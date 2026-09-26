@@ -179,6 +179,16 @@ internal fun BackupSection(viewModel: BackupViewModel) {
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                title = stringResource(R.string.backup_data_memory),
+                trailing = {
+                    AppSwitch(
+                        checked = exportOptions.memoryAndSoul,
+                        onCheckedChange = { viewModel.updateExportOptions(exportOptions.copy(memoryAndSoul = it)) }
+                    )
+                }
+            )
             WorkspaceBackupHint()
         }
 
@@ -218,7 +228,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
                 pendingExportOptions = exportOptions
                 password = ""
                 pendingAction = null
-                exportLauncher.launch("aicode-backup-${System.currentTimeMillis()}.tar.gz")
+                exportLauncher.launch("aharou-backup-${System.currentTimeMillis()}.tar.gz")
             },
             onDismiss = {
                 password = ""
@@ -456,5 +466,6 @@ private fun buildImportSummary(context: android.content.Context, stats: com.ahar
     if (stats.mcpServers > 0) appendLine(context.getString(R.string.backup_stat_mcp_servers, stats.mcpServers))
     if (stats.globalPermissionRules > 0) appendLine(context.getString(R.string.backup_stat_permission_rules, stats.globalPermissionRules))
     if (stats.workspaceFiles > 0) appendLine(context.getString(R.string.backup_stat_workspace_files, stats.workspaceFiles))
+    if (stats.memoryFiles > 0) appendLine(context.getString(R.string.backup_stat_memory_files, stats.memoryFiles))
     append(context.getString(R.string.backup_settings_covered))
 }

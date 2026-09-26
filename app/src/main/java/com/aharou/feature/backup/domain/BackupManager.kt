@@ -60,7 +60,9 @@ data class BackupOptions(
     val mcpServers: Boolean = true,
     val permissionRules: Boolean = true,
     val appSettings: Boolean = true,
-    val workspaceFiles: Boolean = false
+    val workspaceFiles: Boolean = false,
+    /** 记忆与灵魂：aharou-global/memory 下的全部文件（SOUL.md / 核心档案 / 全局记忆 / 日志 / facts 等）。 */
+    val memoryAndSoul: Boolean = false
 )
 
 data class RestoreStats(
@@ -72,7 +74,8 @@ data class RestoreStats(
     val todoItems: Int = 0,
     val mcpServers: Int = 0,
     val globalPermissionRules: Int = 0,
-    val workspaceFiles: Int = 0
+    val workspaceFiles: Int = 0,
+    val memoryFiles: Int = 0
 ) {
     operator fun plus(other: RestoreStats) = RestoreStats(
         providers = providers + other.providers,
@@ -83,6 +86,7 @@ data class RestoreStats(
         todoItems = todoItems + other.todoItems,
         mcpServers = mcpServers + other.mcpServers,
         globalPermissionRules = globalPermissionRules + other.globalPermissionRules,
-        workspaceFiles = workspaceFiles + other.workspaceFiles
+        workspaceFiles = workspaceFiles + other.workspaceFiles,
+        memoryFiles = memoryFiles + other.memoryFiles
     )
 }

@@ -451,6 +451,8 @@
     <string name="backup_data_permissions">授权规则</string>
     <string name="backup_data_app_settings">应用设置</string>
     <string name="backup_data_workspace">工作区文件</string>
+    <string name="backup_data_memory">记忆与灵魂</string>
+    <string name="backup_stat_memory_files">记忆文件 %1$d 个</string>
     <string name="backup_workspace_git_hint">工作区文件建议通过 Git 提交备份，导出备份仅作备用</string>
     <string name="backup_password_label">口令（可选）</string>
     <string name="backup_processing">处理中</string>

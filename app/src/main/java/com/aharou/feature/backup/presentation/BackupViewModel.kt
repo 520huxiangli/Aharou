@@ -61,6 +61,7 @@ class BackupViewModel @Inject constructor(
             .putBoolean(KEY_PERMISSION_RULES, options.permissionRules)
             .putBoolean(KEY_APP_SETTINGS, options.appSettings)
             .putBoolean(KEY_WORKSPACE_FILES, options.workspaceFiles)
+            .putBoolean(KEY_MEMORY_AND_SOUL, options.memoryAndSoul)
             .apply()
     }
 
@@ -71,7 +72,8 @@ class BackupViewModel @Inject constructor(
         mcpServers = prefs.getBoolean(KEY_MCP_SERVERS, true),
         permissionRules = prefs.getBoolean(KEY_PERMISSION_RULES, true),
         appSettings = prefs.getBoolean(KEY_APP_SETTINGS, true),
-        workspaceFiles = prefs.getBoolean(KEY_WORKSPACE_FILES, false)
+        workspaceFiles = prefs.getBoolean(KEY_WORKSPACE_FILES, false),
+        memoryAndSoul = prefs.getBoolean(KEY_MEMORY_AND_SOUL, true)
     )
 
     /** 流式导出到 [output]（调用方打开，本方法负责关闭）。 */
@@ -192,5 +194,6 @@ class BackupViewModel @Inject constructor(
         private const val KEY_PERMISSION_RULES = "permission_rules"
         private const val KEY_APP_SETTINGS = "app_settings"
         private const val KEY_WORKSPACE_FILES = "workspace_files"
+        private const val KEY_MEMORY_AND_SOUL = "memory_and_soul"
     }
 }
