@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.asStateFlow
 object AgentRuntimeStatus {
 
     data class State(
+        /** Agent 会话是否在跑（整轮任务级；悬浮窗按此门控，避免按工具开关导致闪烁）。 */
+        val active: Boolean = false,
         val busy: Boolean = false,
         /** 最近一个运行中工具名（如 Bash / browser / a11y）。 */
         val toolName: String = "",
@@ -23,8 +25,13 @@ object AgentRuntimeStatus {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** 整轮任务的运行开关（由 AIAgentViewModel 的会话状态同步）。 */
+    fun setActive(active: Boolean) {
+        _state.value = _state.value.copy(active = active)
+    }
+
     fun set(busy: Boolean, toolName: String = "", statusText: String = "") {
-        _state.value = State(busy = busy, toolName = toolName, statusText = statusText)
+        _state.value = _state.value.copy(busy = busy, toolName = toolName, statusText = statusText)
     }
 
     fun clear() {

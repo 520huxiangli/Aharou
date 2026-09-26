@@ -400,7 +400,7 @@
     <string name="about_version">版本</string>
     <string name="about_github_repo">GitHub 仓库</string>
     <string name="about_license">开源许可证</string>
-    <string name="about_description">Aharou · 安卓智能体 —— 日常助手 × 编程副驾（OpenMinis × AiCode 融合）</string>
+    <string name="about_description">Aharou · 安卓智能体 —— 日常助手 × 编程副驾</string>
     <string name="about_check_update">检查更新</string>
     <string name="about_checking_update">正在向 GitHub 查询最新版本…</string>
     <string name="about_up_to_date">已经是最新版本</string>
@@ -1848,6 +1848,7 @@
     <string name="floating_grant">悬浮窗权限</string>
     <string name="floating_status_granted">已授权</string>
     <string name="floating_status_denied">未授权</string>
+    <string name="floating_thinking">思考中…</string>
     <string name="floating_oem_hint">部分国产 ROM 还需允许「后台弹出界面」并保持自启动（见「软件权限」页），悬浮窗才能稳定。</string>
 
     <string name="memory_settings_title">记忆</string>

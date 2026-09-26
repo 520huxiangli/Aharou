@@ -65,8 +65,10 @@ class FloatingToolOverlay(private val context: Context) {
         mainHandler.post {
             try {
                 if (view == null) attach()
-                titleView?.text = toolName.ifBlank { "Aharou" }
-                statusView?.text = statusText.ifBlank { "执行中…" }
+                val title = toolName.ifBlank { "Aharou" }
+                val status = statusText.ifBlank { "执行中…" }
+                if (titleView?.text?.toString() != title) titleView?.text = title
+                if (statusView?.text?.toString() != status) statusView?.text = status
             } catch (_: Throwable) {
             }
         }

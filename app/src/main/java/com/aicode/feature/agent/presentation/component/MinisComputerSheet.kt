@@ -141,7 +141,7 @@ internal fun MinisComputerSheet(
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "Minis Computer",
+                    text = "Aharou Computer",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                 )

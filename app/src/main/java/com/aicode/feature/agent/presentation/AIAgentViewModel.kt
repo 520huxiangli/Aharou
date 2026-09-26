@@ -212,6 +212,15 @@ class AIAgentViewModel @Inject constructor(
 
     private fun setAgentState(sessionId: String, state: AgentUIState) {
         _agentStates.value = _agentStates.value + (sessionId to state)
+        syncRuntimeActive()
+    }
+
+    /** 同步「整轮任务在跑」到全局运行状态（悬浮窗按整轮门控，避免按工具开关导致闪烁）。 */
+    private fun syncRuntimeActive() {
+        val active = _agentStates.value.values.any {
+            it is AgentUIState.Loading || it is AgentUIState.Streaming
+        }
+        com.aicode.feature.agent.domain.runtime.AgentRuntimeStatus.setActive(active)
     }
 
     /**
@@ -1707,6 +1716,7 @@ class AIAgentViewModel @Inject constructor(
         _queuedRequests.value = emptyMap()
         _runningCommandSessions.value = emptySet()
         _agentStates.value = _agentStates.value.mapValues { AgentUIState.Idle }
+        syncRuntimeActive()
         _streamingTexts.value = emptyMap()
         _streamingReasonings.value = emptyMap()
         _runningTools.value = emptyMap()

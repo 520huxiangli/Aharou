@@ -400,7 +400,7 @@
     <string name="about_version">Version</string>
     <string name="about_github_repo">GitHub Repository</string>
     <string name="about_license">Open Source License</string>
-    <string name="about_description">Aharou · Android Agent — everyday assistant × coding copilot (OpenMinis × AiCode fusion)</string>
+    <string name="about_description">Aharou · Android Agent — everyday assistant × coding copilot</string>
     <string name="about_check_update">Check for updates</string>
     <string name="about_checking_update">Querying GitHub for the latest version…</string>
     <string name="about_up_to_date">Already up to date</string>
@@ -1849,6 +1849,7 @@
     <string name="floating_grant">Overlay permission</string>
     <string name="floating_status_granted">Granted</string>
     <string name="floating_status_denied">Not granted</string>
+    <string name="floating_thinking">Thinking…</string>
     <string name="floating_oem_hint">Some OEM ROMs also require background-popup permission and autostart for the capsule to stay reliable (see the System permissions page).</string>
 
     <string name="memory_settings_title">Memory</string>

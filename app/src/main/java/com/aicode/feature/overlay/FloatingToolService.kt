@@ -86,9 +86,13 @@ class FloatingToolService : Service() {
             combine(AgentRuntimeStatus.state, appForeground) { status, foreground ->
                 Triple(status, foreground, overlay.hasOverlayPermission())
             }.collect { (status, foreground, hasPermission) ->
-                val shouldShow = status.busy && !foreground && hasPermission
+                // 整轮门控：任务在跑 && App 不在前台 && 有权限 —— 任务期间常显（只更新文字），
+                // 不再按「单个工具的执行窗口」开关，避免一连串快工具导致胶囊闪烁。
+                val shouldShow = status.active && !foreground && hasPermission
                 if (shouldShow) {
-                    overlay.show(status.toolName, status.statusText)
+                    val statusText = if (status.busy) status.statusText
+                    else getString(R.string.floating_thinking)
+                    overlay.show(status.toolName, statusText)
                 } else {
                     overlay.hide()
                 }
