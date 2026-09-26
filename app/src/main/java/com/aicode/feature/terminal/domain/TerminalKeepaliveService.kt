@@ -147,10 +147,10 @@ class TerminalKeepaliveService : Service() {
         private const val TAG = "TerminalKeepaliveService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "terminal_service"
-        const val ACTION_START_SESSION = "com.aicode.action.START_SESSION"
-        const val ACTION_STOP_SESSION = "com.aicode.action.STOP_SESSION"
-        const val ACTION_ENABLE_PERSISTENT = "com.aicode.action.ENABLE_PERSISTENT"
-        const val ACTION_DISABLE_PERSISTENT = "com.aicode.action.DISABLE_PERSISTENT"
+        const val ACTION_START_SESSION = "com.aharou.agent.action.START_SESSION"
+        const val ACTION_STOP_SESSION = "com.aharou.agent.action.STOP_SESSION"
+        const val ACTION_ENABLE_PERSISTENT = "com.aharou.agent.action.ENABLE_PERSISTENT"
+        const val ACTION_DISABLE_PERSISTENT = "com.aharou.agent.action.DISABLE_PERSISTENT"
 
         /** 开启常驻保活（幂等）。 */
         fun enablePersistent(context: Context) {

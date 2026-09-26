@@ -102,7 +102,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.aicode"
+        applicationId = "com.aharou.agent"
         minSdk = 26
         // 仍锁 targetSdk 28，但阻塞项已不是 PRoot：proot 全套改由 jniLibs 装到 nativeLibraryDir
         // （见 sourceSets 与 packaging.jniLibs 注释），W^X 不再挡容器启动。升级前待解决：
@@ -168,9 +168,9 @@ android {
     }
 
     buildTypes {
-        // debug 加包名后缀 .debug → applicationId 变 com.aicode.debug，与 release（com.aicode）
+        // debug 加包名后缀 .debug → applicationId 变 com.aharou.agent.debug，与 release（com.aharou.agent）
         // 可同机共存、互不覆盖。IDE 跑 debug 不再因签名不同卸载已装的正式版。
-        // 注意：因 applicationId 不同，debug 变体私有目录为 /data/data/com.aicode.debug/，
+        // 注意：因 applicationId 不同，debug 变体私有目录为 /data/data/com.aharou.agent.debug/，
         // release 已解压的容器 rootfs 与工作区项目在 debug 下不可见（需重新解压/clone），属预期隔离行为。
         debug {
             applicationIdSuffix = ".debug"
@@ -190,7 +190,7 @@ android {
             }
         }
         // beta 测试版：继承 release 的全部配置（签名/R8/资源压缩/proguard），仅包名后缀 .beta
-        // → applicationId 变 com.aicode.beta，可与正式版同机共存、互不覆盖。
+        // → applicationId 变 com.aharou.agent.beta，可与正式版同机共存、互不覆盖。
         // 由 .github/workflows/beta.yml 在 push main 时构建并上传 Artifacts，供测机验证。
         create("beta") {
             initWith(getByName("release"))

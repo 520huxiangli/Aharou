@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AiCode</string>
+    <string name="app_name">Aharou</string>
 
     <!-- 设置页菜单标题 -->
     <string name="settings_title">设置</string>
@@ -317,7 +317,7 @@
     <string name="credential_auto_inject_title">自动注入凭证</string>
     <string name="credential_auto_inject_hint">把应用中保存的 git 凭据同步到远程服务器，仅对当前工作区根目录下的仓库生效，不影响你在服务器上手动使用 git</string>
     <string name="credential_auto_inject_prompt_title">自动注入 git 凭证？</string>
-    <string name="credential_auto_inject_prompt_body">是否让 AiCode 把应用中保存的 git 凭据同步到该远程服务器？仅对当前工作区根目录下的仓库生效，不会改动服务器的全局 git 配置。</string>
+    <string name="credential_auto_inject_prompt_body">是否让 Aharou 把应用中保存的 git 凭据同步到该远程服务器？仅对当前工作区根目录下的仓库生效，不会改动服务器的全局 git 配置。</string>
     <string name="credential_auto_inject_enable">开启</string>
     <string name="common_rename">重命名</string>
     <string name="common_hide">隐藏</string>
@@ -1408,7 +1408,7 @@
     <string name="crash_restart">重启应用</string>
     <string name="crash_exit">退出应用</string>
     <string name="crash_log_hint">完整日志文件位置：%1$s</string>
-    <string name="crash_report_title">AiCode 崩溃报告</string>
+    <string name="crash_report_title">Aharou 崩溃报告</string>
     <string name="crash_report_time">时间：%1$s</string>
     <string name="crash_report_version">版本：%1$s</string>
     <string name="crash_report_device">设备：%1$s</string>

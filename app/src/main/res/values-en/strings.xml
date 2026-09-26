@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">AiCode</string>
+    <string name="app_name">Aharou</string>
 
     <!-- Settings menu titles -->
     <string name="settings_title">Settings</string>
@@ -121,7 +121,7 @@
     <!-- Storage page -->
     <string name="settings_storage">Storage</string>
     <string name="storage_refresh">Rescan</string>
-    <string name="storage_total_title">Used by AiCode</string>
+    <string name="storage_total_title">Used by Aharou</string>
     <string name="storage_scanning">Calculating…</string>
     <string name="storage_device_free">%1$s free of %2$s</string>
     <string name="storage_section_breakdown">Breakdown</string>
@@ -317,7 +317,7 @@
     <string name="credential_auto_inject_title">Auto-inject credentials</string>
     <string name="credential_auto_inject_hint">Sync git credentials saved in the app to this remote server, effective only for repositories under the current workspace root. Does not affect your manual git usage on the server.</string>
     <string name="credential_auto_inject_prompt_title">Auto-inject git credentials?</string>
-    <string name="credential_auto_inject_prompt_body">Allow AiCode to sync git credentials saved in the app to this remote server? It only applies to repositories under the current workspace root and will not modify the server\'s global git config.</string>
+    <string name="credential_auto_inject_prompt_body">Allow Aharou to sync git credentials saved in the app to this remote server? It only applies to repositories under the current workspace root and will not modify the server\'s global git config.</string>
     <string name="credential_auto_inject_enable">Enable</string>
     <string name="common_rename">Rename</string>
     <string name="common_hide">Hide</string>
@@ -1409,7 +1409,7 @@
     <string name="crash_restart">Restart app</string>
     <string name="crash_exit">Exit app</string>
     <string name="crash_log_hint">Full log files at: %1$s</string>
-    <string name="crash_report_title">AiCode Crash Report</string>
+    <string name="crash_report_title">Aharou Crash Report</string>
     <string name="crash_report_time">Time: %1$s</string>
     <string name="crash_report_version">Version: %1$s</string>
     <string name="crash_report_device">Device: %1$s</string>
