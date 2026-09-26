@@ -363,6 +363,8 @@ dependencies {
     // Material Icons
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
+    // Google 登录页走 Chrome Custom Tabs（WebView 被 Google 封禁）——浏览器移植件依赖
+    implementation("androidx.browser:browser:1.8.0")
 
     // Lucide Icons
     implementation("br.com.devsrsouza.compose.icons:feather:1.1.1")

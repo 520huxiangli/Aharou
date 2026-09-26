@@ -155,9 +155,6 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var onboardingRepository: com.aicode.feature.onboarding.data.OnboardingRepository
 
-    @Inject
-    lateinit var browserManager: com.aicode.feature.agent.domain.tool.browser.BrowserManager
-
     override fun attachBaseContext(newBase: android.content.Context) {
         // 在 Activity 创建前同步应用用户选择的语言，确保冷启动也生效。
         // Hilt 尚未注入，直接从 SharedPreferences 同步读取。
@@ -181,14 +178,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
-        // 挂载离屏 WebView 隐藏宿主，确保后台/离屏状态下 WebView 也能触发 onAttachedToWindow 完成首帧真实光栅化渲染
-        val hiddenHost = android.widget.FrameLayout(this).apply {
-            layoutParams = android.view.ViewGroup.LayoutParams(1, 1)
-            alpha = 0.001f
-            translationX = -10000f
-        }
-        findViewById<android.view.ViewGroup>(android.R.id.content)?.addView(hiddenHost)
-        browserManager.attachHiddenHost(hiddenHost)
         // 监听语言偏好变化，更新 Application/Activity locale 后重建。
         lifecycleScope.launch {
             languageSettings.languageFlow.drop(1).distinctUntilChanged().collect { tag ->
@@ -239,10 +228,6 @@ class MainActivity : ComponentActivity() {
                 val controller = WindowCompat.getInsetsController(window, view)
                 controller.isAppearanceLightStatusBars = !darkTheme
                 controller.isAppearanceLightNavigationBars = !darkTheme
-            }
-
-            LaunchedEffect(darkTheme) {
-                browserManager.setAppDarkTheme(darkTheme)
             }
 
             AIEditorTheme(
@@ -312,7 +297,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        browserManager.detachHiddenHost()
         super.onDestroy()
     }
 
@@ -732,7 +716,7 @@ fun AppNavigation(
             composable("browser") {
                 val browserViewModel: com.aicode.feature.browser.presentation.BrowserViewModel = hiltViewModel()
                 BrowserScreen(
-                    browserManager = browserViewModel.browserManager,
+                    tabPool = browserViewModel.tabPool,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

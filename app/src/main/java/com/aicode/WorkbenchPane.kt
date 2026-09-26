@@ -82,7 +82,7 @@ internal fun WorkbenchPaneContent(
             WorkbenchPaneKind.BROWSER -> {
                 val browserViewModel: BrowserViewModel = hiltViewModel()
                 BrowserScreen(
-                    browserManager = browserViewModel.browserManager,
+                    tabPool = browserViewModel.tabPool,
                     onNavigateBack = onClose,
                     embedded = true
                 )

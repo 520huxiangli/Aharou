@@ -62,7 +62,10 @@ class ToolPermissionPolicyEngine @Inject constructor(
          * getText/getHtml/getBackbone/screenshot/console/wait/listTabs 为只读（PLAN 放行）。
          */
         const val BROWSER_TOOL = "browser"
-        private val BROWSER_READ_ONLY_ACTIONS = setOf("getText", "getHtml", "getBackbone", "screenshot", "console", "wait", "listTabs")
+        private val BROWSER_READ_ONLY_ACTIONS = setOf(
+            "screenshot", "get_text", "get_readable", "get_backbone", "get_page_info",
+            "find_elements", "list_tabs", "get_cookies", "fetch", "wait_for_dom_stable"
+        )
 
         /**
          * 提权参数：非 AUTO 模式下，命令因内置安全防护（灾难性 rm）被拒时，

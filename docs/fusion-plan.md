@@ -107,6 +107,7 @@
 - 联动方式：工具跑 `browser_use` 时弹出面板（`ChatScreen` 里 `toggleBrowserSheet()`），用户实时观看 + 可接管。
 - 适配点：`BrowserTabPool` 几乎零外部依赖（WebView + 协程）；`MinisTextButton` 等换 AiCode 组件或随带；`AppLogger`→AiCode `FileLogger`；接 Hilt。
 - 现状对比：AiCode 已有**基础版**（多标签 + 前进后退 + 地址栏，界面 762 行 + 工具侧 ≈2.1k 行）→ 融合后升维到 Minis 级：围观 / 接管 + 历史 / 下载 / 设置 / 外链处理。
+- ✅ **进度（09-26）**：整搬完成——引擎 11 文件 + UI 10 文件 + 接线 3 件（Hilt 模块 / VM / 工具）；旧实现已删（BrowserManager/BrowserTool/隐藏宿主）；编译通过。待办：聊天侧呼出 / 工具执行自动弹开 / 暗色联动 / `minis://` 路径映射接通。
 
 **B. 沙箱可视化：文件浏览器 + 文件预览**（≈2.4k 行）
 | 层 | 文件 | 说明 |
