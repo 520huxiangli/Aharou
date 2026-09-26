@@ -4,9 +4,9 @@ package com.aicode.feature.agent.domain.model
  * Agent 的工作模式。
  */
 enum class AgentMode {
-    BUILD, // 默认模式，允许所有授权操作
+    BUILD, // 逐个确认模式：未授权操作弹窗确认
     PLAN,  // 计划模式，拦截修改类操作，只读/探索为主
-    AUTO   // 自动模式，放行所有权限（不弹窗），仅用户手动可切换；AI 无法通过 planMode 进入
+    AUTO   // 自动模式，放行所有权限（不弹窗），仅用户手动可切换；AI 无法通过 planMode 进入 —— Aharou 新会话默认
 }
 
 /**

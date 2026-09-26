@@ -46,7 +46,9 @@ class SessionUseCase @Inject constructor(
         workspacePath: String,
         providerId: String? = null,
         model: String? = null,
-        reasoningEffort: String = ReasoningEffort.MEDIUM.name
+        reasoningEffort: String = ReasoningEffort.MEDIUM.name,
+        // Aharou: 新会话默认 AUTO（自动化、免逐项确认）；用户仍可在会话内手动切 BUILD/PLAN。
+        mode: String = AgentMode.AUTO.name
     ): ChatSessionEntity {
         val now = System.currentTimeMillis()
         return ChatSessionEntity(
@@ -57,7 +59,8 @@ class SessionUseCase @Inject constructor(
             updatedAt = now,
             providerId = providerId,
             model = model,
-            reasoningEffort = reasoningEffort
+            reasoningEffort = reasoningEffort,
+            mode = mode
         )
     }
 
