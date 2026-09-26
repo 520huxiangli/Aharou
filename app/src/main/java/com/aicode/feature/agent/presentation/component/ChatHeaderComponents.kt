@@ -39,6 +39,7 @@ import com.aicode.feature.onboarding.domain.OnboardingStep
 import com.aicode.feature.onboarding.presentation.onboardingTarget
 import com.aicode.feature.settings.presentation.component.ModelLogoIcon
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Folder
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Menu
@@ -56,6 +57,7 @@ internal fun ChatHeader(
     onNavigateToTerminal: () -> Unit,
     onNavigateToGit: () -> Unit,
     onNavigateToBrowser: () -> Unit = {},
+    onNavigateToSandbox: () -> Unit = {},
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
     connectionState: com.aicode.feature.agent.domain.container.ConnectionState? = null,
@@ -133,6 +135,18 @@ internal fun ChatHeader(
                     contentDescription = stringResource(R.string.chat_open_terminal),
                     active = terminalActive,
                     onClick = onNavigateToTerminal
+                )
+                WorkbenchIconButton(
+                    icon = FeatherIcons.Globe,
+                    contentDescription = stringResource(R.string.chat_open_browser),
+                    active = browserActive,
+                    onClick = onNavigateToBrowser
+                )
+                WorkbenchIconButton(
+                    icon = FeatherIcons.Folder,
+                    contentDescription = stringResource(R.string.chat_open_sandbox),
+                    active = false,
+                    onClick = onNavigateToSandbox
                 )
             }
             // 远程模式：左边 SSH 连接状态，右边 token 累计统计

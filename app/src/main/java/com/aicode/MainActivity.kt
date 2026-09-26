@@ -656,6 +656,7 @@ fun AppNavigation(
                                 onNavigateToTerminal = { openWorkbench(WorkbenchPaneKind.TERMINAL) },
                                 onNavigateToGit = { openWorkbench(WorkbenchPaneKind.GIT) },
                                 onNavigateToBrowser = { openWorkbench(WorkbenchPaneKind.BROWSER) },
+                                onNavigateToSandbox = { navController.navigate("sandbox") },
                                 terminalActive = paneOpen && paneKind == WorkbenchPaneKind.TERMINAL,
                                 gitActive = paneOpen && paneKind == WorkbenchPaneKind.GIT,
                                 browserActive = paneOpen && paneKind == WorkbenchPaneKind.BROWSER,
@@ -750,6 +751,35 @@ fun AppNavigation(
                     tabPool = browserViewModel.tabPool,
                     onNavigateBack = { navController.popBackStack() }
                 )
+            }
+            composable("sandbox") {
+                val sandboxContext = androidx.compose.ui.platform.LocalContext.current
+                val sandboxVm = remember {
+                    com.aicode.feature.sandbox.FileBrowserViewModel(
+                        rootPath = java.io.File(sandboxContext.filesDir, "rootfs"),
+                        rootLabel = "/",
+                        appContext = sandboxContext.applicationContext,
+                    )
+                }
+                com.aicode.feature.sandbox.FileBrowserScreen(
+                    viewModel = sandboxVm,
+                    onBack = { navController.popBackStack() },
+                    onPreviewFile = { item ->
+                        com.aicode.feature.sandbox.FilePreviewHolder.currentItem = item
+                        navController.navigate("sandboxPreview")
+                    },
+                )
+            }
+            composable("sandboxPreview") {
+                val previewItem = com.aicode.feature.sandbox.FilePreviewHolder.currentItem
+                if (previewItem == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                } else {
+                    com.aicode.feature.sandbox.FilePreviewScreen(
+                        item = previewItem,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
             }
             composable("git") {
                 val gitViewModel: GitViewModel = hiltViewModel()

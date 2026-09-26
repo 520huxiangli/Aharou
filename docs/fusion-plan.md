@@ -115,6 +115,7 @@
 | 文件浏览器 | `ui/sandbox/FileBrowserScreen.kt`(558) + ViewModel(521) | `java.io.File` 直读；浏览根改指 AiCode 容器根；含排序/搜索/操作 |
 | 文件预览 | `ui/sandbox/FilePreviewScreen.kt`(1368) | 图片 / 文本 / Markdown / PDF(PdfRenderer) / 音视频 + 「存到…」 |
 | 发行版 / 镜像管理 | `RootfsManagementScreen`(378+197)、`MirrorSettingsScreen`(824) | **内核**＝AiCode 原生容器切换（镜像目录 / 一键下载 / 自定义导入——即 #387 所求）；**界面**按 Minis 风格做 |
+- ✅ **进度（09-26）**：文件浏览器 + 文件预览整搬完成——11 文件 ≈4.8k 行（浏览器屏 / 预览屏 / ViewModel / 图库 / 全屏查看器 / 媒体播放器 / Minis 菜单与按钮 / 调色板）+ 86 条字符串 + Coil 依赖。根目录＝容器 rootfs（`filesDir/rootfs`）；入口＝聊天页表头 📁 按钮（顺带把表头缺失的 🌐 浏览器按钮也补上了）。Markdown 预览改用融合版 `MarkdownContent`（免搬 3.7k 行）；Minis 未完工的「Add to Home」功能未搬。预览支持：图 / 文 / Markdown / HTML / 音频 / 视频 / PDF / CSV / JSON / APK / 压缩包 + 分享 / 打印 / 存相册 / 另存为。
 **C. 终端 UI：内核不换，做「手感对齐 + 入口打通」**（追加需求 · ✅ 09-26 定案：内核＝AiCode/Termux，界面＝Minis）
 | | OpenMinis（2.7k 行） | AiCode（现状 · 保留） |
 |---|---|---|

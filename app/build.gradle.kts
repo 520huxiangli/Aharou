@@ -368,6 +368,8 @@ dependencies {
 
     // Lucide Icons
     implementation("br.com.devsrsouza.compose.icons:feather:1.1.1")
+    // 图片加载（沙箱图库/全屏查看器移植件依赖）
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // 可拖拽排序列表（长按拖拽手势，提供商排序用）
     implementation("sh.calvin.reorderable:reorderable:3.1.0")
