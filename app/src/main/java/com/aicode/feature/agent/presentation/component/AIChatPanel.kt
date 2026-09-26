@@ -1336,6 +1336,25 @@ fun AIChatPanel(
                 }
             }
 
+            // [Aharou] 小屏幕：底部浮动工具条（最近工具 + 实时迷你终端缩略图）
+            val toolMessagesForScreen = remember(messages) {
+                messages.filter { it.role == MessageRole.TOOL }.takeLast(8)
+            }
+            val anyToolRunning = runningTool.isNotEmpty()
+            val lastMessageIsTool = messages.lastOrNull()?.role == MessageRole.TOOL
+            if (toolMessagesForScreen.isNotEmpty() && (anyToolRunning || lastMessageIsTool)) {
+                FloatingToolStatusBar(
+                    toolMessages = toolMessagesForScreen,
+                    liveOutputFor = { id -> runningTool.firstOrNull { it.messageId == id }?.text },
+                    onOpenDetail = { id -> ToolComputerSignal.request(id) },
+                    onStop = { viewModel.stopAgent() },
+                    browserPool = viewModel.browserTabPool,
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 6.dp),
+                )
+            }
+
             ChatInputBar(
                 value = inputText,
                 onValueChange = { inputText = it; viewModel.updateInputDraft(it) },

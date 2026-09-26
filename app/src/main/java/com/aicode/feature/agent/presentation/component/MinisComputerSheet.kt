@@ -431,7 +431,7 @@ private fun InfoCard(title: String, body: String, mono: Boolean, isError: Boolea
 
 // ── 小工具：从工具消息里提取命令 / URL / 整理输出 ──────────────────────────
 
-private fun extractComputerShellCommand(toolArgs: String?): String? {
+internal fun extractComputerShellCommand(toolArgs: String?): String? {
     val t = toolArgs ?: return null
     return runCatching {
         val obj = JSONObject(t)
@@ -445,7 +445,7 @@ private fun extractComputerBrowserUrl(toolArgs: String?): String? {
 }
 
 /** 把工具结果（传输 JSON 或纯文本）整理成可读输出。 */
-private fun formatComputerOutput(raw: String, running: Boolean): String {
+internal fun formatComputerOutput(raw: String, running: Boolean): String {
     if (running) return "…"
     if (raw.isBlank()) return ""
     val t = raw.trim()
