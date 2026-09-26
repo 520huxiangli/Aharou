@@ -172,6 +172,8 @@ internal data class ChatRenderItem(
     val slice: String? = null,
     val isChunkHeader: Boolean = true,
     val isChunkFooter: Boolean = true,
+    /** 是否在该 item 上渲染「身份行」（Soul 图标 + 名字）：每轮助手回复的首条。 */
+    val showSoulHeader: Boolean = false,
     /**
      * 非空表示这是一条「连续工具调用」分组头 item。成员各自仍是独立 item（仅在该组展开时生成），
      * 因此无论展开与否，任何一条 item 的高度都有界——这是深处交互（表格横滑、长按复制）不失效的前提。
@@ -223,7 +225,7 @@ private fun AgentUIMessage.rendersActionRow(): Boolean =
  * 单条消息（非工具分组）在一次渲染中占据的 item：
  * 超长助手正文拆成多条有界 chunk，其余消息 1:1。
  */
-private fun messageRenderItems(message: AgentUIMessage): List<ChatRenderItem> {
+private fun messageRenderItems(message: AgentUIMessage, showSoulHeader: Boolean = false): List<ChatRenderItem> {
     val canSplit = message.role == MessageRole.ASSISTANT &&
         !message.isCompactionMarker &&
         !message.isContextSummary &&
@@ -232,14 +234,14 @@ private fun messageRenderItems(message: AgentUIMessage): List<ChatRenderItem> {
         message.content.length > CHUNK_SPLIT_THRESHOLD_CHARS
     if (!canSplit) {
         return listOf(
-            ChatRenderItem(message = message, key = message.id, contentType = message.role.name)
+            ChatRenderItem(message = message, key = message.id, contentType = message.role.name, showSoulHeader = showSoulHeader)
         )
     }
     val slices = splitLongContent(message.content)
     if (slices.size <= 1) {
         // 只拆出一块（如无空行的超长单段）：等同普通消息。
         return listOf(
-            ChatRenderItem(message = message, key = message.id, contentType = message.role.name)
+            ChatRenderItem(message = message, key = message.id, contentType = message.role.name, showSoulHeader = showSoulHeader)
         )
     }
     return slices.mapIndexed { idx, slice ->
@@ -250,6 +252,7 @@ private fun messageRenderItems(message: AgentUIMessage): List<ChatRenderItem> {
             slice = slice,
             isChunkHeader = idx == 0,
             isChunkFooter = idx == slices.lastIndex,
+            showSoulHeader = showSoulHeader && idx == 0,
         )
     }
 }
@@ -269,10 +272,21 @@ internal fun buildChatItems(
 ): List<ChatRenderItem> {
     val items = ArrayList<ChatRenderItem>(messages.size)
     var i = 0
+    // 「助手一轮的首条正文」才挂身份行：用户消息开新一轮，工具调用不打断本轮。
+    var assistantRunActive = false
     while (i < messages.size) {
         val message = messages[i]
         if (!message.isGroupableTool()) {
-            items += messageRenderItems(message)
+            val showSoulHeader = message.role == MessageRole.ASSISTANT && !assistantRunActive &&
+                !message.isCompactionMarker && !message.isContextSummary &&
+                !message.isCompactionFailure && !message.isBackgroundNotification &&
+                (message.content.hasVisibleContent() || message.attachments.isNotEmpty())
+            if (message.role == MessageRole.USER) {
+                assistantRunActive = false
+            } else if (showSoulHeader) {
+                assistantRunActive = true
+            }
+            items += messageRenderItems(message, showSoulHeader)
             i++
             continue
         }
@@ -1220,6 +1234,7 @@ fun AIChatPanel(
                                     contentSlice = item.slice,
                                     isChunkHeader = item.isChunkHeader,
                                     isChunkFooter = item.isChunkFooter,
+                                    showSoulHeader = item.showSoulHeader,
                                     onRewindClick = { viewModel.openRewindMenu(it) },
                                     onMoreClick = { messageForMenu = it },
                                     toolExpandedOverride = toolGroupOverrideSnapshot[message.id],

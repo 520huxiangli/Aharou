@@ -211,6 +211,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         com.aicode.core.config.ConfigRegistry.init(this)
         com.aicode.core.config.audit.ConfigAuditLog.init(this)
         com.aicode.core.soul.SoulStore.ensureExists(this)
+        // 读取 SOUL.md 到缓存（聊天身份行用）；改名/改图标后由保存路径刷新。
+        com.aicode.core.soul.SoulStore.refreshCache(this)
         // 把提供商级代理注册表挂到 AppProxy（applyGlobal 已在 attachBaseContext 完成），
         // 此后按目标 host 分派 provider 专属代理；无 provider 配置时回退全局代理。
         AppProxy.registerProviderProxyRegistry(providerProxyRegistry)

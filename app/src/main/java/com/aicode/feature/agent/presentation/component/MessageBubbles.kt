@@ -223,6 +223,8 @@ internal fun AgentMessageItem(
     isChunkHeader: Boolean = true,
     /** 是否为分块的末块（渲染操作行、底部圆角、与下一条列表 item 的间距）；非分块消息恒为 true。 */
     isChunkFooter: Boolean = true,
+    /** 是否在正文上方渲染「身份行」（Soul 图标 + 名字）：每轮助手回复的首条为 true。 */
+    showSoulHeader: Boolean = false,
 ) {
     if (message.isCompactionMarker) {
         // 压缩内部锚点不再渲染分隔线：摘要卡片已提供压缩反馈，避免与卡片重复。
@@ -296,6 +298,10 @@ internal fun AgentMessageItem(
             .padding(bottom = if (isChunkFooter) Spacing.sm else 0.dp),
         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
+        if (showSoulHeader && isChunkHeader && message.role == MessageRole.ASSISTANT) {
+            // 每轮助手回复的首条渲染身份行（图标 + 名字，跟 SOUL.md 实时联动）
+            SoulChatHeaderRow()
+        }
         if (hasReasoning && isChunkHeader) {
             // 思考默认收起：折叠行只占一行（显示思考的第一行），要看全文手动点开
             ReasoningBubble(text = message.reasoning.orEmpty(), cache = markdownCache)

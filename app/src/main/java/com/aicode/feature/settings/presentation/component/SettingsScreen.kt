@@ -89,6 +89,8 @@ import com.aicode.feature.agent.domain.skill.SkillScope
 import com.aicode.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.Clock
+import compose.icons.feathericons.Smile
 import compose.icons.feathericons.BarChart2
 import compose.icons.feathericons.Book
 import compose.icons.feathericons.BookOpen
@@ -138,6 +140,8 @@ private val SettingsTwoPaneMinWidth = 840.dp
 /** 设置页内部二级菜单分区。Menu 为首页菜单，其余为各自的二级页。 */
 internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Menu(R.string.settings_title),
+    Soul(R.string.soul_settings_title),
+    ConfigAudit(R.string.config_audit_title),
     General(R.string.settings_general),
     Providers(R.string.settings_providers),
     ProviderEditor(R.string.settings_provider_editor),
@@ -749,6 +753,8 @@ fun SettingsScreen(
             when (current) {
                 // 大屏菜单已常驻左栏，右栏在没选中分区时给个占位提示
                 SettingsSection.Menu -> if (expanded) SettingsDetailPlaceholder() else menuBody()
+                SettingsSection.Soul -> SoulSettingsSection()
+                SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
                     onToggleAutoRemoveStaleModels = { viewModel.setAutoRemoveStaleModels(it) },
@@ -1249,6 +1255,22 @@ internal fun SettingsMenu(
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        // ── Aharou ──
+        SettingsGroupHeader(text = stringResource(R.string.settings_category_aharou))
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.Smile,
+                title = stringResource(SettingsSection.Soul.titleRes),
+                onClick = { onOpen(SettingsSection.Soul) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Clock,
+                title = stringResource(SettingsSection.ConfigAudit.titleRes),
+                onClick = { onOpen(SettingsSection.ConfigAudit) }
+            )
+        }
+
         // ── 通用设置 ──
         SettingsGroupHeader(text = stringResource(R.string.settings_category_general))
         SettingsGroup {
