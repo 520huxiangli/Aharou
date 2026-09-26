@@ -102,7 +102,7 @@
 
 - 联动方式：工具跑 `browser_use` 时弹出面板（`ChatScreen` 里 `toggleBrowserSheet()`），用户实时观看 + 可接管。
 - 适配点：`BrowserTabPool` 几乎零外部依赖（WebView + 协程）；`MinisTextButton` 等换 AiCode 组件或随带；`AppLogger`→AiCode `FileLogger`；接 Hilt。
-- 现状对比：AiCode 自带浏览器 ≈2.1k 行（无头工具版、无界面）→ 移植后升维为可视化浏览器。
+- 现状对比：AiCode 已有**基础版**（多标签 + 前进后退 + 地址栏，界面 762 行 + 工具侧 ≈2.1k 行）→ 融合后升维到 Minis 级：围观 / 接管 + 历史 / 下载 / 设置 / 外链处理。
 
 **B. 沙箱可视化：文件浏览器 + 文件预览**（≈2.4k 行）
 | 层 | 文件 | 说明 |
@@ -110,7 +110,15 @@
 | 文件浏览器 | `ui/sandbox/FileBrowserScreen.kt`(558) + ViewModel(521) | `java.io.File` 直读；浏览根改指 AiCode 容器根；含排序/搜索/操作 |
 | 文件预览 | `ui/sandbox/FilePreviewScreen.kt`(1368) | 图片 / 文本 / Markdown / PDF(PdfRenderer) / 音视频 + 「存到…」 |
 | 合并项 | `RootfsManagementScreen`(378+197)、`MirrorSettingsScreen`(824) | AiCode 已有「容器与镜像」管理 → 合并，不整搬 |
-| 保留项 | 终端 UI | 保留 AiCode 的 Termux 终端（更老练），Minis 画布终端不搬 |
+**C. 终端 UI：内核不换，做「手感对齐 + 入口打通」**（追加需求）
+| | OpenMinis（2.7k 行） | AiCode（现状 · 保留） |
+|---|---|---|
+| 内核 | 自写 ANSI 模拟器 + Canvas 渲染 | **Termux 组件**（vim/htop/宽字符/鼠标经久考验） |
+| UI | TerminalScreen 全屏 + 触控键栏 + 画笔主题 | ~2.9k 行：标签页 / 主题 / 字体 / 附加键栏 / 保活 / 远程 SSH |
+- **不搬** Minis 自研模拟器（拿嫩引擎换成熟引擎不划算）；吸收它的「感觉」：
+  ① 入口对齐（聊天 / 沙箱区一键进终端、全屏沉浸）——AiCode 已有主界面 + 工作台侧栏两处入口；
+  ② 终端内 URL 用 App 内浏览器打开（参考 `terminal/MinisOpenUrlBroker.kt`）；
+  ③ 视觉 / 主题细节按 Minis 风格对齐。
 
 ### P3 · 沙箱与运行时细节合并
 | 项目 | 参考实现 | 说明 |
