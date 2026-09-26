@@ -125,7 +125,7 @@ class GenerateImageTool @Inject constructor(
         "output_path" to ToolParameter(
             name = "output_path",
             type = ParameterType.STRING,
-            description = "保存路径（可选）。不传默认保存到 ~/.aicode/generated-images/；传了则保存到指定路径，如 ~/workspace/assets/image.png。",
+            description = "保存路径（可选）。不传默认保存到 ~/.aharou/generated-images/；传了则保存到指定路径，如 ~/workspace/assets/image.png。",
             required = false
         )
     )
@@ -651,7 +651,7 @@ class GenerateImageTool @Inject constructor(
         "$DEFAULT_OUTPUT_DIR/gen_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
 
     /** 输出路径派生：去掉调用方后缀、按真实格式落盘，多张在文件名后加 _1/_2 序号。
-     * 扩展名点只在最后一个路径分隔符之后找：`~/.aicode/...` 这类路径自身的点不能当扩展名分隔符。 */
+     * 扩展名点只在最后一个路径分隔符之后找：`~/.aharou/...` 这类路径自身的点不能当扩展名分隔符。 */
     private fun buildTargetPath(basePath: String, index: Int, format: String): String {
         val slash = basePath.lastIndexOf('/')
         val dot = basePath.lastIndexOf('.', basePath.length - 1).takeIf { it > slash } ?: -1
@@ -688,7 +688,7 @@ class GenerateImageTool @Inject constructor(
 
     internal companion object {
         const val TAG = "GenerateImageTool"
-        const val DEFAULT_OUTPUT_DIR = "~/.aicode/generated-images"
+        const val DEFAULT_OUTPUT_DIR = "~/.aharou/generated-images"
         const val DEFAULT_SIZE = "1024x1024"
         const val MAX_IMAGES = 4
         const val MAX_IMAGE_BYTES = 20L * 1024 * 1024

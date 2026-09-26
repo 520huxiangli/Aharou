@@ -2,7 +2,7 @@ package com.aharou.feature.agent.domain.memory
 
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,7 +11,7 @@ class MemoryRepository @Inject constructor(
     private val globalMemorySource: GlobalMemorySource,
     private val executionModeHolder: ExecutionModeHolder,
     private val containerInstaller: ContainerInstaller,
-    private val projectAicodeRoot: ProjectAicodeRoot
+    private val projectAicodeRoot: ProjectAharouRoot
 ) {
     /** 按当前会话 projectRoot 创建项目级数据源（内部按执行模式决定存储位置）。 */
     private fun projectSource(projectRoot: String) =

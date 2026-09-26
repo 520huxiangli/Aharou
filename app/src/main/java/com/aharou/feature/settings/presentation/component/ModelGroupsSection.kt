@@ -47,7 +47,7 @@ import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Trash2
 
 /**
- * 设置页「模型组」分区（自 OpenMinis 的 Model Groups 移植·适配）。
+ * 设置页「模型组」分区（自 上游项目 的 Model Groups 移植·适配）。
  *
  * 组 = 具名的有序模型集合；列表 / 新建 / 详情（成员增删排序）/ 删除。
  * 选中组的地方（如「默认模型」各角色）执行时按成员顺序取用（首成员优先）。

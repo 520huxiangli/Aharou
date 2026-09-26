@@ -15,7 +15,7 @@ import com.aharou.core.config.confirm.PendingConfigChange
 
 /**
  * 配置变更确认弹窗（Aharou 配置通道：写入前由用户批准，120 秒窗口）。
- * 自 OpenMinis 的 ConfigConfirmDialog 移植（裁剪：暂不逐行开关）。
+ * 自 上游项目 的 ConfigConfirmDialog 移植（裁剪：暂不逐行开关）。
  */
 @Composable
 internal fun ConfigConfirmDialog(

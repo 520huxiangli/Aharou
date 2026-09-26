@@ -48,7 +48,7 @@ import javax.inject.Inject
 /**
  * 多轮会话式识图工具：第一次传 images（1~5 张）由识图模型一次性分析/对比，返回 vision_id 与文本结果；
  * 之后传 vision_id + prompt 在同一识图会话内继续追问（识图模型记得图片与之前的问答）。
- * 会话请求体落盘在 ~/.aicode/vision-sessions/（见 [VisionSessionStore]）。
+ * 会话请求体落盘在 ~/.aharou/vision-sessions/（见 [VisionSessionStore]）。
  * 识图模型不校验视觉能力，调用失败时把错误信息原样作为工具结果返回。
  */
 class ViewImageTool @Inject constructor(

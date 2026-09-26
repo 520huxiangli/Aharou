@@ -432,7 +432,7 @@ fun AIChatPanel(
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
     val messages = messagesState.messages
 
-    // [Aharou] Minis Computer：点工具行掀开"电脑"详情面板
+    // [Aharou] Aharou Computer：点工具行掀开"电脑"详情面板
     val computerOpenTarget by ToolComputerSignal.target.collectAsStateWithLifecycle()
     var computerSheetMessageId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(computerOpenTarget) {
@@ -442,7 +442,7 @@ fun AIChatPanel(
     }
     val computerSheetTarget = computerSheetMessageId
     if (computerSheetTarget != null) {
-        MinisComputerSheet(
+        AharouComputerSheet(
             messages = messages,
             initialMessageId = computerSheetTarget,
             browserPool = viewModel.browserTabPool,

@@ -14,7 +14,7 @@ import javax.inject.Singleton
 
 /**
  * 识图会话的落盘存储：每个会话一个 JSON 文件，内容为发给识图模型的完整消息历史（含图片 base64），
- * 目录 `~/.aicode/vision-sessions/`，风格同 ToolOutputStore。会话数超上限时按最后修改时间淘汰最久未用的。
+ * 目录 `~/.aharou/vision-sessions/`，风格同 ToolOutputStore。会话数超上限时按最后修改时间淘汰最久未用的。
  */
 @Singleton
 class VisionSessionStore @Inject constructor(
@@ -30,7 +30,7 @@ class VisionSessionStore @Inject constructor(
     private val mutex = Mutex()
 
     /** 会话文件目录（宿主路径）。对外只用于占用统计与清理。 */
-    val sessionDir: File get() = File(containerInstaller.aicodeDir, SESSION_DIR)
+    val sessionDir: File get() = File(containerInstaller.aharouDir, SESSION_DIR)
 
     private fun fileFor(id: String): File = File(sessionDir, "vision-$id.json")
 

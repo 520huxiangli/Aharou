@@ -270,8 +270,8 @@ private fun FileItemRow(
     onDelete: () -> Unit,
 ) {
     // T-pwa-3: long-press menu for .html / .htm files whose host path
-    // sits under a recognised PRoot bind mount (`/var/minis/shared` or
-    // `/var/minis/mounts/<n>`). Computed lazily because the bindMounts
+    // sits under a recognised PRoot bind mount (`/var/aharou/shared` or
+    // `/var/aharou/mounts/<n>`). Computed lazily because the bindMounts
     // map can change while the screen is open (mount add/remove).
     val ext = item.file.extension.lowercase()
     val isHtml = !item.isDirectory && (ext == "html" || ext == "htm")
@@ -375,7 +375,7 @@ private fun FileItemRow(
     // WebApp entry point (TODO webapp-hidden).
     run {
         val context = LocalContext.current
-        MinisMenu(
+        AharouMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
         ) {
@@ -400,7 +400,7 @@ private fun FileItemRow(
                     ).show()
                 },
             )
-            // [Aharou] 原 Minis 的「Add to Home」菜单项属未完成的残疾功能（源码中 false && 已关），
+            // [Aharou] 原 原版 的「Add to Home」菜单项属未完成的残疾功能（源码中 false && 已关），
             // 移植版直接不搬。
         }
     }
@@ -423,7 +423,7 @@ private fun MoreMenu(
         IconButton(onClick = { expanded = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.filebrowser_more_action))
         }
-        MinisMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        AharouMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             // Display options — sort key choices first so the most
             // frequent toggle (sort) is the closest tap.
             for (key in FileSortKey.entries) {

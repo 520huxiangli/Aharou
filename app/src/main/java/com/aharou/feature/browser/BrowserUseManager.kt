@@ -230,7 +230,7 @@ class BrowserUseManager(
 
     init {
         configureWebView(webView, profile)
-        webView.addJavascriptInterface(jsBridge, "__minis__")
+        webView.addJavascriptInterface(jsBridge, "__aharou__")
         setupWebViewClient()
         setupWebChromeClient()
         // Intercept page-triggered downloads (Content-Disposition attachment,
@@ -271,7 +271,7 @@ class BrowserUseManager(
 
     /**
      * Read a blob: URL from inside the page's JS context and deliver its bytes
-     * through the `__minis__.saveBlobDownload` bridge. blob: object URLs are
+     * through the `__aharou__.saveBlobDownload` bridge. blob: object URLs are
      * scoped to the page — they cannot be fetched from native code, so this
      * injected fetch + FileReader round-trip is the only way to get the data.
      */
@@ -284,12 +284,12 @@ class BrowserUseManager(
                     .then(function(blob) {
                         var reader = new FileReader();
                         reader.onloadend = function() {
-                            __minis__.saveBlobDownload(reader.result, ${JSONObject.quote(guessedName)});
+                            __aharou__.saveBlobDownload(reader.result, ${JSONObject.quote(guessedName)});
                         };
-                        reader.onerror = function() { __minis__.blobDownloadError('FileReader error'); };
+                        reader.onerror = function() { __aharou__.blobDownloadError('FileReader error'); };
                         reader.readAsDataURL(blob);
                     })
-                    .catch(function(e) { __minis__.blobDownloadError(String(e)); });
+                    .catch(function(e) { __aharou__.blobDownloadError(String(e)); });
             })();
         """.trimIndent()
         webView.post { webView.evaluateJavascript(js, null) }
@@ -427,26 +427,26 @@ class BrowserUseManager(
     /** Resolve minis:// URLs to local workspace files. */
     private fun interceptMinisURL(uri: android.net.Uri): android.webkit.WebResourceResponse? {
         try {
-            // minis://workspace/foo.html → /var/minis/workspace/foo.html, then
+            // aharou://workspace/foo.html → /var/aharou/workspace/foo.html, then
             // resolve to the host file via PRoot bind mounts (per-session
             // workspace lives under filesDir/minis-sessions/<sid>/workspace/).
             val host = uri.host ?: return null
             val path = uri.path ?: ""
-            val linuxPath = "/var/minis/$host$path"
+            val linuxPath = "/var/aharou/$host$path"
 
             // [T-android-minis-url-session-scope] Resolve against THIS session
             // first, and only then fall back to the global bind-mount map.
             //
             // `workspace`, `attachments`, `offloads` and `browser` live under
             // `minis-sessions/<sid>/`, but the global map only gains a
-            // `/var/minis/workspace` entry while some session's PRoot shell is
+            // `/var/aharou/workspace` entry while some session's PRoot shell is
             // running — and it is last-writer-wins across sessions. So the old
             // global-only lookup failed in two ordinary situations: the shell
             // had exited (path fell through to the rootfs copy of
-            // /var/minis/workspace, which is empty), or another session had
+            // /var/aharou/workspace, which is empty), or another session had
             // booted more recently and the mount pointed at ITS workspace.
             //
-            // Measured on a GEM-W09: `minis://workspace/jump-jump.html` 404'd
+            // Measured on a GEM-W09: `aharou://workspace/jump-jump.html` 404'd
             // while the file sat intact at 5969 bytes in
             // minis-sessions/145d6883…/workspace/. The rootfs directory the
             // resolver actually reached contained nothing but `.` and `..`.
@@ -938,7 +938,7 @@ class BrowserUseManager(
     /**
      * Public live-preview snapshot — mirrors iOS `webView.takeSnapshot()`.
      * Called by the UI on a timer (e.g. every 3s while a tool is streaming) so
-     * the Minis Computer sheet and FloatingToolStatusBar can show the browser
+     * the Aharou Computer sheet and FloatingToolStatusBar can show the browser
      * state even for actions that don't save an imageFilePath (get_readable,
      * get_text, execute_js, fetch, etc.).
      */
@@ -1038,7 +1038,7 @@ class BrowserUseManager(
         if (script.isNullOrEmpty()) return BrowserActionResult.error("execute_js requires 'script'")
         // Wrap in an async IIFE so `await` works in user scripts.
         // Android WebView doesn't resolve Promises from evaluateJavascript,
-        // so we use a JS bridge callback (__minis__.resolve / __minis__.reject).
+        // so we use a JS bridge callback (__aharou__.resolve / __aharou__.reject).
         return try {
             val deferred = CompletableDeferred<String>()
             asyncJsDeferred = deferred
@@ -1048,14 +1048,14 @@ class BrowserUseManager(
                         var __r__ = (async function(){ $script })();
                         var __v__ = await __r__;
                         if (__v__ === undefined || __v__ === null) {
-                            __minis__.resolve(String(__v__));
+                            __aharou__.resolve(String(__v__));
                         } else if (typeof __v__ === 'object') {
-                            __minis__.resolve(JSON.stringify(__v__));
+                            __aharou__.resolve(JSON.stringify(__v__));
                         } else {
-                            __minis__.resolve(String(__v__));
+                            __aharou__.resolve(String(__v__));
                         }
                     } catch(e) {
-                        __minis__.reject(e.message || String(e));
+                        __aharou__.reject(e.message || String(e));
                     }
                 })();
             """.trimIndent()
@@ -1125,7 +1125,7 @@ class BrowserUseManager(
         // resolves to a Promise. Android's `WebView.evaluateJavascript` does
         // NOT await Promises, so calling `evaluateJavascript(js)` returns the
         // Promise's `{}` string representation and the caller sees a
-        // "No value for base64" parse error. Route through the __minis__
+        // "No value for base64" parse error. Route through the __aharou__
         // bridge so we actually wait for the Promise to resolve.
         val raw = awaitPromiseJs(BrowserUseJS.fetch(urlString))
             ?: return BrowserActionResult.error("fetch timed out")
@@ -1171,7 +1171,7 @@ class BrowserUseManager(
 
     /**
      * Evaluate an `(async function(){...})()` expression and wait for the
-     * returned Promise to resolve via the `__minis__` bridge. Returns the
+     * returned Promise to resolve via the `__aharou__` bridge. Returns the
      * resolved string (JSON or plain) or null on timeout. Mirrors the same
      * pattern used by [executeJS].
      */
@@ -1183,14 +1183,14 @@ class BrowserUseManager(
                 try {
                     var __v__ = await ($js);
                     if (__v__ === undefined || __v__ === null) {
-                        __minis__.resolve('null');
+                        __aharou__.resolve('null');
                     } else if (typeof __v__ === 'object') {
-                        __minis__.resolve(JSON.stringify(__v__));
+                        __aharou__.resolve(JSON.stringify(__v__));
                     } else {
-                        __minis__.resolve(String(__v__));
+                        __aharou__.resolve(String(__v__));
                     }
                 } catch(e) {
-                    __minis__.reject(e && e.message ? e.message : String(e));
+                    __aharou__.reject(e && e.message ? e.message : String(e));
                 }
             })();
         """.trimIndent()

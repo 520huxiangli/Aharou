@@ -434,7 +434,7 @@ private fun MarkdownPreview(item: FileItem) {
             Text(error!!, color = MaterialTheme.colorScheme.error)
         }
         content != null -> com.aharou.feature.agent.presentation.component.MarkdownContent(
-            // [Aharou] 用融合版既有 MarkdownContent 替代 Minis 的 MarkdownDocument（同为懒加载块渲染）。
+            // [Aharou] 用融合版既有 MarkdownContent 替代 原版 的 MarkdownDocument（同为懒加载块渲染）。
             text = content!!,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier

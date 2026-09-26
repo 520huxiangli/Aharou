@@ -254,7 +254,7 @@ class SystemPromptProvider @Inject constructor(
     }
 
     private val customDir: File
-        get() = File(containerInstaller.aicodeDir, "prompts.custom")
+        get() = File(containerInstaller.aharouDir, "prompts.custom")
 
     /** 自定义目录顶层数字片段（数字身份 → 文件），进程内只扫一次（重启 App 才刷新）。 */
     private val customFragmentsByNumber: Map<Int, File> by lazy {
@@ -436,7 +436,7 @@ class SystemPromptProvider @Inject constructor(
         PromptFragmentResolver.parseNumber(name)
             ?.let { number -> readFileOrNull(customFragmentsByNumber[number])?.let { return it } }
         readFileOrNull(File(customDir, name))?.let { return it }
-        readFileOrNull(File(File(containerInstaller.aicodeDir, "prompts"), name))?.let { return it }
+        readFileOrNull(File(File(containerInstaller.aharouDir, "prompts"), name))?.let { return it }
         return context.assets.open("prompts/$name").bufferedReader().use { it.readText() }
     }
 

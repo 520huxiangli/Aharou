@@ -46,10 +46,25 @@ class ContainerInstaller @Inject constructor(
             return newDir
         }
 
+        /** [Aharou 改名] 工作区项目级 `.aicode` 目录批量迁移为 `.aharou`（只搬不删）。 */
+        fun migrateProjectDirs(context: Context) {
+            val projects = File(context.filesDir, "projects")
+            projects.listFiles()?.forEach { project ->
+                if (!project.isDirectory) return@forEach
+                val oldDir = File(project, ".aicode")
+                val newDir = File(project, ".aharou")
+                if (!newDir.exists() && oldDir.exists()) {
+                    if (!oldDir.renameTo(newDir)) {
+                        runCatching { oldDir.copyRecursively(newDir, overwrite = false) }
+                    }
+                }
+            }
+        }
+
         @Volatile private var docsExtractedSession = false
 
         /**
-         * 从 assets 提取文档到 ~/.aicode/docs (内置使用指导)，支持 guide/ advanced/ 等分类子目录。
+         * 从 assets 提取文档到 ~/.aharou/docs (内置使用指导)，支持 guide/ advanced/ 等分类子目录。
          *
          * 提取前先整目录删除：文档按功能分类，版本间调整分类会改变文件路径，只覆盖不清理会让
          * 上个版本的同名旧文件残留在别的路径下，AI 可能读到过期内容。
@@ -68,9 +83,9 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取内置提示词到 ~/.aicode/prompts/，每次启动全量覆盖，使 App 升级后提示词随之更新。
+         * 从 assets 提取内置提示词到 ~/.aharou/prompts/，每次启动全量覆盖，使 App 升级后提示词随之更新。
          *
-         * 用户自定义覆盖放在 ~/.aicode/prompts.custom/（同名即覆盖），本方法不触碰该目录，
+         * 用户自定义覆盖放在 ~/.aharou/prompts.custom/（同名即覆盖），本方法不触碰该目录，
          * 故用户重写的片段不会被升级覆盖。参见 [com.aharou.feature.agent.domain.prompt.SystemPromptProvider]。
          */
         fun extractPrompts(context: Context) {
@@ -102,7 +117,7 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取内置子代理定义（如 Explore）到 ~/.aicode/agents/。
+         * 从 assets 提取内置子代理定义（如 Explore）到 ~/.aharou/agents/。
          * 若文件已存在则不覆盖，以保留用户的修改与删除后的重建选择。
          */
         fun extractAgents(context: Context) {
@@ -124,18 +139,18 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取内置脚本（如面板 demo_balance.py）到 ~/.aicode/scripts/。
+         * 从 assets 提取内置脚本（如面板 demo_balance.py）到 ~/.aharou/scripts/。
          * 若文件已存在则不覆盖，以保留用户的修改。
          */
         fun extractScripts(context: Context) {
             val destDir = File(ContainerInstaller.migrateLegacyDir(context), "scripts")
             destDir.mkdirs()
             runCatching {
-                val entries = context.assets.list("aicode/scripts") ?: return@runCatching
+                val entries = context.assets.list("aharou/scripts") ?: return@runCatching
                 for (entry in entries) {
                     val destFile = File(destDir, entry)
                     if (!destFile.exists()) {
-                        context.assets.open("aicode/scripts/$entry").use { input ->
+                        context.assets.open("aharou/scripts/$entry").use { input ->
                             destFile.outputStream().use { output -> input.copyTo(output) }
                         }
                         destFile.setExecutable(true, false)
@@ -147,11 +162,11 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取自定义 git credential helper 到 ~/.aicode/git-credential-aicode 并赋可执行位。
+         * 从 assets 提取自定义 git credential helper 到 ~/.aharou/git-credential-aicode 并赋可执行位。
          *
          * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/git-credential-aicode，
          * 由容器初始化菜单（provision.sh）在 `.gitconfig` 里登记为第二个 credential.helper，
-         * 排在 `store` 之后兜底未登录（双保险）。helper 详行为见 assets/aicode/git-credential-aicode。
+         * 排在 `store` 之后兜底未登录（双保险）。helper 详行为见 assets/aharou/git-credential-aicode。
          *
          * 启动即提取、独立于 provisioning 成败：provisioning 失败时 git 没装上，helper 配置不存在也无所谓；
          * 一旦 git 装好且配置登记，helper 立即可用。提取失败仅告警不抛（helper 缺席仅导致未登录时无弹窗，
@@ -161,7 +176,7 @@ class ContainerInstaller @Inject constructor(
             val dest = File(ContainerInstaller.migrateLegacyDir(context), "git-credential-aicode")
             runCatching {
                 dest.parentFile?.mkdirs()
-                context.assets.open("aicode/git-credential-aicode").use { input ->
+                context.assets.open("aharou/git-credential-aicode").use { input ->
                     dest.outputStream().use { output -> input.copyTo(output) }
                 }
                 // 对所有用户赋可执行位（proot 进程以 App uid 运行，参照 [copyAsset] 的 0o111 模式）。
@@ -174,7 +189,7 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取容器初始化依赖安装脚本到 ~/.aicode/provision.sh 并赋可执行位。
+         * 从 assets 提取容器初始化依赖安装脚本到 ~/.aharou/provision.sh 并赋可执行位。
          *
          * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/provision.sh，由
          * 首次进入终端的初始化菜单以 `sh` 执行——脚本按包管理器
@@ -186,7 +201,7 @@ class ContainerInstaller @Inject constructor(
             val dest = File(ContainerInstaller.migrateLegacyDir(context), "provision.sh")
             runCatching {
                 dest.parentFile?.mkdirs()
-                context.assets.open("aicode/provision.sh").use { input ->
+                context.assets.open("aharou/provision.sh").use { input ->
                     dest.outputStream().use { output -> input.copyTo(output) }
                 }
                 if (!dest.setExecutable(true, false)) {
@@ -198,7 +213,7 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 从 assets 提取环境工具（`aicode` 命令 + 共享库 lib/）到 ~/.aicode/bin 与 ~/.aicode/lib 并赋可执行位。
+         * 从 assets 提取环境工具（`aicode` 命令 + 共享库 lib/）到 ~/.aharou/bin 与 ~/.aharou/lib 并赋可执行位。
          *
          * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/bin/aicode（在 PATH 中，见
          * buildContainerEnv）与 /root/.aicode/lib/（env-common.sh、android-sdk.sh 与 scenarios/ 子目录），
@@ -207,8 +222,8 @@ class ContainerInstaller @Inject constructor(
          */
         fun extractEnvTool(context: Context) {
             runCatching {
-                extractDirOverwrite(context, "aicode/bin", File(ContainerInstaller.migrateLegacyDir(context), "bin"), executable = true)
-                extractDirOverwrite(context, "aicode/lib", File(ContainerInstaller.migrateLegacyDir(context), "lib"), executable = false)
+                extractDirOverwrite(context, "aharou/bin", File(ContainerInstaller.migrateLegacyDir(context), "bin"), executable = true)
+                extractDirOverwrite(context, "aharou/lib", File(ContainerInstaller.migrateLegacyDir(context), "lib"), executable = false)
             }.onFailure {
                 FileLogger.w(TAG, "提取环境工具失败: ${it.message}", it)
             }
@@ -282,7 +297,7 @@ class ContainerInstaller @Inject constructor(
      * 而本目录承载用户数据，必须跨升级保留。它由 [com.aharou.feature.agent.domain.container.LinuxContainerEngine]
      * 绑定到容器内 `/root/.aicode`，故 AI / 终端看到的 `/root/.aicode` 实际落在这里。
      */
-    val aicodeDir: File
+    val aharouDir: File
         get() = migrateLegacyDir(context)
 
     /**
@@ -408,7 +423,7 @@ class ContainerInstaller @Inject constructor(
     /**
      * 按 [profile] 解压安装 rootfs。内置走 assets 全流程（rootfs/resolv/apk 源）；自定义本地镜像只解压
      * tar.gz + 写 DNS（不写 apk 源）。两者都不自动装包——基础工具由进入终端时的
-     * 初始化菜单（assets/aicode/provision.sh）引导用户选择安装。远程 SSH profile 无本地 rootfs，直接返回
+     * 初始化菜单（assets/aharou/provision.sh）引导用户选择安装。远程 SSH profile 无本地 rootfs，直接返回
      * （命令执行走 [RemoteSshEngine]，不需本地 rootfs）。
      */
     suspend fun installRootfsIfNeed(
@@ -599,16 +614,16 @@ class ContainerInstaller @Inject constructor(
         }
     }
 
-    /** 从 assets 提取文档到 ~/.aicode/docs (内置使用指导) */
+    /** 从 assets 提取文档到 ~/.aharou/docs (内置使用指导) */
     fun extractDocs() = extractDocs(context)
 
-    /** 从 assets 提取 git credential helper 到 ~/.aicode/git-credential-aicode 并赋可执行位。 */
+    /** 从 assets 提取 git credential helper 到 ~/.aharou/git-credential-aicode 并赋可执行位。 */
     fun extractCredentialHelper() = extractCredentialHelper(context)
 
-    /** 从 assets 提取容器初始化依赖安装脚本到 ~/.aicode/provision.sh 并赋可执行位。 */
+    /** 从 assets 提取容器初始化依赖安装脚本到 ~/.aharou/provision.sh 并赋可执行位。 */
     fun extractProvisionScript() = extractProvisionScript(context)
 
-    /** 从 assets 提取环境工具（aicode 命令 + 共享库）到 ~/.aicode/{bin,lib} 并赋可执行位。 */
+    /** 从 assets 提取环境工具（aicode 命令 + 共享库）到 ~/.aharou/{bin,lib} 并赋可执行位。 */
     fun extractEnvTool() = extractEnvTool(context)
 
     /** 解压 alpine-minirootfs.tar.gz，正确处理目录/文件/符号链接/硬链接与权限位；返回解压条目数。 */

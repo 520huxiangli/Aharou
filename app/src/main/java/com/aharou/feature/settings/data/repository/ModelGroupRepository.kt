@@ -13,7 +13,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 模型组仓库（自 OpenMinis 的 ProviderModelGroup 移植·适配）。
+ * 模型组仓库（自 上游项目 的 ProviderModelGroup 移植·适配）。
  *
  * 「模型组」= 具名的有序模型集合（成员 = 供应商 + 模型）；在需要选模型的地方可以
  * 整组选择（如「默认模型」页的识图 / 压缩 / 标题 / 生图角色），执行时经

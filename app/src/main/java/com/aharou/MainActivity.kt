@@ -591,7 +591,7 @@ fun AppNavigation(
             onExport = { session ->
                 pendingExportSessionId = session.id
                 val safeTitle = session.title.replace(Regex("[^\\w\\u4e00-\\u9fa5\\-]"), "_")
-                sessionExportLauncher.launch("aicode-session-$safeTitle-${System.currentTimeMillis()}.tar.gz")
+                sessionExportLauncher.launch("aharou-session-$safeTitle-${System.currentTimeMillis()}.tar.gz")
             },
             onNavigateToSettings = {
                 navController.navigate("settings")

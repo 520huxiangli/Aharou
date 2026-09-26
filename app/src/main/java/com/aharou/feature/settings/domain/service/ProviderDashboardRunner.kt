@@ -642,10 +642,10 @@ class ProviderDashboardRunner @Inject constructor(
     }
 
     /**
-     * 获取 ~/.aicode/scripts 目录下的所有可用脚本文件名列表。
+     * 获取 ~/.aharou/scripts 目录下的所有可用脚本文件名列表。
      */
     fun listAvailableScripts(): List<String> {
-        val scriptsDir = File(containerInstaller.aicodeDir, "scripts")
+        val scriptsDir = File(containerInstaller.aharouDir, "scripts")
         if (!scriptsDir.exists()) {
             scriptsDir.mkdirs()
         }

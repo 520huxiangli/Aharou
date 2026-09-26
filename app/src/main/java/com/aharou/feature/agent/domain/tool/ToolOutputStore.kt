@@ -27,7 +27,7 @@ class ToolOutputStore @Inject constructor(
 ) {
     private companion object {
         const val TAG = "ToolOutputStore"
-        const val AICODE_ROOT = "/root/.aharou"
+        const val AHAROU_ROOT = "/root/.aharou"
         const val OUTPUT_DIR = "tool-output"
         const val HEAD_CHARS = 20_000
         const val TAIL_CHARS = 20_000
@@ -39,7 +39,7 @@ class ToolOutputStore @Inject constructor(
     private val json = Json { encodeDefaults = true }
 
     /** 存档目录（宿主路径）。对外只用于占用统计与清理，写入仍走本类。 */
-    val outputDir: File get() = File(containerInstaller.aicodeDir, OUTPUT_DIR)
+    val outputDir: File get() = File(containerInstaller.aharouDir, OUTPUT_DIR)
 
     fun process(toolName: String, callId: String, result: ToolResult): ToolResult {
         return when (result) {
@@ -143,7 +143,7 @@ class ToolOutputStore @Inject constructor(
             val dir = outputDir.apply { mkdirs() }
             val file = uniqueOutputFile(dir, toolName, callId)
             file.writeText(text, Charsets.UTF_8)
-            val path = "$AICODE_ROOT/$OUTPUT_DIR/${file.name}"
+            val path = "$AHAROU_ROOT/$OUTPUT_DIR/${file.name}"
             FileLogger.i(TAG, "工具输出已保存: $path (${text.length} chars)")
             StoredPathResult(outputPath = path)
         } catch (e: Exception) {

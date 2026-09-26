@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * 短生命周期节点注册表（自 OpenMinis 的 NodeRegistry 移植）。
+ * 短生命周期节点注册表（自 上游项目 的 NodeRegistry 移植）。
  *
  * AccessibilityNodeInfo 跨调用没有稳定标识：`ui dump` 每次都会重新枚举出新对象，
  * 但 Agent 预期几秒后还能用 id 引用同一个节点（如「点 a3f2」）。这里用短 id 缓存

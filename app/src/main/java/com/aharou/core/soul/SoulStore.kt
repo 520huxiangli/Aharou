@@ -204,7 +204,7 @@ sealed class SoulBodyLimitCheck {
 /**
  * File-system helpers + cached metadata. Methods are intentionally
  * `Context`-scoped instead of taking a global singleton — keeps the
- * dependency surface explicit and avoids depending on MinisApp from
+ * dependency surface explicit and avoids depending on AIEditorApp from
  * non-application call sites (tests, previews).
  */
 object SoulStore {

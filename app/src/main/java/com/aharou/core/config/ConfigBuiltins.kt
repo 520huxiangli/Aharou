@@ -9,7 +9,7 @@ import com.aharou.core.soul.SoulStore
 import com.aharou.core.soul.SystemPromptBuilder
 
 /**
- * 内置配置字段注册（自 OpenMinis 移植 · 分批扩充）。
+ * 内置配置字段注册（自 上游项目 移植 · 分批扩充）。
  *
  * 第一批：`soul`（人格）主题——正文 / 名字 / 头像 / 语言。
  * 后续批次：envvars / models / groups / thinkingrules 等（接 AiCode 自有存储）。

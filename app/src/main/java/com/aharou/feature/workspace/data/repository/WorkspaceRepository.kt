@@ -400,7 +400,7 @@ class WorkspaceRepository @Inject constructor(
             return@withContext null
         }
         val writable = runCatching {
-            val probe = File.createTempFile(".aicode_write_probe_", ".tmp", dir)
+            val probe = File.createTempFile(".aharou_write_probe_", ".tmp", dir)
             try {
                 probe.writeText("ok")
                 if (!probe.delete()) error("probe delete failed")

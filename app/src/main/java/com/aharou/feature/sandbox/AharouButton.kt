@@ -1,4 +1,4 @@
-package com.aharou.feature.browser.presentation
+package com.aharou.feature.sandbox
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,11 +20,11 @@ import androidx.compose.ui.unit.dp
 
 // Material3 ButtonDefaults.MinHeight = 40dp; tuned to 48dp for touch
 // ergonomics on phones. IconButton family is unaffected (icon-sized).
-val MinisButtonHeight = 48.dp
+val AharouButtonHeight = 48.dp
 
 // Compact button height for actions embedded inside section cards
 // (e.g. "Sign out" inside a credentials card, "Set Bearer Token" inside
-// a token section). Visually subordinate to MinisButtonHeight (48dp)
+// a token section). Visually subordinate to AharouButtonHeight (48dp)
 // which remains the size for primary screen actions ("Add Custom Model",
 // TopAppBar Save, AlertDialog confirm).
 val MinisSmallButtonHeight = 32.dp
@@ -32,7 +32,7 @@ val MinisSmallButtonHeight = 32.dp
 private val SmallButtonContentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
 
 @Composable
-fun MinisButton(
+fun AharouButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
@@ -46,7 +46,7 @@ fun MinisButton(
 ) {
     Button(
         onClick = onClick,
-        modifier = modifier.heightIn(min = MinisButtonHeight),
+        modifier = modifier.heightIn(min = AharouButtonHeight),
         enabled = enabled,
         shape = shape,
         colors = colors,
@@ -73,7 +73,7 @@ fun MinisOutlinedButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = MinisButtonHeight),
+        modifier = modifier.heightIn(min = AharouButtonHeight),
         enabled = enabled,
         shape = shape,
         colors = colors,
@@ -100,7 +100,7 @@ fun MinisTextButton(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = modifier.heightIn(min = MinisButtonHeight),
+        modifier = modifier.heightIn(min = AharouButtonHeight),
         enabled = enabled,
         shape = shape,
         colors = colors,

@@ -7,7 +7,7 @@ import com.aharou.core.util.FileLogger
 import java.util.UUID
 
 /**
- * 审计撤销：把某条 `applied` 记录改回旧值（对齐 Minis `ConfigBridge.auditRevert` 的用户路径）。
+ * 审计撤销：把某条 `applied` 记录改回旧值（对齐 原版 `ConfigBridge.auditRevert` 的用户路径）。
  *
  * 成功 = 写入旧值 + 追加一条撤销审计（actor=user-revert / agent-revert，revertOf=原记录）+
  * 把原记录标记为 [ConfigAuditStatus.REVERTED]（不删行，历史保留）。

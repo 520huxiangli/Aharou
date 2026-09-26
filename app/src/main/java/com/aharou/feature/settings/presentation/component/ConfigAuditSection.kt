@@ -54,7 +54,7 @@ import java.text.DateFormat
 import java.util.Date
 
 /**
- * 配置审计页——自 Minis `ConfigAuditScreen` 移植适配。
+ * 配置审计页——自 原版 `ConfigAuditScreen` 移植适配。
  *
  * 列出配置通道的每一次写入尝试（含被拒绝/超时）：状态徽章、发起人、相对时间、
  * 字段路径、旧值 → 新值；`applied` 的记录可一键撤销（走 [ConfigRevert]，成功

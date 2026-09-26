@@ -30,11 +30,11 @@ class FileCredentialRepository @Inject constructor(
 
     private companion object {
         const val TAG = "FileCredentialRepo"
-        const val AICODE_DIR = "aicode"
+        const val AHAROU_DIR = "aicode"
         const val CREDENTIALS_NAME = "git-credentials"
     }
 
-    private val credentialsFile: File get() = File(File(context.filesDir, AICODE_DIR), CREDENTIALS_NAME)
+    private val credentialsFile: File get() = File(File(context.filesDir, AHAROU_DIR), CREDENTIALS_NAME)
 
     private val mutex = Mutex()
 

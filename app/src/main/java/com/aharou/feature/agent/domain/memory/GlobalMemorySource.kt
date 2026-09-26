@@ -12,7 +12,7 @@ class GlobalMemorySource @Inject constructor(
 ) : MemorySource {
 
     private val memoryRoot: File by lazy {
-        File(containerInstaller.aicodeDir, "memory").also { it.mkdirs() }
+        File(containerInstaller.aharouDir, "memory").also { it.mkdirs() }
     }
 
     override fun listMemories(): List<Memory> {

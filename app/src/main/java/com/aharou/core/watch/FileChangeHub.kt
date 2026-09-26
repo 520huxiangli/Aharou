@@ -34,7 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * App 级文件变更监听中心：监听当前活动工作区与 `~/.aicode` 两个根（也可订阅任意宿主目录），
+ * App 级文件变更监听中心：监听当前活动工作区与 `~/.aharou` 两个根（也可订阅任意宿主目录），
  * 变更合并成批后广播；订阅方按需声明范围与过滤规则，没人订阅的目录不持有 inotify 句柄、不轮询。
  *
  * 事件来源两层：
@@ -84,7 +84,7 @@ class FileChangeHub @Inject constructor(
         const val CONTAINER_ROOT = WorkspacePathMapper.CONTAINER_ROOT
 
         /** AI 配置目录在容器内的根路径。 */
-        const val AICODE_ROOT = WorkspacePathMapper.AICODE_ROOT
+        const val AHAROU_ROOT = WorkspacePathMapper.AHAROU_ROOT
 
         private val MASK = FileObserver.CREATE or FileObserver.DELETE or FileObserver.MOVED_TO or
             FileObserver.MOVED_FROM or FileObserver.CLOSE_WRITE
@@ -147,7 +147,7 @@ class FileChangeHub @Inject constructor(
             }
         }
 
-    /** 订阅 AI 配置目录（`~/.aicode`）下的子路径，[containerSubPath] 为空表示该目录本身。 */
+    /** 订阅 AI 配置目录（`~/.aharou`）下的子路径，[containerSubPath] 为空表示该目录本身。 */
     fun watchAicode(
         containerSubPath: String = "",
         recursive: Boolean = false,
@@ -157,8 +157,8 @@ class FileChangeHub @Inject constructor(
     ): Flow<FileChangeBatch> {
         val sub = containerSubPath.trim('/')
         return watchHostDir(
-            hostDir = if (sub.isEmpty()) containerInstaller.aicodeDir else File(containerInstaller.aicodeDir, sub),
-            containerRootPath = if (sub.isEmpty()) AICODE_ROOT else "$AICODE_ROOT/$sub",
+            hostDir = if (sub.isEmpty()) containerInstaller.aharouDir else File(containerInstaller.aharouDir, sub),
+            containerRootPath = if (sub.isEmpty()) AHAROU_ROOT else "$AHAROU_ROOT/$sub",
             root = ChangeRoot.AICODE,
             recursive = recursive,
             filter = filter,

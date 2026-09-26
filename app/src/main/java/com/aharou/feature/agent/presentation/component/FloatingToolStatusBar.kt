@@ -46,7 +46,7 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.X
 import kotlinx.coroutines.delay
 
-// ── 小屏幕配色（对齐 Minis 的迷你终端缩略图）──
+// ── 小屏幕配色（对齐 原版 的迷你终端缩略图）──
 private val MiniScreenBg = Color(0xFF1A1A1E)
 private val MiniScreenGreen = Color(0xFF34C759)
 private val MiniScreenRed = Color(0xFFFF6666)
@@ -56,12 +56,12 @@ private val MiniStopRed = Color(0xFFE53935)
 private val MiniMono = FontFamily(Font(R.font.jetbrains_mono_nl))
 
 /**
- * 「小屏幕」底部浮动工具条（Aharou 移植版，对齐 Minis 的 FloatingToolStatusBar）。
+ * 「小屏幕」底部浮动工具条（Aharou 移植版，对齐 原版 的 FloatingToolStatusBar）。
  *
  * 结构 = [状态条 38dp] + [迷你终端缩略图 100×65dp 悬在条子上方左侧]：
  *  - 缩略图：`$ 命令` + 最后 12 行输出（实时滚动，等宽绿字）——即"看得见电脑在干什么"；
  *  - 状态条：工具名 + 运行状态 + ‹ n/m › 翻页浏览这一串工具调用 + 运行中可停止；
- *  - 点缩略图 → 打开 Minis Computer 详情面板（onOpenDetail）。
+ *  - 点缩略图 → 打开 Aharou Computer 详情面板（onOpenDetail）。
  */
 @Composable
 internal fun FloatingToolStatusBar(
@@ -231,7 +231,7 @@ private fun ToolMiniScreenThumbnail(
             .clickable(onClick = onClick),
     ) {
         if (isBrowser) {
-            // [Aharou] 浏览器工具：小屏幕 = 页面实时画面（对齐 Minis 的 browser_use 缩略图）
+            // [Aharou] 浏览器工具：小屏幕 = 页面实时画面（对齐 原版 的 browser_use 缩略图）
             BrowserMiniScreen(pool = browserPool, running = live != null)
         } else if (message.toolName == "vscreen") {
             // [Aharou] 影子屏：小屏幕 = 虚拟屏实时画面（Agent 离屏操作，用户在这儿围观）
@@ -266,7 +266,7 @@ private fun ToolMiniScreenThumbnail(
 
 /**
  * 浏览器小屏幕：实时抓浏览器池活动标签的页面画面（每 2s 一帧，
- * 对齐 Minis 的 browser_use 缩略图机制）。无画面时显示占位文案。
+ * 对齐 原版 的 browser_use 缩略图机制）。无画面时显示占位文案。
  */
 @Composable
 private fun BrowserMiniScreen(

@@ -244,11 +244,11 @@ class RemoteSshEngine @Inject constructor(
     /** 拼接 cd 到 projectPath 再执行 command 的完整命令；projectPath 为 null 则直接执行。
      *  优先 cd 到 ~/workspace（符号链接），让 AI 执行 pwd 时看到 ~/workspace 而非真实路径。
      *  ~/workspace 不存在（符号链接未建成）时 fallback 到 projectPath。
-     *  注入 GIT_CONFIG_GLOBAL 指向 App 管理的 ~/.aicode/gitconfig：
+     *  注入 GIT_CONFIG_GLOBAL 指向 App 管理的 ~/.aharou/gitconfig：
      *  仅当用户开启「自动注入」时该文件存在（含 include 用户全局配置 + includeIf 限定工作区根），
      *  文件不存在时 git 静默跳过——不影响用户在服务器上手动 git。 */
     private fun buildCdCommand(command: String, projectPath: String?): String {
-        val prefix = "export GIT_CONFIG_GLOBAL=\"\$HOME/.aicode/gitconfig\"; "
+        val prefix = "export GIT_CONFIG_GLOBAL=\"\$HOME/.aharou/gitconfig\"; "
         if (projectPath == null) return prefix + command
         return prefix + "cd ~/workspace 2>/dev/null || cd '$projectPath' 2>/dev/null; $command"
     }

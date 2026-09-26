@@ -31,7 +31,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.Smartphone
 
 /**
- * 设置页「悬浮窗」分区（自 OpenMinis 的 Background 悬浮窗开关移植·裁剪）。
+ * 设置页「悬浮窗」分区（自 上游项目 的 Background 悬浮窗开关移植·裁剪）。
  *
  * 开关启动 / 停止 [FloatingToolService]；未授权时引导去系统设置开启「显示在其他应用上层」。
  */

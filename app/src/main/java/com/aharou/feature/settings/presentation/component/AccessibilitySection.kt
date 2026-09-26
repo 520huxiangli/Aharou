@@ -29,7 +29,7 @@ import compose.icons.feathericons.Eye
 import compose.icons.feathericons.RefreshCw
 
 /**
- * 设置页「无障碍」分区（自 OpenMinis 的无障碍引导移植·裁剪）。
+ * 设置页「无障碍」分区（自 上游项目 的无障碍引导移植·裁剪）。
  *
  * 展示服务状态（是否在系统设置里开启 / 是否已连接），提供去系统设置开启与刷新。
  * 无障碍服务让 Agent「看得懂、点得动」宿主屏幕（读节点树 / 手势 / 截图）。

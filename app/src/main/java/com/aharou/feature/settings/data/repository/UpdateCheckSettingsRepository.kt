@@ -49,7 +49,7 @@ class UpdateCheckSettingsRepository @Inject constructor(
     }
 
     /**
-     * 把版本与更新信息写入 `~/.aicode/update-info.json`（宿主 filesDir/aicode/），
+     * 把版本与更新信息写入 `~/.aharou/update-info.json`（宿主 filesDir/aicode/），
      * 供容器内 AI 读取（当前版本、更新通道、最近检查时间、最新版本与逐版本更新日志）。
      * 写入失败静默，不影响检测流程。
      */

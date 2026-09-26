@@ -8,7 +8,7 @@ import javax.inject.Inject
  * /init —— 触发一次 agent 回合，分析当前工作区代码库并生成/改进项目规则文件
  * （`AGENTS.md`，仅有 `CLAUDE.md` 时改进它）。
  *
- * 指令正文存放在 `prompts/agent/init.md`，可被 `~/.aicode/prompts.custom/agent/init.md` 覆盖。
+ * 指令正文存放在 `prompts/agent/init.md`，可被 `~/.aharou/prompts.custom/agent/init.md` 覆盖。
  */
 class InitCommandHandler @Inject constructor(
     private val systemPromptProvider: SystemPromptProvider

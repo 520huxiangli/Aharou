@@ -4,7 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,11 +38,11 @@ import kotlinx.serialization.json.putJsonArray
 @Singleton
 class SkillConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
-    private val projectAicodeRoot: ProjectAicodeRoot,
+    private val projectAicodeRoot: ProjectAharouRoot,
     private val fileChangeHub: FileChangeHub
 ) {
     /** 全局配置文件：`filesDir/aicode/skills.json`。 */
-    private fun globalFile(): File = File(containerInstaller.aicodeDir, CONFIG_FILE)
+    private fun globalFile(): File = File(containerInstaller.aharouDir, CONFIG_FILE)
 
     /** 当前工作区的项目级配置文件：`workspacePath/.aicode/skills.json`。 */
     private fun projectFile(): File = File(projectAicodeRoot.current(), CONFIG_FILE)
@@ -73,8 +73,8 @@ class SkillConfigRepository @Inject constructor(
     val changes: SharedFlow<Unit> = merge(
         fileChangeHub.watchAicode(SKILLS_DIR, recursive = true),
         fileChangeHub.watchAicode(),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR/$SKILLS_DIR", recursive = true),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR")
+        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR/$SKILLS_DIR", recursive = true),
+        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR")
     ).mapNotNull { batch ->
         if (!batch.changes.any(::isSkillChange)) return@mapNotNull null
         FileLogger.i(TAG, "检测到技能目录或配置变化，已通知刷新")
@@ -86,7 +86,7 @@ class SkillConfigRepository @Inject constructor(
         val path = change.hostPath
         if (path == globalFile().absolutePath) return true
         if (path == projectFile().absolutePath) return true
-        val globalSkills = File(containerInstaller.aicodeDir, SKILLS_DIR).absolutePath
+        val globalSkills = File(containerInstaller.aharouDir, SKILLS_DIR).absolutePath
         if (path == globalSkills || path.startsWith("$globalSkills/")) return true
         val projectSkills = File(projectAicodeRoot.current(), SKILLS_DIR).absolutePath
         return path == projectSkills || path.startsWith("$projectSkills/")
@@ -95,7 +95,7 @@ class SkillConfigRepository @Inject constructor(
     companion object {
         private const val TAG = "SkillConfigRepository"
         private const val CONFIG_FILE = "skills.json"
-        private const val AICODE_DIR = ".aicode"
+        private const val AHAROU_DIR = ".aharou"
         private const val SKILLS_DIR = "skills"
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
         private val PRETTY_JSON = Json { prettyPrint = true }

@@ -177,7 +177,7 @@ object BrowserExternalSchemeHandler {
                 // T318: the agent is driving a background WebView and the PAGE
                 // decided to navigate (`toutiao://`, `snssdk141://`, `weibo://`
                 // and friends). Firing ACTION_VIEW here would throw the user
-                // out of Minis into another app mid-task, for something they
+                // out of 原版 into another app mid-task, for something they
                 // never asked for, and would destroy the agent's browsing
                 // context. Swallow it.
                 FileLogger.i(TAG, "blocked unknown scheme: $scheme (uri=$uri, origin=$origin)")

@@ -14,7 +14,7 @@ class LocalDirectorySkillSource @Inject constructor(
     private val localFileAccess: LocalFileAccess
 ) : SkillSource {
 
-    val skillsRoot: String = "${WorkspacePathMapper.AICODE_ROOT}/skills"
+    val skillsRoot: String = "${WorkspacePathMapper.AHAROU_ROOT}/skills"
 
     override fun listSkills(): List<Skill> = SkillDirectoryScanner.scan(localFileAccess, skillsRoot)
 

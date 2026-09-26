@@ -77,17 +77,17 @@ class CredentialRequestBridge @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var started = false
-    private var aicodeDir: File? = null
+    private var aharouDir: File? = null
 
     /**
      * 启动监听：订阅中心服务的 aicode 目录事件捕获请求，并起兜底轮询协程。幂等可重复调。
      */
     fun start() {
         val dir = File(context.filesDir, "aicode").apply { mkdirs() }
-        aicodeDir = dir
+        aharouDir = dir
         if (!started) {
             started = true
-            // 请求文件落在 ~/.aicode 根下，由中心服务统一监听；本桥只做业务侧过滤、去重与弹窗。
+            // 请求文件落在 ~/.aharou 根下，由中心服务统一监听；本桥只做业务侧过滤、去重与弹窗。
             scope.launch {
                 fileChangeHub.watchAicode().collect { batch ->
                     for (change in batch.changes) {
@@ -147,7 +147,7 @@ class CredentialRequestBridge @Inject constructor(
      * [host] 取自 [CredentialRequest]（Git 进程在收到 resp 前不会删 req，但 host 已在请求里，直接传更稳）。
      */
     fun respond(requestId: String, host: String, username: String, token: String) {
-        val dir = aicodeDir ?: File(context.filesDir, "aicode")
+        val dir = aharouDir ?: File(context.filesDir, "aicode")
         scope.launch {
             writeRespAtomically(dir, requestId, "username=$username\npassword=$token\n")
             runCatching {
@@ -164,7 +164,7 @@ class CredentialRequestBridge @Inject constructor(
 
     /** 用户取消弹窗：写 cancel 响应（helper 退出非零让 git 报认证失败）+ dec 在途 + 清状态。 */
     fun cancel(requestId: String) {
-        val dir = aicodeDir ?: File(context.filesDir, "aicode")
+        val dir = aharouDir ?: File(context.filesDir, "aicode")
         scope.launch {
             writeRespAtomically(dir, requestId, "cancel=1\n")
             containerEngine.decPromptInFlight()

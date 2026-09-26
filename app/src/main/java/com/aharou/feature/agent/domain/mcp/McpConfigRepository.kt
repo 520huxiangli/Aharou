@@ -4,7 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -64,7 +64,7 @@ data class McpServerEntry(
 class McpConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val workspaceRepository: WorkspaceRepository,
-    private val projectAicodeRoot: ProjectAicodeRoot,
+    private val projectAicodeRoot: ProjectAharouRoot,
     private val fileChangeHub: FileChangeHub
 ) {
     private companion object {
@@ -72,14 +72,14 @@ class McpConfigRepository @Inject constructor(
         const val CONFIG_FILE = "mcp.json"
         const val DEFAULT_JSON = """{"mcpServers":{}}"""
         /** 项目级配置目录名，容器内即 `~/workspace/.aicode`。 */
-        const val AICODE_DIR_NAME = ".aicode"
+        const val AHAROU_DIR_NAME = ".aharou"
         val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
         val PRETTY_JSON = Json { prettyPrint = true }
     }
 
     /** 全局配置文件：`filesDir/aicode/mcp.json`。 */
     private val globalFile: File
-        get() = File(containerInstaller.aicodeDir, CONFIG_FILE)
+        get() = File(containerInstaller.aharouDir, CONFIG_FILE)
 
     /** 当前工作区的项目级配置文件：`workspacePath/.aicode/mcp.json`。 */
     private fun projectFileForPath(workspacePath: String): File =
@@ -99,7 +99,7 @@ class McpConfigRepository @Inject constructor(
      */
     val externalChanges: SharedFlow<Unit> = merge(
         fileChangeHub.watchAicode(),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR_NAME")
+        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR_NAME")
     ).mapNotNull { batch ->
         val globalPath = globalFile.absolutePath
         val projectPath = projectFileForPath(workspaceRepository.currentPath()).absolutePath

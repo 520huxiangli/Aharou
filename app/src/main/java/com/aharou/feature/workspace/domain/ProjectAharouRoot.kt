@@ -22,7 +22,7 @@ import javax.inject.Singleton
  * 与项目级记忆 [com.aharou.feature.agent.domain.memory.ProjectMemorySource] 使用同一套标识算法。
  */
 @Singleton
-class ProjectAicodeRoot @Inject constructor(
+class ProjectAharouRoot @Inject constructor(
     private val workspaceRepository: WorkspaceRepository,
     private val executionModeHolder: ExecutionModeHolder,
     private val containerInstaller: ContainerInstaller,
@@ -34,9 +34,9 @@ class ProjectAicodeRoot @Inject constructor(
     /** 指定工作区路径对应的项目级配置目录。 */
     fun forPath(workspacePath: String): File =
         if (isRemote()) {
-            File(File(containerInstaller.aicodeDir, PROJECTS_DIR), projectKey(workspacePath))
+            File(File(containerInstaller.aharouDir, PROJECTS_DIR), projectKey(workspacePath))
         } else {
-            File(workspacePath, AICODE_DIR)
+            File(workspacePath, AHAROU_DIR)
         }
 
     /** 远程项目级资源在私有目录下的标识：项目名 + 「IP:端口:路径」哈希前 8 位。 */
@@ -53,7 +53,7 @@ class ProjectAicodeRoot @Inject constructor(
         executionModeHolder.currentMode() == ExecutionMode.REMOTE_SSH
 
     private companion object {
-        const val AICODE_DIR = ".aicode"
+        const val AHAROU_DIR = ".aharou"
         const val PROJECTS_DIR = "projects"
     }
 }

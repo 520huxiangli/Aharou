@@ -4,7 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import java.io.File
 
 /**
@@ -20,14 +20,14 @@ class ProjectMemorySource(
     private val projectRoot: String,
     private val executionModeHolder: ExecutionModeHolder,
     private val containerInstaller: ContainerInstaller,
-    private val projectAicodeRoot: ProjectAicodeRoot
+    private val projectAicodeRoot: ProjectAharouRoot
 ) : MemorySource {
 
     private val memoryRoot: File by lazy {
         if (executionModeHolder.currentMode() == ExecutionMode.REMOTE_SSH) {
-            File(File(containerInstaller.aicodeDir, "memory/projects"), projectAicodeRoot.projectKey(projectRoot))
+            File(File(containerInstaller.aharouDir, "memory/projects"), projectAicodeRoot.projectKey(projectRoot))
         } else {
-            File(projectRoot, ".aicode/memory")
+            File(projectRoot, ".aharou/memory")
         }
     }
 

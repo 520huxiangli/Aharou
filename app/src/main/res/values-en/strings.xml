@@ -209,7 +209,7 @@
     <string name="provider_test_resp_body">Response Body</string>
     <string name="provider_test_error_detail">Error Stack</string>
     <string name="provider_dashboard_test_failed">Execution Failed</string>
-    <string name="provider_dashboard_no_scripts">No scripts found in ~/.aicode/scripts/</string>
+    <string name="provider_dashboard_no_scripts">No scripts found in ~/.aharou/scripts/</string>
     <string name="provider_dashboard_select_title">Select Dashboard Script</string>
     <string name="provider_dashboard_clear_script">None (Clear script)</string>
     <string name="provider_dashboard_loading">Loading dashboard...</string>
@@ -960,7 +960,7 @@
 
     <!-- Skills Settings -->
     <string name="skills_empty">No skills installed</string>
-    <string name="skills_empty_hint">Tap + in the top bar to create or import one, or put a folder containing SKILL.md into ~/.aicode/skills/</string>
+    <string name="skills_empty_hint">Tap + in the top bar to create or import one, or put a folder containing SKILL.md into ~/.aharou/skills/</string>
     <string name="skills_no_project_skills">No skills for the current project</string>
     <string name="skills_no_global_skills">No global skills</string>
     <string name="skills_enable">Enable</string>
@@ -1007,7 +1007,7 @@
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
     <string name="subagents_empty">No custom subagents yet</string>
-    <string name="subagents_empty_hint">Tap + in the top bar to create one, or drop an agent\'s .md definition into ~/.aicode/agents/</string>
+    <string name="subagents_empty_hint">Tap + in the top bar to create one, or drop an agent\'s .md definition into ~/.aharou/agents/</string>
     <string name="subagents_no_project">No subagents in this project</string>
     <string name="subagents_no_global">No global subagents</string>
     <string name="subagents_delete_confirm_title">Delete subagent</string>
@@ -1572,7 +1572,7 @@
 <string name="browser_history_empty_title">No browsing history</string>
 <string name="browser_history_search">Search history</string>
 <string name="browser_history_title">History</string>
-<string name="browser_minis_browsing">Aharou is browsing</string>
+<string name="browser_aharou_browsing">Aharou is browsing</string>
 <string name="browser_nav_back">Back</string>
 <string name="browser_nav_forward">Forward</string>
 <string name="browser_no_tab_open">No browser tab open</string>

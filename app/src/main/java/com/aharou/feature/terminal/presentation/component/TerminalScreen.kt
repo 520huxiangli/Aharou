@@ -91,7 +91,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 
-// ── Minis 风格终端配色（chrome 层；画布配色仍由主题预设控制）──
+// ── 原版 风格终端配色（chrome 层；画布配色仍由主题预设控制）──
 private val TerminalBg = Color(0xFF000000)
 private val TerminalFg = Color(0xFFD4D4D4)
 private val TerminalGreen = Color(0xFF34C759)
@@ -302,7 +302,7 @@ private fun TabChip(
         else -> TerminalFg.copy(alpha = 0.35f)
     }
 
-    // Minis 风格深色 chrome：选中 = 蓝调高亮 + 加粗，未选中 = 深灰胶囊
+    // 原版 风格深色 chrome：选中 = 蓝调高亮 + 加粗，未选中 = 深灰胶囊
     val bg = if (selected) AccentBlue.copy(alpha = 0.22f) else AccButtonBg.copy(alpha = 0.5f)
     val borderColor = if (selected) AccentBlue else Color.Transparent
     val fg = if (selected) Color.White else TerminalFg
@@ -489,7 +489,7 @@ private fun containerInitMessage(context: Context, state: ContainerInitState): S
 }
 
 
-/** Minis 风格终端顶栏：圆形按钮 + 居中 Mono 标题（Aharou 移植）。 */
+/** 原版 风格终端顶栏：圆形按钮 + 居中 Mono 标题（Aharou 移植）。 */
 @Composable
 private fun TerminalTopBar(
     embedded: Boolean,
@@ -560,8 +560,8 @@ private fun CircleIconButton(
 }
 
 /**
- * Minis 风格触控键栏（移植版）：深色胶囊 + 可横滑按键。
- * 在 AiCode 原有键集上补齐 Minis 的「⏎ / 键盘开关」，其余机制
+ * 原版 风格触控键栏（移植版）：深色胶囊 + 可横滑按键。
+ * 在 AiCode 原有键集上补齐 原版 的「⏎ / 键盘开关」，其余机制
  * （CTRL/ALT 走 Termux modifiers、方向键长按连发）沿用。
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -635,7 +635,7 @@ private fun KeyboardAccessoryBar(
 private const val KEY_REPEAT_INITIAL_DELAY_MS = 350L
 private const val KEY_REPEAT_INTERVAL_MS = 50L
 
-/** Minis 风格按键胶囊。 */
+/** 原版 风格按键胶囊。 */
 @Composable
 private fun AccChip(
     label: String,

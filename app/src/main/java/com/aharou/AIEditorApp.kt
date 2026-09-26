@@ -219,6 +219,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         com.aharou.core.config.ConfigRegistry.init(this)
         // 应用设置字段（app.*）注册：Agent 经配置通道改自身设置（无系统权限依赖）
         configAppFields.registerInto(com.aharou.core.config.ConfigRegistry.get())
+        // 工作区项目级 .aicode 目录 → .aharou 一次性迁移（只搬不删）
+        com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this)
         com.aharou.core.config.audit.ConfigAuditLog.init(this)
         com.aharou.core.soul.SoulStore.ensureExists(this)
         // 读取 SOUL.md 到缓存（聊天身份行用）；改名/改图标后由保存路径刷新。
@@ -238,16 +240,16 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             ContainerInstaller.extractDocs(this@AIEditorApp)
         }
-        // 启动即把内置提示词全量释放到 ~/.aicode/prompts/（覆盖式，随 App 升级更新）；
-        // 用户自定义覆盖放在 ~/.aicode/prompts.custom/，同名即覆盖，不被升级覆盖。
+        // 启动即把内置提示词全量释放到 ~/.aharou/prompts/（覆盖式，随 App 升级更新）；
+        // 用户自定义覆盖放在 ~/.aharou/prompts.custom/，同名即覆盖，不被升级覆盖。
         appScope.launch {
             ContainerInstaller.extractPrompts(this@AIEditorApp)
         }
-        // 启动即释放套餐余量示例脚本等内置脚本到 ~/.aicode/scripts/
+        // 启动即释放套餐余量示例脚本等内置脚本到 ~/.aharou/scripts/
         appScope.launch {
             ContainerInstaller.extractScripts(this@AIEditorApp)
         }
-        // 启动即释放内置子代理定义（Explore）到 ~/.aicode/agents/；已存在不覆盖，用户改过或删掉都不会被升级拉回。
+        // 启动即释放内置子代理定义（Explore）到 ~/.aharou/agents/；已存在不覆盖，用户改过或删掉都不会被升级拉回。
         appScope.launch {
             ContainerInstaller.extractAgents(this@AIEditorApp)
         }
@@ -295,7 +297,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                                 remoteWorkspacePath = settings.remoteWorkspacePath
                             )
                         )
-                        // 连接成功后同步内置文档到远程 ~/.aicode/docs/，供 AI 查阅。
+                        // 连接成功后同步内置文档到远程 ~/.aharou/docs/，供 AI 查阅。
                         syncDocsToRemote()
                     }.onFailure { FileLogger.e(TAG, "启动时 SSH 连接失败，将在首次命令时重试", it) }
                 }
@@ -369,8 +371,8 @@ class AIEditorApp : Application(), Configuration.Provider {
             .build()
 
     /**
-     * 读取 assets/docs 下所有内置文档（含 guide/ advanced/ 等分类子目录），通过 SSH exec 同步到远程 ~/.aicode/docs/。
-     * 远程模式下 AI 查阅 ~/.aicode/docs/ 的设置说明文档时，需要这些文件存在于远程服务器。
+     * 读取 assets/docs 下所有内置文档（含 guide/ advanced/ 等分类子目录），通过 SSH exec 同步到远程 ~/.aharou/docs/。
+     * 远程模式下 AI 查阅 ~/.aharou/docs/ 的设置说明文档时，需要这些文件存在于远程服务器。
      * 连接成功与重连成功后调用，保证远程文档随 App 升级更新。失败仅记日志，不阻断流程。
      */
     private suspend fun syncDocsToRemote() {

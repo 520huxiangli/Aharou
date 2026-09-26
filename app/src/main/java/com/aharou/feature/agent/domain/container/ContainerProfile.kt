@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  * 一个可切换的容器配置：镜像来源 + shell 路径 + 额外 proot 绑定/参数。
  *
  * 内置 [BUILTIN_ALPINE] 描述现有 Alpine rootfs（来自 assets）。用户自定义 profile 通过导入
- * tar.gz 提供 rootfs。所有容器首次进入终端时统一弹出初始化菜单（见 assets/aicode/provision.sh），
+ * tar.gz 提供 rootfs。所有容器首次进入终端时统一弹出初始化菜单（见 assets/aharou/provision.sh），
  * 由用户选择自动安装基础工具或手动安装，装包失败不阻塞进入 shell，处理方式一致。
  *
  * 远程 SSH profile（[mode] == [ExecutionMode.REMOTE_SSH]）不导入本地 rootfs，而是绑定一个

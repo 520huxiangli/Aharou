@@ -51,7 +51,7 @@ import androidx.compose.ui.window.PopupProperties
  * [DropdownMenuItem] children as before.
  */
 @Composable
-fun MinisMenu(
+fun AharouMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
@@ -102,7 +102,7 @@ fun MinisMenu(
 ) {
     // [T-android-minis-menu-ios26-anim] BOTH branches (default left-anchored and
     // alignEnd right-anchored) now render through ONE custom Popup +
-    // AnimatedVisibility so every MinisMenu gets the same iOS 26-style
+    // AnimatedVisibility so every AharouMenu gets the same iOS 26-style
     // 200ms scale-from-anchor + fade enter animation. Material3's DropdownMenu
     // (the old default branch) had a fixed, non-tunable ~120ms scale; converting
     // it to this Popup lets us control duration/origin uniformly. Popup unmounts
@@ -203,7 +203,7 @@ fun MinisMenu(
 }
 
 /**
- * Subtle inset divider for grouping items inside a [MinisMenu]. T289:
+ * Subtle inset divider for grouping items inside a [AharouMenu]. T289:
  * `outlineVariant×0.35 + 0.5dp` was effectively invisible on the light
  * surface — the divider lines between sections looked like nothing was
  * there. Bumped to `Color.Black/White × 0.12 + 1.dp` so the rule is
@@ -211,7 +211,7 @@ fun MinisMenu(
  * white instead of black for contrast against the dark surface.
  */
 @Composable
-fun MinisMenuDivider(modifier: Modifier = Modifier) {
+fun AharouMenuDivider(modifier: Modifier = Modifier) {
     val tint = if (ChatColors.isDark) Color.White else Color.Black
     HorizontalDivider(
         modifier = modifier.padding(horizontal = 14.dp, vertical = 4.dp),
@@ -225,7 +225,7 @@ fun MinisMenuDivider(modifier: Modifier = Modifier) {
  * default Material3 48dp row to 44dp and give the leading icon breathing room
  * that matches the iOS context-menu look.
  */
-object MinisMenuDefaults {
+object AharouMenuDefaults {
     val ItemPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
 
     @Composable

@@ -5,7 +5,7 @@ import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-/** 变更所属的监听根：工作区、AI 配置目录（`~/.aicode`），或订阅方指定的其它宿主目录。 */
+/** 变更所属的监听根：工作区、AI 配置目录（`~/.aharou`），或订阅方指定的其它宿主目录。 */
 enum class ChangeRoot { WORKSPACE, AICODE, OTHER }
 
 /** 单条变更的类型。同一路径在一个批量窗口内多次变更会被合并为一条。 */

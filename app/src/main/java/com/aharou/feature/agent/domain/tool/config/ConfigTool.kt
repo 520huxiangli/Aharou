@@ -29,7 +29,7 @@ import java.util.UUID
 import javax.inject.Inject
 
 /**
- * 配置通道工具（自 OpenMinis 的 minis-config 移植 · Aharou 版）。
+ * 配置通道工具（自 上游项目 的 minis-config 移植 · Aharou 版）。
  *
  * 让 Agent 读写「Aharou 自身设置」：list 列字段 / get 读值 / set 写值。
  * set 全流程：模式校验 → 最多 120 秒的确认弹窗（用户批）→ 生效并落审计（可回滚）。

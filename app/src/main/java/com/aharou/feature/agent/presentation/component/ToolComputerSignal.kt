@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 「Minis Computer」（工具详情面板）打开信号。
+ * 「Aharou Computer」（工具详情面板）打开信号。
  *
  * 点聊天里的工具行 → [request]；聊天宿主（AIChatPanel）监听后掀开面板。
  * 值 = 最近一次请求的工具消息 id（null = 无请求）。

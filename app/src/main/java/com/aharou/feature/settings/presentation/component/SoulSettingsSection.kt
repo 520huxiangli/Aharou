@@ -72,7 +72,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 人格（SOUL.md）设置页——自 Minis `SoulSettingsScreen` 移植适配。
+ * 人格（SOUL.md）设置页——自 原版 `SoulSettingsScreen` 移植适配。
  *
  * 预览卡片（图标 + 名字 + 风格）→ 身份字段（名字/风格/语言）→ 人格正文（带字/词数
  * 与超限提示）→ 恢复默认 / 保存。保存走 [SoulStore.save]，同时刷新

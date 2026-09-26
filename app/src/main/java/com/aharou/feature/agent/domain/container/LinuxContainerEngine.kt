@@ -158,7 +158,7 @@ class LinuxContainerEngine @Inject constructor(
         private const val TIMEOUT_KILL_GRACE_MS = 200L
 
         /**
-         * 基础包配置版本。对应 assets/aicode/provision.sh 的版本：改脚本（包清单/安装逻辑/镜像源）时同步 +1，
+         * 基础包配置版本。对应 assets/aharou/provision.sh 的版本：改脚本（包清单/安装逻辑/镜像源）时同步 +1，
          * 触发在设备上重新执行该脚本（apk add 幂等，已装包跳过）。
          * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
          * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改脚本则靠本版本号触发。
@@ -474,7 +474,7 @@ class LinuxContainerEngine @Inject constructor(
 
     /**
      * 基础包是否已配置完成（按当前 profile 的标记）。首次进入终端时由初始化菜单
-     * （assets/aicode/provision.sh）引导安装，完成后脚本写标记；未完成时不影响进入 shell。
+     * （assets/aharou/provision.sh）引导安装，完成后脚本写标记；未完成时不影响进入 shell。
      */
     override fun isProvisioned(): Boolean = isProvisionedFor(currentProfile)
 
@@ -508,7 +508,7 @@ class LinuxContainerEngine @Inject constructor(
 
     /**
      * 幂等地确保容器可用：解压 rootfs/proot（首次耗时）。所有容器（内置/自定义）一致——
-     * 基础工具安装不在此阶段自动执行，由进入终端时的初始化菜单（assets/aicode/provision.sh）
+     * 基础工具安装不在此阶段自动执行，由进入终端时的初始化菜单（assets/aharou/provision.sh）
      * 引导用户选择，装包失败也不阻塞进入 shell。
      * 仅由终端页（[TerminalSessionManager]）作为唯一初始化入口调用；命令执行入口不再自动触发。
      *
@@ -582,7 +582,7 @@ class LinuxContainerEngine @Inject constructor(
             val profile = currentProfile
             val rootfs = containerInstaller.rootfsDirFor(profile)
             val marker = provisionMarker(profile)
-            val provision = java.io.File(containerInstaller.aicodeDir, "provision.sh")
+            val provision = java.io.File(containerInstaller.aharouDir, "provision.sh")
             fun desc(f: java.io.File?): String = when {
                 f == null -> "null"
                 !f.exists() -> "缺失(${f.absolutePath})"
@@ -600,7 +600,7 @@ class LinuxContainerEngine @Inject constructor(
                     "nativeLibDir=${containerInstaller.prootBin.parentFile?.absolutePath} 可用空间=${space}MB " +
                     "/dev/ptmx(可读=${ptmx.canRead()},可写=${ptmx.canWrite()})"
             )
-            val provisionLog = java.io.File(containerInstaller.aicodeDir, "provision.log")
+            val provisionLog = java.io.File(containerInstaller.aharouDir, "provision.log")
             if (provisionLog.isFile) {
                 val tail = runCatching { provisionLog.readLines().takeLast(20).joinToString(" | ") }.getOrDefault("")
                 FileLogger.i(TAG, "provision 日志尾部（$reason）：$tail")
@@ -750,7 +750,7 @@ class LinuxContainerEngine @Inject constructor(
         // mcp.json（MCP 配置）。宿主物理目录独立于 rootfs，容器升级重装不丢用户数据。
         // 基础解释器 python3(3.12) 与 git 由进入终端时的初始化菜单（provision.sh）安装；
         // node 等其他运行时仍由 skill / 用户自行保证。proot 的 -b 要求源路径存在，故先确保目录已建。
-        val aharouDir = containerInstaller.aicodeDir.apply { mkdirs() }
+        val aharouDir = containerInstaller.aharouDir.apply { mkdirs() }
         // [Aharou 改名] 主路径 /root/.aharou；旧路径 /root/.aicode 以同一目录二次绑定，旧脚本照常可用。
         argv.add("-b")
         argv.add("${aharouDir.absolutePath}:/root/.aharou")

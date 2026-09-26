@@ -13,7 +13,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 环境变量仓库（自 OpenMinis 的 EnvVarRepository 移植·适配）。
+ * 环境变量仓库（自 上游项目 的 EnvVarRepository 移植·适配）。
  *
  * 用户自定义的环境变量，注入到容器内的所有命令与终端进程
  * （典型用途：给脚本/CLI 用的 API Key、EDITOR 等）。

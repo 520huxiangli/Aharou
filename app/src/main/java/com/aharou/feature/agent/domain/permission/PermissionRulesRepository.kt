@@ -6,7 +6,7 @@ import com.aharou.core.watch.FileChangeBatch
 import com.aharou.core.watch.FileChangeHub
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,14 +56,14 @@ import javax.inject.Singleton
 class PermissionRulesRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val workspaceRepository: WorkspaceRepository,
-    private val projectAicodeRoot: ProjectAicodeRoot,
+    private val projectAicodeRoot: ProjectAharouRoot,
     private val fileChangeHub: FileChangeHub
 ) {
     private companion object {
         const val TAG = "PermissionRules"
         const val PERMISSIONS_FILE = "permissions.json"
         /** 项目级配置目录名，容器内即 `~/workspace/.aicode`。 */
-        const val AICODE_DIR_NAME = ".aicode"
+        const val AHAROU_DIR_NAME = ".aharou"
         val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
     }
 
@@ -94,7 +94,7 @@ class PermissionRulesRepository @Inject constructor(
         watchScope.launch {
             merge(
                 fileChangeHub.watchAicode(),
-                fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR_NAME")
+                fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR_NAME")
             ).collect { batch -> refreshFromDisk(batch) }
         }
     }

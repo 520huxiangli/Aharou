@@ -1344,7 +1344,7 @@ class SettingsViewModel @Inject constructor(
                     if (manual) UpdateCheckUiState.Error(result.message) else UpdateCheckUiState.Idle
                 }
             }
-            // 无论结果如何，都刷新 ~/.aicode/update-info.json 供 AI 读取
+            // 无论结果如何，都刷新 ~/.aharou/update-info.json 供 AI 读取
             updateCheckSettingsRepository.writeUpdateInfo(
                 currentVersion = currentVersionName(),
                 channel = updateCheckSettingsRepository.channel,

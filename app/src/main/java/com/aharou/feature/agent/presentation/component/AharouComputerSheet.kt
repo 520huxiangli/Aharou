@@ -66,7 +66,7 @@ import compose.icons.feathericons.X
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 
-// ── 终端卡配色（与 Minis ChatToolDetailUI 的「黑色终端卡」对齐）──
+// ── 终端卡配色（与 原版 ChatToolDetailUI 的「黑色终端卡」对齐）──
 private val ComputerCardBg = Color(0xFF141414)
 private val ComputerCardBorder = Color(0xFF404040)
 private val ComputerGreen = Color(0xFF34C759)
@@ -78,9 +78,9 @@ private val ComputerBlue = Color(0xFF7CC4FF)
 private val ComputerMono = FontFamily(Font(R.font.jetbrains_mono_nl))
 
 /**
- * 「Minis Computer」工具详情面板（Aharou 移植版）。
+ * 「Aharou Computer」工具详情面板（Aharou 移植版）。
  *
- * 对齐 Minis 的 Minis Computer（ToolDetailSheet）核心体验：
+ * 对齐 原版 的 Aharou Computer（ToolDetailSheet）核心体验：
  *  - 点聊天里的工具行 → 掀开这个面板；
  *  - 上下滑动/翻页在会话的工具调用之间切换；
  *  - shell 命令 → 黑色终端卡（`$ 命令` + 输出，绿色等宽字）；
@@ -92,7 +92,7 @@ private val ComputerMono = FontFamily(Font(R.font.jetbrains_mono_nl))
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun MinisComputerSheet(
+internal fun AharouComputerSheet(
     messages: List<AgentUIMessage>,
     initialMessageId: String,
     browserPool: BrowserTabPool?,
@@ -118,7 +118,7 @@ internal fun MinisComputerSheet(
                 .fillMaxWidth()
                 .fillMaxHeight(0.85f),
         ) {
-            // ── 顶栏：✕ + "Minis Computer" + 动作钮 ──
+            // ── 顶栏：✕ + "Aharou Computer" + 动作钮 ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -301,7 +301,7 @@ private fun ToolComputerPage(
     }
 }
 
-/** 黑色终端卡：`$ 命令` + 输出（绿字等宽，对齐 Minis 的视觉）。 */
+/** 黑色终端卡：`$ 命令` + 输出（绿字等宽，对齐 原版 的视觉）。 */
 @Composable
 private fun TerminalCard(command: String?, output: String, isError: Boolean) {
     Column(
@@ -359,7 +359,7 @@ private fun BrowserCard(
     )
 }
 
-/** 浏览器实况：轮询浏览器池的活动 WebView 抓快照（对齐 Minis 的 3s 轮询机制）。 */
+/** 浏览器实况：轮询浏览器池的活动 WebView 抓快照（对齐 原版 的 3s 轮询机制）。 */
 @Composable
 private fun BrowserLivePreview(pool: BrowserTabPool?, running: Boolean) {
     var frame by remember { mutableStateOf<Bitmap?>(null) }

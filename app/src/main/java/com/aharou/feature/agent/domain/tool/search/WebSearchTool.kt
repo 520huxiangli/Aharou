@@ -86,7 +86,7 @@ class WebSearchTool @Inject constructor() : AgentTool() {
                 val request = Request.Builder()
                     .url(PARALLEL_MCP_URL)
                     .header("Accept", "application/json, text/event-stream")
-                    .header("User-Agent", "aicode/1.0")
+                    .header("User-Agent", "aharou/1.0")
                     .post(requestBody.toRequestBody("application/json".toMediaType()))
                     .build()
 

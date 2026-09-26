@@ -14,7 +14,7 @@ class LocalDirectoryAgentSource @Inject constructor(
     private val localFileAccess: LocalFileAccess
 ) : AgentDefinitionSource {
 
-    val agentsRoot: String = "${WorkspacePathMapper.AICODE_ROOT}/agents"
+    val agentsRoot: String = "${WorkspacePathMapper.AHAROU_ROOT}/agents"
 
     override fun listDefinitions(): List<AgentDefinition> =
         AgentDefinitionDirectoryScanner.scan(localFileAccess, agentsRoot)

@@ -46,7 +46,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 设置页「记忆」分区（自 OpenMinis 的 MemoryManagementScreen 移植·适配）。
+ * 设置页「记忆」分区（自 上游项目 的 MemoryManagementScreen 移植·适配）。
  *
  * 「默认启用记忆」开关（控制提示词注入）+ 记忆文件列表（名称/大小/时间）+ 预览 + 删除。
  * 文件位于 filesDir/aharou-global/memory（容器内 /root/.aharou/memory）。

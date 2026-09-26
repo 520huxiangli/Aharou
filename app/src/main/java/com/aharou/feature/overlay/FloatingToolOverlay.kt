@@ -20,7 +20,7 @@ import com.aharou.MainActivity
 import kotlin.math.abs
 
 /**
- * 悬浮窗（自 OpenMinis 的 ToolOverlayController 移植·精简）。
+ * 悬浮窗（自 上游项目 的 ToolOverlayController 移植·精简）。
  *
  * 一枚可拖拽的胶囊：App 图标 + 工具名 + 状态短文本；点击回到 App；拖拽移动（位置持久化）。
  * TYPE_APPLICATION_OVERLAY（需 SYSTEM_ALERT_WINDOW 授权），由 [FloatingToolService] 持有与驱动显隐。

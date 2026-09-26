@@ -189,7 +189,7 @@ internal fun ToolMessageBody(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ChatStyle.toolRowMinHeight)
-                // [Aharou] 点工具行 → 掀开「Minis Computer」面板；内联展开交给行尾箭头。
+                // [Aharou] 点工具行 → 掀开「Aharou Computer」面板；内联展开交给行尾箭头。
                 .clickable { ToolComputerSignal.request(message.id) },
             verticalAlignment = Alignment.CenterVertically
         ) {

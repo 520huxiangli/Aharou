@@ -284,8 +284,8 @@ class RemoteSshConnection @Inject constructor(
     }
 
     /**
-     * 把内置文档同步到远程 ~/.aicode/docs/，让远程模式下 AI 也能像本地模式一样
-     * 查阅 ~/.aicode/docs/ 下的设置说明文档。每次连接/重连后全量覆盖，使 App 升级后
+     * 把内置文档同步到远程 ~/.aharou/docs/，让远程模式下 AI 也能像本地模式一样
+     * 查阅 ~/.aharou/docs/ 下的设置说明文档。每次连接/重连后全量覆盖，使 App 升级后
      * 远程文档随之更新。docs 是纯文本，用 exec + printf 写入即可，无需 SFTP。
      *
      * @param docs 相对 docs/ 的路径（可含子目录，如 guide/terminal.md）→ 文件内容。
@@ -294,7 +294,7 @@ class RemoteSshConnection @Inject constructor(
         if (docs.isEmpty()) return
         val client = sshClient ?: return
         val home = remoteHome ?: return
-        val destDir = home.trimEnd('/') + "/.aicode/docs"
+        val destDir = home.trimEnd('/') + "/.aharou/docs"
         withContext(Dispatchers.IO) {
             runCatching {
                 // 先建全部子目录并清掉旧 .md：版本间调整文档分类会改变路径，只覆盖不清理会让旧文件残留
@@ -319,9 +319,9 @@ class RemoteSshConnection @Inject constructor(
 
     /**
      * 把 App 的 git 凭据注入远程服务器（仅当用户开启「自动注入」时调用）：
-     * 写 `~/.aicode/git-credentials`（store 格式）+ `~/.aicode/gitconfig` + `~/.aicode/gitconfig.credential`。
+     * 写 `~/.aharou/git-credentials`（store 格式）+ `~/.aharou/gitconfig` + `~/.aharou/gitconfig.credential`。
      *
-     * 生效机制：[RemoteSshEngine] 执行命令时注入 `GIT_CONFIG_GLOBAL=$HOME/.aicode/gitconfig`，其中
+     * 生效机制：[RemoteSshEngine] 执行命令时注入 `GIT_CONFIG_GLOBAL=$HOME/.aharou/gitconfig`，其中
      * `[include] path=~/.gitconfig` 保留服务器用户自己的全局配置（署名等），`[includeIf "gitdir:<工作区根>/"]`
      * 限定只有工作区根目录下的仓库才加载 store helper——不影响用户在服务器上手动 git，也不影响其它目录的仓库。
      *
@@ -331,42 +331,42 @@ class RemoteSshConnection @Inject constructor(
     suspend fun uploadGitCredentialConfig(credentials: List<GitCredential>, workspaceRoot: String) {
         val client = sshClient ?: return
         val home = remoteHome ?: return
-        val aicodeDir = home.trimEnd('/') + "/.aicode"
+        val aharouDir = home.trimEnd('/') + "/.aharou"
         val wsRoot = workspaceRoot.trimEnd('/').ifEmpty { return }
         withContext(Dispatchers.IO) {
             runCatching {
                 val mkdirSession = client.startSession()
-                mkdirSession.exec("mkdir -p '$aicodeDir'").join()
+                mkdirSession.exec("mkdir -p '$aharouDir'").join()
                 mkdirSession.close()
 
                 val creds = credentials.joinToString("\n") { c ->
                     "https://${enc(c.username)}:${enc(c.token)}@${c.host}"
                 }.let { if (it.isNotEmpty()) "$it\n" else "" }
-                writeRemoteFile(client, "$aicodeDir/git-credentials", encodeCreds(creds))
+                writeRemoteFile(client, "$aharouDir/git-credentials", encodeCreds(creds))
 
                 // 上传 credential helper 脚本（本地由 ContainerInstaller 提取），配置为唯一 helper；
                 // 服务器上没有 App，用 AICODE_CRED_NO_PROMPT 让未命中时直接空退出而非等待弹窗。
                 containerInstaller.extractCredentialHelper()
-                val helperScript = java.io.File(containerInstaller.aicodeDir, "git-credential-aicode").readText()
-                writeRemoteFile(client, "$aicodeDir/git-credential-aicode", helperScript)
+                val helperScript = java.io.File(containerInstaller.aharouDir, "git-credential-aicode").readText()
+                writeRemoteFile(client, "$aharouDir/git-credential-aicode", helperScript)
                 val chmodSession = client.startSession()
-                chmodSession.exec("chmod +x '$aicodeDir/git-credential-aicode'").join()
+                chmodSession.exec("chmod +x '$aharouDir/git-credential-aicode'").join()
                 chmodSession.close()
 
                 val gitconfig = buildString {
                     append("[include]\n")
                     append("    path = ~/.gitconfig\n")
                     append("[includeIf \"gitdir:$wsRoot/\"]\n")
-                    append("    path = ~/.aicode/gitconfig.credential\n")
+                    append("    path = ~/.aharou/gitconfig.credential\n")
                 }
-                writeRemoteFile(client, "$aicodeDir/gitconfig", gitconfig)
+                writeRemoteFile(client, "$aharouDir/gitconfig", gitconfig)
 
                 val credentialConfig = buildString {
                     append("[credential]\n")
-                    append("    helper = !AICODE_CRED_NO_PROMPT=1 $aicodeDir/git-credential-aicode\n")
+                    append("    helper = !AICODE_CRED_NO_PROMPT=1 $aharouDir/git-credential-aicode\n")
                 }
-                writeRemoteFile(client, "$aicodeDir/gitconfig.credential", credentialConfig)
-                FileLogger.i(TAG, "已注入 git 凭据到远程 $aicodeDir（限定 $wsRoot/）")
+                writeRemoteFile(client, "$aharouDir/gitconfig.credential", credentialConfig)
+                FileLogger.i(TAG, "已注入 git 凭据到远程 $aharouDir（限定 $wsRoot/）")
             }.onFailure { FileLogger.w(TAG, "注入 git 凭据到远程失败", it) }
         }
     }
@@ -378,11 +378,11 @@ class RemoteSshConnection @Inject constructor(
     suspend fun removeGitCredentialConfig() {
         val client = sshClient ?: return
         val home = remoteHome ?: return
-        val aicodeDir = home.trimEnd('/') + "/.aicode"
+        val aharouDir = home.trimEnd('/') + "/.aharou"
         withContext(Dispatchers.IO) {
             runCatching {
                 val session = client.startSession()
-                session.exec("rm -f '$aicodeDir/gitconfig' '$aicodeDir/gitconfig.credential' '$aicodeDir/git-credentials' '$aicodeDir/git-credential-aicode' 2>/dev/null; echo done").join()
+                session.exec("rm -f '$aharouDir/gitconfig' '$aharouDir/gitconfig.credential' '$aharouDir/git-credentials' '$aharouDir/git-credential-aicode' 2>/dev/null; echo done").join()
                 session.close()
                 FileLogger.i(TAG, "已撤销远程 git 凭据注入")
             }.onFailure { FileLogger.w(TAG, "撤销远程 git 凭据注入失败", it) }

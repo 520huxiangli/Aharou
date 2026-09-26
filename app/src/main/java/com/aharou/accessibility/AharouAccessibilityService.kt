@@ -21,7 +21,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Aharou 无障碍服务（自 OpenMinis 的 MinisAccessibilityService 移植·裁剪）。
+ * Aharou 无障碍服务（自 上游项目 的 MinisAccessibilityService 移植·裁剪）。
  *
  * 让 Agent「看得懂、点得动」宿主屏幕：读窗口/节点树、返回键、手势点击/滑动/捏合、
  * 系统级截图、设置节点文本。需用户在系统「无障碍」设置里手动开启（Android 禁止程序化开启）。

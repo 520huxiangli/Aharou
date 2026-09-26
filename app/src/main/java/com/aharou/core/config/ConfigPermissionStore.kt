@@ -32,7 +32,7 @@ object ConfigPermissionStore {
     /** Hot-path read used by the offload bridge before any work. */
     val isEnabled: Boolean get() = _enabled.value
 
-    /** Call once early — typically from MinisApp.onCreate. Idempotent. */
+    /** Call once early — typically from AIEditorApp.onCreate. Idempotent. */
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

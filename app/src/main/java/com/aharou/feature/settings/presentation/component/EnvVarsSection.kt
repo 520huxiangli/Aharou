@@ -42,7 +42,7 @@ import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Trash2
 
 /**
- * 设置页「环境变量」分区（自 OpenMinis 的 Environment Variables 移植·适配）。
+ * 设置页「环境变量」分区（自 上游项目 的 Environment Variables 移植·适配）。
  *
  * 列表 + 添加/编辑/删除；值加密存储、默认打码；注入到容器内所有命令与终端。
  */

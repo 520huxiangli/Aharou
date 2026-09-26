@@ -189,11 +189,11 @@ data class FileBrowserUiState(
     val showHidden: Boolean = false,
     /**
      * [T-android-file-context-copy-abs-path] Linux-side (PRoot) absolute path
-     * of the directory currently shown, e.g. "/var/minis/workspace/foo". Null
+     * of the directory currently shown, e.g. "/var/aharou/workspace/foo". Null
      * when this browser isn't rooted under a Linux bind mount (a raw host-path
      * browser). The file context menu's "Copy Absolute Path" joins this with
      * the item name so the user copies the path the agent / shell sees
-     * (/var/minis/…), not the opaque Android host path.
+     * (/var/aharou/…), not the opaque Android host path.
      */
     val currentLinuxPath: String? = null,
 )
@@ -203,11 +203,11 @@ class FileBrowserViewModel(
     initialPath: File? = null,
     private val rootLabel: String = rootPath.name,
     // linuxRootPath: when set, directory listings route through PRootKernel
-    // bind mounts so subdirs like /var/minis/{skills,memory,shared} list their
+    // bind mounts so subdirs like /var/aharou/{skills,memory,shared} list their
     // real content (filesDir/minis-global/*) instead of the empty placeholder
     // dirs shipped inside the Alpine rootfs tarball.
     private val linuxRootPath: String? = null,
-    // T147: when set together with [appContext], `/var/minis/{attachments,
+    // T147: when set together with [appContext], `/var/aharou/{attachments,
     // workspace,offloads,browser}` resolves against THIS session's per-session
     // host dir (filesDir/minis-sessions/<sessionId>/<subdir>) instead of
     // PRootKernel's last-writer-wins global bindMounts map. Lets the Chat
@@ -222,7 +222,7 @@ class FileBrowserViewModel(
     // (filesDir/minis-sessions/<sid>) — that listing already resolves correctly
     // host-side, so we must NOT route it through the PRoot resolver (which would
     // redirect /var/minis to the global/empty placeholder dir). Instead this
-    // prefix just lets the copy menu emit /var/minis/workspace/foo.py instead of
+    // prefix just lets the copy menu emit /var/aharou/workspace/foo.py instead of
     // the opaque /data/user/0/.../minis-sessions/<sid>/workspace/foo.py host
     // path. When null, [linuxRootPath] (if any) drives the copy path as before.
     private val displayLinuxPrefix: String? = null,

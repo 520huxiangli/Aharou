@@ -83,7 +83,7 @@ class WorkspacePathMapper @Inject constructor(
     private fun rootfsRoot(): File = containerInstaller.rootfsDirFor(currentProfile)
 
     /** AI 配置目录在宿主上的根（容器内 `/root/.aharou` 与旧 `/root/.aicode` 即此目录，独立于 rootfs）。 */
-    private fun aicodeRoot(): File = containerInstaller.aicodeDir
+    private fun aicodeRoot(): File = containerInstaller.aharouDir
 
     /** 记忆目录（SOUL.md 等）在宿主上的根（容器内 `/root/.aharou/memory`）。 */
     private fun aharouMemoryRoot(): File = File(aicodeRoot().parentFile, "aharou-global/memory")

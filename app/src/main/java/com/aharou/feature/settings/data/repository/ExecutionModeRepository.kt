@@ -106,4 +106,4 @@ internal fun normalizeRemoteWorkspacePath(stored: String?, username: String): St
  * 远程工作区根目录的默认值。**不能用 `~/workspace`**——那是「当前工作区」符号链接占用的路径，
  * 同名会让根目录与链接相撞。
  */
-internal const val DEFAULT_REMOTE_WORKSPACE_ROOT = "~/.aicode/workspaces"
+internal const val DEFAULT_REMOTE_WORKSPACE_ROOT = "~/.aharou/workspaces"

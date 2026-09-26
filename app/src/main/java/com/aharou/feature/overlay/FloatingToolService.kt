@@ -23,7 +23,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
- * 悬浮窗服务（自 OpenMinis 的 AgentForegroundService overlay 部分移植·裁剪）。
+ * 悬浮窗服务（自 上游项目 的 AgentForegroundService overlay 部分移植·裁剪）。
  *
  * 持有 [FloatingToolOverlay]；按 AND 门控显隐：**App 不在前台 && Agent 有工具在跑 && 有权限**。
  * 由设置页「悬浮窗」开关启停；进程内全局运行状态来自 [AgentRuntimeStatus]。

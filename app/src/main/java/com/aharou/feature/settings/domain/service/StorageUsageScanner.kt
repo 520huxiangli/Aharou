@@ -185,7 +185,7 @@ class StorageUsageScanner @Inject constructor(
 
     /** AI 配置与产物：`filesDir/aicode`，按子目录拆开（工具输出与识图会话可清理）。 */
     private fun aiConfigEntry(cancelled: () -> Boolean): StorageEntry {
-        val root = containerInstaller.aicodeDir
+        val root = containerInstaller.aharouDir
         val cleanableKeys = mapOf(
             toolOutputStore.outputDir.name to StorageDetailKey.TOOL_OUTPUT,
             visionSessionStore.sessionDir.name to StorageDetailKey.VISION_SESSIONS
@@ -265,13 +265,13 @@ class StorageUsageScanner @Inject constructor(
         private const val IMAGES_DIR = "rootfs_images"
         private const val PROJECTS_DIR = "projects"
         private const val CHECKPOINTS_DIR = "checkpoints"
-        private const val AICODE_DIR = "aicode"
+        private const val AHAROU_DIR = "aicode"
         private const val PREFS_DIR = "shared_prefs"
-        private const val ATTACHMENTS_RELATIVE = ".aicode/attachments"
+        private const val ATTACHMENTS_RELATIVE = ".aharou/attachments"
 
         /** 已被其它分类覆盖的 filesDir 子项，不再计入「其他数据」。 */
         private val CLASSIFIED_DIRS = setOf(
-            PROJECTS_DIR, AICODE_DIR, IMAGES_DIR, CHECKPOINTS_DIR, "logs", "ai-logs"
+            PROJECTS_DIR, AHAROU_DIR, IMAGES_DIR, CHECKPOINTS_DIR, "logs", "ai-logs"
         )
 
         private const val TOP_SESSIONS = 5

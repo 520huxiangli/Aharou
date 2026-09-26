@@ -144,14 +144,8 @@ object SoulIcon {
             v.startsWith("http://", true) || v.startsWith("https://", true) ->
                 Source.Unsupported(
                     "remote URLs aren't supported on Android — download the file first, " +
-                        "then pass a path like /var/minis/attachments/icon.png",
+                        "or pick a local image instead",
                 )
-            v.startsWith("minis://") -> {
-                // minis://attachments/x.png -> /var/minis/attachments/x.png
-                val rest = v.removePrefix("minis://").trimStart('/')
-                if (rest.isEmpty()) Source.Unsupported("empty minis:// path")
-                else Source.LinuxPath("/var/minis/$rest")
-            }
             v.startsWith("data:") -> {
                 val comma = v.indexOf(',')
                 val meta = if (comma > 0) v.substring(0, comma) else ""
@@ -170,7 +164,7 @@ object SoulIcon {
                 decodeBase64(v)?.let { Source.Bytes(it) }
                     ?: Source.Unsupported("that base64 could not be decoded")
             else -> Source.Unsupported(
-                "not an emoji, a data URI, base64, a minis:// resource or a /var/minis path",
+                "not an emoji, a data URI, base64, or a local path",
             )
         }
     }
@@ -188,16 +182,16 @@ object SoulIcon {
      * Containment resolves symlinks on BOTH sides before comparing (same
      * construction as the backup extractor), so a symlink inside an allowed
      * directory cannot point out of it. Without the canonicalisation a
-     * model-supplied `/var/minis/attachments/../../../databases/x` would walk
+     * model-supplied `/var/aharou/attachments/../../../databases/x` would walk
      * straight out of the sandbox.
      */
     val ALLOWED_LINUX_ROOTS = listOf(
-        "/var/minis/attachments",
-        "/var/minis/workspace",
-        "/var/minis/offloads",
-        "/var/minis/shared",
-        "/var/minis/memory",
-        "/var/minis/skills",
+        "/var/aharou/attachments",
+        "/var/aharou/workspace",
+        "/var/aharou/offloads",
+        "/var/aharou/shared",
+        "/var/aharou/memory",
+        "/var/aharou/skills",
     )
 
     /** True when [candidate] really sits inside [root] after both are resolved. */

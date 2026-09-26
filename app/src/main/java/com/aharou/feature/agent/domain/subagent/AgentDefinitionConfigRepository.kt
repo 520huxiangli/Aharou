@@ -4,7 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
-import com.aharou.feature.workspace.domain.ProjectAicodeRoot
+import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,10 +37,10 @@ import kotlinx.serialization.json.putJsonArray
 @Singleton
 class AgentDefinitionConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
-    private val projectAicodeRoot: ProjectAicodeRoot,
+    private val projectAicodeRoot: ProjectAharouRoot,
     private val fileChangeHub: FileChangeHub
 ) {
-    private fun globalFile(): File = File(containerInstaller.aicodeDir, CONFIG_FILE)
+    private fun globalFile(): File = File(containerInstaller.aharouDir, CONFIG_FILE)
 
     private fun projectFile(): File = File(projectAicodeRoot.current(), CONFIG_FILE)
 
@@ -55,8 +55,8 @@ class AgentDefinitionConfigRepository @Inject constructor(
     val changes: SharedFlow<Unit> = merge(
         fileChangeHub.watchAicode(AGENTS_DIR, recursive = true),
         fileChangeHub.watchAicode(),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR/$AGENTS_DIR", recursive = true),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AICODE_DIR")
+        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR/$AGENTS_DIR", recursive = true),
+        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR")
     ).mapNotNull { batch ->
         if (!batch.changes.any(::isAgentChange)) return@mapNotNull null
         FileLogger.i(TAG, "检测到子代理目录或配置变化，已通知刷新")
@@ -68,7 +68,7 @@ class AgentDefinitionConfigRepository @Inject constructor(
         val path = change.hostPath
         if (path == globalFile().absolutePath) return true
         if (path == projectFile().absolutePath) return true
-        val globalAgents = File(containerInstaller.aicodeDir, AGENTS_DIR).absolutePath
+        val globalAgents = File(containerInstaller.aharouDir, AGENTS_DIR).absolutePath
         if (path == globalAgents || path.startsWith("$globalAgents/")) return true
         val projectAgents = File(projectAicodeRoot.current(), AGENTS_DIR).absolutePath
         return path == projectAgents || path.startsWith("$projectAgents/")
@@ -89,7 +89,7 @@ class AgentDefinitionConfigRepository @Inject constructor(
     companion object {
         private const val TAG = "AgentDefinitionConfigRepository"
         private const val CONFIG_FILE = "agents.json"
-        private const val AICODE_DIR = ".aicode"
+        private const val AHAROU_DIR = ".aharou"
         private const val AGENTS_DIR = "agents"
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
         private val PRETTY_JSON = Json { prettyPrint = true }

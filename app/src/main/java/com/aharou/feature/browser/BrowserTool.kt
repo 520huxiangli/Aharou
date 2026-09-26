@@ -16,7 +16,7 @@ import javax.inject.Inject
 /**
  * 浏览器自动化工具（browser）——Aharou 移植版。
  *
- * 引擎 = 自 OpenMinis 移植的 [BrowserTabPool] / [BrowserUseManager]
+ * 引擎 = 自 上游项目 移植的 [BrowserTabPool] / [BrowserUseManager]
  * （"browser_use" 同语义）：最多 3 个标签页，动作集见 [BrowserAction]；
  * 截图以 JPEG 随结果返回（走图像通道）。
  */
@@ -31,7 +31,7 @@ class BrowserTool @Inject constructor(
     override val name = "browser"
 
     override val description =
-        "控制内置浏览器（最多 3 个标签页，与 Minis 的 browser_use 同引擎、同语义）。" +
+        "控制内置浏览器（最多 3 个标签页，与 原版 的 browser_use 同引擎、同语义）。" +
             "action 取值：navigate/screenshot/click/type/get_text/scroll/get_page_info/execute_js/" +
             "find_elements/hover/get_readable/set_user_agent/set_viewport/get_backbone/fetch/" +
             "new_tab/close_tab/list_tabs/get_cookies/set_cookies/scroll_and_collect/wait_for_dom_stable。" +
