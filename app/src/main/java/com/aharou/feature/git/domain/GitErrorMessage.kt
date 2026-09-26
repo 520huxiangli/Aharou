@@ -67,4 +67,20 @@ object GitErrorMessage {
             return "当前没有需要储藏的改动"
         return raw
     }
+
+    /** 鉴权类失败（用户名/密码/令牌缺失或错误）→ 可引导去「凭据与署名」页填写。 */
+    fun isAuthFailure(raw: String): Boolean = listOf(
+        "Authentication failed",
+        "Invalid username or token",
+        "Permission denied",
+        "Password authentication is not supported",
+        "could not read Username",
+        "could not read Password",
+        "terminal prompts disabled",
+        "not authorized"
+    ).any { raw.contains(it) }
+
+    /** 署名缺失（提交时）→ 可引导去填写用户名+邮箱。 */
+    fun isIdentityFailure(raw: String): Boolean =
+        raw.contains("Please tell me who you are") || raw.contains("Author identity unknown")
 }

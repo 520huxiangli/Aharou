@@ -144,6 +144,10 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var remoteSshConnection: com.aharou.feature.agent.domain.container.RemoteSshConnection
 
+    /** 全局主机指纹提醒：任意路径撞到未确认指纹时，App 根部弹「温柔提示」引导确认。 */
+    @Inject
+    lateinit var hostKeyVerifier: com.aharou.feature.agent.domain.container.SshHostKeyVerifier
+
     @Inject
     lateinit var executionModeHolder: com.aharou.feature.settings.data.repository.ExecutionModeHolder
 
@@ -248,6 +252,10 @@ class MainActivity : ComponentActivity() {
                         // 全局凭据弹窗：覆盖所有页面，命令行 git 缺凭据在任意页面都能弹。
                         com.aharou.feature.credentials.presentation.component.GlobalCredentialDialogHost(
                             bridge = credentialRequestBridge
+                        )
+                        // 全局主机指纹确认：任意路径撞到未确认的 SSH 指纹时温柔引导确认（而非默默失败）。
+                        com.aharou.feature.workspace.presentation.remote.HostKeyGlobalAlert(
+                            verifier = hostKeyVerifier
                         )
                         if (bgPath != null && bgAlpha > 0f) {
                             val screen = LocalView.current

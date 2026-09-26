@@ -104,6 +104,18 @@ fun GitScreen(
         }
     }
 
+    // 「温柔提示」：git 操作撞上未配置（署名 / 凭据）时不只报 toast，弹出引导去「凭据与署名」填写。
+    state.setupGuide?.let { guide ->
+        GitSetupGuideDialog(
+            guide = guide,
+            onGoFill = {
+                viewModel.dismissSetupGuide()
+                onNavigateToCredentials()
+            },
+            onDismiss = { viewModel.dismissSetupGuide() }
+        )
+    }
+
     var showCommitDialog by remember { mutableStateOf(false) }
     var showPullConfirm by remember { mutableStateOf(false) }
     var showMasterRenameConfirm by remember { mutableStateOf(false) }
@@ -219,7 +231,8 @@ fun GitScreen(
                             onStashDrop = viewModel::stashDrop,
                             onStashClear = viewModel::stashClear,
                             onAbortMerge = viewModel::abortMerge,
-                            onAddToGitignore = viewModel::addToGitignore
+                            onAddToGitignore = viewModel::addToGitignore,
+                            onNavigateToCredentials = onNavigateToCredentials
                         )
                         GitTab.BRANCHES -> BranchesTab(
                             branches = state.branches,

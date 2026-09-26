@@ -736,6 +736,13 @@
     <string name="git_computing_diff">正在计算差异…</string>
     <string name="git_status_clean">工作区干净，无改动</string>
     <string name="git_commit_needs_identity">尚未配置提交署名，请在「凭据与署名」页填写用户名和邮箱</string>
+    <string name="git_commit_needs_identity_action">点这里去填写 →</string>
+    <string name="git_guide_identity_title">还差一步：提交署名</string>
+    <string name="git_guide_identity_message">提交需要一个署名（用户名和邮箱），用来标记 commit 的作者。点「去填写」设置一下，填好就能提交了。</string>
+    <string name="git_guide_auth_title">需要 Git 凭据</string>
+    <string name="git_guide_auth_message">刚才的操作需要远程仓库的登录凭据（用户名 + 密码/令牌）。点「去填写」补上，回来再操作一次就好。</string>
+    <string name="git_guide_go">去填写</string>
+    <string name="git_guide_dismiss">稍后处理</string>
     <string name="git_staged_count">已暂存 (%1$s)</string>
     <string name="git_unstage">取消暂存</string>
     <string name="git_modified_count">已修改 (%1$s)</string>
@@ -1271,6 +1278,8 @@
     <string name="ssh_host_key_settings_desc">已确认的主机指纹会用于阻止中间人攻击。服务器重装或密钥变化后，请先核实再重新确认。</string>
     <string name="ssh_host_key_empty">暂无已保存的主机指纹</string>
     <string name="ssh_host_key_fingerprint_value">指纹：%1$s</string>
+    <string name="ssh_host_key_global_hint">信任后远程连接即可恢复。请先与你服务器的指纹核对一致再信任。</string>
+    <string name="ssh_host_key_trusted_toast">已信任该主机指纹，重试刚才的操作即可</string>
     <string name="ssh_host_key_remove">删除指纹</string>
     <string name="ssh_host_key_detail">已保存的服务器主机指纹：\n%1$s</string>
 

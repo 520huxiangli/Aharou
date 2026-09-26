@@ -736,6 +736,13 @@
     <string name="git_computing_diff">Computing diff...</string>
     <string name="git_status_clean">Working tree clean, no changes</string>
     <string name="git_commit_needs_identity">No commit identity configured. Set your name and email in “Credentials &amp; Identity”.</string>
+    <string name="git_commit_needs_identity_action">Tap here to fill in →</string>
+    <string name="git_guide_identity_title">One more step: commit identity</string>
+    <string name="git_guide_identity_message">Commits need an author identity (name + email). Tap “Fill in” to set it up — then you can commit.</string>
+    <string name="git_guide_auth_title">Git credentials needed</string>
+    <string name="git_guide_auth_message">That action needs credentials for the remote repository (username + password/token). Tap “Fill in”, save them, then retry.</string>
+    <string name="git_guide_go">Fill in</string>
+    <string name="git_guide_dismiss">Later</string>
     <string name="git_staged_count">Staged (%1$s)</string>
     <string name="git_unstage">Unstage</string>
     <string name="git_modified_count">Modified (%1$s)</string>
@@ -1271,6 +1278,8 @@
     <string name="ssh_host_key_settings_desc">Confirmed host fingerprints help prevent man-in-the-middle attacks. Verify a server after reinstalling it or rotating its key before confirming again.</string>
     <string name="ssh_host_key_empty">No saved host fingerprints</string>
     <string name="ssh_host_key_fingerprint_value">Fingerprint: %1$s</string>
+    <string name="ssh_host_key_global_hint">Trusting this key restores the remote connection. Verify the fingerprint against your server before trusting.</string>
+    <string name="ssh_host_key_trusted_toast">Host key trusted — retry your last action</string>
     <string name="ssh_host_key_remove">Remove fingerprint</string>
     <string name="ssh_host_key_detail">Saved server host fingerprint:\n%1$s</string>
 

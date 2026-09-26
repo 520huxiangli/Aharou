@@ -49,6 +49,9 @@ import javax.inject.Inject
  * （暂存/提交/拉取/推送）执行后自动刷新并通过 [GitUiState.toast] 反馈。[GitUiState.busy]
  * 守卫防止并发写操作相互踩踏。
  */
+/** Git「温柔提示」类型：操作失败原因属于未配置署名 / 未配置凭据，引导去「凭据与署名」页填写。 */
+enum class GitSetupGuide { IDENTITY, CREDENTIALS }
+
 private fun GitGraph.toGitCommits() =
     commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
 
@@ -117,7 +120,9 @@ class GitViewModel @Inject constructor(
         /** 正在查看 diff 的文件路径；加载中（diffData 为 null）时供顶栏显示文件名。 */
         val diffPath: String? = null,
         /** diff 视图数据；非 null 时 diff 页渲染内容。 */
-        val diffData: DiffData? = null
+        val diffData: DiffData? = null,
+        /** 「温柔提示」引导类型；非 null 时 GitScreen 弹出引导弹窗（去「凭据与署名」填写）。 */
+        val setupGuide: GitSetupGuide? = null
     )
 
     private val _state = MutableStateFlow(GitUiState())
@@ -248,6 +253,7 @@ class GitViewModel @Inject constructor(
         _state.update { it.copy(busy = true, toast = null) }
         viewModelScope.launch {
             val name = context.getString(nameRes)
+            var guideKind: GitSetupGuide? = null
             val msg = try {
                 action()
                 context.getString(R.string.git_toast_action_success, name)
@@ -255,18 +261,25 @@ class GitViewModel @Inject constructor(
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "${name}失败", e)
                 val reason = (e as? GitCommandFailureException)?.output ?: e.message
-                context.getString(R.string.git_toast_action_failed, name, GitErrorMessage.friendly(reason ?: ""))
+                val raw = reason ?: ""
+                // 未配置署名 / 凭据 时给「温柔提示」引导，而不是只 toast 一句失败原因。
+                guideKind = when {
+                    GitErrorMessage.isIdentityFailure(raw) -> GitSetupGuide.IDENTITY
+                    GitErrorMessage.isAuthFailure(raw) -> GitSetupGuide.CREDENTIALS
+                    else -> null
+                }
+                context.getString(R.string.git_toast_action_failed, name, GitErrorMessage.friendly(raw))
             }
             // 刷新以反映新状态；失败也刷新，让 UI 与仓库一致。
             try {
                 if (repository.isRepo()) {
                     val snap = loadSnapshot(includeIdentity = false)
                     val commits = snap.graph.toGitCommits()
-                    _state.update { it.copy(busy = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, untrackedDirFiles = snap.untrackedDirFiles, notARepo = false, toast = msg) }
+                    _state.update { it.copy(busy = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, untrackedDirFiles = snap.untrackedDirFiles, notARepo = false, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
                     refreshBranchesIfLoaded()
                     onComplete?.invoke()
                 } else {
-                    _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
+                    _state.update { it.copy(busy = false, notARepo = true, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -411,6 +424,9 @@ class GitViewModel @Inject constructor(
     fun closeCommitDetail() = _state.update { it.copy(commitDetailHash = null) }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
+
+    /** 关闭「温柔提示」引导弹窗。 */
+    fun dismissSetupGuide() = _state.update { it.copy(setupGuide = null) }
 
     /**
      * 分页加载更旧的提交。UI 滚到底时调用：取已加载提交作为锚点，[repository.graphAppend] 用

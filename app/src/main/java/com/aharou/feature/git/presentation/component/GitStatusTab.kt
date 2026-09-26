@@ -114,7 +114,8 @@ internal fun StatusTab(
     onStashDrop: (String) -> Unit = {},
     onStashClear: () -> Unit = {},
     onAbortMerge: () -> Unit = {},
-    onAddToGitignore: (String) -> Unit = {}
+    onAddToGitignore: (String) -> Unit = {},
+    onNavigateToCredentials: () -> Unit = {}
 ) {
     val s = status
     val clean = s == null || (s.staged.isEmpty() && s.unstaged.isEmpty() && s.untracked.isEmpty() && s.conflicted.isEmpty())
@@ -230,14 +231,27 @@ internal fun StatusTab(
             )
         }
         if (!hasIdentity) {
-            // 禁用原因提示：用户不知道按钮为什么不可点时给出指引
-            Text(
-                text = stringResource(R.string.git_commit_needs_identity),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
+            // 禁用原因提示：用户不知道按钮为什么不可点时给出指引；点一下直达「凭据与署名」页填写。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onNavigateToCredentials),
+                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = stringResource(R.string.git_commit_needs_identity),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.git_commit_needs_identity_action),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
 
         // 次级操作：暂存全部 / 储藏 / 拉取 / 推送。
