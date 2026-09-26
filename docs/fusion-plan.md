@@ -130,6 +130,7 @@
 ### P2.6 · 智能体层（第二批 · 主人点名：模型组/人格/记忆/环境变量/存储/放权/无障碍/自改设置）
 
 > 2026-09-26 主人清单。**结论：能搬**，分五批；其中 C 批三件事共享 Minis 的同一根骨架（config 框架）。
+> ⚠️ **分发原则（主人钦定）**：本软件可能对外分发——**仓库与 APK 一律零个人数据**（无私人记忆 / 密钥 / 账号 / 隐私偏好）；一切个性化走运行时配置或「导入包」，绝不进源码。
 
 | 批 | 功能 | OpenMinis 参考 | 体量 | 落地方式 |
 |---|---|---|---|---|
@@ -137,7 +138,7 @@
 | B | **无障碍 + 权限管理** | `accessibility/`（服务 274 / 节点表 57 / 自救 356 / 受限设置 210）+ `offload/OffloadPermissionManager.kt`(414) + `OffloadPermissionScreen`(554)/`SystemPermissionsScreen`(392)/`ShizukuPermissionScreen` + 聊天内 `OffloadPermissionDialog` | ~2.6k | 直搬 + manifest/xml 声明；串联已有 Shizuku 工具 → **agent 长出"看得懂、点得动屏幕"的手** |
 | C | **配置自改 + 环境变量 + 模型组**（共享骨架） | `config/` 框架 **4.9k**（Registry/Schema/Value/audit/confirm/collections）+ `ConfigAuditScreen`/`ConfigConfirmDialog` + `EnvVar*`(~0.7k) + `ModelGroupsScreen`(1036)/`ModelGroupDetailScreen`(740) + 路由与思考规则 + `ConfigOffloadHandler`(389) | ~7k | 搬框架 → 把 AiCode 的 provider/model 存储接成 collection；agent 经 offload 改设置（审计 + 确认 + 权限门） |
 | D | **存储管理** | `ui/settings/StorageManagementScreen.kt`(401) | 0.4k | 照搬 UI，改接 AiCode 数据（容器/会话库/媒体/清理） |
-| E | **记忆（按服务器机器人那套重建）** | ~~Minis `MemoryRepository`(559) 体系~~ → **改用机器人记忆架构**：每日日志 + 核心档案（SOUL / L0_CORE / L1_MAP / GLOBAL）+ 事实库（agent_memory.json）+ 心流（mindstream） | 设计 + 新建 | 文件落在容器内（`~/.aharou/memory/`），agent 工具读写/检索；**与服务器侧同构 → 将来可双向同步** |
+| E | **记忆（只搬框架 · 零隐私）** | ~~Minis `MemoryRepository`(559) 体系~~ → **框架按机器人那套架构**：每日日志 + 核心档案（SOUL / L0_CORE / L1_MAP / GLOBAL）+ 事实库（agent_memory.json）+ 心流（mindstream） | 设计 + 新建 | **只带机制不带内容**（软件可能对外分发）：APK 内仅空模板与工具/注入管线；用户数据运行时自建在容器内（`~/.aharou/memory/`）；**个人档案（作者的）以「导入包」形式接入，绝不进源码**；与服务器侧同构 → 私人实例可选同步 |
 
 **建议顺序**：A（小而亮）→ B（agent 有眼有手）→ C（自改设置的门）→ D → E（大件，单独设计）。
 
