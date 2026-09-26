@@ -124,6 +124,7 @@
   ① 入口对齐（聊天 / 沙箱区一键进终端、全屏沉浸）——AiCode 已有主界面 + 工作台侧栏两处入口；
   ② 终端内 URL 用 App 内浏览器打开（参考 `terminal/MinisOpenUrlBroker.kt`）；
   ③ 视觉 / 主题细节按 Minis 风格对齐。
+- ✅ **进度（09-26）**：界面复刻第一版落地——Minis 风深色顶栏（圆钮 + Mono 标题 + 清屏/工具）、胶囊触控键栏（补齐 ⏎ 与键盘开关；CTRL/ALT 走 Termux modifiers、方向键长按连发）、标签栏深色化、chrome 统一 JetBrains Mono（内置字体）。内核（Termux）未动。后续：全屏沉浸细节 / 终端内 URL 内开 / 聊天侧一键呼出。
 
 ### P3 · 沙箱与运行时细节合并
 | 项目 | 参考实现 | 说明 |

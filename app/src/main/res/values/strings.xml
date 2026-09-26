@@ -1291,6 +1291,7 @@
 
     <!-- Terminal -->
     <string name="terminal_title">终端</string>
+    <string name="terminal_clear_screen">清屏</string>
     <string name="terminal_prepare_error_unknown">未知错误</string>
     <string name="terminal_start_failed">无法启动终端：\n%1$s</string>
     <string name="terminal_retry">重试</string>

@@ -35,6 +35,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,16 +50,20 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +91,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 
+// ── Minis 风格终端配色（chrome 层；画布配色仍由主题预设控制）──
+private val TerminalBg = Color(0xFF000000)
+private val TerminalFg = Color(0xFFD4D4D4)
+private val TerminalGreen = Color(0xFF34C759)
+private val AccentBlue = Color(0xFF007AFF)
+private val TopButtonBg = Color(0xFF2C2C2E)
+private val AccessoryBg = Color(0xFF1F1F1F)
+private val AccButtonBg = Color(0xFF404040)
+
+/** chrome 文本统一走 JetBrains Mono（fusion 内置字体，与画布同族）。 */
+private val TerminalMono = FontFamily(Font(R.font.jetbrains_mono_nl))
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(
@@ -102,30 +120,14 @@ fun TerminalScreen(
     var showToolsSheet by remember { mutableStateOf(false) }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = TerminalBg,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.terminal_title)) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                ),
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            if (embedded) FeatherIcons.X else FeatherIcons.ArrowLeft,
-                            contentDescription = stringResource(
-                                if (embedded) R.string.common_close else R.string.common_back
-                            )
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showToolsSheet = true }) {
-                        Icon(FeatherIcons.Tool, contentDescription = stringResource(R.string.terminal_tools_title))
-                    }
-                }
+            TerminalTopBar(
+                embedded = embedded,
+                onClose = onNavigateBack,
+                onClear = { viewModel.writeBytes(0x0C) },
+                onTools = { showToolsSheet = true },
             )
         }
     ) { padding ->
@@ -180,7 +182,11 @@ fun TerminalScreen(
                     }
 
                     if (activeTabId != null) {
-                        ExtraKeysRow(viewModel)
+                        KeyboardAccessoryBar(
+                            viewModel = viewModel,
+                            tabs = tabs,
+                            activeTabId = activeTabId,
+                        )
                     }
                 }
             }
@@ -234,7 +240,7 @@ private fun TabBar(
     }
 
     Surface(
-        color = MaterialTheme.colorScheme.surface,
+        color = AccessoryBg,
         modifier = Modifier
             .fillMaxWidth()
             .onSizeChanged { barWidth = it.width }
@@ -260,7 +266,7 @@ private fun TabBar(
                 Icon(
                     FeatherIcons.Plus,
                     contentDescription = stringResource(R.string.common_new_tab),
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = TerminalGreen,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -277,27 +283,16 @@ private fun TabChip(
     modifier: Modifier = Modifier
 ) {
     val running = tab.runState is RunState.Running
-    val isLight = MaterialTheme.colorScheme.background.luminance() > 0.5f
     val dot = when {
-        running -> MaterialTheme.semanticColors.success // 鲜明活跃绿
-        tab.isBackground -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.outline
+        running -> TerminalGreen // 鲜明活跃绿
+        tab.isBackground -> TerminalFg.copy(alpha = 0.5f)
+        else -> TerminalFg.copy(alpha = 0.35f)
     }
 
-    // 选中态高对比度设计：醒目主色描边 + 浅主色填充 + 加粗文字
-    val bg = when {
-        selected -> MaterialTheme.colorScheme.primary.copy(alpha = if (isLight) 0.14f else 0.22f)
-        else -> MaterialTheme.semanticColors.capsuleSurface
-    }
-    val borderColor = when {
-        selected -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.semanticColors.subtleBorder
-    }
-    val fg = when {
-        selected -> MaterialTheme.colorScheme.primary
-        isLight -> MaterialTheme.colorScheme.onSurface
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    // Minis 风格深色 chrome：选中 = 蓝调高亮 + 加粗，未选中 = 深灰胶囊
+    val bg = if (selected) AccentBlue.copy(alpha = 0.22f) else AccButtonBg.copy(alpha = 0.5f)
+    val borderColor = if (selected) AccentBlue else Color.Transparent
+    val fg = if (selected) Color.White else TerminalFg
 
     Row(
         modifier = modifier
@@ -328,7 +323,7 @@ private fun TabChip(
         Text(
             text = tab.title,
             color = fg,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = TerminalMono,
             fontSize = 13.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
@@ -342,7 +337,7 @@ private fun TabChip(
             Icon(
                 FeatherIcons.X,
                 contentDescription = stringResource(R.string.terminal_close_tab),
-                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                tint = if (selected) AccentBlue else TerminalFg.copy(alpha = 0.5f),
                 modifier = Modifier.size(13.dp)
             )
         }
@@ -480,55 +475,145 @@ private fun containerInitMessage(context: Context, state: ContainerInitState): S
         context.getString(R.string.terminal_preparing_env_first_run)
 }
 
-/** Termius 风格的现代化极客辅助按键栏。 */
+
+/** Minis 风格终端顶栏：圆形按钮 + 居中 Mono 标题（Aharou 移植）。 */
 @Composable
-private fun ExtraKeysRow(viewModel: TerminalViewModel) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
-        modifier = Modifier.fillMaxWidth()
+private fun TerminalTopBar(
+    embedded: Boolean,
+    onClose: () -> Unit,
+    onClear: () -> Unit,
+    onTools: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(TerminalBg)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircleIconButton(
+            icon = FeatherIcons.X,
+            contentDescription = stringResource(if (embedded) R.string.common_close else R.string.common_back),
+            tint = TerminalFg,
+            onClick = onClose,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            stringResource(R.string.terminal_title),
+            color = TerminalFg,
+            fontFamily = TerminalMono,
+            fontSize = 16.sp,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        CircleIconButton(
+            icon = Icons.Default.Brush,
+            contentDescription = stringResource(R.string.terminal_clear_screen),
+            tint = TerminalGreen,
+            onClick = onClear,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        CircleIconButton(
+            icon = FeatherIcons.Tool,
+            contentDescription = stringResource(R.string.terminal_tools_title),
+            tint = TerminalFg,
+            onClick = onTools,
+        )
+    }
+}
+
+/** 圆形图标按钮（Minis 顶栏样式）。 */
+@Composable
+private fun CircleIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(TopButtonBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/**
+ * Minis 风格触控键栏（移植版）：深色胶囊 + 可横滑按键。
+ * 在 AiCode 原有键集上补齐 Minis 的「⏎ / 键盘开关」，其余机制
+ * （CTRL/ALT 走 Termux modifiers、方向键长按连发）沿用。
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun KeyboardAccessoryBar(
+    viewModel: TerminalViewModel,
+    tabs: List<TerminalTab>,
+    activeTabId: String?,
+) {
+    val scrollState = rememberScrollState()
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    fun toggleKeyboard() {
+        val v = tabs.firstOrNull { it.id == activeTabId }?.view ?: return
+        if (v.hasFocus()) {
+            v.clearFocus()
+            keyboard?.hide()
+        } else {
+            v.requestFocus()
+            keyboard?.show()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AccessoryBg),
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = Spacing.sm, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .horizontalScroll(scrollState)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 控制键
-            KeyChip("ESC") { viewModel.write("\u001b") }
-            KeyChip("TAB") { viewModel.write("\t") }
-            KeyChip("CTRL", active = viewModel.modifiers.ctrl) {
+            AccChip("⌨") { toggleKeyboard() }
+            AccChip("ESC") { viewModel.write("\u001b") }
+            AccChip("TAB") { viewModel.write("\t") }
+            AccChip("⏎") { viewModel.writeBytes(0x0D) }
+            AccChip("CTRL", active = viewModel.modifiers.ctrl) {
                 viewModel.modifiers.ctrl = !viewModel.modifiers.ctrl
             }
-            KeyChip("ALT", active = viewModel.modifiers.alt) {
+            AccChip("ALT", active = viewModel.modifiers.alt) {
                 viewModel.modifiers.alt = !viewModel.modifiers.alt
             }
-
-            // 方向键
-            KeyChip("←", repeatOnHold = true) { viewModel.write("\u001b[D") }
-            KeyChip("↑", repeatOnHold = true) { viewModel.write("\u001b[A") }
-            KeyChip("↓", repeatOnHold = true) { viewModel.write("\u001b[B") }
-            KeyChip("→", repeatOnHold = true) { viewModel.write("\u001b[C") }
-
-            // 快捷控制组合
-            KeyChip("C-c") { viewModel.writeBytes(0x03) }
-            KeyChip("C-d") { viewModel.writeBytes(0x04) }
-            KeyChip("C-z") { viewModel.writeBytes(0x1A) }
-            KeyChip("C-l") { viewModel.writeBytes(0x0C) }
-
-            // 常用编程与 shell 符号
-            KeyChip("|") { viewModel.write("|") }
-            KeyChip("~") { viewModel.write("~") }
-            KeyChip("/") { viewModel.write("/") }
-            KeyChip("-") { viewModel.write("-") }
-            KeyChip("_") { viewModel.write("_") }
-            KeyChip(">") { viewModel.write(">") }
-            KeyChip(":") { viewModel.write(":") }
-            KeyChip("$") { viewModel.write("$") }
-            KeyChip("\"") { viewModel.write("\"") }
-            KeyChip("'") { viewModel.write("'") }
+            AccChip("↑", repeatOnHold = true) { viewModel.write("\u001b[A") }
+            AccChip("↓", repeatOnHold = true) { viewModel.write("\u001b[B") }
+            AccChip("←", repeatOnHold = true) { viewModel.write("\u001b[D") }
+            AccChip("→", repeatOnHold = true) { viewModel.write("\u001b[C") }
+            AccChip("C-c") { viewModel.writeBytes(0x03) }
+            AccChip("C-d") { viewModel.writeBytes(0x04) }
+            AccChip("C-z") { viewModel.writeBytes(0x1A) }
+            AccChip("C-l") { viewModel.writeBytes(0x0C) }
+            AccChip("|") { viewModel.write("|") }
+            AccChip("~") { viewModel.write("~") }
+            AccChip("/") { viewModel.write("/") }
+            AccChip("-") { viewModel.write("-") }
+            AccChip("_") { viewModel.write("_") }
+            AccChip(">") { viewModel.write(">") }
+            AccChip(":") { viewModel.write(":") }
+            AccChip("$") { viewModel.write("$") }
+            AccChip("\"") { viewModel.write("\"") }
+            AccChip("'") { viewModel.write("'") }
         }
     }
 }
@@ -537,23 +622,16 @@ private fun ExtraKeysRow(viewModel: TerminalViewModel) {
 private const val KEY_REPEAT_INITIAL_DELAY_MS = 350L
 private const val KEY_REPEAT_INTERVAL_MS = 50L
 
+/** Minis 风格按键胶囊。 */
 @Composable
-private fun KeyChip(
+private fun AccChip(
     label: String,
     active: Boolean = false,
     repeatOnHold: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
-    val isLight = MaterialTheme.colorScheme.background.luminance() > 0.5f
-    val bg = when {
-        active -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.semanticColors.capsuleSurface
-    }
-    val borderColor = when {
-        active -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.semanticColors.subtleBorder
-    }
-    val fg = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val bg = if (active) AccentBlue else AccButtonBg
+    val fg = if (active) Color.White else TerminalGreen
 
     var pressed by remember { mutableStateOf(false) }
     var sentRepeated by remember { mutableStateOf(false) }
@@ -571,11 +649,10 @@ private fun KeyChip(
 
     Box(
         modifier = Modifier
-            .height(34.dp)
+            .height(28.dp)
             .widthChip(label)
             .clip(RoundedCornerShape(6.dp))
             .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(6.dp))
             .then(
                 if (repeatOnHold) {
                     Modifier.pointerInput(onClick) {
@@ -591,15 +668,15 @@ private fun KeyChip(
                     Modifier.clickable(onClick = onClick)
                 }
             ),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             color = fg,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.5.sp,
+            fontFamily = TerminalMono,
+            fontSize = 12.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 10.dp)
+            modifier = Modifier.padding(horizontal = 10.dp),
         )
     }
 }
