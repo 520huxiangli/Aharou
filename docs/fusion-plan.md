@@ -14,6 +14,10 @@
 2. 助手层（设备能力等）是**相对自包含的增量模块**，搬进 AiCode 是"加工具"，动静小；反方向把 IDE 塞进聊天 App 会大动 UI；
 3. AiCode **免 NDK 就能编译**（proot 是预编译的），本地沙箱就能验证构建；OpenMinis 需要 NDK r28+ 从源码编 proot。
 
+> **⚡ 融合总原则（主人钦定 · 09-26）**：**内核用 AiCode（点名：容器切换那套），界面用 Minis。**
+> 落地口径：能力引擎取能打的（多为 AiCode；终端＝Termux），视觉 / 交互一律 Minis 风格。
+> 例：多发行版沙箱（= 我们给 Minis 的 issue #387 所求）→ 内核＝AiCode 原生容器切换；界面＝Minis 风格。
+
 ---
 
 ## 1 · 两个上游盘点
@@ -109,8 +113,8 @@
 |---|---|---|
 | 文件浏览器 | `ui/sandbox/FileBrowserScreen.kt`(558) + ViewModel(521) | `java.io.File` 直读；浏览根改指 AiCode 容器根；含排序/搜索/操作 |
 | 文件预览 | `ui/sandbox/FilePreviewScreen.kt`(1368) | 图片 / 文本 / Markdown / PDF(PdfRenderer) / 音视频 + 「存到…」 |
-| 合并项 | `RootfsManagementScreen`(378+197)、`MirrorSettingsScreen`(824) | AiCode 已有「容器与镜像」管理 → 合并，不整搬 |
-**C. 终端 UI：内核不换，做「手感对齐 + 入口打通」**（追加需求）
+| 发行版 / 镜像管理 | `RootfsManagementScreen`(378+197)、`MirrorSettingsScreen`(824) | **内核**＝AiCode 原生容器切换（镜像目录 / 一键下载 / 自定义导入——即 #387 所求）；**界面**按 Minis 风格做 |
+**C. 终端 UI：内核不换，做「手感对齐 + 入口打通」**（追加需求 · ✅ 09-26 定案：内核＝AiCode/Termux，界面＝Minis）
 | | OpenMinis（2.7k 行） | AiCode（现状 · 保留） |
 |---|---|---|
 | 内核 | 自写 ANSI 模拟器 + Canvas 渲染 | **Termux 组件**（vim/htop/宽字符/鼠标经久考验） |
