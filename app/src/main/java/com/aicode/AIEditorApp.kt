@@ -207,6 +207,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         }
         super.onCreate()
         logDeviceInfo()
+        // Aharou 配置通道 + 人格（SOUL.md）：初始化注册表/审计；首次运行释放默认模板文件（外置可改）
+        com.aicode.core.config.ConfigRegistry.init(this)
+        com.aicode.core.config.audit.ConfigAuditLog.init(this)
+        com.aicode.core.soul.SoulStore.ensureExists(this)
         // 把提供商级代理注册表挂到 AppProxy（applyGlobal 已在 attachBaseContext 完成），
         // 此后按目标 host 分派 provider 专属代理；无 provider 配置时回退全局代理。
         AppProxy.registerProviderProxyRegistry(providerProxyRegistry)

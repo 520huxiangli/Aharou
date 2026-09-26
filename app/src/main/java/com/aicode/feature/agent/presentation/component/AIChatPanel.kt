@@ -436,6 +436,17 @@ fun AIChatPanel(
         )
     }
 
+    // [Aharou] 配置通道：写入前的用户确认弹窗（120 秒窗口）
+    val pendingConfigChange by com.aicode.core.config.confirm.ConfigConfirmationGate.pending
+        .collectAsStateWithLifecycle()
+    pendingConfigChange?.let { change ->
+        ConfigConfirmDialog(
+            change = change,
+            onApprove = { com.aicode.core.config.confirm.ConfigConfirmationGate.userApprove(change.items) },
+            onReject = { com.aicode.core.config.confirm.ConfigConfirmationGate.userReject() },
+        )
+    }
+
     val pendingScroll by viewModel.pendingScrollMessage.collectAsStateWithLifecycle()
 
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()

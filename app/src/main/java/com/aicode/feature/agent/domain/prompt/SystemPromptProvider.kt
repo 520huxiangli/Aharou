@@ -234,6 +234,15 @@ class SystemPromptProvider @Inject constructor(
     private val workspaceSource = WorkspaceSource()
     private val currentTimeSource = CurrentTimeSource()
 
+    private val soulSource = SoulSource()
+
+    /** 人格（SOUL.md）：外置文件、可由用户/Agent 直接修改；作为身份段注入。 */
+    private inner class SoulSource : PromptSource {
+        override fun build(ctx: AgentContext): String? =
+            com.aicode.core.soul.SystemPromptBuilder.identitySection(context)
+                .takeIf { it.isNotBlank() }
+    }
+
     private val customDir: File
         get() = File(containerInstaller.aicodeDir, "prompts.custom")
 
@@ -251,6 +260,7 @@ class SystemPromptProvider @Inject constructor(
 
         // 1. 获取各个 Source 的基线快照。
         val rawStatic = staticRuleSource.build(agentContext)
+        val soulContent = soulSource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val subAgentsContent = subAgentListSource.build(agentContext)
         val memoriesContent = memoryListSource.build(agentContext)
@@ -274,6 +284,9 @@ class SystemPromptProvider @Inject constructor(
         // 4. 组装最终提示词：把稳定不变的重头基线放最前面（享受 KV Cache），变化部分放末尾
         return buildString {
             append(staticContent)
+
+            // 人格（SOUL.md）：身份段紧随基线；外置文件，Agent/用户可直接修改
+            soulContent?.let { if (it.isNotEmpty()) { append("\n\n"); append(it) } }
 
             if (SKILLS_VAR !in rawStatic) skillsContent?.let { append("\n\n"); append(it) }
             if (SUBAGENTS_VAR !in rawStatic) subAgentsContent?.let { append("\n\n"); append(it) }

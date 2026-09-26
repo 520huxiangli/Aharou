@@ -77,6 +77,7 @@ import com.aicode.feature.agent.domain.notification.AgentNotificationCenter
 import com.aicode.feature.agent.domain.notification.DefaultAgentEventInjector
 import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aicode.feature.agent.domain.session.SessionUseCase
+import com.aicode.feature.agent.domain.tool.config.ConfigTool
 import com.aicode.feature.agent.domain.tool.mcp.ManageMcpTool
 import com.aicode.feature.agent.domain.tool.memory.MemoryTool
 import com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager
@@ -288,7 +289,8 @@ object AgentModule {
         memoryTool: MemoryTool,
         taskTool: TaskTool,
         messageParentTool: MessageParentTool,
-        browserTool: BrowserTool
+        browserTool: BrowserTool,
+        configTool: ConfigTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -313,6 +315,7 @@ object AgentModule {
             register("task", taskTool)
             register("messageParent", messageParentTool)
             register("browser", browserTool)
+            register("config", configTool)
         }
     }
 

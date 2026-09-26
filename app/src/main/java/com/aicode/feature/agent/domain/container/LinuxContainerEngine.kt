@@ -753,6 +753,12 @@ class LinuxContainerEngine @Inject constructor(
         argv.add("-b")
         argv.add("${aicodeDir.absolutePath}:/root/.aicode")
 
+        // Aharou 全局目录绑定到容器内 /root/.aharou（读写）：人格 SOUL.md / 记忆等外置文件都放这里，
+        // Agent 可直接用文件与 shell 读写（「外置可改」与 Minis 一致）；内容随用户走，重装容器不丢。
+        val aharouGlobalDir = java.io.File(context.filesDir, "aharou-global").apply { mkdirs() }
+        argv.add("-b")
+        argv.add("${aharouGlobalDir.absolutePath}:/root/.aharou")
+
         // profile 的额外绑定与参数：内置与导入容器默认也在此注入（见 ContainerProfile.DEFAULT_PROOT_ARGS），
         // 与用户手动添加同一条路径，保证参数落在 argv 末尾。
         for (b in profile.extraBindings) {
