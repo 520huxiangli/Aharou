@@ -127,6 +127,20 @@
   ③ 视觉 / 主题细节按 Minis 风格对齐。
 - ✅ **进度（09-26）**：界面复刻第一版落地——Minis 风深色顶栏（圆钮 + Mono 标题 + 清屏/工具）、胶囊触控键栏（补齐 ⏎ 与键盘开关；CTRL/ALT 走 Termux modifiers、方向键长按连发）、标签栏深色化、chrome 统一 JetBrains Mono（内置字体）。内核（Termux）未动。后续：全屏沉浸细节 / 终端内 URL 内开 / 聊天侧一键呼出。
 
+### P2.6 · 智能体层（第二批 · 主人点名：模型组/人格/记忆/环境变量/存储/放权/无障碍/自改设置）
+
+> 2026-09-26 主人清单。**结论：能搬**，分五批；其中 C 批三件事共享 Minis 的同一根骨架（config 框架）。
+
+| 批 | 功能 | OpenMinis 参考 | 体量 | 落地方式 |
+|---|---|---|---|---|
+| A | **人格（Soul）** | `agent/SoulStore.kt`(562) + `ui/settings/SoulSettingsScreen.kt`(750) + `SoulIcon` | ~1.4k | SOUL.md 文件制（YAML 头 name/emoji/style/lang + 正文）→ 注入 AiCode `SystemPromptProvider` 人格段 + 聊天头像/名字；设置页直搬 |
+| B | **无障碍 + 权限管理** | `accessibility/`（服务 274 / 节点表 57 / 自救 356 / 受限设置 210）+ `offload/OffloadPermissionManager.kt`(414) + `OffloadPermissionScreen`(554)/`SystemPermissionsScreen`(392)/`ShizukuPermissionScreen` + 聊天内 `OffloadPermissionDialog` | ~2.6k | 直搬 + manifest/xml 声明；串联已有 Shizuku 工具 → **agent 长出"看得懂、点得动屏幕"的手** |
+| C | **配置自改 + 环境变量 + 模型组**（共享骨架） | `config/` 框架 **4.9k**（Registry/Schema/Value/audit/confirm/collections）+ `ConfigAuditScreen`/`ConfigConfirmDialog` + `EnvVar*`(~0.7k) + `ModelGroupsScreen`(1036)/`ModelGroupDetailScreen`(740) + 路由与思考规则 + `ConfigOffloadHandler`(389) | ~7k | 搬框架 → 把 AiCode 的 provider/model 存储接成 collection；agent 经 offload 改设置（审计 + 确认 + 权限门） |
+| D | **存储管理** | `ui/settings/StorageManagementScreen.kt`(401) | 0.4k | 照搬 UI，改接 AiCode 数据（容器/会话库/媒体/清理） |
+| E | **记忆（按服务器机器人那套重建）** | ~~Minis `MemoryRepository`(559) 体系~~ → **改用机器人记忆架构**：每日日志 + 核心档案（SOUL / L0_CORE / L1_MAP / GLOBAL）+ 事实库（agent_memory.json）+ 心流（mindstream） | 设计 + 新建 | 文件落在容器内（`~/.aharou/memory/`），agent 工具读写/检索；**与服务器侧同构 → 将来可双向同步** |
+
+**建议顺序**：A（小而亮）→ B（agent 有眼有手）→ C（自改设置的门）→ D → E（大件，单独设计）。
+
 ### P3 · 沙箱与运行时细节合并
 | 项目 | 参考实现 | 说明 |
 |---|---|---|
