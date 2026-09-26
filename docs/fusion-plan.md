@@ -82,6 +82,26 @@
 | 技能/记忆统一 | `data/repository/SkillRepository.kt`、`MemoryRepository.kt` | 收口到 SKILL.md + 日志式记忆 |
 | minis:// 兼容 | `docs/specs/minis-url-scheme.md` | 可选，评估后定 |
 
+### P2.5 · 可视化专项（沙箱 + 浏览器）— 自包含度高，可插队
+**A. 浏览器：能围观、能接管**（≈6.3k 行）
+| 层 | 文件 | 行数 |
+|---|---|---|
+| UI | `ui/browser/`：BrowserSheet / 历史 / 下载 / 设置 / 外链处理 / WebView 封装 | ~2.1k |
+| 引擎 | `browser/`：BrowserTabPool（多标签池）/ BrowserUseManager（动作集）/ BrowserUseJS（注入）/ BrowserAction / BrowserHistory / GoogleAuthRouter 等 | ~4.2k |
+| 随行 | `ui/chat/StandardChatSheet.kt`(151) + 少量小组件 | 小 |
+
+- 联动方式：工具跑 `browser_use` 时弹出面板（`ChatScreen` 里 `toggleBrowserSheet()`），用户实时观看 + 可接管。
+- 适配点：`BrowserTabPool` 几乎零外部依赖（WebView + 协程）；`MinisTextButton` 等换 AiCode 组件或随带；`AppLogger`→AiCode `FileLogger`；接 Hilt。
+- 现状对比：AiCode 自带浏览器 ≈2.1k 行（无头工具版、无界面）→ 移植后升维为可视化浏览器。
+
+**B. 沙箱可视化：文件浏览器 + 文件预览**（≈2.4k 行）
+| 层 | 文件 | 说明 |
+|---|---|---|
+| 文件浏览器 | `ui/sandbox/FileBrowserScreen.kt`(558) + ViewModel(521) | `java.io.File` 直读；浏览根改指 AiCode 容器根；含排序/搜索/操作 |
+| 文件预览 | `ui/sandbox/FilePreviewScreen.kt`(1368) | 图片 / 文本 / Markdown / PDF(PdfRenderer) / 音视频 + 「存到…」 |
+| 合并项 | `RootfsManagementScreen`(378+197)、`MirrorSettingsScreen`(824) | AiCode 已有「容器与镜像」管理 → 合并，不整搬 |
+| 保留项 | 终端 UI | 保留 AiCode 的 Termux 终端（更老练），Minis 画布终端不搬 |
+
 ### P3 · 沙箱与运行时细节合并
 | 项目 | 参考实现 | 说明 |
 |---|---|---|
