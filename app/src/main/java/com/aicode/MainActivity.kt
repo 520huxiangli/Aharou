@@ -442,6 +442,15 @@ fun AppNavigation(
     var paneEditorLine by rememberSaveable { mutableIntStateOf(0) }
     var paneSplit by rememberSaveable { mutableFloatStateOf(DEFAULT_PANE_SPLIT) }
 
+    // Aharou：浏览器围观面板 + 工具消息快捷入口（地球 / 在终端运行）
+    var browserSheetOpen by remember { mutableStateOf(false) }
+    var terminalInitCommand by rememberSaveable { mutableStateOf<String?>(null) }
+    val browserWatchTick by com.aicode.feature.browser.BrowserWatchSignal.tick
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(browserWatchTick) {
+        if (browserWatchTick > 0L) browserSheetOpen = true
+    }
+
     // 右栏打开时返回键先收起它。限定聊天页：其他页面右栏不渲染，不能在那里吞掉返回事件。
     BackHandler(
         enabled = expanded && currentRoute == "chat" &&
@@ -510,6 +519,18 @@ fun AppNavigation(
             }
             navController.navigate(route)
         }
+    }
+
+    // Aharou：工具消息两个互联入口的实现
+    val browserOpener: (String) -> Unit = { url ->
+        runCatching {
+            if (url.isNotBlank()) agentViewModel.browserTabPool.selectOrCreateTabForURL(url)
+        }
+        browserSheetOpen = true
+    }
+    val terminalOpener: (String) -> Unit = { cmd ->
+        terminalInitCommand = cmd
+        openWorkbench(WorkbenchPaneKind.TERMINAL)
     }
 
     // 侧栏内容：modal 抽屉与大屏常驻栏共用同一份，不在两处重复几十行参数。
@@ -622,7 +643,9 @@ fun AppNavigation(
                 ) {
                     Box(modifier = Modifier.weight(if (paneOpen) paneSplit else 1f)) {
                         CompositionLocalProvider(
-                            androidx.compose.ui.platform.LocalUriHandler provides fileUriHandler
+                            androidx.compose.ui.platform.LocalUriHandler provides fileUriHandler,
+                            com.aicode.feature.browser.presentation.LocalBrowserOpener provides browserOpener,
+                            com.aicode.feature.terminal.presentation.component.LocalTerminalOpener provides terminalOpener,
                         ) {
                             AIChatPanel(
                                 viewModel = agentViewModel,
@@ -649,6 +672,12 @@ fun AppNavigation(
                                 }
                             )
                         }
+                    }
+                    if (browserSheetOpen) {
+                        com.aicode.feature.browser.presentation.BrowserSheet(
+                            tabPool = agentViewModel.browserTabPool,
+                            onDismiss = { browserSheetOpen = false },
+                        )
                     }
                     if (paneOpen) {
                         VerticalSplitHandle(
@@ -710,7 +739,9 @@ fun AppNavigation(
                 val terminalViewModel: TerminalViewModel = hiltViewModel()
                 TerminalScreen(
                     viewModel = terminalViewModel,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    initCommand = terminalInitCommand,
+                    onInitCommandConsumed = { terminalInitCommand = null },
                 )
             }
             composable("browser") {

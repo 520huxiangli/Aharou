@@ -108,7 +108,11 @@ private val TerminalMono = FontFamily(Font(R.font.jetbrains_mono_nl))
 fun TerminalScreen(
     viewModel: TerminalViewModel,
     onNavigateBack: () -> Unit,
-    embedded: Boolean = false
+    embedded: Boolean = false,
+    /** [Aharou] 打开时预填到提示符的命令（来自聊天工具消息的“在终端中运行”）。 */
+    initCommand: String? = null,
+    /** [Aharou] initCommand 已预填后的回调（宿主清空，避免重复预填）。 */
+    onInitCommandConsumed: () -> Unit = {},
 ) {
     val prepareState by viewModel.prepareState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -118,6 +122,15 @@ fun TerminalScreen(
     val revision by viewModel.revision.collectAsStateWithLifecycle()
     val terminalSettings by viewModel.terminalSettings.collectAsStateWithLifecycle()
     var showToolsSheet by remember { mutableStateOf(false) }
+
+    // [Aharou] 从聊天工具消息「在终端中运行」进入时：命令预填到提示符（不自动回车，供过目）。
+    LaunchedEffect(initCommand, prepareState) {
+        if (initCommand.isNullOrBlank()) return@LaunchedEffect
+        if (prepareState !is TerminalViewModel.PrepareState.Ready) return@LaunchedEffect
+        delay(500)
+        viewModel.write(initCommand)
+        onInitCommandConsumed()
+    }
 
     Scaffold(
         containerColor = TerminalBg,

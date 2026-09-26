@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,6 +72,7 @@ import compose.icons.feathericons.Cpu
 import compose.icons.feathericons.Database
 import compose.icons.feathericons.Edit3
 import compose.icons.feathericons.FileText
+import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Search
 import compose.icons.feathericons.Terminal
 import compose.icons.feathericons.Tool
@@ -146,6 +148,18 @@ internal fun ToolMessageBody(
     } else null
     val webSearchData = if (message.toolName == "websearch" && !running && !message.isError) {
         remember(message.id, message.content) { parseWebSearchResult(message.content) }
+    } else null
+
+    // [Aharou] 工具消息互联入口：browser → 地球（围观该 URL）；Bash/terminal → 在终端中运行。
+    val browserOpener = com.aicode.feature.browser.presentation.LocalBrowserOpener.current
+    val terminalOpener = com.aicode.feature.terminal.presentation.component.LocalTerminalOpener.current
+    val browserUrl = if (message.toolName == "browser") {
+        remember(message.id, message.toolArgs, message.content) {
+            extractBrowserUrl(message.toolArgs, message.content)
+        }
+    } else null
+    val shellCommand = if (message.toolName == "Bash" || message.toolName == "terminal") {
+        remember(message.id, message.toolArgs) { extractShellCommand(message.toolArgs) }
     } else null
     // 后台任务/子代理完成通知：搭车在本次工具结果里送给 AI 的，同时常显给用户看。
     val notifications = if (!running) {
@@ -264,6 +278,34 @@ internal fun ToolMessageBody(
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.width(Spacing.sm))
+            }
+            if (!browserUrl.isNullOrBlank() && browserOpener != null) {
+                Spacer(Modifier.width(Spacing.xs))
+                IconButton(
+                    onClick = { browserOpener.invoke(browserUrl) },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        FeatherIcons.Globe,
+                        contentDescription = stringResource(R.string.tool_action_open_browser),
+                        tint = Brand.IconGray,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            if (!shellCommand.isNullOrBlank() && terminalOpener != null) {
+                Spacer(Modifier.width(Spacing.xs))
+                IconButton(
+                    onClick = { terminalOpener.invoke(shellCommand) },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        FeatherIcons.Terminal,
+                        contentDescription = stringResource(R.string.tool_action_open_terminal),
+                        tint = Brand.IconGray,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
             if (expandable) {
                 Icon(
@@ -922,4 +964,29 @@ private fun extractFilePathArg(argsJson: String?): String? {
             (obj[key] as? JsonPrimitive)?.contentOrNull
         }
     }.getOrNull()
+}
+
+/** [Aharou] browser 工具消息：提取可围观的 URL（参数 url → 结果 data.pageURL）。 */
+private fun extractBrowserUrl(toolArgs: String?, content: String?): String? {
+    toolArgs?.let { t ->
+        runCatching { org.json.JSONObject(t).optString("url") }.getOrNull()
+            ?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    content?.let { t ->
+        runCatching {
+            val obj = org.json.JSONObject(t)
+            val data = obj.optJSONObject("data") ?: obj
+            data.optString("pageURL")
+        }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    return null
+}
+
+/** [Aharou] shell 类工具消息：提取要预填到终端的命令。 */
+private fun extractShellCommand(toolArgs: String?): String? {
+    val t = toolArgs ?: return null
+    return runCatching {
+        val obj = org.json.JSONObject(t)
+        obj.optString("command").ifBlank { obj.optString("input") }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 }

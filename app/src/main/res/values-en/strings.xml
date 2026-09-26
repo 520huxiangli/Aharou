@@ -1293,6 +1293,8 @@
     <!-- Terminal -->
     <string name="terminal_title">Terminal</string>
     <string name="terminal_clear_screen">Clear screen</string>
+    <string name="tool_action_open_browser">View in browser</string>
+    <string name="tool_action_open_terminal">Run in terminal</string>
     <string name="terminal_prepare_error_unknown">Unknown error</string>
     <string name="terminal_start_failed">Cannot start terminal:\n%1$s</string>
     <string name="terminal_retry">Retry</string>

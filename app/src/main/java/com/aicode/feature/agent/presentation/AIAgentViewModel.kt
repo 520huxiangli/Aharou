@@ -151,6 +151,8 @@ class AIAgentViewModel @Inject constructor(
     private val todoItemDao: TodoItemDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
+    /** Aharou：浏览器池 —— 聊天页“自动围观”面板与 browser 工具共用同一池。 */
+    val browserTabPool: com.aicode.feature.browser.BrowserTabPool,
     @param:ApplicationContext private val context: Context
 ) : ViewModel(), SlashCommandContext {
 
