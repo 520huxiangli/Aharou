@@ -104,10 +104,12 @@ import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Info
 import compose.icons.feathericons.Key
+import compose.icons.feathericons.Layers
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.Edit2
+import compose.icons.feathericons.Eye
 import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.RefreshCw
@@ -146,6 +148,8 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ConfigAudit(R.string.config_audit_title),
     ShadowScreen(R.string.vd_settings_title),
     EnvVars(R.string.envvars_title),
+    ModelGroups(R.string.modelgroups_title),
+    Accessibility(R.string.a11y_settings_title),
     General(R.string.settings_general),
     Providers(R.string.settings_providers),
     ProviderEditor(R.string.settings_provider_editor),
@@ -761,6 +765,8 @@ fun SettingsScreen(
                 SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.ShadowScreen -> ShadowScreenSection()
                 SettingsSection.EnvVars -> EnvVarsSection()
+                SettingsSection.ModelGroups -> ModelGroupsSection()
+                SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
                     onToggleAutoRemoveStaleModels = { viewModel.setAutoRemoveStaleModels(it) },
@@ -1362,6 +1368,12 @@ internal fun SettingsMenu(
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.Layers,
+                title = stringResource(SettingsSection.ModelGroups.titleRes),
+                onClick = { onOpen(SettingsSection.ModelGroups) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Box,
                 title = stringResource(SettingsSection.Mcp.titleRes),
                 onClick = { onOpen(SettingsSection.Mcp) }
@@ -1427,6 +1439,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.Shield,
                 title = stringResource(SettingsSection.AppPermissions.titleRes),
                 onClick = { onOpen(SettingsSection.AppPermissions) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Eye,
+                title = stringResource(SettingsSection.Accessibility.titleRes),
+                onClick = { onOpen(SettingsSection.Accessibility) }
             )
             SettingsDivider()
             SettingsRow(

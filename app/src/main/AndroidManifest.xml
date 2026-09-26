@@ -73,6 +73,21 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- 无障碍服务：让 Agent「看得懂、点得动」宿主屏幕（读节点树/手势/截图）。
+             需用户在系统「无障碍」设置中手动开启（Android 禁止程序化开启）。 -->
+        <service
+            android:name="com.aicode.accessibility.AharouAccessibilityService"
+            android:exported="true"
+            android:label="@string/a11y_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/aharou_accessibility_service" />
+        </service>
+
         <!-- Shizuku：用于以 adb shell 身份执行命令（UserService）。
              permission 声明为 INTERACT_ACROSS_USERS_FULL 是官方要求，防止普通应用访问该 provider。 -->
         <provider

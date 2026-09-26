@@ -71,6 +71,23 @@ object ConfigBuiltins {
 
         registry.register(
             ClosureField(
+                path = "soul.style",
+                displayName = "风格",
+                description = "回复风格（一句话）——如「病娇」「简洁、不用 markdown、不要表情包」；会作为硬性风格约束注入系统提示，优先级高于默认的语气设定。",
+                valueSchema = ConfigSchema.Str(maxLength = 400),
+                revertable = true,
+                reader = { ConfigValue.Str(SoulStore.load(appContext)?.metadata?.style.orEmpty()) },
+                writer = { v ->
+                    val style = (v as? ConfigValue.Str)?.value
+                        ?: throw ConfigError.TypeMismatch("string")
+                    val current = SoulStore.load(appContext) ?: SoulFile(SoulMetadata.DEFAULT, "")
+                    SoulStore.save(appContext, current.copy(metadata = current.metadata.copy(style = style.trim())))
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
                 path = "soul.icon",
                 displayName = "头像",
                 description = "emoji 或图片（data URI / 路径）；空 = 默认。",

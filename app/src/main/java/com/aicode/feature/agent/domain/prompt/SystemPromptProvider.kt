@@ -32,6 +32,7 @@ class SystemPromptProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val skillRepository: SkillRepository,
     private val memoryRepository: MemoryRepository,
+    private val aharouMemoryStore: com.aicode.core.memory.AharouMemoryStore,
     private val containerInstaller: ContainerInstaller,
     private val agentDefinitionRepository: AgentDefinitionRepository
 ) {
@@ -243,6 +244,15 @@ class SystemPromptProvider @Inject constructor(
                 .takeIf { it.isNotBlank() }
     }
 
+    private val aharouMemorySource = AharouMemorySource()
+
+    /** 记忆（核心档案 + 今日日志尾巴）：外置文件在 filesDir/aharou-global/memory（容器内可读写）。 */
+    private inner class AharouMemorySource : PromptSource {
+        override fun build(ctx: AgentContext): String? =
+            runCatching { aharouMemoryStore.buildPromptSection() }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+    }
+
     private val customDir: File
         get() = File(containerInstaller.aicodeDir, "prompts.custom")
 
@@ -261,6 +271,7 @@ class SystemPromptProvider @Inject constructor(
         // 1. 获取各个 Source 的基线快照。
         val rawStatic = staticRuleSource.build(agentContext)
         val soulContent = soulSource.build(agentContext)
+        val aharouMemoryContent = aharouMemorySource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val subAgentsContent = subAgentListSource.build(agentContext)
         val memoriesContent = memoryListSource.build(agentContext)
@@ -287,6 +298,9 @@ class SystemPromptProvider @Inject constructor(
 
             // 人格（SOUL.md）：身份段紧随基线；外置文件，Agent/用户可直接修改
             soulContent?.let { if (it.isNotEmpty()) { append("\n\n"); append(it) } }
+
+            // 记忆（核心档案 + 今日日志）：外置文件在 filesDir/aharou-global/memory
+            aharouMemoryContent?.let { if (it.isNotEmpty()) { append("\n\n"); append(it) } }
 
             if (SKILLS_VAR !in rawStatic) skillsContent?.let { append("\n\n"); append(it) }
             if (SUBAGENTS_VAR !in rawStatic) subAgentsContent?.let { append("\n\n"); append(it) }

@@ -1779,4 +1779,40 @@
     <string name="envvars_error_format">Name must be letters / digits / underscore (cannot start with a digit)</string>
     <string name="envvars_error_reserved">\"%1$s\" is a reserved container variable</string>
     <string name="envvars_error_duplicate">A variable with this name already exists</string>
+    <!-- ── Model groups + Accessibility ── -->
+    <string name="modelgroups_title">Model groups</string>
+    <string name="modelgroups_intro">Bundle several models into one group: wherever a model is picked you can pick the whole group — members are used in order (first available wins; later members are the fallback path).</string>
+    <string name="modelgroups_list_header">Your groups</string>
+    <string name="modelgroups_empty">No model groups yet</string>
+    <string name="modelgroups_create">New group</string>
+    <string name="modelgroups_name">Name</string>
+    <string name="modelgroups_save">Save</string>
+    <string name="modelgroups_back_to_list">Back to group list</string>
+    <string name="modelgroups_rename">Rename</string>
+    <string name="modelgroups_delete">Delete</string>
+    <string name="modelgroups_delete_title">Delete \"%1$s\"?</string>
+    <string name="modelgroups_delete_body">Places that selected this group will need a new model selection.</string>
+    <string name="modelgroups_members_header">Members (in order)</string>
+    <string name="modelgroups_members_hint">The first available member is used; the order is adjustable.</string>
+    <string name="modelgroups_no_members">No members yet — tap Add member to pick a model from your providers.</string>
+    <string name="modelgroups_add_member">Add member</string>
+    <string name="modelgroups_remove_member">Remove</string>
+    <string name="modelgroups_move_up">Move up</string>
+    <string name="modelgroups_move_down">Move down</string>
+    <string name="modelgroups_member_count">%1$d member(s)</string>
+    <string name="modelgroups_member_count_with_first">%1$d member(s) · first %2$s / %3$s</string>
+    <string name="modelgroups_no_provider_models">No provider models available (add models under AI providers first).</string>
+    <string name="modelgroups_group_prefix_label">Group: %1$s</string>
+
+    <string name="a11y_service_label">Aharou Accessibility</string>
+    <string name="a11y_service_description">Lets Aharou read the screen and operate the UI: inspect elements, take screenshots, tap and swipe.</string>
+    <string name="a11y_service_summary">Allow Aharou to read screen content and perform gestures</string>
+    <string name="a11y_settings_title">Accessibility</string>
+    <string name="a11y_status_on_connected">Enabled · connected</string>
+    <string name="a11y_status_on_disconnected">Enabled · not connected (system may rebind later)</string>
+    <string name="a11y_status_off">Not enabled</string>
+    <string name="a11y_intro">Once enabled, the agent can understand and operate the screen: inspect elements, take screenshots, tap and swipe. Android does not allow apps to enable this themselves — please tick it in system settings.</string>
+    <string name="a11y_open_settings">Open system settings</string>
+    <string name="a11y_refresh">Refresh status</string>
+    <string name="a11y_oem_hint">Some OEM ROMs (e.g. MIUI) also need autostart permission and battery whitelisting for the service to stay stable.</string>
 </resources>

@@ -134,6 +134,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var mcpManager: McpManager
 
+    /** 模型组解析器兜底：App 启动即构造仓库并安装解析器（角色冷读选择组时不至于解析失败）。 */
+    @Inject
+    lateinit var modelGroupRepository: com.aicode.feature.settings.data.repository.ModelGroupRepository
+
     /** MCP 配置仓库：启动即监听 mcp.json 外部直接编辑，改动数秒内刷新列表并触发重连。 */
     @Inject
     lateinit var mcpConfigRepository: com.aicode.feature.agent.domain.mcp.McpConfigRepository

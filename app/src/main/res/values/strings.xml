@@ -1778,4 +1778,40 @@
     <string name="envvars_error_format">名称需为字母 / 数字 / 下划线（不能以数字开头）</string>
     <string name="envvars_error_reserved">「%1$s」是容器关键变量名，不允许使用</string>
     <string name="envvars_error_duplicate">已存在同名变量</string>
+    <!-- ── 模型组 + 无障碍 ── -->
+    <string name="modelgroups_title">模型组</string>
+    <string name="modelgroups_intro">把多个模型收进一个组：需要选模型的地方可以整组选择，执行时按成员顺序取用（首成员优先，后续成员留作故障转移）。</string>
+    <string name="modelgroups_list_header">已有模型组</string>
+    <string name="modelgroups_empty">还没有模型组</string>
+    <string name="modelgroups_create">新建模型组</string>
+    <string name="modelgroups_name">名称</string>
+    <string name="modelgroups_save">保存</string>
+    <string name="modelgroups_back_to_list">返回模型组列表</string>
+    <string name="modelgroups_rename">重命名</string>
+    <string name="modelgroups_delete">删除</string>
+    <string name="modelgroups_delete_title">删除「%1$s」？</string>
+    <string name="modelgroups_delete_body">删除后，选了该组的地方需要重新选择模型。</string>
+    <string name="modelgroups_members_header">成员（按顺序取用）</string>
+    <string name="modelgroups_members_hint">执行时取第一个可用成员；顺序可以调整。</string>
+    <string name="modelgroups_no_members">还没有成员——点下面「添加成员」从供应商里挑模型。</string>
+    <string name="modelgroups_add_member">添加成员</string>
+    <string name="modelgroups_remove_member">移除</string>
+    <string name="modelgroups_move_up">上移</string>
+    <string name="modelgroups_move_down">下移</string>
+    <string name="modelgroups_member_count">共 %1$d 个成员</string>
+    <string name="modelgroups_member_count_with_first">共 %1$d 个成员 · 首选 %2$s / %3$s</string>
+    <string name="modelgroups_no_provider_models">没有可用的供应商模型（先去「AI 供应商」添加模型）。</string>
+    <string name="modelgroups_group_prefix_label">组：%1$s</string>
+
+    <string name="a11y_service_label">Aharou 无障碍</string>
+    <string name="a11y_service_description">让 Aharou 的 AI 助手读屏与操作界面：读取界面元素、截图、点击与滑动。</string>
+    <string name="a11y_service_summary">允许 Aharou 读取屏幕内容并执行手势</string>
+    <string name="a11y_settings_title">无障碍</string>
+    <string name="a11y_status_on_connected">已开启 · 已连接</string>
+    <string name="a11y_status_on_disconnected">已开启 · 未连接（系统可能稍后重绑）</string>
+    <string name="a11y_status_off">未开启</string>
+    <string name="a11y_intro">开启后，Agent 可以「看得懂、点得动」屏幕：读取界面元素、截图、点击与滑动。Android 不允许应用自行开启，需要你在系统设置里手动勾选。</string>
+    <string name="a11y_open_settings">去系统设置开启</string>
+    <string name="a11y_refresh">刷新状态</string>
+    <string name="a11y_oem_hint">部分国产 ROM（如 MIUI）需额外允许「自启动」并把本应用加入电池优化白名单，服务才稳定。</string>
 </resources>

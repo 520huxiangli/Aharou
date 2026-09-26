@@ -42,11 +42,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import compose.icons.feathericons.Layers
 import com.aicode.R
 import com.aicode.core.theme.Spacing
 import com.aicode.feature.onboarding.domain.OnboardingStep
 import com.aicode.feature.onboarding.presentation.onboardingTarget
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aicode.feature.settings.data.local.ModelSheetCollapseStore
+import com.aicode.feature.settings.data.repository.ModelGroupRepository
+import com.aicode.feature.settings.data.repository.ModelGroupResolver
 import com.aicode.feature.settings.domain.model.AIProviderConfig
 import com.aicode.feature.settings.domain.model.ModelMetadata
 import com.aicode.feature.settings.domain.model.modelMetadataKey
@@ -91,25 +96,37 @@ internal fun DefaultModelsSection(
 
     LaunchedEffect(Unit) { onLoadMetadata() }
 
-    val visionValue = if (visionProviderId.isBlank() || visionModel.isBlank()) {
+    // [Aharou] 模型组：本页各角色可整组选择（执行时按组内成员顺序取用）
+    val groupsViewModel: com.aicode.feature.settings.presentation.ModelGroupsViewModel = hiltViewModel()
+    val modelGroups by groupsViewModel.groups.collectAsStateWithLifecycle()
+
+    val visionValue = if (ModelGroupResolver.isGroupSelection(visionProviderId)) {
+        stringResource(R.string.modelgroups_group_prefix_label, ModelGroupResolver.groupName(visionProviderId).orEmpty())
+    } else if (visionProviderId.isBlank() || visionModel.isBlank()) {
         stringResource(R.string.settings_vision_follow_chat)
     } else {
         visionModel
     }
 
-    val compactionValue = if (compactionProviderId.isBlank() || compactionModel.isBlank()) {
+    val compactionValue = if (ModelGroupResolver.isGroupSelection(compactionProviderId)) {
+        stringResource(R.string.modelgroups_group_prefix_label, ModelGroupResolver.groupName(compactionProviderId).orEmpty())
+    } else if (compactionProviderId.isBlank() || compactionModel.isBlank()) {
         stringResource(R.string.settings_compaction_follow_chat)
     } else {
         compactionModel
     }
 
-    val titleValue = if (titleProviderId.isBlank() || titleModel.isBlank()) {
+    val titleValue = if (ModelGroupResolver.isGroupSelection(titleProviderId)) {
+        stringResource(R.string.modelgroups_group_prefix_label, ModelGroupResolver.groupName(titleProviderId).orEmpty())
+    } else if (titleProviderId.isBlank() || titleModel.isBlank()) {
         stringResource(R.string.settings_title_follow_chat)
     } else {
         titleModel
     }
 
-    val imageGenValue = if (imageGenProviderId.isBlank() || imageGenModel.isBlank()) {
+    val imageGenValue = if (ModelGroupResolver.isGroupSelection(imageGenProviderId)) {
+        stringResource(R.string.modelgroups_group_prefix_label, ModelGroupResolver.groupName(imageGenProviderId).orEmpty())
+    } else if (imageGenProviderId.isBlank() || imageGenModel.isBlank()) {
         stringResource(R.string.settings_image_gen_unconfigured)
     } else {
         imageGenModel
@@ -199,6 +216,7 @@ internal fun DefaultModelsSection(
             title = stringResource(R.string.settings_vision_model),
             noModelsText = stringResource(R.string.vision_no_models),
             providers = providers,
+            groups = modelGroups,
             currentProviderId = visionProviderId,
             currentModel = visionModel,
             modelMetadata = modelMetadata,
@@ -219,6 +237,7 @@ internal fun DefaultModelsSection(
             title = stringResource(R.string.settings_compaction_model),
             noModelsText = stringResource(R.string.compaction_no_models),
             providers = providers,
+            groups = modelGroups,
             currentProviderId = compactionProviderId,
             currentModel = compactionModel,
             modelMetadata = modelMetadata,
@@ -239,6 +258,7 @@ internal fun DefaultModelsSection(
             title = stringResource(R.string.settings_title_model),
             noModelsText = stringResource(R.string.title_no_models),
             providers = providers,
+            groups = modelGroups,
             currentProviderId = titleProviderId,
             currentModel = titleModel,
             modelMetadata = modelMetadata,
@@ -259,6 +279,7 @@ internal fun DefaultModelsSection(
             title = stringResource(R.string.settings_image_gen_model),
             noModelsText = stringResource(R.string.image_gen_no_models),
             providers = providers,
+            groups = modelGroups,
             currentProviderId = imageGenProviderId,
             currentModel = imageGenModel,
             modelMetadata = modelMetadata,
@@ -285,6 +306,7 @@ internal fun ModelSelectionSheet(
     title: String,
     noModelsText: String,
     providers: List<AIProviderConfig>,
+    groups: List<ModelGroupRepository.ModelGroup> = emptyList(),
     currentProviderId: String,
     currentModel: String,
     modelMetadata: Map<String, ModelMetadata>,
@@ -311,6 +333,46 @@ internal fun ModelSelectionSheet(
                 .padding(bottom = Spacing.lg),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
+            // [Aharou] 模型组：整组选择（执行时按组内成员顺序取用）
+            if (groups.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = stringResource(R.string.modelgroups_title),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = Spacing.lg, top = Spacing.sm, bottom = 2.dp),
+                    )
+                    groups.forEach { group ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(ModelGroupRepository.GROUP_PREFIX + group.id, "") }
+                                .padding(horizontal = Spacing.lg, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = FeatherIcons.Layers,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = group.name,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = stringResource(R.string.modelgroups_member_count, group.members.size),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                SettingsDivider()
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

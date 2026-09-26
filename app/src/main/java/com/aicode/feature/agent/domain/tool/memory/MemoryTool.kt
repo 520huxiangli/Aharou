@@ -22,7 +22,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 class MemoryTool @Inject constructor(
-    private val memoryRepository: MemoryRepository
+    private val memoryRepository: MemoryRepository,
+    private val aharouMemory: com.aicode.core.memory.AharouMemoryStore,
 ) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
@@ -39,7 +40,7 @@ class MemoryTool @Inject constructor(
         }
     }
     override val description =
-        "管理 AI 的长期记忆（读取/保存/局部编辑/删除/列表）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+        "管理 AI 的长期记忆（read/save/edit/delete/list；log=追加每日日志；fact=追加事实库）。发现新的用户偏好、项目约定或架构决策时主动记录。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -66,7 +67,7 @@ class MemoryTool @Inject constructor(
             name = "action",
             type = ParameterType.STRING,
             description = "操作类型：read=读取记忆正文；save=保存（创建或全量覆盖）；edit=局部编辑已有正文；delete=删除；list=列出所有记忆摘要",
-            enum = listOf("read", "save", "edit", "delete", "list"),
+            enum = listOf("read", "save", "edit", "delete", "list", "log", "fact"),
             required = true
         ),
         "name" to ToolParameter(
@@ -122,6 +123,8 @@ class MemoryTool @Inject constructor(
                 "save" -> handleSave(args, memoryName, scope, context.projectRoot)
                 "edit" -> handleEdit(args, memoryName, scope, context.projectRoot)
                 "delete" -> handleDelete(memoryName, scope, context.projectRoot)
+                "log" -> handleDailyLog(args)
+                "fact" -> handleFact(args)
                 else -> ToolResult.Error("不支持的操作: $action", "UNSUPPORTED_ACTION")
             }
         } catch (e: Exception) {
@@ -205,5 +208,21 @@ class MemoryTool @Inject constructor(
         } else {
             ToolResult.Error("删除失败，记忆「$name」可能不存在于该作用域。", "DELETE_FAILED")
         }
+    }
+
+    /** 追加每日日志（Aharou 记忆：按天归档的流水笔记）。 */
+    private fun handleDailyLog(args: Map<String, JsonElement>): ToolResult {
+        val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
+        if (content.isNullOrEmpty()) return ToolResult.Error("log 操作需要 content 参数", "MISSING_CONTENT")
+        val file = aharouMemory.appendDailyLog(content)
+        return ToolResult.Success(JsonPrimitive("已写入每日日志：${file.name}"))
+    }
+
+    /** 追加一条事实（Aharou 记忆：结构化事实库）。 */
+    private fun handleFact(args: Map<String, JsonElement>): ToolResult {
+        val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
+        if (content.isNullOrEmpty()) return ToolResult.Error("fact 操作需要 content 参数", "MISSING_CONTENT")
+        aharouMemory.appendFact(content, source = "agent")
+        return ToolResult.Success(JsonPrimitive("已写入事实库。"))
     }
 }
