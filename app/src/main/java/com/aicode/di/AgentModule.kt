@@ -78,6 +78,7 @@ import com.aicode.feature.agent.domain.notification.DefaultAgentEventInjector
 import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aicode.feature.agent.domain.session.SessionUseCase
 import com.aicode.feature.agent.domain.tool.config.ConfigTool
+import com.aicode.feature.agent.domain.tool.a11y.A11yTool
 import com.aicode.feature.agent.domain.tool.vdisplay.VdTool
 import com.aicode.feature.agent.domain.tool.mcp.ManageMcpTool
 import com.aicode.feature.agent.domain.tool.memory.MemoryTool
@@ -292,7 +293,8 @@ object AgentModule {
         messageParentTool: MessageParentTool,
         browserTool: BrowserTool,
         configTool: ConfigTool,
-        vdTool: VdTool
+        vdTool: VdTool,
+        a11yTool: A11yTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -319,6 +321,7 @@ object AgentModule {
             register("browser", browserTool)
             register("config", configTool)
             register("vscreen", vdTool)
+            register("a11y", a11yTool)
         }
     }
 

@@ -497,7 +497,7 @@ object SystemPromptBuilder {
         val soulEditHint =
             "---\n" +
             "SOUL.md fields (name / icon / style / lang / body) can be edited two ways:\n" +
-            "1. Tool: call `aharou-config` to propose changes (user must approve).\n" +
+            "1. Tool: call `config` to propose changes (user must approve).\n" +
             "2. UI: ask the user to go to Settings → Soul to edit directly.\n" +
             "Pick whichever the user finds easier in context. Do not say you cannot change your personality."
 

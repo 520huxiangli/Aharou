@@ -18,6 +18,7 @@ object ConfigBuiltins {
 
     fun registerInto(registry: ConfigRegistry, context: Context) {
         val appContext = context.applicationContext
+        val memoryStore = com.aicode.core.memory.AharouMemoryStore(appContext)
 
         registry.register(
             ClosureField(
@@ -116,6 +117,22 @@ object ConfigBuiltins {
                         ?: throw ConfigError.TypeMismatch("string")
                     val current = SoulStore.load(appContext) ?: SoulFile(SoulMetadata.DEFAULT, "")
                     SoulStore.save(appContext, current.copy(metadata = current.metadata.copy(lang = lang)))
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "memory.core",
+                displayName = "核心档案",
+                description = "长期记忆的核心档案（CORE.md）——会注入系统提示；也可直接编辑容器内 /root/.aharou/memory/CORE.md。",
+                valueSchema = ConfigSchema.Str(maxLength = 20000),
+                revertable = true,
+                reader = { ConfigValue.Str(memoryStore.readCore().orEmpty()) },
+                writer = { v ->
+                    val text = (v as? ConfigValue.Str)?.value
+                        ?: throw ConfigError.TypeMismatch("string")
+                    memoryStore.writeCore(text)
                 },
             ),
         )

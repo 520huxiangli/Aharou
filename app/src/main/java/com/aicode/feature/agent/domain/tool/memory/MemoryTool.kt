@@ -40,7 +40,7 @@ class MemoryTool @Inject constructor(
         }
     }
     override val description =
-        "管理 AI 的长期记忆（read/save/edit/delete/list；log=追加每日日志；fact=追加事实库）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+        "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案）。发现新的用户偏好、项目约定或架构决策时主动记录。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -67,7 +67,7 @@ class MemoryTool @Inject constructor(
             name = "action",
             type = ParameterType.STRING,
             description = "操作类型：read=读取记忆正文；save=保存（创建或全量覆盖）；edit=局部编辑已有正文；delete=删除；list=列出所有记忆摘要",
-            enum = listOf("read", "save", "edit", "delete", "list", "log", "fact"),
+            enum = listOf("read", "save", "edit", "delete", "list", "log", "fact", "mindstream", "core"),
             required = true
         ),
         "name" to ToolParameter(
@@ -125,6 +125,8 @@ class MemoryTool @Inject constructor(
                 "delete" -> handleDelete(memoryName, scope, context.projectRoot)
                 "log" -> handleDailyLog(args)
                 "fact" -> handleFact(args)
+                "mindstream" -> handleMindstream(args)
+                "core" -> handleCore(args)
                 else -> ToolResult.Error("不支持的操作: $action", "UNSUPPORTED_ACTION")
             }
         } catch (e: Exception) {
@@ -224,5 +226,24 @@ class MemoryTool @Inject constructor(
         if (content.isNullOrEmpty()) return ToolResult.Error("fact 操作需要 content 参数", "MISSING_CONTENT")
         aharouMemory.appendFact(content, source = "agent")
         return ToolResult.Success(JsonPrimitive("已写入事实库。"))
+    }
+
+    /** 追加心流（顺滑记录当下的想法/情绪）。 */
+    private fun handleMindstream(args: Map<String, JsonElement>): ToolResult {
+        val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
+        if (content.isNullOrEmpty()) return ToolResult.Error("mindstream 操作需要 content 参数", "MISSING_CONTENT")
+        aharouMemory.appendMindstream(content)
+        return ToolResult.Success(JsonPrimitive("已写入心流。"))
+    }
+
+    /** 读/写核心档案（CORE.md）：带 content = 覆盖写入；不带 = 读取。 */
+    private fun handleCore(args: Map<String, JsonElement>): ToolResult {
+        val content = args["content"]?.jsonPrimitive?.contentOrNull
+        if (content.isNullOrEmpty()) {
+            val current = aharouMemory.readCore().orEmpty()
+            return ToolResult.Success(JsonPrimitive(if (current.isEmpty()) "（核心档案为空）" else current))
+        }
+        aharouMemory.writeCore(content)
+        return ToolResult.Success(JsonPrimitive("已更新核心档案。"))
     }
 }

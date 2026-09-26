@@ -138,6 +138,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var modelGroupRepository: com.aicode.feature.settings.data.repository.ModelGroupRepository
 
+    /** 应用设置字段注册（语言等）：Agent 经配置通道即可改动，无需任何系统权限。 */
+    @Inject
+    lateinit var configAppFields: com.aicode.feature.settings.data.ConfigAppFields
+
     /** MCP 配置仓库：启动即监听 mcp.json 外部直接编辑，改动数秒内刷新列表并触发重连。 */
     @Inject
     lateinit var mcpConfigRepository: com.aicode.feature.agent.domain.mcp.McpConfigRepository
@@ -213,6 +217,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         logDeviceInfo()
         // Aharou 配置通道 + 人格（SOUL.md）：初始化注册表/审计；首次运行释放默认模板文件（外置可改）
         com.aicode.core.config.ConfigRegistry.init(this)
+        // 应用设置字段（app.*）注册：Agent 经配置通道改自身设置（无系统权限依赖）
+        configAppFields.registerInto(com.aicode.core.config.ConfigRegistry.get())
         com.aicode.core.config.audit.ConfigAuditLog.init(this)
         com.aicode.core.soul.SoulStore.ensureExists(this)
         // 读取 SOUL.md 到缓存（聊天身份行用）；改名/改图标后由保存路径刷新。

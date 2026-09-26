@@ -103,6 +103,17 @@ class AharouMemoryStore @Inject constructor(
         return target.takeIf { it.exists() }?.readText()
     }
 
+    /** 读核心档案（CORE.md）。 */
+    fun readCore(): String? = File(dir, "CORE.md").takeIf { it.exists() }?.readText()
+
+    /** 覆盖写核心档案（CORE.md）。 */
+    fun writeCore(text: String) {
+        runCatching {
+            dir.mkdirs()
+            File(dir, "CORE.md").writeText(text)
+        }.onFailure { FileLogger.w(TAG, "writeCore failed: ${it.message}") }
+    }
+
     /**
      * 组装注入系统提示词的记忆段：核心档案 + 全局记忆 + 今天日志的尾巴。
      * 全部为空时返回 null（不注入任何东西）。
