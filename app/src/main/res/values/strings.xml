@@ -1814,4 +1814,50 @@
     <string name="a11y_open_settings">去系统设置开启</string>
     <string name="a11y_refresh">刷新状态</string>
     <string name="a11y_oem_hint">部分国产 ROM（如 MIUI）需额外允许「自启动」并把本应用加入电池优化白名单，服务才稳定。</string>
+    <!-- ── 权限总览 + 悬浮窗 + 记忆 ── -->
+    <string name="permissions_runtime_header">运行时权限</string>
+    <string name="permissions_special_header">特殊权限与白名单</string>
+    <string name="permissions_open_settings">去设置</string>
+    <string name="permissions_camera">相机</string>
+    <string name="permissions_camera_desc">拍照 / 扫码等视觉能力</string>
+    <string name="permissions_mic">麦克风</string>
+    <string name="permissions_mic_desc">语音输入 / 录音</string>
+    <string name="permissions_location">位置</string>
+    <string name="permissions_location_desc">获取当前位置（精确定位）</string>
+    <string name="permissions_contacts">通讯录</string>
+    <string name="permissions_contacts_desc">读取联系人</string>
+    <string name="permissions_calendar">日历</string>
+    <string name="permissions_calendar_desc">读取日程</string>
+    <string name="permissions_phone">电话状态</string>
+    <string name="permissions_phone_desc">读取设备与通话状态</string>
+    <string name="permissions_grant_all">一键申请全部运行时权限</string>
+    <string name="permissions_overlay">悬浮窗</string>
+    <string name="permissions_overlay_desc">在其他应用上层显示（状态胶囊）</string>
+    <string name="permissions_all_files">所有文件访问</string>
+    <string name="permissions_all_files_desc">访问整个存储空间（Android 11+）</string>
+    <string name="permissions_write_settings">修改系统设置</string>
+    <string name="permissions_write_settings_desc">允许改动部分系统设置项</string>
+    <string name="permissions_battery_whitelist">电池优化白名单</string>
+    <string name="permissions_battery_whitelist_desc">查看 / 管理全部应用的电池优化白名单</string>
+    <string name="permissions_usage_access">使用情况访问</string>
+    <string name="permissions_usage_access_desc">读取应用使用统计（统计 / 自动化用）</string>
+
+    <string name="floating_title">悬浮窗</string>
+    <string name="floating_enable">启用悬浮窗</string>
+    <string name="floating_hint">开启后：Agent 干活时，屏幕上会飘出一枚实时状态小胶囊（工具名 + 状态），点一下回到 Aharou，可拖动摆放；Aharou 在前台时自动隐藏。</string>
+    <string name="floating_grant">悬浮窗权限</string>
+    <string name="floating_status_granted">已授权</string>
+    <string name="floating_status_denied">未授权</string>
+    <string name="floating_oem_hint">部分国产 ROM 还需允许「后台弹出界面」并保持自启动（见「软件权限」页），悬浮窗才能稳定。</string>
+
+    <string name="memory_settings_title">记忆</string>
+    <string name="memory_toggle_title">默认启用记忆</string>
+    <string name="memory_toggle_subtitle">关闭后，新会话不再注入核心档案与每日日志（已有会话不受影响）</string>
+    <string name="memory_files_header">文件</string>
+    <string name="memory_empty">还没有记忆文件</string>
+    <string name="memory_back">返回记忆列表</string>
+    <string name="memory_delete">删除</string>
+    <string name="memory_delete_title">删除「%1$s」？</string>
+    <string name="memory_delete_body">删除后不可恢复；相关记忆将不再注入。</string>
+    <string name="memory_read_error">读不出这个文件（可能过大或已删除）</string>
 </resources>

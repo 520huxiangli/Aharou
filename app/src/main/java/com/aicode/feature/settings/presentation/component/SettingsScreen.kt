@@ -116,6 +116,7 @@ import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Server
 import compose.icons.feathericons.Shield
+import compose.icons.feathericons.Smartphone
 import compose.icons.feathericons.Sliders
 import compose.icons.feathericons.Terminal
 import compose.icons.feathericons.Trash2
@@ -150,6 +151,8 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     EnvVars(R.string.envvars_title),
     ModelGroups(R.string.modelgroups_title),
     Accessibility(R.string.a11y_settings_title),
+    FloatingWindow(R.string.floating_title),
+    Memory(R.string.memory_settings_title),
     General(R.string.settings_general),
     Providers(R.string.settings_providers),
     ProviderEditor(R.string.settings_provider_editor),
@@ -767,6 +770,8 @@ fun SettingsScreen(
                 SettingsSection.EnvVars -> EnvVarsSection()
                 SettingsSection.ModelGroups -> ModelGroupsSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
+                SettingsSection.FloatingWindow -> FloatingWindowSection()
+                SettingsSection.Memory -> MemorySection()
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
                     onToggleAutoRemoveStaleModels = { viewModel.setAutoRemoveStaleModels(it) },
@@ -1448,6 +1453,12 @@ internal fun SettingsMenu(
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.Smartphone,
+                title = stringResource(SettingsSection.FloatingWindow.titleRes),
+                onClick = { onOpen(SettingsSection.FloatingWindow) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.RefreshCw,
                 title = stringResource(SettingsSection.BackgroundRun.titleRes),
                 onClick = { onOpen(SettingsSection.BackgroundRun) }
@@ -1467,6 +1478,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.PieChart,
                 title = stringResource(SettingsSection.Storage.titleRes),
                 onClick = { onOpen(SettingsSection.Storage) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.BookOpen,
+                title = stringResource(SettingsSection.Memory.titleRes),
+                onClick = { onOpen(SettingsSection.Memory) }
             )
             SettingsDivider()
             SettingsRow(

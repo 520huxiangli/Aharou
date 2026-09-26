@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -36,6 +37,16 @@ import com.aicode.core.theme.Spacing
 import com.aicode.feature.agent.domain.shizuku.ShizukuState
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
+import compose.icons.feathericons.Calendar
+import compose.icons.feathericons.Camera
+import compose.icons.feathericons.Clock
+import compose.icons.feathericons.HardDrive
+import compose.icons.feathericons.MapPin
+import compose.icons.feathericons.Mic
+import compose.icons.feathericons.Phone
+import compose.icons.feathericons.Sliders
+import compose.icons.feathericons.Smartphone
+import compose.icons.feathericons.Users
 import compose.icons.feathericons.Download
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Power
@@ -95,6 +106,168 @@ internal fun AppPermissionsSection(
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        // ── [Aharou] 运行时权限总览 ──
+        var permsTick by remember { mutableStateOf(0) }
+        LifecycleResumeEffect(Unit) {
+            permsTick++
+            onPauseOrDispose { }
+        }
+        val runtimePermLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { permsTick++ }
+        fun permGranted(permission: String): Boolean =
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+        val runtimePermRows = listOf(
+            RuntimePermRow(Manifest.permission.CAMERA, R.string.permissions_camera, R.string.permissions_camera_desc, FeatherIcons.Camera),
+            RuntimePermRow(Manifest.permission.RECORD_AUDIO, R.string.permissions_mic, R.string.permissions_mic_desc, FeatherIcons.Mic),
+            RuntimePermRow(Manifest.permission.ACCESS_FINE_LOCATION, R.string.permissions_location, R.string.permissions_location_desc, FeatherIcons.MapPin),
+            RuntimePermRow(Manifest.permission.READ_CONTACTS, R.string.permissions_contacts, R.string.permissions_contacts_desc, FeatherIcons.Users),
+            RuntimePermRow(Manifest.permission.READ_CALENDAR, R.string.permissions_calendar, R.string.permissions_calendar_desc, FeatherIcons.Calendar),
+            RuntimePermRow(Manifest.permission.READ_PHONE_STATE, R.string.permissions_phone, R.string.permissions_phone_desc, FeatherIcons.Phone),
+        )
+        // 读取 tick 以订阅「从系统页返回 / 申请回调」后的状态刷新
+        permsTick.let { }
+
+        SettingsGroupHeader(text = stringResource(R.string.permissions_runtime_header))
+        SettingsGroup {
+            runtimePermRows.forEachIndexed { index, row ->
+                if (index > 0) SettingsDivider()
+                val grantedNow = permGranted(row.permission)
+                SettingsRow(
+                    icon = row.icon,
+                    title = stringResource(row.titleRes),
+                    subtitle = stringResource(row.descRes),
+                    onClick = {
+                        if (!grantedNow) {
+                            if (!shouldShowRationale(context, row.permission)) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                }
+                            } else {
+                                runtimePermLauncher.launch(arrayOf(row.permission))
+                            }
+                        }
+                    },
+                    trailing = { PermissionStatusText(allowed = grantedNow) }
+                )
+            }
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
+                title = stringResource(R.string.permissions_grant_all),
+                onClick = {
+                    val missing = runtimePermRows.map { it.permission }.filter { !permGranted(it) }
+                    if (missing.isNotEmpty()) runtimePermLauncher.launch(missing.toTypedArray())
+                }
+            )
+        }
+
+        // ── [Aharou] 特殊系统权限 + 保活白名单 ──
+        SettingsGroupHeader(text = stringResource(R.string.permissions_special_header))
+        SettingsGroup {
+            val overlayGranted = Settings.canDrawOverlays(context)
+            SettingsRow(
+                icon = FeatherIcons.Smartphone,
+                title = stringResource(R.string.permissions_overlay),
+                subtitle = stringResource(R.string.permissions_overlay_desc),
+                onClick = {
+                    if (!overlayGranted) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    }
+                },
+                trailing = { PermissionStatusText(allowed = overlayGranted) }
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                SettingsDivider()
+                val allFilesGranted = Environment.isExternalStorageManager()
+                SettingsRow(
+                    icon = FeatherIcons.HardDrive,
+                    title = stringResource(R.string.permissions_all_files),
+                    subtitle = stringResource(R.string.permissions_all_files_desc),
+                    onClick = {
+                        if (!allFilesGranted) {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    trailing = { PermissionStatusText(allowed = allFilesGranted) }
+                )
+            }
+            SettingsDivider()
+            val writeSettingsGranted = Settings.System.canWrite(context)
+            SettingsRow(
+                icon = FeatherIcons.Sliders,
+                title = stringResource(R.string.permissions_write_settings),
+                subtitle = stringResource(R.string.permissions_write_settings_desc),
+                onClick = {
+                    if (!writeSettingsGranted) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    }
+                },
+                trailing = { PermissionStatusText(allowed = writeSettingsGranted) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Power,
+                title = stringResource(R.string.permissions_battery_whitelist),
+                subtitle = stringResource(R.string.permissions_battery_whitelist_desc),
+                onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                },
+                trailing = {
+                    Text(
+                        text = stringResource(R.string.permissions_open_settings),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Clock,
+                title = stringResource(R.string.permissions_usage_access),
+                subtitle = stringResource(R.string.permissions_usage_access_desc),
+                onClick = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                },
+                trailing = {
+                    Text(
+                        text = stringResource(R.string.permissions_open_settings),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+        }
+
         SettingsGroupHeader(text = stringResource(R.string.settings_category_system_permissions))
         SettingsGroup {
             SettingsRow(
@@ -371,3 +544,11 @@ private fun isIgnoringBatteryOptimizations(context: android.content.Context): Bo
     val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
     return pm.isIgnoringBatteryOptimizations(context.packageName)
 }
+
+/** [Aharou] 权限总览行定义。 */
+private data class RuntimePermRow(
+    val permission: String,
+    @StringRes val titleRes: Int,
+    @StringRes val descRes: Int,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+)

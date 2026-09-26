@@ -45,6 +45,39 @@ class AharouMemoryStore @Inject constructor(
     /** 记忆根目录（宿主侧；容器内 = /root/.aharou/memory）。 */
     val dir: File = File(File(context.filesDir, "aharou-global"), "memory")
 
+    // ── 记忆管理（设置页用） ──
+    private val prefs = context.getSharedPreferences("aharou_memory_prefs", Context.MODE_PRIVATE)
+
+    /** 默认启用记忆：关闭后提示词不再注入核心档案与每日日志。 */
+    fun isMemoryEnabled(): Boolean = prefs.getBoolean("default_enabled", true)
+
+    fun setMemoryEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("default_enabled", enabled).apply()
+    }
+
+    data class MemoryFileInfo(val name: String, val sizeBytes: Long, val modifiedAt: Long)
+
+    /** 列出记忆目录下全部文件（按修改时间倒序）。 */
+    fun listFiles(): List<MemoryFileInfo> =
+        (dir.listFiles() ?: emptyArray()).filter { it.isFile }
+            .map { MemoryFileInfo(it.name, it.length(), it.lastModified()) }
+            .sortedByDescending { it.modifiedAt }
+
+    /** 读取记忆文件（拒绝路径穿越）。 */
+    fun readFile(name: String): String? {
+        if (name.contains('/') || name.contains("..")) return null
+        val target = File(dir, name)
+        return target.takeIf { it.exists() && it.isFile }?.let {
+            runCatching { it.readText() }.getOrNull()
+        }
+    }
+
+    /** 删除记忆文件（拒绝路径穿越）。 */
+    fun deleteFile(name: String): Boolean {
+        if (name.contains('/') || name.contains("..")) return false
+        return runCatching { File(dir, name).delete() }.getOrDefault(false)
+    }
+
     fun ensureExists() {
         runCatching {
             dir.mkdirs()
@@ -119,6 +152,7 @@ class AharouMemoryStore @Inject constructor(
      * 全部为空时返回 null（不注入任何东西）。
      */
     fun buildPromptSection(): String? {
+        if (!isMemoryEnabled()) return null
         ensureExists()
         val sb = StringBuilder()
         val core = File(dir, "CORE.md").takeIf { it.exists() }?.readText()?.trim()

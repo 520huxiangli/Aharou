@@ -739,6 +739,7 @@ class AIAgentViewModel @Inject constructor(
     private fun setRunningTool(sessionId: String, msgId: String, tool: RunningToolOutput) {
         val sessionTools = _runningTools.value[sessionId] ?: emptyMap()
         _runningTools.value = _runningTools.value + (sessionId to (sessionTools + (msgId to tool)))
+        syncRuntimeStatus()
     }
 
     /** 移除一个运行中工具；会话无剩余运行工具时清除该会话条目。 */
@@ -750,6 +751,18 @@ class AIAgentViewModel @Inject constructor(
         } else {
             _runningTools.value + (sessionId to updated)
         }
+        syncRuntimeStatus()
+    }
+
+    /** 同步全局运行状态（悬浮窗等系统级 UI 读取；进程内零权限）。 */
+    private fun syncRuntimeStatus() {
+        val all = _runningTools.value.values.flatMap { it.values }
+        val last = all.lastOrNull()
+        com.aicode.feature.agent.domain.runtime.AgentRuntimeStatus.set(
+            busy = all.isNotEmpty(),
+            toolName = last?.toolName.orEmpty(),
+            statusText = last?.text.orEmpty(),
+        )
     }
 
     private val _preparingTools = MutableStateFlow<Map<String, String>>(emptyMap())
