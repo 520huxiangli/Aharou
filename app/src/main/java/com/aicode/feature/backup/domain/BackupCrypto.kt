@@ -225,7 +225,7 @@ object BackupCrypto {
         var read = 0
         while (read < len) {
             val n = input.read(buffer, offset + read, len - read)
-            if (n < 0) throw IllegalArgumentException("不是有效的加密 AiCode 备份文件")
+            if (n < 0) throw IllegalArgumentException("不是有效的加密 Aharou 备份文件")
             read += n
         }
     }

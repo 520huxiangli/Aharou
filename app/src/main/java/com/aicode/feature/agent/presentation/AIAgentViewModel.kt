@@ -164,7 +164,7 @@ class AIAgentViewModel @Inject constructor(
      */
     private val wakeLock by lazy {
         (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AiCode:AgentWorkflow")
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Aharou:AgentWorkflow")
             .apply { setReferenceCounted(false) }
     }
 

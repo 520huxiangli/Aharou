@@ -229,7 +229,7 @@ class BackupManagerImpl @Inject constructor(
                 if (pw != null) {
                     "备份文件已损坏，或口令与备份文件不匹配"
                 } else {
-                    "不是有效的 AiCode 备份文件；如果这是加密备份，请输入导出口令"
+                    "不是有效的 Aharou 备份文件；如果这是加密备份，请输入导出口令"
                 },
                 e
             )
@@ -504,7 +504,7 @@ class BackupManagerImpl @Inject constructor(
         }
         val meta = metadata ?: run {
             FileLogger.e(TAG, "导入失败：tar 中缺少 metadata.json")
-            error("不是有效的 AiCode 备份文件：缺少 metadata.json")
+            error("不是有效的 Aharou 备份文件：缺少 metadata.json")
         }
         FileLogger.i(TAG, "tar 解析完成，开始还原元数据段")
         return stats + restoreMeta(meta)
