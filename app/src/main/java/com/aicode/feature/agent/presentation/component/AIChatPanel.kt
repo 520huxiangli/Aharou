@@ -417,6 +417,25 @@ fun AIChatPanel(
     val agentState by viewModel.agentState.collectAsStateWithLifecycle()
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
     val messages = messagesState.messages
+
+    // [Aharou] Minis Computer：点工具行掀开"电脑"详情面板
+    val computerOpenTarget by ToolComputerSignal.target.collectAsStateWithLifecycle()
+    var computerSheetMessageId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(computerOpenTarget) {
+        val target = computerOpenTarget ?: return@LaunchedEffect
+        computerSheetMessageId = target
+        ToolComputerSignal.consume()
+    }
+    val computerSheetTarget = computerSheetMessageId
+    if (computerSheetTarget != null) {
+        MinisComputerSheet(
+            messages = messages,
+            initialMessageId = computerSheetTarget,
+            browserPool = viewModel.browserTabPool,
+            onDismiss = { computerSheetMessageId = null },
+        )
+    }
+
     val pendingScroll by viewModel.pendingScrollMessage.collectAsStateWithLifecycle()
 
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()

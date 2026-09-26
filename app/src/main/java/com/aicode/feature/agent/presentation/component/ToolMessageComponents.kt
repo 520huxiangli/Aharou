@@ -189,12 +189,8 @@ internal fun ToolMessageBody(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = ChatStyle.toolRowMinHeight)
-                .then(
-                    if (expandable) Modifier.clickable {
-                        onExpandedChange?.invoke(!effectiveExpanded)
-                        onToggle?.invoke()
-                    } else Modifier
-                ),
+                // [Aharou] 点工具行 → 掀开「Minis Computer」面板；内联展开交给行尾箭头。
+                .clickable { ToolComputerSignal.request(message.id) },
             verticalAlignment = Alignment.CenterVertically
         ) {
             ToolStatusIcon(running = running, isError = message.isError, toolName = message.toolName)
@@ -308,12 +304,23 @@ internal fun ToolMessageBody(
                 }
             }
             if (expandable) {
-                Icon(
-                    if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
-                    contentDescription = if (effectiveExpanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
-                    tint = Brand.IconGray,
-                    modifier = Modifier.size(18.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            onExpandedChange?.invoke(!effectiveExpanded)
+                            onToggle?.invoke()
+                        }
+                        .padding(6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                        contentDescription = if (effectiveExpanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
+                        tint = Brand.IconGray,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
         }
         if (streaming) {
