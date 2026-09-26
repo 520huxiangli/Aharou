@@ -33,6 +33,19 @@ class ContainerInstaller @Inject constructor(
 ) {
     companion object {
         private const val TAG = "ContainerInstaller"
+
+        /** [Aharou 改名] 旧目录 filesDir/aicode 首次访问时迁移到 filesDir/aharou（只搬不删；rename 失败则复制兜底）。 */
+        fun migrateLegacyDir(context: Context): File {
+            val newDir = File(context.filesDir, "aharou")
+            val oldDir = File(context.filesDir, "aicode")
+            if (!newDir.exists() && oldDir.exists()) {
+                if (!oldDir.renameTo(newDir)) {
+                    runCatching { oldDir.copyRecursively(newDir, overwrite = false) }
+                }
+            }
+            return newDir
+        }
+
         @Volatile private var docsExtractedSession = false
 
         /**
@@ -43,7 +56,7 @@ class ContainerInstaller @Inject constructor(
          */
         fun extractDocs(context: Context) {
             if (docsExtractedSession) return
-            val destDir = File(aicodeDir, "docs")
+            val destDir = File(ContainerInstaller.migrateLegacyDir(context), "docs")
             runCatching {
                 destDir.deleteRecursively()
                 destDir.mkdirs()
@@ -61,7 +74,7 @@ class ContainerInstaller @Inject constructor(
          * 故用户重写的片段不会被升级覆盖。参见 [com.aharou.feature.agent.domain.prompt.SystemPromptProvider]。
          */
         fun extractPrompts(context: Context) {
-            val destDir = File(aicodeDir, "prompts")
+            val destDir = File(ContainerInstaller.migrateLegacyDir(context), "prompts")
             destDir.mkdirs()
             runCatching {
                 extractAssetsRecursive(context, "prompts", destDir)
@@ -93,7 +106,7 @@ class ContainerInstaller @Inject constructor(
          * 若文件已存在则不覆盖，以保留用户的修改与删除后的重建选择。
          */
         fun extractAgents(context: Context) {
-            val destDir = File(aicodeDir, "agents")
+            val destDir = File(ContainerInstaller.migrateLegacyDir(context), "agents")
             destDir.mkdirs()
             runCatching {
                 val entries = context.assets.list("agents") ?: return@runCatching
@@ -115,7 +128,7 @@ class ContainerInstaller @Inject constructor(
          * 若文件已存在则不覆盖，以保留用户的修改。
          */
         fun extractScripts(context: Context) {
-            val destDir = File(aicodeDir, "scripts")
+            val destDir = File(ContainerInstaller.migrateLegacyDir(context), "scripts")
             destDir.mkdirs()
             runCatching {
                 val entries = context.assets.list("aicode/scripts") ?: return@runCatching
@@ -145,7 +158,7 @@ class ContainerInstaller @Inject constructor(
          * git 仍能裸跑报认证失败，不致命）。
          */
         fun extractCredentialHelper(context: Context) {
-            val dest = File(aicodeDir, "git-credential-aicode")
+            val dest = File(ContainerInstaller.migrateLegacyDir(context), "git-credential-aicode")
             runCatching {
                 dest.parentFile?.mkdirs()
                 context.assets.open("aicode/git-credential-aicode").use { input ->
@@ -170,7 +183,7 @@ class ContainerInstaller @Inject constructor(
          * 缺脚本时初始化菜单不会出现，用户可手动安装基础工具。
          */
         fun extractProvisionScript(context: Context) {
-            val dest = File(aicodeDir, "provision.sh")
+            val dest = File(ContainerInstaller.migrateLegacyDir(context), "provision.sh")
             runCatching {
                 dest.parentFile?.mkdirs()
                 context.assets.open("aicode/provision.sh").use { input ->
@@ -194,8 +207,8 @@ class ContainerInstaller @Inject constructor(
          */
         fun extractEnvTool(context: Context) {
             runCatching {
-                extractDirOverwrite(context, "aicode/bin", File(aicodeDir, "bin"), executable = true)
-                extractDirOverwrite(context, "aicode/lib", File(aicodeDir, "lib"), executable = false)
+                extractDirOverwrite(context, "aicode/bin", File(ContainerInstaller.migrateLegacyDir(context), "bin"), executable = true)
+                extractDirOverwrite(context, "aicode/lib", File(ContainerInstaller.migrateLegacyDir(context), "lib"), executable = false)
             }.onFailure {
                 FileLogger.w(TAG, "提取环境工具失败: ${it.message}", it)
             }
@@ -270,17 +283,7 @@ class ContainerInstaller @Inject constructor(
      * 绑定到容器内 `/root/.aicode`，故 AI / 终端看到的 `/root/.aicode` 实际落在这里。
      */
     val aicodeDir: File
-        get() {
-            val newDir = File(context.filesDir, "aharou")
-            val oldDir = aicodeDir
-            // [Aharou 改名] 旧目录首次访问时迁移到新名（只搬不删；rename 失败则复制兜底）。
-            if (!newDir.exists() && oldDir.exists()) {
-                if (!oldDir.renameTo(newDir)) {
-                    runCatching { oldDir.copyRecursively(newDir, overwrite = false) }
-                }
-            }
-            return newDir
-        }
+        get() = migrateLegacyDir(context)
 
     /**
      * proot 全套所在目录：APK 内 `lib/<abi>/lib*.so` 由安装器解压到此（见 build.gradle.kts 的
