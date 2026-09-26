@@ -103,6 +103,7 @@ import compose.icons.feathericons.Globe
 import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Info
+import compose.icons.feathericons.Key
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Moon
@@ -144,6 +145,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Soul(R.string.soul_settings_title),
     ConfigAudit(R.string.config_audit_title),
     ShadowScreen(R.string.vd_settings_title),
+    EnvVars(R.string.envvars_title),
     General(R.string.settings_general),
     Providers(R.string.settings_providers),
     ProviderEditor(R.string.settings_provider_editor),
@@ -758,6 +760,7 @@ fun SettingsScreen(
                 SettingsSection.Soul -> SoulSettingsSection()
                 SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.ShadowScreen -> ShadowScreenSection()
+                SettingsSection.EnvVars -> EnvVarsSection()
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
                     onToggleAutoRemoveStaleModels = { viewModel.setAutoRemoveStaleModels(it) },
@@ -1402,6 +1405,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.Monitor,
                 title = stringResource(SettingsSection.ShadowScreen.titleRes),
                 onClick = { onOpen(SettingsSection.ShadowScreen) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Key,
+                title = stringResource(SettingsSection.EnvVars.titleRes),
+                onClick = { onOpen(SettingsSection.EnvVars) }
             )
         }
 

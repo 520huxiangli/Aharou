@@ -1762,4 +1762,21 @@
     <string name="vd_start">Start</string>
     <string name="vd_stop">Stop</string>
     <string name="vd_shizuku_hint">Requires Shizuku ready (currently: %1$s)</string>
+    <string name="envvars_title">Environment variables</string>
+    <string name="envvars_intro">Custom variables are injected into all commands and terminals inside the container (values are encrypted at rest; masked in the list by default).</string>
+    <string name="envvars_list_header">Variables</string>
+    <string name="envvars_add">Add variable</string>
+    <string name="envvars_edit_title">Edit variable</string>
+    <string name="envvars_name">Name</string>
+    <string name="envvars_value">Value</string>
+    <string name="envvars_secret">Secret (mask in list)</string>
+    <string name="envvars_save">Save</string>
+    <string name="envvars_delete">Delete</string>
+    <string name="envvars_delete_title">Delete \"%1$s\"?</string>
+    <string name="envvars_delete_body">New commands inside the container will no longer see this variable.</string>
+    <string name="envvars_empty">No custom environment variables yet</string>
+    <string name="envvars_error_empty">Name cannot be empty</string>
+    <string name="envvars_error_format">Name must be letters / digits / underscore (cannot start with a digit)</string>
+    <string name="envvars_error_reserved">\"%1$s\" is a reserved container variable</string>
+    <string name="envvars_error_duplicate">A variable with this name already exists</string>
 </resources>

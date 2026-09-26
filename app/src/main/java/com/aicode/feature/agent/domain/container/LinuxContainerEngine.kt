@@ -74,6 +74,7 @@ data class ProotInvocation(
 @Singleton
 class LinuxContainerEngine @Inject constructor(
     @param:ApplicationContext private val context: android.content.Context,
+    private val envVarRepository: com.aicode.feature.settings.data.repository.EnvVarRepository,
     private val containerInstaller: ContainerInstaller,
     private val containerOsDetector: ContainerOsDetector,
     private val containerSettingsRepository: com.aicode.feature.settings.data.repository.ContainerSettingsRepository,
@@ -812,7 +813,7 @@ class LinuxContainerEngine @Inject constructor(
             "LANG" to "C.UTF-8"
             // 全局 HTTP 代理：开启时注入 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY，
             // 容器内 curl/git/npm/pip 等一律走代理；关闭或配置不完整时为空 map 不影响直连。
-        ) + com.aicode.core.net.AppProxy.proxyEnv(context)
+        ) + com.aicode.core.net.AppProxy.proxyEnv(context) + envVarRepository.asMap()
     }
 
     private fun buildProcessBuilder(invocation: ProotInvocation): ProcessBuilder {

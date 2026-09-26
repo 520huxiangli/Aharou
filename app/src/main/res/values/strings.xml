@@ -1761,4 +1761,21 @@
     <string name="vd_start">启动</string>
     <string name="vd_stop">停止</string>
     <string name="vd_shizuku_hint">需要 Shizuku 就绪才能使用（当前：%1$s）</string>
+    <string name="envvars_title">环境变量</string>
+    <string name="envvars_intro">自定义环境变量会注入容器内的所有命令与终端（值加密存储，仅本机可解密；列表默认打码）。</string>
+    <string name="envvars_list_header">变量列表</string>
+    <string name="envvars_add">添加变量</string>
+    <string name="envvars_edit_title">编辑变量</string>
+    <string name="envvars_name">名称</string>
+    <string name="envvars_value">值</string>
+    <string name="envvars_secret">敏感值（列表打码显示）</string>
+    <string name="envvars_save">保存</string>
+    <string name="envvars_delete">删除</string>
+    <string name="envvars_delete_title">删除「%1$s」？</string>
+    <string name="envvars_delete_body">删除后，容器内新启动的命令将不再包含这个变量。</string>
+    <string name="envvars_empty">还没有自定义环境变量</string>
+    <string name="envvars_error_empty">名称不能为空</string>
+    <string name="envvars_error_format">名称需为字母 / 数字 / 下划线（不能以数字开头）</string>
+    <string name="envvars_error_reserved">「%1$s」是容器关键变量名，不允许使用</string>
+    <string name="envvars_error_duplicate">已存在同名变量</string>
 </resources>
