@@ -153,10 +153,27 @@ class AIAgentViewModel @Inject constructor(
     private val fileChangeHub: FileChangeHub,
     /** Aharou：浏览器池 —— 聊天页“自动围观”面板与 browser 工具共用同一池。 */
     val browserTabPool: com.aicode.feature.browser.BrowserTabPool,
+    /** Aharou：影子屏控制器 —— 聊天页小屏幕实时预览与 vscreen 工具共用。 */
+    private val vdController: com.aicode.feature.agent.domain.vdisplay.VdController,
     @param:ApplicationContext private val context: Context
 ) : ViewModel(), SlashCommandContext {
 
     private val sessionJobs = mutableMapOf<String, Job>()
+
+    /**
+     * 「影子屏小屏幕」取一帧：给聊天页的小屏幕缩略图实时直播 Agent 的离屏操作画面。
+     * 解码按缩略图尺寸采样（inSampleSize=3），避免每帧整图进内存。
+     */
+    suspend fun captureVdFrame(): android.graphics.Bitmap? =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val info = vdController.state.value ?: vdController.refresh()
+                    ?: return@runCatching null
+                val (_, file) = vdController.screenshot(info)
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 3 }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
+            }.getOrNull()
+        }
 
     /**
      * agent 执行期间持有的 CPU 唤醒锁：熄屏后系统会挂起进程，使流式响应中断、工具调用卡死。

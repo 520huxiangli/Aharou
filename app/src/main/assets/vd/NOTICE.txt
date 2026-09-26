@@ -1,0 +1,13 @@
+aharou-vd — headless virtual display runner
+===========================================
+
+This asset contains a small runner (aharou-vd.jar) that creates a virtual
+display which is NOT shown on the device screen, so apps can be launched,
+captured and controlled off-screen.
+
+The mechanism is adapted from Genymobile/scrcpy (https://github.com/Genymobile/scrcpy)
+— specifically its "new display" feature — which is licensed under the
+Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+
+Source code of this runner lives in this repository at: tools/aharou-vd/
+(VdMain.java, build.sh — build: sh build.sh)

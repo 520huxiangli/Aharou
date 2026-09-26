@@ -1375,6 +1375,7 @@ fun AIChatPanel(
                     onOpenDetail = { id -> ToolComputerSignal.request(id) },
                     onStop = { viewModel.stopAgent() },
                     browserPool = viewModel.browserTabPool,
+                    vdCapture = { viewModel.captureVdFrame() },
                     modifier = Modifier
                         .padding(horizontal = 12.dp)
                         .padding(bottom = 6.dp),

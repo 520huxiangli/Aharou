@@ -1754,4 +1754,11 @@
     <string name="config_audit_time_min_ago">%1$d 分钟前</string>
     <string name="config_audit_time_hr_ago">%1$d 小时前</string>
     <string name="config_audit_time_yesterday">昨天</string>
+    <string name="vd_settings_title">影子屏</string>
+    <string name="vd_intro">创建一块不在屏幕显示的虚拟显示屏：App 可以在里面运行、截图、点按滑动，你正常用手机，互不打扰。（机制改编自 scrcpy，Apache-2.0）</string>
+    <string name="vd_status_running">运行中 · display %1$d · %2$d×%3$d</string>
+    <string name="vd_status_stopped">未运行</string>
+    <string name="vd_start">启动</string>
+    <string name="vd_stop">停止</string>
+    <string name="vd_shizuku_hint">需要 Shizuku 就绪才能使用（当前：%1$s）</string>
 </resources>

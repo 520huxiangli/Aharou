@@ -70,6 +70,7 @@ internal fun FloatingToolStatusBar(
     onOpenDetail: (String) -> Unit,
     onStop: () -> Unit,
     browserPool: com.aicode.feature.browser.BrowserTabPool? = null,
+    vdCapture: (suspend () -> android.graphics.Bitmap?)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (toolMessages.isEmpty()) return
@@ -186,6 +187,7 @@ internal fun FloatingToolStatusBar(
             message = block,
             live = live,
             browserPool = browserPool,
+            vdCapture = vdCapture,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(start = thumbnailInset),
@@ -200,6 +202,7 @@ private fun ToolMiniScreenThumbnail(
     message: AgentUIMessage,
     live: String?,
     browserPool: com.aicode.feature.browser.BrowserTabPool? = null,
+    vdCapture: (suspend () -> android.graphics.Bitmap?)? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -230,6 +233,9 @@ private fun ToolMiniScreenThumbnail(
         if (isBrowser) {
             // [Aharou] 浏览器工具：小屏幕 = 页面实时画面（对齐 Minis 的 browser_use 缩略图）
             BrowserMiniScreen(pool = browserPool, running = live != null)
+        } else if (message.toolName == "vscreen") {
+            // [Aharou] 影子屏：小屏幕 = 虚拟屏实时画面（Agent 离屏操作，用户在这儿围观）
+            VdMiniScreen(capture = vdCapture, running = live != null)
         } else {
         Column(modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)) {
             Text(
@@ -290,6 +296,43 @@ private fun BrowserMiniScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
                 text = if (running) "抓取页面…" else "（暂无画面）",
+                fontSize = 7.sp,
+                fontFamily = MiniMono,
+                color = MiniScreenGreen,
+            )
+        }
+    }
+}
+
+/**
+ * 影子屏小屏幕：实时抓虚拟屏画面（每 2s 一帧）。
+ * Agent 在影子屏里静默操作（不占用户主屏）时，用户从这里围观它的操作页面。
+ */
+@Composable
+private fun VdMiniScreen(
+    capture: (suspend () -> android.graphics.Bitmap?)?,
+    running: Boolean,
+) {
+    var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(capture, running) {
+        while (true) {
+            val shot = capture?.let { runCatching { it() }.getOrNull() }
+            if (shot != null) frame = shot
+            delay(2000)
+        }
+    }
+    val bmp = frame
+    if (bmp != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        )
+    } else {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                text = if (running) "抓取画面…" else "影子屏未运行",
                 fontSize = 7.sp,
                 fontFamily = MiniMono,
                 color = MiniScreenGreen,

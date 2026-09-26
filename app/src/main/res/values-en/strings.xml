@@ -1755,4 +1755,11 @@
     <string name="config_audit_time_min_ago">%1$d min ago</string>
     <string name="config_audit_time_hr_ago">%1$d h ago</string>
     <string name="config_audit_time_yesterday">Yesterday</string>
+    <string name="vd_settings_title">Shadow screen</string>
+    <string name="vd_intro">Creates a headless virtual display: apps can run, be captured and driven inside it while you keep using your phone undisturbed. (Mechanism adapted from scrcpy, Apache-2.0)</string>
+    <string name="vd_status_running">Running · display %1$d · %2$d×%3$d</string>
+    <string name="vd_status_stopped">Not running</string>
+    <string name="vd_start">Start</string>
+    <string name="vd_stop">Stop</string>
+    <string name="vd_shizuku_hint">Requires Shizuku ready (currently: %1$s)</string>
 </resources>
