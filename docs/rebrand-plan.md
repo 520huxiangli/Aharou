@@ -20,6 +20,18 @@
 - **批 1（运行时可见，用户能直接感知）**：#1 目录 + #2 变量 + #3 资产（含迁移逻辑与兼容链接）→ 单一构建 → 实机冒烟 → 版本顺延发布。
 - **批 2（代码层）**：#4 命名空间 + #5 类名 → 独立一轮，多轮编译修复。
 
+## 残留清单（2026-09-26 深夜实测扫描）
+
+**已清**：UI 可见层——「Aharou Computer」（原 Minis Computer）、关于页、README、交流群、Release 页。
+
+**剩余（全部在代码内部，随两批改名清理）**：
+
+1. **类 / 文件名（3 个）**：`MinisComputerSheet`（引用面 1 处）、`MinisButton`（browser + sandbox 两份）、`MinisMenu`（sandbox）→ 改为 `Aharou*`，属批 2。
+2. **注释里的引用（约 50 行）**：形如「对齐 Minis 的…」「MinisApp.onCreate」「Minis 原版…」——批 2 一并撸掉；其中 **17 行是「自 OpenMinis 移植」的许可证来源标注**，拟统一收进 `NOTICE` 文件（保留声明、注释瘦身）。
+3. **功能残留**：`SoulIcon` 里的 `minis://` 协议与 `/var/minis/*` 路径分支（移植自上游 App 的历史路径，本工程实际无人使用）→ 批 1 移除或改写。
+4. **assets/aicode/**（含脚本内文提及 aicode）→ 批 1 的 #3。
+5. 注意区分：`MiniScreen*` / `ToolMiniScreenThumbnail` 等 = 「小屏幕（mini screen）」命名，**不是** Minis 品牌残留，保留。
+
 ## 风险备忘
 
 - **容器 bind / 目录迁移是最脆弱的一环**：写错 = 容器起不来。迁移必须「新目录优先、旧目录兜底、只搬不删」，且在启动早期执行一次。
