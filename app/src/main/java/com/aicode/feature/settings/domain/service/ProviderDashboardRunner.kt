@@ -697,9 +697,10 @@ class ProviderDashboardRunner @Inject constructor(
         return when {
             path.startsWith("/") -> path
             path.startsWith("~/") -> path.replaceFirst("~", "/root")
+            path.startsWith(".aharou/scripts/") -> "/root/$path"
             path.startsWith(".aicode/scripts/") -> "/root/$path"
-            path.startsWith("scripts/") -> "/root/.aicode/$path"
-            else -> "/root/.aicode/scripts/$path"
+            path.startsWith("scripts/") -> "/root/.aharou/$path"
+            else -> "/root/.aharou/scripts/$path"
         }
     }
 
@@ -758,7 +759,11 @@ class ProviderDashboardRunner @Inject constructor(
             envs.add("AICODE_REFRESH_REASON=${escape(context.refreshReason)}")
         }
 
-        return envs.joinToString(" ")
+        // [Aharou 改名] 过渡期同时注入两套前缀：新脚本用 AHAROU_*，旧脚本 AICODE_* 照常可用。
+        val aharouEnvs = envs.map { line ->
+            if (line.startsWith("AICODE_")) "AHAROU_" + line.removePrefix("AICODE_") else line
+        }
+        return (envs + aharouEnvs).joinToString(" ")
     }
 
     /** 把用户填写的参数 Key 规整为合法的环境变量名段（大写，仅保留字母/数字/下划线）。 */

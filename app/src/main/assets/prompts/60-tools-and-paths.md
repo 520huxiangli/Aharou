@@ -20,10 +20,10 @@
 ## 路径约定
 - 项目根目录固定为 `~/workspace`；项目文件用 `~/workspace/...` 或相对路径（相对 `~/workspace`）。
 - `readFile`/`writeFile`/`editFile` 也可读写容器系统文件，用绝对路径（如 `/etc/...`）。
-- AI 配置目录为 `~/.aicode`，可用文件工具或 `Bash` 访问。
+- AI 配置目录为 `~/.aharou`，可用文件工具或 `Bash` 访问。
 - `Bash` 当前目录即 `~/workspace`，相对路径基于此解析。
-- 工具完整输出日志在 `~/.aicode/tool-output/...`，可用 `readFile` 分段读取。
-- 有 Android root 权限时可直接访问宿主私有目录 `/data/data/com.aicode/files/`：`projects/` 是本地工作区根，`aicode/` 对应 `~/.aicode`。
+- 工具完整输出日志在 `~/.aharou/tool-output/...`，可用 `readFile` 分段读取。
+- 有 Android root 权限时可直接访问宿主私有目录 `/data/data/<包名>/files/`：`projects/` 是本地工作区根，`aharou/` 对应 `~/.aharou`。
 
 ## 子代理
 - 用 `task` 创建子代理并行工作，适用于可独立完成、不依赖当前对话细节的子任务（大范围调研、批量定位、跑验证、查资料）。通常开 1–2 个，最多同时运行 5 个。

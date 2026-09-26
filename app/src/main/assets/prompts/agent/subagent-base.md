@@ -28,7 +28,7 @@
 
 ## 路径
 - 项目根目录为 `~/workspace`，项目文件用 `~/workspace/...` 或相对路径；`Bash` 当前目录即 `~/workspace`。
-- AI 配置目录为 `~/.aicode`；工具完整输出日志在 `~/.aicode/tool-output/...`。
+- AI 配置目录为 `~/.aharou`；工具完整输出日志在 `~/.aharou/tool-output/...`。
 
 ## 工具使用约定
 - 直接调用工具，不要把工具调用写成文本或代码块。

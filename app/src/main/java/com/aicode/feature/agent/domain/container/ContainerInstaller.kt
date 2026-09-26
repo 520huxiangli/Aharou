@@ -270,7 +270,17 @@ class ContainerInstaller @Inject constructor(
      * 绑定到容器内 `/root/.aicode`，故 AI / 终端看到的 `/root/.aicode` 实际落在这里。
      */
     val aicodeDir: File
-        get() = File(context.filesDir, "aicode")
+        get() {
+            val newDir = File(context.filesDir, "aharou")
+            val oldDir = File(context.filesDir, "aicode")
+            // [Aharou 改名] 旧目录首次访问时迁移到新名（只搬不删；rename 失败则复制兜底）。
+            if (!newDir.exists() && oldDir.exists()) {
+                if (!oldDir.renameTo(newDir)) {
+                    runCatching { oldDir.copyRecursively(newDir, overwrite = false) }
+                }
+            }
+            return newDir
+        }
 
     /**
      * proot 全套所在目录：APK 内 `lib/<abi>/lib*.so` 由安装器解压到此（见 build.gradle.kts 的

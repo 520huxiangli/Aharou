@@ -40,8 +40,12 @@ class WorkspacePathMapper @Inject constructor(
     companion object {
         /** AI 看到的工作区根路径。用 `~` 形式让提示词/工具描述更自然，内部用 [resolvedContainerRoot] 展开后匹配。 */
         const val CONTAINER_ROOT = "~/workspace"
-        /** AI 配置目录在容器内的路径，绑定到宿主 [ContainerInstaller.aicodeDir]（独立于 rootfs）。 */
+        /** AI 配置目录在容器内的**主**路径（宿主 filesDir/aharou，独立于 rootfs）；旧路径 /root/.aicode 兼容保留。 */
+        const val AHAROU_ROOT = "/root/.aharou"
+        /** 旧路径（兼容）：与 [AHAROU_ROOT] 指向同一宿主目录。 */
         const val AICODE_ROOT = "/root/.aicode"
+        /** 记忆目录（SOUL.md / 核心档案 / 日志）在容器内的路径（宿主 filesDir/aharou-global/memory）。 */
+        const val AHAROU_MEMORY_ROOT = "/root/.aharou/memory"
         private const val TAG = "WorkspacePathMapper"
     }
 
@@ -78,8 +82,11 @@ class WorkspacePathMapper @Inject constructor(
     /** 容器 rootfs 在宿主上的根目录（容器内 `/` 即此目录，随当前 profile 变化）。 */
     private fun rootfsRoot(): File = containerInstaller.rootfsDirFor(currentProfile)
 
-    /** AI 配置目录在宿主上的根（容器内 `/root/.aicode` 即此目录，独立于 rootfs）。 */
+    /** AI 配置目录在宿主上的根（容器内 `/root/.aharou` 与旧 `/root/.aicode` 即此目录，独立于 rootfs）。 */
     private fun aicodeRoot(): File = containerInstaller.aicodeDir
+
+    /** 记忆目录（SOUL.md 等）在宿主上的根（容器内 `/root/.aharou/memory`）。 */
+    private fun aharouMemoryRoot(): File = File(aicodeRoot().parentFile, "aharou-global/memory")
 
     /**
      * 把 AI 提供的路径解析为宿主真实文件。兼容以下写法：
@@ -97,6 +104,10 @@ class WorkspacePathMapper @Inject constructor(
         val file = when {
             p == wsRoot || p == "$wsRoot/" || p == CONTAINER_ROOT || p == "$CONTAINER_ROOT/" -> root
             p.startsWith("$wsRoot/") -> File(root, p.removePrefix("$wsRoot/"))
+            p == AHAROU_MEMORY_ROOT || p == "$AHAROU_MEMORY_ROOT/" -> aharouMemoryRoot()
+            p.startsWith("$AHAROU_MEMORY_ROOT/") -> File(aharouMemoryRoot(), p.removePrefix("$AHAROU_MEMORY_ROOT/"))
+            p == AHAROU_ROOT || p == "$AHAROU_ROOT/" -> aicodeRoot()
+            p.startsWith("$AHAROU_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AHAROU_ROOT/"))
             p == AICODE_ROOT || p == "$AICODE_ROOT/" -> aicodeRoot()
             p.startsWith("$AICODE_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AICODE_ROOT/"))
             else -> mountedHostFile(p)
@@ -119,6 +130,7 @@ class WorkspacePathMapper @Inject constructor(
     fun toContainerPath(hostPath: String): String {
         val rootPath = hostRoot().absolutePath.replace('\\', '/')
         val aicodePath = aicodeRoot().absolutePath.replace('\\', '/')
+        val memoryPath = aharouMemoryRoot().absolutePath.replace('\\', '/')
         val rootfsPath = rootfsRoot().absolutePath.replace('\\', '/')
         val abs = File(hostPath).absolutePath.replace('\\', '/')
         val raw = hostPath.trim().replace('\\', '/')
@@ -130,8 +142,10 @@ class WorkspacePathMapper @Inject constructor(
             raw == resolvedWs || abs == resolvedWs -> CONTAINER_ROOT
             raw.startsWith("$resolvedWs/") -> CONTAINER_ROOT + "/" + raw.removePrefix("$resolvedWs/")
             abs.startsWith("$resolvedWs/") -> CONTAINER_ROOT + "/" + abs.removePrefix("$resolvedWs/")
-            abs == aicodePath -> AICODE_ROOT
-            abs.startsWith("$aicodePath/") -> AICODE_ROOT + "/" + abs.removePrefix("$aicodePath/")
+            abs == memoryPath -> AHAROU_MEMORY_ROOT
+            abs.startsWith("$memoryPath/") -> AHAROU_MEMORY_ROOT + "/" + abs.removePrefix("$memoryPath/")
+            abs == aicodePath -> AHAROU_ROOT
+            abs.startsWith("$aicodePath/") -> AHAROU_ROOT + "/" + abs.removePrefix("$aicodePath/")
             abs == rootfsPath -> "/"
             abs.startsWith("$rootfsPath/") -> "/" + abs.removePrefix("$rootfsPath/")
             else -> mountedContainerPath(abs) ?: hostPath

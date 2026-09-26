@@ -27,7 +27,7 @@ class ToolOutputStore @Inject constructor(
 ) {
     private companion object {
         const val TAG = "ToolOutputStore"
-        const val AICODE_ROOT = "/root/.aicode"
+        const val AICODE_ROOT = "/root/.aharou"
         const val OUTPUT_DIR = "tool-output"
         const val HEAD_CHARS = 20_000
         const val TAIL_CHARS = 20_000

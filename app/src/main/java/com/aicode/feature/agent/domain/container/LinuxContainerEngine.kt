@@ -750,15 +750,17 @@ class LinuxContainerEngine @Inject constructor(
         // mcp.json（MCP 配置）。宿主物理目录独立于 rootfs，容器升级重装不丢用户数据。
         // 基础解释器 python3(3.12) 与 git 由进入终端时的初始化菜单（provision.sh）安装；
         // node 等其他运行时仍由 skill / 用户自行保证。proot 的 -b 要求源路径存在，故先确保目录已建。
-        val aicodeDir = containerInstaller.aicodeDir.apply { mkdirs() }
+        val aharouDir = containerInstaller.aicodeDir.apply { mkdirs() }
+        // [Aharou 改名] 主路径 /root/.aharou；旧路径 /root/.aicode 以同一目录二次绑定，旧脚本照常可用。
         argv.add("-b")
-        argv.add("${aicodeDir.absolutePath}:/root/.aicode")
+        argv.add("${aharouDir.absolutePath}:/root/.aharou")
+        argv.add("-b")
+        argv.add("${aharouDir.absolutePath}:/root/.aicode")
 
-        // Aharou 全局目录绑定到容器内 /root/.aharou（读写）：人格 SOUL.md / 记忆等外置文件都放这里，
-        // Agent 可直接用文件与 shell 读写（「外置可改」与 Minis 一致）；内容随用户走，重装容器不丢。
-        val aharouGlobalDir = java.io.File(context.filesDir, "aharou-global").apply { mkdirs() }
+        // 记忆目录（SOUL.md / 核心档案 / 日志）单独挂到 /root/.aharou/memory（子挂载在父挂载之后生效）。
+        val aharouMemoryDir = java.io.File(context.filesDir, "aharou-global/memory").apply { mkdirs() }
         argv.add("-b")
-        argv.add("${aharouGlobalDir.absolutePath}:/root/.aharou")
+        argv.add("${aharouMemoryDir.absolutePath}:/root/.aharou/memory")
 
         // profile 的额外绑定与参数：内置与导入容器默认也在此注入（见 ContainerProfile.DEFAULT_PROOT_ARGS），
         // 与用户手动添加同一条路径，保证参数落在 argv 末尾。
@@ -790,8 +792,8 @@ class LinuxContainerEngine @Inject constructor(
             // (5.1.107.x) 的 seccomp 过滤表已包含 statx，默认 seccomp 模式即可正确翻译，故此处
             // **刻意不设 PROOT_NO_SECCOMP**——这正是 Termux 自己用 proot 的方式；强制全量 ptrace
             // (PROOT_NO_SECCOMP=1) 反而在本设备触发过 ptrace(PEEKDATA) I/O error。
-            // 前缀 /root/.aicode/bin：容器内 aicode 环境工具（见 ContainerInstaller.extractEnvTool）。
-            "PATH" to "/root/.aicode/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            // 前缀 /root/.aharou/bin：容器内环境工具（见 ContainerInstaller.extractEnvTool）。
+            "PATH" to "/root/.aharou/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME" to "/root",
             // 宿主进程环境的 TMPDIR 指向 App 缓存目录（/data/user/0/<pkg>/cache），容器内 /data 未挂载、
             // 该路径不存在——mktemp/dpkg 等会因找不到临时目录失败，故显式覆盖为容器内 /tmp。
@@ -799,7 +801,7 @@ class LinuxContainerEngine @Inject constructor(
             // git 全局配置指向持久挂载里的 .gitconfig（/root/.aicode 绑定到宿主 filesDir/aicode，
             // 跨 rootfs 升级不丢）。git-credentials 同放该目录，credential.helper=store 经此读；
             // credential.helper 由 provision.sh 经 includeIf 限定 /root/workspace/ 加载（最小化注入）。
-            "GIT_CONFIG_GLOBAL" to "/root/.aicode/.gitconfig",
+            "GIT_CONFIG_GLOBAL" to "/root/.aharou/.gitconfig",
             // safe.directory=* 关掉 git 的 dubious ownership 检查。用户自选的外部工作区落在
             // sdcardfs/FUSE 存储，其合成的文件属主 uid 与 proot 内 euid(0) 不一致，git 判为可疑属主
             // 后 fatal 拒绝操作——表现为 `git init` 成功（init 不查属主）但随后 `git rev-parse` 全部失败，
