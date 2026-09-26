@@ -45,7 +45,7 @@
 # 没有一个以 "OpenAIModels" 开头，ProGuard 的 `*` 只匹配类名后缀，不会保留整个文件里的类。
 # 字段名一旦被混淆成 a/b/c，Gson 反射序列化发出的 JSON key 就全是乱码 → 服务端 400。
 # 故直接 keep 整个 remote 包下所有 DTO 类及其字段。
--keep class com.aicode.feature.agent.data.remote.** { *; }
+-keep class com.aharou.feature.agent.data.remote.** { *; }
 # 任何带 @SerializedName 的字段
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
@@ -57,7 +57,7 @@
 -keep class * implements com.google.gson.JsonDeserializer
 -keep,allowobfuscation class com.google.gson.reflect.TypeToken { *; }
 # Gson 用 sun.misc.Unsafe（旧版）创建未初始化实例；保留构造器以免部分机型崩溃
--keepclassmembers class com.aicode.** {
+-keepclassmembers class com.aharou.** {
     <init>();
 }
 
@@ -70,11 +70,11 @@
     kotlinx.serialization.KSerializer serializer(...);
 }
 # 本项目所有 @Serializable 类的生成器
--keep,includedescriptorclasses class com.aicode.**$$serializer { *; }
--keepclassmembers class com.aicode.** {
+-keep,includedescriptorclasses class com.aharou.**$$serializer { *; }
+-keepclassmembers class com.aharou.** {
     *** Companion;
 }
--keepclasseswithmembers class com.aicode.** {
+-keepclasseswithmembers class com.aharou.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
 
@@ -87,17 +87,17 @@
 # ---- Room ----
 -keep class * extends androidx.room.RoomDatabase
 -dontwarn androidx.room.paging.**
--keep class com.aicode.**.entity.** { *; }   # Room @Entity 不可混淆列名映射
+-keep class com.aharou.**.entity.** { *; }   # Room @Entity 不可混淆列名映射
 
 # ---- Compose ----
 -dontwarn androidx.compose.**
 
 # ---- Shizuku（UserService 以 adb shell 身份执行命令）----
 # UserService 实现类由 Shizuku 在 shell 进程中按类名反射加载，类名与构造器不可被混淆/裁剪。
--keep class com.aicode.feature.agent.domain.shizuku.ShizukuShellService { *; }
+-keep class com.aharou.feature.agent.domain.shizuku.ShizukuShellService { *; }
 # AIDL 接口与 Stub 跨进程传递，保持不混淆。
--keep interface com.aicode.feature.agent.domain.shizuku.IShizukuShellService { *; }
--keep class com.aicode.feature.agent.domain.shizuku.IShizukuShellService$Stub { *; }
+-keep interface com.aharou.feature.agent.domain.shizuku.IShizukuShellService { *; }
+-keep class com.aharou.feature.agent.domain.shizuku.IShizukuShellService$Stub { *; }
 -keep class rikka.shizuku.** { *; }
 -dontwarn rikka.shizuku.**
 

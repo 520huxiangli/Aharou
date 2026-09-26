@@ -86,7 +86,7 @@ val syncAiDocs = tasks.register<Sync>("syncAiDocs") {
 }
 
 android {
-    namespace = "com.aicode"
+    namespace = "com.aharou"
     compileSdk = 36
     buildToolsVersion = "35.0.0"
 

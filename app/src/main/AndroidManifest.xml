@@ -96,7 +96,7 @@
         <!-- 无障碍服务：让 Agent「看得懂、点得动」宿主屏幕（读节点树/手势/截图）。
              需用户在系统「无障碍」设置中手动开启（Android 禁止程序化开启）。 -->
         <service
-            android:name="com.aicode.accessibility.AharouAccessibilityService"
+            android:name="com.aharou.accessibility.AharouAccessibilityService"
             android:exported="true"
             android:label="@string/a11y_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -110,7 +110,7 @@
 
         <!-- 悬浮窗：Agent 干活时在系统层面显示实时状态胶囊（需悬浮窗权限）。 -->
         <service
-            android:name="com.aicode.feature.overlay.FloatingToolService"
+            android:name="com.aharou.feature.overlay.FloatingToolService"
             android:exported="false" />
 
         <!-- Shizuku：用于以 adb shell 身份执行命令（UserService）。

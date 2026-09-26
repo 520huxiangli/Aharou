@@ -1,0 +1,92 @@
+package com.aharou
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.aharou.feature.credentials.presentation.CredentialViewModel
+import com.aharou.feature.credentials.presentation.component.CredentialScreen
+import com.aharou.feature.editor.presentation.CodeEditorScreen
+import com.aharou.feature.browser.presentation.BrowserScreen
+import com.aharou.feature.browser.presentation.BrowserViewModel
+import com.aharou.feature.git.presentation.GitViewModel
+import com.aharou.feature.git.presentation.component.GitScreen
+import com.aharou.feature.terminal.presentation.TerminalViewModel
+import com.aharou.feature.terminal.presentation.component.TerminalScreen
+
+/** 大屏右栏（工作台）当前承载的内容。 */
+internal enum class WorkbenchPaneKind { NONE, EDITOR, TERMINAL, GIT, BROWSER }
+
+/**
+ * 大屏下与聊天并排的右栏内容。
+ *
+ * 三个页面本身就是「参数 + 回调」的独立组件，这里只是把它们的返回动作接成「关闭右栏」；
+ * 窄窗下这些页面仍走 NavHost 全屏路由，两条路径共用同一份 UI 代码。
+ *
+ * ViewModel 挂在聊天页的 NavBackStackEntry 上，右栏在几种内容间切换不会销毁它们——
+ * 终端会话本身归单例 TerminalSessionManager 所有，与这里的作用域无关。
+ */
+@Composable
+internal fun WorkbenchPaneContent(
+    kind: WorkbenchPaneKind,
+    editorPath: String,
+    editorLine: Int,
+    onClose: () -> Unit,
+    onOpenFile: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        when (kind) {
+            WorkbenchPaneKind.NONE -> Unit
+
+            WorkbenchPaneKind.EDITOR -> CodeEditorScreen(
+                path = editorPath,
+                initialLine = editorLine,
+                onBack = onClose,
+                embedded = true
+            )
+
+            WorkbenchPaneKind.TERMINAL -> {
+                val terminalViewModel: TerminalViewModel = hiltViewModel()
+                TerminalScreen(
+                    viewModel = terminalViewModel,
+                    onNavigateBack = onClose,
+                    embedded = true
+                )
+            }
+
+            WorkbenchPaneKind.GIT -> {
+                // 凭据页留在右栏内部翻一层，而不是跳全屏路由，否则大屏下会从双栏突然变成整屏。
+                var showCredentials by rememberSaveable { mutableStateOf(false) }
+                if (showCredentials) {
+                    val credentialViewModel: CredentialViewModel = hiltViewModel()
+                    CredentialScreen(
+                        viewModel = credentialViewModel,
+                        onNavigateBack = { showCredentials = false }
+                    )
+                } else {
+                    val gitViewModel: GitViewModel = hiltViewModel()
+                    GitScreen(
+                        viewModel = gitViewModel,
+                        onNavigateToCredentials = { showCredentials = true },
+                        onNavigateBack = onClose,
+                        onOpenFile = onOpenFile,
+                        embedded = true
+                    )
+                }
+            }
+            WorkbenchPaneKind.BROWSER -> {
+                val browserViewModel: BrowserViewModel = hiltViewModel()
+                BrowserScreen(
+                    tabPool = browserViewModel.tabPool,
+                    onNavigateBack = onClose,
+                    embedded = true
+                )
+            }
+        }
+    }
+}
