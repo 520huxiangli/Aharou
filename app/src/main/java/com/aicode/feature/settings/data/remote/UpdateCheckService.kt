@@ -125,7 +125,7 @@ class UpdateCheckService @Inject constructor(
     )
 
     private companion object {
-        const val GITHUB_RELEASES_API = "https://api.github.com/repos/jieapi/aicode/releases"
+        const val GITHUB_RELEASES_API = "https://api.github.com/repos/520huxiangli/Aharou/releases"
         val SHARED_CLIENT by lazy {
             okhttp3.OkHttpClient.Builder()
                 .proxyAuthenticator(com.aicode.core.net.AppProxy.okHttpAuthenticator)

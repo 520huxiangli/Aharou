@@ -593,10 +593,6 @@ fun AppNavigation(
                 val safeTitle = session.title.replace(Regex("[^\\w\\u4e00-\\u9fa5\\-]"), "_")
                 sessionExportLauncher.launch("aicode-session-$safeTitle-${System.currentTimeMillis()}.tar.gz")
             },
-            onNavigateToBrowser = {
-                openWorkbench(WorkbenchPaneKind.BROWSER)
-                if (!permanentDrawer) scope.launch { drawerState.close() }
-            },
             onNavigateToSettings = {
                 navController.navigate("settings")
                 if (!permanentDrawer) scope.launch { drawerState.snapTo(DrawerValue.Closed) }

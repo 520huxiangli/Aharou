@@ -400,7 +400,7 @@
     <string name="about_version">Version</string>
     <string name="about_github_repo">GitHub Repository</string>
     <string name="about_license">Open Source License</string>
-    <string name="about_description">AI-powered code editor running on Android · Built-in Terminal · AI Agent · MCP Protocol</string>
+    <string name="about_description">Aharou · Android Agent — everyday assistant × coding copilot (OpenMinis × AiCode fusion)</string>
     <string name="about_check_update">Check for updates</string>
     <string name="about_checking_update">Querying GitHub for the latest version…</string>
     <string name="about_up_to_date">Already up to date</string>
