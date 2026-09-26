@@ -22,8 +22,11 @@ class DelegatingFileAccess @Inject constructor(
     private val remoteSftpFileAccess: RemoteSftpFileAccess
 ) : FileAccessProvider {
 
+    /** 远程腿包一层防崩壳：远程失败（连接失败/主机密钥待确认/SFTP 错误）绝不把异常抛进上层协程（防闪退）。 */
+    private val safeRemoteFileAccess: FileAccessProvider by lazy { SafeFileAccessProvider(remoteSftpFileAccess) }
+
     private fun delegate(): FileAccessProvider =
-        if (modeHolder.currentMode() == ExecutionMode.REMOTE_SSH) remoteSftpFileAccess
+        if (modeHolder.currentMode() == ExecutionMode.REMOTE_SSH) safeRemoteFileAccess
         else localFileAccess
 
     override fun readFile(path: String): String = delegate().readFile(path)
