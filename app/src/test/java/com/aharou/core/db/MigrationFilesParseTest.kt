@@ -17,7 +17,7 @@ import java.io.File
 class MigrationFilesParseTest {
 
     private val migrationsDir = File("src/main/assets/migrations")
-    private val dbSource = File("src/main/java/com/aicode/feature/agent/data/local/database/AgentDatabase.kt")
+    private val dbSource = File("src/main/java/com/aharou/feature/agent/data/local/database/AgentDatabase.kt")
 
     private fun migrationFiles(): List<File> =
         migrationsDir.listFiles { f -> f.name.endsWith(".sql") }?.sortedBy { it.name } ?: emptyList()

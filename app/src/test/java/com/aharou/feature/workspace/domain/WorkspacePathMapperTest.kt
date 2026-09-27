@@ -30,7 +30,7 @@ class WorkspacePathMapperTest {
 
     private fun newMapper(): WorkspacePathMapper {
         every { workspaceRepository.currentPath() } returns wsRoot
-        every { containerInstaller.aicodeDir } returns File(aicodeDir)
+        every { containerInstaller.aharouDir } returns File(aicodeDir)
         every { containerInstaller.rootfsDirFor(any()) } returns File(rootfsDir)
         every { containerSettingsRepository.activeProfileIdFlow } returns emptyFlow()
         every { pathHomeResolver.home() } returns home
@@ -112,9 +112,9 @@ class WorkspacePathMapperTest {
     }
 
     @Test
-    fun toContainerPath_aicode_mapsToAicodeRootForm() {
-        assertEquals("/root/.aicode", newMapper().toContainerPath(aicodeDir))
-        assertEquals("/root/.aicode/skills/x/SKILL.md", newMapper().toContainerPath("$aicodeDir/skills/x/SKILL.md"))
+    fun toContainerPath_aharou_mapsToAharouRootForm() {
+        assertEquals("/root/.aharou", newMapper().toContainerPath(aicodeDir))
+        assertEquals("/root/.aharou/skills/x/SKILL.md", newMapper().toContainerPath("$aicodeDir/skills/x/SKILL.md"))
     }
 
     @Test

@@ -116,9 +116,9 @@ jobs:
         run: ./gradlew assembleRelease --stacktrace
 
       # 给三个 APK 重命名为「包名-架构-版本」格式，架构用真实 ABI 名便于用户识别：
-      #   aicode-arm64-v1.0.0-rc1.apk      (armsolo)
-      #   aicode-x86_64-v1.0.0-rc1.apk     (x86solo)
-      #   aicode-universal-v1.0.0-rc1.apk  (universal，含两套镜像)
+      #   Aharou-arm64-v1.0.0-rc1.apk      (armsolo)
+      #   Aharou-x86_64-v1.0.0-rc1.apk     (x86solo)
+      #   Aharou-universal-v1.0.0-rc1.apk  (universal，含两套镜像)
       - name: Rename APKs by flavor
         run: |
           mkdir -p dist
@@ -127,7 +127,7 @@ jobs:
           for f in universal armsolo x86solo; do
             src="app/build/outputs/apk/$f/release/app-$f-release.apk"
             if [[ -f "$src" ]]; then
-              out="dist/aicode-${abi[$f]}-${ver}.apk"
+              out="dist/Aharou-${abi[$f]}-${ver}.apk"
               cp "$src" "$out"
               echo "packaged $out"
             else
@@ -138,12 +138,12 @@ jobs:
           # 保留 R8 混淆映射（mapping.txt）到 dist/，随 Release 一起发布，供崩溃堆栈反混淆。
           # 三个 flavor 共享同一份字节码与混淆结果，取 universal 一份即可；
           # gzip 压缩后只有几 MB（原始约 90MB），retrace/Android Studio 解析前 gunzip 一下。
-          # 命名沿用 aicode-<abi>-<ver> 约定，看到崩溃报告里的版本号即可取对应 mapping。
+          # 命名沿用 Aharou-<abi>-<ver> 约定，看到崩溃报告里的版本号即可取对应 mapping。
           # AGP 8.x 的 mapping 输出目录是 variant 驼峰名（flavor + BuildType），
           # 即 outputs/mapping/universalRelease/，不是 outputs/mapping/universal/release/。
           if [[ -f "app/build/outputs/mapping/universalRelease/mapping.txt" ]]; then
-            gzip -c "app/build/outputs/mapping/universalRelease/mapping.txt" > "dist/aicode-universal-${ver}-mapping.txt.gz"
-            echo "packaged aicode-universal-${ver}-mapping.txt.gz"
+            gzip -c "app/build/outputs/mapping/universalRelease/mapping.txt" > "dist/Aharou-universal-${ver}-mapping.txt.gz"
+            echo "packaged Aharou-universal-${ver}-mapping.txt.gz"
           else
             echo "::warning::missing mapping.txt（R8 混淆映射）"
           fi
@@ -220,13 +220,13 @@ jobs:
           name: Release ${{ steps.release.outputs.tag }}
           body: ${{ steps.changelog.outputs.body }}
           prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
-          # 产物名约定 aicode-<abi>-<版本>.apk（见 Rename 步骤），故 glob 把 ABI 段放 aicode- 紧后、版本段用 * 兜底。
-          # 不要写成 aicode-*-<abi>.apk——那会把 abi 误放末段，与 aicode-<abi>-<ver> 永远匹配不上（rc3 翻车原因）。
+          # 产物名约定 Aharou-<abi>-<版本>.apk（见 Rename 步骤），故 glob 把 ABI 段放 Aharou- 紧后、版本段用 * 兜底。
+          # 不要写成 Aharou-*-<abi>.apk——那会把 abi 误放末段，与 Aharou-<abi>-<ver> 永远匹配不上（rc3 翻车原因）。
+          # R8 映射与 APK 同版本发布，反混淆崩溃报告的凭据（gzip 压缩，体积小），一并上传。
           files: |
-            dist/aicode-universal-*.apk
-            dist/aicode-arm64-*.apk
-            dist/aicode-x86_64-*.apk
-            # R8 映射与 APK 同版本发布，反混淆崩溃报告的凭据（gzip 压缩，体积小）
-            dist/aicode-universal-*mapping.txt.gz
+            dist/Aharou-universal-*.apk
+            dist/Aharou-arm64-*.apk
+            dist/Aharou-x86_64-*.apk
+            dist/Aharou-universal-*mapping.txt.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

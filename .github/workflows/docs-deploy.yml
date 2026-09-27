@@ -24,7 +24,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 未配置 Vercel 凭据时只发警告并跳过部署：文档站是可选的对外站点，
+      # 缺 Secret 不该让 tag 发版整条流水线变红，掩盖真正的构建问题。
+      - name: Check Vercel credentials
+        id: vercel_check
+        run: |
+          if [ -z "${{ secrets.VERCEL_TOKEN }}" ]; then
+            echo "::warning::未配置 VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID，跳过文档站部署（在仓库 Settings→Secrets→Actions 配置后自动生效）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Node 20
+        if: steps.vercel_check.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -32,13 +45,17 @@ jobs:
           cache-dependency-path: docs-site/package-lock.json
 
       - name: Install Vercel CLI
+        if: steps.vercel_check.outputs.skip != 'true'
         run: npm install --global vercel@latest
 
       - name: Pull Vercel environment
+        if: steps.vercel_check.outputs.skip != 'true'
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Build
+        if: steps.vercel_check.outputs.skip != 'true'
         run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
 
       - name: Deploy
+        if: steps.vercel_check.outputs.skip != 'true'
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

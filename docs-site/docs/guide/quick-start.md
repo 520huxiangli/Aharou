@@ -9,7 +9,7 @@
 
 ## 下载安装
 
-去 [GitHub Releases](https://github.com/jieapi/aicode/releases/latest) 下载，三个包按设备选：
+去 [GitHub Releases](https://github.com/520huxiangli/Aharou/releases/latest) 下载，三个包按设备选：
 
 | 包名 | 适用场景 |
 | --- | --- |

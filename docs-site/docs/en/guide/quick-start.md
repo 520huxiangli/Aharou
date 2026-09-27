@@ -9,7 +9,7 @@ From installation to your first AI conversation.
 
 ## Download & Install
 
-Download from [GitHub Releases](https://github.com/jieapi/aicode/releases/latest). Pick the package that fits your device:
+Download from [GitHub Releases](https://github.com/520huxiangli/Aharou/releases/latest). Pick the package that fits your device:
 
 | Package | Best for |
 | --- | --- |

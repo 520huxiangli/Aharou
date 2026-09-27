@@ -21,7 +21,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MIGRATIONS_REL = "app/src/main/assets/migrations"
-DB_REL = "app/src/main/java/com/aicode/feature/agent/data/local/database/AgentDatabase.kt"
+DB_REL = "app/src/main/java/com/aharou/feature/agent/data/local/database/AgentDatabase.kt"
 MIGRATIONS_DIR = os.path.join(ROOT, MIGRATIONS_REL)
 DB_FILE = os.path.join(ROOT, DB_REL)
 

@@ -28,7 +28,7 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: 'Guide', link: '/en/guide/quick-start', activeMatch: '/en/guide/' },
-          { text: 'Download', link: 'https://github.com/jieapi/aicode/releases/latest' }
+          { text: 'Download', link: 'https://github.com/520huxiangli/Aharou/releases/latest' }
         ],
         sidebar: {
           '/en/guide/': [
@@ -57,7 +57,7 @@ export default defineConfig({
         sidebarMenuLabel: 'Menu',
         returnToTopLabel: 'Back to top',
         editLink: {
-          pattern: 'https://github.com/jieapi/aicode/edit/main/docs-site/docs/:path',
+          pattern: 'https://github.com/520huxiangli/Aharou/edit/main/docs-site/docs/:path',
           text: 'Edit this page on GitHub'
         },
         footer: {
@@ -95,7 +95,7 @@ export default defineConfig({
     nav: [
       { text: '使用手册', link: '/guide/quick-start', activeMatch: '/guide/' },
       { text: '进阶教程', link: '/advanced/build-android-app', activeMatch: '/advanced/' },
-      { text: '下载', link: 'https://github.com/jieapi/aicode/releases/latest' }
+      { text: '下载', link: 'https://github.com/520huxiangli/Aharou/releases/latest' }
     ],
     sidebar: {
       '/guide/': [
@@ -189,7 +189,7 @@ export default defineConfig({
       ]
     },
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/jieapi/aicode' }
+      { icon: 'github', link: 'https://github.com/520huxiangli/Aharou' }
     ],
     search: {
       provider: 'local'
@@ -203,7 +203,7 @@ export default defineConfig({
     sidebarMenuLabel: '菜单',
     returnToTopLabel: '回到顶部',
     editLink: {
-      pattern: 'https://github.com/jieapi/aicode/edit/main/docs-site/docs/:path',
+      pattern: 'https://github.com/520huxiangli/Aharou/edit/main/docs-site/docs/:path',
       text: '在 GitHub 上编辑此页'
     },
     footer: {
