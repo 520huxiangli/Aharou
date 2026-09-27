@@ -42,6 +42,9 @@ import urllib.request
 UA = "aharou-gitcode-sync"
 
 GH_REPO = os.environ.get("GH_REPO", "520huxiangli/Aharou")
+# 可选：GitHub 文件镜像前缀（如 https://gh-proxy.com/），国内机器同步 GitHub 资产时
+# 直连仅 ~0.03MB/s、走镜像 4~5MB/s，差两个数量级；镜像失败会自动回退原链。
+GH_MIRROR = os.environ.get("GH_MIRROR", "")
 GITCODE_OWNER = os.environ.get("GITCODE_OWNER") or GH_REPO.split("/")[0]
 GITCODE_REPO = os.environ.get("GITCODE_REPO") or GH_REPO.split("/")[1]
 GITCODE_TOKEN = os.environ.get("GITCODE_TOKEN", "")
@@ -256,8 +259,12 @@ def main() -> int:
                     skipped += 1
                     continue
                 dest = os.path.join(tmpdir, name)
+                url = asset["browser_download_url"]
                 print(f"  下载 {name}（{size / 1048576:.1f}MB）...")
-                if not download(asset["browser_download_url"], dest):
+                downloaded = bool(GH_MIRROR) and download(GH_MIRROR + url, dest)
+                if not downloaded:
+                    downloaded = download(url, dest)
+                if not downloaded:
                     print(f"  [失败] {name} 下载失败")
                     failed += 1
                     continue
