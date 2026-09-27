@@ -183,26 +183,34 @@ class VdController @Inject constructor(
             exec("cmd package resolve-activity --brief $raw 2>/dev/null | tail -1", 20_000L).output.trim()
         }
         check(comp.contains('/')) { "找不到可启动的入口：$component" }
-        // shell（uid 2000）用 `am start --display` 往二级屏启动会被 SecurityException 挡下，
-        // 只能先按常规启动、再把它的任务搬到影子屏（move-stack 走 AM 公开入口，shell 可用）。
-        val r = exec("am start -n $comp", 30_000L)
-        check(!r.output.contains("Error") && !r.output.contains("Exception")) { "启动失败：${r.output.take(300)}" }
         val pkg = comp.substringBefore('/')
-        for (attempt in 0 until 10) {
+        // 直接往影子屏启动，**不走 move-stack**。move-stack 那条路要先把应用在主屏拉起来、
+        // 再把它整个搬进影子屏：屏幕上会先闪出这个应用，目标应用若本就在主屏运行还会被连任务搬走
+        // （用户会看到屏幕跳转）。曾经以为 shell 用 `--display` 会被 SecurityException 挡下，
+        // 实测在本屏（带 TRUSTED/OWN_FOCUS 标志）不成立，直启就能落上去。
+        val r = exec("am start --display ${info.displayId} -f 0x10000000 -n $comp", 30_000L)
+        val out = r.output
+        check(!out.contains("Error") && !out.contains("Exception")) { "启动失败：${out.take(300)}" }
+        // am 对「已在别处运行的实例」会回一句 Warning 并直接交旗，那种情况下这一步不会出现在影子屏。
+        for (attempt in 0 until 8) {
             delay(400L)
-            val taskId = runCatching {
-                exec(
-                    "dumpsys activity activities | grep -oE 'Task\\{[^}]*A=[0-9]+:$pkg' | grep -oE '#[0-9]+' | head -1",
-                    15_000L,
-                ).output.trim().removePrefix("#")
-            }.getOrDefault("")
-            if (taskId.isNotEmpty()) {
-                exec("cmd activity display move-stack $taskId ${info.displayId}", 15_000L)
-                return refresh() ?: info
-            }
+            if (hasTaskOnDisplay(pkg, info.displayId)) return refresh() ?: info
         }
-        error("已启动 $comp 但未能定位其任务并搬入影子屏")
+        error(
+            "$comp 没能落到影子屏：多半是它已经运行在别的屏幕上，系统把 intent 交给了那个实例。" +
+                "先在那边退出它再试（不做 move-stack 搬家，以免动到用户当前屏幕）。"
+        )
     }
+
+    /** 目标包是否已是 [displayId] 那块屏的栈顶（每块屏只有一条 topResumedActivity，用作落屏校验）。 */
+    private suspend fun hasTaskOnDisplay(pkg: String, displayId: Int): Boolean = runCatching {
+        // 不能改用「整段 section 里 grep 包名」：屏幕段之后还跟着全局区域，会把别的屏上的包一起数进来。
+        exec(
+            "dumpsys activity activities | awk '/Display #$displayId \\(activities from top to bottom\\)/{f=1;next}" +
+                " f&&/Display #/{exit} f&&/topResumedActivity/{print;exit}'",
+            15_000L,
+        ).output.contains("$pkg/")
+    }.getOrDefault(false)
 
     /** 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。 */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
