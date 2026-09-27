@@ -4,7 +4,10 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const SITE_URL = 'https://aicode.murk.top'
+// 与 .vitepress/config.ts 用同一套规则：Vercel 上取平台注入的生产域名，本地回退默认值。
+const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : 'https://aharou-docs.vercel.app'
 const here = dirname(fileURLToPath(import.meta.url))
 const docsDir = join(here, '..', 'docs')
 const distDir = join(here, '..', '.vitepress', 'dist')
@@ -124,9 +127,9 @@ for (const section of sections) {
 }
 
 const lines = [
-  '# AiCode 文档',
+  '# Aharou 文档',
   '',
-  `> AiCode 用户文档的纯 Markdown 镜像，正文即 .md 原文，可直接整页抓取。HTML 版见 ${SITE_URL}。`,
+  `> Aharou 用户文档的纯 Markdown 镜像，正文即 .md 原文，可直接整页抓取。HTML 版见 ${SITE_URL}。`,
   ''
 ]
 for (const section of sections) {

@@ -25,13 +25,13 @@ Tip: you can also tap "Download APK" on the [homepage](/en/), which fetches the 
 
 ## 1. First Launch & Onboarding Guide
 
-Open AiCode and you will land on the chat home with a fresh empty conversation. Grant storage permission on first use — otherwise the AI cannot access files on your phone.
+Open Aharou and you will land on the chat home with a fresh empty conversation. Grant storage permission on first use — otherwise the AI cannot access files on your phone.
 
 On first launch, the app automatically starts an interactive spotlight onboarding guide, walking you through the complete flow: "Open sidebar → Enter Settings to configure a vendor and fetch models → Return home to select model → Send first message". In each step, you can tap the highlighted target or the "Next" button on the card to proceed, or tap "Skip" at any time. If you want to review the walkthrough later, you can restart it anytime via "Settings → Re-run onboarding".
 
 ## 2. Configure an AI Vendor
 
-AiCode does not provide models itself; you need to connect a model service first.
+Aharou does not provide models itself; you need to connect a model service first.
 
 1. Tap the menu button at the top-left of the home page to open the sidebar, then tap "Settings" at the bottom.
 2. Go to "AI Config → AI Vendors" and tap the + at the top-right to create one.

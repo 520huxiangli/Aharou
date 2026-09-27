@@ -1,27 +1,27 @@
 ---
 layout: home
-title: AiCode - AI Coding Tool & Linux Terminal on Android
+title: Aharou - AI Coding Tool & Linux Terminal on Android
 titleTemplate: false
-description: AiCode is an open-source AI coding tool for Android that needs no computer. It ships a built-in Linux container and terminal so the AI Agent can read/write code and run builds on its own, with Git version control, the MCP protocol and remote SSH support.
+description: Aharou is an open-source AI coding tool for Android that needs no computer. It ships a built-in Linux container and terminal so the AI Agent can read/write code and run builds on its own, with Git version control, the MCP protocol and remote SSH support.
 head:
   - - meta
     - name: keywords
-      content: AiCode, Android AI coding, mobile development, Linux terminal, PRoot, Termux, AI Agent, MCP, code editor, Git client, mobile workstation, remote SSH
+      content: Aharou, Android AI coding, mobile development, Linux terminal, PRoot, Termux, AI Agent, MCP, code editor, Git client, mobile workstation, remote SSH
 
 hero:
-  name: AiCode
+  name: Aharou
   text: AI Coding Tool & Mobile Workstation on Your Phone
   tagline: No computer needed — write, debug and commit entirely from your phone. A built-in Linux container and terminal let the AI Agent read/write files, run shell commands and execute builds on its own, with Git, MCP, remote SSH and a full model ecosystem.
   image:
     src: /logo.png
-    alt: AiCode
+    alt: Aharou
   actions:
     - theme: brand
       text: Quick Start
       link: /en/guide/quick-start
     - theme: alt
       text: Download APK
-      link: https://aicode.murk.top/download
+      link: /download
     - theme: alt
       text: GitHub
       link: https://github.com/520huxiangli/Aharou

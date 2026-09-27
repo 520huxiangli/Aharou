@@ -1,6 +1,6 @@
 # 在容器中编译 Flutter 应用
 
-在 AiCode 的 Linux 容器（PRoot）中配置 JDK、Android SDK 与 Flutter SDK 后，即可直接从源码编译 Flutter 应用的 Android APK。本文以 Debian 12 (bookworm) aarch64 为例，已在 PRoot 容器内实测通过 debug APK 的构建。
+在 Aharou 的 Linux 容器（PRoot）中配置 JDK、Android SDK 与 Flutter SDK 后，即可直接从源码编译 Flutter 应用的 Android APK。本文以 Debian 12 (bookworm) aarch64 为例，已在 PRoot 容器内实测通过 debug APK 的构建。
 
 ::: tip 支持范围
 ARM64 容器仅支持构建 **debug APK**（JIT 模式，原生支持 ARM64）。**release / profile 包无法在本地构建**：Google 仅为 Android AOT 发布 linux-x64 平台的 gen_snapshot，ARM64 宿主机上无法执行 AOT 编译。如需 release 包，请使用 GitHub Actions 等远程构建方式。

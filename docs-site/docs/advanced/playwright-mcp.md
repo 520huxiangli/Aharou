@@ -55,7 +55,7 @@ https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux-arm
 | 命令参数 | `-y`、`@playwright/mcp@latest`、`--headless`、`--no-sandbox`、`--executable-path`、`/opt/chrome/chrome-linux-arm64/chrome`（逐项添加） |
 | 作用域 | 全局（所有项目共用）或项目（仅当前工作区） |
 
-也可直接编辑配置文件，全局为 `~/.aicode/mcp.json`，项目级为 `<工作区>/.aicode/mcp.json`，保存后数秒内自动生效：
+也可直接编辑配置文件，全局为 `~/.aharou/mcp.json`，项目级为 `<工作区>/.aharou/mcp.json`，保存后数秒内自动生效：
 
 ```json
 {
@@ -165,7 +165,7 @@ fi
 
 BIN="$BIN" python3 - <<'PY'
 import json, os, shutil
-p = os.path.expanduser("~/.aicode/mcp.json")
+p = os.path.expanduser("~/.aharou/mcp.json")
 os.makedirs(os.path.dirname(p), exist_ok=True)
 data = {}
 if os.path.exists(p):

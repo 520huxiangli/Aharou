@@ -1,6 +1,6 @@
 # 在容器中编译 Android 应用
 
-在 AiCode 的 Linux 容器里搭好 JDK 与 Android SDK，就能直接从源码编译 Android 应用。本文以 Debian 12 (bookworm) aarch64 为例，Ubuntu、Arch 等发行版同样适用。
+在 Aharou 的 Linux 容器里搭好 JDK 与 Android SDK，就能直接从源码编译 Android 应用。本文以 Debian 12 (bookworm) aarch64 为例，Ubuntu、Arch 等发行版同样适用。
 
 ::: tip 建议使用自定义 Debian / Ubuntu 镜像
 内置的 Alpine 容器用的是 musl libc，与 PRoot 交互时编译 Android 应用需要额外处理（见文末补充）。导入自定义镜像的方法见「自定义容器镜像」。

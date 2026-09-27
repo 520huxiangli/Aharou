@@ -1,6 +1,6 @@
 # 自定义提示词
 
-AiCode 的系统提示词可以自己改。默认提示词随 App 内置、升级时自动更新；你只要把想改或想加的片段放进自定义目录就能覆盖或扩展，不用动 App 本体。
+Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升级时自动更新；你只要把想改或想加的片段放进自定义目录就能覆盖或扩展，不用动 App 本体。
 
 ::: tip v1.12.0 起
 本文的片段命名规则（`<两位数字>-<名称>.md`）、按数字新增片段、`.no-builtin` 完全禁用开关与 <span v-pre>`{{AICODE_*}}`</span> 变量自 **v1.12.0** 起支持。更早的版本只能放与默认片段**完全同名**的文件来覆盖，不支持按数字新增、`.no-builtin` 与变量。
@@ -8,10 +8,10 @@ AiCode 的系统提示词可以自己改。默认提示词随 App 内置、升�
 
 ## 目录结构
 
-提示词放在 AI 配置目录 `~/.aicode/` 下（容器内路径是 `/root/.aicode/`）：
+提示词放在 AI 配置目录 `~/.aharou/` 下（容器内路径是 `/root/.aharou/`）：
 
 ```
-~/.aicode/
+~/.aharou/
 ├── prompts/          默认提示词（App 启动时全量释放，升级自动覆盖）
 │   ├── 00-identity.md
 │   ├── 10-communication.md
@@ -53,14 +53,14 @@ AiCode 的系统提示词可以自己改。默认提示词随 App 内置、升�
 每个片段按这个顺序查找，找到就用，不再往后找：
 
 1. 自定义版本：顶层数字片段按数字身份（`prompts.custom/` 顶层）、其余按同名（`prompts.custom/agent/xxx.md`）
-2. `~/.aicode/prompts/<同名文件>` — 本地默认副本
+2. `~/.aharou/prompts/<同名文件>` — 本地默认副本
 3. App 内置的版本 — 兜底
 
 所以你只需要放想改或想加的那几个片段，其余会自动用默认版本。
 
 ## 怎么改
 
-1. 在 `~/.aicode/prompts.custom/` 下（没有就手动创建）放入片段：覆盖内置片段用相同数字命名，新增片段用尚未占用的数字命名，子目录片段（如 `agent/plan-mode.md`）对应放到 `prompts.custom/agent/` 下。
+1. 在 `~/.aharou/prompts.custom/` 下（没有就手动创建）放入片段：覆盖内置片段用相同数字命名，新增片段用尚未占用的数字命名，子目录片段（如 `agent/plan-mode.md`）对应放到 `prompts.custom/agent/` 下。
 2. 编辑内容。
 3. **重启 App 后生效**。
 
@@ -135,7 +135,7 @@ AiCode 的系统提示词可以自己改。默认提示词随 App 内置、升�
 
 ## 恢复默认
 
-删掉 `~/.aicode/prompts.custom/` 下对应的文件，那个片段就恢复默认版本；删掉整个 `prompts.custom/` 目录则全部恢复（`.no-builtin` 一并删除后内置提示词重新启用）。
+删掉 `~/.aharou/prompts.custom/` 下对应的文件，那个片段就恢复默认版本；删掉整个 `prompts.custom/` 目录则全部恢复（`.no-builtin` 一并删除后内置提示词重新启用）。
 
 ## 注意
 

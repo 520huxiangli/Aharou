@@ -10,8 +10,8 @@
 
 | 作用域 | 说明 | 存储位置 |
 | --- | --- | --- |
-| 全局 | 跨项目通用的个人偏好 | `~/.aicode/memory/` |
-| 项目 | 当前项目专属的约定与经验 | 本地模式：`<项目根>/.aicode/memory/`；远程 SSH 模式：`~/.aicode/memory/projects/<项目名>-<标识哈希>/` |
+| 全局 | 跨项目通用的个人偏好 | `~/.aharou/memory/` |
+| 项目 | 当前项目专属的约定与经验 | 本地模式：`<项目根>/.aharou/memory/`；远程 SSH 模式：`~/.aharou/memory/projects/<项目名>-<标识哈希>/` |
 
 项目记忆在远程模式下存储于手机本地，并按「项目名 + 服务器标识」隔离，不受容器重置影响。
 
@@ -54,4 +54,4 @@ description: 项目代码规范与命名约定
 
 ### 自定义加载约定
 
-项目规则的加载约定对应提示词片段 `15-project-rules.md`，可通过 `~/.aicode/prompts.custom/15-project-rules.md` 覆盖，见[自定义提示词](/guide/custom-prompts)。
+项目规则的加载约定对应提示词片段 `15-project-rules.md`，可通过 `~/.aharou/prompts.custom/15-project-rules.md` 覆盖，见[自定义提示词](/guide/custom-prompts)。

@@ -1,6 +1,6 @@
 # Free Vendors
 
-Want to try AI coding on a budget? The platforms below offer free quotas or promotional tokens — register and connect them in AiCode. Free quotas are usually time-limited; once exhausted or expired you may need to top up, per each platform's rules.
+Want to try AI coding on a budget? The platforms below offer free quotas or promotional tokens — register and connect them in Aharou. Free quotas are usually time-limited; once exhausted or expired you may need to top up, per each platform's rules.
 
 ## MiMo Open Platform (Xiaomi)
 
@@ -52,7 +52,7 @@ New users must register and complete real-name verification before receiving the
 Text, image and video model APIs are all free, with basic rate limits and fair-use quotas. See platform rules for details.
 :::
 
-## Connecting in AiCode
+## Connecting in Aharou
 
 Once you have a platform's API Key and Base URL, follow [AI Vendors & Models](/en/guide/providers) to configure it:
 

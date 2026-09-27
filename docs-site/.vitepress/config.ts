@@ -5,6 +5,15 @@ import { defineConfig } from 'vitepress'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+/**
+ * 站点地址。部署在 Vercel 时直接用平台注入的生产域名（免费 `<项目名>.vercel.app`，
+ * 不用自己注册域名）；本地构建或换别的托管时回退到默认值。
+ * 凡需绝对地址处（sitemap / og 图 / 分享链接）都引用它，避免域名散落各处。
+ */
+const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : 'https://aharou-docs.vercel.app'
+
 export default defineConfig({
   srcDir: './docs',
   locales: {
@@ -15,14 +24,14 @@ export default defineConfig({
     en: {
       label: 'English',
       lang: 'en',
-      title: 'AiCode',
-      titleTemplate: ':title | AiCode - AI Coding Tool & Terminal on Android',
-      description: 'AiCode is an open-source AI coding and mobile workstation tool for Android. It ships with a built-in Linux container and terminal, letting the AI Agent read and write files, run shell commands and builds on its own — with deep integration of the MCP protocol, Git version control and remote SSH development.',
+      title: 'Aharou',
+      titleTemplate: ':title | Aharou - AI Coding Tool & Terminal on Android',
+      description: 'Aharou is an open-source AI coding and mobile workstation tool for Android. It ships with a built-in Linux container and terminal, letting the AI Agent read and write files, run shell commands and builds on its own — with deep integration of the MCP protocol, Git version control and remote SSH development.',
       head: [
-        ['meta', { name: 'keywords', content: 'AiCode, Android AI coding, mobile development, Linux terminal, PRoot, Termux, AI Agent, MCP, code editor, Git client, mobile workstation, remote SSH' }],
-        ['meta', { property: 'og:title', content: 'AiCode - AI Coding Tool & Linux Terminal on Android' }],
+        ['meta', { name: 'keywords', content: 'Aharou, Android AI coding, mobile development, Linux terminal, PRoot, Termux, AI Agent, MCP, code editor, Git client, mobile workstation, remote SSH' }],
+        ['meta', { property: 'og:title', content: 'Aharou - AI Coding Tool & Linux Terminal on Android' }],
         ['meta', { property: 'og:description', content: 'An open-source AI coding tool for Android with a built-in Linux container and terminal. AI Agent edits code, runs commands and builds; supports MCP tools, Git and remote SSH.' }],
-        ['meta', { name: 'twitter:title', content: 'AiCode - AI Coding Tool & Linux Terminal on Android' }],
+        ['meta', { name: 'twitter:title', content: 'Aharou - AI Coding Tool & Linux Terminal on Android' }],
         ['meta', { name: 'twitter:description', content: 'An open-source AI coding tool for Android with a built-in Linux container and terminal. AI Agent edits code, runs commands and builds; supports MCP tools, Git and remote SSH.' }]
       ],
       themeConfig: {
@@ -62,34 +71,34 @@ export default defineConfig({
         },
         footer: {
           message: 'Open source under GPL-3.0',
-          copyright: 'Copyright © 2026-present AiCode'
+          copyright: 'Copyright © 2026-present Aharou'
         }
       }
     }
   },
-  title: 'AiCode',
-  titleTemplate: ':title | AiCode - 手机端 AI 编程工具与终端',
-  description: 'AiCode 是一款开源的 Android 端 AI 编程与移动工作站工具。内置 Linux 容器与终端环境，AI Agent 可自主读写文件、执行 Shell 命令与运行构建，深度集成 MCP 协议、Git 版本控制与远程 SSH 开发。',
+  title: 'Aharou',
+  titleTemplate: ':title | Aharou - 手机端 AI 编程工具与终端',
+  description: 'Aharou 是一款开源的 Android 端 AI 编程与移动工作站工具。内置 Linux 容器与终端环境，AI Agent 可自主读写文件、执行 Shell 命令与运行构建，深度集成 MCP 协议、Git 版本控制与远程 SSH 开发。',
   cleanUrls: true,
   lastUpdated: true,
   sitemap: {
-    hostname: 'https://aicode.murk.top'
+    hostname: SITE_URL
   },
   head: [
     ['link', { rel: 'icon', href: '/logo.png', type: 'image/png' }],
     ['meta', { name: 'theme-color', content: '#3c8772' }],
-    ['meta', { name: 'keywords', content: 'AiCode, Android AI 编程, 手机编程, 移动端开发, Linux 终端, PRoot, Termux, AI Agent, MCP 协议, 手机代码编辑器, Git 客户端, 移动工作站, 手机跑终端, 远程 SSH 开发' }],
-    ['meta', { name: 'author', content: 'AiCode Team' }],
+    ['meta', { name: 'keywords', content: 'Aharou, Android AI 编程, 手机编程, 移动端开发, Linux 终端, PRoot, Termux, AI Agent, MCP 协议, 手机代码编辑器, Git 客户端, 移动工作站, 手机跑终端, 远程 SSH 开发' }],
+    ['meta', { name: 'author', content: 'Aharou Team' }],
     ['meta', { property: 'og:type', content: 'website' }],
-    ['meta', { property: 'og:site_name', content: 'AiCode' }],
-    ['meta', { property: 'og:title', content: 'AiCode - 手机端 AI 编程工具与内置 Linux 终端' }],
+    ['meta', { property: 'og:site_name', content: 'Aharou' }],
+    ['meta', { property: 'og:title', content: 'Aharou - 手机端 AI 编程工具与内置 Linux 终端' }],
     ['meta', { property: 'og:description', content: 'Android 端全功能 AI 编程工具：内置 Linux 容器与终端、AI Agent 自动修改代码与执行命令、MCP 工具扩展、Git 版本管理与远程 SSH 连接。' }],
-    ['meta', { property: 'og:image', content: 'https://aicode.murk.top/logo.png' }],
-    ['meta', { property: 'og:url', content: 'https://aicode.murk.top/' }],
+    ['meta', { property: 'og:image', content: `${SITE_URL}/logo.png` }],
+    ['meta', { property: 'og:url', content: `${SITE_URL}/` }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:title', content: 'AiCode - 手机端 AI 编程工具与内置 Linux 终端' }],
+    ['meta', { name: 'twitter:title', content: 'Aharou - 手机端 AI 编程工具与内置 Linux 终端' }],
     ['meta', { name: 'twitter:description', content: 'Android 端全功能 AI 编程工具：内置 Linux 容器与终端、AI Agent 自动修改代码与执行命令、MCP 工具扩展、Git 版本管理与远程 SSH 连接。' }],
-    ['meta', { name: 'twitter:image', content: 'https://aicode.murk.top/logo.png' }]
+    ['meta', { name: 'twitter:image', content: `${SITE_URL}/logo.png` }]
   ],
   themeConfig: {
     nav: [
@@ -208,7 +217,7 @@ export default defineConfig({
     },
     footer: {
       message: '基于 GPL-3.0 协议开源',
-      copyright: 'Copyright © 2026-至今 AiCode'
+      copyright: 'Copyright © 2026-至今 Aharou'
     }
   },
   vite: {

@@ -1,6 +1,6 @@
 # AI Vendors & Models
 
-AiCode does not provide models itself — you need to connect at least one model service before you can start chatting. This page covers how to set it up.
+Aharou does not provide models itself — you need to connect at least one model service before you can start chatting. This page covers how to set it up.
 
 The entry point is "Settings → AI Vendors".
 
@@ -70,7 +70,7 @@ Keep them off by default. Enable only when you've confirmed the official direct 
 
 ::: v-pre
 - **Custom request headers**: append custom headers to all requests of this vendor, fully overriding same-named defaults (e.g. setting `User-Agent` replaces the default UA). Values support `{{SESSION_ID}}` (current session id) and `{{API_KEY}}` (the key actually used this time) placeholders, substituted before sending. Only needed when a relay gateway validates specific headers.
-- **Custom dashboard script**: show a balance or usage card above the input box for this vendor. Scripts live in `~/.aicode/scripts/`, support Python, Bash and Node, and can be tested with "Run Test" in the edit page.
+- **Custom dashboard script**: show a balance or usage card above the input box for this vendor. Scripts live in `~/.aharou/scripts/`, support Python, Bash and Node, and can be tested with "Run Test" in the edit page.
 - **Script arguments**: inject extra environment variable `AICODE_KEY_<KEY>` into the dashboard script. Values support placeholders like `{{PROVIDER_API_KEY}}` (current key), `{{BASE_URL}}`, `{{MODEL}}`, substituted before the script runs.
 :::
 

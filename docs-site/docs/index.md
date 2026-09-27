@@ -1,27 +1,27 @@
 ---
 layout: home
-title: AiCode - 手机端 AI 编程工具与内置 Linux 终端
+title: Aharou - 手机端 AI 编程工具与内置 Linux 终端
 titleTemplate: false
-description: AiCode 是一款开源的 Android 端 AI 编程工具，无需电脑，在手机上就能完成完整开发流程。内置 Linux 容器与终端，AI Agent 可直接读写代码并执行构建；支持 Git 版本控制、MCP 协议与远程 SSH 开发。
+description: Aharou 是一款开源的 Android 端 AI 编程工具，无需电脑，在手机上就能完成完整开发流程。内置 Linux 容器与终端，AI Agent 可直接读写代码并执行构建；支持 Git 版本控制、MCP 协议与远程 SSH 开发。
 head:
   - - meta
     - name: keywords
-      content: AiCode, Android AI 编程, 手机编程, 移动端开发, Linux 终端, PRoot, Termux, AI Agent, MCP 协议, 手机代码编辑器, Git 客户端, 移动工作站, 手机跑终端, 远程 SSH 开发
+      content: Aharou, Android AI 编程, 手机编程, 移动端开发, Linux 终端, PRoot, Termux, AI Agent, MCP 协议, 手机代码编辑器, Git 客户端, 移动工作站, 手机跑终端, 远程 SSH 开发
 
 hero:
-  name: AiCode
+  name: Aharou
   text: 手机上的 AI 编程工具与移动工作站
   tagline: 无需电脑，在手机上即可完成从写代码、调试到提交的完整开发流程。内置 Linux 容器与终端，AI Agent 可自主读写文件、执行 Shell 命令与运行构建，还支持 Git、MCP、远程 SSH 与完整模型生态。
   image:
     src: /logo.png
-    alt: AiCode
+    alt: Aharou
   actions:
     - theme: brand
       text: 快速上手
       link: /guide/quick-start
     - theme: alt
       text: 下载 APK
-      link: https://aicode.murk.top/download
+      link: /download
     - theme: alt
       text: GitHub
       link: https://github.com/520huxiangli/Aharou
