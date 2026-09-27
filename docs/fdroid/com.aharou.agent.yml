@@ -1,17 +1,17 @@
 Categories:
   - Development
 License: GPL-3.0-only
-AuthorName: jieapi
-WebSite: https://github.com/jieapi/aicode
-SourceCode: https://github.com/jieapi/aicode
-IssueTracker: https://github.com/jieapi/aicode/issues
-Changelog: https://github.com/jieapi/aicode/releases
+AuthorName: 520huxiangli
+WebSite: https://github.com/520huxiangli/Aharou
+SourceCode: https://github.com/520huxiangli/Aharou
+IssueTracker: https://github.com/520huxiangli/Aharou/issues
+Changelog: https://github.com/520huxiangli/Aharou/releases
 
-Name: AiCode
+Name: Aharou
 Summary: AI coding agent with terminal, Linux container and Git
 Description: |-
-  AiCode is an AI-powered coding tool for Android. It embeds a terminal
-  emulator, a Linux container (PRoot) and Git integration, and connects
+  Aharou is an AI-powered coding agent for Android. It embeds a terminal
+  emulator, a Linux container (PRoot/Alpine) and Git integration, and connects
   to Anthropic, OpenAI or any OpenAI-compatible API provider to generate,
   review and execute code directly on the device.
 
@@ -22,22 +22,21 @@ Description: |-
   * Multi-provider model support with cost tracking
   * Remote SSH server and SFTP file access
   * MCP (Model Context Protocol) client support
+  * In-app update download with mirror fallback
 
 RepoType: git
-Repo: https://github.com/jieapi/aicode.git
-Binaries: https://github.com/jieapi/aicode/releases/download/v%v/aicode-universal-%v.apk
+Repo: https://github.com/520huxiangli/Aharou.git
+Binaries: https://github.com/520huxiangli/Aharou/releases/download/v%v/Aharou-universal-v%v.apk
 
 Builds:
-  - versionName: 1.9.0
-    versionCode: 394
-    commit: v1.9.0
-    disable: v1.9.0 tag 的构建脚本缺少无 keystore 条件化（release 构建需 keystore.properties），
-      可复现构建修复已合入 main，首个可构建版本为 v1.10.0
+  - versionName: 1.13.6
+    versionCode: 910
+    commit: v1.13.6
     gradle:
       - universal
     output: app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 
-AllowedAPKSigningKeys: bab791d7680850f934105d7f35801a2e9f3ceca4313b52c284511f0573433718
+AllowedAPKSigningKeys: 15eb1b0af0dabb68ca7c31deaa3c786ea3fb7de39684adbe94513c86959ab3c1
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags

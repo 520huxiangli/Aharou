@@ -14,7 +14,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 TARGET_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "models.json")
 )
-UA = "aicode-models-sync"
+UA = "aharou-models-sync"
 
 
 def fetch_remote() -> dict:

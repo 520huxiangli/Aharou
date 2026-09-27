@@ -17,7 +17,7 @@ MODELS_DEV_URL = "https://models.dev/api.json"
 ASSET_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "assets", "api.official.json")
 )
-UA = "aicode-assets-updater"
+UA = "aharou-assets-updater"
 
 # 官方 provider 的默认 Base URL（models.dev 的 api 字段缺失时回退）。
 DEFAULT_BASE_URL = {

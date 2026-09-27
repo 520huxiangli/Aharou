@@ -1,7 +1,7 @@
 name: Beta Build
 
 # push 到 main 时自动构建一个测试包：universal flavor、正式签名、与 release 同配置（R8/资源压缩），
-# 仅 applicationId 后缀 .beta（com.aicode.beta，可与正式版同机共存）。
+# 仅 applicationId 后缀 .beta（com.aharou.agent.beta，可与正式版同机共存）。
 # 产物上传到 Actions Artifacts（默认保留 90 天），不进 GitHub Release。
 # 打 v* tag 的正式发版走 android-release.yml；合入前门禁走 ci.yml。
 on:
@@ -77,7 +77,7 @@ jobs:
       - name: Build universal beta APK
         run: ./gradlew :app:assembleUniversalBeta --stacktrace
 
-      # 产物重命名为 aicode-universal-beta-<sha7>.apk，短 sha 便于区分每次构建。
+      # 产物重命名为 Aharou-universal-beta-<sha7>.apk，短 sha 便于区分每次构建。
       # 同时带上 R8 混淆映射（mapping.txt），供 beta 崩溃报告反混淆。
       - name: Rename APK & collect mapping
         run: |
@@ -85,21 +85,21 @@ jobs:
           mkdir -p dist
           sha7="${GITHUB_SHA::7}"
           cp "app/build/outputs/apk/universal/beta/app-universal-beta.apk" \
-             "dist/aicode-universal-beta-${sha7}.apk"
+             "dist/Aharou-universal-beta-${sha7}.apk"
           # AGP 8.x 的 mapping 输出目录是 variant 驼峰名（flavor + BuildType），
           # 即 outputs/mapping/universalBeta/，不是 outputs/mapping/universal/beta/。
           if [[ -f "app/build/outputs/mapping/universalBeta/mapping.txt" ]]; then
             cp "app/build/outputs/mapping/universalBeta/mapping.txt" \
-               "dist/aicode-universal-beta-${sha7}-mapping.txt"
+               "dist/Aharou-universal-beta-${sha7}-mapping.txt"
           fi
           ls -lh dist/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aicode-beta-${{ github.sha }}
+          name: Aharou-beta-${{ github.sha }}
           # Artifacts 默认保留 90 天，无需显式配置。
           path: |
-            dist/aicode-universal-beta-*.apk
-            dist/aicode-universal-beta-*-mapping.txt
+            dist/Aharou-universal-beta-*.apk
+            dist/Aharou-universal-beta-*-mapping.txt
           if-no-files-found: error

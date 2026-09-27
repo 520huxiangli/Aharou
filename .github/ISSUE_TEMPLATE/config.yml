@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: 使用文档
-    url: https://github.com/jieapi/aicode/wiki
-    about: 使用问题建议先查阅 Wiki，再考虑提 issue。
+    url: https://github.com/520huxiangli/Aharou/wiki
+    about: 使用问题建议先查阅文档，再考虑提 issue。

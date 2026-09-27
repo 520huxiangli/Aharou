@@ -10,7 +10,7 @@
   且轻量同步即可满足国内下载需求）；--all 可全量同步 GitHub 全部 Release。
 
 可选环境变量：
-  GH_REPO         GitHub 仓库，默认 jieapi/aicode
+  GH_REPO         GitHub 仓库，默认 520huxiangli/Aharou
   GITCODE_OWNER   GitCode 用户名，默认取 GH_REPO 同名
   GITCODE_REPO    GitCode 仓库名，默认取 GH_REPO 同名
   GITHUB_TOKEN    GitHub 令牌（可选，提高 API 限额）
@@ -39,9 +39,9 @@ import time
 import urllib.parse
 import urllib.request
 
-UA = "aicode-gitcode-sync"
+UA = "aharou-gitcode-sync"
 
-GH_REPO = os.environ.get("GH_REPO", "jieapi/aicode")
+GH_REPO = os.environ.get("GH_REPO", "520huxiangli/Aharou")
 GITCODE_OWNER = os.environ.get("GITCODE_OWNER") or GH_REPO.split("/")[0]
 GITCODE_REPO = os.environ.get("GITCODE_REPO") or GH_REPO.split("/")[1]
 GITCODE_TOKEN = os.environ.get("GITCODE_TOKEN", "")
