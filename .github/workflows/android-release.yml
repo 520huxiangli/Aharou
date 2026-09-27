@@ -230,3 +230,19 @@ jobs:
             dist/Aharou-universal-*mapping.txt.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 发版后立刻同步资产到 GitCode（国内源）。
+      # 日常有 sync-gitcode.yml 定时跑（每天一次），这里补上「发版即同步」，
+      # 用户不用等一天。同步失败不该让发版本身标红——资产已在 GitHub 上，
+      # GitCode 那边下一次定时同步会补上。
+      - name: Sync release assets to GitCode
+        continue-on-error: true
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+          GH_REPO: ${{ github.repository }}
+          # 国内 runner 直连 GitHub 下资产只有 ~0.03MB/s，走镜像快两个数量级
+          GH_MIRROR: https://gh-proxy.com/
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/sync-gitcode-releases.py
