@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 的冷启动闪屏由系统 SplashScreen 接管：targetSdk 31 起每个 Activity 启动时都会先显示系统闪屏，
+     不显式给出背景与图标时它会退回系统默认（白色背景 + 应用图标），把 manifest 里 windowBackground 的观感丢掉。 -->
+<resources>
+    <style name="Theme.AICode.Splash" parent="Theme.AICode">
+        <item name="android:windowSplashScreenBackground">@color/splash_background_color</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

@@ -210,6 +210,8 @@
     <string name="provider_test_error_detail">Error Stack</string>
     <string name="provider_dashboard_test_failed">Execution Failed</string>
     <string name="provider_dashboard_no_scripts">No scripts found in ~/.aharou/scripts/</string>
+    <string name="share_script_imported">Imported panel script: %1$s (pick it under Provider settings → Dashboard script)</string>
+    <string name="provider_dashboard_import_script">Import script from device</string>
     <string name="provider_dashboard_select_title">Select Dashboard Script</string>
     <string name="provider_dashboard_clear_script">None (Clear script)</string>
     <string name="provider_dashboard_loading">Loading dashboard...</string>
@@ -1410,6 +1412,7 @@
     <string name="workspace_external_warning_continue">Continue</string>
     <string name="workspace_external_remove_confirm">Remove workspace "%1$s"? Only the link is removed; the directory and its files will not be deleted.</string>
     <string name="workspace_external_remove_confirm_sessions">Remove workspace "%1$s"? Only the link is removed; the directory and its files are kept, but this workspace\'s chats will be deleted.</string>
+    <string name="workspace_external_need_all_files">Working with directories on device storage needs "All files access". Enable it in Settings → Permissions → All files access, then try again</string>
     <string name="workspace_external_unresolvable">Could not resolve the selected directory. Pick from the "Internal storage" or "SD card" root; other file providers are not supported</string>
     <string name="workspace_external_invalid">The selection is not a valid directory</string>
     <string name="workspace_external_unsupported_path">The directory path contains the unsupported character ":"</string>
@@ -1504,10 +1507,11 @@
     <string name="provider_multi_key_manage">Manage Keys</string>
     <string name="provider_multi_key_summary">%1$d keys · %2$s</string>
     <string name="provider_multi_key_list">Key List</string>
-    <string name="provider_multi_key_item">Key %1$d</string>
+    <string name="provider_multi_key_item">Key #%1$d</string>
     <string name="provider_multi_key_empty">Tap to add the first key</string>
     <string name="provider_multi_key_add">Add key</string>
-    <string name="provider_multi_key_remove">Remove this key</string>
+    <string name="provider_multi_key_weight">Scheduling weight</string>
+    <string name="provider_multi_key_weight_hint">Default 1 · ≤ 0 excluded · Max 1,000,000</string>
     <string name="provider_multi_key_strategy">Selection Strategy</string>
     <string name="provider_multi_key_strategy_sequential">Sequential</string>
     <string name="provider_multi_key_strategy_sequential_desc">Always use the earliest key; move on only after the failure threshold</string>

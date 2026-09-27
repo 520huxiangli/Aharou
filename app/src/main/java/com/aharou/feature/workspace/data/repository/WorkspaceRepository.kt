@@ -2,6 +2,8 @@ package com.aharou.feature.workspace.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -370,6 +372,13 @@ class WorkspaceRepository @Inject constructor(
      * @return 注册成功的 [Workspace]；校验失败返回 null（同时通过 [addError] 给出提示文案）。
      */
     suspend fun addExternalWorkspace(uri: Uri): Workspace? = withContext(Dispatchers.IO) {
+        // Android 11+ 起共享存储被 scoped storage 隔离，本应用对所选目录的直读直写靠
+        // 「所有文件访问」授权；未授权时后续 File 操作只会拿到 EACCES，先给出可操作的提示。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            _addError.value = context.getString(R.string.workspace_external_need_all_files)
+            FileLogger.w(TAG, "添加本地工作区失败：未授予所有文件访问")
+            return@withContext null
+        }
         val uriFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
             android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         val path = UriPathResolver.toFilePath(context, uri)
@@ -379,7 +388,7 @@ class WorkspaceRepository @Inject constructor(
             releaseUriGrant(uri, uriFlags)
             return@withContext null
         }
-        // 实际读写走 targetSdk 28 的 legacy storage + java.io.File；SAF grant 仅记录目录选择授权，不是文件后端。
+        // 实际读写走 java.io.File 直读真实路径（Android 11+ 靠「所有文件访问」授权）；SAF grant 仅记录目录选择授权，不是文件后端。
         if (path.contains(':')) {
             _addError.value = context.getString(R.string.workspace_external_unsupported_path)
             FileLogger.w(TAG, "添加本地工作区失败：路径包含不支持的冒号 $path")

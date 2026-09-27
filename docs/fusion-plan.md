@@ -29,7 +29,7 @@
 | 安卓规模 | ~20.8 万行 Kotlin | ~9.3 万行 Kotlin（主模块） |
 | 架构 | 手工 DI（无 Hilt）、Room、Compose | Hilt/KSP、Room、Compose、feature 分层 |
 | 构建 | AGP 8.7.3 / Kotlin 2.1.0；**需 NDK r28+** | AGP 8.9.3 / Kotlin 2.2.21；**免 NDK** ✅ |
-| SDK | minSdk 26 / targetSdk 35 | minSdk 26 / targetSdk 28（锁定） |
+| SDK | minSdk 26 / targetSdk 35 | minSdk 26 / targetSdk 28（锁定）→ 融合后已升 35 |
 | 拿什么 | 设备集成（闹钟/日历/联系人/剪贴板/定位/通知/媒体/TTS）、浏览器自动化、语音、定时任务、分享入口、技能/记忆、17 语种 | 容器（PRoot 多发行版 + 远程 SSH）、终端、编辑器、Git 面板、文件树、工作区、子代理、检查点、MCP、权限三模式、多 Key |
 
 ---

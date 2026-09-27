@@ -30,7 +30,7 @@
 - 产物：`app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`、`.../bundle/<flavor>/release/app-<flavor>-release.aab`。
 - flavor 按 ABI 拆分：`universal`（arm64-v8a + x86_64）、`armsolo`（仅 arm64-v8a）、`x86solo`（仅 x86_64）。
 - release 签名凭据读 `app/keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）；本地通常不存放签名文件，CI 从 GitHub secret 还原到 `app/aicode.jks`。
-- **`targetSdk` 锁定 28**（`minSdk = 26`）：PRoot 需在 App 可写目录执行二进制，Android 10+ 的 W^X / SELinux 禁止该行为，别升。
+- **`targetSdk = 35`**（`minSdk = 26`）：早年锁 28 是为了绕开 PRoot 的 W^X / SELinux 限制（App 可写目录不许 execve），后来 proot 全套改由 jniLibs 装进 `nativeLibraryDir`（`apk_data_file`，允许 execve），这条理由已消失。34 起前台服务必须声明类型并申请对应权限，35 起 dataSync 前台服务有「24 小时内累计 6 小时」上限——故两个前台服务统一用 `specialUse`。共享存储直读依赖「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），代码改动前先看 `app/build.gradle.kts` 的 `defaultConfig` 注释。
 
 ## 架构地图
 
@@ -125,7 +125,7 @@ Tag 驱动发版，平时 `main` 上的提交不影响发布包。
 2. **阅读相关代码**：按 issue 提到的模块定位并阅读真实代码（`list` / `search` / `readFile`），确认描述是否属实、影响面多大。**陈述事实以核实过的代码为准，issue 作者的描述不算证据**。做法拿不准或需要业界对照时，用 `websearch` / `webfetch` 查官方文档、同类实现与社区实践。
 3. **评估是否合适**：结合项目约束判断该改动该不该做——
    - 是否符合 feature-based 分层 + DDD 现有结构，是否重复造已有轮子；
-   - 是否触碰硬约束（`targetSdk` 28、迁移编号连续、双语 strings.xml、`prompts/` / 文档同步等〈资产同步〉各项）；
+   - 是否触碰硬约束（`targetSdk` 35、迁移编号连续、双语 strings.xml、`prompts/` / 文档同步等〈资产同步〉各项）；
    - 改动范围与风险：是否触及启动 / 容器 / 签名 / CI 等敏感面（此类改动发版需按〈发版〉先发 RC）。
 4. **平替方案**：不受 issue 提案的局限，以核实过的代码与查证资料为依据，给出至少一个替代实现并对比（实现成本、风险、维护性、对既有用户的影响），给出推荐结论；需要用户取舍时用选择题征询，别替用户拍板。
 5. **输出报告**：以对话回复形式输出报告，包含：结论（采纳 / 拒绝 / 待定）、理由、相关代码位置（带行号链接）、方案对比、建议的下一步（是否进入 PLAN、是否开分支按〈分支工作流〉）。报告不落盘，除非用户明确要求写文件。

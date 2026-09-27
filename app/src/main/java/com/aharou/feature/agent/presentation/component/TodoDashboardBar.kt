@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
@@ -68,6 +69,7 @@ fun TodoDashboardBar(
 
     // 按会话隔离记忆展开状态，新会话默认收起
     var isExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
     val effectiveExpanded = isExpanded && !forceCollapse
 
     LaunchedEffect(effectiveExpanded) {
@@ -99,7 +101,11 @@ fun TodoDashboardBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(Radius.sm))
-                    .clickable { isExpanded = !isExpanded }
+                    .clickable {
+                        // 展开前先让键盘让位，不然面板展开后会正好被键盘挡住。
+                        if (!isExpanded) keyboard?.hide()
+                        isExpanded = !isExpanded
+                    }
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

@@ -51,8 +51,16 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.aharou.core.util.FileLogger
+import com.aharou.core.util.PanelScriptImporter
+import com.aharou.feature.agent.presentation.SharedIntakeHolder
+import com.aharou.feature.agent.presentation.component.copyUriToWorkspace
+import com.aharou.feature.agent.presentation.component.toPendingAttachment
+import com.aharou.feature.workspace.domain.FileAccessProvider
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -149,6 +157,14 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var hostKeyVerifier: com.aharou.feature.agent.domain.container.SshHostKeyVerifier
 
+    /** 外部分享文件的中转站；消费方在聊天面板。 */
+    @Inject
+    internal lateinit var sharedIntakeHolder: SharedIntakeHolder
+
+    /** 分享文件要经它写进当前工作区（本地映射到宿主工作区，远程落到远程）。 */
+    @Inject
+    lateinit var fileAccessProvider: FileAccessProvider
+
     @Inject
     lateinit var executionModeHolder: com.aharou.feature.settings.data.repository.ExecutionModeHolder
 
@@ -176,12 +192,61 @@ class MainActivity : ComponentActivity() {
     }
 
     @Suppress("DEPRECATION") // 全局更新 application resources locale，createConfigurationContext 无法替代
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // singleTop 复用本实例时 getIntent() 还指向旧的，必须显式接过来。
+        setIntent(intent)
+        handleShareIntent(intent)
+    }
+
+    /**
+     * 接收外部分享的文件（ACTION_SEND / SEND_MULTIPLE）：拷进工作区 attachments，
+     * 投给 [sharedIntakeHolder] 由聊天面板并入输入框附件。失败只记日志，不影响正常启动。
+     */
+    @Suppress("DEPRECATION")
+    private fun handleShareIntent(intent: Intent?) {
+        val uris = when (intent?.action) {
+            Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            Intent.ACTION_SEND_MULTIPLE ->
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            else -> return
+        }
+        if (uris.isEmpty()) return
+        lifecycleScope.launch {
+            // 脚本类文件导入 ~/.aharou/scripts/（面板脚本目录），其余当普通附件。
+            val (scripts, others) = uris.partition {
+                PanelScriptImporter.isPanelScript(PanelScriptImporter.queryDisplayName(this@MainActivity, it))
+            }
+            val importedScripts = scripts.mapNotNull { PanelScriptImporter.import(this@MainActivity, it) }
+            if (importedScripts.isNotEmpty()) {
+                FileLogger.i("MainActivity", "已导入面板脚本：${importedScripts.joinToString()}")
+                Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.share_script_imported, importedScripts.joinToString()),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            val uploaded = others.mapNotNull { uri ->
+                runCatching { copyUriToWorkspace(this@MainActivity, uri, fileAccessProvider) }
+                    .onFailure { FileLogger.w("MainActivity", "分享文件导入失败：$uri", it) }
+                    .getOrNull()
+            }
+            if (uploaded.isNotEmpty()) {
+                sharedIntakeHolder.submit(uploaded.map { it.toPendingAttachment() })
+                FileLogger.i("MainActivity", "已接收分享文件 ${uploaded.size} 个")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 从冷启动闪屏主题恢复为应用主主题
         setTheme(R.style.Theme_AICode)
         // 绘制到系统状态栏/导航栏之下，让应用背景与系统栏融为一体（消除割裂的色块）。
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        // 冷启动若由分享拉起，直接导入附件（singleTop 复用时走 [onNewIntent]）。
+        handleShareIntent(intent)
 
         // 监听语言偏好变化，更新 Application/Activity locale 后重建。
         lifecycleScope.launch {
@@ -520,6 +585,9 @@ fun AppNavigation(
         if (expanded) {
             paneKind = if (paneKind == target) WorkbenchPaneKind.NONE else target
         } else {
+            // 窄屏：跳全屏路由。若浏览器正以 sheet 形式开着，先收起它——
+            // 否则路由过渡那几百毫秒里 sheet 与全屏页会同时合成，同一个 WebView 被抢挂载。
+            if (target == WorkbenchPaneKind.BROWSER) browserSheetOpen = false
             val route = when (target) {
                 WorkbenchPaneKind.TERMINAL -> "terminal"
                 WorkbenchPaneKind.GIT -> "git"
@@ -535,7 +603,9 @@ fun AppNavigation(
         runCatching {
             if (url.isNotBlank()) agentViewModel.browserTabPool.selectOrCreateTabForURL(url)
         }
-        browserSheetOpen = true
+        // 右栏已经是浏览器时不再叠一层 sheet —— 同一个 WebView 被两个宿主同时挂载
+        // 会互相抢（BrowserWebView.update 里的 re-parent），输的那个容器空着就是白屏。
+        if (paneKind != WorkbenchPaneKind.BROWSER) browserSheetOpen = true
     }
     val terminalOpener: (String) -> Unit = { cmd ->
         terminalInitCommand = cmd
@@ -679,7 +749,7 @@ fun AppNavigation(
                             )
                         }
                     }
-                    if (browserSheetOpen) {
+                    if (browserSheetOpen && paneKind != WorkbenchPaneKind.BROWSER) {
                         com.aharou.feature.browser.presentation.BrowserSheet(
                             tabPool = agentViewModel.browserTabPool,
                             onDismiss = { browserSheetOpen = false },

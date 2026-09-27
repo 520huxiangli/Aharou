@@ -248,7 +248,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val history = messagePersistenceUseCase.buildHistory(sessionId, "__manual_compress__")
         if (history.size <= 2) return false
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
-        val compacted = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true, onEvent = onEvent)
+        val compacted = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true, windowProvider = provider, onEvent = onEvent)
         return compacted.size != history.size
     }
 

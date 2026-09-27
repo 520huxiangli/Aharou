@@ -12,6 +12,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'docs-site/**'
+      - 'data/**'
       - 'LICENSE'
       - '.gitignore'
   # 允许在 Actions 页面手动触发，便于验证链路。

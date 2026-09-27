@@ -66,11 +66,16 @@ class ModelApiService @Inject constructor(
         customHeaders: Map<String, String> = emptyMap()
     ): Result<FetchModelsResult> = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
+        // recoverCatching 在外层作用域，看不到块内的 url 与请求头；
+        // 排错时最需要的恰好是「请求发到哪了」，所以先带出来再兜底。
+        var failedUrl = ""
+        var failedHeaders: Map<String, String> = emptyMap()
         runCatching {
             if (apiKey.isBlank()) error(context.getString(R.string.provider_api_key_required))
 
             val modelsPath = if (type == ProviderType.GEMINI) "v1beta/models" else "v1/models"
             val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, modelsPath)
+            failedUrl = url
             val request = Request.Builder()
                 .url(url)
                 .applyAuth(apiKey, type)
@@ -86,6 +91,7 @@ class ModelApiService @Inject constructor(
                     raw
                 }
             }
+            failedHeaders = reqHeadersMap
 
             client.newCall(request).execute().use { response ->
                 val latency = (System.nanoTime() - start) / 1_000_000
@@ -159,6 +165,8 @@ class ModelApiService @Inject constructor(
                 success = false,
                 latencyMs = latency,
                 message = e.message ?: fallback,
+                requestUrl = failedUrl,
+                requestHeaders = failedHeaders,
                 errorDetail = e.stackTraceToString()
             )
             throw FetchModelsException(e.message ?: fallback, debug)

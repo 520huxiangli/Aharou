@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 夜间配色下的 Android 12+ 系统闪屏，说明见 values-v31/styles.xml -->
+<resources>
+    <style name="Theme.AICode.Splash" parent="Theme.AICode">
+        <item name="android:windowSplashScreenBackground">@color/splash_background_color</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

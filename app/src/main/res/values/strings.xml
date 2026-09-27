@@ -210,6 +210,8 @@
     <string name="provider_test_error_detail">错误堆栈</string>
     <string name="provider_dashboard_test_failed">执行失败</string>
     <string name="provider_dashboard_no_scripts">~/.aharou/scripts 目录下暂无脚本</string>
+    <string name="share_script_imported">已导入面板脚本：%1$s（可在供应商设置 → 面板脚本 中选择）</string>
+    <string name="provider_dashboard_import_script">从手机导入脚本</string>
     <string name="provider_dashboard_select_title">选择面板脚本</string>
     <string name="provider_dashboard_clear_script">不使用面板脚本 (清空)</string>
     <string name="provider_dashboard_loading">正在加载面板…</string>
@@ -1409,6 +1411,7 @@
     <string name="workspace_external_warning_continue">继续</string>
     <string name="workspace_external_remove_confirm">移除工作区「%1$s」？仅解除关联，不会删除该目录及其文件。</string>
     <string name="workspace_external_remove_confirm_sessions">移除工作区「%1$s」？仅解除关联，不会删除该目录及其文件；该工作区的聊天记录将一并删除。</string>
+    <string name="workspace_external_need_all_files">读取设备存储上的目录需要「所有文件访问」权限，请在「设置 → 权限 → 所有文件访问」开启后重试</string>
     <string name="workspace_external_unresolvable">无法解析所选目录，请从「内部存储」或「SD 卡」根目录进入选择，暂不支持其它文件提供方</string>
     <string name="workspace_external_invalid">所选不是有效目录</string>
     <string name="workspace_external_unsupported_path">该目录路径包含不支持的字符「:」</string>
@@ -1503,10 +1506,11 @@
     <string name="provider_multi_key_manage">多 Key 管理</string>
     <string name="provider_multi_key_summary">%1$d 个 · %2$s</string>
     <string name="provider_multi_key_list">Key 列表</string>
-    <string name="provider_multi_key_item">Key %1$d</string>
+    <string name="provider_multi_key_item">密钥 #%1$d</string>
     <string name="provider_multi_key_empty">点此添加第一个 Key</string>
     <string name="provider_multi_key_add">添加 Key</string>
-    <string name="provider_multi_key_remove">删除该 Key</string>
+    <string name="provider_multi_key_weight">调度权重</string>
+    <string name="provider_multi_key_weight_hint">默认 1 · ≤ 0 时不参与 · 最大 1,000,000</string>
     <string name="provider_multi_key_strategy">取用策略</string>
     <string name="provider_multi_key_strategy_sequential">顺序</string>
     <string name="provider_multi_key_strategy_sequential_desc">始终用靠前的 Key，失败达阈值才切下一个</string>

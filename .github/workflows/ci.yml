@@ -12,6 +12,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'docs-site/**'
+      - 'data/**'
       - 'LICENSE'
       - '.gitignore'
   pull_request:
@@ -20,6 +21,7 @@ on:
       - '**.md'
       - 'docs/**'
       - 'docs-site/**'
+      - 'data/**'
       - 'LICENSE'
       - '.gitignore'
 

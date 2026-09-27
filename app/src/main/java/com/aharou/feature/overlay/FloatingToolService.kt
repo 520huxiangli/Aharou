@@ -6,8 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.ServiceCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -79,7 +81,14 @@ class FloatingToolService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // targetSdk 34 起 startForeground 必须带上类型（与 manifest 的 foregroundServiceType 一致），
+        // 否则抛 MissingForegroundServiceTypeException。
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        )
         overlay = FloatingToolOverlay(this)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
         collectorJob = scope.launch {

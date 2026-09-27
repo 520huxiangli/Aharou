@@ -40,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -71,6 +72,7 @@ fun ProviderDashboardBar(
 ) {
     val context = LocalContext.current
     var isExpanded by rememberSaveable { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
 
     // 弹窗/键盘叠加时同帧收起：用派生状态而不是 LaunchedEffect 异步改 isExpanded，
     // 否则弹窗先出现顶开布局、面板后折叠，中间产生空档闪屏。
@@ -188,7 +190,12 @@ fun ProviderDashboardBar(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { isExpanded = !effectiveExpanded },
+                            .clickable {
+                                // 展开前先让键盘让位，避开面板被键盘挡住的情况。
+                                val willExpand = !effectiveExpanded
+                                if (willExpand) keyboard?.hide()
+                                isExpanded = willExpand
+                            },
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(

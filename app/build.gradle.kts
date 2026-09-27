@@ -104,14 +104,14 @@ android {
     defaultConfig {
         applicationId = "com.aharou.agent"
         minSdk = 26
-        // 仍锁 targetSdk 28，但阻塞项已不是 PRoot：proot 全套改由 jniLibs 装到 nativeLibraryDir
-        // （见 sourceSets 与 packaging.jniLibs 注释），W^X 不再挡容器启动。升级前待解决：
-        //   1. 外部工作区（EXTERNAL_LOCAL）目前用 File API 直读 /storage/emulated/0，29+ 需改走
-        //      MANAGE_EXTERNAL_STORAGE；
-        //   2. TerminalKeepaliveService 的 dataSync 前台服务在 35 上有 24 小时内累计 6 小时上限，
-        //      保活需换 specialUse。
-        // 代价：不能上 Google Play。
-        targetSdk = 28
+        // targetSdk 从 28 升到 35：28 是当年为了绕开 proot 的 W^X / SELinux 限制而锁的，后来 proot 全套
+        // 改由 jniLibs 装进 nativeLibraryDir（apk_data_file，允许 execve），就不再需要锁这么低。
+        //   · 34 的门槛：前台服务必须声明类型并申请对应权限（否则 startForeground 抛异常）、
+        //     共享存储读写改走 MANAGE_EXTERNAL_STORAGE；
+        //   · 35 的门槛：Android 15 对 dataSync 前台服务施加上限（24 小时内累计 6 小时），
+        //     故终端保活与悬浮窗统一改用 specialUse，并覆写 Service.onTimeout 兜底。
+        // 代价：不上 Google Play（MANAGE_EXTERNAL_STORAGE / QUERY_ALL_PACKAGES 均为受限权限）。
+        targetSdk = 35
         versionCode = gitCommitCount()
         versionName = gitVersionName()
 
@@ -253,11 +253,9 @@ android {
         }
     }
 
-    // targetSdk 故意锁定 28（原因见 defaultConfig 处注释），代价是不进 Google Play——故关闭该平台的过期 targetSdk 检查。
-    // 同时关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
+    // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
     // lintVital 在 R8/打包阶段额外吃 CPU 与内存（2 核 7GB runner 易 OOM），且其发现不阻塞发布。
     lint {
-        disable += "ExpiredTargetSdkVersion"
         checkReleaseBuilds = false
         abortOnError = false
     }

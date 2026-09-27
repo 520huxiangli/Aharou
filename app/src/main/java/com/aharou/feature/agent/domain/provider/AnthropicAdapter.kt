@@ -174,8 +174,8 @@ class AnthropicAdapter @Inject constructor(
             stream = true
         )
         val seq = AILogger.logRequest(logSessionId, "Anthropic", model, "POST", url, request)
-        // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
-        val rawSse = StringBuilder()
+        // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
+        val sseLog = AILogger.beginRawSse(logSessionId, "Anthropic", seq)
 
         // 流式请求整体可重试；重试前上层会收到 Retrying 事件并清空已展示文本。
         val triedKeys = mutableSetOf(apiKey)
@@ -229,7 +229,7 @@ class AnthropicAdapter @Inject constructor(
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
                         if (data.isEmpty()) continue
-                        AILogger.appendRawSse(rawSse, line)
+                        sseLog.append(line)
                         val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                         // 单行 SSE 解析：不同上游/模型的字段类型偶有出入，Gson 的 getAsJsonObject/getAsJsonArray
                         // 在类型不符时会直接抛 ClassCastException，asString/asInt 对非原始值抛 UnsupportedOperationException。
@@ -373,7 +373,7 @@ class AnthropicAdapter @Inject constructor(
             throw enriched
         } finally {
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
-            AILogger.logResponseStream(logSessionId, "Anthropic", rawSse.toString(), seq)
+            sseLog.finish()
         }
     }.flowOn(Dispatchers.IO)
 

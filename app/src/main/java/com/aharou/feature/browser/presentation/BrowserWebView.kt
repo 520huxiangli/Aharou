@@ -62,12 +62,18 @@ fun BrowserWebView(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                     ),
                 )
+                // WebView 刚被 re-parent/重新挂载时，之前 detach 掉的硬件层已失效，
+                // 且尺寸没变就不会触发 onSizeChanged、也就没有新帧 → 会一直停在空白。
+                // 主动请求一次布局与重绘，把它拉回可见状态。
+                webView.requestLayout()
+                webView.invalidate()
             }
         },
         onRelease = { container ->
-            // Free the WebView so a later mount (same or different sheet)
-            // can re-parent it without hitting the has-a-parent guard.
-            container.removeAllViews()
+            // 只摘“自己容器里就是它”的情况：多宿主过渡时被 dispose 的那个容器
+            // 不该把 WebView 从还活着的宿主手里抢走（那会让幸存者直接空白）。
+            val child = container.getChildAt(0)
+            if (child === webView) container.removeView(child)
         },
         modifier = modifier,
     )

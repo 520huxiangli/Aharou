@@ -48,6 +48,30 @@ class MarkdownPreprocessorTest {
     }
 
     @Test
+    fun `latex paren inline math becomes math image link`() {
+        val out = process("""令 \(S=a+b+c\)。算法只需枚举较小的因子 \(b\)：""")
+        assertTrue(out.contains(MarkdownPreprocessor.MATH_INLINE_SCHEME))
+        val matches = Regex("""!\[]\((aicode-math-inline://[^)]+)\)""").findAll(out).toList()
+        assertEquals(2, matches.size)
+        val first = MarkdownPreprocessor.decodeMathLink(matches[0].groupValues[1])!!
+        assertEquals("S=a+b+c", first.first)
+        assertFalse(first.second)
+        val second = MarkdownPreprocessor.decodeMathLink(matches[1].groupValues[1])!!
+        assertEquals("b", second.first)
+        assertFalse(second.second)
+    }
+
+    @Test
+    fun `latex bracket block math becomes block math image link`() {
+        val out = process("""公式：\[\sum_{i=1}^n i = \frac{n(n+1)}{2}\]完""")
+        assertTrue(out.contains(MarkdownPreprocessor.MATH_BLOCK_SCHEME))
+        val link = Regex("""!\[]\((aicode-math-block://[^)]+)\)""").find(out)!!.groupValues[1]
+        val (latex, block) = MarkdownPreprocessor.decodeMathLink(link)!!
+        assertEquals("""\sum_{i=1}^n i = \frac{n(n+1)}{2}""", latex)
+        assertTrue(block)
+    }
+
+    @Test
     fun `bold italic strike tags map to markdown`() {
         assertEquals("**粗**", process("<b>粗</b>"))
         assertEquals("*斜*", process("<i>斜</i>"))

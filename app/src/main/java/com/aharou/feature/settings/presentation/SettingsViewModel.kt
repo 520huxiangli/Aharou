@@ -58,7 +58,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.DownloadedImageRecord
-import com.aharou.feature.settings.data.repository.DEFAULT_REMOTE_WORKSPACE_ROOT
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
@@ -1755,7 +1754,7 @@ class SettingsViewModel @Inject constructor(
      * 切换当前选中的容器 profile，并按其 [ContainerProfile.mode] 同步切全局执行模式。
      *
      * 本地镜像 → [ExecutionMode.LOCAL_PROOT]；远程 SSH 镜像 → [ExecutionMode.REMOTE_SSH]，
-     * 并据其 [RootfsSource.RemoteSsh] 绑定的工作区通道构造 [RemoteConnectionSettings] 持久化 + 触发 SSH 连接。
+     * 连接参数由 ActiveRemoteConnectionResolver 按激活 profile 实时解析，AIEditorApp 的常驻订阅据此重连。
      * 委托层每次调用读 holder，切换即时生效，无需重启。
      */
     fun setActiveContainerProfile(id: String) {
@@ -1785,31 +1784,10 @@ class SettingsViewModel @Inject constructor(
             }
 
             ExecutionMode.REMOTE_SSH -> {
-                val ssh = profile.rootfsSource as? RootfsSource.RemoteSsh ?: return
-                val conn = remoteConnections.value.firstOrNull { it.id == ssh.connectionId }
-                    ?: return
-                val settings = com.aharou.feature.settings.data.repository.RemoteConnectionSettings(
-                    host = conn.host,
-                    port = conn.port,
-                    username = conn.username,
-                    password = conn.password,
-                    remoteWorkspacePath = ssh.remoteWorkspacePath.ifBlank { DEFAULT_REMOTE_WORKSPACE_ROOT }
-                )
-                executionModeRepository.setRemoteConnection(settings)
+                if (profile.rootfsSource !is RootfsSource.RemoteSsh) return
+                // 连接参数由 ActiveRemoteConnectionResolver 按激活 profile 实时解析，AIEditorApp 的常驻订阅据此重连。
                 executionModeRepository.setExecutionMode(ExecutionMode.REMOTE_SSH)
                 executionModeHolder.setMode(ExecutionMode.REMOTE_SSH)
-                // 运行时切换需主动连接（启动时由 AIEditorApp 连）；复用 RemoteSshConnection.connect
-                runCatching {
-                    remoteSshConnection.connect(
-                        com.aharou.feature.agent.domain.container.RemoteConnectionConfig(
-                            host = settings.host,
-                            port = settings.port,
-                            username = settings.username,
-                            auth = com.aharou.feature.workspace.domain.remote.RemoteAuth.Password(settings.password),
-                            remoteWorkspacePath = settings.remoteWorkspacePath
-                        )
-                    )
-                }.onFailure { FileLogger.w("SettingsViewModel", "切换到远程镜像时 SSH 连接失败", it) }
             }
         }
     }

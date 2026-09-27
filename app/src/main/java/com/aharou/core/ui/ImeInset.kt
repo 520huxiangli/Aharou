@@ -24,10 +24,9 @@ import androidx.core.view.WindowInsetsCompat
  * 跟随软键盘逐帧移动的底部内边距（用于把底栏 / 操作栏顶在键盘之上）。
  * 取 ime 与 navigationBars 的较大值：键盘弹出时浮于键盘上，收起时停在导航栏上，无重复内边距。
  *
- * 为什么要这么费劲：本应用锁定 `targetSdk = 28`（PRoot 需从可写目录执行，见 build.gradle.kts）。
- * 在 targetSdk < 30 下，`windowSoftInputMode=adjustResize` 走的是旧版兼容缩放路径，它会**吞掉**
- * 平台的 IME inset 逐帧动画——`WindowInsets.ime` 只在键盘动画结束后一步到位。表现就是「键盘先弹起、
- * 底栏再迟一拍跟上」。
+ * 为什么要这么费劲：`windowSoftInputMode=adjustResize` 在 API 30+ 上不再缩放窗口，键盘遮挡改由应用
+ * 自己用 inset 处理；而单看 `WindowInsets.ime` 只能拿到键盘动画的**最终值**——非受控弹键盘时（如终端用
+ * `InputMethodManager.showSoftInput` 唤起）尤其明显。表现就是「键盘先弹起、底栏再迟一拍跟上」。
  *
  * 解决：在 API 30+ 上，Activity.onCreate 把窗口切到 `ADJUST_NOTHING`（让旧版缩放路径让位），改由
  * 我们用 inset 把底栏顶起来；同时本函数挂一个 [WindowInsetsAnimationCompat] 回调，在 onProgress

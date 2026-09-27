@@ -2,6 +2,7 @@ package com.aharou.feature.settings.data.repository
 
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.KeyRotationStrategy
+import com.aharou.feature.settings.domain.model.ProviderKey
 import com.aharou.feature.settings.domain.model.ProviderType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -13,7 +14,7 @@ class ProviderKeyRotatorTest {
     private fun config(
         id: String = "provider-1",
         apiKey: String = "key-1",
-        apiKeys: List<String> = emptyList(),
+        apiKeys: List<ProviderKey> = emptyList(),
         multiKeyEnabled: Boolean = false,
         keyRotationStrategy: KeyRotationStrategy = KeyRotationStrategy.SEQUENTIAL,
         keyFailoverThreshold: Int = 2,
@@ -42,7 +43,7 @@ class ProviderKeyRotatorTest {
     ) = config(
         id = id,
         apiKey = "unused",
-        apiKeys = keys,
+        apiKeys = keys.map { ProviderKey(it) },
         multiKeyEnabled = true,
         keyRotationStrategy = strategy,
         keyFailoverThreshold = threshold,
@@ -331,5 +332,54 @@ class ProviderKeyRotatorTest {
         // key-b 是最后一个可用候选：返回 null 且不冷却它
         assertNull(rotator.reportFailure("provider-1", "s1", "key-b"))
         assertEquals("key-b", rotator.activeKey(cfg, "s2"))
+    }
+
+    // ---------- 加权轮询 ----------
+
+    /** 加权轮询：新会话按权重比例分配（1:3 时高权重 Key 约为低权重的三倍）。 */
+    @Test
+    fun activeKey_weightedRoundRobin_distributesByWeight() {
+        val rotator = ProviderKeyRotator()
+        val cfg = config(
+            apiKeys = listOf(ProviderKey("key-a", 1), ProviderKey("key-b", 3)),
+            multiKeyEnabled = true,
+            keyRotationStrategy = KeyRotationStrategy.ROUND_ROBIN
+        )
+
+        val counts = mutableMapOf<String, Int>()
+        repeat(40) { i ->
+            val key = rotator.activeKey(cfg, "session-$i")!!
+            counts[key] = (counts[key] ?: 0) + 1
+        }
+
+        assertEquals(10, counts["key-a"])
+        assertEquals(30, counts["key-b"])
+    }
+
+    /** 权重 ≤ 0 的 Key 不参与调度：轮询下始终不会被选中。 */
+    @Test
+    fun activeKey_nonPositiveWeightIsExcluded() {
+        val rotator = ProviderKeyRotator()
+        val cfg = config(
+            apiKeys = listOf(ProviderKey("key-a", 0), ProviderKey("key-b", 1)),
+            multiKeyEnabled = true,
+            keyRotationStrategy = KeyRotationStrategy.ROUND_ROBIN
+        )
+
+        repeat(5) { i ->
+            assertEquals("key-b", rotator.activeKey(cfg, "session-$i"))
+        }
+    }
+
+    /** 所有 Key 权重都 ≤ 0 时没有可调度的 Key，返回 null。 */
+    @Test
+    fun activeKey_allNonPositiveWeights_returnsNull() {
+        val rotator = ProviderKeyRotator()
+        val cfg = config(
+            apiKeys = listOf(ProviderKey("key-a", 0), ProviderKey("key-b", 0)),
+            multiKeyEnabled = true
+        )
+
+        assertNull(rotator.activeKey(cfg, "session-1"))
     }
 }

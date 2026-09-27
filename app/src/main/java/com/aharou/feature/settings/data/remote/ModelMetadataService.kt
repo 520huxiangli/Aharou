@@ -29,8 +29,8 @@ class ModelMetadataService @Inject constructor(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 统一拉取器：模型元数据与 provider 预设同链路，统一从本仓库 main 分支拉取。 */
-    private val repoFetcher = RepoDataFetcher(context)
+    /** 统一拉取器；模型元数据每日由 CI 发到独立的 data 分支，main 上不再存机器产物。 */
+    private val repoFetcher = RepoDataFetcher(context, branch = "data")
 
     @Volatile
     private var cached: Catalog? = null

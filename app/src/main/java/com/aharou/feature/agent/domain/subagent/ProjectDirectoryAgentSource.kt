@@ -14,7 +14,7 @@ class ProjectDirectoryAgentSource @Inject constructor(
     private val fileAccess: FileAccessProvider
 ) : AgentDefinitionSource {
 
-    val agentsRoot: String = "${WorkspacePathMapper.CONTAINER_ROOT}/.aicode/agents"
+    val agentsRoot: String = "${WorkspacePathMapper.CONTAINER_ROOT}/.aharou/agents"
 
     override fun listDefinitions(): List<AgentDefinition> =
         AgentDefinitionDirectoryScanner.scan(fileAccess, agentsRoot)

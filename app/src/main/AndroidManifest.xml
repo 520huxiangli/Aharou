@@ -4,9 +4,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- 前台服务类型对应权限：targetSdk 34 起，声明了 foregroundServiceType 却没申请对应权限，
+         startForeground() 直接抛 SecurityException。两个前台服务统一用 specialUse（用例见各自 service）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -30,7 +33,12 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Android 11+ 的包可见性：Shizuku 不在默认可见范围内，声明后才能查它的安装状态与启动入口。
+         另有 QUERY_ALL_PACKAGES 兜底，这里显式声明以缩小对全量包可见性的依赖。 -->
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
 
     <application
         android:name=".AIEditorApp"
@@ -50,11 +58,23 @@
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.AICode.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 接收其它应用分享的文件，直接进当前会话的输入框附件。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
 
@@ -87,11 +107,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- 终端保活：常驻前台通知，让后台会话不被系统回收。
+             用 specialUse 而不是 dataSync：Android 15(35) 起 dataSync 前台服务在 24 小时内累计只能跑 6 小时，
+             超时会被系统强杀，保活形同虚设；specialUse 面向「用户可见的自定义用途」，正对本场景。 -->
         <service
             android:name=".feature.terminal.domain.TerminalKeepaliveService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="保持后台终端会话存活，避免容器进程被系统回收" />
+        </service>
 
         <!-- 无障碍服务：让 Agent「看得懂、点得动」宿主屏幕（读节点树/手势/截图）。
              需用户在系统「无障碍」设置中手动开启（Android 禁止程序化开启）。 -->
@@ -108,10 +135,17 @@
                 android:resource="@xml/aharou_accessibility_service" />
         </service>
 
-        <!-- 悬浮窗：Agent 干活时在系统层面显示实时状态胶囊（需悬浮窗权限）。 -->
+        <!-- 悬浮窗：Agent 干活时在系统层面显示实时状态胶囊（需悬浮窗权限）。
+             targetSdk 34 起必须声明 FGS 类型，否则 startForeground 抛 MissingForegroundServiceTypeException；
+             它属于“用户可见的自定义用途”，用 specialUse 并声明 subtype 说明。 -->
         <service
             android:name="com.aharou.feature.overlay.FloatingToolService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Agent 执行期间在屏幕上显示实时进度胶囊" />
+        </service>
 
         <!-- Shizuku：用于以 adb shell 身份执行命令（UserService）。
              permission 声明为 INTERACT_ACROSS_USERS_FULL 是官方要求，防止普通应用访问该 provider。 -->

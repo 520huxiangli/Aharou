@@ -303,8 +303,8 @@ class OpenAIAdapter @Inject constructor(
             prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
         )
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
-        // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
-        val rawSse = StringBuilder()
+        // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
+        val sseLog = AILogger.beginRawSse(logSessionId, "OpenAI", seq)
 
         // 流式请求整体可重试；重试前上层会收到 Retrying 事件并清空已展示文本。
         try {
@@ -357,7 +357,7 @@ class OpenAIAdapter @Inject constructor(
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
                         if (data.isEmpty()) continue
-                        AILogger.appendRawSse(rawSse, line)
+                        sseLog.append(line)
                         if (data == "[DONE]") break
                         val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                         obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
@@ -459,7 +459,7 @@ class OpenAIAdapter @Inject constructor(
             throw enriched
         } finally {
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
-            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString(), seq)
+            sseLog.finish()
         }
     }.flowOn(Dispatchers.IO)
 
@@ -478,8 +478,8 @@ class OpenAIAdapter @Inject constructor(
         val url = resolveApiUrl()
         val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = true)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
-        // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
-        val rawSse = StringBuilder()
+        // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
+        val sseLog = AILogger.beginRawSse(logSessionId, "OpenAI", seq)
         try {
             val triedKeys = mutableSetOf(apiKey)
             streamWithStaircaseRetry(
@@ -519,7 +519,7 @@ class OpenAIAdapter @Inject constructor(
                                 if (!line.startsWith("data:")) continue
                                 val data = line.removePrefix("data:").trim()
                                 if (data.isEmpty()) continue
-                                AILogger.appendRawSse(rawSse, line)
+                                sseLog.append(line)
                                 // 官方 Responses 不发 [DONE]，但部分兼容服务会补发，收到即视为流结束。
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
@@ -580,7 +580,7 @@ class OpenAIAdapter @Inject constructor(
             AILogger.logError(logSessionId, "OpenAI", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString(), seq)
+            sseLog.finish()
         }
     }
 

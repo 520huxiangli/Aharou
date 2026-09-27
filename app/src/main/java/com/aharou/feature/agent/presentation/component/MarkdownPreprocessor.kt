@@ -17,8 +17,8 @@ internal object MarkdownPreprocessor {
 
     fun process(raw: String): String {
         if (raw.isEmpty()) return raw
-        // 无需处理的快速路径：既没有 HTML 标签也没有 $ 数学定界符
-        if (!raw.contains('<') && !raw.contains('$') && !raw.contains('&')) return raw
+        // 无需处理的快速路径：既没有 HTML 标签、没有 $ 或 \( / \[ 数学定界符，也没有 & 实体
+        if (!raw.contains('<') && !raw.contains('$') && !raw.contains('\\') && !raw.contains('&')) return raw
 
         val sb = StringBuilder(raw.length + 32)
         for (seg in splitPreservingCode(raw)) {
@@ -124,17 +124,35 @@ internal object MarkdownPreprocessor {
     // 数学公式
     // ---------------------------------------------------------------------------------------------
 
-    private val BLOCK_MATH = Regex("""\$\$(.+?)\$\$""", RegexOption.DOT_MATCHES_ALL)
+    private val BLOCK_MATH_DOLLAR = Regex("""\$\$(.+?)\$\$""", RegexOption.DOT_MATCHES_ALL)
+    private val BLOCK_MATH_BRACKET = Regex("""\\\[(.+?)\\\]""", RegexOption.DOT_MATCHES_ALL)
+
     // 行内：定界符内侧首尾非空白、内容不含换行与 $，规避 "$5 ... $10" 这类货币误命中（非空白锚点）
-    private val INLINE_MATH = Regex("""\$(?=\S)([^\n$]*?\S)\$""")
+    private val INLINE_MATH_DOLLAR = Regex("""\$(?=\S)([^\n$]*?\S)\$""")
+    // LaTeX 标准行内定界符 \( ... \)
+    private val INLINE_MATH_PAREN = Regex("""\\\((.+?)\\\)""", RegexOption.DOT_MATCHES_ALL)
 
     private fun extractMath(input: String): String {
-        if (!input.contains('$')) return input
-        var s = BLOCK_MATH.replace(input) { m ->
-            "\n\n" + encodeMathLink(m.groupValues[1].trim(), block = true) + "\n\n"
+        var s = input
+        if (s.contains("$$")) {
+            s = BLOCK_MATH_DOLLAR.replace(s) { m ->
+                "\n\n" + encodeMathLink(m.groupValues[1].trim(), block = true) + "\n\n"
+            }
         }
-        s = INLINE_MATH.replace(s) { m ->
-            encodeMathLink(m.groupValues[1].trim(), block = false)
+        if (s.contains("\\[")) {
+            s = BLOCK_MATH_BRACKET.replace(s) { m ->
+                "\n\n" + encodeMathLink(m.groupValues[1].trim(), block = true) + "\n\n"
+            }
+        }
+        if (s.contains("\\(")) {
+            s = INLINE_MATH_PAREN.replace(s) { m ->
+                encodeMathLink(m.groupValues[1].trim(), block = false)
+            }
+        }
+        if (s.contains('$')) {
+            s = INLINE_MATH_DOLLAR.replace(s) { m ->
+                encodeMathLink(m.groupValues[1].trim(), block = false)
+            }
         }
         return s
     }

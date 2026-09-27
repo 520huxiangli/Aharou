@@ -14,7 +14,7 @@ class ProjectDirectorySkillSource @Inject constructor(
     private val fileAccess: FileAccessProvider
 ) : SkillSource {
 
-    val skillsRoot: String = "${WorkspacePathMapper.CONTAINER_ROOT}/.aicode/skills"
+    val skillsRoot: String = "${WorkspacePathMapper.CONTAINER_ROOT}/.aharou/skills"
 
     override fun listSkills(): List<Skill> = SkillDirectoryScanner.scan(fileAccess, skillsRoot)
 

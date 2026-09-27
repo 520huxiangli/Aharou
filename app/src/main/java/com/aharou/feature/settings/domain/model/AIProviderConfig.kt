@@ -7,8 +7,8 @@ data class AIProviderConfig(
     val apiKey: String,
     /** 多 Key 模式开关：开启后从 [apiKeys] 轮换取用，关闭时只用 [apiKey]。 */
     val multiKeyEnabled: Boolean = false,
-    /** 多 Key 模式下的候选 Key（按列表顺序优先）。 */
-    val apiKeys: List<String> = emptyList(),
+    /** 多 Key 模式下的候选 Key（按列表顺序优先，各条自带调度权重）。 */
+    val apiKeys: List<ProviderKey> = emptyList(),
     /** 多 Key 取用策略：顺序（失败才切）或轮询（新会话轮流起步）。 */
     val keyRotationStrategy: KeyRotationStrategy = KeyRotationStrategy.SEQUENTIAL,
     /** 已废弃：早期「连续失败达阈值才切」的阈值。现在命中 [keySwitchStatusCodes] 即立即切换，保留仅为兼容旧数据库列。 */
@@ -64,11 +64,11 @@ data class AIProviderConfig(
      * 实际可用的 Key 列表。多 Key 模式开启且列表非空时用 [apiKeys]，否则退回单 [apiKey]，
      * 使「开关关闭」与「开着但没填」都能落到既有单 Key 行为上。
      */
-    val effectiveApiKeys: List<String>
-        get() = if (multiKeyEnabled && apiKeys.any { it.isNotBlank() }) {
-            apiKeys.filter { it.isNotBlank() }
+    val effectiveApiKeys: List<ProviderKey>
+        get() = if (multiKeyEnabled && apiKeys.any { it.value.isNotBlank() }) {
+            apiKeys.filter { it.value.isNotBlank() }
         } else {
-            listOf(apiKey).filter { it.isNotBlank() }
+            listOf(ProviderKey(apiKey)).filter { it.value.isNotBlank() }
         }
 
     /** 是否已配置至少一个可用 Key。 */
@@ -80,8 +80,22 @@ data class AIProviderConfig(
             .ifEmpty { DEFAULT_KEY_SWITCH_STATUS_CODES }
 
     /** 拉取模型列表 / 连通性测试等无会话上下文的请求用第一个可用 Key。 */
-    val firstUsableApiKey: String get() = effectiveApiKeys.firstOrNull() ?: ""
+    val firstUsableApiKey: String get() = effectiveApiKeys.firstOrNull()?.value ?: ""
 }
+
+/**
+ * 多 Key 模式下的一条候选 Key：值 + 调度权重。
+ *
+ * [weight] 参与轮询调度：越大被分到的新会话越多；≤ 0 表示该 Key 暂不参与调度（保留但不选用）。
+ */
+data class ProviderKey(
+    val value: String,
+    val weight: Int = DEFAULT_KEY_WEIGHT
+)
+
+/** 调度权重默认值与上限。 */
+const val DEFAULT_KEY_WEIGHT: Int = 1
+const val MAX_KEY_WEIGHT: Int = 1_000_000
 
 /** 绝不包含空白的字段（API Key / URL / 代理主机）：连中间空白一并去掉。 */
 private fun String.stripAllWhitespace(): String = filterNot { it.isWhitespace() }
@@ -98,7 +112,10 @@ private fun String.stripLineBreaks(): String =
 fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
     name = name.stripLineBreaks(),
     apiKey = apiKey.stripAllWhitespace(),
-    apiKeys = apiKeys.map { it.stripAllWhitespace() }.filter { it.isNotEmpty() }.distinct(),
+    apiKeys = apiKeys
+        .map { it.copy(value = it.value.stripAllWhitespace(), weight = it.weight.coerceIn(0, MAX_KEY_WEIGHT)) }
+        .filter { it.value.isNotEmpty() }
+        .distinctBy { it.value },
     keySwitchStatusCodes = keySwitchStatusCodes.filter { it in 100..599 }.distinct(),
     baseUrl = baseUrl.stripAllWhitespace(),
     defaultModel = defaultModel.stripLineBreaks(),

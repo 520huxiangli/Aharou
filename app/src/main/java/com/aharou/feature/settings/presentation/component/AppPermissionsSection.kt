@@ -58,7 +58,7 @@ import compose.icons.feathericons.Zap
 /**
  * 「软件权限」二级页：集中展示并管理系统级权限。
  * - 安装未知应用：展示授权状态，未授权点击跳转系统设置开启。
- * - 访问存储空间：展示授权状态，未授权点击申请运行时权限；已被永久拒绝时同样引导去系统设置。
+ * - 访问存储空间：Android 11+ 展示「所有文件访问」状态，未授权点击跳系统设置；更低版本申请运行时权限。
  * - 忽略电池优化 / 自启动管理：跳转系统设置。
  * - Shizuku：展示 adb shell 授权状态，未就绪时点击安装/启动/申请授权。
  * 页面恢复（含从系统设置页或 Shizuku 应用返回）时刷新各权限状态。
@@ -295,12 +295,24 @@ internal fun AppPermissionsSection(
                 subtitle = stringResource(R.string.settings_permission_storage_desc),
                 onClick = {
                     if (!storageGranted) {
-                        storageLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.READ_EXTERNAL_STORAGE,
-                                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            // Android 11+ 共享存储的读写入口是「所有文件访问」，运行时权限管不了。
+                            runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            }
+                        } else {
+                            storageLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                                )
                             )
-                        )
+                        }
                     }
                 },
                 trailing = { PermissionStatusText(allowed = storageGranted) }
@@ -382,8 +394,7 @@ internal fun BackgroundRunSection(
     // 通知权限申请成功后要打开的目标开关回调。
     var pendingNotificationToggle by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
 
-    // targetSdk 28 在 Android 13+ 上申请通知权限系统不弹框、直接回调 denied，
-    // 此时只能引导用户去系统设置手动开启。
+    // Android 13 起通知是运行时权限：被拒（含永久拒绝、系统不再弹框）时只能引导去系统设置手动开启。
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -537,8 +548,14 @@ private fun PermissionStatusText(allowed: Boolean) {
 }
 
 private fun checkStorageGranted(context: android.content.Context): Boolean =
-    ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
-        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        // Android 11+ 共享存储由 scoped storage 接管，READ/WRITE_EXTERNAL_STORAGE 不再够用
+        //（33+ 更是完全失效），直读设备目录靠「所有文件访问」。
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
 
 private fun isIgnoringBatteryOptimizations(context: android.content.Context): Boolean {
     val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager

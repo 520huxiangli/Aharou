@@ -3,6 +3,7 @@ package com.aharou.feature.settings.data.repository
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.KeyRotationStrategy
+import com.aharou.feature.settings.domain.model.ProviderKey
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -29,7 +30,7 @@ class ProviderKeyRotator @Inject constructor() {
 
     /** 由最近一次 [activeKey] 记录的 provider Key 配置，供失败上报时读取候选与冷却时长。 */
     private data class KeySetup(
-        val keys: List<String>,
+        val keys: List<ProviderKey>,
         val strategy: KeyRotationStrategy,
         val cooldownMillis: Long
     )
@@ -41,8 +42,8 @@ class ProviderKeyRotator @Inject constructor() {
     /** providerId + Key → 冷却截止时间戳（毫秒）。 */
     private val cooldownUntil = mutableMapOf<String, Long>()
 
-    /** providerId → 轮询策略下一个新会话的起始下标。 */
-    private val roundRobinCursor = mutableMapOf<String, Int>()
+    /** providerId → Key 值 → 平滑加权轮询的当前权重（运行时内存态）。 */
+    private val weightedState = mutableMapOf<String, MutableMap<String, Long>>()
 
     /** providerId → 最近一次选中的 Key，供余额查询等旁路请求取「当前活动 Key」。 */
     private val lastSelected = mutableMapOf<String, String>()
@@ -72,7 +73,7 @@ class ProviderKeyRotator @Inject constructor() {
 
             val bindKey = sessionId?.let { sessionBinding(config.id, it) }
             val bound = bindKey?.let { sessionKeys[bindKey] }
-            if (bound != null && bound in keys && !isCoolingDown(config.id, bound)) return bound
+            if (bound != null && keys.any { it.value == bound } && !isCoolingDown(config.id, bound)) return bound
 
             val chosen = pick(config.id, keys, config.keyRotationStrategy, exclude = emptySet()) ?: return null
             if (bindKey != null) sessionKeys[bindKey] = chosen
@@ -90,8 +91,8 @@ class ProviderKeyRotator @Inject constructor() {
         if (keys.isEmpty()) return null
         synchronized(lock) {
             val last = lastSelected[config.id]
-            if (last != null && last in keys && !isCoolingDown(config.id, last)) return last
-            return keys.firstOrNull { !isCoolingDown(config.id, it) } ?: keys.first()
+            if (last != null && keys.any { it.value == last } && !isCoolingDown(config.id, last)) return last
+            return keys.firstOrNull { !isCoolingDown(config.id, it.value) }?.value ?: keys.first().value
         }
     }
 
@@ -110,7 +111,7 @@ class ProviderKeyRotator @Inject constructor() {
     ): KeySwitchResult? {
         synchronized(lock) {
             val setup = setups[providerId] ?: return null
-            if (key !in setup.keys) return null
+            if (setup.keys.none { it.value == key }) return null
 
             // 先确认有可切换的候选，没有就别冷却——把最后一个可用 Key 冷却只会让用户在一段时间内完全不可用
             val next = pick(providerId, setup.keys, setup.strategy, exclude = triedKeys + key) ?: return null
@@ -119,31 +120,52 @@ class ProviderKeyRotator @Inject constructor() {
             }
             sessionId?.let { sessionKeys[sessionBinding(providerId, it)] = next }
             lastSelected[providerId] = next
-            val index = setup.keys.indexOf(next) + 1
+            val index = setup.keys.indexOfFirst { it.value == next } + 1
             FileLogger.i(TAG, "Key 切换 provider=$providerId ${key.masked()} → ${next.masked()} (第 $index/${setup.keys.size} 个)")
             return KeySwitchResult(newKey = next, newIndex = index, total = setup.keys.size)
         }
     }
 
     /**
-     * 按策略挑一个可选 Key：排除 [exclude]（本次已试过）与处于冷却中的 Key；没有可选时返回 null。
-     * 不做「全冷却就退回最早到期者再试一遍」的回退——那等于拿已知不可用的 Key 硬打。
+     * 按策略挑一个可选 Key：排除 [exclude]（本次已试过）与处于冷却中的 Key，权重 ≤ 0 的也不参与；
+     * 没有可选时返回 null。不做「全冷却就退回最早到期者再试一遍」的回退——那等于拿已知不可用的 Key 硬打。
      */
     private fun pick(
         providerId: String,
-        keys: List<String>,
+        keys: List<ProviderKey>,
         strategy: KeyRotationStrategy,
         exclude: Set<String>
     ): String? {
-        val ordered = when (strategy) {
-            KeyRotationStrategy.SEQUENTIAL -> keys
-            KeyRotationStrategy.ROUND_ROBIN -> {
-                val start = (roundRobinCursor[providerId] ?: 0) % keys.size
-                roundRobinCursor[providerId] = (start + 1) % keys.size
-                keys.subList(start, keys.size) + keys.subList(0, start)
+        val participants = keys.filter {
+            it.weight > 0 && it.value !in exclude && !isCoolingDown(providerId, it.value)
+        }
+        if (participants.isEmpty()) return null
+        return when (strategy) {
+            KeyRotationStrategy.SEQUENTIAL -> participants.first().value
+            KeyRotationStrategy.ROUND_ROBIN -> weightedRoundRobin(providerId, participants)
+        }
+    }
+
+    /**
+     * 平滑加权轮询（SWRR）：每轮给各候选加上自身权重、取当前权重最大者，再给选中者减去候选总权重。
+     * 无需按权重展开成虚拟列表，权重可到百万级；分布均匀且不会一直落在同一个 Key 上。
+     */
+    private fun weightedRoundRobin(providerId: String, participants: List<ProviderKey>): String {
+        val current = weightedState.getOrPut(providerId) { mutableMapOf() }
+        var total = 0L
+        var best = participants.first()
+        var bestWeight = Long.MIN_VALUE
+        for (candidate in participants) {
+            val next = (current[candidate.value] ?: 0L) + candidate.weight
+            current[candidate.value] = next
+            total += candidate.weight
+            if (next > bestWeight) {
+                bestWeight = next
+                best = candidate
             }
         }
-        return ordered.firstOrNull { it !in exclude && !isCoolingDown(providerId, it) }
+        current[best.value] = (current[best.value] ?: 0L) - total
+        return best.value
     }
 
     private fun isCoolingDown(providerId: String, key: String): Boolean {

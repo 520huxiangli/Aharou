@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Binder
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -107,6 +108,16 @@ class TerminalKeepaliveService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     /**
+     * Android 15(35) 起系统会对有运行时长上限的前台服务类型发超时回调；specialUse 不在时限列表内，
+     * 这里仍做兑底——回调后只留几秒，不主动停就会抛 RemoteServiceException。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        FileLogger.w(TAG, "Foreground service timed out (type=$fgsType), stopping")
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf(startId)
+    }
+
+    /**
      * 进入前台并刷新通知；文案随「常驻保活 / 后台会话」组合变化。
      *
      * startForeground 在 Android 12+ 从后台启动前台服务时可能抛
@@ -139,8 +150,14 @@ class TerminalKeepaliveService : Service() {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
             .build()
 
-        runCatching { startForeground(NOTIFICATION_ID, notification) }
-            .onFailure { FileLogger.e(TAG, "startForeground failed", it) }
+        runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        }.onFailure { FileLogger.e(TAG, "startForeground failed", it) }
     }
 
     companion object {

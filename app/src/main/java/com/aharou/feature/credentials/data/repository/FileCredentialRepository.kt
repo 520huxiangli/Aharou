@@ -17,7 +17,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * git 凭据的文件实现（真源 = `filesDir/aicode/git-credentials`，容器内 `/root/.aicode/git-credentials`）。
+ * git 凭据的文件实现（真源 = `filesDir/aharou/git-credentials`，容器内 `/root/.aharou/git-credentials`）。
  *
  * 文件采用 git-credential-store 标准格式：每行 `https://user:token@host`，每主机一条（保存同主机覆盖旧值），
  * 由容器/远程服务器的 `credential.helper=store` 直接读取，UI 与 git 共用同一份。
@@ -30,7 +30,10 @@ class FileCredentialRepository @Inject constructor(
 
     private companion object {
         const val TAG = "FileCredentialRepo"
-        const val AHAROU_DIR = "aicode"
+        const val AHAROU_DIR = "aharou"
+
+        /** [Aharou 改名] 旧目录名：老版本把凭据写在这里，需要一次性合并。 */
+        const val LEGACY_DIR = "aicode"
         const val CREDENTIALS_NAME = "git-credentials"
     }
 
@@ -131,5 +134,30 @@ class FileCredentialRepository @Inject constructor(
         if (tryDecode(raw) != null) return@withLock
         writeFile(_credentials.value)
         FileLogger.i(TAG, "已将明文 git 凭据迁移为编码格式")
+    }
+
+    /**
+     * 把旧目录 `filesDir/aicode/git-credentials` 并进当前目录（幂等，在 [migrateToEncoded] 之前调）。
+     *
+     * `ContainerInstaller.migrateLegacyDir` 只在目标目录不存在时才搬，而 `filesDir/aharou`
+     * 早被运行时创建，所以旧文件从未被搬过。这里按 host 归并：同名 host 以旧目录那条为准
+     * （改名后经 UI 保存的都落在旧目录，是较新的值），旧文件保留不删。
+     */
+    suspend fun migrateFromLegacyDir() = mutex.withLock {
+        val legacyFile = File(File(context.filesDir, LEGACY_DIR), CREDENTIALS_NAME)
+        if (!legacyFile.isFile) return@withLock
+        val legacy = parse(legacyFile)
+        if (legacy.isEmpty()) return@withLock
+
+        val current = _credentials.value
+        val merged = (current.associateBy { it.host } + legacy.associateBy { it.host })
+            .values.sortedBy { it.host }
+        val unchanged = merged.size == current.size && current.all { c ->
+            merged.any { it.host == c.host && it.username == c.username && it.token == c.token }
+        }
+        if (unchanged) return@withLock
+        writeFile(merged)
+        _credentials.value = merged
+        FileLogger.i(TAG, "已并入旧目录凭据 ${legacy.size} 条（按 host 归并，旧文件保留）")
     }
 }

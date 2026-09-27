@@ -199,7 +199,7 @@ class GeminiAdapter @Inject constructor(
         }
         
         val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
-        val rawSse = StringBuilder()
+        val sseLog = AILogger.beginRawSse(logSessionId, "Gemini", seq)
 
         try {
             val triedKeys = mutableSetOf(apiKey)
@@ -244,7 +244,7 @@ class GeminiAdapter @Inject constructor(
                             if (!line.startsWith("data:")) continue
                             val data = line.removePrefix("data:").trim()
                             if (data.isEmpty()) continue
-                            AILogger.appendRawSse(rawSse, line)
+                            sseLog.append(line)
                             val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                             
                             try {
@@ -330,7 +330,7 @@ class GeminiAdapter @Inject constructor(
             AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString(), seq)
+            sseLog.finish()
         }
     }.flowOn(Dispatchers.IO)
 
@@ -448,8 +448,8 @@ class GeminiAdapter @Inject constructor(
         val url = resolveInteractionsUrl(stream = true)
         val request = buildInteractionsRequest(systemPrompt, messages, tools, reasoningEffort, stream = true)
         val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
-        // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
-        val rawSse = StringBuilder()
+        // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
+        val sseLog = AILogger.beginRawSse(logSessionId, "Gemini", seq)
         try {
             val triedKeys = mutableSetOf(apiKey)
             streamWithStaircaseRetry(
@@ -489,7 +489,7 @@ class GeminiAdapter @Inject constructor(
                                 if (!line.startsWith("data:")) continue
                                 val data = line.removePrefix("data:").trim()
                                 if (data.isEmpty()) continue
-                                AILogger.appendRawSse(rawSse, line)
+                                sseLog.append(line)
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                                 // 单个事件的字段类型异常不应废掉整条流，只跳过该事件；
@@ -544,7 +544,7 @@ class GeminiAdapter @Inject constructor(
             AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString(), seq)
+            sseLog.finish()
         }
     }
 

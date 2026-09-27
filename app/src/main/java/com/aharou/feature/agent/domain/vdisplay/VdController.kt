@@ -116,6 +116,12 @@ class VdController @Inject constructor(
             "影子屏启动超时（日志尾部：${exec("tail -5 $LOG_FILE 2>/dev/null", 10_000L).output.take(300)}）"
         }
         val info = refresh() ?: VdInfo(id, "", width, height, dpi)
+        // DisplayInfo 不跟着改的话，App 拿到的 screenWidthDp 仍是物理设备的值
+        // （363dp = 手机档），宽屏/平板分支永远走不到，也就模拟不出大屏布局。
+        runCatching {
+            exec("wm size -d ${info.displayId} ${width}x$height", 15_000L)
+            exec("wm density -d ${info.displayId} $dpi", 15_000L)
+        }.onFailure { FileLogger.i(TAG, "设置影子屏尺寸失败：${it.message}") }
         _state.value = info
         return info
     }
@@ -139,12 +145,21 @@ class VdController @Inject constructor(
                 20_000L,
             ).output
         }.getOrDefault("")
-        val id = Regex("VD_READY id=(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull()
         val sf = Regex("Display (\\d+) \\(Virtual display\\): displayName=\"$DISPLAY_NAME\"")
             .find(out)?.groupValues?.get(1)
-        val w = Regex("size=(\\d+)x(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull() ?: DEFAULT_WIDTH
-        val h = Regex("size=(\\d+)x(\\d+)").find(out)?.groupValues?.get(2)?.toIntOrNull() ?: DEFAULT_HEIGHT
-        val dpi = Regex("dpi=(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull() ?: DEFAULT_DPI
+        // 逻辑 display id 不能取 runner 的 VD_READY：那是创建瞬间的编号，之后系统会重排
+        // （实测 runner 报 5、AM 实际是 8），拿它去 am/input 全部打偏。
+        // mViewports 把「类型 + displayId + uniqueId + 尺寸/dpi」放在同一条目里，是唯一可靠来源。
+        val viewports = runCatching { exec("dumpsys display | grep mViewports", 15_000L).output }
+            .getOrDefault("")
+        val vd = Regex(
+            "type=VIRTUAL[^}]*?displayId=(\\d+)[^}]*?uniqueId='[^']*$DISPLAY_NAME[^']*'" +
+                "[^}]*?densityDpi=(\\d+)[^}]*?deviceWidth=(\\d+), deviceHeight=(\\d+)",
+        ).find(viewports)
+        val id = vd?.groupValues?.get(1)?.toIntOrNull()
+        val w = vd?.groupValues?.get(3)?.toIntOrNull() ?: DEFAULT_WIDTH
+        val h = vd?.groupValues?.get(4)?.toIntOrNull() ?: DEFAULT_HEIGHT
+        val dpi = vd?.groupValues?.get(2)?.toIntOrNull() ?: DEFAULT_DPI
         val info = if (id != null && !sf.isNullOrEmpty()) VdInfo(id, sf, w, h, dpi) else null
         _state.value = info
         return info
@@ -168,15 +183,32 @@ class VdController @Inject constructor(
             exec("cmd package resolve-activity --brief $raw 2>/dev/null | tail -1", 20_000L).output.trim()
         }
         check(comp.contains('/')) { "找不到可启动的入口：$component" }
-        val r = exec("am start --display ${info.displayId} -n $comp", 30_000L)
+        // shell（uid 2000）用 `am start --display` 往二级屏启动会被 SecurityException 挡下，
+        // 只能先按常规启动、再把它的任务搬到影子屏（move-stack 走 AM 公开入口，shell 可用）。
+        val r = exec("am start -n $comp", 30_000L)
         check(!r.output.contains("Error") && !r.output.contains("Exception")) { "启动失败：${r.output.take(300)}" }
-        return info
+        val pkg = comp.substringBefore('/')
+        for (attempt in 0 until 10) {
+            delay(400L)
+            val taskId = runCatching {
+                exec(
+                    "dumpsys activity activities | grep -oE 'Task\\{[^}]*A=[0-9]+:$pkg' | grep -oE '#[0-9]+' | head -1",
+                    15_000L,
+                ).output.trim().removePrefix("#")
+            }.getOrDefault("")
+            if (taskId.isNotEmpty()) {
+                exec("cmd activity display move-stack $taskId ${info.displayId}", 15_000L)
+                return refresh() ?: info
+            }
+        }
+        error("已启动 $comp 但未能定位其任务并搬入影子屏")
     }
 
     /** 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。 */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
         val info = known ?: refresh() ?: error("影子屏未运行，请先 start")
         val shot = File(context.getExternalFilesDir(null), "vd/shot.png")
+        shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
         val r = exec("screencap -d ${info.sfDisplayId} -p \"${shot.absolutePath}\"", 30_000L)
         check(shot.exists() && shot.length() > 0) { "截图失败：${r.output.take(300)}" }

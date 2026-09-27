@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+# 同一时刻只允许一次同步，避免两次运行撞车后互相覆盖 data 分支。
+concurrency:
+  group: sync-models
+  cancel-in-progress: false
+
 jobs:
   sync-models:
     runs-on: ubuntu-latest
@@ -26,17 +31,30 @@ jobs:
         run: |
           python3 scripts/sync-models-dev.py
 
-      - name: Commit and push changes if updated
+      - name: Publish to data branch
         run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # 仅检查 data/models.json 的变更
-          if git diff --quiet data/models.json; then
-            echo "全量模型元数据无变动，跳过提交"
-            exit 0
+
+          # 机器产物不落在 main（否则每次提交都会触发一轮 CI + Beta 构建）。
+          cp data/models.json "$RUNNER_TEMP/models.json"
+
+          # 与 data 分支现存文件比对，无变化则跳过（避免无意义提交）。
+          git fetch origin data || true
+          if git show origin/data:data/models.json > "$RUNNER_TEMP/models.old.json" 2>/dev/null; then
+            if cmp -s "$RUNNER_TEMP/models.old.json" data/models.json; then
+              echo "模型元数据无变动，跳过提交"
+              exit 0
+            fi
           fi
 
+          # orphan 分支承载数据：每次覆盖成单个提交，data 分支始终只有最新快照。
+          git checkout --orphan data-snapshot
+          git rm -rf --cached . > /dev/null
+          git clean -fdx > /dev/null
+          mkdir -p data
+          cp "$RUNNER_TEMP/models.json" data/models.json
           git add data/models.json
-          git commit -m "chore(data): 自动同步 models.dev 完整元数据"
-          git push origin main
+          git commit -m "chore(data): 同步 models.dev 完整元数据"
+          git push -f origin HEAD:data

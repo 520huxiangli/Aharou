@@ -173,7 +173,7 @@ internal suspend fun copyUriToWorkspace(
     fileAccess: FileAccessProvider,
     includeImageData: Boolean = false
 ): UploadedWorkspaceFile = withContext(Dispatchers.IO) {
-    val attachmentsDir = "${WorkspacePathMapper.CONTAINER_ROOT}/.aicode/attachments"
+    val attachmentsDir = "${WorkspacePathMapper.CONTAINER_ROOT}/.aharou/attachments"
     val fileName = uniqueUploadName(fileAccess, attachmentsDir, safeUploadFileName(context, uri))
     val containerPath = "$attachmentsDir/$fileName"
 
@@ -224,10 +224,13 @@ internal suspend fun copyUriToWorkspace(
 }
 
 private fun Context.displayName(uri: Uri): String {
-    return contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+    val fromProvider = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
         val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
         if (index >= 0 && cursor.moveToFirst()) cursor.getString(index).orEmpty() else ""
     }.orEmpty()
+    if (fromProvider.isNotBlank()) return fromProvider
+    // file:// 之类没有真实 provider（如分享 intent 直接给路径），退回路径末段。
+    return uri.lastPathSegment.orEmpty()
 }
 
 private fun Context.contentSize(uri: Uri): Long? {

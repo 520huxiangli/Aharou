@@ -3,8 +3,15 @@ package com.aharou.core.util
 import android.content.Context
 import android.util.Log
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
+import java.io.BufferedWriter
 import java.io.File
-
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.io.Writer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,6 +27,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * `filesDir/ai-logs/`）。所有写入串行化到单线程后台执行，不阻塞调用方协程。
  * 请求体不含 API Key（密钥在 HTTP 头，本类只记录 URL 与 body），可安全留存。
  *
+ * 不做长度截断：请求/响应体在写入线程里序列化后直接写盘，不构造整段大字符串；原始 SSE 分批
+ * 落盘——因此长历史 / 大附件也不会 OOM，日志保持完整以便复现问题。超大 base64 媒体（图片等）
+ * 在写入前按 **JSON 结构**（字段名 + 值的形态）脱敏为占位符，避免单行几 MB 撑爆日志文件。
+ *
  * 使用前需在 [android.app.Application.onCreate] 调用一次 [init]。
  */
 object AILogger {
@@ -27,12 +38,15 @@ object AILogger {
     private const val TAG = "AILogger"
     private const val MAX_AGE_DAYS = 7
     private const val MAX_FILE_BYTES = 20 * 1024 * 1024 // 单会话文件上限 20MB（每轮重发完整历史，增长快）
-    /** 原始 SSE 日志缓冲字符上限：流式响应体量无上限，整段累积再 toString 会在移动端把堆顶爆。 */
-    private const val MAX_RAW_SSE_CHARS = 512 * 1024
-    private const val TRUNCATED_SSE_MARKER = "\n...[raw SSE 已截断]\n"
-    /** 请求/响应体写入日志的单段上限（字符）：长历史 / 大附件整段序列化再拼接会在移动端 OOM。 */
-    private const val MAX_LOGGED_CHARS = 2 * 1024 * 1024
-    private const val LOG_TRUNCATED_MARKER = "\n...[日志内容过长，已截断]"
+    /** 原始 SSE 分批落盘的缓冲阈值（字符）：累积到该量即落盘，避免整段响应驻留内存。 */
+    private const val SSE_FLUSH_CHARS = 64 * 1024
+    /** 字段名提示为 base64 承载时，值超过该长度即视为媒体数据。 */
+    private const val BASE64_MIN_CHARS = 256
+    /** 兜底：任意位置连续 base64 字符超过该长度即视为媒体数据（不管字段叫什么）。 */
+    private const val BASE64_RUN_CHARS = 1024
+
+    /** 承载 base64 的常见字段名（Anthropic `source.data`、附件 `base64Data`、OpenAI `image_url.url` 等）。 */
+    private val BASE64_FIELD_NAMES = setOf("data", "base64Data", "image_data", "url")
 
     private val ioExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ai-logger").apply { isDaemon = true }
@@ -63,70 +77,91 @@ object AILogger {
      * 记录一次请求的 URL 与请求体，并把本会话计数 +1（作为本次交互的序号）。
      *
      * @return 本次分配的序号 `n`，调用方必须把它原样回传给对应的 [logResponse] /
-     *   [logError] / [logResponseStream]，否则同会话内并发请求（如标题生成与主请求并行）
+     *   [logError] / [beginRawSse]，否则同会话内并发请求（如标题生成与主请求并行）
      *   会让 REQUEST 与 RESPONSE/ERROR 的编号错配——响应晚到时读到的是最新计数器值。
      */
     fun logRequest(sessionId: String?, provider: String, model: String, method: String, url: String, body: Any?): Int {
         val n = counter(sessionId).incrementAndGet()
-        val text = buildString {
-            append('\n').append("=".repeat(78)).append('\n')
-            append(now()).append("  REQUEST #").append(n)
-            append("   [").append(provider).append(" / ").append(model).append("]\n")
-            append(method).append(' ').append(url).append('\n')
-            append("--- request body ---\n")
-            append(stringify(body)).append('\n')
+        appendToSession(sessionId) { w ->
+            w.write("\n")
+            w.write("=".repeat(78))
+            w.write("\n")
+            w.write("${now()}  REQUEST #$n   [$provider / $model]\n")
+            w.write("$method $url\n")
+            w.write("--- request body ---\n")
+            writeBody(w, body)
+            w.write("\n")
         }
-        write(sessionId, text)
         return n
     }
 
     /** 记录一次非流式响应对象（用 Gson 序列化为 JSON）。[seq] 必须来自对应 [logRequest] 的返回值。 */
     fun logResponse(sessionId: String?, provider: String, body: Any?, seq: Int) {
-        val text = buildString {
-            append(now()).append("  RESPONSE #").append(seq)
-            append("   [").append(provider).append("]\n")
-            append("--- response body ---\n")
-            append(stringify(body)).append('\n')
-        }
-        write(sessionId, text)
-    }
-
-    /** 记录一次流式响应的原始 SSE 文本（由调用方按行累积后整体传入）。[seq] 必须来自对应 [logRequest] 的返回值。 */
-    fun logResponseStream(sessionId: String?, provider: String, raw: String, seq: Int) {
-        val text = buildString {
-            append(now()).append("  RESPONSE #").append(seq)
-            append("   [").append(provider).append(" / stream]\n")
-            append("--- raw SSE ---\n")
-            append(MediaRedactor.redact(raw).ifBlank { "(空响应)" })
-            if (!raw.endsWith("\n")) append('\n')
-        }
-        write(sessionId, text)
-    }
-
-    /**
-     * 把一行原始 SSE 追加到 [sb]，超过 [MAX_RAW_SSE_CHARS] 后停止累积。
-     *
-     * 原始 SSE 仅用于离线诊断；若整段无上限累积，最后 `toString()` 会在移动端 OOM（曾致 release 崩溃）。
-     */
-    fun appendRawSse(sb: StringBuilder, line: String) {
-        if (sb.length >= MAX_RAW_SSE_CHARS) return
-        val room = MAX_RAW_SSE_CHARS - sb.length
-        if (line.length + 1 <= room) {
-            sb.append(line).append('\n')
-        } else {
-            sb.append(line, 0, maxOf(room - TRUNCATED_SSE_MARKER.length, 0))
-            sb.append(TRUNCATED_SSE_MARKER)
+        appendToSession(sessionId) { w ->
+            w.write("${now()}  RESPONSE #$seq   [$provider]\n")
+            w.write("--- response body ---\n")
+            writeBody(w, body)
+            w.write("\n")
         }
     }
 
     /** 记录一次请求失败（取消不算失败，不应走到这里）。[seq] 必须来自对应 [logRequest] 的返回值。 */
     fun logError(sessionId: String?, provider: String, throwable: Throwable, seq: Int) {
-        val text = buildString {
-            append(now()).append("  ERROR #").append(seq)
-            append("   [").append(provider).append("]\n")
-            append(throwable.javaClass.name).append(": ").append(throwable.message ?: "").append('\n')
+        appendToSession(sessionId) { w ->
+            w.write("${now()}  ERROR #$seq   [$provider]\n")
+            w.write("${throwable.javaClass.name}: ${throwable.message ?: ""}\n")
         }
-        write(sessionId, text)
+    }
+
+    /**
+     * 开启一次流式响应的原始 SSE 日志句柄：调用方每收到一行就 [RawSseLog.append]，本轮结束
+     * （成功 / 失败 / 取消）时在 `finally` 调用 [RawSseLog.finish]。内容分批落盘，不整段驻留内存。
+     *
+     * @param seq 必须来自对应 [logRequest] 的返回值。
+     */
+    fun beginRawSse(sessionId: String?, provider: String, seq: Int): RawSseLog =
+        RawSseLog(sessionId, provider, seq)
+
+    /** 一次流式响应的原始 SSE 日志缓冲句柄，累积到阈值即分批落盘。 */
+    class RawSseLog internal constructor(
+        private val sessionId: String?,
+        private val provider: String,
+        private val seq: Int
+    ) {
+        private val buffer = StringBuilder()
+        private var headerWritten = false
+
+        fun append(line: String) {
+            buffer.append(redactString(line, null)).append('\n')
+            if (buffer.length >= SSE_FLUSH_CHARS) flush()
+        }
+
+        fun finish() {
+            if (buffer.isEmpty() && !headerWritten) {
+                headerWritten = true
+                writeChunk(header() + "(空响应)\n")
+            } else {
+                flush()
+            }
+        }
+
+        private fun flush() {
+            if (buffer.isEmpty() && headerWritten) return
+            val chunk = buffer.toString()
+            buffer.setLength(0)
+            val prefix = if (!headerWritten) {
+                headerWritten = true
+                header()
+            } else ""
+            writeChunk(prefix + chunk)
+        }
+
+        private fun header(): String =
+            "${now()}  RESPONSE #$seq   [$provider / stream]\n--- raw SSE ---\n"
+
+        private fun writeChunk(text: String) {
+            appendToSession(sessionId) { w -> w.write(text) }
+        }
     }
 
     private fun counter(sessionId: String?): AtomicInteger =
@@ -166,49 +201,73 @@ object AILogger {
 
     private fun now(): String = timestampFormat.format(java.time.Instant.now())
 
-    /**
-     * 序列化用于日志的对象。长度封顶 [MAX_LOGGED_CHARS]：大对象经有界 [LimitWriter] 序列化，
-     * 避免超大请求/响应体（长历史、大附件）整段进内存、再被日志拼接复制而 OOM。
-     */
-    private fun stringify(body: Any?): String = when (body) {
-        null -> MediaRedactor.redact("null")
-        is String -> MediaRedactor.redact(body.truncateForLog())
-        else -> {
-            val writer = LimitWriter(MAX_LOGGED_CHARS)
-            runCatching { gson.toJson(body, writer) }.fold(
-                onSuccess = { MediaRedactor.redact(writer.result()) },
-                onFailure = { MediaRedactor.redact(body.toString().truncateForLog()) }
-            )
-        }
-    }
-
-    /** 截断超长文本并追加提示，限定单段日志的内存占用。 */
-    private fun String.truncateForLog(): String =
-        if (length <= MAX_LOGGED_CHARS) this else take(MAX_LOGGED_CHARS) + LOG_TRUNCATED_MARKER
-
-    /** 有界 [java.io.Writer]：写入超过 [limit] 字符后丢弃后续内容，避免超大对象序列化整段进内存。 */
-    private class LimitWriter(private val limit: Int) : java.io.Writer() {
-        private val sb = StringBuilder()
-        private var truncated = false
-
-        override fun write(cbuf: CharArray, off: Int, len: Int) {
-            if (sb.length >= limit) {
-                truncated = true
-                return
+    /** 把 body 脱敏后流式写入 [w]：对象走 Gson 树序列化（不构造整段字符串）。 */
+    private fun writeBody(w: Writer, body: Any?) {
+        when (body) {
+            null -> w.write("null")
+            is String -> w.write(redactString(body, null))
+            else -> {
+                val tree = runCatching { gson.toJsonTree(body) }.getOrNull()
+                if (tree == null) {
+                    w.write(redactString(body.toString(), null))
+                } else {
+                    gson.toJson(redactInPlace(tree), w)
+                }
             }
-            val n = minOf(limit - sb.length, len)
-            sb.append(cbuf, off, n)
-            if (n < len) truncated = true
         }
-
-        override fun flush() {}
-
-        override fun close() {}
-
-        fun result(): String = if (truncated) sb.toString() + LOG_TRUNCATED_MARKER else sb.toString()
     }
 
-    private fun write(sessionId: String?, text: String) {
+    /** 供测试：把 body 按日志脱敏规则序列化为 JSON 文本（不写盘）。 */
+    internal fun redactToJson(body: Any?): String =
+        java.io.StringWriter().also { writeBody(it, body) }.toString()
+
+    /** 递归遍历 JSON 树，把媒体 base64 就地替换为占位符（树由 [GsonBuilder] 新生成，可安全修改）。 */
+    private fun redactInPlace(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> {
+            element.keySet().toList().forEach { key ->
+                val value = element.get(key)
+                when {
+                    value is JsonObject || value is JsonArray -> redactInPlace(value)
+                    value is JsonPrimitive && value.isString ->
+                        element.add(key, JsonPrimitive(redactString(value.asString, key)))
+                }
+            }
+            element
+        }
+        is JsonArray -> {
+            for (i in 0 until element.size()) {
+                val value = element.get(i)
+                when {
+                    value is JsonObject || value is JsonArray -> redactInPlace(value)
+                    value is JsonPrimitive && value.isString ->
+                        element.set(i, JsonPrimitive(redactString(value.asString, null)))
+                }
+            }
+            element
+        }
+        else -> element
+    }
+
+    /**
+     * 单个字符串值的脱敏：把内联 data URL、按字段名判定的裸 base64、以及任意位置超长 base64 串
+     * 替换为占位符。只在单个值内匹配，不跨字段，避免全文正则那种「换个格式就漏」的脆弱。
+     */
+    private fun redactString(value: String, key: String?): String {
+        if (value.isEmpty()) return value
+        var out = DATA_URL_REGEX.replace(value) { m -> "[base64 omitted: ${m.value.length} chars]" }
+        if (key != null && key in BASE64_FIELD_NAMES && out.length >= BASE64_MIN_CHARS && out.all { it.isBase64Char() }) {
+            return "[base64 omitted: ${out.length} chars]"
+        }
+        out = LONG_BASE64_RUN_REGEX.replace(out) { m -> "[base64 omitted: ${m.value.length} chars]" }
+        return out
+    }
+
+    private fun Char.isBase64Char(): Boolean =
+        this in 'A'..'Z' || this in 'a'..'z' || this in '0'..'9' ||
+            this == '+' || this == '/' || this == '=' || this == '_' || this == '-'
+
+    /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先重置。 */
+    private fun appendToSession(sessionId: String?, block: (Writer) -> Unit) {
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
         val safeId = (sessionId ?: "unknown").replace(Regex("[^A-Za-z0-9_-]"), "_")
         ioExecutor.execute {
@@ -218,7 +277,10 @@ object AILogger {
                     // 超上限则截断重开，避免单文件无限增长。
                     file.writeText("--- AI 会话日志超过 ${MAX_FILE_BYTES / 1024 / 1024}MB 已重置 ---\n")
                 }
-                file.appendText(text)
+                BufferedWriter(OutputStreamWriter(FileOutputStream(file, true), Charsets.UTF_8)).use { w ->
+                    block(w)
+                    w.flush()
+                }
             }.onFailure { Log.e(TAG, "写入 AI 会话日志失败", it) }
         }
     }
@@ -230,4 +292,9 @@ object AILogger {
             if (file.lastModified() < cutoff) runCatching { file.delete() }
         }
     }
+
+    /** 内联 base64 data URL（`data:<mime>;base64,...`，mime 可为空/任意）。 */
+    private val DATA_URL_REGEX = Regex("data:[A-Za-z0-9.+/-]*;base64,[A-Za-z0-9+/=_-]{$BASE64_MIN_CHARS,}")
+    /** 兜底：任意位置 ≥ [BASE64_RUN_CHARS] 的连续 base64 字符。 */
+    private val LONG_BASE64_RUN_REGEX = Regex("[A-Za-z0-9+/=_-]{$BASE64_RUN_CHARS,}")
 }
