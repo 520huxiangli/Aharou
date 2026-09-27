@@ -102,11 +102,21 @@ object GitHubDnsFallback {
         val existing = runCatching { if (hostsFile.isFile) hostsFile.readText() else "" }
             .getOrDefault("")
 
-        // 已注入的块覆盖了本次全部目标且未过期，就不动。新鲜度写进文件本身，进程重启后依然有效
-        // （lastCheckAt 只是进程内的节流）。
+        // 已注入的块覆盖了本次全部目标、未过期，且里面的 IP 还连得上，才不动。新鲜度写进文件本身，
+        // 进程重启后依然有效（lastCheckAt 只是进程内的节流）。
+        // 光看时间戳不够：名单里的 GitHub IP 会变差，一旦写进 hosts，容器里的 git 会一直失败到这个
+        // 块过期（REFRESH_AFTER_MS）为止，所以这里顺手探活一次（有 5 分钟节流兜着，不会每条命令都探）。
         val injected = parseBlock(existing)
         if (injected != null && !isStale(injected.stamp, now) && targets.all { it in injected.hosts }) {
-            return null
+            val alive = injected.entries
+                .filter { (_, host) -> host in targets }
+                .all { (ip, _) -> isReachable(ip) }
+            if (alive) return null
+            FileLogger.i(
+                TAG,
+                "已注入的 hosts 条目已连不上，重新解析：" +
+                    injected.entries.joinToString { "${it.second}→${it.first}" }
+            )
         }
 
         val resolved = targets.mapNotNull { host -> pickIp(host)?.let { host to it } }
@@ -131,7 +141,10 @@ object GitHubDnsFallback {
         }.getOrNull()
     }
 
-    private data class InjectedBlock(val stamp: Long, val hosts: List<String>)
+    private data class InjectedBlock(val stamp: Long, val entries: List<Pair<String, String>>) {
+        /** 块里写过的域名（与 [entries] 同源，按写入顺序）。 */
+        val hosts: List<String> get() = entries.map { it.second }
+    }
 
     private fun parseBlock(content: String): InjectedBlock? {
         val lines = content.lineSequence().toList()
@@ -144,9 +157,12 @@ object GitHubDnsFallback {
             ?.trim()
             ?.toLongOrNull()
             ?: return null
-        val hosts = body.filterNot { it.trim().startsWith(STAMP_PREFIX.trim()) }
-            .mapNotNull { it.trim().split(Regex("\\s+")).lastOrNull() }
-        return InjectedBlock(stamp, hosts)
+        val entries = body.filterNot { it.trim().startsWith(STAMP_PREFIX.trim()) }
+            .mapNotNull { line ->
+                val parts = line.trim().split(Regex("\\s+"))
+                if (parts.size < 2) null else parts[0] to parts[1]
+            }
+        return InjectedBlock(stamp, entries)
     }
 
     private fun stripBlock(content: String): String {
