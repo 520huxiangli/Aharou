@@ -2,9 +2,11 @@
 <!-- 供 sendFile 文件卡片点击打开（ACTION_VIEW + FileProvider 授权 URI）使用。
      files-path 覆盖 filesDir/projects（workspace 根）、filesDir/aicode（~/.aharou）与 rootfs；
      cache-path 覆盖远程模式 SFTP 下载的临时缓存与无法直接授权的文件的二次拷贝；
-     external-path 覆盖外部本地目录工作区（设备存储上的目录）。 -->
+     external-path 覆盖外部本地目录工作区（设备存储上的目录）；
+     external-files-path 覆盖 App 外部私有目录（更新包下在这里，便于交给 Shizuku 静默安装）。 -->
 <paths>
     <files-path name="files" path="." />
     <cache-path name="cache" path="." />
     <external-path name="external" path="." />
+    <external-files-path name="ext_files" path="." />
 </paths>

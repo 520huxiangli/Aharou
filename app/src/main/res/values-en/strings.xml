@@ -411,6 +411,11 @@
     <string name="about_download_resolving">Choosing a download source…</string>
     <string name="about_downloading_from">Downloading from %1$s</string>
     <string name="about_download_installing">Downloaded, launching installer…</string>
+    <string name="about_download_install_hint">Aharou will restart after installing; your chats are kept</string>
+    <string name="about_auto_download_update">Auto-download updates</string>
+    <string name="about_auto_download_update_desc">Fetch new versions in the background via the fastest mirror; installing takes one tap</string>
+    <string name="about_auto_install_update">Install automatically</string>
+    <string name="about_auto_install_update_desc">Requires Shizuku. Aharou restarts after installing, with no rollback</string>
     <string name="about_download_failed">Download failed</string>
     <string name="about_download_cancel">Cancel download</string>
     <string name="about_download_install_now">Install now</string>

@@ -155,6 +155,12 @@ private fun NewVersionDialog(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.about_download_install_hint),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     is UpdateDownloadUiState.Failed -> {
                         Spacer(Modifier.height(12.dp))

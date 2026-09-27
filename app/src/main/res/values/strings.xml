@@ -411,6 +411,11 @@
     <string name="about_download_resolving">正在选择下载源…</string>
     <string name="about_downloading_from">正在下载（%1$s）</string>
     <string name="about_download_installing">下载完成，正在启动安装…</string>
+    <string name="about_download_install_hint">安装完成后 Aharou 会重启，对话记录会保留</string>
+    <string name="about_auto_download_update">自动下载更新</string>
+    <string name="about_auto_download_update_desc">检测到新版本后自动用国内镜像下好，只需点一次安装</string>
+    <string name="about_auto_install_update">下载后自动安装</string>
+    <string name="about_auto_install_update_desc">需 Shizuku 授权；安装会重启 Aharou，且无法回退到旧版</string>
     <string name="about_download_failed">下载失败</string>
     <string name="about_download_cancel">取消下载</string>
     <string name="about_download_install_now">立即安装</string>

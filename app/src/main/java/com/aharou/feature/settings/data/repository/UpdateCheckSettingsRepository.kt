@@ -40,6 +40,37 @@ class UpdateCheckSettingsRepository @Inject constructor(
             prefs.edit().putString(KEY_CHANNEL, value.name).apply()
         }
 
+    /** 自动下载更新包：检测到新版本就在后台下好，用户只需点一下安装。默认开启。 */
+    var autoDownloadEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_DOWNLOAD, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_DOWNLOAD, value).apply()
+        }
+
+    /**
+     * 下载完就自动静默安装（需 Shizuku 授权），默认关闭。
+     * 注意：覆盖安装自己会重启 App，且 Android 侧无法回退到上一版。
+     */
+    var autoInstallEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_INSTALL, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_INSTALL, value).apply()
+        }
+
+    /** 已下载好的更新包版本 tag（跨进程重启复用，避免重复下载同一版本）。 */
+    var downloadedTag: String?
+        get() = prefs.getString(KEY_DOWNLOADED_TAG, null)
+        set(value) {
+            prefs.edit().putString(KEY_DOWNLOADED_TAG, value).commit()
+        }
+
+    /** 已下载好的更新包路径。 */
+    var downloadedPath: String?
+        get() = prefs.getString(KEY_DOWNLOADED_PATH, null)
+        set(value) {
+            prefs.edit().putString(KEY_DOWNLOADED_PATH, value).commit()
+        }
+
     /** 今天是否已检测过（按记录日期判断）。 */
     fun hasCheckedToday(): Boolean = prefs.getString(KEY_LAST_CHECKED, null) == today()
 
@@ -105,5 +136,9 @@ class UpdateCheckSettingsRepository @Inject constructor(
         const val KEY_CHANNEL = "update_channel"
         const val KEY_LAST_CHECKED = "last_checked_date"
         const val KEY_LAST_NOTIFIED_TAG = "last_notified_tag"
+        const val KEY_AUTO_DOWNLOAD = "auto_download_enabled"
+        const val KEY_AUTO_INSTALL = "auto_install_enabled"
+        const val KEY_DOWNLOADED_TAG = "downloaded_update_tag"
+        const val KEY_DOWNLOADED_PATH = "downloaded_update_path"
     }
 }

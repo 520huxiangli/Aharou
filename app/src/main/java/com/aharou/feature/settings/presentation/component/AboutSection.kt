@@ -62,8 +62,12 @@ import compose.icons.feathericons.Tag
 internal fun AboutSection(
     updateCheckEnabled: Boolean,
     updateCheckChannel: UpdateChannel,
+    autoDownloadEnabled: Boolean,
+    autoInstallEnabled: Boolean,
     onToggleUpdateCheck: (Boolean) -> Unit,
     onSelectChannel: (UpdateChannel) -> Unit,
+    onToggleAutoDownload: (Boolean) -> Unit,
+    onToggleAutoInstall: (Boolean) -> Unit,
     onCheckUpdate: () -> Unit
 ) {
     val context = LocalContext.current
@@ -122,6 +126,30 @@ internal fun AboutSection(
                     AppSwitch(
                         checked = updateCheckEnabled,
                         onCheckedChange = onToggleUpdateCheck
+                    )
+                }
+            )
+            SettingsDivider()
+            // 自动下载更新包：检测到新版本就提前下好（国内源）
+            SettingsRow(
+                title = stringResource(R.string.about_auto_download_update),
+                subtitle = stringResource(R.string.about_auto_download_update_desc),
+                trailing = {
+                    AppSwitch(
+                        checked = autoDownloadEnabled,
+                        onCheckedChange = onToggleAutoDownload
+                    )
+                }
+            )
+            SettingsDivider()
+            // 下载后自动静默安装（需 Shizuku）
+            SettingsRow(
+                title = stringResource(R.string.about_auto_install_update),
+                subtitle = stringResource(R.string.about_auto_install_update_desc),
+                trailing = {
+                    AppSwitch(
+                        checked = autoInstallEnabled,
+                        onCheckedChange = onToggleAutoInstall
                     )
                 }
             )

@@ -259,6 +259,8 @@ fun SettingsScreen(
     val tokenStats by viewModel.tokenStats.collectAsStateWithLifecycle()
     val updateCheckEnabled by viewModel.updateCheckEnabled.collectAsStateWithLifecycle()
     val updateCheckChannel by viewModel.updateCheckChannel.collectAsStateWithLifecycle()
+    val autoDownloadEnabled by viewModel.autoDownloadEnabled.collectAsStateWithLifecycle()
+    val autoInstallEnabled by viewModel.autoInstallEnabled.collectAsStateWithLifecycle()
     val containerAnnouncementText by viewModel.containerAnnouncementText.collectAsStateWithLifecycle()
     val containerAnnouncementOutdated by viewModel.containerAnnouncementOutdated.collectAsStateWithLifecycle()
     val imageCatalog by viewModel.imageCatalog.collectAsStateWithLifecycle()
@@ -982,8 +984,12 @@ fun SettingsScreen(
                 SettingsSection.About -> AboutSection(
                     updateCheckEnabled = updateCheckEnabled,
                     updateCheckChannel = updateCheckChannel,
+                    autoDownloadEnabled = autoDownloadEnabled,
+                    autoInstallEnabled = autoInstallEnabled,
                     onToggleUpdateCheck = { viewModel.setUpdateCheckEnabled(it) },
                     onSelectChannel = { viewModel.setUpdateCheckChannel(it) },
+                    onToggleAutoDownload = { viewModel.setAutoDownloadEnabled(it) },
+                    onToggleAutoInstall = { viewModel.setAutoInstallEnabled(it) },
                     onCheckUpdate = { viewModel.checkUpdate(manual = true) }
                 )
             }

@@ -39,8 +39,17 @@ class UpdateApkDownloader @Inject constructor(
             .build()
     }
 
-    /** 下载目录（FileProvider 已覆盖 filesDir，无需改 file_paths.xml）。 */
-    fun downloadDir(): File = File(context.filesDir, "updates").apply { mkdirs() }
+    /**
+     * 下载目录：优先 App 外部私有目录（Android/data/<pkg>/files/updates）。
+     *
+     * 之所以不用内部 filesDir：开关「下载后自动静默安装」时要把包交给 Shizuku（adb shell 身份）
+     * 执行 `pm install`，而 shell 读不到 filesDir，外部私有目录实测 shell 可读写；取不到时回退内部目录
+     *（此时只能走系统安装器，见 installDownloadedApk）。
+     */
+    fun downloadDir(): File {
+        val base = context.getExternalFilesDir(null) ?: context.filesDir
+        return File(base, "updates").apply { mkdirs() }
+    }
 
     /**
      * 逐个候选源尝试下载。单个源连接不上、返回非 200、内容不是 APK 或长度对不上，

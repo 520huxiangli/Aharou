@@ -47,6 +47,7 @@ import com.aharou.feature.settings.data.remote.ModelApiService
 import com.aharou.feature.settings.data.remote.ContainerImageDownloader
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.remote.ModelTestResult
+import com.aharou.feature.agent.domain.shizuku.ShizukuManager
 import com.aharou.feature.settings.data.remote.UpdateApkDownloader
 import com.aharou.feature.settings.data.remote.UpdateCheckResult
 import com.aharou.feature.settings.data.remote.UpdateCheckService
@@ -106,6 +107,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -364,11 +366,14 @@ class SettingsViewModel @Inject constructor(
     private val updateCheckSettingsRepository: UpdateCheckSettingsRepository,
     private val updateCheckService: UpdateCheckService,
     private val updateApkDownloader: UpdateApkDownloader,
+    private val shizukuManager: ShizukuManager,
     private val providerDashboardRunner: ProviderDashboardRunner,
     private val terminalSettingsRepository: TerminalSettingsRepository,
     private val proxySettingsRepository: ProxySettingsRepository
 ) : ViewModel() {
     private companion object {
+        /** Shizuku 静默安装的超时（大包 pm install 要几十秒）。 */
+        const val SHIZUKU_INSTALL_TIMEOUT_MS = 120_000L
         const val MAX_LOG_LINES = 1200
         const val CALLS_PAGE_SIZE = 10
         const val STATS_PAGE_SIZE = 5
@@ -491,12 +496,19 @@ class SettingsViewModel @Inject constructor(
     private val _updateDownloadState = MutableStateFlow<UpdateDownloadUiState>(UpdateDownloadUiState.Idle)
     val updateDownloadState: StateFlow<UpdateDownloadUiState> = _updateDownloadState.asStateFlow()
     private var updateDownloadJob: Job? = null
+    private var shizukuInstallJob: Job? = null
 
     private val _updateCheckEnabled = MutableStateFlow(updateCheckSettingsRepository.autoCheckEnabled)
     val updateCheckEnabled: StateFlow<Boolean> = _updateCheckEnabled.asStateFlow()
 
     private val _updateCheckChannel = MutableStateFlow(updateCheckSettingsRepository.channel)
     val updateCheckChannel: StateFlow<UpdateChannel> = _updateCheckChannel.asStateFlow()
+
+    private val _autoDownloadEnabled = MutableStateFlow(updateCheckSettingsRepository.autoDownloadEnabled)
+    val autoDownloadEnabled: StateFlow<Boolean> = _autoDownloadEnabled.asStateFlow()
+
+    private val _autoInstallEnabled = MutableStateFlow(updateCheckSettingsRepository.autoInstallEnabled)
+    val autoInstallEnabled: StateFlow<Boolean> = _autoInstallEnabled.asStateFlow()
 
     private val _keepaliveEnabled = MutableStateFlow(false)
     val keepaliveEnabled: StateFlow<Boolean> = _keepaliveEnabled.asStateFlow()
@@ -1387,6 +1399,10 @@ class SettingsViewModel @Inject constructor(
                     if (manual) UpdateCheckUiState.Error(result.message) else UpdateCheckUiState.Idle
                 }
             }
+            // 自动下载：检测到新版本就提前把包下好，用户之后只需点一下「立即安装」
+            if (result is UpdateCheckResult.NewVersion && updateCheckSettingsRepository.autoDownloadEnabled) {
+                autoDownloadIfNeeded(result.info.latestTag)
+            }
             // 无论结果如何，都刷新 ~/.aharou/update-info.json 供 AI 读取
             updateCheckSettingsRepository.writeUpdateInfo(
                 currentVersion = currentVersionName(),
@@ -1437,7 +1453,10 @@ class SettingsViewModel @Inject constructor(
                         _updateDownloadState.value = UpdateDownloadUiState.Downloading(read, total, source)
                     }
                 )
+                updateCheckSettingsRepository.downloadedTag = state.latestTag
+                updateCheckSettingsRepository.downloadedPath = file.absolutePath
                 _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, state.latestTag)
+                maybeAutoInstall(file.absolutePath, state.latestTag)
             } catch (e: CancellationException) {
                 _updateDownloadState.value = UpdateDownloadUiState.Idle
                 throw e
@@ -1455,10 +1474,60 @@ class SettingsViewModel @Inject constructor(
         _updateDownloadState.value = UpdateDownloadUiState.Idle
     }
 
+    /**
+     * 检测到新版本就提前把包装好（开关默认开）。已下好同一版本则直接进入可安装状态，不重复下载。
+     */
+    private fun autoDownloadIfNeeded(tag: String) {
+        val savedPath = updateCheckSettingsRepository.downloadedPath
+        if (updateCheckSettingsRepository.downloadedTag == tag && savedPath != null && File(savedPath).exists()) {
+            _updateDownloadState.value = UpdateDownloadUiState.Ready(savedPath, tag)
+            maybeAutoInstall(savedPath, tag)
+            return
+        }
+        downloadUpdate()
+    }
+
+    /** 开关开启时交给 Shizuku 静默安装；未开启/未授权则什么都不做，等用户点「立即安装」。 */
+    private fun maybeAutoInstall(path: String, tag: String) {
+        if (!updateCheckSettingsRepository.autoInstallEnabled) return
+        installUpdateWithShizuku(path, tag)
+    }
+
+    /**
+     * 用 Shizuku（adb shell 身份）静默安装已下载的更新包。
+     * 失败不弹错误窗：UI 上的「立即安装」按钮仍在，可回落到系统安装器。
+     */
+    fun installUpdateWithShizuku(path: String, tag: String) {
+        if (shizukuInstallJob?.isActive == true) return
+        shizukuInstallJob = viewModelScope.launch {
+            val result = runCatching {
+                shizukuManager.runCommand("pm install -r \"$path\"", SHIZUKU_INSTALL_TIMEOUT_MS)
+            }.getOrNull()
+            val ok = result != null && result.exitCode == 0 && !result.output.contains("Failure")
+            FileLogger.i(
+                "UpdateInstall",
+                "Shizuku 静默安装 tag=$tag exit=${result?.exitCode} ok=$ok"
+            )
+            // 成功时 App 马上被替换重启，不必再改状态；失败就保持 Ready，让用户点按钮走系统安装器
+        }
+    }
+
     /** 自动检查更新开关（默认开启）。 */
     fun setUpdateCheckEnabled(enabled: Boolean) {
         updateCheckSettingsRepository.autoCheckEnabled = enabled
         _updateCheckEnabled.value = enabled
+    }
+
+    /** 自动下载更新包开关：检测到新版本就用国内源提前下好。 */
+    fun setAutoDownloadEnabled(enabled: Boolean) {
+        updateCheckSettingsRepository.autoDownloadEnabled = enabled
+        _autoDownloadEnabled.value = enabled
+    }
+
+    /** 下载后自动静默安装开关（需 Shizuku 授权；覆盖安装会重启 App）。 */
+    fun setAutoInstallEnabled(enabled: Boolean) {
+        updateCheckSettingsRepository.autoInstallEnabled = enabled
+        _autoInstallEnabled.value = enabled
     }
 
     /** 更新通道：稳定版 / 最新版。 */
