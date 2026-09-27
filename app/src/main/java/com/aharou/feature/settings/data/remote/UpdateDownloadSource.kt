@@ -19,8 +19,12 @@ object UpdateDownloadSource {
 
     private const val GITHUB_BASE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO"
 
-    /** GitCode 镜像仓库（与 GitHub 同名）。若尚未同步该 release，探测失败会被跳过。 */
-    private const val GITCODE_BASE = "https://gitcode.com/$GITHUB_OWNER/$GITHUB_REPO"
+    /**
+     * GitCode 镜像仓库。注意它是**另一个账号**下的同名仓库（2026-09-27 建仓），
+     * 路径与 GitHub 不同名，别把两者混用。代码/tag/Release 资产均已同步过去。
+     */
+    private const val GITCODE_OWNER = "Aharou"
+    private const val GITCODE_BASE = "https://gitcode.com/$GITCODE_OWNER/$GITHUB_REPO"
 
     /**
      * GitHub 文件反代，用法是「前缀 + 完整 GitHub URL」。

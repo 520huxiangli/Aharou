@@ -47,7 +47,7 @@ class UpdateDownloadSourceTest {
         val github = "https://github.com/520huxiangli/Aharou/releases/download/" +
             "v1.13.5/Aharou-universal-v1.13.5.apk"
 
-        assertTrue("GitCode 应排第一", list.first().startsWith("https://gitcode.com/520huxiangli/Aharou/"))
+        assertTrue("GitCode 应排第一", list.first().startsWith("https://gitcode.com/Aharou/Aharou/"))
         assertEquals("GitHub 原链应排最后", github, list.last())
         // 中间的每个都是「反代前缀 + GitHub 原链」
         list.drop(1).dropLast(1).forEach { assertTrue(it.endsWith(github)) }
