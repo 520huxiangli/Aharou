@@ -19,7 +19,7 @@
 
 与 Gitee 版的关键差异（GitCode API v5 实测确认）：
   - 认证：Authorization: Bearer <token>，不支持 access_token query 之外的方式也行（见代码）
-  - 创建 Release：tag 不存在时自动在 target_commitish(main) 上创建，无需等待镜像同步；
+  - 创建 Release：tag 不存在时自动在 target_commitish(master) 上创建，无需等待镜像同步；
     同 tag 已存在返回 409（幂等复用）
   - 上传附件：先 GET /releases/{tag}/upload_url?file_name= 取预签名地址，
     再 PUT 二进制（响应 headers 必须全部带上，参与 OBS 签名校验）
@@ -236,7 +236,7 @@ def main() -> int:
                         "tag_name": tag,
                         "name": rel.get("name") or f"Release {tag}",
                         "body": rel.get("body") or "",
-                        "target_commitish": "main",
+                        "target_commitish": "master",
                     })
                     if isinstance(created, dict) and created.get("tag_name"):
                         attach_names = set()

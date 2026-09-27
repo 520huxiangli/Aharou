@@ -423,5 +423,5 @@ private fun loadAppIconBitmap(context: Context): ImageBitmap? {
 }
 
 private const val GITHUB_REPO_URL = "https://github.com/520huxiangli/Aharou"
-private const val LICENSE_URL = "https://github.com/520huxiangli/Aharou/blob/main/LICENSE"
+private const val LICENSE_URL = "https://github.com/520huxiangli/Aharou/blob/master/LICENSE"
 private const val ICON_PX_DP = 48

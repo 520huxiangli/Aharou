@@ -1,11 +1,11 @@
 name: CI
 
-# push 到 main 或 PR 时触发：构建 universal debug（单 flavor 冒烟）+ 跑单元测试。
+# push 到 master 或 PR 时触发：构建 universal debug（单 flavor 冒烟）+ 跑单元测试。
 # 目的是合入前的兜底门禁，避免编译错误/回归推迟到打 tag 发版当天才暴露。
 # 打 v* tag 的发版构建走 android-release.yml，不在这里。
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     # 纯文档/资源改动不影响构建产物，跳过 CI 省时间（public 仓库虽不扣额度，但省 11 分钟等待）。
     # 注意：只要本次 push 含任一非忽略路径的改动，CI 仍会触发。
     paths-ignore:
@@ -16,7 +16,7 @@ on:
       - 'LICENSE'
       - '.gitignore'
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -52,14 +52,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          # PR 用只读缓存，仅 main 的 push 写回缓存，避免被 PR 污染。
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          # PR 用只读缓存，仅 master 的 push 写回缓存，避免被 PR 污染。
+          cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
       # 迁移版本号对账：编号连续、SCHEMA_VERSION 一致、已发布迁移未被篡改/复用
-      # （hotfix 合流后 main 未把未发布迁移后移会在这里被拦）。
+      # （hotfix 合流后 master 未把未发布迁移后移会在这里被拦）。
       - name: Check migration versions
         run: python3 scripts/check_migrations.py
 

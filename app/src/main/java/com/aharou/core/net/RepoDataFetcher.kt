@@ -186,7 +186,7 @@ class RepoDataFetcher(
 
         const val DEFAULT_OWNER = "520huxiangli"
         const val DEFAULT_REPO = "Aharou"
-        const val DEFAULT_BRANCH = "main"
+        const val DEFAULT_BRANCH = "master"
 
         /** 默认缓存 12 小时 */
         const val DEFAULT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000L

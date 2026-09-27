@@ -8,7 +8,7 @@
 2. 一致性：AgentDatabase.kt 的 SCHEMA_VERSION 必须等于最大迁移版本；
 3. 已发布冻结：版本号小于等于任一 v* tag 上 SCHEMA_VERSION 的迁移文件，
    内容必须与该 tag 上的一字不差——已打 tag 发布的迁移不可修改、不可复用。
-   违反时说明 main 未在 hotfix 合流时把未发布迁移后移，或有人篡改了已发布迁移。
+   违反时说明 master 未在 hotfix 合流时把未发布迁移后移，或有人篡改了已发布迁移。
 
 依赖本地 git refs：CI 用 actions/checkout fetch-depth: 0（含 tags）即可，本地请先 git fetch --tags。
 用法：python3 scripts/check_migrations.py   （退出码 0 = 通过，1 = 有冲突）
@@ -127,7 +127,7 @@ elif versions and published_max > 0:
             if local_content != tag_content:
                 errors.append(
                     "版本 %d（%s）已发布（最早出现于 tag %s，当时文件 %s），但本地内容与之不同："
-                    "已发布迁移不可修改或复用。若是 hotfix 合流后 main 未后移，"
+                    "已发布迁移不可修改或复用。若是 hotfix 合流后 master 未后移，"
                     "请把该迁移重编号为 %d+1 及之后的连续号再提交。" % (ver, name, tag, tag_name, published_max)
                 )
     notes.append("已发布版本号上限（全部 tag 最大 SCHEMA_VERSION）= %d" % published_max)

@@ -1,12 +1,12 @@
 name: Beta Build
 
-# push 到 main 时自动构建一个测试包：universal flavor、正式签名、与 release 同配置（R8/资源压缩），
+# push 到 master 时自动构建一个测试包：universal flavor、正式签名、与 release 同配置（R8/资源压缩），
 # 仅 applicationId 后缀 .beta（com.aharou.agent.beta，可与正式版同机共存）。
 # 产物上传到 Actions Artifacts（默认保留 90 天），不进 GitHub Release。
 # 打 v* tag 的正式发版走 android-release.yml；合入前门禁走 ci.yml。
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     # 纯文档/资源改动不影响 APK，跳过省时间（与 ci.yml 保持一致）。
     paths-ignore:
       - '**.md'
@@ -45,7 +45,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
       # beta 用正式签名：从 Secret 还原 keystore 到 app/aicode.jks，并生成 keystore.properties，
       # 与 android-release.yml 完全一致；缺任一步 beta 包会变成 unsigned。

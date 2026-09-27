@@ -37,7 +37,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # 机器产物不落在 main（否则每次提交都会触发一轮 CI + Beta 构建）。
+          # 机器产物不落在 master（否则每次提交都会触发一轮 CI + Beta 构建）。
           cp data/models.json "$RUNNER_TEMP/models.json"
 
           # 与 data 分支现存文件比对，无变化则跳过（避免无意义提交）。

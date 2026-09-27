@@ -6,4 +6,4 @@ if [ -n "$(git status --porcelain)" ]; then
   git add -A
   git commit -m "chore: 工作快照 $(date '+%Y-%m-%d %H:%M')"
 fi
-git push origin main && echo "[publish] 已上传: $(git log --oneline -1)"
+git push origin master && echo "[publish] 已上传: $(git log --oneline -1)"
