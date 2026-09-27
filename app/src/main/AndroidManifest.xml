@@ -76,6 +76,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- 「打开方式」入口：在文件管理器 / QQ 等选「用 Aharou 打开」。只收 content/file
+                 两种 scheme——不加限定的话，浏览器点 http 链接也会把 Aharou 列进候选。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
         <!-- 未捕获异常时由 AIEditorApp 的全局 handler 拉起，全屏展示崩溃详情供复制反馈。独立进程运行，避免被主进程崩溃影响或引发 Application 业务逻辑重跑。 -->

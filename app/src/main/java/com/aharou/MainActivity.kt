@@ -200,7 +200,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 接收外部分享的文件（ACTION_SEND / SEND_MULTIPLE）：拷进工作区 attachments，
+     * 接收外部送来的文件（ACTION_SEND / SEND_MULTIPLE / VIEW 打开方式）：拷进工作区 attachments，
      * 投给 [sharedIntakeHolder] 由聊天面板并入输入框附件。失败只记日志，不影响正常启动。
      */
     @Suppress("DEPRECATION")
@@ -209,6 +209,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
             Intent.ACTION_SEND_MULTIPLE ->
                 intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            // 「打开方式」来的文件把 URI 放在 data 里。
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
             else -> return
         }
         if (uris.isEmpty()) return
