@@ -407,6 +407,17 @@
     <string name="about_up_to_date_detail">Current version v%1$s, already the latest Release on GitHub.</string>
     <string name="about_new_version_found">New version available</string>
     <string name="about_download">Download</string>
+    <string name="about_download_and_install">Download and install</string>
+    <string name="about_download_resolving">Choosing a download source…</string>
+    <string name="about_downloading_from">Downloading from %1$s</string>
+    <string name="about_download_installing">Downloaded, launching installer…</string>
+    <string name="about_download_failed">Download failed</string>
+    <string name="about_download_cancel">Cancel download</string>
+    <string name="about_download_install_now">Install now</string>
+    <string name="about_open_in_browser">Open in browser</string>
+    <string name="about_download_source_gitcode">GitCode mirror</string>
+    <string name="about_download_source_github">GitHub</string>
+    <string name="about_download_source_mirror">Accelerated mirror</string>
     <string name="about_later">Later</string>
     <string name="about_check_failed">Check failed</string>
     <string name="about_ok">OK</string>

@@ -43,19 +43,32 @@ class UpdateCheckSettingsRepository @Inject constructor(
     /** 今天是否已检测过（按记录日期判断）。 */
     fun hasCheckedToday(): Boolean = prefs.getString(KEY_LAST_CHECKED, null) == today()
 
-    /** 记录今天已检测。 */
+    /**
+     * 记录今天已检测。用 commit() 同步落盘：apply() 是异步写，进程紧接着被杀（覆盖安装、
+     * 冷启动后被系统回收）会丢掉记录，导致同一天反复自动检查、反复弹窗。
+     */
     fun markCheckedToday() {
-        prefs.edit().putString(KEY_LAST_CHECKED, today()).apply()
+        prefs.edit().putString(KEY_LAST_CHECKED, today()).commit()
     }
 
     /**
-     * 把版本与更新信息写入 `~/.aharou/update-info.json`（宿主 filesDir/aicode/），
-     * 供容器内 AI 读取（当前版本、更新通道、最近检查时间、最新版本与逐版本更新日志）。
+     * 最近一次已提示过的版本 tag。自动检查为同一版本不再重复弹窗（用户点「稍后」后不该被
+     * 反复打扰）；手动检查不受此限。
+     */
+    var lastNotifiedTag: String?
+        get() = prefs.getString(KEY_LAST_NOTIFIED_TAG, null)
+        set(value) {
+            prefs.edit().putString(KEY_LAST_NOTIFIED_TAG, value).commit()
+        }
+
+    /**
+     * 把版本与更新信息写入 `~/.aharou/update-info.json`（宿主 filesDir/aharou/，容器内挂到
+     * `/root/.aharou`），供容器内 AI 读取（当前版本、更新通道、最近检查时间、最新版本与逐版本更新日志）。
      * 写入失败静默，不影响检测流程。
      */
     fun writeUpdateInfo(currentVersion: String, channel: UpdateChannel, result: UpdateCheckResult) {
         runCatching {
-            val dir = File(context.filesDir, "aicode").apply { mkdirs() }
+            val dir = File(context.filesDir, "aharou").apply { mkdirs() }
             val obj = JSONObject()
             obj.put("currentVersion", currentVersion)
             obj.put("channel", channel.name.lowercase())
@@ -91,5 +104,6 @@ class UpdateCheckSettingsRepository @Inject constructor(
         const val KEY_ENABLED = "auto_check_enabled"
         const val KEY_CHANNEL = "update_channel"
         const val KEY_LAST_CHECKED = "last_checked_date"
+        const val KEY_LAST_NOTIFIED_TAG = "last_notified_tag"
     }
 }

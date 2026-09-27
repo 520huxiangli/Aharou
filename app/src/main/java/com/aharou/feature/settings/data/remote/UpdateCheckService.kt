@@ -18,11 +18,15 @@ data class VersionUpdate(
     val changelog: String
 )
 
-/** 拉取到的更新信息：最新版本号 + 从当前版本到最新的更新日志。 */
+/** 拉取到的更新信息：最新版本号 + 从当前版本到最新的更新日志 + 可下载的安装包资产名。 */
 data class UpdateInfo(
     val latestTag: String,
     val changelog: String,
-    val updates: List<VersionUpdate>
+    val updates: List<VersionUpdate>,
+    /** 最新版里挑出的 APK 资产名（无 apk 资产时为 null）。 */
+    val apkAssetName: String? = null,
+    /** 该资产的字节数，用于校验下载完整性；0 表示未知。 */
+    val apkAssetSize: Long = 0L
 )
 
 /** 检查更新结果。 */
@@ -67,7 +71,12 @@ class UpdateCheckService @Inject constructor(
                             version = version,
                             rawTag = tag,
                             notes = obj.get("body")?.asString.orEmpty(),
-                            prerelease = obj.get("prerelease")?.asBoolean ?: false
+                            prerelease = obj.get("prerelease")?.asBoolean ?: false,
+                            assets = obj.getAsJsonArray("assets")?.mapNotNull { a ->
+                                val asset = a.asJsonObject
+                                val name = asset.get("name")?.asString ?: return@mapNotNull null
+                                ReleaseAsset(name = name, size = asset.get("size")?.asLong ?: 0L)
+                            } ?: emptyList()
                         )
                     }
 
@@ -80,11 +89,17 @@ class UpdateCheckService @Inject constructor(
                         UpdateCheckResult.UpToDate
                     } else {
                         val versionUpdates = updates.map { toVersionUpdate(it) }
+                        val latest = updates.first()
+                        val apkAsset = latest.assets.firstOrNull {
+                            it.name == UpdateDownloadSource.pickApkAsset(latest.assets.map { a -> a.name })
+                        }
                         UpdateCheckResult.NewVersion(
                             UpdateInfo(
                                 latestTag = versionUpdates.first().tag,
                                 changelog = versionUpdates.joinToString("\n\n") { "${it.tag}\n${it.changelog}" },
-                                updates = versionUpdates
+                                updates = versionUpdates,
+                                apkAssetName = apkAsset?.name,
+                                apkAssetSize = apkAsset?.size ?: 0L
                             )
                         )
                     }
@@ -121,8 +136,12 @@ class UpdateCheckService @Inject constructor(
         val version: String,
         val rawTag: String,
         val notes: String,
-        val prerelease: Boolean
+        val prerelease: Boolean,
+        val assets: List<ReleaseAsset> = emptyList()
     )
+
+    /** release 里的单个资产（只关心发布包本身）。 */
+    private data class ReleaseAsset(val name: String, val size: Long)
 
     private companion object {
         const val GITHUB_RELEASES_API = "https://api.github.com/repos/520huxiangli/Aharou/releases"

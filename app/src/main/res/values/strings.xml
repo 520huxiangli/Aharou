@@ -407,6 +407,17 @@
     <string name="about_up_to_date_detail">当前版本 v%1$s，已是 GitHub 上最新的 Release。</string>
     <string name="about_new_version_found">发现新版本</string>
     <string name="about_download">前往下载</string>
+    <string name="about_download_and_install">下载并安装</string>
+    <string name="about_download_resolving">正在选择下载源…</string>
+    <string name="about_downloading_from">正在下载（%1$s）</string>
+    <string name="about_download_installing">下载完成，正在启动安装…</string>
+    <string name="about_download_failed">下载失败</string>
+    <string name="about_download_cancel">取消下载</string>
+    <string name="about_download_install_now">立即安装</string>
+    <string name="about_open_in_browser">用浏览器打开</string>
+    <string name="about_download_source_gitcode">GitCode 镜像</string>
+    <string name="about_download_source_github">GitHub</string>
+    <string name="about_download_source_mirror">加速镜像</string>
     <string name="about_later">稍后</string>
     <string name="about_check_failed">检查失败</string>
     <string name="about_ok">确定</string>

@@ -47,8 +47,10 @@ import com.aharou.feature.settings.data.remote.ModelApiService
 import com.aharou.feature.settings.data.remote.ContainerImageDownloader
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.remote.ModelTestResult
+import com.aharou.feature.settings.data.remote.UpdateApkDownloader
 import com.aharou.feature.settings.data.remote.UpdateCheckResult
 import com.aharou.feature.settings.data.remote.UpdateCheckService
+import com.aharou.feature.settings.data.remote.UpdateDownloadSource
 import com.aharou.feature.settings.data.repository.UpdateCheckSettingsRepository
 import com.aharou.feature.settings.data.repository.UpdateChannel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -104,6 +106,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -156,8 +159,33 @@ sealed interface UpdateCheckUiState {
     data object Idle : UpdateCheckUiState
     data object Checking : UpdateCheckUiState
     data object UpToDate : UpdateCheckUiState
-    data class NewVersion(val latestTag: String, val changelog: String) : UpdateCheckUiState
+    data class NewVersion(
+        val latestTag: String,
+        val changelog: String,
+        /** release 里挑出的 APK 资产名；为 null 时只能走浏览器兜底。 */
+        val apkAssetName: String? = null,
+        val apkAssetSize: Long = 0L
+    ) : UpdateCheckUiState
     data class Error(val message: String) : UpdateCheckUiState
+}
+
+/** 应用内下载更新包的状态（在检查更新弹窗里展示进度）。 */
+sealed interface UpdateDownloadUiState {
+    data object Idle : UpdateDownloadUiState
+
+    /** 正在挑选可用的下载源（GitCode → 加速镜像 → GitHub 原链）。 */
+    data object Resolving : UpdateDownloadUiState
+
+    data class Downloading(
+        val bytesRead: Long,
+        val totalBytes: Long,
+        val sourceUrl: String
+    ) : UpdateDownloadUiState
+
+    /** 下载完成，等交给系统安装器。 */
+    data class Ready(val apkPath: String, val versionTag: String) : UpdateDownloadUiState
+
+    data class Failed(val message: String? = null) : UpdateDownloadUiState
 }
 
 /** Token 统计周期：决定统计起始时间与趋势粒度（今天=小时粒度，其余=天粒度）。 */
@@ -335,6 +363,7 @@ class SettingsViewModel @Inject constructor(
     private val modelCostCalculator: ModelCostCalculator,
     private val updateCheckSettingsRepository: UpdateCheckSettingsRepository,
     private val updateCheckService: UpdateCheckService,
+    private val updateApkDownloader: UpdateApkDownloader,
     private val providerDashboardRunner: ProviderDashboardRunner,
     private val terminalSettingsRepository: TerminalSettingsRepository,
     private val proxySettingsRepository: ProxySettingsRepository
@@ -458,6 +487,10 @@ class SettingsViewModel @Inject constructor(
 
     private val _updateCheckState = MutableStateFlow<UpdateCheckUiState>(UpdateCheckUiState.Idle)
     val updateCheckState: StateFlow<UpdateCheckUiState> = _updateCheckState.asStateFlow()
+
+    private val _updateDownloadState = MutableStateFlow<UpdateDownloadUiState>(UpdateDownloadUiState.Idle)
+    val updateDownloadState: StateFlow<UpdateDownloadUiState> = _updateDownloadState.asStateFlow()
+    private var updateDownloadJob: Job? = null
 
     private val _updateCheckEnabled = MutableStateFlow(updateCheckSettingsRepository.autoCheckEnabled)
     val updateCheckEnabled: StateFlow<Boolean> = _updateCheckEnabled.asStateFlow()
@@ -1336,10 +1369,20 @@ class SettingsViewModel @Inject constructor(
                 is UpdateCheckResult.UpToDate -> {
                     if (manual) UpdateCheckUiState.UpToDate else UpdateCheckUiState.Idle
                 }
-                is UpdateCheckResult.NewVersion -> UpdateCheckUiState.NewVersion(
-                    latestTag = result.info.latestTag,
-                    changelog = result.info.changelog
-                )
+                is UpdateCheckResult.NewVersion -> {
+                    // 同一版本只自动提示一次：用户点过「稍后」后不该被反复打扰；手动检查不受此限。
+                    if (!manual && result.info.latestTag == updateCheckSettingsRepository.lastNotifiedTag) {
+                        UpdateCheckUiState.Idle
+                    } else {
+                        updateCheckSettingsRepository.lastNotifiedTag = result.info.latestTag
+                        UpdateCheckUiState.NewVersion(
+                            latestTag = result.info.latestTag,
+                            changelog = result.info.changelog,
+                            apkAssetName = result.info.apkAssetName,
+                            apkAssetSize = result.info.apkAssetSize
+                        )
+                    }
+                }
                 is UpdateCheckResult.Error -> {
                     if (manual) UpdateCheckUiState.Error(result.message) else UpdateCheckUiState.Idle
                 }
@@ -1356,9 +1399,60 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 关闭更新弹窗。 */
+    /** 关闭更新弹窗（连同已下未装的进度一起收起）。 */
     fun dismissUpdateCheck() {
         _updateCheckState.value = UpdateCheckUiState.Idle
+        cancelDownload()
+    }
+
+    /**
+     * 应用内下载更新包：候选源依次尝试（GitCode → 加速镜像 → GitHub 原链），
+     * 进度与当前来源写入 [updateDownloadState] 供弹窗展示。
+     */
+    fun downloadUpdate() {
+        val state = _updateCheckState.value as? UpdateCheckUiState.NewVersion ?: return
+        val assetName = state.apkAssetName
+        if (assetName.isNullOrBlank()) {
+            _updateDownloadState.value = UpdateDownloadUiState.Failed("no apk asset in release")
+            return
+        }
+        if (updateDownloadJob?.isActive == true) return
+        updateDownloadJob = viewModelScope.launch {
+            _updateDownloadState.value = UpdateDownloadUiState.Resolving
+            val candidates = UpdateDownloadSource.candidates(state.latestTag, assetName)
+            try {
+                val file = updateApkDownloader.download(
+                    candidates = candidates,
+                    fileName = assetName,
+                    expectedSize = state.apkAssetSize,
+                    onSource = { url ->
+                        _updateDownloadState.value = UpdateDownloadUiState.Downloading(
+                            bytesRead = 0L,
+                            totalBytes = state.apkAssetSize,
+                            sourceUrl = url
+                        )
+                    },
+                    onProgress = { read, total ->
+                        val source = (_updateDownloadState.value as? UpdateDownloadUiState.Downloading)?.sourceUrl.orEmpty()
+                        _updateDownloadState.value = UpdateDownloadUiState.Downloading(read, total, source)
+                    }
+                )
+                _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, state.latestTag)
+            } catch (e: CancellationException) {
+                _updateDownloadState.value = UpdateDownloadUiState.Idle
+                throw e
+            } catch (e: Exception) {
+                FileLogger.w("UpdateDownload", "download failed: ${e.message}")
+                _updateDownloadState.value = UpdateDownloadUiState.Failed(e.message)
+            }
+        }
+    }
+
+    /** 取消进行中的下载（半成品由下载器删除）。 */
+    fun cancelDownload() {
+        updateDownloadJob?.cancel()
+        updateDownloadJob = null
+        _updateDownloadState.value = UpdateDownloadUiState.Idle
     }
 
     /** 自动检查更新开关（默认开启）。 */

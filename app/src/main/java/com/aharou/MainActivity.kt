@@ -101,6 +101,7 @@ import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.presentation.FetchState
 import com.aharou.feature.settings.presentation.UpdateCheckUiState
 import com.aharou.feature.settings.presentation.component.githubReleaseUrl
+import com.aharou.feature.settings.presentation.component.installDownloadedApk
 import com.aharou.feature.settings.presentation.component.SettingsScreen
 import com.aharou.feature.settings.presentation.component.UpdateCheckDialog
 import com.aharou.feature.settings.presentation.component.decodeBackgroundBitmap
@@ -900,6 +901,7 @@ fun AppNavigation(
 
     // 检查更新弹窗（全局宿主：自动检测与关于页手动检查共用，覆盖所有页面）
     val updateCheckState by settingsViewModel.updateCheckState.collectAsStateWithLifecycle()
+    val updateDownloadState by settingsViewModel.updateDownloadState.collectAsStateWithLifecycle()
     if (updateCheckState != UpdateCheckUiState.Idle) {
         val version = remember {
             runCatching {
@@ -908,8 +910,12 @@ fun AppNavigation(
         }
         UpdateCheckDialog(
             state = updateCheckState,
+            downloadState = updateDownloadState,
             currentVersion = version,
             onDismiss = { settingsViewModel.dismissUpdateCheck() },
+            onDownload = { settingsViewModel.downloadUpdate() },
+            onCancelDownload = { settingsViewModel.cancelDownload() },
+            onInstall = { apkPath -> installDownloadedApk(context, apkPath) },
             onOpenRelease = { tag ->
                 openUrl(context, githubReleaseUrl(tag))
                 settingsViewModel.dismissUpdateCheck()
