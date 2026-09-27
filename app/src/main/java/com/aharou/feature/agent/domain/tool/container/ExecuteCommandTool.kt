@@ -13,12 +13,14 @@ import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.ToolStreamEvent
+import com.aharou.feature.terminal.domain.TerminalSessionProvider
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -35,7 +37,8 @@ import javax.inject.Inject
  */
 class ExecuteCommandTool @Inject constructor(
     private val commandEngine: CommandEngine,
-    private val workspaceRepository: WorkspaceRepository
+    private val workspaceRepository: WorkspaceRepository,
+    private val terminalSessionProvider: TerminalSessionProvider
 ) : AgentTool(), StreamingAgentTool {
     private companion object {
         const val TAG = "ExecuteCommandTool"
@@ -48,7 +51,9 @@ class ExecuteCommandTool @Inject constructor(
     }
 
     override val name = "Bash"
-    override val description = "在当前执行环境（本地容器或远程 SSH）中执行一次性 Shell 命令，同步返回输出。耗时或常驻任务（安装依赖、启动服务等）请改用 `terminal`，不要用 `&` 挂后台。"
+    override val description = "在当前执行环境（本地容器或远程 SSH）中执行 Shell 命令。" +
+        "预计超过 30 秒的命令（构建、下载、部署）请加 background=true 提交到后台终端，" +
+        "或改用 `terminal`；**不要**用 `&`/`nohup` 挂后台——容器会随本次调用结束把后台进程一起杀掉。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val capabilities = setOf(ToolCapability.EXECUTE_COMMANDS)
 
@@ -65,6 +70,12 @@ class ExecuteCommandTool @Inject constructor(
             description = "命令最长执行时间（秒），超时将被强制终止。默认 $DEFAULT_TIMEOUT_SECONDS 秒，上限 $MAX_TIMEOUT_SECONDS 秒。耗时命令（如安装依赖）可适当调大。",
             required = false
         ),
+        "background" to ToolParameter(
+            name = "background",
+            type = ParameterType.BOOLEAN,
+            description = "置 true 时把命令提交到常驻后台终端并立即返回（返回 tab 号），命令结束时自动通知；适合构建/下载/部署这类长任务。默认 false（同步等结果，超过 timeout 会被强制终止）。",
+            required = false
+        ),
         "elevate" to ToolParameter(
             name = "elevate",
             type = ParameterType.BOOLEAN,
@@ -78,6 +89,36 @@ class ExecuteCommandTool @Inject constructor(
         val seconds = args["timeout"]?.jsonPrimitive?.longOrNull ?: DEFAULT_TIMEOUT_SECONDS
         return seconds.coerceIn(1L, MAX_TIMEOUT_SECONDS) * 1000L
     }
+
+    private fun isBackground(args: Map<String, JsonElement>): Boolean =
+        args["background"]?.jsonPrimitive?.booleanOrNull ?: false
+
+    /**
+     * 把命令提交到常驻后台终端（[TerminalSessionProvider]）并立即返回 tab 号。
+     *
+     * 一次性 Bash 跑的是带 `--kill-on-exit` 的 proot 进程，调用一结束整棵子进程树都会被回收，
+     * 所以长任务必须挂到常驻会话里才不会半途死掉。
+     */
+    private suspend fun startBackground(command: String, args: Map<String, JsonElement>): ToolResult =
+        try {
+            val tabId = terminalSessionProvider.startBackgroundCommand(
+                command = command,
+                title = command.take(40),
+                notify = true
+            )
+            FileLogger.i(TAG, "已提交后台任务 tab=$tabId: $command")
+            ToolResult.Success(
+                JsonPrimitive(
+                    "已提交到后台终端（tab $tabId），命令结束时会自动通知；" +
+                        "要看输出或交互就用 terminal 工具（read/send）。"
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "提交后台任务失败: $command", e)
+            ToolResult.Error("提交后台任务失败: ${e.message}")
+        }
 
     override fun buildPermissionRequest(
         callId: String,
@@ -99,6 +140,8 @@ class ExecuteCommandTool @Inject constructor(
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
+
+        if (isBackground(args)) return startBackground(command, args)
 
         return try {
             // 在当前工作区目录内执行，与文件工具保持同一根目录
@@ -128,6 +171,11 @@ class ExecuteCommandTool @Inject constructor(
         val command = args["command"]?.jsonPrimitive?.contentOrNull
         if (command == null) {
             emit(ToolStreamEvent.Completed(ToolResult.Error("缺少必需参数: command")))
+            return@flow
+        }
+
+        if (isBackground(args)) {
+            emit(ToolStreamEvent.Completed(startBackground(command, args)))
             return@flow
         }
 
