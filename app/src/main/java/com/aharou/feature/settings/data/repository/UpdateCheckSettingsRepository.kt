@@ -93,6 +93,26 @@ class UpdateCheckSettingsRepository @Inject constructor(
         }
 
     /**
+     * 记录最近一次更新包下载用了哪个源，写到 `~/.aharou/last-update-download.json`。
+     *
+     * 放这里是因为它同时被挂进容器：出事时 agent（或用户）能直接看到「这次走的 GitCode 还是
+     * 回退到了镜像」——否则只能靠猜（下载只链是候选列表，失败会静默换下一个源）。
+     */
+    fun writeDownloadRecord(tag: String, sourceUrl: String, filePath: String) {
+        runCatching {
+            val dir = File(context.filesDir, "aharou").apply { mkdirs() }
+            val obj = JSONObject().apply {
+                put("tag", tag)
+                put("sourceUrl", sourceUrl)
+                put("fromGitCode", sourceUrl.contains("gitcode.com"))
+                put("filePath", filePath)
+                put("time", java.time.LocalDateTime.now().toString())
+            }
+            File(dir, "last-update-download.json").writeText(obj.toString())
+        }
+    }
+
+    /**
      * 把版本与更新信息写入 `~/.aharou/update-info.json`（宿主 filesDir/aharou/，容器内挂到
      * `/root/.aharou`），供容器内 AI 读取（当前版本、更新通道、最近检查时间、最新版本与逐版本更新日志）。
      * 写入失败静默，不影响检测流程。

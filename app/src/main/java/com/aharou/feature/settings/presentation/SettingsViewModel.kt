@@ -1436,12 +1436,15 @@ class SettingsViewModel @Inject constructor(
         updateDownloadJob = viewModelScope.launch {
             _updateDownloadState.value = UpdateDownloadUiState.Resolving
             val candidates = UpdateDownloadSource.candidates(state.latestTag, assetName)
+            // 记下实际命中的候选（候选列表失败会静默换下一个源，不记就无从得知走的哪条）
+            var usedSource = ""
             try {
                 val file = updateApkDownloader.download(
                     candidates = candidates,
                     fileName = assetName,
                     expectedSize = state.apkAssetSize,
                     onSource = { url ->
+                        usedSource = url
                         _updateDownloadState.value = UpdateDownloadUiState.Downloading(
                             bytesRead = 0L,
                             totalBytes = state.apkAssetSize,
@@ -1455,6 +1458,8 @@ class SettingsViewModel @Inject constructor(
                 )
                 updateCheckSettingsRepository.downloadedTag = state.latestTag
                 updateCheckSettingsRepository.downloadedPath = file.absolutePath
+                updateCheckSettingsRepository.writeDownloadRecord(state.latestTag, usedSource, file.absolutePath)
+                FileLogger.i("UpdateDownload", "已下载 $state.latestTag，来源=$usedSource")
                 _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, state.latestTag)
                 maybeAutoInstall(file.absolutePath, state.latestTag)
             } catch (e: CancellationException) {
