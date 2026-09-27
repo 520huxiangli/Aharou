@@ -49,7 +49,8 @@ class ContextCompactor @Inject constructor(
      * - 重启后 [MessagePersistenceUseCase.buildHistory] 会跳过 isCompacted 的消息，
      *   只回放摘要 + tail 部分
      *
-     * @return 压缩后的新列表（如果没有触发压缩则返回原列表的副本）
+     * @return 压缩后的新列表；**未触发压缩时直接返回入参本身**（同一引用），
+     *         调用方据此判断“这次到底压了没”（以前返回副本，引用判断恒为 true）。
      */
     suspend fun compactIfNeeded(
         messages: List<AgentMessage>,
@@ -77,7 +78,7 @@ class ContextCompactor @Inject constructor(
         val reachedThreshold = currentTokens >= triggerThreshold
         val reachedHardLimit = currentTokens >= contextLimit
         if (messages.size <= 2 || (!force && !reachedThreshold && !reachedHardLimit)) {
-            return messages.toList()
+            return messages
         }
 
         val tokensSource = if (lastInputTokens > 0) "真实 usage" else "本地估算"
@@ -98,7 +99,7 @@ class ContextCompactor @Inject constructor(
         }
         if (splitIndex <= 0) {
             onEvent(AgentEvent.CompactionFinished)
-            return messages.toList()
+            return messages
         }
 
         // 确保 tail 的第一条消息不是孤立的 ToolResultMessage：
@@ -116,7 +117,7 @@ class ContextCompactor @Inject constructor(
             // 重复压缩时 head 可能只剩旧的 marker+summary 对，删光后无可压缩内容，跳过本轮压缩。
             FileLogger.i(TAG, "无可压缩内容（head 为空），跳过压缩")
             onEvent(AgentEvent.CompactionFinished)
-            return messages.toList()
+            return messages
         }
         // 压缩请求：head 原始消息数组 + 末尾一条压缩指令（Codex 式），tools 不发送。
         // 消息数组保留真实角色结构（user/assistant/tool 配对），比文本化拼接更利于模型理解。
@@ -147,7 +148,7 @@ class ContextCompactor @Inject constructor(
             FileLogger.e(TAG, "压缩上下文失败", e)
             onEvent(AgentEvent.CompactionFailed(callError))
             onEvent(AgentEvent.CompactionFinished)
-            return messages.toList() // 失败则原样返回，交由上层自行承担溢出风险
+            return messages // 失败则原样返回，交由上层自行承担溢出风险
         }
 
         val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
@@ -200,10 +201,12 @@ class ContextCompactor @Inject constructor(
 
                 // 摘要收尾：marker + summary 时间戳放在 tail 最后一条之后，回放/UI 顺序 = tail → 摘要，
                 // 与 Codex 一致（最近消息在前、接手摘要收尾），避免摘要插在历史最前导致观感混乱。
-                val tailLastTs = tail.asReversed().firstNotNullOfOrNull { msg ->
+                // 摘要要排在 tail 之前，时间戳必须早于 tail 的第一条，
+                // 否则数据库回放顺序会跟内存里的新顺序打架。
+                val tailFirstTs = tail.firstNotNullOfOrNull { msg ->
                     dbEntities.find { it.id == msg.id }?.timestamp
                 }
-                val insertBase = maxOf(System.currentTimeMillis(), tailLastTs ?: 0L) + 1
+                val insertBase = (tailFirstTs ?: System.currentTimeMillis()) - 2
                 agentMessageDao.insert(
                     AgentMessageEntity(
                         id = markerId,
@@ -232,10 +235,11 @@ class ContextCompactor @Inject constructor(
         onEvent(AgentEvent.CompactionFinished)
 
         val newMessages = mutableListOf<AgentMessage>()
-        // Codex 式布局：tail（保留的最近消息）在前，摘要收尾。
-        newMessages.addAll(tail)
+        // 摘要必须在 tail **之前**。放在末尾时模型会把它当成“自己上一轮说的话”，
+        // 接着摘要续写一小段就停、不再干活（上游踩过这个坑）。
         newMessages.add(markerMessage)
         newMessages.add(compactedMessage)
+        newMessages.addAll(tail)
 
         return newMessages
     }

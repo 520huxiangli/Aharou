@@ -173,6 +173,28 @@ fun isRetriableNetworkError(t: Throwable): Boolean {
     return TRANSIENT_MESSAGES.any { message.contains(it) }
 }
 
+/**
+ * 是否属于「限流」类错误（HTTP 429 / 流内 rate_limit_* / 明确的限流文案）。
+ *
+ * 与 [isRetriableNetworkError] 分开判断：有多个 Key 时 429 交给“换 Key”更划算，
+ * 但**单 Key 用户没有别的 Key 可换**，此时直接抛等于彻底失败——退避重试是唯一自救
+ *（429 常带 Retry-After，等一会儿往往就好了）。
+ */
+fun isRateLimitError(e: Throwable): Boolean {
+    var t: Throwable? = e
+    var depth = 0
+    while (t != null && depth < 5) {
+        if (t is HttpException && t.code() == 429) return true
+        val m = t.message?.lowercase().orEmpty()
+        if (m.contains("429") || m.contains("rate_limit") || m.contains("rate limit") ||
+            m.contains("too many requests") || m.contains("限流") || m.contains("请求过于频繁")
+        ) return true
+        t = t.cause
+        depth++
+    }
+    return false
+}
+
 /** 重试错误的用户可见类别，用于 UI 展示具体原因（而非笼统的「网络波动」）。 */
 enum class RetryErrorKind {
     /** HTTP 429 / 服务端 rate limit 类错误。 */
@@ -327,7 +349,9 @@ suspend fun <T> retryStaircase(
                     attempt = 0
                     continue
                 }
-                throw e
+                // 限流没有“换 Key”这条路时不能直接抛（单 Key 用户会彻底失败），
+                // 落到下面的退避重试上。
+                if (!isRateLimitError(e)) throw e
             }
             if (attempt >= maxRetries) throw e
             val wait = retryDelayMillis(attempt, e)
@@ -376,7 +400,8 @@ suspend fun streamWithStaircaseRetry(
                     attempt = 0
                     continue
                 }
-                throw e
+                // 同上：单 Key 撞限流时退避重试；已吐过字则不重发（避免用户看到重复内容）。
+                if (!isRateLimitError(e) || receivedContent) throw e
             }
             if (attempt >= maxRetries) throw e
             val wait = retryDelayMillis(attempt, e)
