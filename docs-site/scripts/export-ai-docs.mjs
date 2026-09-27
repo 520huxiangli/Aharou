@@ -4,10 +4,11 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// 与 .vitepress/config.ts 用同一套规则：Vercel 上取平台注入的生产域名，本地回退默认值。
-const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
-  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://aharou-docs.vercel.app'
+// 与 .vitepress/config.ts 用同一套规则：部署时由 workflow 注入 SITE_URL，本地回退默认值。
+const SITE_URL = process.env.SITE_URL
+  || (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : 'https://520huxiangli.github.io/Aharou')
 const here = dirname(fileURLToPath(import.meta.url))
 const docsDir = join(here, '..', 'docs')
 const distDir = join(here, '..', '.vitepress', 'dist')

@@ -6,16 +6,21 @@ import { defineConfig } from 'vitepress'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
- * 站点地址。部署在 Vercel 时直接用平台注入的生产域名（免费 `<项目名>.vercel.app`，
- * 不用自己注册域名）；本地构建或换别的托管时回退到默认值。
- * 凡需绝对地址处（sitemap / og 图 / 分享链接）都引用它，避免域名散落各处。
+ * 站点地址与部署基路径。
+ *
+ * 当前部署在 GitHub Pages：项目页挂在 `/Aharou/` 子路径下，base 必须匹配，否则静态资源全 404；
+ * workflow 通过 VITEPRESS_BASE / SITE_URL 注入。本地构建或换托管时分别回退到下边的默认值。
+ * 凡需绝对地址处（sitemap / og 图 / 分享链接）都引用 SITE_URL，避免域名散落各处。
  */
-const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
-  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://aharou-docs.vercel.app'
+const SITE_URL = process.env.SITE_URL
+  || (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : 'https://520huxiangli.github.io/Aharou')
+const BASE = process.env.VITEPRESS_BASE || '/'
 
 export default defineConfig({
   srcDir: './docs',
+  base: BASE,
   locales: {
     root: {
       label: '简体中文',

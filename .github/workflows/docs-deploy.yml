@@ -1,22 +1,32 @@
 name: Deploy Docs
 
-# 文档站只在打 tag 时部署，避免 main 上尚未随版本发布的文档被公开。
-# Vercel 的 Git 自动部署已在 docs-site/vercel.json 用 git.deploymentEnabled=false 关闭，
-# 生产部署统一由本工作流用 Vercel CLI 完成。
-# 前置配置（GitHub 仓库 Secret）：VERCEL_TOKEN、VERCEL_ORG_ID、VERCEL_PROJECT_ID
+# 文档站部署：构建 VitePress 站点并发布到 GitHub Pages。
+# 选 Pages 是因为它用仓库自带的 GITHUB_TOKEN，不需要任何第三方凭据（Vercel 那套要人工配 token）。
+# 地址：https://520huxiangli.github.io/Aharou/
+# 仅在打 tag 时部署，避免 main 上尚未随版本发布的文档被公开。
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 部署串行：不取消进行中的那次，避免 Pages 处于半发布状态。
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy Docs to Vercel
+  build:
+    name: Build & Deploy Docs
     runs-on: ubuntu-latest
-    env:
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-    # vercel.json / package-lock.json 都在 docs-site，项目根即此处。
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     defaults:
       run:
         working-directory: docs-site
@@ -24,38 +34,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # 未配置 Vercel 凭据时只发警告并跳过部署：文档站是可选的对外站点，
-      # 缺 Secret 不该让 tag 发版整条流水线变红，掩盖真正的构建问题。
-      - name: Check Vercel credentials
-        id: vercel_check
-        run: |
-          if [ -z "${{ secrets.VERCEL_TOKEN }}" ]; then
-            echo "::warning::未配置 VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID，跳过文档站部署（在仓库 Settings→Secrets→Actions 配置后自动生效）"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Node 20
-        if: steps.vercel_check.outputs.skip != 'true'
         uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: docs-site/package-lock.json
 
-      - name: Install Vercel CLI
-        if: steps.vercel_check.outputs.skip != 'true'
-        run: npm install --global vercel@latest
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Pull Vercel environment
-        if: steps.vercel_check.outputs.skip != 'true'
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      # GitHub Pages 的项目页挂在 /Aharou/ 子路径下，必须告诉 VitePress base，
+      # 否则打包出来的资源路径全是根路径、上线即 404（这是换托管最容易踩的坑）。
+      - name: Build site
+        env:
+          VITEPRESS_BASE: /Aharou/
+          SITE_URL: https://520huxiangli.github.io/Aharou
+        run: npm run build
 
-      - name: Build
-        if: steps.vercel_check.outputs.skip != 'true'
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          # 首次运行时自动在仓库开启 Pages（Source = GitHub Actions），省得手动去设置里点。
+          enablement: true
 
-      - name: Deploy
-        if: steps.vercel_check.outputs.skip != 'true'
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/.vitepress/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
