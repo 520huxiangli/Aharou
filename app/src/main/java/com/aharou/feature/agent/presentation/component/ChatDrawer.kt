@@ -94,6 +94,7 @@ import com.aharou.feature.agent.presentation.BrowseClipboard
 import com.aharou.feature.agent.presentation.FileBrowseState
 import com.aharou.feature.agent.presentation.FileTreeNode
 import com.aharou.feature.workspace.domain.isValidFileEntryName
+import com.aharou.feature.workspace.domain.model.Workspace
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
@@ -127,6 +128,8 @@ import java.util.Locale
 @Composable
 fun ChatDrawerContent(
     sessions: List<ChatSession>,
+    workspaces: List<Workspace> = emptyList(),
+    currentWorkspacePath: String = "",
     currentSessionId: String?,
     agentStates: Map<String, AgentUIState>,
     awaitingPermissionSessionIds: Set<String> = emptySet(),
@@ -294,6 +297,8 @@ fun ChatDrawerContent(
             when (selectedTab) {
                 0 -> SessionListTab(
                     sessions = sessions,
+                    workspaces = workspaces,
+                    currentWorkspacePath = currentWorkspacePath,
                     currentSessionId = currentSessionId,
                     agentStates = agentStates,
                     awaitingPermissionSessionIds = awaitingPermissionSessionIds,
@@ -487,6 +492,8 @@ fun ChatDrawerContent(
 @Composable
 private fun SessionListTab(
     sessions: List<ChatSession>,
+    workspaces: List<Workspace>,
+    currentWorkspacePath: String,
     currentSessionId: String?,
     agentStates: Map<String, AgentUIState>,
     awaitingPermissionSessionIds: Set<String>,
@@ -504,6 +511,8 @@ private fun SessionListTab(
     if (searchQuery.isBlank()) {
         SessionListContent(
             sessions = sessions,
+            workspaces = workspaces,
+            currentWorkspacePath = currentWorkspacePath,
             currentSessionId = currentSessionId,
             agentStates = agentStates,
             awaitingPermissionSessionIds = awaitingPermissionSessionIds,
@@ -524,6 +533,8 @@ private fun SessionListTab(
 @Composable
 private fun SessionListContent(
     sessions: List<ChatSession>,
+    workspaces: List<Workspace>,
+    currentWorkspacePath: String,
     currentSessionId: String?,
     agentStates: Map<String, AgentUIState>,
     awaitingPermissionSessionIds: Set<String>,
@@ -555,36 +566,66 @@ private fun SessionListContent(
             restore = { it.toSet() }
         )
     ) { mutableStateOf(emptySet<String>()) }
-    val groups = remember(sessions) {
-        val now = System.currentTimeMillis()
-        val pinned = sessions.filter { it.isPinned }
-        val unpinned = sessions.filterNot { it.isPinned }
-        buildList {
-            if (pinned.isNotEmpty()) add(SessionGroup("pinned", pinned))
-            addAll(buildSessionGroups(unpinned, now))
+    // 文件夹 = 工作区。会话按 workspacePath 归档，文件夹按「当前所在优先、其次最近活跃」排序，
+    // 组内仍是 DAO 的置顶优先 + 更新时间倒序。
+    val folders = remember(sessions, workspaces, currentWorkspacePath) {
+        val names = workspaces.associate { it.path to it.name }
+        sessions.groupBy { it.workspacePath }
+            .map { (path, list) ->
+                FolderGroup(
+                    path = path,
+                    name = names[path] ?: path.substringAfterLast('/'),
+                    sessions = list,
+                    latestAt = list.maxOfOrNull { it.updatedAt } ?: 0L
+                )
+            }
+            .sortedWith(
+                compareByDescending<FolderGroup> { it.path == currentWorkspacePath }
+                    .thenByDescending { it.latestAt }
+            )
+    }
+    // 只记住「用户主动展开的」文件夹：默认仅当前文件夹展开，切工作区时自动展开新的那个。
+    var expandedFolders by rememberSaveable(
+        stateSaver = listSaver<Set<String>, String>(
+            save = { it.toList() },
+            restore = { it.toSet() }
+        )
+    ) { mutableStateOf(setOf(currentWorkspacePath)) }
+    LaunchedEffect(currentWorkspacePath) {
+        if (currentWorkspacePath.isNotBlank()) {
+            expandedFolders = expandedFolders + currentWorkspacePath
         }
     }
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize()
     ) {
-        // 每个分组占一个 item、组内 forEach 全量渲染会让 LazyColumn 失去惰性：
-        // 「最近 30 天」这种分组有上百个会话时，一个 item 就要组合上百行。分组头与会话各自成 item。
-        groups.forEach { group ->
-            item(key = "group-${group.groupKey}", contentType = "group-header") {
-                SettingsGroupHeader(
-                    text = sessionGroupLabel(group.groupKey, group.sessions.first())
+        // 同上：文件夹头与会话行各自成 item，组内 forEach 会让 LazyColumn 失去惰性。
+        folders.forEach { folder ->
+            val folderExpanded = folder.path in expandedFolders
+            item(key = "folder-${folder.path}", contentType = "folder-header") {
+                FolderHeader(
+                    name = folder.name,
+                    sessionCount = folder.sessions.size,
+                    isCurrent = folder.path == currentWorkspacePath,
+                    expanded = folderExpanded,
+                    onToggle = {
+                        expandedFolders = if (folderExpanded) {
+                            expandedFolders - folder.path
+                        } else {
+                            expandedFolders + folder.path
+                        }
+                    }
                 )
             }
+            if (!folderExpanded) return@forEach
             itemsIndexed(
-                items = group.sessions,
+                items = folder.sessions,
                 key = { _, session -> session.id },
                 contentType = { _, _ -> "session" }
             ) { index, session ->
                 Column {
-                    if (index > 0) {
-                        if (group.groupKey == "pinned") Spacer(Modifier.height(Spacing.sm)) else SettingsDivider()
-                    }
+                    if (index > 0) SettingsDivider()
                     val state = agentStates[session.id]
                     val isExecuting = state is AgentUIState.Loading || state is AgentUIState.Streaming
                     val subSessions = subSessionsByParent[session.id].orEmpty()
@@ -1393,6 +1434,17 @@ internal data class SessionGroup(
 )
 
 /**
+ * 侧边栏里的一个文件夹（= 一个工作区 = 一个仓库）。文件夹内的会话共享同一套工作区与容器，
+ * 文件夹之间相互隔离；文件夹名取工作区名，工作区已不存在时退回目录名。
+ */
+internal data class FolderGroup(
+    val path: String,
+    val name: String,
+    val sessions: List<ChatSession>,
+    val latestAt: Long
+)
+
+/**
  * 按最后回复时间（updatedAt）降序的会话列表分组：今天 / 昨天 / 7天内 / 30天内 / 更早按月。
  */
 internal fun buildSessionGroups(sessions: List<ChatSession>, now: Long): List<SessionGroup> {
@@ -1435,4 +1487,59 @@ private fun sessionGroupLabel(groupKey: String, anchorSession: ChatSession): Str
         stringResource(R.string.session_group_month_format),
         Locale.getDefault()
     ).format(Date(anchorSession.updatedAt))
+}
+
+/**
+ * 文件夹行：展开箭头 + 文件夹名 + 会话数。当前所在的文件夹用主色高亮，
+ * 与 `ChatSessionRow` 的选中态呼应，让人一眼看出「现在在哪」。
+ */
+@Composable
+private fun FolderHeader(
+    name: String,
+    sessionCount: Int,
+    isCurrent: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    val tint = if (isCurrent) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (expanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(Spacing.xs))
+        Icon(
+            imageVector = FeatherIcons.Folder,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(Spacing.xs))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = sessionCount.toString(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }

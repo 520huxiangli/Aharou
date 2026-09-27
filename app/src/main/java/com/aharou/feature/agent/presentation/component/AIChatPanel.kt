@@ -75,6 +75,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.ImageViewerHost
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.readableContentMaxWidth
+import com.aharou.core.util.FileLogger
 import com.aharou.core.ui.rememberImageViewerState
 import com.aharou.core.ui.rememberViewerDecodeSpec
 import com.aharou.feature.agent.domain.tool.question.UserQuestionAnswer
@@ -544,10 +545,16 @@ fun AIChatPanel(
     LaunchedEffect(inputText) {
         if (inputText == "/") viewModel.refreshSlashCommands()
     }
-    // 附件按会话隔离：带上 currentSessionId 作 key，切会话即清空，
-    // 不把上一个会话的附件带到新会话。
-    var pendingAttachments by remember(currentSessionId) {
+    // 附件按会话隔离：只响应用户主动切换会话（selectSession 发信号），别的时候一律不动。
+    // 不能用 remember(currentSessionId) 或比较 sessionId 变化来做——冷启动时 id 会先从
+    // 默认值变成真实会话，那种变化会把刚分享进来的附件误清掉（表现为「闪一下就不见了」）。
+    var pendingAttachments by remember {
         mutableStateOf<List<PendingUploadAttachment>>(emptyList())
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.sessionSwitchEvents.collect {
+            pendingAttachments = emptyList()
+        }
     }
     // 外部分享进来的文件（ACTION_SEND）：MainActivity 已拷进工作区，这里并入附件列表。
     val appContext = LocalContext.current.applicationContext

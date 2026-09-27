@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LineDiff
+import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.git.domain.GitCommandFailureException
 import com.aharou.feature.git.domain.GitOutputTooLargeException
@@ -25,6 +26,7 @@ import com.aharou.feature.git.presentation.component.DiffData
 import com.aharou.feature.git.presentation.component.DiffRow
 import com.aharou.feature.git.presentation.component.highlightCode
 import com.aharou.feature.git.presentation.component.inferSyntaxLanguage
+import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.settings.data.repository.ThemeSettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -60,7 +62,9 @@ class GitViewModel @Inject constructor(
     private val repository: GitRepository,
     @param:ApplicationContext private val context: Context,
     private val themeSettings: ThemeSettingsRepository,
-    private val agentWorkflow: AgentWorkflow
+    private val agentWorkflow: AgentWorkflow,
+    private val workspaceRepository: WorkspaceRepository,
+    private val sessionUseCase: SessionUseCase
 ) : ViewModel() {
 
     private companion object {
@@ -87,6 +91,11 @@ class GitViewModel @Inject constructor(
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
         val toast: String? = null,
+        /**
+         * 克隆进度（0–100）。git 只在 clone 期间汇报阶段百分比，故仅克隆写操作中非 null，
+         * 供 Git 页画出真实进度而不是只有一个转圈。各阶段会从 0 重数，写入时取大值保证只前进。
+         */
+        val cloneProgress: Int? = null,
         /** 是否已配置远程仓库，控制拉取/推送按钮可用性。 */
         val hasRemote: Boolean = false,
         /** 是否已配置全局署名 user.name（git config --global），控制提交按钮可用性；无署名提交会成为失败提交。 */
@@ -250,7 +259,7 @@ class GitViewModel @Inject constructor(
         onComplete: (suspend () -> Unit)? = null
     ) {
         if (_state.value.busy) return
-        _state.update { it.copy(busy = true, toast = null) }
+        _state.update { it.copy(busy = true, toast = null, cloneProgress = null) }
         viewModelScope.launch {
             val name = context.getString(nameRes)
             var guideKind: GitSetupGuide? = null
@@ -275,15 +284,15 @@ class GitViewModel @Inject constructor(
                 if (repository.isRepo()) {
                     val snap = loadSnapshot(includeIdentity = false)
                     val commits = snap.graph.toGitCommits()
-                    _state.update { it.copy(busy = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, untrackedDirFiles = snap.untrackedDirFiles, notARepo = false, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
+                    _state.update { it.copy(busy = false, cloneProgress = null, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, untrackedDirFiles = snap.untrackedDirFiles, notARepo = false, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
                     refreshBranchesIfLoaded()
                     onComplete?.invoke()
                 } else {
-                    _state.update { it.copy(busy = false, notARepo = true, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
+                    _state.update { it.copy(busy = false, cloneProgress = null, notARepo = true, toast = msg, setupGuide = guideKind ?: it.setupGuide) }
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                _state.update { it.copy(busy = false, toast = context.getString(R.string.git_toast_action_refresh_failed, msg)) }
+                _state.update { it.copy(busy = false, cloneProgress = null, toast = context.getString(R.string.git_toast_action_refresh_failed, msg)) }
             }
         }
     }
@@ -366,8 +375,35 @@ class GitViewModel @Inject constructor(
     /** 在当前工作区执行 `git init` 初始化仓库；成功后 runAction 末尾自动刷新（notARepo 翻 false）。 */
     fun initRepo() = runAction(R.string.git_action_init, { repository.initRepo() })
 
-    /** 在当前工作区克隆远程仓库；成功后 runAction 末尾自动刷新进仓库态。 */
-    fun cloneRepo(url: String) = runAction(R.string.git_action_clone, { repository.cloneRepo(url) })
+    /**
+     * 克隆到新建的独立工作区：先建工作区目录、把 clone 落进去，**不切走当前工作区**。
+     *
+     * 工作区与会话一一对应（一会话一仓库一工作区），所以这里顺带为新工作区建一个会话，
+     * 仓库拉下来后切到那个会话即进入它的环境。切工作区会停掉当前工作区的 AI 会话并关掉
+     * 终端标签，所以克隆中途不该动它——失败时当前会话与挂载点均不受影响。
+     * 目标目录同时作为本次命令的挂载点，于是 `git clone <url> .` 落进新目录而非当前工作区。
+     */
+    fun cloneRepo(workspaceName: String, url: String) = runAction(
+        R.string.git_action_clone,
+        {
+            val target = workspaceRepository.createUniqueWorkspace(workspaceName)
+                ?: throw GitCommandFailureException(
+                    context.getString(R.string.git_clone_workspace_failed, workspaceName)
+                )
+            val output = repository.cloneRepo(url, target.path) { pct ->
+                // git 按阶段各自数到 100，取大值让进度条只前进不后退。
+                _state.update { s ->
+                    val next = maxOf(s.cloneProgress ?: 0, pct)
+                    if (s.cloneProgress == next) s else s.copy(cloneProgress = next)
+                }
+            }
+            // 克隆成功才落会话，失败时不在侧边栏留一个空壳。
+            sessionUseCase.upsertSession(
+                sessionUseCase.newSessionEntity(target.path).copy(title = workspaceName)
+            )
+            output
+        }
+    )
     fun pull() {
         if (!_state.value.hasRemote) {
             _state.update { it.copy(toast = context.getString(R.string.git_toast_no_remote_pull)) }

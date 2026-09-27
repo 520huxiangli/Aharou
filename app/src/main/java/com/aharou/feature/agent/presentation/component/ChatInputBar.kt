@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ClipEntry
@@ -348,6 +349,10 @@ internal fun ChatInputBar(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    // 必须挂一个布局回调：附件预览行插入/移除会改变输入框高度，
+                    // 没有它时高度变化不触发布局重算，表现为附件已渲染但屏幕上不显示，
+                    // 退出重进才出现（重进走全新测量）。
+                    .onGloballyPositioned { }
                     .clip(RoundedCornerShape(Radius.lg))
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
                     .border(

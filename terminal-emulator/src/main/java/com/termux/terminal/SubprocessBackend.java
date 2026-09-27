@@ -1,5 +1,6 @@
 package com.termux.terminal;
 
+import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 
@@ -24,7 +25,6 @@ final class SubprocessBackend implements SessionBackend {
 
     private final int mPtyFd;
     private final int mPid;
-    private final FileDescriptor mWrappedFd;
     private final InputStream mInputStream;
     private final OutputStream mOutputStream;
 
@@ -41,9 +41,12 @@ final class SubprocessBackend implements SessionBackend {
                     + " shell=" + shellPath + " cwd=" + cwd
                     + "（/dev/ptmx 或 fork 被内核/SELinux 拒绝，perror 详情见 logcat）");
         }
-        mWrappedFd = wrapFileDescriptor(mPtyFd);
-        mInputStream = new FileInputStream(mWrappedFd);
-        mOutputStream = new FileOutputStream(mWrappedFd);
+        // 同一个 fd 不能丢给两个流再手写 close：FileInputStream/FileOutputStream 构造时会
+        // 把 fd 登记进 fdsan，之后 close() 里直接 JNI.close(mPtyFd) 就被判为「关闭不属于
+        // 自己的 fd」，fdsan 直接 SIGABRT——用户关闭终端标签时闪退即由此而来。
+        // 给两个流各 dup 一份，三个句柄彼此独立，谁关谁自己的。
+        mInputStream = new FileInputStream(dupFd(mPtyFd));
+        mOutputStream = new FileOutputStream(dupFd(mPtyFd));
     }
 
     int getPid() {
@@ -78,7 +81,25 @@ final class SubprocessBackend implements SessionBackend {
             } catch (Exception ignored) {
             }
         }
+        // 各句柄关各自的：两个 dup 由流关（同时唤醒阻塞中的读写线程），原始 fd 交 JNI。
+        closeQuietly(mInputStream);
+        closeQuietly(mOutputStream);
         JNI.close(mPtyFd);
+    }
+
+    private static void closeQuietly(java.io.Closeable target) {
+        try {
+            target.close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static FileDescriptor dupFd(int fd) {
+        try {
+            return Os.dup(wrapFileDescriptor(fd));
+        } catch (ErrnoException e) {
+            throw new IllegalStateException("dup pty fd 失败：fd=" + fd, e);
+        }
     }
 
     private static FileDescriptor wrapFileDescriptor(int fileDescriptor) {

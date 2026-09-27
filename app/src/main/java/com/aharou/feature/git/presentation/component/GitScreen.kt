@@ -26,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -185,6 +186,7 @@ fun GitScreen(
                 }
                 state.notARepo -> NotARepoState(
                     busy = state.busy,
+                    cloneProgress = state.cloneProgress,
                     onInit = viewModel::initRepo,
                     onClone = viewModel::cloneRepo
                 )
@@ -435,12 +437,45 @@ internal fun EmptyState(text: String) {
     }
 }
 
+/**
+ * 克隆进度：拿到百分比就画线性进度条，否则退回转圈。
+ *
+ * git 开头的远端计数阶段（Counting/Compressing objects）只报远端进度、本地一个字节还没收到，
+ * 这时还没有可展示的进度，所以两种形态都要留着。
+ */
+@Composable
+private fun CloneProgress(progress: Int?) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        if (progress == null) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        } else {
+            LinearProgressIndicator(
+                progress = { progress / 100f },
+                modifier = Modifier.width(220.dp)
+            )
+        }
+        Text(
+            text = if (progress == null) {
+                stringResource(R.string.git_cloning_hint)
+            } else {
+                stringResource(R.string.git_cloning_progress, progress)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
 /** 非仓库态：文案 + 「初始化 Git 仓库」/「克隆远程仓库」按钮（成功后自动刷新进仓库态）。 */
 @Composable
 private fun NotARepoState(
     busy: Boolean,
+    cloneProgress: Int?,
     onInit: () -> Unit,
-    onClone: (String) -> Unit
+    onClone: (workspaceName: String, url: String) -> Unit
 ) {
     var showCloneDialog by remember { mutableStateOf(false) }
 
@@ -462,12 +497,7 @@ private fun NotARepoState(
             )
             if (busy) {
                 Spacer(Modifier.height(Spacing.sm))
-                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                Text(
-                    stringResource(R.string.git_cloning_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                CloneProgress(progress = cloneProgress)
             } else {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.md),
@@ -491,20 +521,26 @@ private fun NotARepoState(
     if (showCloneDialog) {
         CloneRepoDialog(
             onDismiss = { showCloneDialog = false },
-            onConfirm = { url ->
+            onConfirm = { workspaceName, url ->
                 showCloneDialog = false
-                onClone(url)
+                onClone(workspaceName, url)
             }
         )
     }
 }
 
+/** 从仓库 URL 推导默认工作区名（`.../Aharou.git` -> `Aharou`），供对话框预填。 */
+private fun deriveWorkspaceName(url: String): String =
+    url.trim().trimEnd('/').substringAfterLast('/').removeSuffix(".git")
+
 @Composable
 private fun CloneRepoDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (workspaceName: String, url: String) -> Unit
 ) {
     var url by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    var nameTouched by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -531,13 +567,28 @@ private fun CloneRepoDialog(
                     singleLine = true,
                     colors = dialogTextFieldColors()
                 )
+                AppTextField(
+                    value = if (nameTouched) name else deriveWorkspaceName(url),
+                    onValueChange = {
+                        name = it
+                        nameTouched = true
+                    },
+                    label = stringResource(R.string.git_clone_workspace_label),
+                    placeholder = stringResource(R.string.git_clone_workspace_hint),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = dialogTextFieldColors()
+                )
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
                     val trimmed = url.trim()
-                    if (trimmed.isNotEmpty()) onConfirm(trimmed)
+                    if (trimmed.isNotEmpty()) {
+                        val wsName = if (nameTouched) name.trim() else deriveWorkspaceName(trimmed)
+                        onConfirm(wsName.ifBlank { deriveWorkspaceName(trimmed) }, trimmed)
+                    }
                 },
                 enabled = url.trim().isNotEmpty()
             ) {

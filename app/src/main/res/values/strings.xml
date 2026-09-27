@@ -822,10 +822,14 @@
     <string name="git_init_repo">初始化 Git 仓库</string>
     <string name="git_clone_repo">克隆远程仓库</string>
     <string name="git_clone_dialog_title">克隆 Git 仓库</string>
-    <string name="git_clone_desc">将远程仓库克隆到当前工作区根目录（工作区需为空）。若为私有仓库，可先在右上角凭据管理中配置访问凭据。</string>
+    <string name="git_clone_desc">克隆到新建的独立工作区，并自动切换过去。若为私有仓库，可先在右上角凭据管理中配置访问凭据。</string>
     <string name="git_clone_url_label">仓库地址</string>
     <string name="git_clone_url_hint">https://github.com/user/repo.git</string>
+    <string name="git_clone_workspace_label">工作区名</string>
+    <string name="git_clone_workspace_hint">为此仓库新建的工作区</string>
+    <string name="git_clone_workspace_failed">无法创建工作区「%1$s」</string>
     <string name="git_cloning_hint">正在克隆仓库，请稍候…</string>
+    <string name="git_cloning_progress">正在克隆仓库 %1$d%%</string>
     <string name="git_commit_dialog_title">提交更改</string>
     <string name="git_commit_message">提交信息</string>
     <string name="git_tracking_branch">跟踪 %1$s</string>

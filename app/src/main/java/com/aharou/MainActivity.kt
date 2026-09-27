@@ -235,7 +235,6 @@ class MainActivity : ComponentActivity() {
             }
             if (uploaded.isNotEmpty()) {
                 sharedIntakeHolder.submit(uploaded.map { it.toPendingAttachment() })
-                FileLogger.i("MainActivity", "已接收分享文件 ${uploaded.size} 个")
             }
         }
     }
@@ -457,7 +456,10 @@ fun AppNavigation(
         agentViewModel.setWorkspace(path)
     }
 
-    val sessions by agentViewModel.sessions.collectAsStateWithLifecycle()
+    // 侧边栏按文件夹（工作区）分成两层，要跨工作区的会话，不能只取当前工作区那份。
+    val sessionsByWorkspace by agentViewModel.sessionsByWorkspace.collectAsStateWithLifecycle()
+    val sessions = remember(sessionsByWorkspace) { sessionsByWorkspace.values.flatten() }
+    val allWorkspaces by workspaceViewModel.workspaces.collectAsStateWithLifecycle()
     val currentSessionId by agentViewModel.currentSessionId.collectAsStateWithLifecycle()
     val agentStates by agentViewModel.agentStates.collectAsStateWithLifecycle()
     val awaitingPermissionSessionIds by agentViewModel.awaitingPermissionSessionIds.collectAsStateWithLifecycle()
@@ -618,6 +620,8 @@ fun AppNavigation(
     val drawerBody: @Composable () -> Unit = {
         ChatDrawerContent(
             sessions = sessions,
+            workspaces = allWorkspaces,
+            currentWorkspacePath = currentWorkspace?.path ?: "",
             currentSessionId = currentSessionId,
             agentStates = agentStates,
             awaitingPermissionSessionIds = awaitingPermissionSessionIds,

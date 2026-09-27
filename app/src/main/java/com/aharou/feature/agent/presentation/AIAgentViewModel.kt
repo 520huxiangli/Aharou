@@ -155,6 +155,7 @@ class AIAgentViewModel @Inject constructor(
     val browserTabPool: com.aharou.feature.browser.BrowserTabPool,
     /** Aharou：影子屏控制器 —— 聊天页小屏幕实时预览与 vscreen 工具共用。 */
     private val vdController: com.aharou.feature.agent.domain.vdisplay.VdController,
+    private val workspaceRepository: com.aharou.feature.workspace.data.repository.WorkspaceRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel(), SlashCommandContext {
 
@@ -191,6 +192,13 @@ class AIAgentViewModel @Inject constructor(
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
+
+    /**
+     * 用户主动切换会话的信号（仅 [selectSession] 触发，冷启动/恢复时的 id 变化不发）。
+     * 聊天面板据此清空待发附件，避免把上一个会话的附件带过去。
+     */
+    private val _sessionSwitchEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val sessionSwitchEvents: SharedFlow<Unit> = _sessionSwitchEvents.asSharedFlow()
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val currentSessionTodoItems: StateFlow<List<TodoItem>> = _currentSessionId
@@ -324,6 +332,15 @@ class AIAgentViewModel @Inject constructor(
                 .map { list -> list.map { it.toDomain() } }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * 会话按工作区分组（文件夹 = 工作区 = 仓库）。侧边栏要看其他文件夹里有什么，
+     * 而 [sessions] 只含当前工作区，所以这里单独走一次全量查询。
+     */
+    val sessionsByWorkspace: StateFlow<Map<String, List<ChatSession>>> = chatSessionDao
+        .getAllRootSessions()
+        .map { list -> list.map { it.toDomain() }.groupBy { it.workspacePath } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /**
      * 所有根会话的子代理，按父会话 id 分组，供侧边栏会话行就地展开。
@@ -1018,12 +1035,20 @@ class AIAgentViewModel @Inject constructor(
         viewModelScope.launch {
             _currentWorkspace.collectLatest { path ->
                 if (path.isBlank()) return@collectLatest
+                // 当前会话本就挂在这个工作区上（由 selectSession 驱动切过来的），不必重挑，
+                // 否则会把用户刚点开的会话又换掉。只在会话与工作区对不上时才按工作区选会话。
+                val existing = _currentSessionId.value
+                    ?.let { sessionUseCase.getSessionById(it) }
+                    ?.workspacePath
+                if (existing == path) return@collectLatest
                 val recent = sessionUseCase.getMostRecentSessionOfWorkspace(path)
-                // 立即确定并设置当前会话，确保首帧 UI 秒开、侧边栏立即出现新会话，彻底消除转圈卡顿。
-                // 「打开最近会话」有历史就直接进最近那个（按 updatedAt，不受置顶影响）；
-                // 「新开会话」复用还没发过消息的空会话（避免每次启动都堆一个空会话），其余情况新建。
+                // 从别的工作区切过来时直接进该文件夹的最近会话：用户点的是文件夹，想看的就是上次
+                // 在那儿聊的东西。startupSessionMode 只管冷启动（_currentSessionId 为 null），否则
+                // 默认的「新开会话」设置会让每次切文件夹都开一个新会话。
+                val switchingWorkspace = _currentSessionId.value != null
                 val targetId = when {
                     recent == null -> createAndUpsertSession(path)
+                    switchingWorkspace -> recent.id
                     generalSettingsRepository.startupSessionMode() == StartupSessionMode.RECENT_SESSION -> recent.id
                     sessionUseCase.isSessionEmpty(recent.id) -> recent.id
                     else -> createAndUpsertSession(path)
@@ -2056,6 +2081,15 @@ class AIAgentViewModel @Inject constructor(
     fun selectSession(id: String) {
         if (_currentSessionId.value == id) return
         _currentSessionId.value = id
+        _sessionSwitchEvents.tryEmit(Unit)
+        // 工作区跟着会话走：与「切工作区挑对应会话」（见 _currentWorkspace 的订阅）互为一对，
+        // 两个方向都把会话与它绑定的仓库保持在一起。
+        viewModelScope.launch {
+            val path = sessionUseCase.getSessionById(id)?.workspacePath
+            if (!path.isNullOrBlank() && path != workspaceRepository.currentPath()) {
+                workspaceRepository.selectWorkspaceByPath(path)
+            }
+        }
     }
 
     fun deleteSessions(ids: Set<String>) = viewModelScope.launch {

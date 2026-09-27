@@ -311,11 +311,21 @@ class WorkspaceRepository @Inject constructor(
         }
 
     /** 切换当前工作区并持久化。 */
-    suspend fun selectWorkspace(name: String) = withContext(Dispatchers.IO) {
-        val target = _workspaces.value.firstOrNull { it.name == name && it.available } ?: return@withContext
+    suspend fun selectWorkspace(name: String) = selectWorkspaceBy { it.name == name }
+
+    /**
+     * 按路径切换当前工作区。
+     *
+     * 供「工作区跟着会话走」的场景使用：会话记的是 workspacePath，与切换入口那边
+     * 拿到的名字不是一回事（外部工作区的名字可能被 sanitize 过）。
+     */
+    suspend fun selectWorkspaceByPath(path: String) = selectWorkspaceBy { it.path == path }
+
+    private suspend fun selectWorkspaceBy(match: (Workspace) -> Boolean) = withContext(Dispatchers.IO) {
+        val target = _workspaces.value.firstOrNull { it.available && match(it) } ?: return@withContext
         _current.value = target
-        context.workspaceDataStore.edit { it[currentNameKey] = name }
-        FileLogger.i(TAG, "切换工作区: $name")
+        context.workspaceDataStore.edit { it[currentNameKey] = target.name }
+        FileLogger.i(TAG, "切换工作区: ${target.name}")
         // 远程模式：切换后更新符号链接指向新工作区
         if (!isLocal()) {
             remoteSshConnection.updateWorkspaceSymlink(target.path)
@@ -364,6 +374,17 @@ class WorkspaceRepository @Inject constructor(
             FileLogger.i(TAG, "新建工作区(远程): $name")
             Workspace(name = name, path = remotePath, type = WorkspaceType.REMOTE)
         }
+    }
+
+    /**
+     * 同 [createWorkspace]，但重名时自动加「(2)」「(3)」后缀。
+     * 供「克隆到新工作区」这类由系统推导名称的调用方使用——用户已经填了名字，
+     * 不该因为撞上历史工作区就直接失败。
+     */
+    suspend fun createUniqueWorkspace(rawName: String): Workspace? {
+        if (sanitize(rawName).isEmpty()) return null
+        val taken = _workspaces.value.map { it.name }.toSet()
+        return createWorkspace(uniqueName(sanitize(rawName), taken))
     }
 
     /**

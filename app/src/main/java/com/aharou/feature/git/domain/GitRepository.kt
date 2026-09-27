@@ -2,6 +2,7 @@ package com.aharou.feature.git.domain
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.agent.domain.container.CommandEvent
 import com.aharou.feature.git.domain.model.GitBranch
 import com.aharou.feature.git.domain.model.GitCommit
 import com.aharou.feature.git.domain.model.GitFileChange
@@ -13,6 +14,7 @@ import com.aharou.feature.git.domain.model.GitStatus
 import com.aharou.feature.git.domain.model.GitTag
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -113,9 +115,69 @@ class GitRepository @Inject constructor(
             }
     }
 
-    /** 克隆远程仓库到当前工作区根目录（`git clone <url> .`）。据退出码判成败，失败抛 [GitCommandFailureException]。 */
-    suspend fun cloneRepo(url: String): String =
-        gitCheckedWithTimeout(600_000L, "clone", url.trim(), ".")
+    /**
+     * 克隆远程仓库到当前工作区根目录（`git clone <url> .`）。据退出码判成败，失败抛 [GitCommandFailureException]。
+     *
+     * 走流式通道而非 [gitCheckedWithTimeout]：克隆动辄几分钟，[CommandEngine.runCommandStream]
+     * 能逐行拿到 `--progress` 写往 stderr 的阶段百分比，[onProgress] 据此驱动进度条。
+     *
+     * @param targetPath 克隆目标目录，同时也是本次命令的挂载点。默认当前工作区。
+     *   由「克隆到新工作区」传入尚未切入的新目录，这样克隆失败时不会把用户的挂载点与
+     *   会话一起带走（切工作区会触发 AI 页按工作区重选会话）。
+     * @param onProgress 总进度百分比（0–100，已按阶段加权，见 [parseCloneProgress]）。
+     */
+    suspend fun cloneRepo(
+        url: String,
+        targetPath: String? = null,
+        onProgress: (Int) -> Unit = {}
+    ): String {
+        val command = buildGitCommand(arrayOf("clone", "--progress", url.trim(), "."))
+        val output = StringBuilder()
+        var exitCode: Int? = null
+        engine.runCommandStream(
+            command,
+            targetPath ?: workspaceRepository.currentPath(),
+            600_000L
+        )
+            .collect { event ->
+                when (event) {
+                    is CommandEvent.Line -> {
+                        output.appendLine(event.text)
+                        parseCloneProgress(event.text)?.let(onProgress)
+                    }
+
+                    is CommandEvent.Exit -> exitCode = event.code
+                }
+            }
+        val text = output.toString()
+        if (exitCode != 0) {
+            throw GitCommandFailureException(text.ifBlank { "git 退出码 $exitCode" })
+        }
+        return text
+    }
+
+    /**
+     * 把 `git clone --progress` 的一行换算成总进度百分比，认不出阶段时返回 null。
+     *
+     * git 是按阶段各自从 0 数到 100 的，直接拿它的百分比画进度条会在阶段切换时往回跳
+     * （接收对象 100% → 解压增量 0%）。故按各阶段实际耗时占比加权映射到统一的 0–100：
+     * 接收对象占大头，之后是解压增量与检出/更新文件。
+     * `remote:` 开头那几行（Counting/Compressing）不计入——那时本地一个字节都还没收到。
+     */
+    private fun parseCloneProgress(line: String): Int? {
+        if (line.startsWith("remote:")) return null
+        val pct = Regex("""(\d{1,3})%""").find(line)?.groupValues?.get(1)?.toIntOrNull()
+            ?: return null
+        val clamped = pct.coerceIn(0, 100)
+        return when {
+            line.contains("Receiving objects") -> clamped * 85 / 100
+            line.contains("Resolving deltas") -> 85 + clamped * 13 / 100
+            line.contains("Checking out files") || line.contains("Updating files") ->
+                98 + clamped * 2 / 100
+
+            else -> null
+        }
+    }
 
     /** 是否已配置至少一个远程仓库（`git remote` 输出非空）。拉取/推送前据此门控。 */
     suspend fun hasRemote(): Boolean = git("remote").trim().isNotEmpty()

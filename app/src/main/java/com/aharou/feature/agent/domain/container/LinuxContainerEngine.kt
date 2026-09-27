@@ -140,6 +140,9 @@ class LinuxContainerEngine @Inject constructor(
     companion object {
         private const val TAG = "LinuxContainerEngine"
 
+        /** 命令里的 URL 与 scp 形式（https://host、git@host:path），用于提前兑底域名解析。 */
+        private val HOST_IN_COMMAND = Regex("""(?:https?://|git@)([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})""")
+
         /**
          * 子进程 stdin 的重定向目标。命令执行链路从不向子进程写输入，若留 Java 默认的空管道，
          * 按「stdin 是否可读」决定行为的程序（无路径参数的 rg、等确认的包管理器等）会把它当
@@ -169,6 +172,21 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /** 标记基础包已按 [PROVISION_VERSION] 配置完成（内容为版本号，或用户手动安装的跳过标记），按当前 profile 的 rootfs 目录存放（内置/自定义各自独立）。 */
+    /**
+     * 命令里出现的域名要先能在容器里解析，否则 git clone 直接报「Could not resolve host」。
+     * 站点是用户随手填的（github / cnb.cool / gitcode……），不可能写进默认名单，所以从命令文本里扫。
+     */
+    private fun ensureHostsForCommand(command: String, profile: ContainerProfile) {
+        val hosts = HOST_IN_COMMAND.findAll(command)
+            .map { it.groupValues[1].lowercase() }
+            .distinct()
+            .toList()
+        if (hosts.isEmpty()) return
+        runCatching {
+            com.aharou.core.net.GitHubDnsFallback.ensureResolvable(containerInstaller.rootfsDirFor(profile), hosts)
+        }.onFailure { FileLogger.d(TAG, "域名兑底失败：${it.message}") }
+    }
+
     private fun provisionMarker(profile: ContainerProfile): java.io.File =
         java.io.File(containerInstaller.rootfsDirFor(profile), ".provisioned")
 
@@ -454,6 +472,7 @@ class LinuxContainerEngine @Inject constructor(
      */
     private fun startContainerProcess(command: String, projectPath: String?): Process {
         val profile = currentProfile
+        ensureHostsForCommand(command, profile)
         val useProot = containerInstaller.isInstalledFor(profile)
 
         val processBuilder = if (useProot) {
@@ -778,6 +797,11 @@ class LinuxContainerEngine @Inject constructor(
         // 每个容器用自己 rootfs 下的 /tmp：镜像自带该目录，但重置/删除别的容器不该影响本容器，
         // 且 proot 要求 PROOT_TMP_DIR 已存在，故启动前确保建好（同 -b 源路径的处理）。
         val tmpDir = containerInstaller.prootTmpDirFor(profile).apply { mkdirs() }
+        // github.com 被 DNS 污染时（其他域名正常、唯它解析失败）注入 /etc/hosts 兑底，
+        // 否则容器内 git clone/pull/push 一律报「Could not resolve host」。解析正常时空转。
+        com.aharou.core.net.GitHubDnsFallback.ensureResolvable(
+            containerInstaller.rootfsDirFor(profile)
+        )
         return mapOf(
             // Android proot 必需的环境变量
             "PROOT_TMP_DIR" to tmpDir.absolutePath, // Android 没有 /tmp
