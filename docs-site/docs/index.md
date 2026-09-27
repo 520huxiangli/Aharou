@@ -21,7 +21,7 @@ hero:
       link: /guide/quick-start
     - theme: alt
       text: 下载 APK
-      link: /download
+      link: https://gitcode.com/Aharou/Aharou/releases/latest
     - theme: alt
       text: GitHub
       link: https://github.com/520huxiangli/Aharou
