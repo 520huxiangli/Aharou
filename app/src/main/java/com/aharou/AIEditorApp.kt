@@ -10,6 +10,7 @@ import androidx.work.Configuration
 import androidx.hilt.work.HiltWorkerFactory
 import com.aharou.core.net.AppProxy
 import com.aharou.core.util.AILogger
+import com.aharou.core.util.CrashRecorder
 import com.aharou.core.util.FileLogger
 import net.schmizz.sshj.common.SecurityUtils
 import com.aharou.feature.agent.domain.container.ContainerInstaller
@@ -433,6 +434,15 @@ class AIEditorApp : Application(), Configuration.Provider {
             FileLogger.e("CRASH", "线程 ${thread.name} 未捕获异常 (进程=$processName)", throwable)
             // 崩溃前同步 flush 缓冲日志，避免最后一段（含本行错误）留在内存中丢失。
             FileLogger.flushSync()
+            // 结构化留档：写进 filesDir/aharou/crash/（容器内 /root/.aharou/crash），
+            // 以后 agent 能直接读现场，不必再让用户手抄堆栈。
+            CrashRecorder.record(
+                context = this,
+                threadName = thread.name,
+                throwable = throwable,
+                screen = currentRoute,
+                workspaceMode = currentWorkspaceMode
+            )
 
             // 1. 若 :crash 进程自身发生异常：交回系统默认处理器并彻底退出，绝不二次拉起错误页
             if (isCrash) {
