@@ -69,7 +69,7 @@ class PermissionRulesRepository @Inject constructor(
 
     /** 全局权限文件：`filesDir/aicode/permissions.json`，与 mcp.json 同级。 */
     private val globalFile: File
-        get() = File(File(context.filesDir, "aicode"), PERMISSIONS_FILE)
+        get() = File(File(context.filesDir, "aharou"), PERMISSIONS_FILE)
 
     /** 当前工作区的项目级权限文件：`workspacePath/.aicode/permissions.json`。 */
     private fun projectFileForPath(workspacePath: String): File =

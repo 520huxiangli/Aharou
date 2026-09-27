@@ -59,14 +59,15 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         ctx().filesDir
 
     /**
-     * 根下唯一对外可见的子目录名白名单：工作区 `projects` 与 AI 配置 `aicode`（容器内 /root/.aicode，
-     * 含 skills/ 与 mcp.json）。两者首次访问即创建，其余 filesDir 内部目录不列出。
+     * 根下唯一对外可见的子目录名白名单：工作区 `projects` 与 AI 配置 `aharou`
+     *（容器内 /root/.aharou，含 skills/ 与 mcp.json）。两者首次访问即创建，
+     * 其余 filesDir 内部目录不列出。
      */
     private fun exposedChildren(): List<File> {
         ContainerInstaller.extractDocs(ctx())
         return listOf(
             File(baseDir(), "projects").apply { mkdirs() },
-            File(baseDir(), "aicode").apply { mkdirs() },
+            File(baseDir(), "aharou").apply { mkdirs() },
         )
     }
 

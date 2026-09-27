@@ -80,10 +80,13 @@ class CredentialRequestBridge @Inject constructor(
     private var aharouDir: File? = null
 
     /**
-     * 启动监听：订阅中心服务的 aicode 目录事件捕获请求，并起兜底轮询协程。幂等可重复调。
+     * 启动监听：订阅中心服务的 aharou 目录事件捕获请求，并起兜底轮询协程。幂等可重复调。
+     *
+     * 目录必须是 filesDir/aharou（容器内的 /root/.aharou）：helper 写在那儿，
+     * 而 PRoot 绑定的是同一个宿主目录，写旧名 filesDir/aicode 会永远收不到请求。
      */
     fun start() {
-        val dir = File(context.filesDir, "aicode").apply { mkdirs() }
+        val dir = File(context.filesDir, "aharou").apply { mkdirs() }
         aharouDir = dir
         if (!started) {
             started = true
@@ -147,7 +150,7 @@ class CredentialRequestBridge @Inject constructor(
      * [host] 取自 [CredentialRequest]（Git 进程在收到 resp 前不会删 req，但 host 已在请求里，直接传更稳）。
      */
     fun respond(requestId: String, host: String, username: String, token: String) {
-        val dir = aharouDir ?: File(context.filesDir, "aicode")
+        val dir = aharouDir ?: File(context.filesDir, "aharou")
         scope.launch {
             writeRespAtomically(dir, requestId, "username=$username\npassword=$token\n")
             runCatching {
@@ -164,7 +167,7 @@ class CredentialRequestBridge @Inject constructor(
 
     /** 用户取消弹窗：写 cancel 响应（helper 退出非零让 git 报认证失败）+ dec 在途 + 清状态。 */
     fun cancel(requestId: String) {
-        val dir = aharouDir ?: File(context.filesDir, "aicode")
+        val dir = aharouDir ?: File(context.filesDir, "aharou")
         scope.launch {
             writeRespAtomically(dir, requestId, "cancel=1\n")
             containerEngine.decPromptInFlight()
