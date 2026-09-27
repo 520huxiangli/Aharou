@@ -106,7 +106,7 @@ write_android_profile() {
     jh=$(java_home_dir)
     mkdir -p /etc/profile.d
     {
-        echo "# AiCode: Android / Kotlin 开发环境（由环境安装工具写入）"
+        echo "# Aharou: Android / Kotlin 开发环境（由环境安装工具写入）"
         [ -n "$jh" ] && echo "export JAVA_HOME=\"$jh\""
         echo "export ANDROID_HOME=\"$sdk\""
         echo "export ANDROID_SDK_ROOT=\"$sdk\""

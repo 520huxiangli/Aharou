@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AiCode 套餐余量示例脚本 (demo_subscription.py) - 订阅制 Adaptive Card 模板
+Aharou 套餐余量示例脚本 (demo_subscription.py) - 订阅制 Adaptive Card 模板
 
-本脚本演示如何为 AiCode 供应商返回声明式 Adaptive Card 格式的余量数据。
+本脚本演示如何为 Aharou 供应商返回声明式 Adaptive Card 格式的余量数据。
 支持收起态 (compact) 与展开态 (body) 的自定义排版。
 """
 

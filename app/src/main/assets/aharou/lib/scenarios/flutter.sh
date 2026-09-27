@@ -34,7 +34,7 @@ install_scenario_flutter() {
     "$FLUTTER_DIR/bin/flutter" --version || echo "${C_YELLOW}Flutter 初始化未完成，可在新终端重试 flutter --version。${C_RESET}"
     mkdir -p /etc/profile.d
     {
-        echo "# AiCode: Flutter 开发环境（由环境安装工具写入）"
+        echo "# Aharou: Flutter 开发环境（由环境安装工具写入）"
         echo "export FLUTTER_STORAGE_BASE_URL=\"$FLUTTER_STORAGE\""
         echo "export PATH=\"$FLUTTER_DIR/bin:\$PATH\""
     } > /etc/profile.d/aicode-flutter.sh

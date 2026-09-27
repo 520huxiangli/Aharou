@@ -153,11 +153,8 @@ plog "显示初始化菜单：PMGR=${PMGR:-未识别}"
 while :; do
     echo ""
     cat <<EOF
-${C_CYAN}    _    ___ ____ ___  ____  _____ ${C_RESET}
-${C_CYAN}   / \  |_ _/ ___/ _ \|  _ \| ____|${C_RESET}
-${C_CYAN}  / _ \  | | |  | | | | | | |  _|  ${C_RESET}
-${C_CYAN} / ___ \ | | |__| |_| | |_| | |___ ${C_RESET}
-${C_CYAN}/_/   \_\___\____\___/|____/|_____|${C_RESET}
+${C_BOLD}${C_CYAN}  Aharou 容器环境${C_RESET}
+${C_DIM}  Android AI 工作台 · 首次使用需装基础依赖${C_RESET}
 ${C_YELLOW}══════════════════════════════════════════════${C_RESET}
 ${C_BOLD}  容器初始化 · 选择安装方式${C_RESET}
 ${C_YELLOW}══════════════════════════════════════════════${C_RESET}
