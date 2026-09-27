@@ -162,20 +162,16 @@ class GitRepository @Inject constructor(
      * git 是按阶段各自从 0 数到 100 的，直接拿它的百分比画进度条会在阶段切换时往回跳
      * （接收对象 100% → 解压增量 0%）。故按各阶段实际耗时占比加权映射到统一的 0–100：
      * 接收对象占大头，之后是解压增量与检出/更新文件。
-     *
-     * 远端统计/压缩（`remote:` 开头的 Counting/Compressing）本地一个字节都还没收到，但大仓库里
-     * 这一段可能耗时很久，整段不计入的话进度条会一直停在转圈形态、看不出还在动，故给它留前 10%。
+     * `remote:` 开头那几行（Counting/Compressing）不计入——那时本地一个字节都还没收到。
      */
     private fun parseCloneProgress(line: String): Int? {
+        if (line.startsWith("remote:")) return null
         val pct = Regex("""(\d{1,3})%""").find(line)?.groupValues?.get(1)?.toIntOrNull()
             ?: return null
         val clamped = pct.coerceIn(0, 100)
-        val remote = line.startsWith("remote:")
         return when {
-            remote && line.contains("Counting objects") -> clamped * 6 / 100
-            remote && line.contains("Compressing objects") -> 6 + clamped * 4 / 100
-            line.contains("Receiving objects") -> 10 + clamped * 78 / 100
-            line.contains("Resolving deltas") -> 88 + clamped * 10 / 100
+            line.contains("Receiving objects") -> clamped * 85 / 100
+            line.contains("Resolving deltas") -> 85 + clamped * 13 / 100
             line.contains("Checking out files") || line.contains("Updating files") ->
                 98 + clamped * 2 / 100
 
