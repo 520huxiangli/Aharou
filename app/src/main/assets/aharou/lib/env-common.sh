@@ -12,8 +12,10 @@
 # 多镜像候选（按优先级排序，换源时自动探测跳过不可用；阿里云对服务器访问全量 403 放最后，探测会跳过）
 MIRRORS="mirrors.huaweicloud.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn mirrors.cloud.tencent.com mirrors.aliyun.com"
 MIRROR=""
-# 基础工具（不参与自定义勾选，始终安装）：git/ripgrep 是 AI 工作流与版本管理基础，bash/curl 是通用依赖
-BASE_PKGS="bash curl ripgrep git"
+# 基础工具（不参与自定义勾选，始终安装）：git/ripgrep 是 AI 工作流与版本管理基础，bash/curl 是通用依赖；
+# wget/jq/rsync/net-tools/bind-tools/netcat-openbsd/less/file 是排查与脚本里最常现装的几个，
+# 捎进基础包省得每次干活再 apk add（体积增量很小）。
+BASE_PKGS="bash curl wget jq rsync git ripgrep net-tools bind-tools netcat-openbsd less file"
 
 # ── 诊断日志：写入宿主可见的 $HOME/.aicode/provision.log（容器内 /root/.aicode 绑定到 App 私有目录）。
 # 终端 PTY 起不来或卡住时，App 侧「容器诊断」会把本文件尾部一并打进日志，用于判断脚本执行到了哪一步、

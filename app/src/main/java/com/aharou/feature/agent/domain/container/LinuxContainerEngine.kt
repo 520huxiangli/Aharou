@@ -165,7 +165,7 @@ class LinuxContainerEngine @Inject constructor(
          * 标记文件由脚本自身写入（内容为下方版本号，或自定义镜像用户选择手动安装时的跳过标记
          * provision-script-skipped），App 端仅读它判断是否完成。
          */
-        private const val PROVISION_VERSION = "provision-script-v9"
+        private const val PROVISION_VERSION = "provision-script-v10"
     }
 
     /** 标记基础包已按 [PROVISION_VERSION] 配置完成（内容为版本号，或用户手动安装的跳过标记），按当前 profile 的 rootfs 目录存放（内置/自定义各自独立）。 */
