@@ -13,9 +13,19 @@
 MIRRORS="mirrors.huaweicloud.com mirrors.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn mirrors.cloud.tencent.com mirrors.aliyun.com"
 MIRROR=""
 # 基础工具（不参与自定义勾选，始终安装）：git/ripgrep 是 AI 工作流与版本管理基础，bash/curl 是通用依赖；
-# wget/jq/rsync/net-tools/bind-tools/netcat-openbsd/less/file 是排查与脚本里最常现装的几个，
-# 捎进基础包省得每次干活再 apk add（体积增量很小）。
-BASE_PKGS="bash curl wget jq rsync git ripgrep net-tools bind-tools netcat-openbsd less file"
+# wget/jq/rsync/net-tools/netcat-openbsd/less/file 是排查与脚本里最常现装的几个，捎进基础包省得每次干活再装。
+# 注意：这里只能放各发行版**同名**的包。dig 的包名三家不同（apk=bind-tools / apt=dnsutils / dnf|yum=bind-utils），
+# 所以由 base_pkgs() 按包管理器补——写错会让整条 install 失败（2026-09-27 真实踩过：apt 容器里装 bind-tools 直接报错）。
+BASE_PKGS="bash curl wget jq rsync git ripgrep net-tools netcat-openbsd less file"
+
+# 按当前包管理器返回完整基础包清单（含发行版专有包名的那些）。
+base_pkgs() {
+    case "$PMGR" in
+        apt)     echo "$BASE_PKGS dnsutils" ;;
+        dnf|yum) echo "$BASE_PKGS bind-utils" ;;
+        *)       echo "$BASE_PKGS bind-tools" ;;
+    esac
+}
 
 # ── 诊断日志：写入宿主可见的 $HOME/.aicode/provision.log（容器内 /root/.aicode 绑定到 App 私有目录）。
 # 终端 PTY 起不来或卡住时，App 侧「容器诊断」会把本文件尾部一并打进日志，用于判断脚本执行到了哪一步、
@@ -267,7 +277,7 @@ ask_yn() {
 show_plan() {
     echo ""
     echo "══════════════ 安装清单 ══════════════"
-    echo "  基础工具: $BASE_PKGS"
+    echo "  基础工具: $(base_pkgs)"
     runtimes="$1"
     if [ -n "$runtimes" ]; then
         echo "  运行时:"
@@ -323,7 +333,7 @@ ask_mirror() {
 # 返回：0=完成 1=安装失败 2=用户取消（未确认清单）
 install_custom() {
     echo ""
-    echo "自定义安装将同时安装基础工具（$BASE_PKGS）与所选运行时。"
+    echo "自定义安装将同时安装基础工具（$(base_pkgs)）与所选运行时。"
     echo ""
     ask_mirror
     echo "正在更新软件包列表..."
@@ -369,12 +379,12 @@ install_custom() {
         runtimes="$runtimes php"
     fi
     if [ -z "$runtimes" ]; then
-        echo "未选择任何运行时，将仅安装基础工具（$BASE_PKGS）。"
+        echo "未选择任何运行时，将仅安装基础工具（$(base_pkgs)）。"
     fi
     show_plan "$runtimes" || return 2
     echo ""
     echo "开始安装所选依赖（可能需要几分钟，请耐心等待）..."
-    pkgs="$BASE_PKGS"
+    pkgs="$(base_pkgs)"
     for r in $runtimes; do
         pkgs="$pkgs $(runtime_install "$r")"
     done
@@ -645,7 +655,7 @@ install_light_runtimes() {
     show_plan "$runtimes" || return 2
     echo ""
     echo "开始安装（可能需要几分钟，请耐心等待）..."
-    pkgs="$BASE_PKGS"
+    pkgs="$(base_pkgs)"
     for r in $runtimes; do
         pkgs="$pkgs $(runtime_install "$r")"
     done
