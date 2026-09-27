@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -63,6 +64,13 @@ class BrowserUseManager(
          * scrollHeight so the agent can scroll-then-stitch if it needs more.
          */
         private const val MAX_FULL_PAGE_HEIGHT_PX = 32768
+
+        /**
+         * 单张截图的像素上限（宽×高）。上面只限了高度，宽度却随 CSS 宽 × density 放大：
+         * desktop profile（1280 CSS × 2.75）下就是 3520×32768 ≈ 461MB 位图。
+         * 16MP 对应 ARGB_8888 约 64MB，留出余量又不至于把进程压死。
+         */
+        private const val MAX_CAPTURE_PIXELS = 16_000_000L
 
         /**
          * Minimal HTML used in place of `about:blank` when a fresh tab
@@ -965,13 +973,26 @@ class BrowserUseManager(
                 webView.layout(0, 0, targetW, targetH)
                 w = targetW; h = targetH
             }
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            webView.draw(canvas)
-            Log.d(TAG, "captureWebViewBitmap ${w}x$h")
-            bitmap
+            // 限制总像素：full_page 高度上限 32768px，而宽度 = CSS 宽 × density，
+            // desktop profile（1280 CSS × 2.75）下就是 3520×32768 ≈ 461MB，直接 OOM；
+            // 而外层 catch(Exception) 捕不到 OutOfMemoryError，会崩掉整个进程。
+            val pixels = w.toLong() * h
+            if (pixels > MAX_CAPTURE_PIXELS) {
+                Log.w(TAG, "captureWebViewBitmap 尺寸过大 ${w}x$h（${pixels / 1_000_000}MP），拒绝生成位图")
+                null
+            } else {
+                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                webView.draw(canvas)
+                Log.d(TAG, "captureWebViewBitmap ${w}x$h")
+                bitmap
+            }
         } catch (e: Exception) {
             Log.e(TAG, "captureWebViewBitmap failed: ${e.message}")
+            null
+        } catch (e: OutOfMemoryError) {
+            // 注意：w/h 是 try 内的局部变量，catch 块里不可见，这里取 webView 自身尺寸。
+            Log.e(TAG, "captureWebViewBitmap OOM（${webView.width}x${webView.height}）")
             null
         }
     }
@@ -1393,7 +1414,11 @@ class BrowserUseManager(
             }
             deferred.complete(unquoted)
         }
-        deferred.await()
+        // 回调可能永远不回来（执行途中页面被 reload/导航、WebView 处于异常态），
+        // 而 click / get_text / scroll / find_elements 全走这里：没超时就会永久挂起，
+        // 调用方的 per-tab 锁与 inUse 也因 finally 不执行而一直占着。
+        // 同文件的 executeJS(30s) / awaitPromiseJs(60s) 都有超时，这里补齐。
+        withTimeoutOrNull(30_000L) { deferred.await() } ?: "null"
     }
 
     private suspend fun evaluateAndReturn(js: String): BrowserActionResult {

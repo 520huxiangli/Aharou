@@ -150,13 +150,22 @@ class VdController @Inject constructor(
         return info
     }
 
+    // component / keycode 会被拼进 Shizuku（adb shell, uid 2000）执行的命令，
+    // 必须先白名单校验再拼——否则 `com.x/.Y; 任意命令` 能在宿主上跑。
+    private val componentSlashRe = Regex("^[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+$")
+    private val packageNameRe = Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)*$")
+    private val keyCodeRe = Regex("^(KEYCODE_[A-Z0-9_]+|[0-9]{1,4})$")
+
     /** 在影子屏上启动应用（component 可传 "pkg/act" 或仅 "pkg"）。 */
     suspend fun launch(component: String): VdInfo {
         val info = refresh() ?: error("影子屏未运行，请先 start")
-        val comp = if (component.contains('/')) {
-            component
+        val raw = component.trim()
+        val comp = if (raw.contains('/')) {
+            require(componentSlashRe.matches(raw)) { "component 格式不合法：$raw" }
+            raw
         } else {
-            exec("cmd package resolve-activity --brief $component 2>/dev/null | tail -1", 20_000L).output.trim()
+            require(packageNameRe.matches(raw)) { "包名格式不合法：$raw" }
+            exec("cmd package resolve-activity --brief $raw 2>/dev/null | tail -1", 20_000L).output.trim()
         }
         check(comp.contains('/')) { "找不到可启动的入口：$component" }
         val r = exec("am start --display ${info.displayId} -n $comp", 30_000L)
@@ -189,7 +198,9 @@ class VdController @Inject constructor(
     /** 在影子屏上发送按键（如 KEYCODE_BACK / KEYCODE_HOME / 4 / 3）。 */
     suspend fun keyEvent(code: String) {
         val info = refresh() ?: error("影子屏未运行")
-        exec("input -d ${info.displayId} keyevent $code", 20_000L)
+        val c = code.trim()
+        require(keyCodeRe.matches(c)) { "keycode 不合法：$c" }
+        exec("input -d ${info.displayId} keyevent $c", 20_000L)
     }
 
     private fun md5Hex(file: File): String {

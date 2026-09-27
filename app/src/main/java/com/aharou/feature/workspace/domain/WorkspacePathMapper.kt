@@ -110,11 +110,26 @@ class WorkspacePathMapper @Inject constructor(
             p.startsWith("$AHAROU_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AHAROU_ROOT/"))
             p == AICODE_ROOT || p == "$AICODE_ROOT/" -> aicodeRoot()
             p.startsWith("$AICODE_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AICODE_ROOT/"))
-            else -> mountedHostFile(p)
+            else -> mountedHostFile(p)?.let { return it }   // 用户显式配置的挂载点，信任其宿主路径
                 ?: if (p.startsWith("/")) File(rootfsRoot(), p.removePrefix("/")) else File(root, p)
+        }
+        // 防穿越：上面的分支全是字符串前缀匹配，`..` 能逃出各根目录——
+        // 例如 `/../../shared_prefs/x.xml` 会落到 App 私有数据区（DataStore / 凭据 / settings）。
+        // 所以解析成真实路径后，必须确认它仍落在允许的根之内（工作区 / rootfs / AI 配置 / 记忆）。
+        val resolved = runCatching { file.canonicalFile }.getOrElse { file }
+        val allowed = listOf(root, rootfsRoot(), aicodeRoot(), aharouMemoryRoot())
+        if (allowed.none { resolved.isUnder(it) }) {
+            throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
         FileLogger.v(TAG, "toHostFile '$path' -> ${file.absolutePath}")
         return file
+    }
+
+    /** [this] 的规范化路径是否位于 [base] 之内（两侧都规范化，避免符号链接导致的误判）。 */
+    private fun File.isUnder(base: File): Boolean {
+        val basePath = runCatching { base.canonicalPath }.getOrElse { base.absolutePath }.trimEnd('/')
+        val selfPath = runCatching { canonicalPath }.getOrElse { absolutePath }
+        return selfPath == basePath || selfPath.startsWith("$basePath/")
     }
 
     /**

@@ -75,12 +75,20 @@ class VdTool @Inject constructor(
         argsPreview: String,
     ): PendingToolPermission {
         val action = args["action"]?.jsonPrimitive?.contentOrNull ?: "?"
+        // 把真正会被拼进 shell 命令的参数原样回显。之前只显示 action，用户看不到 payload
+        // 就被执行了——这是 Shizuku（adb shell）身份的命令，必须让用户看得见再确认。
+        val payload = listOfNotNull(
+            args["component"]?.jsonPrimitive?.contentOrNull?.let { "component = $it" },
+            args["keycode"]?.jsonPrimitive?.contentOrNull?.let { "keycode = $it" },
+            args["package"]?.jsonPrimitive?.contentOrNull?.let { "package = $it" },
+        ).joinToString("\n")
         return PendingToolPermission(
             id = callId,
             toolName = name,
             title = "确认使用影子屏",
-            summary = "action = $action",
-            details = "将经 Shizuku 在宿主上创建/操作无头虚拟屏（不会占用你的屏幕）。",
+            summary = if (payload.isEmpty()) "action = $action" else "action = $action\n$payload",
+            details = "将经 Shizuku 在宿主上创建/操作无头虚拟屏（不会占用你的屏幕）。" +
+                "上面列出的参数会原样传给系统命令，请确认后再放行。",
             argsPreview = argsPreview,
         )
     }
