@@ -213,6 +213,9 @@
     <string name="share_script_imported">Imported panel script: %1$s (pick it under Provider settings → Dashboard script)</string>
     <string name="provider_dashboard_import_script">Import script from device</string>
     <string name="provider_dashboard_select_title">Select Dashboard Script</string>
+    <string name="provider_dashboard_select_hint">Execute and preview the panel; swipe a script left to delete it</string>
+    <string name="provider_dashboard_script_delete_title">Delete panel script</string>
+    <string name="provider_dashboard_script_delete_message">This deletes the script file \"%1$s\" and cannot be undone. Delete it?</string>
     <string name="provider_dashboard_clear_script">None (Clear script)</string>
     <string name="provider_dashboard_loading">Loading dashboard...</string>
     <string name="provider_dashboard_raw_output">Raw Output</string>

@@ -655,6 +655,20 @@ class ProviderDashboardRunner @Inject constructor(
     }
 
     /**
+     * 删除 `~/.aharou/scripts/` 下的一个面板脚本。
+     *
+     * [name] 虽然来自列表，仍按边界校验：只收纯文件名，带路径分隔符或 `..` 的一律拒绝。
+     */
+    fun deleteScript(name: String): Boolean {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..")) return false
+        val target = File(File(containerInstaller.aharouDir, "scripts"), trimmed)
+        val deleted = runCatching { target.isFile && target.delete() }.getOrDefault(false)
+        if (deleted) FileLogger.i(TAG, "面板脚本已删除：$trimmed") else FileLogger.w(TAG, "面板脚本删除失败：$trimmed")
+        return deleted
+    }
+
+    /**
      * 执行提供商的自定义面板脚本并解析返回结果。
      */
     suspend fun runScript(

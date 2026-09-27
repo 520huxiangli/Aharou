@@ -213,6 +213,9 @@
     <string name="share_script_imported">已导入面板脚本：%1$s（可在供应商设置 → 面板脚本 中选择）</string>
     <string name="provider_dashboard_import_script">从手机导入脚本</string>
     <string name="provider_dashboard_select_title">选择面板脚本</string>
+    <string name="provider_dashboard_select_hint">执行并预览面板；左滑脚本可删除</string>
+    <string name="provider_dashboard_script_delete_title">删除面板脚本</string>
+    <string name="provider_dashboard_script_delete_message">将删除「%1$s」的脚本文件，此操作不可恢复。确定删除？</string>
     <string name="provider_dashboard_clear_script">不使用面板脚本 (清空)</string>
     <string name="provider_dashboard_loading">正在加载面板…</string>
     <string name="provider_dashboard_raw_output">原始输出</string>

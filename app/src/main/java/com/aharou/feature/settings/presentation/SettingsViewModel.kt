@@ -2268,6 +2268,11 @@ class SettingsViewModel @Inject constructor(
         return providerDashboardRunner.listAvailableScripts()
     }
 
+    /** 删除 `~/.aharou/scripts/` 下的一个面板脚本；返回是否真的删掉。 */
+    fun deleteDashboardScript(name: String): Boolean {
+        return providerDashboardRunner.deleteScript(name)
+    }
+
     fun testDashboardScript(provider: AIProviderConfig, scriptPath: String) {
         viewModelScope.launch {
             _dashboardTestState.value = ProviderDashboardState.Loading

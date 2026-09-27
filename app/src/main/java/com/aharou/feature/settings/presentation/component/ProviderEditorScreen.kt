@@ -1081,6 +1081,11 @@ fun ProviderEditorScreen(
                 dashboardScriptPath = selectedScript
                 showScriptPickerSheet = false
             },
+            // 删除后 list 要重算：scriptPickerTick 是列表的 remember 键。
+            onDelete = { scriptName ->
+                viewModel.deleteDashboardScript(scriptName)
+                scriptPickerTick++
+            },
             onDismiss = { showScriptPickerSheet = false }
         )
     }
@@ -2383,8 +2388,10 @@ private fun ScriptPickerBottomSheet(
     scripts: List<String>,
     onImportFromFile: () -> Unit,
     onSelect: (String) -> Unit,
+    onDelete: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(),
@@ -2405,7 +2412,7 @@ private fun ScriptPickerBottomSheet(
                     .padding(bottom = Spacing.sm)
             )
             Text(
-                text = stringResource(R.string.provider_dashboard_script_desc),
+                text = stringResource(R.string.provider_dashboard_select_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -2451,9 +2458,9 @@ private fun ScriptPickerBottomSheet(
                 }
             } else {
                 scripts.forEach { scriptName ->
-                    Surface(
-                        onClick = { onSelect(scriptName) },
-                        color = Color.Transparent
+                    SwipeToDeleteRow(
+                        onDelete = { pendingDelete = scriptName },
+                        onClick = { onSelect(scriptName) }
                     ) {
                         Row(
                             modifier = Modifier
@@ -2479,6 +2486,24 @@ private fun ScriptPickerBottomSheet(
                 }
             }
         }
+    }
+
+    // 左滑露出删除按钮后先二次确认：脚本删掉就得重新导入。
+    pendingDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.provider_dashboard_script_delete_title)) },
+            text = { Text(stringResource(R.string.provider_dashboard_script_delete_message, name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(name)
+                    pendingDelete = null
+                }) { Text(stringResource(R.string.common_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
     }
 }
 
