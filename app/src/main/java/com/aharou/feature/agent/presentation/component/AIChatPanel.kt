@@ -91,6 +91,8 @@ import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 
 /**
@@ -535,6 +537,9 @@ fun AIChatPanel(
         if (inputText == "/") viewModel.refreshSlashCommands()
     }
     var pendingAttachments by remember { mutableStateOf<List<PendingUploadAttachment>>(emptyList()) }
+    // 上传串行化：两次上传并发时，下面 pendingAttachments 的「读-改-写」会互相覆盖，
+    // 表现为先选的附件预览凭空消失（文件其实已上传成功）。
+    val attachmentUploadMutex = remember { Mutex() }
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
@@ -756,14 +761,17 @@ fun AIChatPanel(
             val failures = mutableListOf<String>()
             uploadingCount = selected.size
             try {
-                selected.forEach { uri ->
-                    runCatching {
-                        copyUriToWorkspace(context, uri, viewModel.fileAccess, includeImageData = images)
-                    }.onSuccess { uploaded ->
-                        pendingAttachments = pendingAttachments + uploaded.toPendingAttachment()
-                        successCount += 1
-                    }.onFailure { error ->
-                        failures += (error.message ?: uploadFallbackError(context))
+                // 整段上传串行化：避免并发上传时的读-改-写覆盖（见的 attachmentUploadMutex 注释）
+                attachmentUploadMutex.withLock {
+                    selected.forEach { uri ->
+                        runCatching {
+                            copyUriToWorkspace(context, uri, viewModel.fileAccess, includeImageData = images)
+                        }.onSuccess { uploaded ->
+                            pendingAttachments = pendingAttachments + uploaded.toPendingAttachment()
+                            successCount += 1
+                        }.onFailure { error ->
+                            failures += (error.message ?: uploadFallbackError(context))
+                        }
                     }
                 }
             } finally {
