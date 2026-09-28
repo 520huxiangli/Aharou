@@ -1779,6 +1779,8 @@
     <string name="soul_icon_error_too_large">图片太大，换一张。</string>
 
     <string name="config_audit_used_count">已记录 %1$d / %2$d 条</string>
+    <string name="config_audit_reveal_sensitive">显示敏感字段明文</string>
+    <string name="config_audit_hide_sensitive">隐藏敏感字段明文</string>
     <string name="config_audit_empty">还没有配置变更记录</string>
     <string name="config_audit_revert">撤销</string>
     <string name="config_audit_revert_confirm_title">撤销这次变更？</string>

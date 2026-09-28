@@ -1,6 +1,7 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -40,13 +42,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.core.config.CONFIG_MASK_TEXT
 import com.aharou.core.config.audit.ConfigAuditActor
 import com.aharou.core.config.audit.ConfigAuditEntry
 import com.aharou.core.config.audit.ConfigAuditLog
 import com.aharou.core.config.audit.ConfigAuditStatus
 import com.aharou.core.config.audit.ConfigRevert
+import com.aharou.core.config.isSensitivePath
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Clock
+import compose.icons.feathericons.Eye
+import compose.icons.feathericons.EyeOff
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +74,7 @@ internal fun ConfigAuditSection() {
     var usage by remember { mutableStateOf(ConfigAuditLog.Usage(0, 1000)) }
     var revertCandidate by remember { mutableStateOf<ConfigAuditEntry?>(null) }
     var revertResult by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var revealSensitive by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // 每次审计日志变动都重载（revision 由 append / markReverted / clearAll 触发）。
@@ -97,6 +104,23 @@ internal fun ConfigAuditSection() {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Spacer(Modifier.weight(1f))
+            if (entries.any { isSensitivePath(it.key) }) {
+                Icon(
+                    imageVector = if (revealSensitive) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                    contentDescription = stringResource(
+                        if (revealSensitive) {
+                            R.string.config_audit_hide_sensitive
+                        } else {
+                            R.string.config_audit_reveal_sensitive
+                        }
+                    ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clickable { revealSensitive = !revealSensitive },
+                )
+            }
         }
 
         if (entries.isEmpty()) {
@@ -127,7 +151,11 @@ internal fun ConfigAuditSection() {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(entries, key = { it.id }) { entry ->
-                    AuditRow(entry = entry, onRevert = { revertCandidate = entry })
+                    AuditRow(
+                        entry = entry,
+                        revealSensitive = revealSensitive,
+                        onRevert = { revertCandidate = entry },
+                    )
                 }
             }
         }
@@ -146,7 +174,7 @@ internal fun ConfigAuditSection() {
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = "${displayJSON(entry.newValueJSON)} → ${displayJSON(entry.oldValueJSON)}",
+                        text = "${displayJSON(entry.newValueJSON, entry.key, revealSensitive)} → ${displayJSON(entry.oldValueJSON, entry.key, revealSensitive)}",
                         style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -197,7 +225,11 @@ internal fun ConfigAuditSection() {
 }
 
 @Composable
-private fun AuditRow(entry: ConfigAuditEntry, onRevert: () -> Unit) {
+private fun AuditRow(
+    entry: ConfigAuditEntry,
+    revealSensitive: Boolean,
+    onRevert: () -> Unit,
+) {
     val context = LocalContext.current
     Column(
         modifier = Modifier
@@ -227,7 +259,7 @@ private fun AuditRow(entry: ConfigAuditEntry, onRevert: () -> Unit) {
         )
         Row(verticalAlignment = Alignment.Top) {
             Text(
-                text = displayJSON(entry.oldValueJSON),
+                text = displayJSON(entry.oldValueJSON, entry.key, revealSensitive),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
@@ -242,7 +274,7 @@ private fun AuditRow(entry: ConfigAuditEntry, onRevert: () -> Unit) {
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = displayJSON(entry.newValueJSON),
+                text = displayJSON(entry.newValueJSON, entry.key, revealSensitive),
                 style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                 color = if (entry.status == ConfigAuditStatus.APPLIED) {
                     MaterialTheme.colorScheme.onSurface
@@ -340,8 +372,10 @@ private fun coarseRelativeTime(context: android.content.Context, epochMs: Long):
     }
 }
 
-private fun displayJSON(json: String): String {
+private fun displayJSON(json: String, path: String, revealSensitive: Boolean): String {
     if (json.isEmpty()) return "—"
+    // 敏感字段默认打码；存储层仍是真值，撤销要读它回写。
+    if (!revealSensitive && isSensitivePath(path)) return CONFIG_MASK_TEXT
     if (json.length >= 2 && json.startsWith('"') && json.endsWith('"')) {
         return json.substring(1, json.length - 1)
     }

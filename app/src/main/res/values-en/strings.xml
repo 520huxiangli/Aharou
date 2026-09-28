@@ -1780,6 +1780,8 @@
     <string name="soul_icon_error_too_large">Image is too large — try another.</string>
 
     <string name="config_audit_used_count">%1$d / %2$d recorded</string>
+    <string name="config_audit_reveal_sensitive">Show sensitive values</string>
+    <string name="config_audit_hide_sensitive">Hide sensitive values</string>
     <string name="config_audit_empty">No config changes yet</string>
     <string name="config_audit_revert">Revert</string>
     <string name="config_audit_revert_confirm_title">Revert this change?</string>
