@@ -35,12 +35,21 @@ description: 项目代码规范与命名约定
 
 | 参数 | 说明 |
 | --- | --- |
-| `action` | `read` / `save` / `edit` / `delete` / `list` |
+| `action` | `read` / `save` / `edit` / `delete` / `list` / `log` / `fact` / `mindstream` / `core` |
 | `name` | 记忆名称（即文件名） |
 | `description` | 摘要，`save` 时必填 |
 | `content` | 正文（Markdown），`save` 时必填 |
 | `edits` | 局部编辑列表，语义与编辑文件一致 |
 | `scope` | `project`（默认）或 `global` |
+
+除通用的读写改删，还有四个「持续记录」用的动作：
+
+| 动作 | 用途 |
+| --- | --- |
+| `log` | 追加每日日志——按天归档的流水笔记 |
+| `fact` | 追加一条事实，进结构化的事实库 |
+| `mindstream` | 追加心流——记录当下的想法与情绪，不求结论 |
+| `core` | 读 / 写核心档案（一事一条，每次对话都会自动携带） |
 
 同名记忆项目级优先于全局。更新既有记忆时建议使用 `edit` 局部编辑；涉及踩坑经验的内容，应在验证根因后记录。
 

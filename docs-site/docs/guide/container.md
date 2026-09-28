@@ -159,7 +159,7 @@ AI 跑在容器里，默认只看得到工作区，看不到手机的公共存�
 只挂你需要的子目录，不要图省事直接挂整个 `/sdcard`——那等于把手机里所有文件都暴露给 AI，有隐私泄露风险。
 :::
 
-例子：想让 AI 自己看 App 的日志，把本地目录 `/storage/emulated/0/Android/data/com.aharou.agent/` 挂到容器 `/mnt/aicode`，它就能读 `/mnt/aharou/files/logs/` 下的日志。注意 `Android/data/` 下只能访问 Aharou 自己的目录，其他应用的目录受分区存储限制访问不了。
+例子：想让 AI 自己看 App 的日志，把本地目录 `/storage/emulated/0/Android/data/com.aharou.agent/` 挂到容器 `/mnt/aharou`，它就能读 `/mnt/aharou/files/logs/` 下的日志。注意 `Android/data/` 下只能访问 Aharou 自己的目录，其他应用的目录受分区存储限制访问不了。
 
 如果只是想处理某一个文件，更简单的办法是把它复制进工作区，AI 默认就能访问。
 

@@ -140,6 +140,7 @@ export default defineConfig({
           items: [
             { text: 'AI 供应商与模型', link: '/guide/providers' },
             { text: '默认与专用模型', link: '/guide/default-models' },
+            { text: '模型组', link: '/guide/model-groups' },
             { text: 'Token 统计与费用', link: '/guide/token-stats' }
           ]
         },
@@ -147,10 +148,12 @@ export default defineConfig({
           text: '执行环境',
           items: [
             { text: '容器与镜像', link: '/guide/container' },
+            { text: '环境变量', link: '/guide/env-vars' },
             { text: '远程 SSH 模式', link: '/guide/remote-ssh' },
             { text: '工作区同步', link: '/guide/sync' },
             { text: '网络代理', link: '/guide/proxy' },
-            { text: 'Shizuku 执行后端', link: '/guide/shizuku' }
+            { text: 'Shizuku 执行后端', link: '/guide/shizuku' },
+            { text: '影子屏', link: '/guide/shadow-screen' }
           ]
         },
         {
@@ -160,7 +163,8 @@ export default defineConfig({
             { text: '技能', link: '/guide/skills' },
             { text: '子代理', link: '/guide/subagent' },
             { text: '自定义提示词', link: '/guide/custom-prompts' },
-            { text: '记忆与项目规则', link: '/guide/memory' }
+            { text: '记忆与项目规则', link: '/guide/memory' },
+            { text: '人格（Soul）', link: '/guide/soul' }
           ]
         },
         {
@@ -170,6 +174,8 @@ export default defineConfig({
             { text: '外观与语言', link: '/guide/appearance' },
             { text: '工具授权', link: '/guide/permissions' },
             { text: '软件权限', link: '/guide/app-permissions' },
+            { text: '无障碍与悬浮窗', link: '/guide/accessibility' },
+            { text: '配置审计', link: '/guide/config-audit' },
             { text: '后台运行', link: '/guide/background-run' },
             { text: '日志与故障排查', link: '/guide/logs' },
             { text: '常见错误提示', link: '/guide/error-codes' },
