@@ -38,9 +38,14 @@ object SkillDirectoryScanner {
             .distinct()
 
         val base = root.trimEnd('/')
-        return dirs.mapNotNull { relative ->
-            val dirPath = if (relative.isEmpty()) base else "$base/$relative"
-            SkillParser.parse(provider, dirPath)
-        }.sortedBy { it.name.lowercase() }
+        return runCatching {
+            dirs.mapNotNull { relative ->
+                val dirPath = if (relative.isEmpty()) base else "$base/$relative"
+                SkillParser.parse(provider, dirPath)
+            }.sortedBy { it.name.lowercase() }
+        }.getOrElse { e ->
+            FileLogger.w(TAG, "解析技能失败（$root）：${e.message}")
+            emptyList()
+        }
     }
 }

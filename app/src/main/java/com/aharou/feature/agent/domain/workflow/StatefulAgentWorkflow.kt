@@ -249,7 +249,7 @@ class StatefulAgentWorkflow @Inject constructor(
         if (history.size <= 2) return false
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
         val compacted = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true, windowProvider = provider, onEvent = onEvent)
-        return compacted.size != history.size
+        return compacted !== history
     }
 
     /**
