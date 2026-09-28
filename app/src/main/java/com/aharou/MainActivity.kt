@@ -47,10 +47,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import dagger.hilt.android.EntryPointAccessors
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -58,6 +60,8 @@ import androidx.lifecycle.lifecycleScope
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.PanelScriptImporter
 import com.aharou.feature.agent.presentation.SharedIntakeHolder
+import com.aharou.feature.agent.presentation.SharedIntakeEntryPoint
+import com.aharou.feature.agent.presentation.component.ShareIntakeDialog
 import com.aharou.feature.agent.presentation.component.copyUriToWorkspace
 import com.aharou.feature.agent.presentation.component.toPendingAttachment
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -205,7 +209,8 @@ class MainActivity : ComponentActivity() {
      */
     @Suppress("DEPRECATION")
     private fun handleShareIntent(intent: Intent?) {
-        val uris = when (intent?.action) {
+        if (intent == null) return
+        val direct = when (intent.action) {
             Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
             Intent.ACTION_SEND_MULTIPLE ->
                 intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
@@ -213,6 +218,18 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_VIEW -> listOfNotNull(intent.data)
             else -> return
         }
+        // 分享方只把 URI 塞进 clipData 的情况很常见（QQ/微信等按官方推荐这么做，EXTRA_STREAM 为空），
+        // 只认 EXTRA_STREAM 会表现为「分享进来什么都没发生」：不导入、也不报错。
+        val fromClip = intent.clipData?.let { clip ->
+            (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        }.orEmpty()
+        val uris = direct.ifEmpty { fromClip }
+        FileLogger.i(
+            "MainActivity",
+            "分享 intent: action=${intent.action} type=${intent.type} " +
+                "extraKeys=${intent.extras?.keySet()?.joinToString()} " +
+                "clipItems=${intent.clipData?.itemCount ?: 0} data=${intent.data} -> uris=$uris"
+        )
         if (uris.isEmpty()) return
         lifecycleScope.launch {
             // 脚本类文件导入 ~/.aharou/scripts/（面板脚本目录），其余当普通附件。
@@ -234,7 +251,9 @@ class MainActivity : ComponentActivity() {
                     .getOrNull()
             }
             if (uploaded.isNotEmpty()) {
-                sharedIntakeHolder.submit(uploaded.map { it.toPendingAttachment() })
+                // 文件已落地，但先不投给聊天面板：冷启动时面板可能还没组合完，投进去会落空。
+                // 交给用户确认（预览 / 插入输入框 / 取消），点「插入输入框」时再投。
+                sharedIntakeHolder.awaitConfirm(uploaded.map { it.toPendingAttachment() })
             }
         }
     }
@@ -996,6 +1015,29 @@ fun AppNavigation(
                 openUrl(context, githubReleaseUrl(tag))
                 settingsViewModel.dismissUpdateCheck()
             }
+        )
+    }
+
+    // 外部分享进来的文件：确认「预览 / 插入输入框 / 取消」后才投给聊天面板。
+    // 本函数是独立 Composable，够不到 Activity 的注入字段，走 EntryPoint 取同一个单例。
+    val intakeContext = LocalContext.current.applicationContext
+    val intakeHolder = remember(intakeContext) {
+        EntryPointAccessors.fromApplication(intakeContext, SharedIntakeEntryPoint::class.java)
+            .sharedIntakeHolder()
+    }
+    val awaitingShareItems by intakeHolder.awaitingConfirm.collectAsStateWithLifecycle()
+    if (awaitingShareItems.isNotEmpty()) {
+        ShareIntakeDialog(
+            items = awaitingShareItems,
+            onPreview = { item ->
+                openFile(item.containerPath, 0, false)
+                intakeHolder.clearAwaitingConfirm()
+            },
+            onInsert = {
+                intakeHolder.submit(awaitingShareItems)
+                intakeHolder.clearAwaitingConfirm()
+            },
+            onDismiss = { intakeHolder.clearAwaitingConfirm() }
         )
     }
 

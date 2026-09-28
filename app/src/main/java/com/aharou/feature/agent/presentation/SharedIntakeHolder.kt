@@ -22,16 +22,37 @@ internal class SharedIntakeHolder @Inject constructor() {
     private val _pending = MutableStateFlow<List<PendingUploadAttachment>>(emptyList())
     val pending: StateFlow<List<PendingUploadAttachment>> = _pending.asStateFlow()
 
+    /** 已落地、等用户确认怎么处理的分享文件；确认或取消后才进 [pending]。 */
+    private val _awaitingConfirm = MutableStateFlow<List<PendingUploadAttachment>>(emptyList())
+    val awaitingConfirm: StateFlow<List<PendingUploadAttachment>> = _awaitingConfirm.asStateFlow()
+
+    /** 收下已落地的分享文件等用户确认。重复分享追加而不是覆盖，否则前一个会被顶掉。 */
+    fun awaitConfirm(items: List<PendingUploadAttachment>) {
+        if (items.isEmpty()) return
+        _awaitingConfirm.value = _awaitingConfirm.value + items
+        com.aharou.core.util.FileLogger.i(TAG, "待确认 ${items.size} 项")
+    }
+
+    fun clearAwaitingConfirm() {
+        _awaitingConfirm.value = emptyList()
+    }
+
     fun submit(items: List<PendingUploadAttachment>) {
         if (items.isEmpty()) return
         _pending.value = _pending.value + items
+        com.aharou.core.util.FileLogger.i(TAG, "submit ${items.size} 项，pending 现有 ${_pending.value.size} 项")
     }
 
     /** 取走全部待插入附件；取完即清空，避免来回切页时重复插入。 */
     fun consume(): List<PendingUploadAttachment> {
         val items = _pending.value
         if (items.isNotEmpty()) _pending.value = emptyList()
+        com.aharou.core.util.FileLogger.i(TAG, "consume 取走 ${items.size} 项")
         return items
+    }
+
+    private companion object {
+        const val TAG = "SharedIntake"
     }
 }
 

@@ -211,6 +211,10 @@
     <string name="provider_dashboard_test_failed">执行失败</string>
     <string name="provider_dashboard_no_scripts">~/.aharou/scripts 目录下暂无脚本</string>
     <string name="share_script_imported">已导入面板脚本：%1$s（可在供应商设置 → 面板脚本 中选择）</string>
+    <string name="share_intake_title">如何处理这个文件？</string>
+    <string name="share_intake_title_multiple">如何处理这些文件？</string>
+    <string name="share_intake_preview">预览</string>
+    <string name="share_intake_insert">插入输入框</string>
     <string name="provider_dashboard_import_script">从手机导入脚本</string>
     <string name="provider_dashboard_select_title">选择面板脚本</string>
     <string name="provider_dashboard_select_hint">执行并预览面板；左滑脚本可删除</string>

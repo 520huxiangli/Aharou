@@ -211,6 +211,10 @@
     <string name="provider_dashboard_test_failed">Execution Failed</string>
     <string name="provider_dashboard_no_scripts">No scripts found in ~/.aharou/scripts/</string>
     <string name="share_script_imported">Imported panel script: %1$s (pick it under Provider settings → Dashboard script)</string>
+    <string name="share_intake_title">How do you want to handle this file?</string>
+    <string name="share_intake_title_multiple">How do you want to handle these files?</string>
+    <string name="share_intake_preview">Preview</string>
+    <string name="share_intake_insert">Insert into input</string>
     <string name="provider_dashboard_import_script">Import script from device</string>
     <string name="provider_dashboard_select_title">Select Dashboard Script</string>
     <string name="provider_dashboard_select_hint">Execute and preview the panel; swipe a script left to delete it</string>
