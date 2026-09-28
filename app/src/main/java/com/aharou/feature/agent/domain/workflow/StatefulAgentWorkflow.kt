@@ -63,6 +63,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
@@ -550,11 +551,20 @@ class StatefulAgentWorkflow @Inject constructor(
                             // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
                             val supportsVision = activeModelSupportsVision(currentContext.sessionId)
                             val messagesToSend = sanitizeImagesForModel(compactedMessages, supportsVision)
-                            providerInUse.completeStream(systemPrompt, messagesToSend, currentTools, currentContext.reasoningEffort).collect { chunk ->
+                            // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
+                            var samplingLoopCut = false
+                            providerInUse.completeStream(systemPrompt, messagesToSend, currentTools, currentContext.reasoningEffort)
+                                .takeWhile { !samplingLoopCut }
+                                .collect { chunk ->
                                 when (chunk) {
                                     is AIStreamChunk.TextDelta -> {
                                         if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
                                         acc.append(chunk.text)
+                                        val loopStart = samplingLoopStart(acc)
+                                        if (loopStart >= 0) {
+                                            acc.setLength(loopStart)
+                                            samplingLoopCut = true
+                                        }
                                         pendingTextDelta = acc.toString()
                                         val now = SystemClock.elapsedRealtime()
                                         if (now - lastTextDeltaSentAt >= DELTA_THROTTLE_MS) {
@@ -566,6 +576,11 @@ class StatefulAgentWorkflow @Inject constructor(
                                         // 思考内容也算首字（推理模型先吐思考再吐正文）
                                         if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
                                         reasoningAcc.append(chunk.text)
+                                        val loopStart = samplingLoopStart(reasoningAcc)
+                                        if (loopStart >= 0) {
+                                            reasoningAcc.setLength(loopStart)
+                                            samplingLoopCut = true
+                                        }
                                         pendingReasoningDelta = reasoningAcc.toString()
                                         val now = SystemClock.elapsedRealtime()
                                         if (now - lastReasoningDeltaSentAt >= DELTA_THROTTLE_MS) {
@@ -870,6 +885,54 @@ class StatefulAgentWorkflow @Inject constructor(
      * - 不支持：剥离所有图片（仅影响本次发送，不动持久化数据），历史/输入中的图片不会原样发给
      *   非多模态模型导致请求失败；切回多模态模型后图片上下文仍可正常使用。
      */
+    /**
+     * 采样循环检测：模型偶尔会连续吐出同一片段（思考里尤其常见，一句话重复几十遍）。
+     * 命中时返回重复起点的下标，调用方截断到该处只保留第一次；未命中返回 -1。
+     * 单元长度下限 2、连续重复下限 20 次，避免把 `---` 分隔符或少量重复误判成循环。
+     */
+    private fun samplingLoopStart(text: CharSequence, minRepeat: Int = 20, maxUnit: Int = 16): Int {
+        val len = text.length
+        for (unit in 2..maxUnit) {
+            val need = unit * minRepeat
+            if (len < need) continue
+            val end = len
+            // 单元内全是同一个字符时不算重复：`--------`、`====` 这类分隔线和表格线
+            // 满足任意 unit 的周期条件，不排除会被误判成循环。
+            if ((1 until unit).none { text[end - unit] != text[end - unit + it] }) continue
+            var repeated = true
+            var i = 1
+            while (repeated && i < minRepeat) {
+                var j = 0
+                while (j < unit) {
+                    if (text[end - unit + j] != text[end - unit * (i + 1) + j]) {
+                        repeated = false
+                        break
+                    }
+                    j++
+                }
+                i++
+            }
+            if (repeated) {
+                // 尾部窗口只够证明「重复了 minRepeat 次」，前面往往还连着更多次；
+                // 向前回溯到周期真正的起点，只留第一次。
+                var start = end - unit
+                while (start - unit >= 0) {
+                    var same = true
+                    for (k in 0 until unit) {
+                        if (text[start - unit + k] != text[start + k]) {
+                            same = false
+                            break
+                        }
+                    }
+                    if (!same) break
+                    start -= unit
+                }
+                return start + unit
+            }
+        }
+        return -1
+    }
+
     private fun sanitizeImagesForModel(
         messages: List<AgentMessage>,
         supportsVision: Boolean
