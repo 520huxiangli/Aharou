@@ -370,8 +370,8 @@
     <string name="chat_add_attachment">添加附件</string>
     <string name="chat_take_photo">拍照</string>
     <string name="chat_reasoning_effort">思考强度</string>
+    <string name="chat_reasoning_effort_default">默认</string>
     <string name="chat_reasoning_effort_none">不思考</string>
-    <string name="chat_reasoning_effort_minimal">极低</string>
     <string name="chat_reasoning_effort_low">低</string>
     <string name="chat_reasoning_effort_medium">中</string>
     <string name="chat_reasoning_effort_high">高</string>
@@ -388,6 +388,7 @@
     <string name="chat_open_terminal">打开终端</string>
     <string name="chat_open_browser">打开浏览器</string>
     <string name="chat_open_sandbox">打开沙箱文件</string>
+    <string name="chat_open_shared">打开共享区</string>
     <string name="chat_ssh_connected">SSH：已连接</string>
     <string name="chat_ssh_connecting">SSH：连接中…</string>
     <string name="chat_ssh_failed">SSH：连接失败</string>

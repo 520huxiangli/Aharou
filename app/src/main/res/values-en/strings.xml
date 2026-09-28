@@ -370,8 +370,8 @@
     <string name="chat_add_attachment">Add attachment</string>
     <string name="chat_take_photo">Take photo</string>
     <string name="chat_reasoning_effort">Reasoning effort</string>
+    <string name="chat_reasoning_effort_default">Default</string>
     <string name="chat_reasoning_effort_none">None</string>
-    <string name="chat_reasoning_effort_minimal">Minimal</string>
     <string name="chat_reasoning_effort_low">Low</string>
     <string name="chat_reasoning_effort_medium">Medium</string>
     <string name="chat_reasoning_effort_high">High</string>
@@ -388,6 +388,7 @@
     <string name="chat_open_terminal">Open terminal</string>
     <string name="chat_open_browser">Open browser</string>
     <string name="chat_open_sandbox">Open sandbox files</string>
+    <string name="chat_open_shared">Open shared folder</string>
     <string name="chat_ssh_connected">SSH: Connected</string>
     <string name="chat_ssh_connecting">SSH: Connecting…</string>
     <string name="chat_ssh_failed">SSH: Connection failed</string>

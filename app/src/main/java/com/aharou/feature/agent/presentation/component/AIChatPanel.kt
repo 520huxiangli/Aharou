@@ -424,6 +424,7 @@ fun AIChatPanel(
     onNavigateToGit: () -> Unit = {},
     onNavigateToBrowser: () -> Unit = {},
     onNavigateToSandbox: () -> Unit = {},
+    onNavigateToShared: () -> Unit = {},
     settingsViewModel: SettingsViewModel? = null,
     workspaceViewModel: WorkspaceViewModel? = null,
     onOpenDrawer: () -> Unit,
@@ -482,7 +483,6 @@ fun AIChatPanel(
     val messageEntryDelays = remember(messages, entryScheduler) { entryScheduler.schedule(messages) }
     val currentSessionState by viewModel.currentSessionState.collectAsStateWithLifecycle()
     val currentSession = currentSessionState
-    val sessionTitle = currentSession?.title?.takeIf { it.isNotBlank() } ?: stringResource(R.string.chat_new_session_btn)
     val sessionInputTokens = currentSession?.totalInputTokens ?: 0
     val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
     val sessionLastInputTokens = currentSession?.lastInputTokens ?: 0
@@ -697,7 +697,8 @@ fun AIChatPanel(
             messageCount = messages.size,
             agentState = agentStateStr,
             sessionMode = currentMode.name.lowercase(),
-            reasoningEffort = reasoningEffort.apiValue,
+            // 「默认」档没有 apiValue，环境变量给空串（仪表盘脚本据此判断未指定档位）。
+            reasoningEffort = reasoningEffort.apiValue.orEmpty(),
             refreshReason = refreshReason
         )
     }
@@ -1114,8 +1115,6 @@ fun AIChatPanel(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatHeader(
-                sessionTitle = sessionTitle,
-                modelName = activeProvider?.effectiveModel,
                 inputTokens = sessionInputTokens,
                 outputTokens = sessionOutputTokens,
                 onOpenDrawer = {
@@ -1127,6 +1126,7 @@ fun AIChatPanel(
                 onNavigateToGit = onNavigateToGit,
                 onNavigateToBrowser = onNavigateToBrowser,
                 onNavigateToSandbox = onNavigateToSandbox,
+                onNavigateToShared = onNavigateToShared,
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) },
                 connectionState = connectionState?.takeIf { isRemote },

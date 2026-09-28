@@ -37,19 +37,17 @@ import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
-import com.aharou.feature.settings.presentation.component.ModelLogoIcon
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Globe
+import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Menu
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Terminal
 
 @Composable
 internal fun ChatHeader(
-    sessionTitle: String,
-    modelName: String?,
     inputTokens: Int,
     outputTokens: Int,
     onOpenDrawer: () -> Unit,
@@ -58,6 +56,7 @@ internal fun ChatHeader(
     onNavigateToGit: () -> Unit,
     onNavigateToBrowser: () -> Unit = {},
     onNavigateToSandbox: () -> Unit = {},
+    onNavigateToShared: () -> Unit = {},
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
     connectionState: com.aharou.feature.agent.domain.container.ConnectionState? = null,
@@ -94,30 +93,8 @@ internal fun ChatHeader(
                 } else {
                     Spacer(modifier = Modifier.width(Spacing.sm))
                 }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = sessionTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-                    ) {
-                        if (!modelName.isNullOrBlank()) {
-                            ModelLogoIcon(modelName = modelName, size = 14.dp)
-                        }
-                        Text(
-                            text = modelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.chat_no_model_selected),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
+                // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
+                Spacer(modifier = Modifier.weight(1f))
                 IconButton(onClick = onNewChat) {
                     Icon(
                         FeatherIcons.Plus,
@@ -147,6 +124,12 @@ internal fun ChatHeader(
                     contentDescription = stringResource(R.string.chat_open_sandbox),
                     active = false,
                     onClick = onNavigateToSandbox
+                )
+                WorkbenchIconButton(
+                    icon = FeatherIcons.HardDrive,
+                    contentDescription = stringResource(R.string.chat_open_shared),
+                    active = false,
+                    onClick = onNavigateToShared
                 )
             }
             // 远程模式：左边 SSH 连接状态，右边 token 累计统计
