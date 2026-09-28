@@ -654,8 +654,8 @@ class SettingsViewModel @Inject constructor(
     private val _imageSourceOptions = MutableStateFlow<List<String>>(emptyList())
     val imageSourceOptions: StateFlow<List<String>> = _imageSourceOptions.asStateFlow()
 
-    /** 当前选中的下载源（默认官方）。 */
-    private val _selectedImageSource = MutableStateFlow("official")
+    /** 当前选中的下载源（默认 Aharou 自建源；清单里没有该源时自动兜底到其他可用源）。 */
+    private val _selectedImageSource = MutableStateFlow("aharou")
     val selectedImageSource: StateFlow<String> = _selectedImageSource.asStateFlow()
 
     /** 已下载/已安装的镜像记录（entryId → 记录），跨重启保留。 */
@@ -714,8 +714,9 @@ class SettingsViewModel @Inject constructor(
     init {
         _imageCatalog.value = containerImageCatalog.load()
         _imageSourceOptions.value = containerImageCatalog.sourceIds
-        _selectedImageSource.value = containerImageCatalog.sourceIds.firstOrNull { it == "official" }
-            ?: containerImageCatalog.sourceIds.firstOrNull() ?: "official"
+        _selectedImageSource.value = containerImageCatalog.sourceIds.firstOrNull { it == "aharou" }
+            ?: containerImageCatalog.sourceIds.firstOrNull { it == "official" }
+            ?: containerImageCatalog.sourceIds.firstOrNull() ?: "aharou"
         // 已下载/已安装记录跨重启保留
         viewModelScope.launch {
             containerSettingsRepository.downloadedImagesFlow.collect { records ->

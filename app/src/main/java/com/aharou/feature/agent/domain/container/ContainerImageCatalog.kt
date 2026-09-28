@@ -2,7 +2,11 @@ package com.aharou.feature.agent.domain.container
 
 import android.content.Context
 import android.os.Build
+import com.aharou.core.net.RepoDataFetcher
+import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
@@ -19,6 +23,8 @@ data class ContainerImageEntry(
     /** 所属发行版（对应全局 sources 表的键，如 alpine/ubuntu）。 */
     val distro: String = "",
     val path: String,
+    /** 按源覆盖的 [path]：源 id → 该源下的相对路径（缺省用 [path]）。用于结构不同的自建源。 */
+    val paths: Map<String, String> = emptyMap(),
     /** 标准架构键（arm64/x86_64）→ 该发行版实际目录名（如 aarch64/amd64）。 */
     val abiNames: Map<String, String> = emptyMap()
 )
@@ -38,7 +44,12 @@ data class ContainerImageCatalogData(
 )
 
 /**
- * 从内置 assets/container-images.json 加载可下载镜像目录。
+ * 可下载镜像目录：读取顺序「内存缓存 -> 磁盘已下载文件 -> 内置 assets」。
+ *
+ * 网络预热由 [refreshFromNetworkIfStale] 在 App 启动阶段后台执行（失败静默），
+ * 走 [RepoDataFetcher] 拉本仓库的 `data/container-images.json`（多 CDN 降级 + 磁盘缓存）。
+ * 这样加新版本、换源、改地址都只需改仓库里那个 JSON，不必发版。
+ *
  * 源与镜像分离存储：URL = sources[源][发行版] 前缀 + 条目 path（{abi} 按设备架构替换）。
  */
 @Singleton
@@ -47,7 +58,64 @@ class ContainerImageCatalog @Inject constructor(
 ) {
     private var data = ContainerImageCatalogData()
 
+    @Volatile
+    private var cached: ContainerImageCatalogData? = null
+
+    @Volatile
+    private var refreshAttemptedThisProcess = false
+
+    /**
+     * 仅供 App 启动阶段后台协程调用：拉取仓库里的最新清单并更新内存缓存。
+     * 解析成功且镜像列表非空才采纳；任何失败都静默，UI 仍走磁盘缓存或内置 assets。
+     */
+    suspend fun refreshFromNetworkIfStale() = withContext(Dispatchers.IO) {
+        if (refreshAttemptedThisProcess) return@withContext
+        refreshAttemptedThisProcess = true
+
+        val remote = when (val result = runCatching {
+            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH)
+        }.getOrNull()) {
+            is RepoDataFetcher.FetchResult.Success -> result.content
+            is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content
+            else -> null
+        }
+        if (remote.isNullOrBlank()) return@withContext
+
+        val parsed = runCatching {
+            json.decodeFromString<ContainerImageCatalogData>(remote)
+        }.getOrNull()
+        if (parsed != null && parsed.images.isNotEmpty()) {
+            cached = parsed
+            FileLogger.d(TAG, "远端镜像目录已更新：${parsed.images.size} 条、${parsed.sources.size} 个源")
+        }
+    }
+
+    /**
+     * UI 专用快速同步读取：内存缓存 -> 磁盘下载文件 -> assets 内置文件。
+     * 纯本地 IO，不发任何网络请求。
+     */
     fun load(): List<ContainerImageEntry> {
+        cached?.let {
+            data = it
+            return it.images
+        }
+
+        // 磁盘缓存由 RepoDataFetcher 写入，目录与它统一
+        val diskRaw = runCatching {
+            RepoDataFetcher(context).readLocalCache(REMOTE_CATALOG_PATH)
+        }.getOrNull()
+        if (!diskRaw.isNullOrBlank()) {
+            val parsed = runCatching {
+                json.decodeFromString<ContainerImageCatalogData>(diskRaw)
+            }.getOrNull()
+            if (parsed != null && parsed.images.isNotEmpty()) {
+                cached = parsed
+                data = parsed
+                return parsed.images
+            }
+        }
+
+        // 兜底内置 assets（必定存在）
         val raw = runCatching {
             context.assets.open(ASSET_FILE).bufferedReader().use { it.readText() }
         }.getOrNull() ?: return emptyList()
@@ -73,11 +141,17 @@ class ContainerImageCatalog @Inject constructor(
         val prefix = data.sources[sourceId]?.distros?.get(entry.distro)
             ?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return null
         val abiName = entry.abiNames[abi] ?: return null
-        return "$prefix/${entry.path}".replace("{abi}", abiName)
+        val path = entry.paths[sourceId] ?: entry.path
+        return "$prefix/$path".replace("{abi}", abiName)
     }
 
     companion object {
+        private const val TAG = "ContainerImageCatalog"
         private const val ASSET_FILE = "container-images.json"
+
+        /** 统一拉取器中的仓库相对路径：本仓库维护的可下载镜像目录。 */
+        private const val REMOTE_CATALOG_PATH = "data/container-images.json"
+
         private val json = Json { ignoreUnknownKeys = true }
 
         /** 与 [com.aharou.feature.agent.domain.container.ContainerInstaller] 一致的架构判定：x86 设备走 x86_64，其余走 arm64。 */

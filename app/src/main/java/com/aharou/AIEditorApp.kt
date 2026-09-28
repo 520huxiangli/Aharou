@@ -209,6 +209,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var providerProxyRegistry: com.aharou.feature.settings.data.repository.ProviderProxyRegistry
 
+    /** 可下载镜像目录：启动即异步刷新本仓库清单（12h 缓存，失败静默，兜底磁盘缓存与内置 assets）。 */
+    @Inject
+    lateinit var containerImageCatalog: com.aharou.feature.agent.domain.container.ContainerImageCatalog
+
     /** 长驻作用域：持续把持久化的日志等级同步到 FileLogger。 */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -279,6 +283,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 启动即异步刷新仓库 providers.json 预设（12h 缓存；失败静默，兜底本地磁盘与内置 assets）。
         appScope.launch {
             com.aharou.feature.settings.data.local.ProviderPresetLibrary.refreshFromNetworkIfStale(this@AIEditorApp)
+        }
+        // 启动即异步刷新可下载镜像目录（12h 缓存；失败静默，兜底磁盘缓存与内置 assets；加版本无需发版）。
+        appScope.launch {
+            containerImageCatalog.refreshFromNetworkIfStale()
         }
         // 启动即加载持久化等级，并随设置页改动实时生效（唯一同步点）。
         appScope.launch {
