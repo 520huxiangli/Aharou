@@ -70,7 +70,7 @@ internal fun FloatingToolStatusBar(
     onOpenDetail: (String) -> Unit,
     onStop: () -> Unit,
     browserPool: com.aharou.feature.browser.BrowserTabPool? = null,
-    vdCapture: (suspend () -> android.graphics.Bitmap?)? = null,
+    vdCapture: (suspend (Int) -> android.graphics.Bitmap?)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (toolMessages.isEmpty()) return
@@ -202,7 +202,7 @@ private fun ToolMiniScreenThumbnail(
     message: AgentUIMessage,
     live: String?,
     browserPool: com.aharou.feature.browser.BrowserTabPool? = null,
-    vdCapture: (suspend () -> android.graphics.Bitmap?)? = null,
+    vdCapture: (suspend (Int) -> android.graphics.Bitmap?)? = null,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -308,15 +308,17 @@ private fun BrowserMiniScreen(
  * 影子屏小屏幕：实时抓虚拟屏画面（每 2s 一帧）。
  * Agent 在影子屏里静默操作（不占用户主屏）时，用户从这里围观它的操作页面。
  */
+private const val MINI_VD_SAMPLE = 3
+
 @Composable
 private fun VdMiniScreen(
-    capture: (suspend () -> android.graphics.Bitmap?)?,
+    capture: (suspend (Int) -> android.graphics.Bitmap?)?,
     running: Boolean,
 ) {
     var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(capture, running) {
         while (true) {
-            val shot = capture?.let { runCatching { it() }.getOrNull() }
+            val shot = capture?.let { runCatching { it(MINI_VD_SAMPLE) }.getOrNull() }
             if (shot != null) frame = shot
             delay(2000)
         }

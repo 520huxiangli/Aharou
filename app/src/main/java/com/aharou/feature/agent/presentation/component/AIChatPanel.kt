@@ -457,7 +457,7 @@ fun AIChatPanel(
             messages = messages,
             initialMessageId = computerSheetTarget,
             browserPool = viewModel.browserTabPool,
-            vdCapture = { viewModel.captureVdFrame() },
+            vdCapture = { viewModel.captureVdFrame(it) },
             onDismiss = { computerSheetMessageId = null },
         )
     }
@@ -1356,7 +1356,7 @@ fun AIChatPanel(
                     onOpenDetail = { id -> ToolComputerSignal.request(id) },
                     onStop = { viewModel.stopAgent() },
                     browserPool = viewModel.browserTabPool,
-                    vdCapture = { viewModel.captureVdFrame() },
+                    vdCapture = { viewModel.captureVdFrame(it) },
                     modifier = Modifier
                         .padding(horizontal = 12.dp)
                         .padding(bottom = 6.dp),

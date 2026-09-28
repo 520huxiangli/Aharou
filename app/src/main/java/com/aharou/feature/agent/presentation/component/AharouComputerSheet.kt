@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -97,7 +98,7 @@ internal fun AharouComputerSheet(
     messages: List<AgentUIMessage>,
     initialMessageId: String,
     browserPool: BrowserTabPool?,
-    vdCapture: (suspend () -> Bitmap?)? = null,
+    vdCapture: (suspend (Int) -> Bitmap?)? = null,
     onDismiss: () -> Unit,
 ) {
     val toolMessages = remember(messages) { messages.filter { it.toolName != null } }
@@ -230,7 +231,7 @@ private fun ComputerActionButton(message: AgentUIMessage?) {
 private fun ToolComputerPage(
     message: AgentUIMessage,
     browserPool: BrowserTabPool?,
-    vdCapture: (suspend () -> Bitmap?)? = null,
+    vdCapture: (suspend (Int) -> Bitmap?)? = null,
 ) {
     val running = message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
         message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER)
@@ -324,13 +325,13 @@ private fun ToolComputerPage(
  */
 @Composable
 private fun VdCard(
-    capture: (suspend () -> Bitmap?)?,
+    capture: (suspend (Int) -> Bitmap?)?,
     running: Boolean,
 ) {
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(capture, running) {
         while (true) {
-            val shot = capture?.let { runCatching { it() }.getOrNull() }
+            val shot = capture?.let { runCatching { it(VD_FRAME_SAMPLE) }.getOrNull() }
             if (shot != null) frame = shot
             delay(1500)
         }
@@ -349,7 +350,12 @@ private fun VdCard(
             Image(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = null,
-                modifier = Modifier.fillMaxWidth(),
+                // 竖屏虚拟屏（9:16）只给 fillMaxWidth 会被 sheet 的高度框住，
+                // Fit 之后缩成窄窄一条、字全看不清；显式声明比例才能按宽度铺开。
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bmp.width.toFloat() / bmp.height.toFloat())
+                    .clip(RoundedCornerShape(Radius.mdLarge)),
                 contentScale = ContentScale.Fit,
             )
         } else {
@@ -367,6 +373,9 @@ private fun VdCard(
         }
     }
 }
+
+/** 抓帧采样率：这张图要按屏宽铺开，得取到接近虚拟屏原宽的一半以上才看得清。 */
+private const val VD_FRAME_SAMPLE = 2
 
 /** 黑色终端卡：`$ 命令` + 输出（绿字等宽，对齐 原版 的视觉）。 */
 @Composable

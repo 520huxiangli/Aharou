@@ -162,16 +162,16 @@ class AIAgentViewModel @Inject constructor(
     private val sessionJobs = mutableMapOf<String, Job>()
 
     /**
-     * 「影子屏小屏幕」取一帧：给聊天页的小屏幕缩略图实时直播 Agent 的离屏操作画面。
-     * 解码按缩略图尺寸采样（inSampleSize=3），避免每帧整图进内存。
+     * 「影子屏」取一帧。缩略图轮播用 [sampleSize]=3 就够（每 1.5s 一帧，避免整图进内存）；
+     * 工具详情面板里的图要按屏宽铺开，用 2 才看得清。
      */
-    suspend fun captureVdFrame(): android.graphics.Bitmap? =
+    suspend fun captureVdFrame(sampleSize: Int = 3): android.graphics.Bitmap? =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 val info = vdController.state.value ?: vdController.refresh()
                     ?: return@runCatching null
                 val (_, file) = vdController.screenshot(info)
-                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 3 }
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
                 android.graphics.BitmapFactory.decodeFile(file.absolutePath, opts)
             }.getOrNull()
         }
