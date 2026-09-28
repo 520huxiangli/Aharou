@@ -52,6 +52,7 @@ Aharou packs a full AI assistant and Linux environment into your phone: a built-
 ## License
 
 - Released under [GPL-3.0](LICENSE).
+- This project is derived from AiCode: portions are Copyright (C) 2026 AiCode contributors, and new or modified portions are Copyright (C) 2026 Aharou contributors.
 - This project uses several open-source components; their copyright and license notices are preserved in [LICENSE](LICENSE) and the related NOTICE files.
 
 ## Feedback

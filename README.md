@@ -52,6 +52,7 @@ Aharou 把一套完整的 AI 助手与 Linux 环境装进手机：内置 Alpine 
 ## 开源说明
 
 - 本项目以 [GPL-3.0](LICENSE) 协议开源。
+- 本项目基于 AiCode 改造：部分代码版权归 AiCode contributors，新增与改动部分版权归 Aharou contributors。
 - 项目开发中使用了若干开源组件；其版权与许可声明见 [LICENSE](LICENSE) 与相关 NOTICE 文件。
 
 ## 反馈与贡献
