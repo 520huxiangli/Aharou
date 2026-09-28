@@ -376,32 +376,43 @@ class GitViewModel @Inject constructor(
     fun initRepo() = runAction(R.string.git_action_init, { repository.initRepo() })
 
     /**
-     * 克隆到新建的独立工作区：先建工作区目录、把 clone 落进去，**不切走当前工作区**。
+     * 克隆仓库。
      *
-     * 工作区与会话一一对应（一会话一仓库一工作区），所以这里顺带为新工作区建一个会话，
-     * 仓库拉下来后切到那个会话即进入它的环境。切工作区会停掉当前工作区的 AI 会话并关掉
-     * 终端标签，所以克隆中途不该动它——失败时当前会话与挂载点均不受影响。
-     * 目标目录同时作为本次命令的挂载点，于是 `git clone <url> .` 落进新目录而非当前工作区。
+     * 当前工作区还是空的（刚建好、还没放过东西）就直接克隆进去：不新建工作区、不去重名字，
+     * 也不切走——人本来就在那儿，空目录里也没什么可保的。否则克隆到新建的独立工作区
+     * （撞名时自动加后缀）。
+     *
+     * 工作区与会话一一对应（一会话一仓库一工作区），所以新工作区会顺带建一个会话，克隆成功
+     * 后切过去。切工作区会停掉当前工作区的 AI 会话并关掉终端标签，所以这一步必须放在克隆
+     * 成功之后——失败时当前会话与挂载点均不受影响。
+     * 目标目录同时作为本次命令的挂载点，于是 `git clone <url> .` 落进目标目录而非别处。
      */
     fun cloneRepo(workspaceName: String, url: String) = runAction(
         R.string.git_action_clone,
         {
-            val target = workspaceRepository.createUniqueWorkspace(workspaceName)
-                ?: throw GitCommandFailureException(
-                    context.getString(R.string.git_clone_workspace_failed, workspaceName)
-                )
-            val output = repository.cloneRepo(url, target.path) { pct ->
+            val onProgress: (Int) -> Unit = { pct ->
                 // git 按阶段各自数到 100，取大值让进度条只前进不后退。
                 _state.update { s ->
                     val next = maxOf(s.cloneProgress ?: 0, pct)
                     if (s.cloneProgress == next) s else s.copy(cloneProgress = next)
                 }
             }
-            // 克隆成功才落会话，失败时不在侧边栏留一个空壳。
-            sessionUseCase.upsertSession(
-                sessionUseCase.newSessionEntity(target.path).copy(title = workspaceName)
-            )
-            output
+            val current = workspaceRepository.currentPath()
+            if (workspaceRepository.isDirEmpty(current)) {
+                repository.cloneRepo(url, current, onProgress)
+            } else {
+                val target = workspaceRepository.createUniqueWorkspace(workspaceName)
+                    ?: throw GitCommandFailureException(
+                        context.getString(R.string.git_clone_workspace_failed, workspaceName)
+                    )
+                val output = repository.cloneRepo(url, target.path, onProgress)
+                // 克隆成功才落会话，失败时不在侧边栏留一个空壳；标题用真实工作区名（撞名时带后缀）。
+                sessionUseCase.upsertSession(
+                    sessionUseCase.newSessionEntity(target.path).copy(title = target.name)
+                )
+                workspaceRepository.switchToNewWorkspace(target.path)
+                output
+            }
         }
     )
     fun pull() {

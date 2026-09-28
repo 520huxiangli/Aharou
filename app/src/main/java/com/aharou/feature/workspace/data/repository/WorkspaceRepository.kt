@@ -321,6 +321,18 @@ class WorkspaceRepository @Inject constructor(
      */
     suspend fun selectWorkspaceByPath(path: String) = selectWorkspaceBy { it.path == path }
 
+    /**
+     * 切到刚创建、还没进 `_workspaces` 列表的工作区。
+     *
+     * `createUniqueWorkspace` 不自带刷新，不先刷一下列表的话 [selectWorkspaceByPath] 会在
+     * 列表里找不到目标而静默不切；而刷新会在 [ensureCurrentReachable] 里重新校验当前工作区，
+     * 所以这里只用于「当前工作区健在、只是要换成新建的那个」的场景。
+     */
+    suspend fun switchToNewWorkspace(path: String) {
+        refreshWorkspaces()
+        selectWorkspaceByPath(path)
+    }
+
     private suspend fun selectWorkspaceBy(match: (Workspace) -> Boolean) = withContext(Dispatchers.IO) {
         val target = _workspaces.value.firstOrNull { it.available && match(it) } ?: return@withContext
         _current.value = target
@@ -589,16 +601,20 @@ class WorkspaceRepository @Inject constructor(
             }
         }
 
-        refreshWorkspaces()
-        val renamed = _workspaces.value.firstOrNull { it.path == newPath }
-            ?: Workspace(name = newName, path = newPath, type = target.type)
+        // 先落 current 再刷新：refreshWorkspaces() 里的 ensureCurrentReachable() 按名字校验当前工作区，
+        // 旧名此时已不在列表里，会被判成「不可用」而回退到别的工作区（还弹一次误导提示）——结果是
+        // 重命名当前工作区变成切换工作区，后面那段 if 也再不会成立。
         if (_current.value?.name == oldName) {
-            _current.value = renamed
-            context.workspaceDataStore.edit { it[currentNameKey] = renamed.name }
+            _current.value = Workspace(name = newName, path = newPath, type = target.type)
+            context.workspaceDataStore.edit { it[currentNameKey] = newName }
             if (target.type == WorkspaceType.REMOTE) {
                 runCatching { remoteSshConnection.updateWorkspaceSymlink(newPath) }
             }
         }
+
+        refreshWorkspaces()
+        val renamed = _workspaces.value.firstOrNull { it.path == newPath }
+            ?: Workspace(name = newName, path = newPath, type = target.type)
         FileLogger.i(TAG, "重命名工作区: $oldName -> ${renamed.name}")
         renamed
     }
@@ -639,6 +655,14 @@ class WorkspaceRepository @Inject constructor(
                 ?: "/"
         }
         return _current.value?.path ?: projectsRoot.absolutePath
+    }
+
+    /** 目录里除 App 自己的元数据（.aicode / .aharou）之外是否没有任何条目。
+     * 远程模式一律当作非空，沿用「克隆到新工作区」的旧行为（本地才有 File 可查）。 */
+    fun isDirEmpty(path: String): Boolean {
+        if (!isLocal()) return false
+        val entries = File(path).listFiles() ?: return true
+        return entries.none { it.name != ".aicode" && it.name != ".aharou" }
     }
 
     /** 仅保留字母数字、下划线、连字符、点和空格，去掉路径分隔符等危险字符。 */

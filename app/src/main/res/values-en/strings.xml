@@ -825,7 +825,7 @@
     <string name="git_init_repo">Initialize Git Repository</string>
     <string name="git_clone_repo">Clone Remote Repository</string>
     <string name="git_clone_dialog_title">Clone Git Repository</string>
-    <string name="git_clone_desc">Clone into a new dedicated workspace and switch to it. For private repos, configure credentials via the key icon first.</string>
+    <string name="git_clone_desc">If the current workspace is empty, clone straight into it (no new workspace, no rename). Otherwise a dedicated workspace is created and switched to. For private repos, configure credentials via the key icon first.</string>
     <string name="git_clone_url_label">Repository URL</string>
     <string name="git_clone_url_hint">https://github.com/user/repo.git</string>
     <string name="git_clone_workspace_label">Workspace name</string>
