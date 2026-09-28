@@ -106,6 +106,7 @@ AI 工具或终端可能同时在改同一个文件，而保存会直接用编�
 
 - `projects/`：工作区项目。通过「添加本地目录」加进来的外部工作区不在这里，它们在你自己选的设备目录下。
 - `aharou/`：对应容器内的 `~/.aharou`，里面有 `skills/`（技能）、`docs/`（文档）、`mcp.json`（MCP 配置）等。
+- `shared/`：跨工作区共享区，对应容器内的 `~/shared`（见〈容器与镜像〉）。
 
 以 MT 管理器为例的挂载步骤：打开 MT 管理器 → 点左上角菜单（三横线）→ 侧边栏右上角的三个点 → 「添加本地存储」→ 系统文件选择器打开后点左上角三个点、选「Aharou」→ 点底部「使用此文件夹」。
 
@@ -113,4 +114,4 @@ AI 工具或终端可能同时在改同一个文件，而保存会直接用编�
 
 **直接让 AI 做**：AI 就跑在容器里，你可以说“把 `~/.aharou/mcp.json` 打印出来看看”或者“在 `~/.aharou/skills/` 下写一个新技能”。
 
-**Root 设备**：直接进 `/data/data/com.aharou.agent/files/`（部分系统等价路径是 `/data/user/0/com.aharou.agent/files/`）。其中 `projects/` 是工作区根，`aharou/` 对应 `~/.aharou`，`rootfs/` 是容器系统。注意 debug 构建的包名是 `com.aharou.agent.debug`，两者私有目录完全隔离。
+**Root 设备**：直接进 `/data/data/com.aharou.agent/files/`（部分系统等价路径是 `/data/user/0/com.aharou.agent/files/`）。其中 `projects/` 是工作区根，`aharou/` 对应 `~/.aharou`，`aharou-global/shared/` 对应 `~/shared`，`rootfs/` 是容器系统。注意 debug 构建的包名是 `com.aharou.agent.debug`，两者私有目录完全隔离。

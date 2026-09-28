@@ -16,9 +16,10 @@ import java.util.LinkedList
 
 /**
  * SAF DocumentsProvider，把 app 私有 `filesDir` 暴露为**单一根**到系统「文件」app 及其它 app 的
- * SAF 选择器，满足「对外可见」。根下只放出两个子目录：
+ * SAF 选择器，满足「对外可见」。根下只放出三个子目录：
  * - `projects`：工作区（各项目）；
- * - `aicode`：AI 配置目录（skills/ 与 mcp.json，容器内即 `/root/.aicode`）。
+ * - `aharou`：AI 配置目录（skills/ 与 mcp.json，容器内即 `/root/.aharou`）；
+ * - `shared`：跨工作区共享区（容器内即 `/root/shared`）。
  *
  * 其余内部目录（rootfs、容器二进制、数据库、DataStore 等）刻意不在根下列出，避免对外泄露/误删。
  *
@@ -59,15 +60,20 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         ctx().filesDir
 
     /**
-     * 根下唯一对外可见的子目录名白名单：工作区 `projects` 与 AI 配置 `aharou`
-     *（容器内 /root/.aharou，含 skills/ 与 mcp.json）。两者首次访问即创建，
-     * 其余 filesDir 内部目录不列出。
+     * 根下唯一对外可见的子目录名白名单：工作区 `projects`、AI 配置 `aharou`
+     *（容器内 /root/.aharou，含 skills/ 与 mcp.json）与跨工作区共享区 `shared`
+     *（容器内 /root/shared）。三者首次访问即创建，其余 filesDir 内部目录不列出。
+     *
+     * `shared` 实际住在 `aharou-global/shared`（对齐上游 minis-global/shared），这里以目录对象
+     * 入场，显示名仍是 `shared`（docId 用绝对路径）。刻意不整体放开 `aharou-global/`——
+     * 它下面还有 memory，里面有凭据类文件。
      */
     private fun exposedChildren(): List<File> {
         ContainerInstaller.extractDocs(ctx())
         return listOf(
             File(baseDir(), "projects").apply { mkdirs() },
             File(baseDir(), "aharou").apply { mkdirs() },
+            File(baseDir(), "aharou-global/shared").apply { mkdirs() },
         )
     }
 

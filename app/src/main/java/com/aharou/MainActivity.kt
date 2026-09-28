@@ -757,6 +757,7 @@ fun AppNavigation(
                                 onNavigateToGit = { openWorkbench(WorkbenchPaneKind.GIT) },
                                 onNavigateToBrowser = { openWorkbench(WorkbenchPaneKind.BROWSER) },
                                 onNavigateToSandbox = { navController.navigate("sandbox") },
+                                onNavigateToShared = { navController.navigate("shared") },
                                 terminalActive = paneOpen && paneKind == WorkbenchPaneKind.TERMINAL,
                                 gitActive = paneOpen && paneKind == WorkbenchPaneKind.GIT,
                                 browserActive = paneOpen && paneKind == WorkbenchPaneKind.BROWSER,
@@ -854,15 +855,37 @@ fun AppNavigation(
             }
             composable("sandbox") {
                 val sandboxContext = androidx.compose.ui.platform.LocalContext.current
-                val sandboxVm = remember {
+                // 浏览根取当前选中容器的 rootfs（容器内 `/`）：写死内置 rootfs 会让自定义镜像用户
+                // 点进来只看到空目录。
+                val sandboxRootVm: com.aharou.feature.sandbox.SandboxRootViewModel = hiltViewModel()
+                val sandboxRoot by sandboxRootVm.rootfsDir.collectAsStateWithLifecycle()
+                val sandboxVm = remember(sandboxRoot) {
                     com.aharou.feature.sandbox.FileBrowserViewModel(
-                        rootPath = java.io.File(sandboxContext.filesDir, "rootfs"),
+                        rootPath = sandboxRoot,
                         rootLabel = "/",
                         appContext = sandboxContext.applicationContext,
                     )
                 }
                 com.aharou.feature.sandbox.FileBrowserScreen(
                     viewModel = sandboxVm,
+                    onBack = { navController.popBackStack() },
+                    onPreviewFile = { item ->
+                        com.aharou.feature.sandbox.FilePreviewHolder.currentItem = item
+                        navController.navigate("sandboxPreview")
+                    },
+                )
+            }
+            composable("shared") {
+                val sharedContext = androidx.compose.ui.platform.LocalContext.current
+                val sharedVm = remember {
+                    com.aharou.feature.sandbox.FileBrowserViewModel(
+                        rootPath = com.aharou.feature.agent.domain.container.ContainerInstaller
+                            .sharedDirOf(sharedContext),
+                        appContext = sharedContext.applicationContext,
+                    )
+                }
+                com.aharou.feature.sandbox.FileBrowserScreen(
+                    viewModel = sharedVm,
                     onBack = { navController.popBackStack() },
                     onPreviewFile = { item ->
                         com.aharou.feature.sandbox.FilePreviewHolder.currentItem = item

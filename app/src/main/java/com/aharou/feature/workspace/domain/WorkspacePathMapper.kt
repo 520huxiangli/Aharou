@@ -46,6 +46,8 @@ class WorkspacePathMapper @Inject constructor(
         const val AICODE_ROOT = "/root/.aicode"
         /** 记忆目录（SOUL.md / 核心档案 / 日志）在容器内的路径（宿主 filesDir/aharou-global/memory）。 */
         const val AHAROU_MEMORY_ROOT = "/root/.aharou/memory"
+        /** 跨工作区共享区在容器内的路径（宿主 filesDir/shared）：所有工作区共用同一份。 */
+        const val SHARED_ROOT = "/root/shared"
         private const val TAG = "WorkspacePathMapper"
     }
 
@@ -88,6 +90,9 @@ class WorkspacePathMapper @Inject constructor(
     /** 记忆目录（SOUL.md 等）在宿主上的根（容器内 `/root/.aharou/memory`）。 */
     private fun aharouMemoryRoot(): File = File(aicodeRoot().parentFile, "aharou-global/memory")
 
+    /** 跨工作区共享区在宿主上的根（容器内 `/root/shared`）。 */
+    private fun sharedRoot(): File = containerInstaller.sharedDir
+
     /**
      * 把 AI 提供的路径解析为宿主真实文件。兼容以下写法：
      * - 容器绝对路径 `~/workspace[/…]`（或展开后的 `$HOME/workspace[/…]`）→ 映射到宿主工作区；
@@ -110,6 +115,8 @@ class WorkspacePathMapper @Inject constructor(
             p.startsWith("$AHAROU_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AHAROU_ROOT/"))
             p == AICODE_ROOT || p == "$AICODE_ROOT/" -> aicodeRoot()
             p.startsWith("$AICODE_ROOT/") -> File(aicodeRoot(), p.removePrefix("$AICODE_ROOT/"))
+            p == SHARED_ROOT || p == "$SHARED_ROOT/" -> sharedRoot()
+            p.startsWith("$SHARED_ROOT/") -> File(sharedRoot(), p.removePrefix("$SHARED_ROOT/"))
             else -> mountedHostFile(p)?.let { return it }   // 用户显式配置的挂载点，信任其宿主路径
                 ?: if (p.startsWith("/")) File(rootfsRoot(), p.removePrefix("/")) else File(root, p)
         }
@@ -117,7 +124,7 @@ class WorkspacePathMapper @Inject constructor(
         // 例如 `/../../shared_prefs/x.xml` 会落到 App 私有数据区（DataStore / 凭据 / settings）。
         // 所以解析成真实路径后，必须确认它仍落在允许的根之内（工作区 / rootfs / AI 配置 / 记忆）。
         val resolved = runCatching { file.canonicalFile }.getOrElse { file }
-        val allowed = listOf(root, rootfsRoot(), aicodeRoot(), aharouMemoryRoot())
+        val allowed = listOf(root, rootfsRoot(), aicodeRoot(), aharouMemoryRoot(), sharedRoot())
         if (allowed.none { resolved.isUnder(it) }) {
             throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
@@ -146,6 +153,7 @@ class WorkspacePathMapper @Inject constructor(
         val rootPath = hostRoot().absolutePath.replace('\\', '/')
         val aicodePath = aicodeRoot().absolutePath.replace('\\', '/')
         val memoryPath = aharouMemoryRoot().absolutePath.replace('\\', '/')
+        val sharedPath = sharedRoot().absolutePath.replace('\\', '/')
         val rootfsPath = rootfsRoot().absolutePath.replace('\\', '/')
         val abs = File(hostPath).absolutePath.replace('\\', '/')
         val raw = hostPath.trim().replace('\\', '/')
@@ -161,6 +169,8 @@ class WorkspacePathMapper @Inject constructor(
             abs.startsWith("$memoryPath/") -> AHAROU_MEMORY_ROOT + "/" + abs.removePrefix("$memoryPath/")
             abs == aicodePath -> AHAROU_ROOT
             abs.startsWith("$aicodePath/") -> AHAROU_ROOT + "/" + abs.removePrefix("$aicodePath/")
+            abs == sharedPath -> SHARED_ROOT
+            abs.startsWith("$sharedPath/") -> SHARED_ROOT + "/" + abs.removePrefix("$sharedPath/")
             abs == rootfsPath -> "/"
             abs.startsWith("$rootfsPath/") -> "/" + abs.removePrefix("$rootfsPath/")
             else -> mountedContainerPath(abs) ?: hostPath

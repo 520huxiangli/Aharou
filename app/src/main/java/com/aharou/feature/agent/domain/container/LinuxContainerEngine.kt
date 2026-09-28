@@ -781,6 +781,12 @@ class LinuxContainerEngine @Inject constructor(
         argv.add("-b")
         argv.add("${aharouMemoryDir.absolutePath}:/root/.aharou/memory")
 
+        // 跨工作区共享区（宿主 filesDir/shared）：所有工作区、所有 profile 共用同一份，切工作区不重置。
+        // 有意置于 profile.extraBindings 之前，用户自定义挂载仍可覆盖该路径。
+        val sharedDir = containerInstaller.sharedDir
+        argv.add("-b")
+        argv.add("${sharedDir.absolutePath}:/root/shared")
+
         // profile 的额外绑定与参数：内置与导入容器默认也在此注入（见 ContainerProfile.DEFAULT_PROOT_ARGS），
         // 与用户手动添加同一条路径，保证参数落在 argv 末尾。
         for (b in profile.extraBindings) {

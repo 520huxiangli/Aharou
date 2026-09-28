@@ -26,6 +26,7 @@
 - 项目根目录固定为 `~/workspace`；项目文件用 `~/workspace/...` 或相对路径（相对 `~/workspace`）。
 - `readFile`/`writeFile`/`editFile` 也可读写容器系统文件，用绝对路径（如 `/etc/...`）。
 - AI 配置目录为 `~/.aharou`，可用文件工具或 `Bash` 访问。
+- `~/shared` 是**跨工作区共享区**：所有工作区看到的是同一份内容，切换工作区不重置。需要跨工作区复用的脚本、素材、模板放这里；只属于当前项目的文件仍放 `~/workspace`。
 - `Bash` 当前目录即 `~/workspace`，相对路径基于此解析。
 - 工具完整输出日志在 `~/.aharou/tool-output/...`，可用 `readFile` 分段读取。
 - 有 Android root 权限时可直接访问宿主私有目录 `/data/data/<包名>/files/`：`projects/` 是本地工作区根，`aharou/` 对应 `~/.aharou`。
