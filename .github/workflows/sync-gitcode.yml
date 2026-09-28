@@ -1,7 +1,7 @@
 name: Sync Code & Releases to GitCode
 
 # 定时把 GitHub 主仓库镜像到 GitCode（面向访问不了 GitHub 的用户）：
-#   - 代码：全部分支与 tag（push --prune 保证 GitCode 侧 refs 与 GitHub 完全一致，GitCode 上不要直接改代码）
+#   - 代码：全部分支与 tag（只增不删；GitCode 上不要直接改代码）
 #   - Release 资产：把 GitHub 上的 Release APK 同步到 GitCode Release（幂等，默认保留最新 3 个正式版，不含 RC）
 # 每天 1 次自动执行（schedule，UTC 03:17），也可在 Actions 页面手动触发（workflow_dispatch）。
 # 前置配置：GitHub Secret GITCODE_TOKEN = GitCode 个人访问令牌（需仓库读写 + API 权限）
@@ -37,7 +37,11 @@ jobs:
           repo="${GITCODE_REPO:-${GITHUB_REPOSITORY#*/}}"
           echo "目标 GitCode 仓库: ${owner}/${repo}"
           git remote add gitcode "https://oauth2:${GITCODE_TOKEN}@gitcode.com/${owner}/${repo}.git"
-          git push --prune gitcode \
+          # 不带 --prune：GitCode 建仓时自带一个 main 分支并被设为默认分支，
+          # --prune 会按 GitHub 的 refs 去删它，服务端「默认分支不能删除」会把
+          # 整批 push 一起拒掉（连 tag 都推不上去，pre-receive hook declined）。
+          # GitCode 上残留的额外分支无害，改成只增不删。
+          git push gitcode \
             "+refs/heads/*:refs/heads/*" \
             "+refs/tags/*:refs/tags/*"
           echo "✓ 代码与 tag 已同步到 https://gitcode.com/${owner}/${repo}"
