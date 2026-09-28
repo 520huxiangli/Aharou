@@ -51,7 +51,11 @@ class SshShellBackend(
         }
     }
 
+    @Synchronized
     override fun close() {
+        // 与 SubprocessBackend.close 同理：关标签与 shell 退出各调一次，重复关闭会让底层 socket 被关
+        // 二次，fdsan 判「关闭不属于自己的 fd」并 SIGABRT。只放行第一次。
+        if (closed) return
         closed = true
         resizeExecutor.shutdownNow()
         // shell.close() 走网络 I/O，不能在主线程同步执行

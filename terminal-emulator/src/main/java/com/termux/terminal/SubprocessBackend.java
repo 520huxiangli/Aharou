@@ -10,6 +10,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Field;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * {@link SessionBackend} backed by a local pseudoterminal subprocess created via {@link JNI}
@@ -27,6 +28,7 @@ final class SubprocessBackend implements SessionBackend {
     private final int mPid;
     private final InputStream mInputStream;
     private final OutputStream mOutputStream;
+    private final AtomicBoolean mClosed = new AtomicBoolean();
 
     SubprocessBackend(String shellPath, String cwd, String[] args, String[] env, int rows, int columns) {
         int[] processId = new int[1];
@@ -75,6 +77,10 @@ final class SubprocessBackend implements SessionBackend {
 
     @Override
     public void close() {
+        // close 会被调两次：关标签走 finishIfRunning()，shell 退出后 cleanupResources() 再来一次。
+        // 流的 close 自身幂等，JNI.close(mPtyFd) 却是裸关——第二次关的 fd 号可能已被系统复用给别的
+        // socket/流，fdsan 会判「关闭不属于自己的 fd」并 SIGABRT，所以这里只允许真正关一次。
+        if (!mClosed.compareAndSet(false, true)) return;
         if (mPid > 0) {
             try {
                 Os.kill(mPid, OsConstants.SIGKILL);
