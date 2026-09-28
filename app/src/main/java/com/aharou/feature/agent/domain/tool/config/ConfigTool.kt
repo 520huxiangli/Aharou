@@ -26,6 +26,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.util.UUID
@@ -146,6 +148,33 @@ class ConfigTool @Inject constructor(
                     put("description", coll.description)
                 })
             }
+            // 集合里的一条记录（`<集合名>.<id>`）本身也不是字段：回这一条的全部子字段，
+            // 免得只能靠 list 逐条猜叶子路径。敏感子字段同样只给打码值。
+            registry.collectionRecord(path)?.let { (recordColl, id) ->
+                val children = recordColl.fields(forId = id)
+                    .filter { it.access != ConfigAccess.HIDDEN }
+                return ToolResult.Success(buildJsonObject {
+                    put("path", path)
+                    put("displayName", "${recordColl.displayName}[$id]")
+                    put("kind", "record")
+                    put("fields", buildJsonArray {
+                        children.forEach { child ->
+                            add(buildJsonObject {
+                                put("path", child.path)
+                                put("displayName", child.displayName)
+                                put("type", child.valueSchema.typeName())
+                                put("access", child.access.name)
+                                put(
+                                    "value",
+                                    child.read()
+                                        .maskedForDisplay(child.risk == ConfigRisk.SENSITIVE)
+                                        .jsonString(),
+                                )
+                            })
+                        }
+                    })
+                })
+            }
             return ToolResult.Error("未知字段：$path（先用 action=list 看看）", "UNKNOWN_PATH")
         }
         if (field.access == ConfigAccess.HIDDEN) {
@@ -183,7 +212,9 @@ class ConfigTool @Inject constructor(
             displayName = field.displayName,
             path = field.path,
             oldDisplay = preview(old.maskedForDisplay(sensitive)),
-            newDisplay = preview(parsed.maskedForDisplay(sensitive)),
+            // 新值给明文：弹窗存在的意义就是让人看清即将写入什么，
+            // 两边都打码等于让用户盲签。旧值继续遮住（可能早已泄露过的历史值）。
+            newDisplay = preview(parsed),
             verb = "修改",
             risk = field.risk,
         )

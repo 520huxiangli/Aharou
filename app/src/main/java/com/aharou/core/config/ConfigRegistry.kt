@@ -54,6 +54,26 @@ class ConfigRegistry private constructor() {
 
     fun collection(basePath: String): ConfigCollection? = collections[basePath]
 
+    /**
+     * If [path] addresses a whole record inside a collection (`<base>.<id>`)
+     * rather than a leaf field, return that collection and the id. Used by
+     * `config get` so `<base>.<id>` lists the record's fields instead of
+     * failing — `resolveField` only ever resolves leaves.
+     */
+    fun collectionRecord(path: String): Pair<ConfigCollection, String>? {
+        if (fields.containsKey(path)) return null
+        val base = collections.keys
+            .filter { path.startsWith("$it.") }
+            .maxByOrNull { it.length }
+            ?: return null
+        val rest = path.substring(base.length + 1)
+        // 多一段就是叶子（`<base>.<id>.<sub>`），交给 resolveField。
+        if (rest.isEmpty() || rest.contains('.')) return null
+        val coll = collections.getValue(base)
+        if (rest !in coll.childIds()) return null
+        return coll to rest
+    }
+
     /** All registered top-level field paths (excluding hidden), sorted. */
     fun allVisibleFieldPaths(): List<String> =
         fields.values
