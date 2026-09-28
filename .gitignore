@@ -23,6 +23,7 @@ keystore.properties
 /.kotlin/
 /.agents/
 /.aicode/
+/.aharou/
 
 # 临时调试文件
 /*.log
