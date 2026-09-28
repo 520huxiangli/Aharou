@@ -457,6 +457,7 @@ fun AIChatPanel(
             messages = messages,
             initialMessageId = computerSheetTarget,
             browserPool = viewModel.browserTabPool,
+            vdCapture = { viewModel.captureVdFrame() },
             onDismiss = { computerSheetMessageId = null },
         )
     }

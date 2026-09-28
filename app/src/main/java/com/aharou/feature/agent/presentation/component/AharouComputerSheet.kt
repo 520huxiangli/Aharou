@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
+import com.aharou.core.theme.Radius
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.browser.BrowserTabPool
@@ -96,6 +97,7 @@ internal fun AharouComputerSheet(
     messages: List<AgentUIMessage>,
     initialMessageId: String,
     browserPool: BrowserTabPool?,
+    vdCapture: (suspend () -> Bitmap?)? = null,
     onDismiss: () -> Unit,
 ) {
     val toolMessages = remember(messages) { messages.filter { it.toolName != null } }
@@ -168,6 +170,7 @@ internal fun AharouComputerSheet(
                 ToolComputerPage(
                     message = toolMessages[page],
                     browserPool = browserPool,
+                    vdCapture = vdCapture,
                 )
             }
         }
@@ -227,6 +230,7 @@ private fun ComputerActionButton(message: AgentUIMessage?) {
 private fun ToolComputerPage(
     message: AgentUIMessage,
     browserPool: BrowserTabPool?,
+    vdCapture: (suspend () -> Bitmap?)? = null,
 ) {
     val running = message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
         message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER)
@@ -277,6 +281,19 @@ private fun ToolComputerPage(
                     pool = browserPool,
                 )
             }
+            message.toolName == "vscreen" -> {
+                // [Aharou] 影子屏：大图实时围观 Agent 的离屏操作
+                VdCard(capture = vdCapture, running = running)
+                message.toolArgs?.takeIf { it.isNotBlank() && it != "{}" }?.let {
+                    InfoCard(title = "参数", body = it, mono = true)
+                }
+                InfoCard(
+                    title = "结果",
+                    body = formatComputerOutput(message.content, running),
+                    mono = false,
+                    isError = message.isError,
+                )
+            }
             else -> {
                 val args = message.toolArgs?.takeIf { it.isNotBlank() && it != "{}" }
                 if (args != null) {
@@ -297,6 +314,56 @@ private fun ToolComputerPage(
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * 影子屏卡：实时抓虚拟屏画面（每 1.5s 一帧）放大展示。
+ * Agent 在影子屏里静默操作（不占用户主屏）时，用户点开工具行就能大图围观。
+ */
+@Composable
+private fun VdCard(
+    capture: (suspend () -> Bitmap?)?,
+    running: Boolean,
+) {
+    var frame by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(capture, running) {
+        while (true) {
+            val shot = capture?.let { runCatching { it() }.getOrNull() }
+            if (shot != null) frame = shot
+            delay(1500)
+        }
+    }
+    val bmp = frame
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.mdLarge))
+            .background(ComputerCardBg)
+            .border(1.dp, ComputerCardBorder, RoundedCornerShape(Radius.mdLarge))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxWidth(),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxWidth().height(160.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (running) stringResource(R.string.vd_capturing)
+                           else stringResource(R.string.vd_not_running),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
