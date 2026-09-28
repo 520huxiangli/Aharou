@@ -93,6 +93,10 @@ class SessionUseCase @Inject constructor(
         return sessions.size
     }
 
+    /** 工作区改名后，把该工作区下全部会话（含子代理会话）的 workspacePath 迁到新路径，返回迁移条数。 */
+    suspend fun updateSessionsWorkspacePath(oldPath: String, newPath: String): Int =
+        chatSessionDao.updateWorkspacePath(oldPath, newPath)
+
     suspend fun getFirstSessionOfWorkspace(workspacePath: String): ChatSessionEntity? {
         return chatSessionDao.getRootSessionsByWorkspaceOnce(workspacePath).firstOrNull()
     }

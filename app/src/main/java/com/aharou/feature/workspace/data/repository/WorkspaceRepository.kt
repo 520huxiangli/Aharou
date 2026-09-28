@@ -498,6 +498,111 @@ class WorkspaceRepository @Inject constructor(
         FileLogger.i(TAG, "删除工作区: $name")
     }
 
+    /**
+     * 重命名工作区。
+     *
+     * - 内部工作区：连同 `filesDir/projects/<name>` 的目录一起改名，并把该工作区的会话记录迁到新路径。
+     * - 外部本地工作区：只改列表里的显示名——用户自己的目录不动，路径不变，会话无需迁移。
+     * - 远程工作区：对服务器上的目录执行 `mv`，成功后同样迁移会话路径（选中它时再更新软链）。
+     *
+     * 改名的正是当前工作区时，同步更新 DataStore 里的当前工作区名与 [current]。
+     * @return 改名后的 [Workspace]；名称非法、重名或改名失败返回 null。
+     */
+    suspend fun renameWorkspace(oldName: String, rawNewName: String): Workspace? = withContext(Dispatchers.IO) {
+        val target = _workspaces.value.firstOrNull { it.name == oldName } ?: return@withContext null
+        val newName = sanitize(rawNewName)
+        if (newName.isEmpty()) {
+            FileLogger.w(TAG, "重命名工作区失败：名称非法 '$rawNewName'")
+            return@withContext null
+        }
+        if (newName == oldName) return@withContext target
+        if (_workspaces.value.any { it.name != oldName && it.name.equals(newName, ignoreCase = true) }) {
+            FileLogger.w(TAG, "重命名工作区失败：已存在 '$newName'")
+            return@withContext null
+        }
+
+        val newPath = when (target.type) {
+            WorkspaceType.INTERNAL -> {
+                val oldDir = File(projectsRoot, oldName)
+                val newDir = File(projectsRoot, newName)
+                if (!oldDir.isDirectory || newDir.exists()) {
+                    FileLogger.w(TAG, "重命名工作区失败：目录状态不允许 $oldName -> $newName")
+                    return@withContext null
+                }
+                if (!oldDir.renameTo(newDir)) {
+                    FileLogger.e(TAG, "重命名工作区失败：无法重命名目录 ${oldDir.absolutePath}")
+                    return@withContext null
+                }
+                newDir.absolutePath
+            }
+
+            WorkspaceType.EXTERNAL_LOCAL -> {
+                val records = readExternalWorkspaces()
+                if (records.none { it.path == target.path }) {
+                    FileLogger.w(TAG, "重命名工作区失败：外部工作区记录不存在 ${target.path}")
+                    return@withContext null
+                }
+                writeExternalWorkspaces(
+                    records.map { if (it.path == target.path) it.copy(name = newName) else it }
+                )
+                target.path
+            }
+
+            WorkspaceType.REMOTE -> {
+                val cfg = remoteSshConnection.config ?: return@withContext null
+                val wsRoot = pathHomeResolver.expandHome(cfg.remoteWorkspacePath.trimEnd('/'))
+                val newRemotePath = "$wsRoot/$newName"
+                val moved = runCatching {
+                    if (execRemoteExit("test -e ${shellQuote(newRemotePath)}") == 0) {
+                        FileLogger.w(TAG, "重命名工作区失败：远程已存在 $newRemotePath")
+                        false
+                    } else {
+                        execRemoteExit("mv ${shellQuote(target.path)} ${shellQuote(newRemotePath)}") == 0
+                    }
+                }.getOrElse {
+                    FileLogger.e(TAG, "重命名工作区失败：远程 mv ${target.path} -> $newRemotePath", it)
+                    false
+                }
+                if (!moved) return@withContext null
+                newRemotePath
+            }
+        }
+
+        // 目录已改名，会话归属必须跟着走；迁移失败就把目录改回去，不留半途状态。
+        if (newPath != target.path) {
+            val migrated = runCatching { sessionUseCase.updateSessionsWorkspacePath(target.path, newPath) }
+                .getOrElse {
+                    FileLogger.e(TAG, "重命名工作区失败：会话路径迁移异常", it)
+                    -1
+                }
+            if (migrated < 0) {
+                runCatching {
+                    when (target.type) {
+                        WorkspaceType.INTERNAL ->
+                            File(projectsRoot, newName).renameTo(File(projectsRoot, oldName))
+                        WorkspaceType.REMOTE ->
+                            execRemoteExit("mv ${shellQuote(newPath)} ${shellQuote(target.path)}") == 0
+                        else -> false
+                    }
+                }.onFailure { FileLogger.e(TAG, "重命名工作区回滚失败: $newPath -> ${target.path}", it) }
+                return@withContext null
+            }
+        }
+
+        refreshWorkspaces()
+        val renamed = _workspaces.value.firstOrNull { it.path == newPath }
+            ?: Workspace(name = newName, path = newPath, type = target.type)
+        if (_current.value?.name == oldName) {
+            _current.value = renamed
+            context.workspaceDataStore.edit { it[currentNameKey] = renamed.name }
+            if (target.type == WorkspaceType.REMOTE) {
+                runCatching { remoteSshConnection.updateWorkspaceSymlink(newPath) }
+            }
+        }
+        FileLogger.i(TAG, "重命名工作区: $oldName -> ${renamed.name}")
+        renamed
+    }
+
     /** 外部本地工作区持久化记录。 */
     @Serializable
     internal data class ExternalWorkspaceRecord(

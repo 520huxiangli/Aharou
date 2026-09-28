@@ -55,6 +55,7 @@ import com.aharou.feature.workspace.domain.model.WorkspaceType
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
+import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.Plus
@@ -244,6 +245,13 @@ private fun WorkspaceSelectionHost(
                 }
             },
             onDelete = { viewModel.deleteWorkspace(it.name) },
+            onRename = { ws, newName ->
+                viewModel.renameWorkspace(ws.name, newName) { renamed ->
+                    if (renamed == null) {
+                        Toast.makeText(context, R.string.workspace_rename_failed, Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
             onStopCurrentSessions = onSwitchConfirmed,
             deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
             onDismiss = onDismiss
@@ -318,6 +326,7 @@ private fun WorkspaceSheet(
     onSelect: (Workspace) -> Unit,
     onCreate: (String) -> Unit,
     onDelete: (Workspace) -> Unit,
+    onRename: (Workspace, String) -> Unit,
     onStopCurrentSessions: () -> Unit,
     deleteExternalWorkspaceSessions: Boolean,
     onDismiss: () -> Unit
@@ -325,6 +334,7 @@ private fun WorkspaceSheet(
     val sheetState = rememberModalBottomSheetState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Workspace?>(null) }
+    var pendingRename by remember { mutableStateOf<Workspace?>(null) }
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -379,7 +389,8 @@ private fun WorkspaceSheet(
                             selected = ws.name == current?.name,
                             canDelete = workspaces.size > 1,
                             onClick = { onSelect(ws) },
-                            onDelete = { pendingDelete = ws }
+                            onDelete = { pendingDelete = ws },
+                            onRename = { pendingRename = ws }
                         )
                     }
                 }
@@ -427,6 +438,21 @@ private fun WorkspaceSheet(
             }
         )
     }
+
+    pendingRename?.let { ws ->
+        RenameWorkspaceDialog(
+            workspace = ws,
+            existingNames = workspaces.map { it.name },
+            onConfirm = { newName ->
+                // 改的正是当前工作区时，先按切换工作区的同一套处理停掉会话与终端，
+                // 否则旧 proot 里还绑着旧路径。
+                if (ws.name == current?.name) onStopCurrentSessions()
+                onRename(ws, newName)
+                pendingRename = null
+            },
+            onDismiss = { pendingRename = null }
+        )
+    }
 }
 
 @Composable
@@ -435,7 +461,8 @@ private fun WorkspaceRow(
     selected: Boolean,
     canDelete: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRename: () -> Unit
 ) {
     val external = workspace.type == WorkspaceType.EXTERNAL_LOCAL
     val disabled = !workspace.available
@@ -491,6 +518,20 @@ private fun WorkspaceRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(Radius.sm))
+                .clickable(onClick = onRename),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                FeatherIcons.Edit2,
+                contentDescription = stringResource(R.string.common_rename),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
         }
         if (canDelete) {
             Box(
@@ -548,6 +589,61 @@ private fun CreateWorkspaceDialog(
         },
         confirmButton = {
             TextButton(enabled = canConfirm, onClick = { onConfirm(trimmed) }) { Text(stringResource(R.string.common_create)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        }
+    )
+}
+
+@Composable
+private fun RenameWorkspaceDialog(
+    workspace: Workspace,
+    existingNames: List<String>,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(workspace.name) }
+    val trimmed = name.trim()
+    val duplicate = existingNames.any { it != workspace.name && it.equals(trimmed, ignoreCase = true) }
+    val canConfirm = trimmed.isNotEmpty() && !duplicate && trimmed != workspace.name
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.workspace_rename_title)) },
+        text = {
+            Column {
+                AppTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = stringResource(R.string.common_name),
+                    placeholder = stringResource(R.string.workspace_name_hint),
+                    isError = duplicate,
+                    colors = dialogTextFieldColors()
+                )
+                if (duplicate) {
+                    Spacer(Modifier.height(Spacing.xs))
+                    Text(
+                        stringResource(R.string.workspace_name_exists),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                if (workspace.type == WorkspaceType.EXTERNAL_LOCAL) {
+                    Spacer(Modifier.height(Spacing.xs))
+                    Text(
+                        stringResource(R.string.workspace_rename_external_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = canConfirm, onClick = { onConfirm(trimmed) }) {
+                Text(stringResource(R.string.common_rename))
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }

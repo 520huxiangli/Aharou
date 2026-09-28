@@ -72,6 +72,10 @@ interface ChatSessionDao {
     @Query("DELETE FROM chat_sessions WHERE workspacePath = :workspacePath")
     suspend fun deleteByWorkspace(workspacePath: String)
 
+    /** 工作区改名后批量迁移会话归属，返回受影响的行数。 */
+    @Query("UPDATE chat_sessions SET workspacePath = :newPath WHERE workspacePath = :oldPath")
+    suspend fun updateWorkspacePath(oldPath: String, newPath: String): Int
+
     @Query("UPDATE chat_sessions SET providerId = :providerId, model = :model WHERE id = :id")
     suspend fun updateProviderModel(id: String, providerId: String?, model: String?)
 

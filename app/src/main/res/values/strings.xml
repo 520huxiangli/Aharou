@@ -1408,6 +1408,9 @@
     <string name="workspace_new_workspace">新建工作区</string>
     <string name="workspace_name_hint">例如 my-project</string>
     <string name="workspace_name_exists">已存在同名工作区</string>
+    <string name="workspace_rename_title">重命名工作区</string>
+    <string name="workspace_rename_failed">重命名失败：名称不合法、已重名，或目录状态不允许</string>
+    <string name="workspace_rename_external_hint">只改列表里显示的名字，不会重命名设备上的目录。</string>
     <string name="workspace_remote_root_create_failed">远程工作区目录创建失败，请检查路径与服务器权限</string>
     <string name="workspace_remote_default_create_failed">远程默认工作区创建失败，请检查服务器权限与磁盘空间</string>
     <string name="workspace_add_local_dir">添加本地目录</string>

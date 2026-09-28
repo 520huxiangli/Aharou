@@ -1409,6 +1409,9 @@
     <string name="workspace_new_workspace">New Workspace</string>
     <string name="workspace_name_hint">e.g. my-project</string>
     <string name="workspace_name_exists">A workspace with this name already exists</string>
+    <string name="workspace_rename_title">Rename Workspace</string>
+    <string name="workspace_rename_failed">Rename failed: invalid or duplicate name, or the directory state disallows it</string>
+    <string name="workspace_rename_external_hint">Only the name shown in the list changes; the directory on your device is not renamed.</string>
     <string name="workspace_remote_root_create_failed">Failed to create the remote workspace directory. Check the path and server permissions.</string>
     <string name="workspace_remote_default_create_failed">Failed to create the default remote workspace. Check server permissions and disk space.</string>
     <string name="workspace_add_local_dir">Add Local Directory</string>
