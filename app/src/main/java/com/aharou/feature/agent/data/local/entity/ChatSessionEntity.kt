@@ -20,7 +20,7 @@ data class ChatSessionEntity(
     val mode: String = AgentMode.BUILD.name,
     /** 进入 PLAN 前的模式（如 AUTO）；退出 PLAN 时恢复，null 视为 BUILD。 */
     val modeBeforePlan: String? = null,
-    val reasoningEffort: String = ReasoningEffort.MEDIUM.name,
+    val reasoningEffort: String = ReasoningEffort.DEFAULT.name,
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,
@@ -40,7 +40,7 @@ data class ChatSessionEntity(
         workspacePath = workspacePath,
         mode = runCatching { AgentMode.valueOf(mode) }.getOrDefault(AgentMode.BUILD),
         modeBeforePlan = modeBeforePlan?.let { runCatching { AgentMode.valueOf(it) }.getOrNull() },
-        reasoningEffort = runCatching { ReasoningEffort.valueOf(reasoningEffort) }.getOrDefault(ReasoningEffort.MEDIUM),
+        reasoningEffort = runCatching { ReasoningEffort.valueOf(reasoningEffort) }.getOrDefault(ReasoningEffort.DEFAULT),
         providerId = providerId,
         model = model,
         totalInputTokens = totalInputTokens,

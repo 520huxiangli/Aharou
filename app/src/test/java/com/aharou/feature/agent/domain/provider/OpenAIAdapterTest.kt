@@ -140,9 +140,6 @@ class OpenAIAdapterTest {
         adapter(api).complete("", emptyList(), reasoningEffort = "none")
         assertNull(reqSlot.captured.reasoning_effort)
 
-        adapter(api).complete("", emptyList(), reasoningEffort = "minimal")
-        assertNull(reqSlot.captured.reasoning_effort)
-
         adapter(api).complete("", emptyList(), reasoningEffort = "xhigh")
         assertEquals("high", reqSlot.captured.reasoning_effort)
 

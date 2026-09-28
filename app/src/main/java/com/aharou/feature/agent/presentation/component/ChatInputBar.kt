@@ -101,7 +101,6 @@ import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
-import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import com.aharou.feature.workspace.presentation.component.WorkspaceIconButton
@@ -494,17 +493,11 @@ internal fun ChatInputBar(
                             )
                         }
 
-                        // 元数据未命中时（如中转站改了模型名）退回全部档位由用户自选：
-                        // 这类模型可能强制开启推理，隐藏按钮会导致无法调档。
-                        val availableEfforts = remember(activeProvider, modelMetadata) {
-                            activeProvider?.let { provider ->
-                                modelMetadata[modelMetadataKey(provider.id, provider.effectiveModel)]?.reasoningEffortOptions
-                                    ?.let { ReasoningEffort.fromValues(it) }
-                            }.orEmpty().ifEmpty { ReasoningEffort.entries }
-                        }
+                        // 档位一律全列：models.dev 的声明常缺档（例如只给 low/high/max），
+                        // 按声明过滤会让用户选不到「中」这类档位。
                         ReasoningEffortSelector(
                             effort = reasoningEffort,
-                            availableEfforts = availableEfforts,
+                            availableEfforts = ReasoningEffort.entries,
                             onChange = onReasoningEffortChange,
                             enabled = !isBusy
                         )

@@ -389,13 +389,14 @@ internal fun SubAgentEditorScreen(
                             showEffortSheet = false
                         }
                     )
-                    ReasoningEffort.entries.forEach { item ->
+                    // 子代理不支持「默认」档：定义文件里要存明确档位，null 无法表达。
+                    ReasoningEffort.entries.filter { it.apiValue != null }.forEach { item ->
                         SettingsDivider()
                         PickerRow(
                             title = stringResource(item.labelRes()),
                             selected = effort == item.apiValue,
                             onClick = {
-                                effort = item.apiValue
+                                effort = item.apiValue.orEmpty()
                                 showEffortSheet = false
                             }
                         )
@@ -617,7 +618,7 @@ private fun AgentSaveError.messageRes(): Int = when (this) {
 
 private fun ReasoningEffort.labelRes(): Int = when (this) {
     ReasoningEffort.NONE -> R.string.chat_reasoning_effort_none
-    ReasoningEffort.MINIMAL -> R.string.chat_reasoning_effort_minimal
+    ReasoningEffort.DEFAULT -> R.string.chat_reasoning_effort_default
     ReasoningEffort.LOW -> R.string.chat_reasoning_effort_low
     ReasoningEffort.MEDIUM -> R.string.chat_reasoning_effort_medium
     ReasoningEffort.HIGH -> R.string.chat_reasoning_effort_high

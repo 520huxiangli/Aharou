@@ -6,13 +6,21 @@ import org.junit.Test
 class ReasoningEffortTest {
 
     @Test
-    fun fromValues_parsesAllSeven() {
+    fun fromValues_parsesKnownEfforts() {
         assertEquals(
             listOf(
-                ReasoningEffort.NONE, ReasoningEffort.MINIMAL, ReasoningEffort.LOW,
-                ReasoningEffort.MEDIUM, ReasoningEffort.HIGH, ReasoningEffort.XHIGH, ReasoningEffort.MAX
+                ReasoningEffort.NONE, ReasoningEffort.LOW, ReasoningEffort.MEDIUM,
+                ReasoningEffort.HIGH, ReasoningEffort.XHIGH, ReasoningEffort.MAX
             ),
-            ReasoningEffort.fromValues(listOf("none", "minimal", "low", "medium", "high", "xhigh", "max"))
+            ReasoningEffort.fromValues(listOf("none", "low", "medium", "high", "xhigh", "max"))
+        )
+    }
+
+    @Test
+    fun fromValues_ignoresDefaultAndUnknown() {
+        assertEquals(
+            listOf(ReasoningEffort.NONE, ReasoningEffort.LOW),
+            ReasoningEffort.fromValues(listOf("none", "default", "minimal", "low"))
         )
     }
 

@@ -104,7 +104,7 @@ inject: [base, projectRules]
 | `description` | 建议填写 | 简述适用场景与专长，主会话 AI 依据此描述判断何时选用该子代理 |
 | `provider` | 否 | AI 供应商名称，省略时继承父会话配置 |
 | `model` | 否 | 模型名称，省略时继承父会话配置 |
-| `reasoningEffort` | 否 | 思考强度：`none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max` |
+| `reasoningEffort` | 否 | 思考强度：`none` / `low` / `medium` / `high` / `xhigh` / `max`；整项留空表示不指定（跟随服务商默认） |
 | `mode` | 否 | 默认运行模式：`build` / `plan` / `auto`，省略时继承父会话当前模式 |
 | `tools` | 否 | 工具白名单。**省略时代表开放全部可用工具** |
 | `disallowedTools` | 否 | 工具黑名单，优先级高于白名单，支持 `mcp__*` 前缀通配 |

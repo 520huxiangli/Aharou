@@ -421,9 +421,9 @@ class AnthropicAdapter @Inject constructor(
     /**
      * 思考强度 → Anthropic thinking 配置。
      * - 新模型（4.6+/5 系，支持 adaptive）：effort 档位直传 output_config，thinking 用 adaptive+summarized；
-     *   "none" 关闭思考用 disabled；"minimal" 无对应档，归一到 low（官方仅 low/medium/high/xhigh/max）。
+     *   "none" 关闭思考用 disabled。
      * - 旧模型（4.5 及更早，仅 budget_tokens）：low/medium/high 映射 1024/4096/8192（须小于 max_tokens），
-     *   minimal 归一到 low，xhigh/max 归一到 high。
+     *   xhigh/max 归一到 high。
      */
     private fun buildThinkingConfig(reasoningEffort: String?): Pair<AnthropicThinkingConfig?, AnthropicOutputConfig?> {
         if (reasoningEffort == null) return null to null
@@ -431,13 +431,10 @@ class AnthropicAdapter @Inject constructor(
             if (reasoningEffort == "none") {
                 return AnthropicThinkingConfig(type = "disabled") to null
             }
-            // 官方 effort 无 minimal 档，归一到 low，避免透传非法档位被 400。
-            val effort = if (reasoningEffort == "minimal") "low" else reasoningEffort
-            return AnthropicThinkingConfig(type = "adaptive", display = "summarized") to AnthropicOutputConfig(effort = effort)
+            return AnthropicThinkingConfig(type = "adaptive", display = "summarized") to AnthropicOutputConfig(effort = reasoningEffort)
         }
         val budget = when (reasoningEffort) {
-            // Anthropic 无 minimal 档：归一到最接近的 low（避免同一档位一边 400 一边忽略的分裂）。
-            "minimal", "low" -> 1024
+            "low" -> 1024
             "medium" -> 4096
             "high", "xhigh", "max" -> 8192
             else -> return null to null

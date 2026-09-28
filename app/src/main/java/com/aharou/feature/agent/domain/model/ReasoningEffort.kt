@@ -5,9 +5,10 @@ package com.aharou.feature.agent.domain.model
  * 直接透传给支持该参数的 provider（OpenAI reasoning_effort / Gemini thinkingLevel）；
  * Anthropic 由适配器按模型代际映射为 adaptive effort 或 budget_tokens。
  */
-enum class ReasoningEffort(val apiValue: String) {
+enum class ReasoningEffort(val apiValue: String?) {
     NONE("none"),
-    MINIMAL("minimal"),
+    /** 不指定档位：请求里不带思考强度参数，由服务商按自己的默认处理。 */
+    DEFAULT(null),
     LOW("low"),
     MEDIUM("medium"),
     HIGH("high"),

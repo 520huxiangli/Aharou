@@ -90,7 +90,7 @@ object AgentDefinitionParser {
         return map to rest
     }
 
-    private val VALID_EFFORTS = ReasoningEffort.entries.map { it.apiValue }.toSet()
+    private val VALID_EFFORTS = ReasoningEffort.entries.mapNotNull { it.apiValue }.toSet()
 
     /**
      * 把设置页表单写回定义文件文本（frontmatter + 正文），与 [parse] 成对。

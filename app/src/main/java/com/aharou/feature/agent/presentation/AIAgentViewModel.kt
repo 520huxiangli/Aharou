@@ -714,8 +714,8 @@ class AIAgentViewModel @Inject constructor(
 
     /** 当前会话的思考强度（默认 MEDIUM）。 */
     val currentSessionReasoningEffort: StateFlow<ReasoningEffort> =
-        currentSessionState.map { it?.reasoningEffort ?: ReasoningEffort.MEDIUM }
-            .stateIn(viewModelScope, SharingStarted.Eagerly, ReasoningEffort.MEDIUM)
+        currentSessionState.map { it?.reasoningEffort ?: ReasoningEffort.DEFAULT }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, ReasoningEffort.DEFAULT)
 
     /** 当前会话绑定的 providerId/model（null 表示未绑定，回退全局 active provider）。 */
     val currentSessionProviderModel: StateFlow<Pair<String?, String?>> =
@@ -2296,9 +2296,9 @@ class AIAgentViewModel @Inject constructor(
         val providerId = defaultModelSettingsRepository.getDefaultProviderId().takeIf { it.isNotBlank() }
         val model = defaultModelSettingsRepository.getDefaultModel().takeIf { it.isNotBlank() }
         val effort = if (providerId != null && model != null) {
-            modelReasoningEffortRepository.get(providerId, model) ?: ReasoningEffort.MEDIUM.name
+            modelReasoningEffortRepository.get(providerId, model) ?: ReasoningEffort.DEFAULT.name
         } else {
-            ReasoningEffort.MEDIUM.name
+            ReasoningEffort.DEFAULT.name
         }
         return sessionUseCase.newSessionEntity(
             workspacePath = workspacePath,

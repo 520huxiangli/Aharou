@@ -21,7 +21,7 @@ data class ChatSession(
     val mode: AgentMode = AgentMode.BUILD,
     /** 进入 PLAN 前的模式（如 AUTO）；退出 PLAN 时恢复，null 视为 BUILD。 */
     val modeBeforePlan: AgentMode? = null,
-    val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    val reasoningEffort: ReasoningEffort = ReasoningEffort.DEFAULT,
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,

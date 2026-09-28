@@ -46,7 +46,7 @@ class SessionUseCase @Inject constructor(
         workspacePath: String,
         providerId: String? = null,
         model: String? = null,
-        reasoningEffort: String = ReasoningEffort.MEDIUM.name,
+        reasoningEffort: String = ReasoningEffort.DEFAULT.name,
         // Aharou: 新会话默认 AUTO（自动化、免逐项确认）；用户仍可在会话内手动切 BUILD/PLAN。
         mode: String = AgentMode.AUTO.name
     ): ChatSessionEntity {

@@ -653,7 +653,7 @@ class GeminiAdapter @Inject constructor(
     private fun buildThinkingConfig(reasoningEffort: String?): Map<String, Any>? {
         if (reasoningEffort == null) return null
         return if (model.contains("gemini-3")) {
-            // thinkingLevel 仅支持 minimal/low/medium/high；none 跳过（不发 thinking），xhigh/max 归一到 high（元数据未命中时 UI 会给出全部档位）
+            // thinkingLevel 仅支持 minimal/low/medium/high；none 跳过（不发 thinking），xhigh/max 归一到 high
             val level = when (reasoningEffort) {
                 "none" -> return null
                 "xhigh", "max" -> "high"

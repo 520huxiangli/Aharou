@@ -157,14 +157,14 @@ class OpenAIAdapter @Inject constructor(
 
     /**
      * 思考强度 → OpenAI reasoning_effort。
-     * OpenAI 官方 Chat Completions 的 reasoning_effort 仅接受 low/medium/high（gpt-5 系额外支持
-     * none/minimal，但 o 系列不接受），"none"/"minimal" 原样透传会在多数推理模型上 400。
-     * 这里把 "none"/"minimal" 明确跳过（不发该字段，交由服务端默认），"xhigh"/"max" 归一到 high
+     * OpenAI 官方 Chat Completions 的 reasoning_effort 仅接受 low/medium/high（gpt-5 系额外支持 none，
+     * 但 o 系列不接受），"none" 原样透传会在多数推理模型上 400。
+     * 这里把 "none" 明确跳过（不发该字段，交由服务端默认），"xhigh"/"max" 归一到 high
      * （OpenAI 无更高档），low/medium/high 原样透传。与 Anthropic/Gemini 对齐「不可表达即跳过」的策略。
      */
     private fun normalizeReasoningEffort(effort: String?): String? = when (effort) {
         null -> null
-        "none", "minimal" -> null
+        "none" -> null
         "xhigh", "max" -> "high"
         else -> effort
     }

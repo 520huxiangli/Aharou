@@ -96,16 +96,27 @@ internal fun ReasoningEffortSelector(
 ) {
     var showSheet by remember { mutableStateOf(false) }
     Box {
-        IconButton(
-            onClick = { showSheet = true },
-            enabled = enabled,
-            modifier = Modifier.size(36.dp)
+        // 图标旁直接带档位文字：档位不同耗时与花费差得多，只给图标看不出当前选了哪档。
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clip(RoundedCornerShape(Radius.sm))
+                .clickable(enabled = enabled) { showSheet = true }
+                .padding(horizontal = Spacing.sm, vertical = Spacing.sm)
         ) {
+            val tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
             Icon(
                 FeatherIcons.Zap,
-                contentDescription = stringResource(effort.labelRes()),
-                tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                contentDescription = null,
+                tint = tint,
                 modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(Spacing.xs))
+            Text(
+                text = stringResource(effort.labelRes()),
+                style = MaterialTheme.typography.labelMedium,
+                color = tint,
+                maxLines = 1
             )
         }
     }
@@ -174,8 +185,8 @@ internal fun ReasoningEffortSelector(
 }
 
 private fun ReasoningEffort.labelRes(): Int = when (this) {
+    ReasoningEffort.DEFAULT -> com.aharou.R.string.chat_reasoning_effort_default
     ReasoningEffort.NONE -> com.aharou.R.string.chat_reasoning_effort_none
-    ReasoningEffort.MINIMAL -> com.aharou.R.string.chat_reasoning_effort_minimal
     ReasoningEffort.LOW -> com.aharou.R.string.chat_reasoning_effort_low
     ReasoningEffort.MEDIUM -> com.aharou.R.string.chat_reasoning_effort_medium
     ReasoningEffort.HIGH -> com.aharou.R.string.chat_reasoning_effort_high
