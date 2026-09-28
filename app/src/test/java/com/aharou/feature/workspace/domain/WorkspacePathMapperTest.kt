@@ -26,12 +26,14 @@ class WorkspacePathMapperTest {
     private val wsRoot = "/data/ws"
     private val aicodeDir = "/data/aicode"
     private val rootfsDir = "/data/rootfs"
+    private val sharedDir = "/data/shared"
     private val home = "/root"
 
     private fun newMapper(): WorkspacePathMapper {
         every { workspaceRepository.currentPath() } returns wsRoot
         every { containerInstaller.aharouDir } returns File(aicodeDir)
         every { containerInstaller.rootfsDirFor(any()) } returns File(rootfsDir)
+        every { containerInstaller.sharedDir } returns File(sharedDir)
         every { containerSettingsRepository.activeProfileIdFlow } returns emptyFlow()
         every { pathHomeResolver.home() } returns home
         // expandHome 保持真实展开语义，让 toHostFile 里的 ~ 前缀与生产行为一致
@@ -84,6 +86,17 @@ class WorkspacePathMapperTest {
     }
 
     @Test
+    fun toHostFile_sharedRoot_mapsToSharedDir() {
+        assertEquals(File(sharedDir), newMapper().toHostFile("/root/shared"))
+        assertEquals(File(sharedDir), newMapper().toHostFile("/root/shared/"))
+    }
+
+    @Test
+    fun toHostFile_sharedChild_mapsUnderSharedDir() {
+        assertEquals(File(sharedDir, "notes/a.md"), newMapper().toHostFile("/root/shared/notes/a.md"))
+    }
+
+    @Test
     fun toHostFile_relativePath_hangsUnderWorkspaceRoot() {
         assertEquals(File(wsRoot, "src/Main.kt"), newMapper().toHostFile("src/Main.kt"))
     }
@@ -121,6 +134,12 @@ class WorkspacePathMapperTest {
     fun toContainerPath_rootfs_mapsToContainerAbsolute() {
         assertEquals("/", newMapper().toContainerPath(rootfsDir))
         assertEquals("/etc/hosts", newMapper().toContainerPath("$rootfsDir/etc/hosts"))
+    }
+
+    @Test
+    fun toContainerPath_shared_mapsToSharedRootForm() {
+        assertEquals("/root/shared", newMapper().toContainerPath(sharedDir))
+        assertEquals("/root/shared/notes/a.md", newMapper().toContainerPath("$sharedDir/notes/a.md"))
     }
 
     @Test
