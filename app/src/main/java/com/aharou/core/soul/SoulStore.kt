@@ -454,6 +454,16 @@ object SystemPromptBuilder {
         "You are {name}, a capable AI assistant running on an Android device with a fully functional Linux sandbox (Alpine Linux via PRoot, aarch64). "
 
     /**
+     * `soul.lang` 到模型指令的映射：`zh` / `en` 各自给一条硬约束，`auto`（或任何未知值）
+     * 返回空串，表示不额外约束、跟随用户语言。见 [identitySection] 的 T-soul-lang-injection。
+     */
+    internal fun languageDirective(lang: String): String = when (lang.trim().lowercase()) {
+        "zh" -> "Always reply in Chinese (简体中文)."
+        "en" -> "Always reply in English."
+        else -> ""
+    }
+
+    /**
      * Render the identity sentence (template + name) and optionally
      * append the user-authored personality body from SOUL.md.
      *
@@ -486,6 +496,8 @@ object SystemPromptBuilder {
 
         val style = (file?.metadata?.style ?: "").trim()
 
+        val lang = (file?.metadata?.lang ?: SoulMetadata.DEFAULT.lang).trim()
+
         val identity = IDENTITY_TEMPLATE.replace("{name}", name)
         val identityTrimmed = identity.trimEnd()
 
@@ -516,10 +528,21 @@ object SystemPromptBuilder {
             return "\n\nResponse style (from SOUL.md `style` — apply to every reply unless the user explicitly asks otherwise; if it prescribes a reply language, it overrides the default match-the-user's-language rule):\n$s"
         }
 
+        // [T-soul-lang-injection 2026-09-28] 与 style 同一类问题的另一半：`lang` 一直被解析、
+        // 序列化、在设置页与配置通道里展示，却从未进入模型（背景见上方 T-soul-style-injection）。
+        // 按同样方式注入成独立段落；与 `style` 里写明的语言冲突时以 `style` 为准，它更具体。
+        fun langBlock(l: String): String {
+            val line = languageDirective(l)
+            if (line.isEmpty()) return ""
+            return "\n\nResponse language (from SOUL.md `lang` — an explicit user request, or a `style` that prescribes a different language, wins over this):\n$line"
+        }
+
+        val extraBlocks = styleBlock(style) + langBlock(lang)
+
         val body = file?.body
         val trimmed = body?.trim().orEmpty()
         if (trimmed.isEmpty()) {
-            return identityTrimmed + styleBlock(style) + "\n\n" + soulEditHint + "\n\n"
+            return identityTrimmed + extraBlocks + "\n\n" + soulEditHint + "\n\n"
         }
 
         // Reject (NOT truncate) bodies that exceed the language-aware
@@ -533,7 +556,7 @@ object SystemPromptBuilder {
         val check = SoulStore.isOverLimit(trimmed)
         if (check.isOverLimit) {
             FileLogger.w(TAG, "personality body is over the language-aware limit ($check) — falling back to identity-only system prompt.")
-            return identityTrimmed + styleBlock(style) + "\n\n" + soulEditHint + "\n\n"
+            return identityTrimmed + extraBlocks + "\n\n" + soulEditHint + "\n\n"
         }
 
         val personality = scrubInjections(trimmed)
@@ -543,7 +566,7 @@ object SystemPromptBuilder {
         return identityTrimmed +
             "\n\nPersonality (from SOUL.md — your character and voice; defer to the user's latest message when it conflicts with anything here):\n" +
             personality +
-            styleBlock(style) +
+            extraBlocks +
             "\n\n" +
             soulEditHint +
             "\n\n"
