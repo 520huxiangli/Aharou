@@ -144,6 +144,46 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configAppFields: com.aharou.feature.settings.data.ConfigAppFields
 
+    /** 外观 / 编辑器 / 终端 / 声音 / 保活字段注册。 */
+    @Inject
+    lateinit var configAppearanceFields: com.aharou.feature.settings.data.ConfigAppearanceFields
+
+    /** 全局代理与远程同步偏好字段注册。 */
+    @Inject
+    lateinit var configNetworkFields: com.aharou.feature.settings.data.ConfigNetworkFields
+
+    /** 容器选择字段注册。 */
+    @Inject
+    lateinit var configContainerFields: com.aharou.feature.settings.data.ConfigContainerFields
+
+    /** AI 供应商集合注册（动态子路径 + 增删）。 */
+    @Inject
+    lateinit var configProviderFields: com.aharou.feature.settings.data.ConfigProviderFields
+
+    /** 远程连接与挂载集合注册。 */
+    @Inject
+    lateinit var configRemoteFields: com.aharou.feature.workspace.data.ConfigRemoteFields
+
+    /** 模型组集合注册。 */
+    @Inject
+    lateinit var configModelGroupFields: com.aharou.feature.settings.data.ConfigModelGroupFields
+
+    /** 各角色模型选择字段注册。 */
+    @Inject
+    lateinit var configModelRoleFields: com.aharou.feature.settings.data.ConfigModelRoleFields
+
+    /** 环境变量集合注册。 */
+    @Inject
+    lateinit var configEnvFields: com.aharou.feature.settings.data.ConfigEnvFields
+
+    /** MCP 服务器集合注册。 */
+    @Inject
+    lateinit var configMcpFields: com.aharou.feature.agent.data.ConfigMcpFields
+
+    /** 技能启停集合注册。 */
+    @Inject
+    lateinit var configSkillFields: com.aharou.feature.agent.data.ConfigSkillFields
+
     /** MCP 配置仓库：启动即监听 mcp.json 外部直接编辑，改动数秒内刷新列表并触发重连。 */
     @Inject
     lateinit var mcpConfigRepository: com.aharou.feature.agent.domain.mcp.McpConfigRepository
@@ -227,8 +267,20 @@ class AIEditorApp : Application(), Configuration.Provider {
         logDeviceInfo()
         // Aharou 配置通道 + 人格（SOUL.md）：初始化注册表/审计；首次运行释放默认模板文件（外置可改）
         com.aharou.core.config.ConfigRegistry.init(this)
-        // 应用设置字段（app.*）注册：Agent 经配置通道改自身设置（无系统权限依赖）
-        configAppFields.registerInto(com.aharou.core.config.ConfigRegistry.get())
+        // 应用设置字段（app.* / appearance.* / editor.* / terminal.* / sound.* / network.*）注册：
+        // Agent 经配置通道改自身设置（无系统权限依赖）
+        val configRegistry = com.aharou.core.config.ConfigRegistry.get()
+        configAppFields.registerInto(configRegistry)
+        configAppearanceFields.registerInto(configRegistry)
+        configNetworkFields.registerInto(configRegistry)
+        configContainerFields.registerInto(configRegistry)
+        configProviderFields.registerInto(configRegistry)
+        configRemoteFields.registerInto(configRegistry)
+        configModelGroupFields.registerInto(configRegistry)
+        configModelRoleFields.registerInto(configRegistry)
+        configEnvFields.registerInto(configRegistry)
+        configMcpFields.registerInto(configRegistry)
+        configSkillFields.registerInto(configRegistry)
         // 工作区项目级 .aicode 目录 → .aharou 一次性迁移（只搬不删）
         com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this)
         com.aharou.core.config.audit.ConfigAuditLog.init(this)

@@ -6,8 +6,14 @@ import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.DataStoreBoolField
+import com.aharou.core.config.fields.DataStoreEnumField
+import com.aharou.core.config.fields.DataStoreIntField
+import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.LanguageSettingsRepository
+import com.aharou.feature.settings.data.repository.StartupSessionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,11 +23,15 @@ import javax.inject.Singleton
  *
  * 与 [com.aharou.core.config.ConfigBuiltins]（soul/memory 等文件型字段）互补：这里接
  * DataStore 支撑的应用设置。注册在 Application.onCreate 完成（ConfigRegistry.init 之后）。
+ *
+ * 本文件只管 `app.*`；界面外观、编辑器、终端、网络等主题见 [ConfigAppearanceFields] 与
+ * [ConfigNetworkFields]。
  */
 @Singleton
 class ConfigAppFields @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val languageSettings: LanguageSettingsRepository,
+    private val generalSettings: GeneralSettingsRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -39,6 +49,97 @@ class ConfigAppFields @Inject constructor(
                         ?: throw ConfigError.TypeMismatch("string")
                     runBlocking { languageSettings.setLanguage(if (tag == "auto") null else tag) }
                 },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "app.auto_remove_stale_models",
+                displayName = "自动清理失效模型",
+                description = "拉取模型列表后，自动移除远端已不存在的本地模型。默认开启。",
+                flow = generalSettings.autoRemoveStaleModelsFlow,
+                setter = { generalSettings.setAutoRemoveStaleModels(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreEnumField(
+                path = "app.startup_session_mode",
+                displayName = "启动进入的会话",
+                description = "App 启动（含切换工作区）时进入哪个会话：new_session=复用当前工作区里未发过消息的空会话，否则新建；recent_session=直接打开最近更新的会话。",
+                flow = generalSettings.startupSessionModeFlow.map { it.name },
+                setter = { generalSettings.setStartupSessionMode(StartupSessionMode.valueOf(it)) },
+                cases = listOf("new_session", "recent_session"),
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.first_byte_timeout_sec",
+                displayName = "首字超时（秒）",
+                description = "发出请求后等待模型返回第一个字的时间上限，超过即判失败。默认 300 秒。",
+                flow = generalSettings.firstByteTimeoutSecFlow,
+                setter = { generalSettings.setFirstByteTimeoutSec(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.stream_idle_timeout_sec",
+                displayName = "数据块间隔超时（秒）",
+                description = "流式输出期间，两个数据块之间的最长等待时间，超过即判失败。默认 300 秒。",
+                flow = generalSettings.streamIdleTimeoutSecFlow,
+                setter = { generalSettings.setStreamIdleTimeoutSec(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.max_network_retries",
+                displayName = "网络请求最大重试次数",
+                description = "网络请求失败后的重试次数。默认 6。",
+                flow = generalSettings.maxNetworkRetriesFlow,
+                setter = { generalSettings.setMaxNetworkRetries(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "app.enter_to_send",
+                displayName = "回车发送",
+                description = "输入框里按回车即发送消息（关闭则回车换行）。",
+                flow = generalSettings.enterToSendFlow,
+                setter = { generalSettings.setEnterToSend(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.compaction_threshold_percent",
+                displayName = "自动压缩阈值（%）",
+                description = "上下文用量达到该百分比时自动压缩历史。默认 90。",
+                flow = generalSettings.compactionThresholdPercentFlow,
+                setter = { generalSettings.setCompactionThresholdPercent(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.sendfile_max_size_mb",
+                displayName = "sendFile 单文件上限（MB）",
+                description = "sendFile 工具一次能发送的文件大小上限，超过会被拒绝。默认 100。",
+                flow = generalSettings.sendFileMaxSizeMbFlow,
+                setter = { generalSettings.setSendFileMaxSizeMb(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "app.delete_external_workspace_sessions",
+                displayName = "移除外部工作区时删聊天记录",
+                description = "移除外部本地工作区时，是否一并删除它的聊天记录。默认关闭（保留记录）。",
+                flow = generalSettings.deleteExternalWorkspaceSessionsFlow,
+                setter = { generalSettings.setDeleteExternalWorkspaceSessions(it) },
             ),
         )
     }
