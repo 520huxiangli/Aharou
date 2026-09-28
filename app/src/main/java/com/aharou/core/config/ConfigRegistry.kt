@@ -36,13 +36,20 @@ class ConfigRegistry private constructor() {
      */
     fun resolveField(path: String): ConfigField? {
         fields[path]?.let { return it }
-        // Collection child lookup: split into [base, id, leaf]. The leaf
-        // may itself contain dots (e.g. `models.<uuid>.modality.video`),
-        // so cap maxSplits at 2.
-        val segments = path.split('.', limit = 3)
-        if (segments.size != 3) return null
-        val coll = collections[segments[0]] ?: return null
-        return coll.fields(forId = segments[1]).firstOrNull { it.path == path }
+        // Collection child lookup. Collection base paths are not always a
+        // single segment (`remote.connections`, `modelgroup.groups`), so
+        // match the longest registered base that prefixes `path` instead
+        // of assuming the first dot-delimited segment is the base. The id
+        // is the segment right after the base; the leaf may itself contain
+        // dots (e.g. `models.<uuid>.modality.video`).
+        val base = collections.keys
+            .filter { path.startsWith("$it.") }
+            .maxByOrNull { it.length }
+            ?: return null
+        val rest = path.substring(base.length + 1)
+        val id = rest.substringBefore('.')
+        if (id.isEmpty()) return null
+        return collections.getValue(base).fields(forId = id).firstOrNull { it.path == path }
     }
 
     fun collection(basePath: String): ConfigCollection? = collections[basePath]
