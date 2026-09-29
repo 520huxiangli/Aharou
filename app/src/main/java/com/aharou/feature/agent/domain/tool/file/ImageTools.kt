@@ -101,6 +101,8 @@ class ViewImageTool @Inject constructor(
         args: Map<String, JsonElement>,
         context: AgentContext
     ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         val images = parseImages(args)
         val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         val prompt = args["prompt"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -118,22 +120,23 @@ class ViewImageTool @Inject constructor(
         }
         val supportsVision = isCurrentChatModelSupportsVision(context.sessionId)
         return if (supportsVision && images.isNotEmpty()) {
-            loadImagesDirectlyToContext(images, prompt, detail)
+            loadImagesDirectlyToContext(access, images, prompt, detail)
         } else if (images.isNotEmpty()) {
-            createSession(images, prompt, detail, context.sessionId)
+            createSession(access, images, prompt, detail, context.sessionId)
         } else {
             continueSession(id, prompt, context.sessionId)
         }
     }
 
     private fun loadImagesDirectlyToContext(
+        access: FileAccessProvider,
         images: List<String>,
         prompt: String,
         detail: String
     ): ToolResult {
         val encoded = mutableListOf<AgentImage>()
         for (path in images) {
-            when (val r = encodeImage(path, detail)) {
+            when (val r = encodeImage(access, path, detail)) {
                 is EncodeOutcome.Ok -> encoded.add(r.image)
                 is EncodeOutcome.Fail -> return ToolResult.Error(r.message, r.code)
             }
@@ -153,11 +156,11 @@ class ViewImageTool @Inject constructor(
         )
     }
 
-    private suspend fun createSession(images: List<String>, prompt: String, detail: String, sessionId: String?): ToolResult {
+    private suspend fun createSession(access: FileAccessProvider, images: List<String>, prompt: String, detail: String, sessionId: String?): ToolResult {
         // 按 detail 档位逐张编码：original 全部原样；high 小图原样、大图压缩；low 全部压缩。
         val encoded = mutableListOf<AgentImage>()
         for (path in images) {
-            when (val r = encodeImage(path, detail)) {
+            when (val r = encodeImage(access, path, detail)) {
                 is EncodeOutcome.Ok -> encoded.add(r.image)
                 is EncodeOutcome.Fail -> return ToolResult.Error(r.message, r.code)
             }
@@ -346,13 +349,13 @@ class ViewImageTool @Inject constructor(
         return provider
     }
 
-    private fun encodeImage(path: String, detail: String): EncodeOutcome {
+    private fun encodeImage(access: FileAccessProvider, path: String, detail: String): EncodeOutcome {
         return try {
-            val file = fileAccess.copyToLocal(path)
+            val file = access.copyToLocal(path)
             FileLogger.d(TAG, "viewImage path=$path -> ${file.absolutePath}, detail=$detail")
-            if (!fileAccess.exists(path)) return EncodeOutcome.Fail("文件不存在: $path", "FILE_NOT_FOUND")
-            if (!fileAccess.isFile(path)) return EncodeOutcome.Fail("路径不是文件: $path", "NOT_A_FILE")
-            val fileSize = fileAccess.fileSize(path)
+            if (!access.exists(path)) return EncodeOutcome.Fail("文件不存在: $path", "FILE_NOT_FOUND")
+            if (!access.isFile(path)) return EncodeOutcome.Fail("路径不是文件: $path", "NOT_A_FILE")
+            val fileSize = access.fileSize(path)
             if (fileSize <= 0L) return EncodeOutcome.Fail("图片文件为空: $path", "EMPTY_FILE")
 
             val bounds = decodeBounds(file)
@@ -366,7 +369,7 @@ class ViewImageTool @Inject constructor(
             val encoded = when (detail) {
                 "low" -> encodePreview(file, bounds, LOW_MAX_EDGE, LOW_TARGET_BYTES, detail)
                 else -> if (originalOk && fileSize <= MAX_ORIGINAL_BYTES) {
-                    originalImage(path, bounds, sourceMime, fileSize)
+                    originalImage(access, path, bounds, sourceMime, fileSize)
                 } else {
                     encodePreview(file, bounds, HIGH_MAX_EDGE, HIGH_TARGET_BYTES, detail)
                 }
@@ -375,7 +378,7 @@ class ViewImageTool @Inject constructor(
                 AgentImage(
                     mimeType = encoded.mimeType,
                     base64Data = encoded.base64Data,
-                    path = fileAccess.toDisplayPath(path)
+                    path = access.toDisplayPath(path)
                 )
             )
         } catch (e: Exception) {
@@ -384,10 +387,10 @@ class ViewImageTool @Inject constructor(
         }
     }
 
-    private fun originalImage(path: String, bounds: ImageBounds, mime: String, size: Long): EncodedImage =
+    private fun originalImage(access: FileAccessProvider, path: String, bounds: ImageBounds, mime: String, size: Long): EncodedImage =
         EncodedImage(
             mimeType = mime,
-            base64Data = Base64.encodeToString(fileAccess.readBytes(path), Base64.NO_WRAP),
+            base64Data = Base64.encodeToString(access.readBytes(path), Base64.NO_WRAP),
             width = bounds.width,
             height = bounds.height,
             detail = "original",

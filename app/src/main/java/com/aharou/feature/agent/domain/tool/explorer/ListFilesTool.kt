@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.explorer
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -49,7 +50,12 @@ class ListFilesTool @Inject constructor(
         )
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         return try {
             val rawArgs = args["args"]?.jsonPrimitive?.contentOrNull.orEmpty()
             val tokens = parseShellWords(rawArgs)
@@ -85,21 +91,21 @@ class ListFilesTool @Inject constructor(
                     return
                 }
 
-                val containerPath = fileAccess.toDisplayPath(path)
+                val containerPath = access.toDisplayPath(path)
 
-                if (!fileAccess.exists(path)) {
+                if (!access.exists(path)) {
                     appendLine("ls: cannot access '$path': No such file or directory")
                     return
                 }
 
-                if (!fileAccess.isDirectory(path) || options.directoryOnly) {
+                if (!access.isDirectory(path) || options.directoryOnly) {
                     val name = path.substringAfterLast('/').ifBlank { containerPath }
                     appendEntry(LsEntry(name, path), options, ::appendLine)
                     return
                 }
 
                 if (showHeader) appendLine("${containerPath.trimEnd('/')}:")
-                val children = listEntries(path, options)
+                val children = listEntries(access, path, options)
                 for (entry in children) {
                     if (entryCount >= (options.maxLines ?: MAX_ENTRIES)) {
                         truncated = true
@@ -114,7 +120,7 @@ class ListFilesTool @Inject constructor(
                             truncated = true
                             return
                         }
-                        if (!fileAccess.isDirectory(entry.fullPath) || entry.name == "." || entry.name == "..") continue
+                        if (!access.isDirectory(entry.fullPath) || entry.name == "." || entry.name == "..") continue
                         appendLine()
                         listPath(entry.fullPath, showHeader = true)
                     }
@@ -192,15 +198,15 @@ class ListFilesTool @Inject constructor(
         return options
     }
 
-    private fun listEntries(dirPath: String, options: LsOptions): List<LsEntry> {
+    private fun listEntries(access: FileAccessProvider, dirPath: String, options: LsOptions): List<LsEntry> {
         val entries = mutableListOf<LsEntry>()
         if (options.showAll && !options.showAlmostAll) {
             entries.add(LsEntry(".", dirPath, isDir = true, size = 0, lastModified = 0, permissions = "rwx"))
-            fileAccess.parentPath(dirPath)?.let { parent ->
+            access.parentPath(dirPath)?.let { parent ->
                 entries.add(LsEntry("..", parent, isDir = true, size = 0, lastModified = 0, permissions = "rwx"))
             }
         }
-        val children = fileAccess.listFiles(dirPath)
+        val children = access.listFiles(dirPath)
             .filter { options.showAll || options.showAlmostAll || !it.name.startsWith(".") }
             .map { LsEntry(it.name, "$dirPath/${it.name}".trimEnd('/'), it.isDirectory, it.size, it.lastModified, it.permissions) }
         entries.addAll(children)

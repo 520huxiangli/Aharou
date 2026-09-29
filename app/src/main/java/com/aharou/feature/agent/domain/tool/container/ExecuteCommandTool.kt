@@ -137,15 +137,22 @@ class ExecuteCommandTool @Inject constructor(
         )
     }
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    /** 会话绑定的工作区；会话没绑定时回退全局当前工作区。 */
+    private fun sessionWorkdir(context: com.aharou.feature.agent.domain.model.AgentContext): String =
+        context.projectRoot.takeIf { it.isNotBlank() } ?: workspaceRepository.currentPath()
+
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext
+    ): ToolResult {
         val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
 
         if (isBackground(args)) return startBackground(command, args)
 
         return try {
-            // 在当前工作区目录内执行，与文件工具保持同一根目录
-            val workdir = workspaceRepository.currentPath()
+            // 在会话绑定的工作区目录内执行，与文件工具保持同一根目录
+            val workdir = sessionWorkdir(context)
             val timeoutMs = resolveTimeoutMs(args)
             FileLogger.d(TAG, "execute_command (timeout=${timeoutMs}ms): $command")
             val output = commandEngine.runCommandSync(command, workdir, timeoutMs)
@@ -182,7 +189,7 @@ class ExecuteCommandTool @Inject constructor(
         // 限幅累积：喂回模型的最终结果只保留开头+结尾，避免超大输出撑爆上下文。
         val accumulated = BoundedOutput()
         try {
-            val workdir = workspaceRepository.currentPath()
+            val workdir = sessionWorkdir(context)
             val timeoutMs = resolveTimeoutMs(args)
             FileLogger.d(TAG, "execute_command(流式, timeout=${timeoutMs}ms): $command")
             commandEngine.runCommandStream(command, workdir, timeoutMs).collect { event ->

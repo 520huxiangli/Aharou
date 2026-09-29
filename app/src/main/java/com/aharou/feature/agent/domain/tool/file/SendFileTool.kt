@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.file
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -74,7 +75,12 @@ class SendFileTool @Inject constructor(
         )
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         return try {
             val paths = (args["paths"] as? JsonArray)?.mapNotNull { it.jsonPrimitive.contentOrNull }
                 ?.map { it.trim() }
@@ -99,10 +105,10 @@ class SendFileTool @Inject constructor(
             val failures = mutableListOf<String>()
             paths.forEachIndexed { index, path ->
                 when {
-                    !fileAccess.exists(path) -> failures.add("文件不存在: $path")
-                    !fileAccess.isFile(path) -> failures.add("路径不是文件: $path")
-                    fileAccess.fileSize(path) > maxSizeBytes -> {
-                        val sizeMb = fileAccess.fileSize(path) / (1024 * 1024)
+                    !access.exists(path) -> failures.add("文件不存在: $path")
+                    !access.isFile(path) -> failures.add("路径不是文件: $path")
+                    access.fileSize(path) > maxSizeBytes -> {
+                        val sizeMb = access.fileSize(path) / (1024 * 1024)
                         failures.add("文件超过 ${maxSizeMb}MB 限制: $path（${sizeMb}MB）")
                     }
                 }
@@ -118,17 +124,17 @@ class SendFileTool @Inject constructor(
                 val displayName = names.getOrNull(index)?.takeIf { it.isNotBlank() } ?: rawName
                 JsonObject(
                     mapOf(
-                        "path" to JsonPrimitive(fileAccess.toDisplayPath(path)),
-                        "local_path" to JsonPrimitive(fileAccess.copyToLocal(path).absolutePath),
+                        "path" to JsonPrimitive(access.toDisplayPath(path)),
+                        "local_path" to JsonPrimitive(access.copyToLocal(path).absolutePath),
                         "name" to JsonPrimitive(displayName),
                         "mime_type" to JsonPrimitive(guessMimeType(rawName)),
-                        "size_bytes" to JsonPrimitive(fileAccess.fileSize(path)),
+                        "size_bytes" to JsonPrimitive(access.fileSize(path)),
                         "is_image" to JsonPrimitive(guessMimeType(rawName).startsWith("image/"))
                     )
                 )
             }
 
-            FileLogger.i(TAG, "sendFile 成功: ${paths.size} 个文件 ${paths.joinToString(", ") { fileAccess.toDisplayPath(it) }}")
+            FileLogger.i(TAG, "sendFile 成功: ${paths.size} 个文件 ${paths.joinToString(", ") { access.toDisplayPath(it) }}")
             ToolResult.Success(
                 JsonObject(
                     mapOf(

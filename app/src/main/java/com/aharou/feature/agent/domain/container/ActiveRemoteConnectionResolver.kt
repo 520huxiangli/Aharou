@@ -18,8 +18,6 @@ import javax.inject.Singleton
  * 取代旧的 execution_mode_prefs 连接参数副本：激活 profile 变化、profile 内容变化（编辑远程路径或换绑通道）
  * 或连接表变化（改 host/端口/账号密码）都会重新解析，产出可直接交给 [RemoteSshConnection.connect] 的
  * [RemoteConnectionConfig]，因此改连接即时生效，无需切换容器再切回。
- *
- * 仅支持密码认证（与远程镜像通道既有约束一致）：非密码类型的连接解出空密码。
  */
 @Singleton
 class ActiveRemoteConnectionResolver @Inject constructor(
@@ -45,13 +43,23 @@ class ActiveRemoteConnectionResolver @Inject constructor(
             ?: return null
         val ssh = profile.rootfsSource as? RootfsSource.RemoteSsh ?: return null
         val conn = connections.firstOrNull { it.id == ssh.connectionId } ?: return null
-        val password = if (conn.authType == "PASSWORD") KeystoreCipher.decryptString(conn.authData) else ""
         return RemoteConnectionConfig(
             host = conn.host,
             port = conn.port,
             username = conn.username,
-            auth = RemoteAuth.Password(password),
+            auth = conn.toRemoteAuth(),
             remoteWorkspacePath = normalizeRemoteWorkspacePath(ssh.remoteWorkspacePath, conn.username)
         )
     }
+
+    /**
+     * authData 的语义随 authType 变：密码连接存密文，密钥连接存明文私钥路径，故只对密码解密。
+     * 这里读的是连接表原始值，取值已在迁移 58 归一成 "password"/"key"。
+     */
+    private fun RemoteConnectionEntity.toRemoteAuth(): RemoteAuth =
+        if (authType == "key") {
+            RemoteAuth.PrivateKey(authData, passphrase?.let { KeystoreCipher.decryptString(it) })
+        } else {
+            RemoteAuth.Password(KeystoreCipher.decryptString(authData))
+        }
 }

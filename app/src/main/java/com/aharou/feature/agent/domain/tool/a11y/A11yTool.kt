@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool.a11y
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
@@ -9,6 +10,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.aharou.accessibility.AharouAccessibilityService
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.shizuku.ShizukuManager
+import com.aharou.feature.agent.domain.shizuku.ShizukuState
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -25,6 +28,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
+import dagger.hilt.android.qualifiers.ApplicationContext
 
 /**
  * 无障碍工具（a11y）：让 Agent「看得懂、点得动」宿主屏幕。
@@ -33,19 +37,27 @@ import javax.inject.Inject
  * 未开启时返回明确指引。能力：节点树 dump / 按文字查找 / 点按（id 或坐标）/ 滑动 /
  * 系统键 / 系统截图 / 输入框写文字 / 窗口列表 / 前台应用。
  */
-class A11yTool @Inject constructor() : AgentTool() {
+class A11yTool @Inject constructor(
+    @param:ApplicationContext private val context: Context,
+    private val shizukuManager: ShizukuManager,
+) : AgentTool() {
     private companion object {
         const val TAG = "A11yTool"
         const val MAX_NODES = 400
         const val MAX_DEPTH = 25
         const val MAX_IMAGE_EDGE = 1440
         const val JPEG_QUALITY = 75
+
+        /** 会改变他人应用状态的写动作：有影子屏可用时必须走影子屏。 */
+        val WRITE_ACTIONS = setOf("tap", "swipe", "key", "settext")
     }
 
     override val name = "a11y"
 
     override val description =
-        "无障碍操作宿主屏幕（需先在 设置 → 权限与后台 → 无障碍 开启服务）：" +
+        "无障碍操作宿主屏幕（需先在 设置 → 权限与后台 → 无障碍 开启服务）。" +
+            "只读动作 dump/find/shot/windows/foreground 可随时用（看用户屏幕上有什么，不抢焦点）；" +
+            "写动作 tap/swipe/key/setText 仅用于 Aharou 自己的界面——前台是第三方 App 时会被拒统，改用 vscreen 影子屏。" +
             "dump=读当前界面元素树（带节点 id）；find=按文字找节点；tap=按 id 或坐标点按；" +
             "swipe=滑动；key=返回/主页/最近任务；shot=系统截图（图片随结果返回）；" +
             "setText=给输入框写文字；windows=窗口列表；foreground=前台应用。"
@@ -96,6 +108,19 @@ class A11yTool @Inject constructor() : AgentTool() {
                 "无障碍服务未开启：请到「设置 → 权限与后台 → 无障碍」开启 Aharou 无障碍服务后重试。",
                 "A11Y_NOT_ENABLED",
             )
+
+        // 写动作不碰用户主屏上的第三方 App：有影子屏就让它去影子屏。
+        // 但 Shizuku 未就绪时影子屏根本起不来，这时无障碍是唯一可行路径，放行。
+        if (action in WRITE_ACTIONS && shizukuManager.state.value == ShizukuState.READY) {
+            val (foregroundPkg, _) = service.foregroundPackage()
+            if (foregroundPkg != null && !foregroundPkg.startsWith(context.packageName)) {
+                return ToolResult.Error(
+                    "前台是第三方 App（$foregroundPkg）：操作其他应用请改用 vscreen 影子屏，避免抢占用户主屏。",
+                    "USE_VSCREEN",
+                )
+            }
+        }
+
         return try {
             when (action) {
                 "dump" -> ToolResult.Success(kotlinx.serialization.json.JsonPrimitive(dumpTree(service)))

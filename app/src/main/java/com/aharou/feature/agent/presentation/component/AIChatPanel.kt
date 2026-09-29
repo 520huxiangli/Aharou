@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -86,6 +87,9 @@ import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
+import com.aharou.feature.voice.presentation.ReadAloudViewModel
+import com.aharou.feature.voice.presentation.VoiceErrorAutoClear
+import com.aharou.feature.voice.presentation.VoiceInputViewModel
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
@@ -94,6 +98,7 @@ import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
+import compose.icons.feathericons.ArrowUp
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -338,6 +343,8 @@ private class ChatTurn(
  * 按「用户消息」切成轮。返回 (轮首之前的散消息, 轮列表)。
  *
  * 后台通知虽可能是 USER 角色，但它是系统注入的提示条而非用户输入，不作为轮起点（归入当前轮内容）。
+ * 压缩锚点同为 USER 角色（见 ContextCompactor），但它不渲染、只是个定位标记，当轮首会让那一轮
+ * 失去可见的用户消息，同时把摘要卡片从轮末挑到轮头下方——也归入当前轮内容。
  */
 private fun splitChatTurns(messages: List<AgentUIMessage>): Pair<List<AgentUIMessage>, List<ChatTurn>> {
     val leading = ArrayList<AgentUIMessage>()
@@ -345,7 +352,7 @@ private fun splitChatTurns(messages: List<AgentUIMessage>): Pair<List<AgentUIMes
     var user: AgentUIMessage? = null
     var body: MutableList<AgentUIMessage>? = null
     for (message in messages) {
-        if (message.role == MessageRole.USER && !message.isBackgroundNotification) {
+        if (message.role == MessageRole.USER && !message.isBackgroundNotification && !message.isCompactionMarker) {
             user?.let { turns += ChatTurn(turnKeyOf(it.id), it, body?.toList().orEmpty()) }
             user = message
             body = ArrayList()
@@ -648,12 +655,26 @@ fun AIChatPanel(
             defaultFallbackProvider
         }
     }
-    val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
-    val projectRoot = currentWorkspace?.path ?: ""
+    // 会话绑定的工作区：手打对话也按会话走，不跟界面上选中的工作区
+    val projectRoot by viewModel.currentSessionWorkspace.collectAsStateWithLifecycle()
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
     val slashCommands by viewModel.slashCommands.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
+    // 语音输入：按住说话 → 离线识别 → 追加到输入框
+    val voiceViewModel: VoiceInputViewModel = hiltViewModel()
+    val voiceState by voiceViewModel.state.collectAsStateWithLifecycle()
+    VoiceErrorAutoClear(voiceState, voiceViewModel::clearError)
+    // 朗读：气泡上的喇叭按钮读这一条；开了自动朗读时，每条回复落地就念
+    val readAloudViewModel: ReadAloudViewModel = hiltViewModel()
+    val readingText by readAloudViewModel.currentText.collectAsStateWithLifecycle()
+    // 边回边念：流式文本每帧喂给播报队列（开关关着时 ViewModel 会直接丢）；
+    // 文本清空 = 本轮结束，收尾把最后没成句的尾巴也读掉。
+    LaunchedEffect(streamingText) {
+        val text = streamingText
+        if (!text.isNullOrBlank()) readAloudViewModel.feedStream(text)
+        else readAloudViewModel.finishStream()
+    }
     val inputDraft by viewModel.inputDraft.collectAsStateWithLifecycle()
     LaunchedEffect(inputDraft) {
         if (inputText != inputDraft) inputText = inputDraft
@@ -1109,6 +1130,19 @@ fun AIChatPanel(
         }
     }
 
+    // 上一条用户消息在 chatItems 里的下标：视口顶之前最近的 USER 消息。
+    // 只取 firstVisibleItemIndex 之前的部分，所以视口顶端正停在那条用户消息上时
+    // 找的是它**上面**那条（否则按一下几乎不动）。没有则 -1，按钮隐藏。
+    // 必须排掉轮头折叠条（turnHeader）：它内部也持同一条 userMessage，下标更大，
+    // 不排除就会跳到「已完成 Xs」上，视口落在折叠的过程项里。
+    val prevUserItemIndex by remember(messagesReady, chatItems.size) {
+        derivedStateOf {
+            if (!messagesReady) return@derivedStateOf -1
+            val beforeViewport = chatItems.take(listState.firstVisibleItemIndex.coerceIn(0, chatItems.size))
+            beforeViewport.indexOfLast { it.message.role == MessageRole.USER && it.turnHeader == null }
+        }
+    }
+
     // 用户开始拖拽：停止跟随。松手时若已到底则恢复跟随。
     // 额外：流式输出时内容持续增长，用户可能松手后又被「顶」离底部——
     // 用 snapshotFlow { isAtBottom } 持续监测，只要滑到底部就恢复跟随，
@@ -1393,6 +1427,8 @@ fun AIChatPanel(
                                 onMoreClick = { messageForMenu = it },
                                 toolExpandedOverride = toolGroupOverrideSnapshot[member.id],
                                 onToolExpandedChange = { isExpanded -> viewModel.setToolExpanded(member.id, isExpanded) },
+                                onReadAloud = { readAloudViewModel.toggle(it.content) },
+                                isReadingAloud = readingText == member.content,
                                 onToolToggle = onToolItemToggled,
                                 // 分组展开时成员行内缩一级，与分组头区分层级
                                 contentPadding = ToolGroupMemberPadding,
@@ -1413,6 +1449,8 @@ fun AIChatPanel(
                     contentSlice = item.slice,
                     isChunkHeader = item.isChunkHeader,
                     isChunkFooter = item.isChunkFooter,
+                    onReadAloud = { readAloudViewModel.toggle(it.content) },
+                    isReadingAloud = readingText == message.content,
                     showSoulHeader = item.showSoulHeader,
                     reasoningVisible = item.reasoningVisible,
                     onRewindClick = { viewModel.openRewindMenu(it) },
@@ -1646,8 +1684,7 @@ fun AIChatPanel(
                 onStop = { viewModel.stopAgent() },
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
-                hasRunningSessions = { viewModel.hasRunningSessionsInCurrentWorkspace() },
-                onSwitchWorkspaceConfirmed = { viewModel.stopAllAndCloseTerminal() },
+                onStopCurrentSessions = { viewModel.stopAllAgents() },
                 activeProvider = activeProvider,
                 providers = providers,
                 modelMetadata = modelMetadata,
@@ -1672,6 +1709,19 @@ fun AIChatPanel(
                     )
                 },
                 onTakePhoto = ::takePhoto,
+                voiceState = voiceState,
+                onVoiceStart = {
+                    voiceViewModel.start { text ->
+                        // 语音输入按「说完即发」处理：结果拼进当前草稿后直接走正常发送流程。
+                        // 输入框里已有的文字（先打字再补一句语音）会一并带出去。
+                        val merged = if (inputText.isBlank()) text else "$inputText $text"
+                        inputText = merged
+                        viewModel.updateInputDraft(merged)
+                        sendMessage()
+                    }
+                },
+                onVoiceStop = { voiceViewModel.stop() },
+                onVoiceCancel = voiceViewModel::cancel,
                 slashCommands = slashCommands,
                 queuedRequests = queuedRequests,
                 onRemoveQueued = { viewModel.removeQueuedRequest(it) },
@@ -1740,11 +1790,36 @@ fun AIChatPanel(
                 }
             }
 
-            // 滚动到底部按钮：悬浮在输入框右上角上方（避让底栏及可能悬浮的授权弹窗），离底超过半屏时
-            // 显示，不看滚动方向——往上翻历史后停住恰恰是最需要一键回底的时刻；滚动时跟随输入框淡出。
             val permissionOffsetPx = with(LocalDensity.current) {
                 if (pendingPermission != null) permissionPanelHeightPx + Spacing.xs.toPx() else 0f
             }
+
+            // 滚到上一条用户消息：与回底按钮同位于输入框右上角上方，堆在它正上方一档。
+            // 只有上方确实还有我发的消息时才出现（不看滚动方向，与回底按钮同思路）。
+            // 点击先停跟随，否则校准循环下一帧就把视口拉回底部，看不出跳转。
+            androidx.compose.animation.AnimatedVisibility(
+                visible = prevUserItemIndex >= 0,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = Spacing.lg)
+                    .padding(bottom = with(LocalDensity.current) {
+                        (floatingLayerHeightPx + permissionOffsetPx + FLOATING_LAYER_GAP_DP.toPx()).toDp() +
+                            SCROLL_TO_BOTTOM_BTN_SIZE.dp + Spacing.sm
+                    })
+                    .graphicsLayer { alpha = if (listState.isScrollInProgress) 0.4f else 1f },
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut()
+            ) {
+                ScrollToPrevUserButton(
+                    onClick = {
+                        followBottom = false
+                        scope.launch { listState.animateScrollToItem(prevUserItemIndex) }
+                    }
+                )
+            }
+
+            // 滚动到底部按钮：悬浮在输入框右上角上方（避让底栏及可能悬浮的授权弹窗），离底超过半屏时
+            // 显示，不看滚动方向——往上翻历史后停住恰恰是最需要一键回底的时刻；滚动时跟随输入框淡出。
             androidx.compose.animation.AnimatedVisibility(
                 visible = isFarFromBottom,
                 modifier = Modifier
@@ -1890,6 +1965,32 @@ private fun ScrollToBottomButton(
             Icon(
                 imageVector = FeatherIcons.ArrowDown,
                 contentDescription = stringResource(R.string.common_scroll_to_bottom),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/** 回上一条用户消息按钮：圆形，与 [ScrollToBottomButton] 同款，堆在它上方。 */
+@Composable
+private fun ScrollToPrevUserButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 6.dp,
+        modifier = modifier
+            .size(SCROLL_TO_BOTTOM_BTN_SIZE.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = FeatherIcons.ArrowUp,
+                contentDescription = stringResource(R.string.common_scroll_to_prev_user),
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(20.dp)
             )

@@ -49,6 +49,8 @@ import com.aharou.feature.agent.domain.notification.NotificationOutcome
 import com.aharou.feature.agent.domain.notification.PendingNotification
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.mcp.McpManager
+import com.aharou.feature.agent.domain.runner.AgentTurnRequest
+import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
@@ -155,6 +157,7 @@ class AIAgentViewModel @Inject constructor(
     private val subAgentEventBus: SubAgentEventBus,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val agentDefinitionRepository: AgentDefinitionRepository,
+    private val agentTurnRunner: AgentTurnRunner,
     private val todoItemDao: TodoItemDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
@@ -458,6 +461,21 @@ class AIAgentViewModel @Inject constructor(
         // 搜索限定当前工作区，切区后旧结果无意义，一并清空。
         _chatSearchQuery.value = ""
     }
+
+    /**
+     * 当前会话绑定的工作区路径；会话没绑定（老会话）或还没选会话时回退当前选中的工作区。
+     *
+     * 界面拿它当 projectRoot：文件落哪个工作区跟会话走，不跟界面上选中的工作区走。
+     */
+    val currentSessionWorkspace: StateFlow<String> = combine(
+        _currentSessionId.flatMapLatest { id ->
+            if (id == null) flowOf("")
+            else chatSessionDao.getByIdFlow(id).map { it?.workspacePath.orEmpty() }
+        },
+        _currentWorkspace
+    ) { sessionPath, selected ->
+        sessionPath.ifBlank { selected }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     val sessions: StateFlow<List<ChatSession>> = _currentWorkspace
         .flatMapLatest { path ->
@@ -1417,6 +1435,16 @@ class AIAgentViewModel @Inject constructor(
      * 空闲则以一条系统通知消息触发新一轮。后台任务完成、子代理结束、代理间消息、模式切换共用此分发，
      * 避免各处重复判断忙碌/空闲。
      */
+    /**
+     * 会话绑定的工作区路径；会话不存在或没绑定时回退全局当前工作区。
+     *
+     * 让「文件落哪个工作区」跟会话走，而不是跟界面上选中的工作区走——否则切工作区后
+     * 老会话的工具调用会写到新工作区里去。
+     */
+    private suspend fun workspaceOf(sessionId: String): String =
+        sessionUseCase.getSessionById(sessionId)?.workspacePath?.takeIf { it.isNotBlank() }
+            ?: _currentWorkspace.value
+
     private fun deliverSystemEvent(sessionId: String, item: PendingNotification) {
         if (sessionJobs[sessionId]?.isActive == true) {
             agentNotificationCenter.enqueue(sessionId, item)
@@ -1425,7 +1453,7 @@ class AIAgentViewModel @Inject constructor(
         viewModelScope.launch {
             enqueueAgentRequest(
                 request = AgentNotificationFormatter.buildMessage(listOf(item)),
-                projectRoot = _currentWorkspace.value,
+                projectRoot = workspaceOf(sessionId),
                 targetSessionId = sessionId
             )
         }
@@ -1452,7 +1480,7 @@ class AIAgentViewModel @Inject constructor(
         viewModelScope.launch {
             enqueueAgentRequest(
                 request = AgentNotificationFormatter.buildMessage(items),
-                projectRoot = _currentWorkspace.value,
+                projectRoot = workspaceOf(sessionId),
                 targetSessionId = sessionId
             )
         }
@@ -1577,16 +1605,6 @@ class AIAgentViewModel @Inject constructor(
                 return@launch
             }
         }
-        // 兼容历史会话：若会话尚未持久化绑定 providerId/model，发消息时将其固化，避免后续默认模型变动影响已有会话
-        val currentSession = sessionUseCase.getSessionById(sessionId)
-        if (currentSession != null && (currentSession.providerId.isNullOrBlank() || currentSession.model.isNullOrBlank())) {
-            val defaultProviderId = defaultModelSettingsRepository.getDefaultProviderId().takeIf { it.isNotBlank() }
-            val defaultModel = defaultModelSettingsRepository.getDefaultModel().takeIf { it.isNotBlank() }
-            if (defaultProviderId != null && defaultModel != null) {
-                sessionUseCase.updateProviderModel(sessionId, defaultProviderId, defaultModel)
-            }
-        }
-
         coroutineContext[Job]?.let { sessionJobs[sessionId] = it }
         FileLogger.d(TAG, "stream start: sid=$sessionId prevState=${_agentStates.value[sessionId]} isAutoTrigger=$isAutoTrigger")
         setAgentState(sessionId, AgentUIState.Streaming)
@@ -1594,61 +1612,21 @@ class AIAgentViewModel @Inject constructor(
 
         try {
             var failed = false
-            // 必须在插入本次用户消息之前读取历史：workflow 会自己 add(userRequest)，避免重复。
-            val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
-            val isFirst = history.isEmpty()
 
-            if (!isAutoTrigger) {
-                val userMsgId = UUID.randomUUID().toString()
-                messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, id = userMsgId, attachments = inputAttachments)
-                checkpointManager.createCheckpoint(sessionId, userMsgId, request)
-                if (isFirst && !skipTitleUpdate) {
-                    sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
-                    // 后台异步用 LLM 生成更贴切的标题替换临时标题；失败/取不到时保留临时标题
-                    viewModelScope.launch {
-                        agentWorkflow.generateTitle(sessionId, request)?.let { sessionUseCase.updateTitle(sessionId, it) }
-                    }
-                }
-            }
-            sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
-
-            val sessionEntity = sessionUseCase.getSessionById(sessionId)
-            val sessionDomain = sessionEntity?.toDomain()
-            val mode = sessionDomain?.mode ?: AgentMode.BUILD
-            // 子会话的 subagentType 存的是自定义 agent 名；能查到定义时提示词与工具集都按它组装。
-            val agentDefinition = sessionEntity?.takeIf { it.parentId != null }
-                ?.subagentType
-                ?.let { agentDefinitionRepository.findIncludingDisabled(it) }
-
-            val agentContext = AgentContext(
-                currentFile = currentFile,
-                selectedCode = selectedCode,
-                projectRoot = projectRoot,
-                language = currentFile?.let { detectLanguage(it) },
-                history = history,
-                inputImages = inputImages,
-                sessionId = sessionId,
-                mode = mode,
-                modeBeforePlan = sessionDomain?.modeBeforePlan,
-                reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
-                agentDefinition = agentDefinition
-            )
-
-            val allTools = toolRegistry.getAvailableTools()
-            val isSub = sessionEntity?.parentId != null
-            val tools = when {
-                agentDefinition != null -> {
-                    val allowed = agentDefinition.filterToolNames(allTools.map { it.name }).toSet()
-                    allTools.filter { it.name in allowed }
-                }
-                isSub -> allTools.filterNot { it.name == AgentDefinition.NESTED_TOOL }
-                else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
-            }
-
-            agentWorkflow.executeEvents(
-                userRequest = modelRequest,
-                context = agentContext,
-                tools = tools
+            // 会话就绪、历史组装、工具装配、落库全在 runner 里；这里只管界面状态。
+            agentTurnRunner.run(
+                AgentTurnRequest(
+                    sessionId = sessionId,
+                    text = request,
+                    modelRequest = modelRequest,
+                    currentFile = currentFile,
+                    selectedCode = selectedCode,
+                    projectRoot = projectRoot,
+                    inputImages = inputImages,
+                    inputAttachments = inputAttachments,
+                    isAutoTrigger = isAutoTrigger,
+                    skipTitleUpdate = skipTitleUpdate
+                )
             ).collect { event ->
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
@@ -1691,49 +1669,19 @@ class AIAgentViewModel @Inject constructor(
                     }
                     is AgentEvent.CompactionFailed -> {
                         setCompacting(sessionId, false)
-                        // 落库为无配对的 TOOL 消息：UI 渲染失败卡片，buildHistory 回放自动丢弃，不进模型上下文。
-                        messagePersistenceUseCase.persist(
-                            sessionId,
-                            MessageRole.TOOL,
-                            event.reason,
-                            toolName = COMPACTION_FAILURE_TOOL_NAME,
-                            isError = true
-                        )
+                        // 失败记录的落库在 runner 里做（无配对的 TOOL 消息，界面渲染成失败卡片）
                     }
                     is AgentEvent.AssistantText -> {
-                        // 流式收尾：在落库并触发 UI messages 更新之前，先同步清空流式状态，
-                        // 避免落库消息先行发射导致 UI 出现「落库消息与流式气泡同屏并存」的时差。
+                        // 流式收尾：落库在 runner 里做，但它先把事件转给我们，
+                        // 所以这里能先清空流式状态，避免「落库消息与流式气泡同屏并存」的时差。
                         setStreamingReasoning(sessionId, null)
                         setStreamingText(sessionId, null)
                         if (event.toolCalls.isEmpty()) {
                             setPreparingTool(sessionId, null)
                         }
 
-                        val normalized = if (event.content.hasVisibleContent()) event.content else ""
-                        val reasoning = event.reasoning.takeIf { it.hasVisibleContent() }
-                        messagePersistenceUseCase.persist(
-                            sessionId,
-                            MessageRole.ASSISTANT,
-                            normalized,
-                            toolCalls = event.toolCalls,
-                            reasoning = reasoning,
-                            signature = event.signature.ifEmpty { null },
-                            thinkingBlocksJson = event.thinkingBlocksJson.ifEmpty { null },
-                            attachments = event.attachments,
-                            inputTokens = event.inputTokens,
-                            outputTokens = event.outputTokens,
-                            cachedInputTokens = event.cachedInputTokens
-                        )
                         if (event.inputTokens > 0 || event.outputTokens > 0) {
                             _llmCallEvents.tryEmit(LlmCallEvent(sessionId, event.inputTokens, event.outputTokens, event.cachedInputTokens))
-                            // 同步写库：工具循环下一轮 CallLlm 前会重读 lastInputTokens 判断压缩，
-                            // 异步写库可能读到压缩前的旧大值导致重复触发压缩。
-                            runCatching {
-                                chatSessionDao.addTokenUsage(sessionId, event.inputTokens, event.outputTokens)
-                                if (event.inputTokens > 0) {
-                                    chatSessionDao.updateLastInputTokens(sessionId, event.inputTokens)
-                                }
-                            }
                         }
                     }
                     is AgentEvent.ToolCallStarted -> {
@@ -1741,16 +1689,6 @@ class AIAgentViewModel @Inject constructor(
                         setStreamingText(sessionId, null)
                         setPreparingTool(sessionId, null)
                         toolArgsByMsgId[msgId] = event.argsPreview
-                        messagePersistenceUseCase.persist(
-                            sessionId,
-                            MessageRole.TOOL,
-                            "${SessionUseCase.PENDING_TOOL_MARKER} ${context.getString(R.string.agent_tool_executing, event.toolName)}",
-                            id = msgId,
-                            toolCallId = event.id,
-                            toolName = event.toolName,
-                            toolArgs = event.argsPreview,
-                            isError = false
-                        )
                         setRunningTool(sessionId, msgId, RunningToolOutput(msgId, "", event.toolName, event.argsPreview))
                     }
                     is AgentEvent.ToolCallProgress -> {
@@ -1764,17 +1702,6 @@ class AIAgentViewModel @Inject constructor(
                     }
                     is AgentEvent.ToolCallFinished -> {
                         val msgId = "tool_${event.id}"
-                        messagePersistenceUseCase.persist(
-                            sessionId,
-                            MessageRole.TOOL,
-                            event.result,
-                            id = msgId,
-                            toolCallId = event.id,
-                            toolName = event.toolName,
-                            toolArgs = event.argsPreview ?: toolArgsByMsgId[msgId],
-                            isError = event.isError,
-                            attachments = event.attachments
-                        )
                         toolArgsByMsgId.remove(msgId)
                         removeRunningTool(sessionId, msgId)
                     }
@@ -1782,36 +1709,13 @@ class AIAgentViewModel @Inject constructor(
                         failed = true
                         setCompacting(sessionId, false)
                         setAgentState(sessionId, AgentUIState.Error(describeFailure(event)))
-                        // 子代理会话失败时通知父会话
-                        if (isSub) {
-                            sessionUseCase.getSessionById(sessionId)?.parentId?.let { parentId ->
-                                subAgentEventBus.emit(
-                                    SubAgentEvent(
-                                        subSessionId = sessionId,
-                                        parentSessionId = parentId,
-                                        type = SubAgentEventType.FAILED,
-                                        detail = event.error
-                                    )
-                                )
-                            }
-                        }
+                        // 子代理失败时通知父会话的事在 runner 里做
                     }
                     AgentEvent.Completed -> {
                         setRetryState(sessionId, null)
                         setKeySwitchState(sessionId, null)
                         setCompacting(sessionId, false)
-                        // 子代理会话完成时通知父会话（异步回调）
-                        if (isSub) {
-                            sessionUseCase.getSessionById(sessionId)?.parentId?.let { parentId ->
-                                subAgentEventBus.emit(
-                                    SubAgentEvent(
-                                        subSessionId = sessionId,
-                                        parentSessionId = parentId,
-                                        type = SubAgentEventType.COMPLETED
-                                    )
-                                )
-                            }
-                        }
+                        // 子代理完成时通知父会话的事在 runner 里做
                         // 仅当 App 不在前台时发 agent 完成通知（避免打扰正在看对话的用户）。
                         val inForeground = ProcessLifecycleOwner.get().lifecycle.currentState
                             .isAtLeast(Lifecycle.State.STARTED)
@@ -1877,8 +1781,9 @@ class AIAgentViewModel @Inject constructor(
                 processNextInQueue(sessionId)
             }
             // 放在队列处理之后：flushPendingNotifications / processNextInQueue 会同步注册接替的 job，
-            // 此时 hasRunningSessions 才能反映真实状态，不会刚释放又立即重新获取。
-            if (!hasRunningSessionsInCurrentWorkspace()) {
+            // 此时 job 状态才能反映真实情况，不会刚释放又立即重新获取。
+            // 用全局 job 判断而非「当前工作区」：切工作区不会打断还在跑的会话，它们仍需保活。
+            if (sessionJobs.values.none { it.isActive }) {
                 releaseKeepalive()
             }
         }
@@ -1899,13 +1804,17 @@ class AIAgentViewModel @Inject constructor(
         askUserQuestionManager.resolve(id, answer)
     }
 
-    /** 停止当前工作区所有正在运行的 AI 会话并关闭所有终端标签（切换工作区前调用）。 */
+    /**
+     * 停止所有正在运行的 AI 会话并关闭终端标签（切换/重置容器前调用）。
+     *
+     * 容器 rootfs 会被删掉，会话与终端必须全停；切工作区不走这里——那个只换目录，什么都不用停。
+     */
     fun stopAllAndCloseTerminal() {
         stopAllAgents()
         terminalSessionManager.tabs.value.map { it.id }.forEach { terminalSessionManager.closeTab(it) }
     }
 
-    /** 停止当前工作区所有正在运行的 AI 会话（切换工作区前调用）。 */
+    /** 停止所有正在运行的 AI 会话（仅由容器切换/重置流程调用）。 */
     fun stopAllAgents() {
         val jobs = sessionJobs.values.filter { it.isActive }
         jobs.forEach { it.cancel() }
@@ -2112,23 +2021,27 @@ class AIAgentViewModel @Inject constructor(
     /** /init —— 触发 agent 回合，分析代码库并生成/改进项目规则文件。 */
     override fun initProject(prompt: String) {
         val sid = _currentSessionId.value ?: return
-        executeAgentRequestStream(
-            request = prompt,
-            projectRoot = _currentWorkspace.value,
-            targetSessionId = sid,
-            isAutoTrigger = true
-        )
+        viewModelScope.launch {
+            executeAgentRequestStream(
+                request = prompt,
+                projectRoot = workspaceOf(sid),
+                targetSessionId = sid,
+                isAutoTrigger = true
+            )
+        }
     }
 
     /** 技能触发 —— 把技能正文作为本轮指令执行。 */
     override fun runSkill(skill: Skill, args: String) {
         val sid = _currentSessionId.value ?: return
-        executeAgentRequestStream(
-            request = SlashCommandRegistry.buildSkillPrompt(skill, args),
-            projectRoot = _currentWorkspace.value,
-            targetSessionId = sid,
-            isAutoTrigger = true
-        )
+        viewModelScope.launch {
+            executeAgentRequestStream(
+                request = SlashCommandRegistry.buildSkillPrompt(skill, args),
+                projectRoot = workspaceOf(sid),
+                targetSessionId = sid,
+                isAutoTrigger = true
+            )
+        }
     }
 
     /** /usage —— 以 Markdown 表格输出今日与累计的调用次数、token 用量与预估费用。 */
@@ -2449,7 +2362,7 @@ class AIAgentViewModel @Inject constructor(
         _currentSessionId.value?.let { return it }
         val ws = _currentWorkspace.value
         if (ws.isBlank()) return ""
-        val id = sessionUseCase.getFirstSessionOfWorkspace(ws)?.id ?: createAndUpsertSession(ws)
+        val id = agentTurnRunner.ensureSession(ws)
         _currentSessionId.value = id
         return id
     }
@@ -2465,21 +2378,8 @@ class AIAgentViewModel @Inject constructor(
      * 创建新会话并按「新会话默认模型」绑定 provider/model；未设置默认时回退全局 active provider。
      * 所有新建会话的入口（冷启动、新建、删除兜底、ensureSession）都走这里。
      */
-    private suspend fun createSession(workspacePath: String): ChatSessionEntity {
-        val providerId = defaultModelSettingsRepository.getDefaultProviderId().takeIf { it.isNotBlank() }
-        val model = defaultModelSettingsRepository.getDefaultModel().takeIf { it.isNotBlank() }
-        val effort = if (providerId != null && model != null) {
-            modelReasoningEffortRepository.get(providerId, model) ?: ReasoningEffort.DEFAULT.name
-        } else {
-            ReasoningEffort.DEFAULT.name
-        }
-        return sessionUseCase.newSessionEntity(
-            workspacePath = workspacePath,
-            providerId = providerId,
-            model = model,
-            reasoningEffort = effort
-        )
-    }
+    private suspend fun createSession(workspacePath: String): ChatSessionEntity =
+        agentTurnRunner.createSessionEntity(workspacePath)
 
     // endregion
 
@@ -2503,19 +2403,4 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
-    private fun detectLanguage(filePath: String): String {
-        return when (filePath.substringAfterLast(".").lowercase()) {
-            "kt", "kotlin" -> "kotlin"
-            "java" -> "java"
-            "dart" -> "dart"
-            "py" -> "python"
-            "js" -> "javascript"
-            "ts" -> "typescript"
-            "tsx" -> "typescript"
-            "jsx" -> "javascript"
-            "go" -> "go"
-            "rs" -> "rust"
-            else -> "text"
-        }
-    }
 }

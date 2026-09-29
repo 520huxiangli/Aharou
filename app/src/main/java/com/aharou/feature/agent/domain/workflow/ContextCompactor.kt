@@ -199,9 +199,7 @@ class ContextCompactor @Inject constructor(
                 // 将 head 部分的消息标记为已压缩（不删除，保留数据完整性）
                 agentMessageDao.markMessagesCompactedBeforeTimestamp(sessionId, cutoffTimestamp)
 
-                // 摘要收尾：marker + summary 时间戳放在 tail 最后一条之后，回放/UI 顺序 = tail → 摘要，
-                // 与 Codex 一致（最近消息在前、接手摘要收尾），避免摘要插在历史最前导致观感混乱。
-                // 摘要要排在 tail 之前，时间戳必须早于 tail 的第一条，
+                // 摘要与锚点都排在 tail 之前：时间戳必须早于 tail 的第一条，
                 // 否则数据库回放顺序会跟内存里的新顺序打架。
                 val tailFirstTs = tail.firstNotNullOfOrNull { msg ->
                     dbEntities.find { it.id == msg.id }?.timestamp

@@ -25,11 +25,13 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aharou.R
 import com.aharou.core.theme.semanticColors
 import com.mikepenz.markdown.compose.LazyMarkdownSuccess
 import com.mikepenz.markdown.compose.LocalMarkdownColors
@@ -60,6 +62,10 @@ import dev.snipme.highlights.model.SyntaxLanguage
 import dev.snipme.highlights.model.SyntaxThemes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+// 代码块与行内代码共用字体。系统等宽（FontFamily.Monospace）缺下标字形且不回落，
+// 内置 JetBrains Mono NL 经资源加载可走系统 fallback，能显示 ₀-₉ 等下标/上标字符。
+private val CodeFontFamily = FontFamily(Font(R.font.jetbrains_mono_nl))
 
 internal class MarkdownRenderCache(
     private val maxEntries: Int = 80
@@ -152,8 +158,8 @@ internal fun MarkdownContent(
         h5 = (if (compact) typography.bodySmall else typography.bodyLarge).copy(fontWeight = FontWeight.Medium, color = color),
         h6 = (if (compact) typography.bodySmall else typography.bodyMedium).copy(fontWeight = FontWeight.Medium, color = color),
         paragraph = body.copy(color = color, lineHeight = bodyLineHeight),
-        code = TextStyle(fontFamily = FontFamily.Monospace, fontSize = codeSize, color = MaterialTheme.colorScheme.onSurface),
-        inlineCode = TextStyle(fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
+        code = TextStyle(fontFamily = CodeFontFamily, fontSize = codeSize, color = MaterialTheme.colorScheme.onSurface),
+        inlineCode = TextStyle(fontFamily = CodeFontFamily, color = MaterialTheme.colorScheme.onSurface),
         ordered = body.copy(color = color, lineHeight = bodyLineHeight),
         bullet = body.copy(color = color, lineHeight = bodyLineHeight),
         table = typography.bodySmall.copy(color = color),

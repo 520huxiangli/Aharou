@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool.editor
 
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -103,7 +104,12 @@ class EditFileTool @Inject constructor(
         )
     }
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         return try {
             val path = args["path"]?.jsonPrimitive?.contentOrNull
                 ?: return ToolResult.Error("路径参数缺失", "MISSING_PATH")
@@ -122,13 +128,13 @@ class EditFileTool @Inject constructor(
             }
 
             FileLogger.d(TAG, "edit_file path=$path (edits=${edits.size})")
-            if (!fileAccess.exists(path)) {
+            if (!access.exists(path)) {
                 FileLogger.w(TAG, "edit_file 文件不存在: $path")
                 return ToolResult.Error("文件不存在: $path", "FILE_NOT_FOUND")
             }
 
             // 先在内存里顺序应用所有编辑；任一失败立刻返回、绝不写盘（全有或全无）。
-            var content = fileAccess.readFile(path)
+            var content = access.readFile(path)
             val hunks = ArrayList<Hunk>(edits.size)
             var totalReplacements = 0
 
@@ -164,7 +170,7 @@ class EditFileTool @Inject constructor(
                 totalReplacements += if (e.replaceAll) occurrences else 1
             }
 
-            fileAccess.writeFile(path, content, overwrite = true)
+            access.writeFile(path, content, overwrite = true)
 
             val addedTotal = hunks.sumOf { it.added }
             val removedTotal = hunks.sumOf { it.removed }
@@ -181,7 +187,7 @@ class EditFileTool @Inject constructor(
             ToolResult.Success(
                 JsonObject(mapOf(
                     "status" to JsonPrimitive("edited"),
-                    "path" to JsonPrimitive(fileAccess.toDisplayPath(path)),
+                    "path" to JsonPrimitive(access.toDisplayPath(path)),
                     "edits_count" to JsonPrimitive(edits.size),
                     "replacements" to JsonPrimitive(totalReplacements),
                     "total_lines" to JsonPrimitive(content.lines().size),

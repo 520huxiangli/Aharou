@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.tool.explorer
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -47,7 +48,10 @@ class SearchCodeTool @Inject constructor(
         )
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
         return try {
             val rawArgs = args["args"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             if (rawArgs.isEmpty()) return ToolResult.Error("缺少搜索参数 args", "MISSING_ARGS")
@@ -62,7 +66,8 @@ class SearchCodeTool @Inject constructor(
             val startedAt = System.currentTimeMillis()
             val result = commandEngine.runCommandSyncIfReady(
                 command = command,
-                projectPath = workspaceRepository.currentPath(),
+                projectPath = context.projectRoot.takeIf { it.isNotBlank() }
+                    ?: workspaceRepository.currentPath(),
                 timeoutMs = SEARCH_TIMEOUT_MS
             ) ?: return ToolResult.Error("容器未就绪，无法执行 rg", "CONTAINER_NOT_READY")
 

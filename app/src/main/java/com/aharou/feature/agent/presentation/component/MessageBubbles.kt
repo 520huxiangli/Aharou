@@ -72,6 +72,8 @@ import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Database
 import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.RotateCcw
+import compose.icons.feathericons.Volume2
+import compose.icons.feathericons.VolumeX
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -228,6 +230,10 @@ internal fun AgentMessageItem(
     isChunkFooter: Boolean = true,
     /** 是否在正文上方渲染「身份行」（Soul 图标 + 名字）：每轮助手回复的首条为 true。 */
     showSoulHeader: Boolean = false,
+    /** 朗读本条回复；null 时不显示朗读按钮（未配置语音合成模型）。 */
+    onReadAloud: ((AgentUIMessage) -> Unit)? = null,
+    /** 本条是否正在朗读中（按钮变停止图标）。 */
+    isReadingAloud: Boolean = false,
 ) {
     if (message.isCompactionMarker) {
         // 压缩内部锚点不再渲染分隔线：摘要卡片已提供压缩反馈，避免与卡片重复。
@@ -386,7 +392,7 @@ internal fun AgentMessageItem(
                 }
                 // 气泡下方的元信息行（工具消息不显示）：用户消息每条都常驻「时间 + 复制/回退/更多」，
                 // 助手消息只挂整段会话最新的一条，避免每条回复下面都吊一排按钮把聊天记录割碎。
-                // 排列固定为「复制 → 统计（用量/缓存/耗时）→ 更多选项」：信息在前，操作入口收在行尾。
+                // 排列固定为「统计（用量/缓存/耗时）→ 复制 → 更多选项」：信息在前，操作入口收在行尾。
                 //
                 // 用量与耗时按**本轮合计**（1 轮 n 步的所有调用求和）挂在轮末那条助手消息上：
                 // 逐步显示会把一次任务的开销拆成碎片，中间步骤的数字对用户也没有意义。
@@ -415,24 +421,26 @@ internal fun AgentMessageItem(
                             ChatMetaText(text = formatClockTime(message.timestamp))
                             emitted = true
                         }
-                        if (actionsVisible) {
-                            if (emitted) Spacer(Modifier.width(Spacing.xs))
-                            if (hasContent) {
-                                MessageActionIconButton(
-                                    icon = if (copied) FeatherIcons.Check else FeatherIcons.Copy,
-                                    contentDescription = if (copied) stringResource(R.string.chat_copied) else stringResource(R.string.chat_copy),
-                                    tint = iconTint,
-                                    onClick = {
-                                        copyScope.launch {
-                                            clipboard.setClipEntry(
-                                                ClipEntry(ClipData.newPlainText("message", message.content))
-                                            )
-                                            copied = true
-                                        }
+                        val copyButton: @Composable () -> Unit = {
+                            MessageActionIconButton(
+                                icon = if (copied) FeatherIcons.Check else FeatherIcons.Copy,
+                                contentDescription = if (copied) stringResource(R.string.chat_copied) else stringResource(R.string.chat_copy),
+                                tint = iconTint,
+                                onClick = {
+                                    copyScope.launch {
+                                        clipboard.setClipEntry(
+                                            ClipEntry(ClipData.newPlainText("message", message.content))
+                                        )
+                                        copied = true
                                     }
-                                )
-                            }
-                            if (isUser && onRewindClick != null) {
+                                }
+                            )
+                        }
+                        // 用户消息：复制紧跟时间戳，回退按钮在其后（保持原顺序）
+                        if (isUser && actionsVisible) {
+                            if (emitted) Spacer(Modifier.width(Spacing.xs))
+                            if (hasContent) copyButton()
+                            if (onRewindClick != null) {
                                 MessageActionIconButton(
                                     icon = FeatherIcons.RotateCcw,
                                     contentDescription = stringResource(R.string.checkpoint_rewind_title),
@@ -471,7 +479,26 @@ internal fun AgentMessageItem(
                             ChatMetaText(text = durationText)
                             emitted = true
                         }
-                        // 「更多选项」排在这一行的**最后**：助手消息里它跟在用量/耗时后面（先给信息，
+                        // 助手消息的复制按钮排在「更多选项」左边（统计信息之后）
+                        if (!isUser && actionsVisible && hasContent) {
+                            if (emitted) Spacer(Modifier.width(Spacing.sm))
+                            copyButton()
+                            emitted = true
+                        }
+                        // 朗读紧跟在复制后面：两者都是对这条回复的整体操作
+                        if (!isUser && actionsVisible && hasContent && onReadAloud != null) {
+                            if (emitted) Spacer(Modifier.width(Spacing.xs))
+                            MessageActionIconButton(
+                                icon = if (isReadingAloud) FeatherIcons.VolumeX else FeatherIcons.Volume2,
+                                contentDescription = stringResource(
+                                    if (isReadingAloud) R.string.voice_stop_read_aloud else R.string.voice_read_aloud
+                                ),
+                                tint = if (isReadingAloud) MaterialTheme.colorScheme.primary else iconTint,
+                                onClick = { onReadAloud(message) }
+                            )
+                            emitted = true
+                        }
+                        // 「更多选项」排在这一行的**最后**：助手消息里它跟在复制按钮后面（先给信息，
                         // 再给操作入口）；用户消息没有统计项，它自然接着回退按钮，间距与按钮组一致。
                         if (actionsVisible && onMoreClick != null) {
                             if (emitted) Spacer(Modifier.width(Spacing.xs))

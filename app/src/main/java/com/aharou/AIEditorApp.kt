@@ -175,6 +175,9 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 环境变量集合注册。 */
     @Inject
     lateinit var configEnvFields: com.aharou.feature.settings.data.ConfigEnvFields
+    /** 语音合成（TTS）字段注册。 */
+    @Inject
+    lateinit var configVoiceFields: com.aharou.feature.settings.data.ConfigVoiceFields
 
     /** MCP 服务器集合注册。 */
     @Inject
@@ -183,6 +186,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 技能启停集合注册。 */
     @Inject
     lateinit var configSkillFields: com.aharou.feature.agent.data.ConfigSkillFields
+
+    /** 技能市场自定义源集合注册。 */
+    @Inject
+    lateinit var configSkillMarketFields: com.aharou.feature.agent.data.ConfigSkillMarketFields
 
     /** MCP 配置仓库：启动即监听 mcp.json 外部直接编辑，改动数秒内刷新列表并触发重连。 */
     @Inject
@@ -253,6 +260,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var containerImageCatalog: com.aharou.feature.agent.domain.container.ContainerImageCatalog
 
+    /** 技能市场源清单：启动后台刷新，加源/换源不必发版。 */
+    @Inject
+    lateinit var skillMarketCatalog: com.aharou.feature.agent.domain.skill.market.SkillMarketCatalog
+
     /** 长驻作用域：持续把持久化的日志等级同步到 FileLogger。 */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -281,6 +292,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         configEnvFields.registerInto(configRegistry)
         configMcpFields.registerInto(configRegistry)
         configSkillFields.registerInto(configRegistry)
+        configSkillMarketFields.registerInto(configRegistry)
+        configVoiceFields.registerInto(configRegistry)
         // 工作区项目级 .aicode 目录 → .aharou 一次性迁移（只搬不删）
         com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this)
         com.aharou.core.config.audit.ConfigAuditLog.init(this)
@@ -339,6 +352,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 启动即异步刷新可下载镜像目录（12h 缓存；失败静默，兜底磁盘缓存与内置 assets；加版本无需发版）。
         appScope.launch {
             containerImageCatalog.refreshFromNetworkIfStale()
+            skillMarketCatalog.refreshFromNetworkIfStale()
         }
         // 启动即加载持久化等级，并随设置页改动实时生效（唯一同步点）。
         appScope.launch {

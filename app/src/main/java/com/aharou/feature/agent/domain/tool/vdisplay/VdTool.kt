@@ -44,8 +44,9 @@ class VdTool @Inject constructor(
 
     override val description =
         "影子屏：宿主上的无头虚拟显示屏（不在设备屏幕显示）。可在其中启动 App、截图、点按、滑动、按键，全程不影响用户主屏。" +
+            "操作宿主上第三方 App 的标准手段——要动 Aharou 以外的应用就用它，别用 a11y 抢占用户主屏。" +
             "action=start 创建（可选 width/height/dpi）；status 查询；stop 停止；launch 启动应用（component=\"包名/Activity\" 或仅包名）；" +
-            "shot 截图（图片随结果返回）；tap / swipe / key 触控。需 Shizuku 就绪。"
+            "shot 截图（图片随结果返回）；tap / swipe / key 触控。需 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
 
     override val permissionPolicy = ToolPermissionPolicy.ASK
 

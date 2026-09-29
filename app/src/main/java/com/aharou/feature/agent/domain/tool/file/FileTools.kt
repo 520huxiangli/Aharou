@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool.file
 
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -36,7 +37,12 @@ class ReadFileTool @Inject constructor(
         "end_line" to ToolParameter("end_line", ParameterType.INTEGER, "结束行号；与 start_line 的跨度最多 2000 行，超出按 2000 行截断。", required = false)
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         return try {
             val path = args["path"]?.jsonPrimitive?.contentOrNull ?: run {
                 FileLogger.w(TAG, "read_file 缺少 path 参数")
@@ -44,7 +50,7 @@ class ReadFileTool @Inject constructor(
             }
             FileLogger.d(TAG, "read_file path=$path")
 
-            if (!fileAccess.exists(path)) {
+            if (!access.exists(path)) {
                 FileLogger.w(TAG, "read_file 文件不存在: $path")
                 return ToolResult.Error("文件不存在: $path", "FILE_NOT_FOUND")
             }
@@ -65,7 +71,7 @@ class ReadFileTool @Inject constructor(
             var truncatedByBytes = false
             var lineNo = 0
             withContext(Dispatchers.IO) {
-                fileAccess.readLines(path).forEach { line ->
+                access.readLines(path).forEach { line ->
                     lineNo++
                     totalLines = lineNo
                     if (lineNo < startLine) return@forEach
@@ -160,7 +166,12 @@ class WriteFileTool @Inject constructor(
         )
     }
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): ToolResult {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         return try {
             val path = args["path"]?.jsonPrimitive?.contentOrNull ?: run {
                 FileLogger.w(TAG, "write_file 缺少 path 参数")
@@ -170,16 +181,16 @@ class WriteFileTool @Inject constructor(
             val overwrite = args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: true
 
             FileLogger.d(TAG, "write_file path=$path (${content.length} 字符, overwrite=$overwrite)")
-            val existed = fileAccess.exists(path)
+            val existed = access.exists(path)
             if (existed && !overwrite) {
                 FileLogger.w(TAG, "write_file 文件已存在且 overwrite=false: $path")
                 return ToolResult.Error("文件已存在: $path（overwrite=false）", "FILE_EXISTS")
             }
 
             // 写前留存旧内容，供生成「旧→新」差异（与 edit_file 同构，UI 据此渲染彩色 diff）。
-            val oldContent = if (existed) runCatching { fileAccess.readFile(path) }.getOrDefault("") else ""
+            val oldContent = if (existed) runCatching { access.readFile(path) }.getOrDefault("") else ""
 
-            fileAccess.writeFile(path, content, overwrite = true)
+            access.writeFile(path, content, overwrite = true)
 
             // 生成统一差异文本：新建文件按「整体新增」呈现（旧内容视为空，避免一行伪删除）；
             // 覆盖写则计算旧→新的行级增删。LineDiff 为 O(n·m) 内存，超大文件重写时跳过 LCS、
@@ -199,7 +210,7 @@ class WriteFileTool @Inject constructor(
             FileLogger.v(TAG, "write_file 成功 path=$path created=${!existed} lines=${content.lines().size} (+$added -$removed)")
             ToolResult.Success(
                 JsonObject(mapOf(
-                    "path" to JsonPrimitive(fileAccess.toDisplayPath(path)),
+                    "path" to JsonPrimitive(access.toDisplayPath(path)),
                     "created" to JsonPrimitive(!existed),
                     "bytes_written" to JsonPrimitive(content.length),
                     "lines_written" to JsonPrimitive(content.lines().size),

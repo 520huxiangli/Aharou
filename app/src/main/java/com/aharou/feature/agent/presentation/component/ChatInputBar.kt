@@ -44,6 +44,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -63,6 +64,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -91,6 +93,10 @@ import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.rememberImeBottomInset
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
+import com.aharou.feature.voice.call.VoiceCallService
+import com.aharou.feature.voice.presentation.LiveTranscript
+import com.aharou.feature.voice.presentation.VoiceInputState
+import com.aharou.feature.voice.presentation.VoiceMicButton
 import com.aharou.feature.agent.domain.command.SlashCommand
 import com.aharou.feature.agent.domain.command.SlashCommandKind
 import com.aharou.feature.agent.domain.model.AgentMode
@@ -143,8 +149,7 @@ internal fun ChatInputBar(
     onStop: () -> Unit,
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
-    hasRunningSessions: () -> Boolean,
-    onSwitchWorkspaceConfirmed: () -> Unit = {},
+    onStopCurrentSessions: () -> Unit = {},
     activeProvider: AIProviderConfig?,
     providers: List<AIProviderConfig>,
     modelMetadata: Map<String, ModelMetadata>,
@@ -163,6 +168,11 @@ internal fun ChatInputBar(
     onUploadFile: () -> Unit,
     onUploadImage: () -> Unit,
     onTakePhoto: () -> Unit,
+    /** 按住说话：语音状态与起止回调。默认 Idle + 空回调时按钮仍显示（可用于提示未配置）。 */
+    voiceState: VoiceInputState = VoiceInputState.Idle,
+    onVoiceStart: () -> Unit = {},
+    onVoiceStop: () -> Unit = {},
+    onVoiceCancel: () -> Unit = {},
     slashCommands: List<SlashCommand> = emptyList(),
     queuedRequests: List<QueuedRequest> = emptyList(),
     onRemoveQueued: (String) -> Unit = {},
@@ -275,6 +285,8 @@ internal fun ChatInputBar(
                     .padding(bottom = Spacing.md)
                     .padding(bottom = imeInset)
             ) {
+            // 流式识别的实时文本：贴在输入框上方浮动，说话期间持续刷新
+            LiveTranscript(voiceState)
             if (filteredCommands.isNotEmpty()) {
                 Surface(
                     modifier = Modifier
@@ -550,8 +562,7 @@ internal fun ChatInputBar(
                         if (workspaceViewModel != null) {
                             WorkspaceIconButton(
                                 viewModel = workspaceViewModel,
-                                hasRunningSessions = hasRunningSessions,
-                                onSwitchConfirmed = onSwitchWorkspaceConfirmed,
+                                onStopCurrentSessions = onStopCurrentSessions,
                                 modifier = Modifier.size(36.dp),
                                 iconSize = 20.dp
                             )
@@ -566,6 +577,20 @@ internal fun ChatInputBar(
                             enabled = !isBusy
                         )
                     }
+                    val callContext = LocalContext.current
+                    val callRunning by VoiceCallService.running.collectAsState()
+                    VoiceMicButton(
+                        state = voiceState,
+                        enabled = !isBusy,
+                        callRunning = callRunning,
+                        onStart = onVoiceStart,
+                        onStop = onVoiceStop,
+                        onCancel = onVoiceCancel,
+                        onToggleCall = {
+                            if (VoiceCallService.isRunning()) VoiceCallService.stop(callContext)
+                            else VoiceCallService.start(callContext)
+                        }
+                    )
                     UploadIconButton(
                         enabled = !isBusy,
                         icon = FeatherIcons.Plus,

@@ -156,6 +156,8 @@ class GenerateImageTool @Inject constructor(
         args: Map<String, JsonElement>,
         context: AgentContext
     ): ToolResult = withContext(Dispatchers.IO) {
+        // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
+        val access = (fileAccess).forWorkspace(context.projectRoot)
         val prompt = args["prompt"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (prompt.isEmpty()) {
             return@withContext ToolResult.Error("缺少 prompt 参数：请描述想生成的图片内容。", "MISSING_PROMPT")
@@ -185,7 +187,7 @@ class GenerateImageTool @Inject constructor(
             // /v1/images/generations 端点打不通；设了 Gemini 生图模型时切独立通道，
             // OpenAI 特有的参数（size/quality/background 等）在 Gemini 分支里忽略。
             if (provider.type == ProviderType.GEMINI) {
-                return@withContext generateViaGemini(provider, activeApiKey, prompt, n, outputPath, context.sessionId)
+                return@withContext generateViaGemini(access, provider, activeApiKey, prompt, n, outputPath, context.sessionId)
             }
             val isGptImage = model.startsWith("gpt-image", ignoreCase = true)
             val isDalle2 = model.equals("dall-e-2", ignoreCase = true)
@@ -226,7 +228,7 @@ class GenerateImageTool @Inject constructor(
                 request = request
             )
             AILogger.logResponse(context.sessionId, provider.id, response, seq)
-            buildSuccess(response, n, outputPath, model)
+            buildSuccess(access, response, n, outputPath, model)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -254,6 +256,7 @@ class GenerateImageTool @Inject constructor(
     }
 
     private suspend fun buildSuccess(
+        access: FileAccessProvider,
         response: ImageGenerationResponse,
         requestedN: Int,
         outputPath: String?,
@@ -287,7 +290,7 @@ class GenerateImageTool @Inject constructor(
                 }
                 totalBytes = checkedTotalBytes(totalBytes, bytes.size)
                 persistImageBytes(
-                    bytes, base64, effectiveBasePath, overwrite,
+                    access, bytes, base64, effectiveBasePath, overwrite,
                     agentImages, savedDisplayPaths, filesList
                 )
             } catch (e: Exception) {
@@ -311,6 +314,7 @@ class GenerateImageTool @Inject constructor(
      * candidates[].parts 的 inlineData 解析）。多张走多次调用；OpenAI 特有参数忽略。
      */
     private suspend fun generateViaGemini(
+        access: FileAccessProvider,
         provider: com.aharou.feature.settings.domain.model.AIProviderConfig,
         apiKey: String,
         prompt: String,
@@ -321,14 +325,15 @@ class GenerateImageTool @Inject constructor(
         val model = provider.effectiveModel
         FileLogger.i(TAG, "generateImage(Gemini) provider=${provider.id} model=$model prompt=$prompt n=$n")
         return if (provider.useResponseApi) {
-            generateViaGeminiInteractions(provider, apiKey, model, prompt, n, outputPath, sessionId)
+            generateViaGeminiInteractions(access, provider, apiKey, model, prompt, n, outputPath, sessionId)
         } else {
-            generateViaGeminiGenerateContent(provider, apiKey, model, prompt, n, outputPath, sessionId)
+            generateViaGeminiGenerateContent(access, provider, apiKey, model, prompt, n, outputPath, sessionId)
         }
     }
 
     /** Interactions 通道：非流式 createInteraction，从响应 steps 提取图片。 */
     private suspend fun generateViaGeminiInteractions(
+        access: FileAccessProvider,
         provider: com.aharou.feature.settings.domain.model.AIProviderConfig,
         apiKey: String,
         model: String,
@@ -376,7 +381,7 @@ class GenerateImageTool @Inject constructor(
                 parsed.images.forEach { image ->
                     runCatching {
                         totalBytes += persistImage(
-                            image.base64Data, effectiveBasePath, overwrite, agentImages,
+                            access, image.base64Data, effectiveBasePath, overwrite, agentImages,
                             savedDisplayPaths, filesList, totalBytes
                         )
                     }.onFailure { FileLogger.w(TAG, "处理 Gemini 生图结果失败", it) }
@@ -408,6 +413,7 @@ class GenerateImageTool @Inject constructor(
      * candidates[].content.parts 的 inlineData（camelCase）中整块返回。
      */
     private suspend fun generateViaGeminiGenerateContent(
+        access: FileAccessProvider,
         provider: com.aharou.feature.settings.domain.model.AIProviderConfig,
         apiKey: String,
         model: String,
@@ -443,7 +449,7 @@ class GenerateImageTool @Inject constructor(
                 extractGenerateContentImageData(response).forEach { base64 ->
                     runCatching {
                         totalBytes += persistImage(
-                            base64, effectiveBasePath, overwrite, agentImages,
+                            access, base64, effectiveBasePath, overwrite, agentImages,
                             savedDisplayPaths, filesList, totalBytes
                         )
                     }.onFailure { FileLogger.w(TAG, "处理 Gemini 生图结果失败", it) }
@@ -488,6 +494,7 @@ class GenerateImageTool @Inject constructor(
 
     /** 单张图落盘：base64 → 按真实格式写文件 → 组装 AgentImage 与 files 附件。 */
     private fun persistImage(
+        access: FileAccessProvider,
         base64: String,
         effectiveBasePath: String,
         overwrite: Boolean,
@@ -499,13 +506,14 @@ class GenerateImageTool @Inject constructor(
         val bytes = decodeImageBase64(base64)
         checkedTotalBytes(currentTotalBytes, bytes.size)
         persistImageBytes(
-            bytes, base64, effectiveBasePath, overwrite,
+            access, bytes, base64, effectiveBasePath, overwrite,
             agentImages, savedDisplayPaths, filesList
         )
         return bytes.size.toLong()
     }
 
     private fun persistImageBytes(
+        access: FileAccessProvider,
         bytes: ByteArray,
         base64: String,
         effectiveBasePath: String,
@@ -518,9 +526,9 @@ class GenerateImageTool @Inject constructor(
         val format = detectImageFormat(bytes)
         val targetPath = buildTargetPath(effectiveBasePath, agentImages.size, format)
         val realMime = mimeForFormat(format)
-        fileAccess.writeBytes(targetPath, bytes, overwrite = overwrite)
-        val displayPath = fileAccess.toDisplayPath(targetPath)
-        val localFile = fileAccess.copyToLocal(targetPath)
+        access.writeBytes(targetPath, bytes, overwrite = overwrite)
+        val displayPath = access.toDisplayPath(targetPath)
+        val localFile = access.copyToLocal(targetPath)
         val fileName = targetPath.substringAfterLast('/')
 
         agentImages.add(AgentImage(mimeType = realMime, base64Data = base64, path = displayPath))

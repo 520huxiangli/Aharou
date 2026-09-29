@@ -102,7 +102,13 @@ abstract class AgentTool {
         return capabilities
     }
 
-    abstract suspend fun execute(args: Map<String, JsonElement>): ToolResult
+    /**
+     * 不带上下文的执行。只实现了 [executeWithContext] 的工具无需实现它——工具调用链统一走
+     * [executeWithContext]，这里只是兜底，正常运行不会走到。
+     */
+    open suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+        return ToolResult.Error("工具 $name 需要执行上下文", "CONTEXT_REQUIRED")
+    }
 
     open suspend fun executeWithContext(args: Map<String, JsonElement>, context: com.aharou.feature.agent.domain.model.AgentContext): ToolResult {
         return execute(args)
