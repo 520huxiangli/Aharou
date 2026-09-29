@@ -286,7 +286,9 @@ internal fun DefaultModelsSection(
                 trailing = {
                     AppSwitch(
                         checked = autoReadAloud,
-                        onCheckedChange = onAutoReadAloudChange
+                        // 不信界面上的 checked：界面状态一旦过期，按它算出来的目标值就是错的，
+                        // 表现就是「开关只能开、关不掉」。统一走「读存储真值再取反」。
+                        onCheckedChange = { onToggleAutoReadAloud() }
                     )
                 }
             )
