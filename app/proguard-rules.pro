@@ -105,6 +105,13 @@
 -keep class com.termux.terminal.** { *; }
 -keep class com.termux.view.** { *; }
 
+# ---- sherpa-onnx（离线语音识别，native + JNI）----
+# native 侧按原始类名注册、查找方法，R8 改名后 JNI 绑定失配，release 包构造
+# 识别器直接失败（debug 不混淆故正常）。v2.0.1 的 mapping 里可见
+# com.k2fsa.sherpa.onnx.EndpointConfig 被改成了 oc.a。
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
+
 # ---- Apache FtpServer / MINA（内置 FTP 服务端）----
 # MINA 的 SimpleIoProcessorPool 用反射找 IoProcessor 实现的 (ExecutorService)/(Executor) 构造器
 # （NioProcessor 只有 public NioProcessor(Executor)）。这些构造器无直接调用方，R8 优化掉后
