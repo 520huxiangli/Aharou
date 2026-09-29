@@ -258,6 +258,8 @@ fun SettingsScreen(
     val voiceTtsModel by viewModel.voiceTtsModel.collectAsStateWithLifecycle()
     val voiceTtsVoice by viewModel.voiceTtsVoice.collectAsStateWithLifecycle()
     val autoReadAloud by viewModel.autoReadAloud.collectAsStateWithLifecycle()
+    val voiceModelStatus by viewModel.voiceModelStatus.collectAsStateWithLifecycle()
+    val voiceModelMessage by viewModel.voiceModelMessage.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
     val containerProfiles by viewModel.profiles.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
@@ -834,6 +836,9 @@ fun SettingsScreen(
                     voiceTtsVoice = voiceTtsVoice,
                     autoReadAloud = autoReadAloud,
                     onAutoReadAloudChange = viewModel::setAutoReadAloud,
+                    voiceModelStatus = voiceModelStatus,
+                    voiceModelMessage = voiceModelMessage,
+                    onRereleaseVoiceModel = { viewModel.rereleaseVoiceModel() },
                     modelMetadata = modelMetadata,
                     onLoadMetadata = { viewModel.loadAllModelMetadata() },
                     onSelectVisionModel = { pid, m -> viewModel.setVisionModel(pid, m) },

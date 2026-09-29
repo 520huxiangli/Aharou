@@ -80,19 +80,9 @@ internal class VoiceInputViewModel @Inject constructor(
         viewModelScope.launch {
             val cloud = cloudSttConfig()
             if (cloud == null && !modelManager.isReady(VoiceModels.ASR_ZH)) {
+                // 模型随安装包内置，这里只是从 assets 释放到私有目录，不上网
                 _state.value = VoiceInputState.Preparing(0f, R.string.voice_model_preparing)
-                val ok = runCatching {
-                    modelManager.ensureModel(VoiceModels.ASR_ZH) { s ->
-                        val p = if (s is VoiceModelState.Downloading && s.totalBytes > 0) {
-                            s.readBytes.toFloat() / s.totalBytes
-                        } else 0f
-                        _state.value = VoiceInputState.Preparing(
-                            p,
-                            if (s is VoiceModelState.Extracting) R.string.voice_model_extracting
-                            else R.string.voice_model_downloading
-                        )
-                    }
-                }.isSuccess
+                val ok = runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH) }.isSuccess
                 if (!ok) {
                     _state.value = VoiceInputState.Error(R.string.voice_model_failed)
                     return@launch

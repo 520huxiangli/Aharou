@@ -6,12 +6,18 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
+import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retryWhen
+
+private const val TAG = "VoiceTtsSettings"
 
 private val Context.voiceTtsDataStore by preferencesDataStore(
     name = "voice_tts_prefs",
@@ -37,8 +43,22 @@ class VoiceTtsSettingsRepository @Inject constructor(
     /** 当前持久化的音色名流；未设置时为空字符串（=用服务端默认音色）。 */
     val voiceFlow: Flow<String> = dataStore.data.map { it[voiceKey] ?: "" }
 
-    /** 自动朗读开关流：开了之后 AI 每条回复落地就自动念。 */
-    val autoReadAloudFlow: Flow<Boolean> = dataStore.data.map { it[autoReadKey] ?: false }
+    /**
+     * 自动朗读开关流：开了之后 AI 每条回复落地就自动念。
+     *
+     * 读失败先重试自愈；重试仍失败就下发「关闭」。绝不能把上一次的值冻着——
+     * 一旦冻在 `true` 上，界面会显示「关」而实际一直在念，开关也点不动。
+     */
+    val autoReadAloudFlow: Flow<Boolean> = dataStore.data
+        .map { it[autoReadKey] ?: false }
+        .retryWhen { cause, attempt ->
+            FileLogger.w(TAG, "自动朗读开关读取失败（第 ${attempt + 1} 次），重试", cause)
+            if (attempt >= 3) false else { delay(500); true }
+        }
+        .catch { cause ->
+            FileLogger.w(TAG, "自动朗读开关读取失败，按关闭处理", cause)
+            emit(false)
+        }
 
     /** 读一次自动朗读开关。 */
     suspend fun isAutoReadAloud(): Boolean = autoReadAloudFlow.first()

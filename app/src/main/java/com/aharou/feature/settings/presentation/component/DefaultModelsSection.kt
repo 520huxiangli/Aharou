@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
+import com.aharou.feature.voice.domain.VoiceModelStatus
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -89,6 +90,9 @@ internal fun DefaultModelsSection(
     voiceTtsVoice: String,
     autoReadAloud: Boolean = false,
     onAutoReadAloudChange: (Boolean) -> Unit = {},
+    voiceModelStatus: VoiceModelStatus,
+    voiceModelMessage: Int? = null,
+    onRereleaseVoiceModel: () -> Unit = {},
     modelMetadata: Map<String, ModelMetadata>,
     onLoadMetadata: () -> Unit,
     onSelectVisionModel: (providerId: String, model: String) -> Unit,
@@ -282,6 +286,33 @@ internal fun DefaultModelsSection(
                     AppSwitch(
                         checked = autoReadAloud,
                         onCheckedChange = onAutoReadAloudChange
+                    )
+                }
+            )
+            SettingsDivider()
+            val voiceModelProblem = if (voiceModelStatus.ready) {
+                null
+            } else {
+                val missing = stringResource(R.string.settings_voice_model_missing)
+                val mismatch = stringResource(R.string.settings_voice_model_size_mismatch)
+                voiceModelStatus.files.filter { !it.ok }
+                    .joinToString("、") { f -> "${f.name}：" + if (f.actual == null) missing else mismatch }
+            }
+            SettingsRow(
+                icon = FeatherIcons.Mic,
+                title = stringResource(R.string.settings_voice_model_title),
+                subtitle = when {
+                    voiceModelMessage != null -> stringResource(voiceModelMessage)
+                    voiceModelProblem != null -> voiceModelProblem
+                    else -> stringResource(R.string.settings_voice_model_ready)
+                },
+                onClick = onRereleaseVoiceModel,
+                trailing = {
+                    Text(
+                        text = stringResource(R.string.settings_voice_model_rerelease),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
                     )
                 }
             )

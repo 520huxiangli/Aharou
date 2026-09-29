@@ -2014,6 +2014,8 @@
     <string name="voice_model_failed">语音模型准备失败</string>
     <string name="voice_record_failed">无法启动录音</string>
     <string name="voice_permission_required">需要录音权限，去设置里开启</string>
+    <string name="voice_call_toggle_start">点一下开始语音通话（一路听你说，再点一下停）</string>
+    <string name="voice_call_toggle_stop">语音通话中，点一下结束</string>
     <string name="voice_not_heard">没听清，再说一次</string>
     <string name="voice_tts_not_configured">手机上也没有可用的语音引擎：装一个，或者去「设置 → 默认模型」配置云端合成</string>
     <string name="voice_tts_failed">朗读失败，检查一下合成模型配置</string>
@@ -2034,4 +2036,11 @@
     <string name="voice_call_failed">通话启动失败</string>
     <string name="voice_call_notification_title">语音通话中</string>
     <string name="voice_call_notification_text">点按返回 Aharou</string>
+    <string name="settings_voice_model_title">离线语音模型</string>
+    <string name="settings_voice_model_ready">已就绪</string>
+    <string name="settings_voice_model_missing">缺失</string>
+    <string name="settings_voice_model_size_mismatch">大小不符</string>
+    <string name="settings_voice_model_rerelease">重新释放</string>
+    <string name="settings_voice_model_rereleased">已重新释放</string>
+    <string name="settings_voice_model_rerelease_failed">释放失败，安装包里的模型可能不完整</string>
 </resources>

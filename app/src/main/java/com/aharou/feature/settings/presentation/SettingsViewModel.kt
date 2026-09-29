@@ -6,6 +6,9 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.core.net.AppProxy
+import com.aharou.feature.voice.domain.VoiceModelManager
+import com.aharou.feature.voice.domain.VoiceModelStatus
+import com.aharou.feature.voice.domain.VoiceModels
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LogLevel
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
@@ -370,6 +373,7 @@ class SettingsViewModel @Inject constructor(
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
     private val voiceSttSettingsRepository: VoiceSttSettingsRepository,
     private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
+    private val voiceModelManager: VoiceModelManager,
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
@@ -528,6 +532,31 @@ class SettingsViewModel @Inject constructor(
 
     /** 自动朗读开关：开了之后 AI 每条回复落地就自动念。 */
     val autoReadAloud: StateFlow<Boolean> = _autoReadAloud.asStateFlow()
+
+    /** 离线语音模型的当前状态（打开设置页时构造 VM 即算好）。 */
+    private val _voiceModelStatus = MutableStateFlow(voiceModelManager.status(VoiceModels.ASR_ZH))
+    val voiceModelStatus: StateFlow<VoiceModelStatus> = _voiceModelStatus.asStateFlow()
+
+    /** 「重新释放」的结果提示，null 表示无提示。 */
+    private val _voiceModelMessage = MutableStateFlow<Int?>(null)
+    val voiceModelMessage: StateFlow<Int?> = _voiceModelMessage.asStateFlow()
+
+    fun refreshVoiceModelStatus() {
+        _voiceModelStatus.value = voiceModelManager.status(VoiceModels.ASR_ZH)
+    }
+
+    /** 强制从安装包重新释放模型（文件坏了/缺失时用）。 */
+    fun rereleaseVoiceModel() {
+        viewModelScope.launch {
+            val ok = runCatching { voiceModelManager.rerelease(VoiceModels.ASR_ZH) }.isSuccess
+            _voiceModelMessage.value = if (ok) {
+                R.string.settings_voice_model_rereleased
+            } else {
+                R.string.settings_voice_model_rerelease_failed
+            }
+            refreshVoiceModelStatus()
+        }
+    }
 
     private val _logLevel = MutableStateFlow(LogLevel.VERBOSE)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()

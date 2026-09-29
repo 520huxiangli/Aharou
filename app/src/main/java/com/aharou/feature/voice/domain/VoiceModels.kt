@@ -9,20 +9,21 @@ package com.aharou.feature.voice.domain
  *
  * [urls] 保留作为兵底：assets 释放失败（包裹损坏、被裁剪）时回退网络下载。
  */
-internal data class VoiceModelSpec(
+data class VoiceModelSpec(
     /** 落盘目录名，解压后的根目录与 assets 下的子目录名都用它。 */
     val dirName: String,
     /** 展示名（设置页 / 下载进度用）。 */
     val displayName: String,
-    /** 压缩包大小（字节），用于进度与完整性校验；<=0 表示未知。 */
-    val archiveSize: Long,
-    /** 按优先级排列的备用下载地址（仅在 assets 释放失败时使用）。 */
-    val urls: List<String>,
     /** 运行所需文件相对 [dirName] 的路径，全部存在才算就绪。 */
     val requiredFiles: List<String>,
+    /**
+     * 各必需文件的字节数。只看「文件在不在」会把上一版下载残留的坏文件当成就绪，
+     * 于是跳过从内置 assets 释放，直接用坏的——从 v2.0.0 升上来的机器就栽在这里。
+     */
+    val fileSizes: Map<String, Long> = emptyMap(),
 )
 
-internal object VoiceModels {
+object VoiceModels {
 
     /** 模型根目录（相对 filesDir）。 */
     const val MODEL_ROOT_DIR = "voice_models"
@@ -39,11 +40,12 @@ internal object VoiceModels {
     val ASR_ZH = VoiceModelSpec(
         dirName = "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30",
         displayName = "中文语音识别（Zipformer 流式）",
-        archiveSize = 132_634_597L,
-        urls = listOf(
-            "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
-        ),
         requiredFiles = listOf("encoder.int8.onnx", "decoder.onnx", "joiner.int8.onnx", "tokens.txt"),
+        fileSizes = mapOf(
+            "encoder.int8.onnx" to 161_141_793L,
+            "decoder.onnx" to 5_165_083L,
+            "joiner.int8.onnx" to 1_033_416L,
+            "tokens.txt" to 20_628L,
+        ),
     )
 }

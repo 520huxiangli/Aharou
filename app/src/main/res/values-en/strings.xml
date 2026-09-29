@@ -2015,6 +2015,8 @@
     <string name="voice_model_failed">Failed to prepare voice model</string>
     <string name="voice_record_failed">Could not start recording</string>
     <string name="voice_permission_required">Microphone permission needed, enable it in Settings</string>
+    <string name="voice_call_toggle_start">Tap to start a voice call (hands-free) — tap again to stop</string>
+    <string name="voice_call_toggle_stop">Voice call running — tap to stop</string>
     <string name="voice_not_heard">Didn\'t catch that, try again</string>
     <string name="voice_tts_not_configured">No speech engine available on this device — install one, or configure cloud synthesis in Settings → Default Models</string>
     <string name="voice_tts_failed">Read aloud failed, check the synthesis model config</string>
@@ -2035,4 +2037,11 @@
     <string name="voice_call_failed">Couldn\'t start the call</string>
     <string name="voice_call_notification_title">Voice call in progress</string>
     <string name="voice_call_notification_text">Tap to return to Aharou</string>
+    <string name="settings_voice_model_title">Offline voice model</string>
+    <string name="settings_voice_model_ready">Ready</string>
+    <string name="settings_voice_model_missing">Missing</string>
+    <string name="settings_voice_model_size_mismatch">Size mismatch</string>
+    <string name="settings_voice_model_rerelease">Re-extract</string>
+    <string name="settings_voice_model_rereleased">Re-extracted</string>
+    <string name="settings_voice_model_rerelease_failed">Extraction failed — the model inside the APK may be incomplete</string>
 </resources>

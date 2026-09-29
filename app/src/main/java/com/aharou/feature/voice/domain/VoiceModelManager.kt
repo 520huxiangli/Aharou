@@ -1,69 +1,87 @@
 package com.aharou.feature.voice.domain
 
 import android.content.Context
-import com.aharou.core.net.AppProxy
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 
 /** 模型准备进度。 */
-internal sealed interface VoiceModelState {
+sealed interface VoiceModelState {
     data object Idle : VoiceModelState
-    data class Downloading(val readBytes: Long, val totalBytes: Long) : VoiceModelState
     data object Extracting : VoiceModelState
     data object Ready : VoiceModelState
     data class Failed(val message: String) : VoiceModelState
+}
+
+/** 单个必需文件的状态。[actual] 为 null 表示文件不存在。 */
+data class VoiceModelFileStatus(val name: String, val expected: Long, val actual: Long?) {
+    val ok: Boolean get() = actual != null && actual == expected
+}
+
+/** 模型当前状态：哪个文件缺了、哪个字节数不对——设置页照这个显示，不用靠猜。 */
+data class VoiceModelStatus(val files: List<VoiceModelFileStatus>) {
+    val ready: Boolean get() = files.all { it.ok }
 }
 
 /**
  * 离线语音模型的获取与解压。
  *
  * 目录布局：`filesDir/voice_models/<spec.dirName>/`，就绪判据是 [VoiceModelSpec.requiredFiles]
- * 全部存在——不做「是否下载过」的标记文件，避免解压中断后标记与实体不一致。
- * 下载走临时文件，解压成功才落成正式目录，中途失败删除半成品。
+ * 全部存在**且字节数对得上**（见 [VoiceModelSpec.fileSizes]）——不写「已下载」标记文件，
+ * 避免解压中断后标记与实体不一致。释放走临时目录，成功才落成正式目录，中途失败删除半成品。
  */
 @Singleton
-internal class VoiceModelManager @Inject constructor(
+class VoiceModelManager @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    private val client by lazy {
-        OkHttpClient.Builder()
-            .proxyAuthenticator(AppProxy.okHttpAuthenticator)
-            .connectTimeout(20, TimeUnit.SECONDS)
-            // 模型几十 MB，读超时给宽；慢源由 [fetch] 内的速度探测兜底
-            .readTimeout(120, TimeUnit.SECONDS)
-            .build()
-    }
-
-    /** 同一模型的并发准备串行化：两处同时触发下载会互相覆盖临时文件。 */
+    /** 同一模型的并发准备串行化：两处同时触发释放会互相覆盖临时目录。 */
     private val mutex = Mutex()
 
     fun modelRoot(): File = File(context.filesDir, VoiceModels.MODEL_ROOT_DIR).apply { mkdirs() }
 
     fun modelDir(spec: VoiceModelSpec): File = File(modelRoot(), spec.dirName)
 
-    /** 模型是否已就绪（运行所需文件齐全）。 */
-    fun isReady(spec: VoiceModelSpec): Boolean {
+    /** 模型是否已就绪（运行所需文件齐全**且字节数对得上**）。 */
+    fun isReady(spec: VoiceModelSpec): Boolean = status(spec).ready
+
+    /** 当前模型状态：逐个文件核「在不在 + 字节数对不对」。 */
+    fun status(spec: VoiceModelSpec): VoiceModelStatus {
         val dir = modelDir(spec)
-        return spec.requiredFiles.all { File(dir, it).isFile }
+        return VoiceModelStatus(
+            spec.requiredFiles.map { name ->
+                val file = File(dir, name)
+                VoiceModelFileStatus(
+                    name = name,
+                    expected = spec.fileSizes[name] ?: 0L,
+                    actual = file.takeIf { it.isFile }?.length(),
+                )
+            }
+        )
     }
 
     /**
-     * 确保模型可用，返回模型目录。已就绪时直接返回，不重复下载。
+     * 强制从安装包重新释放（设置页那个「重新释放」按钮）：
+     * 先删掉现存的，再走一遍 [ensureModel]。文件看着在、内容坏了时用它。
+     */
+    suspend fun rerelease(spec: VoiceModelSpec): File {
+        mutex.withLock { modelDir(spec).deleteRecursively() }
+        return ensureModel(spec)
+    }
+
+    /**
+     * 确保模型可用，返回模型目录。已就绪时直接返回。
      *
-     * @throws IOException 全部源都失败
+     * 模型随安装包内置（见 [VoiceModels.ASR_ZH]），这里只是把它从 assets 释放到私有目录，
+     * **不走网络**：模型下载源又慢又不稳，内置才是正经分发方式。
+     *
+     * @throws IOException 内置模型取不到（安装包被裁剪 / 损坏）
      */
     suspend fun ensureModel(
         spec: VoiceModelSpec,
@@ -75,22 +93,13 @@ internal class VoiceModelManager @Inject constructor(
                 onState(VoiceModelState.Ready)
                 return@withLock dir
             }
-            onState(VoiceModelState.Downloading(0L, spec.archiveSize))
-            val archive = File(modelRoot(), "${spec.dirName}.tar.bz2")
             try {
-                // 内置模型直接释放：APK 里带着压缩包时不必走网络（模型 78MB，网络源在国内普遍很慢）。
-                // 释放失败（如包裹损坏）不直接判失败，回退到下载。
                 onState(VoiceModelState.Extracting)
                 val staging = File(modelRoot(), "${spec.dirName}.staging")
                 staging.deleteRecursively()
                 staging.mkdirs()
-                val bundled = runCatching { extractBundled(spec, staging) }.getOrDefault(false)
-                if (!bundled) {
-                    staging.deleteRecursively()
-                    downloadArchive(spec, archive, onState)
-                    onState(VoiceModelState.Extracting)
-                    staging.mkdirs()
-                    extractTarBz2(archive, staging)
+                if (!runCatching { extractBundled(spec, staging) }.getOrDefault(false)) {
+                    throw IOException("安装包里的语音模型不完整，请重新安装 App")
                 }
                 dir.deleteRecursively()
                 if (!staging.renameTo(dir)) {
@@ -105,15 +114,12 @@ internal class VoiceModelManager @Inject constructor(
                 dir
             } catch (e: Exception) {
                 // CancellationException 也走这里：半成品必须清掉，否则下次启动会认为已就绪
-                archive.delete()
                 File(modelRoot(), "${spec.dirName}.staging").deleteRecursively()
                 if (e !is kotlinx.coroutines.CancellationException) {
                     FileLogger.e(TAG, "准备语音模型失败：${spec.displayName}", e)
-                    onState(VoiceModelState.Failed(e.message ?: "下载失败"))
+                    onState(VoiceModelState.Failed(e.message ?: "准备失败"))
                 }
                 throw e
-            } finally {
-                archive.delete()
             }
         }
     }
@@ -139,98 +145,7 @@ internal class VoiceModelManager @Inject constructor(
         return true
     }
 
-    /** 逐个候选源尝试；任一源失败即删半成品换下一个。 */
-    private suspend fun downloadArchive(
-        spec: VoiceModelSpec,
-        dest: File,
-        onState: (VoiceModelState) -> Unit,
-    ) {
-        var lastError: Exception? = null
-        for (url in spec.urls) {
-            try {
-                fetch(url, dest, spec.archiveSize, onState)
-                return
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                dest.delete()
-                throw e
-            } catch (e: Exception) {
-                FileLogger.w(TAG, "模型下载源失败：$url", e)
-                lastError = e
-                dest.delete()
-            }
-        }
-        throw IOException(lastError?.message ?: "没有可用的模型下载源")
-    }
-
-    private fun fetch(
-        url: String,
-        dest: File,
-        expectedSize: Long,
-        onState: (VoiceModelState) -> Unit,
-    ) {
-        val response = client.newCall(Request.Builder().url(url).build()).execute()
-        response.use { resp ->
-            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
-            resp.header("Content-Type")?.takeIf { it.startsWith("text/") }?.let {
-                // 镜像故障时会回一段 HTML 错误页，别当压缩包存下来
-                throw IOException("响应不是模型包（$it）")
-            }
-            val body = resp.body ?: throw IOException("响应体为空")
-            val total = body.contentLength().takeIf { it > 0 } ?: expectedSize
-            val startedAt = System.currentTimeMillis()
-            val buffer = ByteArray(64 * 1024)
-            var read = 0L
-            body.byteStream().use { input ->
-                dest.outputStream().use { output ->
-                    while (true) {
-                        val n = input.read(buffer)
-                        if (n < 0) break
-                        output.write(buffer, 0, n)
-                        read += n
-                        onState(VoiceModelState.Downloading(read, total))
-                        // 慢源早退：GitHub 直连对国内约 0.03 MB/s，正常镜像 ≥1 MB/s。
-                        // 读到阀定量还没达最低速度就换下一个候选，别让用户干等。
-                        val elapsed = System.currentTimeMillis() - startedAt
-                        if (read >= SLOW_PROBE_BYTES && elapsed > SLOW_PROBE_MILLIS) {
-                            throw IOException("下载源过慢（${read / 1024} KB 用了 ${elapsed / 1000} s）")
-                        }
-                    }
-                }
-            }
-            if (expectedSize > 0 && read != expectedSize) {
-                throw IOException("模型包不完整（$read / $expectedSize 字节）")
-            }
-        }
-    }
-
-    /** 解压 tar.bz2 到 [destDir]，带 zip-slip 防护。模型包内只有普通文件与目录，不处理链接/权限位。 */
-    private fun extractTarBz2(archive: File, destDir: File) {
-        val canonicalRoot = destDir.canonicalPath
-        archive.inputStream().use { raw ->
-            BZip2CompressorInputStream(raw, true).use { bz ->
-                TarArchiveInputStream(bz).use { tar ->
-                    var entry = tar.nextEntry
-                    while (entry != null) {
-                        val out = File(destDir, entry.name)
-                        if (!out.canonicalPath.startsWith(canonicalRoot + File.separator)) {
-                            throw IOException("压缩包内含越界路径：${entry.name}")
-                        }
-                        if (entry.isDirectory) {
-                            out.mkdirs()
-                        } else {
-                            out.parentFile?.mkdirs()
-                            out.outputStream().use { os -> tar.copyTo(os) }
-                        }
-                        entry = tar.nextEntry
-                    }
-                }
-            }
-        }
-    }
-
     private companion object {
         const val TAG = "VoiceModelManager"
-        const val SLOW_PROBE_BYTES = 1L * 1024 * 1024
-        const val SLOW_PROBE_MILLIS = 10_000L
     }
 }
