@@ -119,3 +119,13 @@
 # ---- SnakeYAML / EdDSA 等第三方库在 Android 环境下的 JRE 缺失类告警忽略 ----
 -dontwarn java.beans.**
 -dontwarn sun.security.x509.**
+
+# ---- jlatexmath（LaTeX 公式渲染）----
+# jlatexmath 的宏系统在运行时用反射调用宏实现：MacroInfo 构造时
+# Class.forName("org.scilab.forge.jlatexmath.NewCommandMacro") +
+# getDeclaredMethod("executeMacro", TeXParser, String[])。所有 \newcommand / \newenvironment
+# 定义的宏（含全部 \begin{...} 环境）都走这条路。R8 的 class merging 会把 NewCommandMacro
+# 整个合并掉（mapping 里显示为 R8$$REMOVED$$CLASS$$0），forName 抛 ClassNotFoundException，
+# MacroInfo.macro 保持 null，渲染时 Method.invoke NPE——release 包上所有带 \begin / 自定义宏的
+# 公式空白，debug 不混淆故正常。整包保留类名与方法名，避免再被 interface 去虚化等优化破坏。
+-keep class org.scilab.forge.jlatexmath.** { *; }

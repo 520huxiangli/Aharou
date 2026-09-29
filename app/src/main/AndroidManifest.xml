@@ -10,6 +10,9 @@
     <!-- 前台服务类型对应权限：targetSdk 34 起，声明了 foregroundServiceType 却没申请对应权限，
          startForeground() 直接抛 SecurityException。两个前台服务统一用 specialUse（用例见各自 service）。 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 语音通话：麦克风类型前台服务。Android 14+ 要求 startForeground 时 RECORD_AUDIO 已授予，
+         且该类型只能从可见界面启动——通话因此必须由用户点按发起，不能后台自启。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -43,6 +46,7 @@
     <application
         android:name=".AIEditorApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -155,6 +159,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Agent 执行期间在屏幕上显示实时进度胶囊" />
         </service>
+
+        <!-- 语音通话：悬浮窗 + 实时语音回合。用 microphone 类型，通话期间必须持有麦克风。 -->
+        <service
+            android:name="com.aharou.feature.voice.call.VoiceCallService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- 开机与应用被更新后把悬浮窗服务拉回来。START_STICKY 只覆盖「被系统查杀」，
              包替换（pm install）与设备重启都不会自动拉起服务，用户会以为开关失效了。

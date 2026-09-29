@@ -253,6 +253,12 @@ android {
         }
     }
 
+    // 内置语音模型（model.int8.onnx，78MB）不再压缩：它已是紧凑的二进制权重，再压几无收益，
+    // 却要在安装/读取时多一次解压，且会让 APK 启动时的 asset 扫描变慢。
+    androidResources {
+        noCompress += listOf("onnx", "mvn")
+    }
+
     // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
     // lintVital 在 R8/打包阶段额外吃 CPU 与内存（2 核 7GB runner 易 OOM），且其发现不阻塞发布。
     lint {
