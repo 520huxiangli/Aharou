@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool.explorer
 
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.FileEntry
@@ -62,7 +63,15 @@ class ListFilesToolTest {
     }
 
     private suspend fun runList(args: String): ToolResult {
-        return tool.execute(mapOf("args" to JsonPrimitive(args)))
+        // 工具已改为按会话上下文执行（文件访问绑到会话自己的工作区），测试补一个最小上下文。
+        // FakeFileAccess 未覆盖 forWorkspace，默认实现返回自身，所以这里的工作区值不影响断言。
+        val context = AgentContext(
+            currentFile = null,
+            selectedCode = null,
+            projectRoot = "/root/workspace",
+            language = null
+        )
+        return tool.executeWithContext(mapOf("args" to JsonPrimitive(args)), context)
     }
 
     private fun contentOf(result: ToolResult): String {
