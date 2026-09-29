@@ -3,7 +3,9 @@
 在 Aharou 的 Linux 容器（PRoot）中配置 JDK、Android SDK 与 Flutter SDK 后，即可直接从源码编译 Flutter 应用的 Android APK。本文以 Debian 12 (bookworm) aarch64 为例，已在 PRoot 容器内实测通过 debug APK 的构建。
 
 ::: tip 支持范围
-ARM64 容器仅支持构建 **debug APK**（JIT 模式，原生支持 ARM64）。**release / profile 包无法在本地构建**：Google 仅为 Android AOT 发布 linux-x64 平台的 gen_snapshot，ARM64 宿主机上无法执行 AOT 编译。如需 release 包，请使用 GitHub Actions 等远程构建方式。
+ARM64 容器默认可直接构建 **debug APK**（JIT 模式，原生支持 ARM64）。
+
+**release / profile 包**走 AOT，需要 `gen_snapshot`——而 Google 仅为 Android AOT 发布 linux-x64 版。ARM64 宿主机上需用 qemu 转译该二进制才能构建，配置方法见〈编译 release 包〉。不想在本地折腾的话，用 GitHub Actions 等远程构建方式亦可。
 :::
 
 ::: tip 镜像与网络说明
@@ -255,6 +257,53 @@ build/app/outputs/flutter-apk/app-debug.apk
 ~/android/sdk/build-tools/35.0.0/aapt2 dump badging build/app/outputs/flutter-apk/app-debug.apk | head -3
 ```
 
+## 7. 编译 release 包
+
+release / profile 走 AOT，需要 `gen_snapshot`，而官方只发布 linux-x64 版。在 aarch64 容器里用 qemu 转译执行即可，**不必改用远程构建**。
+
+### 7.1 用 qemu 包一层 gen_snapshot
+
+`gen_snapshot` 在 Flutter SDK 的 `bin/cache/artifacts/engine/android-<abi>-release/<宿主平台>/` 下。把原二进制改名，再放一个包装脚本顶替：
+
+```bash
+cd ~/.local/flutter-3.27.4/bin/cache/artifacts/engine/android-arm64-release
+for d in linux-x64 linux-arm64; do
+  [ -f "$d/gen_snapshot" ] && [ ! -f "$d/gen_snapshot.x64-real" ] && \
+    mv "$d/gen_snapshot" "$d/gen_snapshot.x64-real"
+  printf '#!/bin/sh\nexec %s "%s" "$@"\n' \
+    "$(command -v qemu-x86_64)" "$(pwd)/$d/gen_snapshot.x64-real" > "$d/gen_snapshot"
+  chmod +x "$d/gen_snapshot"
+ done
+```
+
+两个关键细节：
+
+- **`linux-x64` 与 `linux-arm64` 两个目录都要放**——Flutter 按宿主平台选目录，只改一处可能命中不了。
+- **qemu 的可执行文件名随发行版而异**。本容器的实际名字是 `/usr/bin/qemu-x86_64`；有些发行版只提供带 `-static` 后缀的版本。先 `command -v qemu-x86_64 qemu-x86_64-static` 确认后再写进脚本。
+
+之后按第 6 节同样的流程构建，把 `--debug` 换成 `--release`：
+
+```bash
+flutter build apk --release --target-platform android-arm64
+```
+
+### 7.2 带原生代码的项目还需换 NDK
+
+若项目含原生插件（如 Rust + `cargokit`），默认 NDK 会在 aarch64 上直接崩：官方 NDK 的
+`toolchains/llvm/prebuilt/linux-x86_64/bin/clang` 是**真的 x86_64 二进制**，执行报
+`Illegal instruction`。问题是 `cargokit` 把宿主工具链目录名**硬编码**成 `linux-x86_64`，
+改成 `linux-aarch64` 反而找不到。
+
+解法是用 aarch64 社区版 NDK，它把 aarch64 二进制放进 `linux-x86_64` 目录（`linux-aarch64`
+只是软链过去），从而同时满足「目录名」和「可执行」两个条件。改用后需同步两处 `ndkVersion`：
+项目 `android/build.gradle` 的子工程覆盖项、`android/app/build.gradle`。
+
+::: tip 来源说明
+本节记录的 qemu 包装与 NDK 方案来自社区项目在 aarch64 容器内的实测（Flutter 3.47.5、
+NDK 29），已成功产出带发布证书签名的 arm64 release APK。本仓库文档未逐项复现，
+版本不同时请以实际报错为准。
+:::
+
 ## 常见问题
 
 | 现象 | 原因 | 解决 |
@@ -268,10 +317,13 @@ build/app/outputs/flutter-apk/app-debug.apk
 | `flutter doctor` Android toolchain 检查超时 | doctor 内部通过 sdkmanager 联网验证 dl.google.com | dl.google.com 不可达时属正常现象，不影响构建 |
 | Gradle 锁文件冲突 | 上次构建未正常退出 | 删除 `~/.gradle/caches/*.lock` 或加 `--no-daemon` |
 | 构建命令接管道后看不到进度 | `\| tail` 缓冲输出 | 直接运行构建命令，勿接 tail；失败信息在前 1~3 分钟的依赖解析阶段即可见 |
+| release 构建报 `gen_snapshot: cannot execute` | AOT 编译器是 x64 二进制 | 按第 7 节用 qemu 包装 `gen_snapshot` |
+| 原生插件编译报 `Illegal instruction` | 默认 NDK 的 clang 是真 x86_64 二进制 | 按第 7.2 节换 aarch64 社区版 NDK |
+| `Could not resolve io.flutter:arm64_v8a_release` | 引擎仓库被排在 `google()` 之后，dl.google.com 不可达时先失败 | 把引擎仓库显式排到 `google()` 之前，或按第 5 节用镜像 |
 
 ## 限制与提示
 
-- **release/profile 无法在 ARM64 构建**：Android AOT 的 gen_snapshot 仅有 linux-x64 版。如需 release 包，请使用 GitHub Actions（在 x64 上执行 `flutter build apk --release`）或其它远程构建方式。
+- **release / profile 包需额外配置才能本地构建**：Android AOT 的 `gen_snapshot` 仅有 linux-x64 版，需按〈编译 release 包〉用 qemu 转译；带原生代码的项目还需换 aarch64 版 NDK。不想配置就走 GitHub Actions（在 x64 上执行 `flutter build apk --release`）。
 - 模板 `flutter create` 的 `compileSdk=35`、`buildToolsVersion=33.0.1`，修改模板前请先确认对应 SDK 组件已安装。
 - PRoot 下大量小文件的解压（如 dart-sdk、依赖缓存）速度偏慢属正常现象，请勿误判为卡死。
 - 若依赖解析持续失败，可先单独 `curl -sI` 验证对应仓库 URL 的可达性，再检查仓库顺序。
