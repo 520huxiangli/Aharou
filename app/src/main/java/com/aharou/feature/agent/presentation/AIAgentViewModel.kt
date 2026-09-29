@@ -85,7 +85,10 @@ import com.aharou.feature.agent.domain.command.SlashCommandRegistry
 import com.aharou.feature.agent.domain.command.SlashCommandRegistry.ResolvedCommand
 import com.aharou.feature.agent.domain.skill.Skill
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.agent.presentation.component.PendingUploadAttachment
+import com.aharou.feature.agent.presentation.component.PastedText
 import com.aharou.feature.agent.presentation.component.RewindOption
+import com.aharou.feature.agent.presentation.component.expandPastePlaceholders
 import com.aharou.feature.agent.presentation.component.formatTokenCount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -111,7 +114,11 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.launch
 import java.io.OutputStream
 import java.util.Calendar
@@ -211,6 +218,13 @@ class AIAgentViewModel @Inject constructor(
     private val _agentStates = MutableStateFlow<Map<String, AgentUIState>>(emptyMap())
     val agentStates: StateFlow<Map<String, AgentUIState>> = _agentStates.asStateFlow()
 
+    /**
+     * 各会话「最后一轮是否正常完成」：只有正常收尾（收到完成标记）才在轮末回复下挂「复制 / 更多」
+     * 按钮；主动暂停 / 出错 / 未开始都不挂，避免按钮挂在半截输出上。
+     */
+    private val _completedSessions = MutableStateFlow<Set<String>>(emptySet())
+    val completedSessions: StateFlow<Set<String>> = _completedSessions.asStateFlow()
+
     val agentState: StateFlow<AgentUIState> = _currentSessionId
         .flatMapLatest { id ->
             if (id == null) flowOf(AgentUIState.Idle)
@@ -260,6 +274,8 @@ class AIAgentViewModel @Inject constructor(
      * 以前是全局单一一份，在 A 打了半截话切到 B 那半截话会跟着跑过去。
      */
     private val draftPrefs = context.getSharedPreferences("agent_input_drafts", Context.MODE_PRIVATE)
+    private val pastedPrefs = context.getSharedPreferences("agent_pasted_texts", Context.MODE_PRIVATE)
+    private val json = Json { ignoreUnknownKeys = true }
     private val _inputDrafts = MutableStateFlow<Map<String, String>>(
         draftPrefs.all.mapNotNull { (k, v) ->
             (v as? String)?.takeIf { it.isNotEmpty() }?.let { k to it }
@@ -291,6 +307,105 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
+     * 折叠的粘贴块，按会话隔离。
+     *
+     * 与输入草稿共用同一生命周期：草稿持久化（draftPrefs），它也必须持久化，否则重启后
+     * 草稿里留下的 `[Pasted#N]` 展开不出来，会把标记字面量发给模型。id 全局单调、不重用，
+     * 免得旧标记撞上新内容。
+     */
+    private val _pastedTexts = MutableStateFlow(loadPastedTexts())
+    val pastedTexts: StateFlow<List<PastedText>> = _currentSessionId
+        .flatMapLatest { id -> _pastedTexts.map { it[id].orEmpty() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private var nextPasteId: Int =
+        (_pastedTexts.value.values.flatten().maxOfOrNull { it.id } ?: 0) + 1
+
+    /**
+     * 待发送附件（含外部分享投递进来的）。
+     *
+     * 状态必须活得比聊天面板的 Composable 长：分享文件是跨 Activity 投递的，面板若在投递前
+     * 被销毁（冷启动时序、切换路由），remember 局部状态会连同附件一起丢，表现为「点了插入，
+     * 当次不显示；退出重进才出现」。这里不按会话隔离——分享发生在会话确定之前，硬绑会话会让
+     * 附件无处安放；切换会话时的清空统一在 init 里订阅。
+     */
+    private val _pendingAttachments = MutableStateFlow<List<PendingUploadAttachment>>(emptyList())
+    internal val pendingAttachments: StateFlow<List<PendingUploadAttachment>> = _pendingAttachments.asStateFlow()
+
+    internal fun addPendingAttachments(items: List<PendingUploadAttachment>) {
+        if (items.isEmpty()) return
+        _pendingAttachments.value = _pendingAttachments.value + items
+        // 诊断：确认 flow 侧确实写进去了。与 AIChatPanelDbg 对照，
+        // 两边不一致就能定位是写入没发生还是订阅没收到。
+        com.aharou.core.util.FileLogger.i(
+            "PendingAttachDbg",
+            "add ${items.size} -> flow=${_pendingAttachments.value.size}"
+        )
+    }
+
+    internal fun setPendingAttachments(items: List<PendingUploadAttachment>) {
+        _pendingAttachments.value = items
+    }
+
+    internal fun removePendingAttachmentAt(index: Int) {
+        if (index !in _pendingAttachments.value.indices) return
+        _pendingAttachments.value = _pendingAttachments.value.filterIndexed { i, _ -> i != index }
+    }
+
+    /** 缓冲 [text]，返回顶替它的 `[Pasted#N]` 标记。 */
+    fun stashPastedText(text: String): String {
+        val id = nextPasteId++
+        val sessionId = _currentSessionId.value ?: return PastedText.placeholderFor(id)
+        val entries = _pastedTexts.value[sessionId].orEmpty() + PastedText(id, text)
+        _pastedTexts.value = _pastedTexts.value + (sessionId to entries)
+        savePastedTexts(_pastedTexts.value)
+        return PastedText.placeholderFor(id)
+    }
+
+    fun removePastedText(id: Int) {
+        val sessionId = _currentSessionId.value ?: return
+        val entries = _pastedTexts.value[sessionId].orEmpty().filterNot { it.id == id }
+        _pastedTexts.value =
+            if (entries.isEmpty()) _pastedTexts.value - sessionId
+            else _pastedTexts.value + (sessionId to entries)
+        savePastedTexts(_pastedTexts.value)
+    }
+
+    /** 发送时把标记还原成原文；[PastedText] 已被用户删掉的标记原样保留。 */
+    fun expandPastes(text: String): String {
+        val sessionId = _currentSessionId.value ?: return text
+        val (expanded, consumed) = expandPastePlaceholders(
+            text,
+            _pastedTexts.value[sessionId].orEmpty(),
+        )
+        if (consumed.isEmpty()) return text
+        val remaining = _pastedTexts.value[sessionId].orEmpty().filterNot { it.id in consumed }
+        _pastedTexts.value =
+            if (remaining.isEmpty()) _pastedTexts.value - sessionId
+            else _pastedTexts.value + (sessionId to remaining)
+        savePastedTexts(_pastedTexts.value)
+        return expanded
+    }
+
+    private fun loadPastedTexts(): Map<String, List<PastedText>> {
+        val raw = pastedPrefs.getString("buffers", null) ?: return emptyMap()
+        return runCatching {
+            json.decodeFromString<Map<String, List<PastedTextEntry>>>(raw)
+                .mapValues { (_, list) -> list.map { PastedText(it.id, it.text) } }
+        }.getOrDefault(emptyMap())
+    }
+
+    private fun savePastedTexts(buffers: Map<String, List<PastedText>>) {
+        val encoded = buffers.mapValues { (_, list) ->
+            list.map { PastedTextEntry(it.id, it.text) }
+        }
+        pastedPrefs.edit().putString("buffers", json.encodeToString(encoded)).apply()
+    }
+
+    @Serializable
+    private data class PastedTextEntry(val id: Int, val text: String)
+
+    /**
      * 工具调用（分组头与单条工具卡片）的手动展开态：key = 分组 key（`toolgroup:<组内首条消息 id>`）
      * 或单条消息 id。
      *
@@ -304,6 +419,31 @@ class AIAgentViewModel @Inject constructor(
     /** 记录一次手动展开/收起（取值由调用方按当前可见态取反后传入）。 */
     fun setToolExpanded(key: String, expanded: Boolean) {
         toolExpansionOverrides[key] = expanded
+    }
+
+    /**
+     * 整轮任务折叠（外层「执行中 / 已完成」头）的手动展开态：key = `turn:<轮首消息 id>`。
+     *
+     * 与 [toolExpansionOverrides] 同款：按 App 进程内存保留、不落盘。没记录时按「末轮运行中默认展开、
+     * 其余默认收起」推默认值（见 AIChatPanel.buildChatItems 的 activeTurnKey）；一旦用户手动点过，
+     * 就以其选择为准，任务完成自动收起也不会覆盖它。
+     */
+    val turnExpansionOverrides = mutableStateMapOf<String, Boolean>()
+
+    /** 记录一次整轮折叠的手动展开/收起。 */
+    fun setTurnExpanded(key: String, expanded: Boolean) {
+        turnExpansionOverrides[key] = expanded
+    }
+
+    /**
+     * 思考过程展开态的手动选择：key = 助手消息 id。与 [toolExpansionOverrides] 同款（进程内存、不落盘），
+     * 使思考卡片划出视口回收、切页返回后仍保持展开/收起。
+     */
+    val reasoningExpansionOverrides = mutableStateMapOf<String, Boolean>()
+
+    /** 记录一次思考卡片的展开/收起。 */
+    fun setReasoningExpanded(messageId: String, expanded: Boolean) {
+        reasoningExpansionOverrides[messageId] = expanded
     }
 
     fun loadMoreMessages() {
@@ -471,6 +611,14 @@ class AIAgentViewModel @Inject constructor(
     }
     val expandedPaths: StateFlow<Set<String>> = _expandedPaths.asStateFlow()
 
+    /** 正在展开、等待列目录返回的目录路径（远程 SSH 下 listFiles 可能耗时数秒）；UI 在该行显示等待动画。 */
+    private val _expandingPath = MutableStateFlow<String?>(null)
+    val expandingPath: StateFlow<String?> = _expandingPath.asStateFlow()
+
+    /** 正在执行写操作（新建/重命名/删除/复制/移动）的条目路径集合；UI 在对应行与工具栏显示等待动画。 */
+    private val _fileOpPaths = MutableStateFlow<Set<String>>(emptySet())
+    val fileOpPaths: StateFlow<Set<String>> = _fileOpPaths.asStateFlow()
+
     /** 手动刷新信号：远程模式无 inotify，只能靠它；本地模式作为兜底。 */
     private val _browseRefresh = MutableStateFlow(0)
 
@@ -494,6 +642,8 @@ class AIAgentViewModel @Inject constructor(
                 triggers.collect { emit(buildBrowseTree(expanded)) }
             }.flowOn(Dispatchers.IO)
         }
+        // 新树已就绪：清掉展开等待态（无论成功/出错都清，避免转圈卡死）。
+        .onEach { _expandingPath.value = null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FileBrowseState.Loading)
 
     /** 读取工作区根并按 [expanded] 递归展开，产出扁平的可见节点列表；根读取失败则整体报错。 */
@@ -561,12 +711,15 @@ class AIAgentViewModel @Inject constructor(
         _browseRefresh.value++
     }
 
-    /** 展开/折叠目录；折叠时连同其所有后代一并移出展开集，避免残留监听与再展开时意外深开。改变后按工作区持久化。 */
+    /** 展开/折叠目录；折叠时连同其所有后代一并移出展开集，避免残留监听与再展开时意外深开。改变后按工作区持久化。
+     *  展开需等列目录返回，期间标记 [expandingPath] 让 UI 显示等待动画，并忽略对同一目录的重复点击（否则会把它折回去）。 */
     fun toggleExpand(path: String) {
+        if (path == _expandingPath.value) return
         val current = _expandedPaths.value
         val updated = if (path in current) {
             current.filterNot { it == path || it.startsWith("$path/") }.toSet()
         } else {
+            _expandingPath.value = path
             current + path
         }
         _expandedPaths.value = updated
@@ -575,16 +728,26 @@ class AIAgentViewModel @Inject constructor(
 
     /**
      * 文件浏览的写操作共用包装：跑 IO 调度器，成功后主动重读目录（远程模式无 inotify）。
+     * [busyPaths] 为本次操作涉及的条目路径，操作期间加入 [fileOpPaths] 让 UI 显示等待动画。
      * [block] 返回 false 表示名称非法或同名已存在，抛异常表示 IO 失败，两者均回报失败。
      */
-    private fun mutateBrowse(onResult: (Boolean) -> Unit, block: () -> Boolean) = viewModelScope.launch {
-        val success = withContext(Dispatchers.IO) {
-            runCatching(block)
-                .onFailure { FileLogger.w(TAG, "文件操作失败", it) }
-                .getOrDefault(false)
+    private fun mutateBrowse(
+        busyPaths: Set<String> = emptySet(),
+        onResult: (Boolean) -> Unit,
+        block: () -> Boolean
+    ) = viewModelScope.launch {
+        if (busyPaths.isNotEmpty()) _fileOpPaths.value = _fileOpPaths.value + busyPaths
+        try {
+            val success = withContext(Dispatchers.IO) {
+                runCatching(block)
+                    .onFailure { FileLogger.w(TAG, "文件操作失败", it) }
+                    .getOrDefault(false)
+            }
+            if (success) refreshBrowse()
+            onResult(success)
+        } finally {
+            if (busyPaths.isNotEmpty()) _fileOpPaths.value = _fileOpPaths.value - busyPaths
         }
-        if (success) refreshBrowse()
-        onResult(success)
     }
 
     /** [parent] 目录下的子路径；名称非法时返回 null。 */
@@ -592,43 +755,49 @@ class AIAgentViewModel @Inject constructor(
         if (isValidFileEntryName(name)) "$parent/${name.trim()}" else null
 
     /** 在 [parent] 目录新建空文件。 */
-    fun createBrowseFile(parent: String, name: String, onResult: (Boolean) -> Unit) = mutateBrowse(onResult) {
+    fun createBrowseFile(parent: String, name: String, onResult: (Boolean) -> Unit) {
         val target = browseChildPath(parent, name)
-        if (target == null || fileAccess.exists(target)) {
-            false
-        } else {
-            fileAccess.writeFile(target, "", overwrite = false)
-            true
+        mutateBrowse(busyPaths = target?.let { setOf(it) } ?: emptySet(), onResult = onResult) {
+            if (target == null || fileAccess.exists(target)) {
+                false
+            } else {
+                fileAccess.writeFile(target, "", overwrite = false)
+                true
+            }
         }
     }
 
     /** 在 [parent] 目录新建文件夹。 */
-    fun createBrowseFolder(parent: String, name: String, onResult: (Boolean) -> Unit) = mutateBrowse(onResult) {
+    fun createBrowseFolder(parent: String, name: String, onResult: (Boolean) -> Unit) {
         val target = browseChildPath(parent, name)
-        if (target == null || fileAccess.exists(target)) {
-            false
-        } else {
-            fileAccess.mkdirs(target)
-            fileAccess.isDirectory(target)
+        mutateBrowse(busyPaths = target?.let { setOf(it) } ?: emptySet(), onResult = onResult) {
+            if (target == null || fileAccess.exists(target)) {
+                false
+            } else {
+                fileAccess.mkdirs(target)
+                fileAccess.isDirectory(target)
+            }
         }
     }
 
     /** 重命名条目（仅同目录内改名，不跨目录移动）。 */
-    fun renameBrowseEntry(path: String, newName: String, onResult: (Boolean) -> Unit) = mutateBrowse(onResult) {
-        val parent = path.substringBeforeLast('/', "")
-        if (parent.isEmpty() || !isValidFileEntryName(newName)) {
-            false
-        } else {
-            fileAccess.rename(path, "$parent/${newName.trim()}")
-            true
+    fun renameBrowseEntry(path: String, newName: String, onResult: (Boolean) -> Unit) =
+        mutateBrowse(busyPaths = setOf(path), onResult = onResult) {
+            val parent = path.substringBeforeLast('/', "")
+            if (parent.isEmpty() || !isValidFileEntryName(newName)) {
+                false
+            } else {
+                fileAccess.rename(path, "$parent/${newName.trim()}")
+                true
+            }
         }
-    }
 
     /** 删除条目；目录连同内容递归删除。 */
-    fun deleteBrowseEntry(path: String, onResult: (Boolean) -> Unit) = mutateBrowse(onResult) {
-        fileAccess.deleteRecursively(path)
-        true
-    }
+    fun deleteBrowseEntry(path: String, onResult: (Boolean) -> Unit) =
+        mutateBrowse(busyPaths = setOf(path), onResult = onResult) {
+            fileAccess.deleteRecursively(path)
+            true
+        }
 
     // region 文件复制 / 剪切 / 粘贴
 
@@ -684,7 +853,8 @@ class AIAgentViewModel @Inject constructor(
     }
 
     private fun performPaste(clip: BrowseClipboard, target: String, overwrite: Boolean, onResult: (Boolean) -> Unit) {
-        mutateBrowse({ success ->
+        val busyPaths = if (clip.isCut) setOf(clip.sourcePath, target) else setOf(target)
+        mutateBrowse(busyPaths = busyPaths, onResult = { success ->
             // 无论复制还是剪切，粘贴成功即清空剪切板，避免重复粘贴；失败保留，允许重试。
             if (success) _browseClipboard.value = null
             onResult(success)
@@ -1025,6 +1195,12 @@ class AIAgentViewModel @Inject constructor(
         // 冷启动收尾：上次进程被杀时残留的「执行中」工具回填为「已中断」。在后台执行，不阻塞首屏与会话展示。
         viewModelScope.launch(Dispatchers.IO) {
             sessionUseCase.initColdStartCleanup()
+        }
+
+        // 附件按会话隔离：用户主动切换会话时清空。原本挂在聊天面板的 collect 里，
+        // 面板被销毁时清不掉，且分享投递与面板组合时序耦合，这里提到 VM 统一处理。
+        viewModelScope.launch {
+            _sessionSwitchEvents.collect { _pendingAttachments.value = emptyList() }
         }
 
         // 启动与工作区切换时重新扫描技能（项目级技能随工作区变化），刷新 `/` 命令菜单。
@@ -1662,6 +1838,7 @@ class AIAgentViewModel @Inject constructor(
             val finishedState = _agentStates.value[sessionId]
             if (!failed && (finishedState is AgentUIState.Loading || finishedState is AgentUIState.Streaming)) {
                 setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
+                _completedSessions.value = _completedSessions.value + sessionId
             }
             setStreamingText(sessionId, null)
 
@@ -1673,11 +1850,13 @@ class AIAgentViewModel @Inject constructor(
                 (cancelledState is AgentUIState.Loading || cancelledState is AgentUIState.Streaming)
             ) {
                 setAgentState(sessionId, AgentUIState.Idle)
+                _completedSessions.value = _completedSessions.value - sessionId
             }
             throw e
         } catch (e: Exception) {
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
              setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
+             _completedSessions.value = _completedSessions.value - sessionId
         } finally {
             val isOwnJob = sessionJobs[sessionId] == coroutineContext[Job]
             FileLogger.d(TAG, "stream finally: sid=$sessionId isOwnJob=$isOwnJob state=${_agentStates.value[sessionId]}")

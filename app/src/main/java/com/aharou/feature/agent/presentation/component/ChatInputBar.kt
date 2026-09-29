@@ -13,6 +13,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -153,6 +155,9 @@ internal fun ChatInputBar(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     pendingAttachments: List<PendingUploadAttachment>,
     onRemoveAttachment: (Int) -> Unit,
+    pastedTexts: List<PastedText> = emptyList(),
+    onStashPaste: (String) -> String = { it },
+    onRemovePaste: (Int) -> Unit = {},
     canUploadFiles: Boolean,
     canUploadImages: Boolean,
     onUploadFile: () -> Unit,
@@ -177,6 +182,14 @@ internal fun ChatInputBar(
     onModelSheetDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    // 诊断：确认本组件确实执行到了。外层已能观察到状态变化，但屏幕上不出现附件行，
+    // 这行能区分「重组了却没画出来」与「压根没重组」。
+    SideEffect {
+        com.aharou.core.util.FileLogger.i(
+            "ChatInputBarDbg",
+            "recomposed: attachments=${pendingAttachments.size} pasted=${pastedTexts.size}"
+        )
+    }
     val hasContent = value.isNotBlank() || pendingAttachments.isNotEmpty()
     val canSend = hasContent
     var showAttachmentSheet by remember { mutableStateOf(false) }
@@ -361,10 +374,41 @@ internal fun ChatInputBar(
                     )
                     .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
             ) {
-                PendingAttachmentPreviewList(
-                    attachments = pendingAttachments,
-                    onRemoveAttachment = onRemoveAttachment
-                )
+                key(pendingAttachments.size) {
+                    PendingAttachmentPreviewList(
+                        attachments = pendingAttachments,
+                        onRemoveAttachment = onRemoveAttachment
+                    )
+                }
+
+                if (pastedTexts.isNotEmpty()) {
+                    // 同样按数量重建：粘贴 chip 行插入/移除也会改变输入框高度。
+                    key(pastedTexts.size) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                        ) {
+                            pastedTexts.forEach { pasted ->
+                                PastedTextChip(
+                                    pasted = pasted,
+                                    onRemove = {
+                                        // 先摘掉输入框里的标记再回收块。反过来的话，
+                                        // 缓冲没了、标记还在，发送时它就成了展开不出来的死字面量。
+                                        val stripped = inputFieldValue.text
+                                            .replace(PastedText.placeholderFor(pasted.id), "")
+                                        inputFieldValue =
+                                            TextFieldValue(stripped, TextRange(stripped.length))
+                                        onValueChange(stripped)
+                                        onRemovePaste(pasted.id)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -373,8 +417,15 @@ internal fun ChatInputBar(
                     TextField(
                         value = inputFieldValue,
                         onValueChange = { new ->
-                            inputFieldValue = new
-                            onValueChange(new.text)
+                            // 大段粘贴折成 [Pasted#N] 标记，普通输入原样通过。
+                            val folded = foldLongPasteIfNeeded(inputFieldValue, new, onStashPaste)
+                            inputFieldValue = folded
+                            onValueChange(folded.text)
+                            // 用户可能直接删掉 [Pasted#N] 字面量，对应的缓冲块要跟着回收，
+                            // 否则 chip 会赖在输入框上方，点开还是一段早已不在文本里的内容。
+                            val referenced = pastedIdsIn(folded.text)
+                            pastedTexts.filterNot { it.id in referenced }
+                                .forEach { onRemovePaste(it.id) }
                         },
                         modifier = Modifier
                             .weight(1f)
