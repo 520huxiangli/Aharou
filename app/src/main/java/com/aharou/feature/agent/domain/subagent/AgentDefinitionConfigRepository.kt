@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.subagent
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
@@ -125,8 +126,8 @@ class AgentDefinitionConfigRepository @Inject constructor(
             val json = serializeDisabled(names)
             // 临时文件 + rename 原子落盘，避免写一半崩溃损坏配置
             val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(json)
-            if (!tmp.renameTo(file)) file.writeText(json)
+            tmp.writeTextSafely(json, TAG)
+            if (!tmp.renameTo(file)) file.writeTextSafely(json, TAG)
         }
     }
 }

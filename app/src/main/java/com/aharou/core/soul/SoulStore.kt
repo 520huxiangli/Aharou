@@ -2,6 +2,7 @@ package com.aharou.core.soul
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -339,7 +340,7 @@ lang: "auto"
         if (file.exists()) return
         try {
             file.parentFile?.mkdirs()
-            file.writeText(DEFAULT_CONTENT)
+            file.writeTextSafely(DEFAULT_CONTENT, TAG)
             FileLogger.i(TAG, "seeded SOUL.md at ${file.absolutePath}")
         } catch (t: Throwable) {
             FileLogger.w(TAG, "ensureExists failed: ${t.message}")
@@ -368,12 +369,12 @@ lang: "auto"
         target.parentFile?.mkdirs()
         val text = SoulMDParser.serialize(file)
         val tmp = File(target.parentFile, "${target.name}.tmp")
-        tmp.writeText(text)
+        tmp.writeTextSafely(text, TAG)
         if (!tmp.renameTo(target)) {
             // Fallback: copy + delete tmp on filesystems that reject
             // cross-inode rename (shouldn't apply inside filesDir, but
             // defensive — keeps us from leaving a stale .tmp behind).
-            target.writeText(text)
+            target.writeTextSafely(text, TAG)
             tmp.delete()
         }
         _cachedMetadata.value = file.metadata

@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.permission
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChangeBatch
 import com.aharou.core.watch.FileChangeHub
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -158,7 +159,7 @@ class PermissionRulesRepository @Inject constructor(
 
     private fun writeToFile(file: File, rules: List<PermissionRule>) {
         file.parentFile?.mkdirs()
-        file.writeText(JSON.encodeToString(PermissionFile.serializer(), rules.toPermissionFile()))
+        file.writeTextSafely(JSON.encodeToString(PermissionFile.serializer(), rules.toPermissionFile()), TAG)
     }
 
     // ── 公共 API ────────────────────────────────────────────────

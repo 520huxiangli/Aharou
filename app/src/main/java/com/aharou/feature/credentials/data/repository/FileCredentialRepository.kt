@@ -3,6 +3,7 @@ package com.aharou.feature.credentials.data.repository
 import android.content.Context
 import android.util.Base64
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.feature.credentials.domain.model.GitCredential
 import com.aharou.feature.credentials.domain.repository.CredentialRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -108,10 +109,10 @@ class FileCredentialRepository @Inject constructor(
         credentialsFile.parentFile?.mkdirs()
         val tmp = File(credentialsFile.parentFile, "${credentialsFile.name}.tmp")
         val encoded = encode(sb.toString())
-        tmp.writeText(encoded)
+        tmp.writeTextSafely(encoded, TAG)
         if (credentialsFile.exists()) credentialsFile.delete()
         if (!tmp.renameTo(credentialsFile)) {
-            credentialsFile.writeText(encoded)
+            credentialsFile.writeTextSafely(encoded, TAG)
             tmp.delete()
         }
     }

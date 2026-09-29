@@ -818,6 +818,7 @@ class BackupManagerImpl @Inject constructor(
         val parsed = runCatching { RemoteProtocol.valueOf(protocol) }.getOrNull() ?: return null
         return RemoteConnectionEntity(
             id, name, parsed, host, port, username, authType,
+            // 忽略大小写：旧版本导出的备份里 authType 可能是 PASSWORD/PRIVATE_KEY。
             if (authType.equals("PASSWORD", ignoreCase = true)) KeystoreCipher.encryptString(authData) else authData,
             passphrase?.let { KeystoreCipher.encryptString(it) }
         )

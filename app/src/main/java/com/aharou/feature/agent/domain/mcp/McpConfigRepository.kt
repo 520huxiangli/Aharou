@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.mcp
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
@@ -165,10 +166,8 @@ class McpConfigRepository @Inject constructor(
         DEFAULT_JSON
     }
 
-    private fun writeFile(file: File, json: String) {
-        file.parentFile?.mkdirs()
-        file.writeText(json)
-    }
+    /** 写入配置文件；失败不抛（该目录被绑进容器，权限可能被容器内 root 环境改坏）。 */
+    private fun writeFile(file: File, json: String): Boolean = file.writeTextSafely(json, TAG)
 
     /** 全局 MCP 配置流。 */
     val globalServersFlow: Flow<List<McpServerConfig>> = flow {
@@ -204,8 +203,11 @@ class McpConfigRepository @Inject constructor(
     suspend fun setGlobalServers(servers: List<McpServerConfig>) {
         val json = serialize(servers)
         mutex.withLock {
-            withContext(Dispatchers.IO) { writeFile(globalFile, json) }
-            globalState.value = json
+            if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
+                globalState.value = json
+            } else {
+                FileLogger.w(TAG, "全局 MCP 配置未能落盘，保持原状态")
+            }
         }
     }
 
@@ -213,8 +215,11 @@ class McpConfigRepository @Inject constructor(
         val path = workspaceRepository.currentPath()
         val json = serialize(servers)
         mutex.withLock {
-            withContext(Dispatchers.IO) { writeFile(projectFileForPath(path), json) }
-            getProjectState(path).value = json
+            if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(path), json) }) {
+                getProjectState(path).value = json
+            } else {
+                FileLogger.w(TAG, "项目 MCP 配置未能落盘，保持原状态")
+            }
         }
     }
 

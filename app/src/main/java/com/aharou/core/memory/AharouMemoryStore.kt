@@ -2,6 +2,7 @@ package com.aharou.core.memory
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,7 +83,7 @@ class AharouMemoryStore @Inject constructor(
         runCatching {
             dir.mkdirs()
             val core = File(dir, "CORE.md")
-            if (!core.exists()) core.writeText(DEFAULT_CORE)
+            if (!core.exists()) core.writeTextSafely(DEFAULT_CORE, TAG)
         }.onFailure { FileLogger.w(TAG, "ensureExists failed: ${it.message}") }
     }
 
@@ -95,7 +96,7 @@ class AharouMemoryStore @Inject constructor(
         val time = SimpleDateFormat("HH:mm", Locale.US).format(now)
         val target = File(dir, "LOG-$day.md")
         dir.mkdirs()
-        if (!target.exists()) target.writeText("# $day 日志\n\n")
+        if (!target.exists()) target.writeTextSafely("# $day 日志\n\n", TAG)
         target.appendText("- [$time] ${entry.trim()}\n")
         return target
     }
@@ -112,7 +113,7 @@ class AharouMemoryStore @Inject constructor(
                     .put("src", source ?: "")
                     .put("text", fact.trim())
             )
-            target.writeText(arr.toString())
+            target.writeTextSafely(arr.toString(), TAG)
         }.onFailure { FileLogger.w(TAG, "appendFact failed: ${it.message}") }
     }
 
@@ -143,7 +144,7 @@ class AharouMemoryStore @Inject constructor(
     fun writeCore(text: String) {
         runCatching {
             dir.mkdirs()
-            File(dir, "CORE.md").writeText(text)
+            File(dir, "CORE.md").writeTextSafely(text, TAG)
         }.onFailure { FileLogger.w(TAG, "writeCore failed: ${it.message}") }
     }
 

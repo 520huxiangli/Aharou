@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import java.io.File
 import javax.inject.Inject
@@ -33,7 +34,7 @@ class GlobalMemorySource @Inject constructor(
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
             val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-            file.writeText(MemoryParser.format(MemorySource.sanitizeName(name), description, content))
+            file.writeTextSafely(MemoryParser.format(MemorySource.sanitizeName(name), description, content), "GlobalMemorySource")
             true
         } catch (e: Exception) {
             FileLogger.e("GlobalMemorySource", "Failed to save memory: $name", e)

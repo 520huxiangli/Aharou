@@ -2,6 +2,7 @@ package com.aharou.feature.credentials.data
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.credentials.domain.model.GitCredential
@@ -185,10 +186,10 @@ class CredentialRequestBridge @Inject constructor(
         val target = File(dir, RESP_PREFIX + requestId)
         val tmp = File(dir, "$RESP_PREFIX${requestId}.tmp")
         runCatching {
-            tmp.writeText(content)
+            tmp.writeTextSafely(content, TAG)
             if (target.exists()) target.delete()
             if (!tmp.renameTo(target)) {
-                target.writeText(content)
+                target.writeTextSafely(content, TAG)
                 tmp.delete()
             }
         }.onFailure { FileLogger.e(TAG, "写凭据响应文件失败", it) }

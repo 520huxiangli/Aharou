@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
@@ -51,7 +52,7 @@ class ProjectMemorySource(
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
             val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-            file.writeText(MemoryParser.format(MemorySource.sanitizeName(name), description, content))
+            file.writeTextSafely(MemoryParser.format(MemorySource.sanitizeName(name), description, content), "ProjectMemorySource")
             true
         } catch (e: Exception) {
             FileLogger.e("ProjectMemorySource", "Failed to save memory: $name", e)

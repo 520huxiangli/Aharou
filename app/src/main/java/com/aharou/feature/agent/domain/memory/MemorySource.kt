@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import java.io.File
 
 /** 单个编辑项，语义与 editFile 的 edits 一致。 */
@@ -74,7 +75,7 @@ interface MemorySource {
         }
 
         return try {
-            file.writeText(MemoryParser.format(memory.name, memory.description, content))
+            file.writeTextSafely(MemoryParser.format(memory.name, memory.description, content), "MemorySource")
             MemoryEditResult.Success
         } catch (e: Exception) {
             FileLogger.e("MemorySource", "Failed to edit memory: $name", e)
