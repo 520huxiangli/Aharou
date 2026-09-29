@@ -1,7 +1,8 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValueimport androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +46,7 @@ import com.aharou.feature.settings.presentation.MarketSkillUi
  *
  * 列表为空可能是源本身没内容、网络不通或还在加载，统一给一句提示，不区分——对用户没有可操作的区别。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SkillMarketSection(
     sources: List<Pair<String, String>>,
@@ -137,11 +138,11 @@ internal fun SkillMarketSection(
                 )
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            // 源一多单行就排不下（横向滚动没有任何提示，新源会整个看不见），换成换行排
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
                 sources.forEach { (id, label) ->
                     FilterChip(
@@ -156,6 +157,8 @@ internal fun SkillMarketSection(
                 MarketAlert.InvalidAddress -> MarketAlertText(stringResource(R.string.skills_market_repo_invalid))
                 MarketAlert.NoSkills -> MarketAlertText(stringResource(R.string.skills_market_no_skills))
                 MarketAlert.LoadFailed -> MarketAlertText(stringResource(R.string.skills_market_load_failed))
+                MarketAlert.SearchByKeyword -> MarketAlertText(stringResource(R.string.skills_market_search_by_keyword))
+                MarketAlert.SkillSiteNeedsDetail -> MarketAlertText(stringResource(R.string.skills_market_site_needs_detail))
                 null -> Unit
             }
         }

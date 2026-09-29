@@ -1085,6 +1085,8 @@
     <string name="skills_market_repo_invalid">认不出这个地址</string>
     <string name="skills_market_search_hint">输入关键词搜索技能（至少 2 个字）</string>
     <string name="skills_market_search">搜索</string>
+    <string name="skills_market_search_by_keyword">这是个只能用关键词检索的技能站，已帮你切过去，输关键词搜吧</string>
+    <string name="skills_market_site_needs_detail">这是技能站的目录页，贴具体技能页的地址才行</string>
     <string name="skills_market_no_skills">这个仓库里没找到技能</string>
     <string name="skills_market_load_failed">加载失败，检查网络或换个源再试</string>
     <string name="skills_add_from_market">从市场安装</string>

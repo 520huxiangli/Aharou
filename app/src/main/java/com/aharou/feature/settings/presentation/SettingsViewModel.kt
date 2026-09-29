@@ -38,6 +38,7 @@ import com.aharou.feature.agent.domain.skill.SkillSaveError
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
 import com.aharou.feature.agent.domain.skill.market.SkillMarketRepository
+import com.aharou.feature.agent.domain.skill.market.SkillRepoAccess
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionConfigRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionForm
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -303,7 +304,7 @@ data class MarketSkillUi(
 )
 
 /** 市场页的提示；文案由 UI 层映射成资源串。 */
-enum class MarketAlert { InvalidAddress, NoSkills, LoadFailed }
+enum class MarketAlert { InvalidAddress, NoSkills, LoadFailed, SearchByKeyword, SkillSiteNeedsDetail }
 
 /** 「粘贴地址」临时源在源列表里的 id。 */
 private const val ADHOC_MARKET_ID = "adhoc"
@@ -1270,6 +1271,14 @@ class SettingsViewModel @Inject constructor(
     private fun isSearchSource(sourceId: String) =
         skillMarketRepository.sources()[sourceId]?.isSearch == true
 
+    /** 贴的是某个检索型源的站点地址时，返回那个源的 id（用它自己的检索接口当源）。 */
+    private fun searchSourceFor(input: String): String? {
+        val host = runCatching { java.net.URI(input.trim()) }.getOrNull()?.host?.lowercase() ?: return null
+        return skillMarketRepository.sources().entries
+            .firstOrNull { (_, def) -> def.isSearch && def.searchUrl.contains(host, ignoreCase = true) }
+            ?.key
+    }
+
     /** 切换市场源并重新拉取其技能列表。 */
     fun selectMarketSource(sourceId: String) {
         if (_marketSourceId.value == sourceId) return
@@ -1315,12 +1324,24 @@ class SettingsViewModel @Inject constructor(
     fun loadMarketFromRepo(input: String) {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return
+        // 贴的是检索型源的站点地址（如 https://skills.sh）：它没有「列全部」的入口，
+        // 地址本身当不了仓库，但那个源就是它的家，直接切过去接着输关键词。
+        searchSourceFor(trimmed)?.let { id ->
+            selectMarketSource(id)
+            _marketAlert.value = MarketAlert.SearchByKeyword
+            return
+        }
         viewModelScope.launch {
             _marketLoading.value = true
             _marketAlert.value = null
             val listing = withContext(Dispatchers.IO) { skillMarketRepository.listFromRepo(trimmed) }
             if (listing == null) {
-                _marketAlert.value = MarketAlert.InvalidAddress
+                // 技能网站的目录页拿不到仓库信息，直接说清楚要贴到哪一级
+                _marketAlert.value = if (SkillRepoAccess.isSkillSite(trimmed)) {
+                    MarketAlert.SkillSiteNeedsDetail
+                } else {
+                    MarketAlert.InvalidAddress
+                }
             } else {
                 marketAdhocRepo = listing.repo
                 _marketSourceId.value = ADHOC_MARKET_ID

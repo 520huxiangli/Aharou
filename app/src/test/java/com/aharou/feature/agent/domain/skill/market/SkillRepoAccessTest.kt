@@ -110,4 +110,20 @@ class SkillRepoAccessTest {
     fun repoFromSitePage_returnsNullWhenNoRepoLink() {
         assertNull(SkillRepoAccess.repoFromSitePage("# skill\n\n没有仓库链接"))
     }
+
+    // ── 技能网站的目录页：当不了源，但要说清楚 ──
+
+    @Test
+    fun isSkillSite_recognizesSiteRoots() {
+        assertTrue(SkillRepoAccess.isSkillSite("https://skills.sh"))
+        assertTrue(SkillRepoAccess.isSkillSite("https://skills.sh/"))
+        assertTrue(SkillRepoAccess.isSkillSite("https://lobehub.com/skills"))
+    }
+
+    @Test
+    fun isSkillSite_rejectsRepoAddresses() {
+        assertTrue(!SkillRepoAccess.isSkillSite("https://github.com/anthropics/skills"))
+        assertTrue(!SkillRepoAccess.isSkillSite("https://gitee.com/a/b"))
+        assertTrue(!SkillRepoAccess.isSkillSite("owner/repo"))
+    }
 }

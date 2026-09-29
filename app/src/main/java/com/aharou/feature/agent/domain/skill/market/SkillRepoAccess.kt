@@ -138,6 +138,16 @@ object SkillRepoAccess {
     }
 
     /**
+     * 这个地址是不是已知的技能网站。站点首页自己当不了源（没有「列全部」的接口），
+     * 但能据此给出比「认不出这个地址」更具体的提示。
+     */
+    fun isSkillSite(input: String): Boolean {
+        val host = runCatching { java.net.URI(input.trim().removeSuffix("/")) }.getOrNull()
+            ?.host?.lowercase() ?: return false
+        return host.endsWith(SKILLS_SH) || host.endsWith(LOBEHUB)
+    }
+
+    /**
      * 从技能网站的页面正文里找出它指向的 GitHub 仓库（`owner/repo`）。
      * LobeHub 的技能页直接返回 markdown 正文，里面带着仓库地址；没有则返回 null。
      */
