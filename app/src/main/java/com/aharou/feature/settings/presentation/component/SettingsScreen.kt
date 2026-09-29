@@ -836,6 +836,7 @@ fun SettingsScreen(
                     voiceTtsVoice = voiceTtsVoice,
                     autoReadAloud = autoReadAloud,
                     onAutoReadAloudChange = viewModel::setAutoReadAloud,
+                    onToggleAutoReadAloud = { viewModel.toggleAutoReadAloud() },
                     voiceModelStatus = voiceModelStatus,
                     voiceModelMessage = voiceModelMessage,
                     onRereleaseVoiceModel = { viewModel.rereleaseVoiceModel() },

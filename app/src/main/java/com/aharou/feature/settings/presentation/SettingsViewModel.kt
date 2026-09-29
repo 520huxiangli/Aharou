@@ -2375,6 +2375,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 切换自动朗读：以存储里的真实值为准取反。
+     *
+     * 不能按界面上的值取反——界面状态一旦过期（收流断过），它显示的是错的值，
+     * 用户每点一次都会写回同一个值，表现就是「开关点不动、一直关不掉」。
+     */
+    fun toggleAutoReadAloud() {
+        viewModelScope.launch {
+            val current = runCatching { voiceTtsSettingsRepository.isAutoReadAloud() }.getOrDefault(false)
+            voiceTtsSettingsRepository.setAutoReadAloud(!current)
+            _autoReadAloud.value = !current
+        }
+    }
+
     /** 只改音色，保留当前合成模型选择。 */
     fun setVoiceTtsVoice(voice: String) {
         viewModelScope.launch {

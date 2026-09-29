@@ -90,6 +90,7 @@ internal fun DefaultModelsSection(
     voiceTtsVoice: String,
     autoReadAloud: Boolean = false,
     onAutoReadAloudChange: (Boolean) -> Unit = {},
+    onToggleAutoReadAloud: () -> Unit = {},
     voiceModelStatus: VoiceModelStatus,
     voiceModelMessage: Int? = null,
     onRereleaseVoiceModel: () -> Unit = {},
@@ -281,7 +282,7 @@ internal fun DefaultModelsSection(
                 icon = FeatherIcons.Volume2,
                 title = stringResource(R.string.settings_voice_auto_read),
                 subtitle = stringResource(R.string.settings_voice_auto_read_desc),
-                onClick = { onAutoReadAloudChange(!autoReadAloud) },
+                onClick = onToggleAutoReadAloud,
                 trailing = {
                     AppSwitch(
                         checked = autoReadAloud,

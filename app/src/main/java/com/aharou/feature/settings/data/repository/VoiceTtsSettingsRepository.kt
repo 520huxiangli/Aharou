@@ -12,7 +12,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
@@ -46,18 +45,15 @@ class VoiceTtsSettingsRepository @Inject constructor(
     /**
      * 自动朗读开关流：开了之后 AI 每条回复落地就自动念。
      *
-     * 读失败先重试自愈；重试仍失败就下发「关闭」。绝不能把上一次的值冻着——
-     * 一旦冻在 `true` 上，界面会显示「关」而实际一直在念，开关也点不动。
+     * 读失败就一直重试，**绝不让这条流结束**：流一旦结束，收它的 UI 就再也收不到值，
+     * 开关会冻在最后一次显示上——表现就是「显示关、实际开、怎么点都关不掉」。
      */
     val autoReadAloudFlow: Flow<Boolean> = dataStore.data
         .map { it[autoReadKey] ?: false }
         .retryWhen { cause, attempt ->
             FileLogger.w(TAG, "自动朗读开关读取失败（第 ${attempt + 1} 次），重试", cause)
-            if (attempt >= 3) false else { delay(500); true }
-        }
-        .catch { cause ->
-            FileLogger.w(TAG, "自动朗读开关读取失败，按关闭处理", cause)
-            emit(false)
+            delay(if (attempt < 3) 500 else 2000)
+            true
         }
 
     /** 读一次自动朗读开关。 */
