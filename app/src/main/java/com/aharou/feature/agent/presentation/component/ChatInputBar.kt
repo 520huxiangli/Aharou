@@ -182,14 +182,6 @@ internal fun ChatInputBar(
     onModelSheetDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    // 诊断：确认本组件确实执行到了。外层已能观察到状态变化，但屏幕上不出现附件行，
-    // 这行能区分「重组了却没画出来」与「压根没重组」。
-    SideEffect {
-        com.aharou.core.util.FileLogger.i(
-            "ChatInputBarDbg",
-            "recomposed: attachments=${pendingAttachments.size} pasted=${pastedTexts.size}"
-        )
-    }
     val hasContent = value.isNotBlank() || pendingAttachments.isNotEmpty()
     val canSend = hasContent
     var showAttachmentSheet by remember { mutableStateOf(false) }
@@ -268,7 +260,17 @@ internal fun ChatInputBar(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .graphicsLayer { alpha = contentAlpha }
+                    // 只在真的需要淡化时才建图层：graphicsLayer 会把整块内容（含输入框卡片
+                    // 与附件预览行）画进独立的 RenderNode，正常状态 alpha 恒为 1，这个图层
+                    // 白建不说，内容变动时还可能困在缓存里不重绘——表现就是附件已渲染、
+                    // 位置尺寸都对，屏幕上却一片空白。
+                    .then(
+                        if (contentAlpha < 1f) {
+                            Modifier.graphicsLayer { alpha = contentAlpha }
+                        } else {
+                            Modifier
+                        }
+                    )
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.md)
                     .padding(bottom = imeInset)
@@ -358,13 +360,22 @@ internal fun ChatInputBar(
                 )
             }
 
+            // 附件预览行必须放在输入框卡片**外面**，作为外层 Column 的直接子项：
+            // 卡片带 clip / background / border，高度依赖自身尺寸；预览行嵌在里面时，
+            // 插入/移除会同时改动三个修饰符的尺寸计算，时序稍有偏差就是「占位对了、
+            // 屏幕上一片空白」，且时好时坏。参照 Operit（AgentChatInputSection）：
+            // 附件行与输入框卡片是兄弟节点，高度由外层自然流动。
+            if (pendingAttachments.isNotEmpty()) {
+                PendingAttachmentPreviewList(
+                    attachments = pendingAttachments,
+                    onRemoveAttachment = onRemoveAttachment,
+                    modifier = Modifier.padding(bottom = Spacing.xs)
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 必须挂一个布局回调：附件预览行插入/移除会改变输入框高度，
-                    // 没有它时高度变化不触发布局重算，表现为附件已渲染但屏幕上不显示，
-                    // 退出重进才出现（重进走全新测量）。
-                    .onGloballyPositioned { }
                     .clip(RoundedCornerShape(Radius.lg))
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
                     .border(
@@ -374,13 +385,6 @@ internal fun ChatInputBar(
                     )
                     .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
             ) {
-                key(pendingAttachments.size) {
-                    PendingAttachmentPreviewList(
-                        attachments = pendingAttachments,
-                        onRemoveAttachment = onRemoveAttachment
-                    )
-                }
-
                 if (pastedTexts.isNotEmpty()) {
                     // 同样按数量重建：粘贴 chip 行插入/移除也会改变输入框高度。
                     key(pastedTexts.size) {

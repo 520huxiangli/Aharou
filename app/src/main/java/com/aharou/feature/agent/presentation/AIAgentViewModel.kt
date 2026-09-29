@@ -335,12 +335,6 @@ class AIAgentViewModel @Inject constructor(
     internal fun addPendingAttachments(items: List<PendingUploadAttachment>) {
         if (items.isEmpty()) return
         _pendingAttachments.value = _pendingAttachments.value + items
-        // 诊断：确认 flow 侧确实写进去了。与 AIChatPanelDbg 对照，
-        // 两边不一致就能定位是写入没发生还是订阅没收到。
-        com.aharou.core.util.FileLogger.i(
-            "PendingAttachDbg",
-            "add ${items.size} -> flow=${_pendingAttachments.value.size}"
-        )
     }
 
     internal fun setPendingAttachments(items: List<PendingUploadAttachment>) {

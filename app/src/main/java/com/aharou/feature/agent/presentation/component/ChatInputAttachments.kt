@@ -144,12 +144,13 @@ internal fun QueuedRequestPanel(
 @Composable
 internal fun PendingAttachmentPreviewList(
     attachments: List<PendingUploadAttachment>,
-    onRemoveAttachment: (Int) -> Unit
+    onRemoveAttachment: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     if (attachments.isEmpty()) return
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
