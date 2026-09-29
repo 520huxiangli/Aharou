@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -157,10 +158,14 @@ internal fun PendingAttachmentPreviewList(
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
         attachments.forEachIndexed { index, attachment ->
-            PendingAttachmentPreviewItem(
-                attachment = attachment,
-                onRemove = { onRemoveAttachment(index) }
-            )
+            // 按条目身份给 key，不用位置：删掉中间一项时，后面各项的状态（如图片缩略图的
+            // produceState）不会被错位复用。OpenMinis 的附件行同样用 key = { it.id }。
+            key(attachment.localPath) {
+                PendingAttachmentPreviewItem(
+                    attachment = attachment,
+                    onRemove = { onRemoveAttachment(index) }
+                )
+            }
         }
     }
 }

@@ -399,13 +399,22 @@ internal fun ChatInputBar(
                                 PastedTextChip(
                                     pasted = pasted,
                                     onRemove = {
-                                        // 先摘掉输入框里的标记再回收块。反过来的话，
-                                        // 缓冲没了、标记还在，发送时它就成了展开不出来的死字面量。
-                                        val stripped = inputFieldValue.text
-                                            .replace(PastedText.placeholderFor(pasted.id), "")
-                                        inputFieldValue =
-                                            TextFieldValue(stripped, TextRange(stripped.length))
-                                        onValueChange(stripped)
+                                        // 先摘掉输入框里的标记再回收块 —— 反过来的话，缓冲没了、
+                                        // 标记还在，发送时它就成了展开不出来的死字面量。
+                                        //
+                                        // 用 indexOf 定位后 substring 拼接，而不是 replace：同一标记
+                                        // 在文本里出现两次时（用户手动复制过），replace 会把两处都删掉。
+                                        // 光标落在被删位置，接着打字不会跳到末尾。
+                                        val marker = PastedText.placeholderFor(pasted.id)
+                                        val current = inputFieldValue.text
+                                        val at = current.indexOf(marker)
+                                        if (at >= 0) {
+                                            val stripped = current.substring(0, at) +
+                                                current.substring(at + marker.length)
+                                            inputFieldValue =
+                                                TextFieldValue(stripped, TextRange(at))
+                                            onValueChange(stripped)
+                                        }
                                         onRemovePaste(pasted.id)
                                     }
                                 )
