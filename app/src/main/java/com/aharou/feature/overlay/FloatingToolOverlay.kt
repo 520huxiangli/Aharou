@@ -1,7 +1,6 @@
 package com.aharou.feature.overlay
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -16,13 +15,14 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.aharou.MainActivity
 import kotlin.math.abs
 
 /**
  * 悬浮窗（自 上游项目 的 ToolOverlayController 移植·精简）。
  *
- * 一枚可拖拽的胶囊：App 图标 + 工具名 + 状态短文本；点击回到 App；拖拽移动（位置持久化）。
+ * 一枚可拖拽的胶囊：App 图标 + 工具名 + 状态短文本。**点它不回 App**：
+ * 头像（或通话中任意位置）切通话开关，右端箭头展开/收起台词；要看 App 走通知或桌面图标。
+ * 拖拽移动（位置持久化）。
  * TYPE_APPLICATION_OVERLAY（需 SYSTEM_ALERT_WINDOW 授权），由 [FloatingToolService] 持有与驱动显隐。
  */
 class FloatingToolOverlay(private val context: Context) {
@@ -37,6 +37,9 @@ class FloatingToolOverlay(private val context: Context) {
         private const val EDGE_PADDING_DP = 10
         /** 头像可点区域宽度 = 左内边距 + 头像 + 一点余量。 */
         private const val ICON_HIT_WIDTH_DP = 44
+
+        /** 胶囊右端箭头的点击区宽度（点它展开/收起会话）。 */
+        private const val ARROW_HIT_WIDTH_DP = 28
         /** 展开后文字框的高度上限（估位置用，实际由内容撑开）。 */
         private const val EXPANDED_BOX_MAX_DP = 150
         private const val EXPANDED_MAX_LINES = 6
@@ -67,6 +70,11 @@ class FloatingToolOverlay(private val context: Context) {
     /** 通话中才能展开：一行装不下它说的话，点一下摊开看完整。 */
     private var expandable = false
     private var expanded = false
+
+    /**
+     * 通话中：胶囊就是通话界面，点哪儿都不回 App——误触跳走会直接打断对话。
+     */
+    private var callActive = false
     private var layoutParams: WindowManager.LayoutParams? = null
 
     @Volatile
@@ -94,6 +102,7 @@ class FloatingToolOverlay(private val context: Context) {
         }
         this.iconAction = iconAction
         this.expandable = expandable
+        this.callActive = callActive
         mainHandler.post {
             try {
                 if (view == null) attach()
@@ -285,7 +294,7 @@ class FloatingToolOverlay(private val context: Context) {
         var startX = 0
         var startY = 0
         var dragging = false
-        view.setOnTouchListener { _, event ->
+        view.setOnTouchListener { v, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = event.rawX
@@ -311,14 +320,17 @@ class FloatingToolOverlay(private val context: Context) {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     when {
                         dragging -> prefs.edit().putInt(KEY_X, params.x).putInt(KEY_Y, params.y).apply()
-                        // 落在头像上：给头像的动作（通话开关）；没给就照旧回 App
-                        event.x <= dpToPx(ICON_HIT_WIDTH_DP) ->
-                            iconAction?.invoke() ?: bringAppToFront()
 
-                        // 通话中：点胶囊展开/收起，看完整台词
-                        expandable -> setExpanded(!expanded)
+                        // 点右端的箭头：展开/收起会话（看完整台词）
+                        expandable && event.x >= v.width - dpToPx(ARROW_HIT_WIDTH_DP) ->
+                            setExpanded(!expanded)
 
-                        else -> bringAppToFront()
+                        // 头像，以及通话中的任意位置：通话开关。
+                        // 胶囊在任何状态下都不回 App——误触跳走会打断正在跑的任务/通话；
+                        // 要看 App 走通知或桌面图标。
+                        callActive || event.x <= dpToPx(ICON_HIT_WIDTH_DP) -> iconAction?.invoke()
+
+                        else -> Unit
                     }
                     true
                 }
@@ -333,15 +345,6 @@ class FloatingToolOverlay(private val context: Context) {
         shape = GradientDrawable.OVAL
         setColor(Color.TRANSPARENT)
         setStroke(dpToPx(2), Color.argb(255, 102, 187, 106))
-    }
-
-    private fun bringAppToFront() {
-        runCatching {
-            context.startActivity(
-                Intent(context, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            )
-        }
     }
 
     private fun fixedCapsuleWidthPx(): Int {

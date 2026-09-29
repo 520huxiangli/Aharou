@@ -580,12 +580,8 @@ internal fun ChatInputBar(
                     val callContext = LocalContext.current
                     val callRunning by VoiceCallService.running.collectAsState()
                     VoiceMicButton(
-                        state = voiceState,
                         enabled = !isBusy,
                         callRunning = callRunning,
-                        onStart = onVoiceStart,
-                        onStop = onVoiceStop,
-                        onCancel = onVoiceCancel,
                         onToggleCall = {
                             if (VoiceCallService.isRunning()) VoiceCallService.stop(callContext)
                             else VoiceCallService.start(callContext)

@@ -27,90 +27,47 @@ import com.aharou.R
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Mic
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 麦克风按钮：两种手势。
+ * 麦克风按钮：语音通话开关。
  *
- *  - **轻点**：开关语音通话（常驻，再点才关）。
- *  - **按住**：原来的语音输入，松手把识别结果填进输入框。
+ * **点一下开始**（免手通话，一路听你说），**再点一下停**。
  *
- * 区分方法是按下时长：先起来的那次录音如果判定为轻点，会被 [onCancel] 作废，
- * 不会在输入框里留下半句脏数据；按住则从按下那刻就开始收音，开头几个字不丢。
+ * 不做「按住说话」——一个按钮只干一件事。两种手势并存时用户猜不到：
+ * 曾经把「按住录音、轻点切通话」塞在同一个按钮上，被一眼看穿地误解了，已按要求撤掉。
  *
- * 与 [com.aharou.feature.agent.presentation.component.UploadIconButton] 同尺寸同图标风格，
- * 但用 [detectTapGestures] 而不是 IconButton：IconButton 只有点击、没有「按住—松开」语义。
+ * 与 [com.aharou.feature.agent.presentation.component.UploadIconButton] 同尺寸同图标风格。
  */
 @Composable
 internal fun VoiceMicButton(
-    state: VoiceInputState,
     enabled: Boolean,
     callRunning: Boolean,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onCancel: () -> Unit,
     onToggleCall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val recording = state is VoiceInputState.Recording
-    val busy = state is VoiceInputState.Recognizing || state is VoiceInputState.Preparing
-    val active = enabled && !busy
-
     Box(
         modifier = modifier
             .size(36.dp)
-            .pointerInput(active) {
-                if (!active) return@pointerInput
-                detectTapGestures(
-                    onPress = {
-                        onStart()
-                        // 先按阈值等一等：阈值内松手 = 轻点，超过 = 按住
-                        val quickTap = withTimeoutOrNull(CALL_TAP_MAX_MS) {
-                            tryAwaitRelease()
-                            true
-                        } ?: false
-                        if (quickTap) {
-                            onCancel()
-                            onToggleCall()
-                        } else {
-                            tryAwaitRelease()
-                            onStop()
-                        }
-                    },
-                )
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(onTap = { onToggleCall() })
             },
         contentAlignment = Alignment.Center,
     ) {
-        when {
-            busy -> CircularProgressIndicator(
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            else -> Icon(
-                FeatherIcons.Mic,
-                contentDescription = stringResource(
-                    when {
-                        callRunning -> R.string.voice_call_title
-                        recording -> R.string.voice_input_recording
-                        else -> R.string.voice_input_hold
-                    }
-                ),
-                tint = when {
-                    callRunning -> MaterialTheme.colorScheme.primary
-                    recording -> MaterialTheme.colorScheme.error
-                    enabled -> MaterialTheme.colorScheme.onSurfaceVariant
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                },
-                modifier = Modifier.size(20.dp),
-            )
-        }
+        Icon(
+            FeatherIcons.Mic,
+            contentDescription = stringResource(
+                if (callRunning) R.string.voice_call_toggle_stop else R.string.voice_call_toggle_start
+            ),
+            tint = when {
+                callRunning -> MaterialTheme.colorScheme.primary
+                enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+            },
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
-
-/** 按下多久以内算「轻点」（切通话），超过就是「按住说话」。 */
-private const val CALL_TAP_MAX_MS = 250L
 
 /**
  * 录音期间的实时识别文本浮层：贴在输入栏上方，显示「边说边出」的当前结果。
