@@ -45,6 +45,26 @@ data class ContainerProfile(
          */
         val DEFAULT_PROOT_ARGS = listOf("--link2symlink", "--kill-on-exit")
 
+        /**
+         * 校验一条额外绑定（格式 `宿主源:容器目标`），返回人类可读的错误原因，null 表示合法。
+         *
+         * 非法路径会让 proot 启动失败、整个会话起不来，而用户无从得知是哪条挂载闯的祸；
+         * 这里统一校验，argv 构建与设置页共用同一套规则，避免两边规则漂移。
+         * 只拒绝明确非法的形式，不限制允许的挂载根——挂在哪是用户的事。
+         */
+        fun validateBinding(binding: String): String? {
+            if ('\u0000' in binding) return "挂载路径包含非法字符"
+            val idx = binding.indexOf(':')
+            if (idx <= 0 || idx == binding.lastIndex) return "格式应为「宿主路径:容器路径」"
+            val host = binding.substring(0, idx).trim()
+            val guest = binding.substring(idx + 1).trim()
+            if (!host.startsWith("/")) return "宿主路径必须是绝对路径"
+            if (!guest.startsWith("/")) return "容器路径必须是绝对路径"
+            if (host.split('/').any { it == ".." }) return "宿主路径不允许包含 .."
+            if (guest.split('/').any { it == ".." }) return "容器路径不允许包含 .."
+            return null
+        }
+
         /** 内置 Alpine profile：镜像来自 assets，复用现有安装/provision 全流程。 */
         val BUILTIN_ALPINE = ContainerProfile(
             id = BUILTIN_ID,

@@ -571,7 +571,7 @@ class GeminiAdapter @Inject constructor(
             mapOf(
                 "name" to tool.name,
                 "description" to tool.description,
-                "parameters" to tool.toJsonSchema()
+                "parameters" to sanitizeGeminiSchema(tool.toJsonSchema())
             )
         }?.let { request["tools"] = listOf(mapOf("functionDeclarations" to it)) }
 
@@ -775,4 +775,20 @@ class GeminiAdapter @Inject constructor(
             )
         )
     }
+}
+
+/**
+ * 递归剔除 Gemini 不接受的 JSON Schema 字段。
+ *
+ * MCP 工具的 schema 是外部 server 原样透传的，`propertyNames` 之类在 JSON Schema 里合法、
+ * 但 Gemini 的 functionDeclarations 不认，带上会让整个请求被拒——一个工具的参数写法
+ * 不该让整轮对话发不出去。
+ */
+private fun sanitizeGeminiSchema(value: Any?): Any? = when (value) {
+    is Map<*, *> -> value.entries
+        .filterNot { (it.key as? String) == "propertyNames" }
+        .associate { (k, v) -> k to sanitizeGeminiSchema(v) }
+
+    is List<*> -> value.map { sanitizeGeminiSchema(it) }
+    else -> value
 }

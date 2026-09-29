@@ -790,8 +790,15 @@ class LinuxContainerEngine @Inject constructor(
         // profile 的额外绑定与参数：内置与导入容器默认也在此注入（见 ContainerProfile.DEFAULT_PROOT_ARGS），
         // 与用户手动添加同一条路径，保证参数落在 argv 末尾。
         for (b in profile.extraBindings) {
-            argv.add("-b")
-            argv.add(b)
+            // 非法绑定必须在进 argv 之前挡掉：proot 会因它启动失败、整个会话起不来，
+            // 而用户看不出是哪条挂载闯的祸（存量配置里可能留着历史版本的越界路径）。
+            val error = ContainerProfile.validateBinding(b)
+            if (error == null) {
+                argv.add("-b")
+                argv.add(b)
+            } else {
+                FileLogger.w(TAG, "忽略非法挂载绑定 $b：$error")
+            }
         }
         argv.addAll(profile.extraArgs)
 

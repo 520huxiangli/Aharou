@@ -97,7 +97,8 @@ class StreamableHttpTransport(
             // 同时接受两种响应，让 server 自行决定单条 JSON 还是 SSE。
             add("Accept", "application/json, text/event-stream")
             sessionId?.let { add("Mcp-Session-Id", it) }
-            extraHeaders.forEach { (k, v) -> add(k, v) }
+            // 名称为空的 header 会被 OkHttp 拒绝（name is empty）并整条连接失败，配置里常见的空行不该拖垮连接。
+            extraHeaders.forEach { (k, v) -> if (k.isNotBlank()) add(k, v) }
         }.build()
 
         return Request.Builder()
