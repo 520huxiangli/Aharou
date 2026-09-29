@@ -1784,6 +1784,11 @@
     <string name="config_audit_hide_sensitive">隐藏敏感字段明文</string>
     <string name="config_audit_empty">还没有配置变更记录</string>
     <string name="config_audit_revert">撤销</string>
+    <string name="config_audit_delete_confirm_title">删除这条记录？</string>
+    <string name="config_audit_delete_confirm_body">只从审计列表里移除，不会把字段改回去。要改回去请用「撤销」。</string>
+    <string name="config_audit_clear_all">清空全部记录</string>
+    <string name="config_audit_clear_confirm_title">清空全部记录？</string>
+    <string name="config_audit_clear_confirm_body">%1$d 条记录会被永久删除，不影响已生效的配置。</string>
     <string name="config_audit_revert_confirm_title">撤销这次变更？</string>
     <string name="config_audit_revert_confirm_body">会把这个字段改回旧值，并记一条撤销记录。</string>
     <string name="config_audit_revert_success_title">已撤销</string>

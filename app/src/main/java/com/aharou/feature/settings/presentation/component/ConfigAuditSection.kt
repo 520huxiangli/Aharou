@@ -49,10 +49,12 @@ import com.aharou.core.config.audit.ConfigAuditLog
 import com.aharou.core.config.audit.ConfigAuditStatus
 import com.aharou.core.config.audit.ConfigRevert
 import com.aharou.core.config.isSensitivePath
+import com.aharou.core.ui.SwipeToDeleteRow
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.EyeOff
+import compose.icons.feathericons.Trash2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,6 +76,8 @@ internal fun ConfigAuditSection() {
     var usage by remember { mutableStateOf(ConfigAuditLog.Usage(0, 1000)) }
     var revertCandidate by remember { mutableStateOf<ConfigAuditEntry?>(null) }
     var revertResult by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var deleteCandidate by remember { mutableStateOf<ConfigAuditEntry?>(null) }
+    var clearConfirm by remember { mutableStateOf(false) }
     var revealSensitive by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -121,6 +125,17 @@ internal fun ConfigAuditSection() {
                         .clickable { revealSensitive = !revealSensitive },
                 )
             }
+            if (entries.isNotEmpty()) {
+                Spacer(Modifier.width(16.dp))
+                Icon(
+                    imageVector = FeatherIcons.Trash2,
+                    contentDescription = stringResource(R.string.config_audit_clear_all),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .clickable { clearConfirm = true },
+                )
+            }
         }
 
         if (entries.isEmpty()) {
@@ -151,11 +166,13 @@ internal fun ConfigAuditSection() {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(entries, key = { it.id }) { entry ->
-                    AuditRow(
-                        entry = entry,
-                        revealSensitive = revealSensitive,
-                        onRevert = { revertCandidate = entry },
-                    )
+                    SwipeToDeleteRow(onDelete = { deleteCandidate = entry }) {
+                        AuditRow(
+                            entry = entry,
+                            revealSensitive = revealSensitive,
+                            onRevert = { revertCandidate = entry },
+                        )
+                    }
                 }
             }
         }
@@ -203,6 +220,74 @@ internal fun ConfigAuditSection() {
             },
             dismissButton = {
                 TextButton(onClick = { revertCandidate = null }) {
+                    Text(stringResource(R.string.soul_cancel))
+                }
+            },
+        )
+    }
+
+    // 删除单条确认。
+    deleteCandidate?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { deleteCandidate = null },
+            title = { Text(stringResource(R.string.config_audit_delete_confirm_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = entry.key,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.config_audit_delete_confirm_body),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = entry
+                    deleteCandidate = null
+                    scope.launch {
+                        withContext(Dispatchers.IO) { log.delete(target.id) }
+                    }
+                }) {
+                    Text(
+                        text = stringResource(R.string.common_delete),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteCandidate = null }) {
+                    Text(stringResource(R.string.soul_cancel))
+                }
+            },
+        )
+    }
+
+    // 清空全部确认。
+    if (clearConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearConfirm = false },
+            title = { Text(stringResource(R.string.config_audit_clear_confirm_title)) },
+            text = { Text(stringResource(R.string.config_audit_clear_confirm_body, usage.count)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    clearConfirm = false
+                    scope.launch {
+                        withContext(Dispatchers.IO) { log.clearAll() }
+                    }
+                }) {
+                    Text(
+                        text = stringResource(R.string.config_audit_clear_all),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearConfirm = false }) {
                     Text(stringResource(R.string.soul_cancel))
                 }
             },

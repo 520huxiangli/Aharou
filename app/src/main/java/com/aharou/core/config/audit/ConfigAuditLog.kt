@@ -85,6 +85,14 @@ class ConfigAuditLog private constructor(context: Context) {
         bumpRevision()
     }
 
+    /** Drop a single row. Surfaced as the per-row swipe action. */
+    @Synchronized
+    fun delete(id: String) {
+        val db = helper.writableDatabase
+        db.delete(TABLE, "$COL_ID = ?", arrayOf(id))
+        bumpRevision()
+    }
+
     /** Wipe all rows. Surfaced as a manual UI action; never via CLI. */
     @Synchronized
     fun clearAll() {

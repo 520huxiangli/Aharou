@@ -1785,6 +1785,11 @@
     <string name="config_audit_hide_sensitive">Hide sensitive values</string>
     <string name="config_audit_empty">No config changes yet</string>
     <string name="config_audit_revert">Revert</string>
+    <string name="config_audit_delete_confirm_title">Delete this entry?</string>
+    <string name="config_audit_delete_confirm_body">Removes it from the audit list only; the field is not changed back. Use Revert for that.</string>
+    <string name="config_audit_clear_all">Clear all entries</string>
+    <string name="config_audit_clear_confirm_title">Clear all entries?</string>
+    <string name="config_audit_clear_confirm_body">%1$d entries will be permanently deleted. Applied settings are unaffected.</string>
     <string name="config_audit_revert_confirm_title">Revert this change?</string>
     <string name="config_audit_revert_confirm_body">Writes the old value back and records a revert entry.</string>
     <string name="config_audit_revert_success_title">Reverted</string>
