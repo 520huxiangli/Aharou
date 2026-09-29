@@ -10,7 +10,7 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 
 | Feature | Description |
 | --- | --- |
-| Chat & workspace | Title bar, sidebar, toolbar, message queue, workspace switching |
+| Chat & workspace | Title bar, sidebar, toolbar, message queue, folding long pastes, workspace switching |
 | Modes (three modes) | Permission control and use cases for Build / Plan / Auto |
 | Checkpoints & undo | Automatic snapshot before AI edits, one-tap safe rollback |
 | Terminal | Multi-tab sessions, auxiliary key bar, color and font settings |
@@ -36,7 +36,7 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 
 | Entry | Description |
 | --- | --- |
-| Container & images | Local Linux container, custom images, mounting phone directories, remote SSH backend |
+| Container & images | Local Linux container, environment health check with one-tap install, custom images, mounting phone directories, remote SSH backend |
 | Network proxy | Global proxy and vendor-level proxy (since 1.11.0) |
 | Connection & sync | SFTP / FTP channels, workspace sync, built-in FTP server |
 
@@ -46,7 +46,7 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 | --- | --- |
 | Tool authorization | Rules for which tools the AI may call |
 | System permissions | Keep-alive, screen always on, notifications, storage, battery optimization |
-| Logs | View runtime logs, crash reports, access the app private directory |
+| Logs | View runtime logs, crash reports, performance monitor (CPU / memory / traffic), access the app private directory |
 
 ### Appearance & Language
 

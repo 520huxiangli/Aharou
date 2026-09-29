@@ -59,6 +59,24 @@ export default defineConfig({
               items: [
                 { text: 'AI Vendors & Models', link: '/en/guide/providers' }
               ]
+            },
+            {
+              text: 'Core Workflows',
+              items: [
+                { text: 'Chat Interface', link: '/en/guide/chat' }
+              ]
+            },
+            {
+              text: 'Runtime',
+              items: [
+                { text: 'Containers & Images', link: '/en/guide/container' }
+              ]
+            },
+            {
+              text: 'Tools & Permissions',
+              items: [
+                { text: 'Logs & Troubleshooting', link: '/en/guide/logs' }
+              ]
             }
           ]
         },
