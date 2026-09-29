@@ -21,7 +21,10 @@ class WorkspacePathMapperTest {
 
     private val workspaceRepository: WorkspaceRepository = mockk()
     private val containerInstaller: ContainerInstaller = mockk()
-    private val containerSettingsRepository: ContainerSettingsRepository = mockk()
+
+    // 放宽：WorkspacePathMapper 的 init 会起一个不取消的后台收集协程，用例结束后仍可能触发调用。
+    // 严格 mock 会在后台线程抛 MockKException，而它会被算到**下一条**用例（甚至另一个测试类）头上。
+    private val containerSettingsRepository: ContainerSettingsRepository = mockk(relaxed = true)
     private val pathHomeResolver: PathHomeResolver = mockk()
 
     private val wsRoot = "/data/ws"
