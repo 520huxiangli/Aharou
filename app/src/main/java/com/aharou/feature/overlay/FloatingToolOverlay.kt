@@ -37,6 +37,9 @@ class FloatingToolOverlay(private val context: Context) {
         private const val EDGE_PADDING_DP = 10
         /** 头像可点区域宽度 = 左内边距 + 头像 + 一点余量。 */
         private const val ICON_HIT_WIDTH_DP = 44
+
+        /** 右端下拉箭头的可点宽度。 */
+        private const val ARROW_HIT_WIDTH_DP = 28
         /** 展开后文字框的高度上限（估位置用，实际由内容撑开）。 */
         private const val EXPANDED_BOX_MAX_DP = 150
         private const val EXPANDED_MAX_LINES = 6
@@ -311,13 +314,15 @@ class FloatingToolOverlay(private val context: Context) {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     when {
                         dragging -> prefs.edit().putInt(KEY_X, params.x).putInt(KEY_Y, params.y).apply()
-                        // 落在头像上：给头像的动作（通话开关）；没给就照旧回 App
+                        // 右端下拉箭头：展开/收起回合（只有通话中才有回合）
+                        expandable && event.x >= view.width - dpToPx(ARROW_HIT_WIDTH_DP) ->
+                            setExpanded(!expanded)
+
+                        // 落在头像上：切换语音（开 / 停）
                         event.x <= dpToPx(ICON_HIT_WIDTH_DP) ->
                             iconAction?.invoke() ?: bringAppToFront()
 
-                        // 通话中：点胶囊展开/收起，看完整台词
-                        expandable -> setExpanded(!expanded)
-
+                        // 状态区：回到 App
                         else -> bringAppToFront()
                     }
                     true
