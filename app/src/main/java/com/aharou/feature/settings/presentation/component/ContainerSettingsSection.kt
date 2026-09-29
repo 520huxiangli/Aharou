@@ -179,6 +179,11 @@ internal fun ContainerSection(
                     )
                 }
             }
+
+            Spacer(Modifier.height(Spacing.md))
+
+            // 容器出问题时用户往往只看到一句「命令失败」，一键体检把真实原因摆出来。
+            ContainerHealthSection()
         }
     }
 
@@ -511,6 +516,8 @@ private fun ProfileEditSheet(
             } ?: emptyList())
         }
     }
+    // 非法挂载会让整个容器起不来，保存时就拦下并把原因显给用户。
+    var bindingError by remember { mutableStateOf<String?>(null) }
     val argsList = remember {
         mutableStateListOf<String>().apply { addAll(initial?.extraArgs ?: emptyList()) }
     }
@@ -629,6 +636,13 @@ private fun ProfileEditSheet(
                             emptyText = stringResource(R.string.container_no_bindings),
                             addText = stringResource(R.string.container_add_binding)
                         )
+                        bindingError?.let { msg ->
+                            Text(
+                                text = msg,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
 
                         StringListEditor(
                             title = stringResource(R.string.container_extra_proot_args),
@@ -784,6 +798,7 @@ private fun ProfileEditSheet(
                                 ?: pickedUri
                         } ?: pickedUri
                         importing = false
+                        bindingError = null
                         val profile = buildProfile(
                             initial = initial,
                             mode = mode,
@@ -791,7 +806,15 @@ private fun ProfileEditSheet(
                             shellPath = shellPath,
                             bindings = bindingsList
                                 .filter { it.first.isNotBlank() && it.second.isNotBlank() }
-                                .map { (local, container) -> "${local.trim()}:${container.trim()}" },
+                                .map { (local, container) -> "${local.trim()}:${container.trim()}" }
+                                .onEach { b ->
+                                    val err = ContainerProfile.validateBinding(b)
+                                    if (err != null) {
+                                        bindingError = err
+                                        importing = false
+                                        return@launch
+                                    }
+                                },
                             args = argsList.map { it.trim() }.filter { it.isNotEmpty() },
                             env = envList
                                 .map { it.first.trim() to it.second }
