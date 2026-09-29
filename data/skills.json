@@ -2,10 +2,10 @@
   "sources": {
     "aharou": {
       "name": { "zh": "Aharou 官方", "en": "Aharou Official" },
-      "kind": "index",
+      "kind": "directory",
       "repo": "520huxiangli/Aharou",
       "branch": "master",
-      "path": "data/skill-packs.json"
+      "path": "skills"
     },
     "anthropics": {
       "name": { "zh": "Anthropic 官方", "en": "Anthropic" },
@@ -27,6 +27,11 @@
       "repo": "infometa/workbuddyskills",
       "branch": "main",
       "path": "skills"
+    },
+    "skills_sh": {
+      "name": { "zh": "skills.sh 搜索", "en": "skills.sh Search" },
+      "kind": "search",
+      "searchUrl": "https://skills.sh/api/search?q={q}"
     }
   }
 }
