@@ -156,6 +156,19 @@
                 android:value="Agent 执行期间在屏幕上显示实时进度胶囊" />
         </service>
 
+        <!-- 开机与应用被更新后把悬浮窗服务拉回来。START_STICKY 只覆盖「被系统查杀」，
+             包替换（pm install）与设备重启都不会自动拉起服务，用户会以为开关失效了。
+             接收器自己会先查设置里的开关，关着就不启动。 -->
+        <receiver
+            android:name="com.aharou.feature.overlay.OverlayRestartReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Shizuku：用于以 adb shell 身份执行命令（UserService）。
              permission 声明为 INTERACT_ACROSS_USERS_FULL 是官方要求，防止普通应用访问该 provider。 -->
         <provider

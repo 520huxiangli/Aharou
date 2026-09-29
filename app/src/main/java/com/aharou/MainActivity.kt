@@ -119,6 +119,7 @@ import com.aharou.feature.settings.presentation.component.UpdateCheckDialog
 import com.aharou.feature.settings.presentation.component.decodeBackgroundBitmap
 import com.aharou.feature.settings.presentation.component.openUrl
 import com.aharou.feature.settings.presentation.component.settingsPageBackground
+import com.aharou.feature.overlay.FloatingToolService
 import com.aharou.feature.terminal.domain.TerminalKeepaliveService
 import com.aharou.feature.terminal.presentation.TerminalViewModel
 import com.aharou.feature.terminal.presentation.component.TerminalScreen
@@ -378,6 +379,12 @@ class MainActivity : ComponentActivity() {
                 TerminalKeepaliveService.enablePersistent(this@MainActivity)
             }
         }
+
+        // 悬浮窗同理：装包替换进程或进程被杀后服务不会自动重建，而开关还亮着，
+        // 用户看到的就是「得先去设置里关一次再打开才生效」。前台时补上，不必等下一次重启。
+        if (FloatingToolService.isEnabled(this) && !FloatingToolService.isRunning()) {
+            FloatingToolService.start(this)
+        }
     }
 
     override fun onResume() {
@@ -484,6 +491,8 @@ fun AppNavigation(
     val awaitingPermissionSessionIds by agentViewModel.awaitingPermissionSessionIds.collectAsStateWithLifecycle()
     val subSessionsByParent by agentViewModel.subSessionsByParent.collectAsStateWithLifecycle()
     val expandedPaths by agentViewModel.expandedPaths.collectAsStateWithLifecycle()
+    val expandingPath by agentViewModel.expandingPath.collectAsStateWithLifecycle()
+    val fileOpPaths by agentViewModel.fileOpPaths.collectAsStateWithLifecycle()
     val browseState by agentViewModel.browseState.collectAsStateWithLifecycle()
     val browseClipboard by agentViewModel.browseClipboard.collectAsStateWithLifecycle()
     val pasteConflict by agentViewModel.pasteConflict.collectAsStateWithLifecycle()
@@ -647,6 +656,8 @@ fun AppNavigation(
             subSessionsByParent = subSessionsByParent,
             browseState = browseState,
             expandedPaths = expandedPaths,
+            expandingPath = expandingPath,
+            fileOpPaths = fileOpPaths,
             clipboard = browseClipboard,
             pasteConflict = pasteConflict,
             onToggleExpand = { agentViewModel.toggleExpand(it) },

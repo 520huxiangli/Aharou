@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -40,6 +41,17 @@ class FloatingToolService : Service() {
         private const val PREFS = "aharou_overlay_prefs"
         private const val KEY_ENABLED = "enabled"
 
+        /**
+         * 服务是否已在本进程内运行。
+         *
+         * 用于「开关开着但服务没跑」的自愈判断：装包或进程被杀后服务不会自动重建，
+         * 用户看到的就是开关亮着却不生效。
+         */
+        @Volatile
+        private var running = false
+
+        fun isRunning(): Boolean = running
+
         fun isEnabled(context: Context): Boolean =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_ENABLED, false)
 
@@ -50,7 +62,12 @@ class FloatingToolService : Service() {
 
         fun start(context: Context) {
             runCatching {
-                context.startService(Intent(context, FloatingToolService::class.java))
+                // 用 startForegroundService 而非 startService：调用方可能是广播接收器
+                // （见 [OverlayRestartReceiver]），后台走 startService 在 Android 8+ 会抛异常。
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, FloatingToolService::class.java)
+                )
             }
         }
 
@@ -80,6 +97,7 @@ class FloatingToolService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        running = true
         ensureChannel()
         // targetSdk 34 起 startForeground 必须带上类型（与 manifest 的 foregroundServiceType 一致），
         // 否则抛 MissingForegroundServiceTypeException。
@@ -112,6 +130,7 @@ class FloatingToolService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
+        running = false
         collectorJob?.cancel()
         runCatching { ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver) }
         runCatching { overlay.hide() }
