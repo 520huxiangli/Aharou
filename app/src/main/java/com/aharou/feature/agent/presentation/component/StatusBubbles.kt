@@ -1,6 +1,11 @@
 package com.aharou.feature.agent.presentation.component
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -22,7 +27,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,13 +45,16 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -613,13 +623,6 @@ internal fun StreamingBubble(
     }
 }
 
-/** 思考时长格式化：<1 分钟显示 `5s`，超过显示 `1:05`。 */
-private fun formatThinkingTime(seconds: Int): String {
-    val m = seconds / 60
-    val s = seconds % 60
-    return if (m > 0) "$m:${s.toString().padStart(2, '0')}" else "${s}s"
-}
-
 /**
  * 折叠行里显示的那一行思考内容：思考进行中取**最后一行**（跟着模型正在写的内容快速滚动），
  * 思考结束后取**第一行**（内容已定，固定成一句预览）。
@@ -647,6 +650,12 @@ internal fun reasoningPreviewLine(raw: String, live: Boolean): String {
 /** 折叠行预览两端要剥掉的字符：空白 + Markdown 记号（标题 `#`、列表 `-` `+` `*`、引用 `>`、加粗与行内代码的 `*` `` ` ``）。 */
 private val REASONING_PREVIEW_MARKERS = charArrayOf(' ', '\t', '#', '*', '-', '>', '`', '+')
 
+/** 思考展开窗口的最大高度：超出后在窗口内滚动，不再无限撑高、拖走整页滚动。 */
+private val ReasoningWindowMaxHeight = 300.dp
+
+/** 思考窗口底部渐隐遮罩的高度（仅当内容还可继续下滚时显示）。 */
+private val ReasoningWindowFadeHeight = 28.dp
+
 /**
  * 思考过程折叠行：左对齐、浅色弱化，与正式回复区分。**默认收起**，点这一行随时展开/收起。
  *
@@ -666,9 +675,17 @@ internal fun ReasoningBubble(
     /** 思考所属会话：切会话时重新计时，否则会拿上一个会话的起点算出离谱的时长。 */
     sessionKey: String? = null,
     /** 思考仍在进行中：折叠行的预览取最后一行（跟着滚动），见上方 KDoc。 */
-    live: Boolean = false
+    live: Boolean = false,
+    /** 展开态的外部覆盖（宿主持久化，见 [AIAgentViewModel.reasoningExpansionOverrides]）；null = 用内部状态。 */
+    expandedOverride: Boolean? = null,
+    /** 手动展开/收起时回传新状态，由上层持久化。 */
+    onExpandedChange: ((Boolean) -> Unit)? = null
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var localExpanded by remember { mutableStateOf(false) }
+    val expanded = expandedOverride ?: localExpanded
+    val toggleExpanded: (Boolean) -> Unit = { next ->
+        if (onExpandedChange != null) onExpandedChange(next) else localExpanded = next
+    }
     // 思考计时：仅流式思考场景开启，思考结束组件卸载自然停止。存绝对起始时间戳而非累加
     // 秒数，切页返回或气泡滚出视口重挂载后显示的仍是真实时长；起始戳连同已见文本的长度与
     // 指纹一起进 saveable，恢复时文本若不是同一轮的延续（期间已换轮）则重新计时。
@@ -691,72 +708,88 @@ internal fun ReasoningBubble(
     }
     // 展开渲染用节流文本（流式思考时降低 md 解析频率）；preRendered 时外部已按打字机节奏给出渲染文本。
     val renderText = if (preRendered) text else rememberThrottledStreamingText(text)
-    // 折叠行预览直接用实时文本：节流后的文本会让「快速滚动」慢半拍
-    val previewLine = reasoningPreviewLine(text, live)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start
-    ) {
-        // 扁平化：思考不再是染色/描边卡片，只是一段弱化的灰色小字（靠色阶与字号与正文区分）
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
+    // 折叠行文案：进行中显示实时耗时，完成后显示总耗时（拿不到耗时数据时只显示「思考完成」）。
+    val label = when {
+        live -> stringResource(R.string.chat_thinking_running_time, elapsedSeconds)
+        elapsedSeconds > 0 -> stringResource(R.string.chat_thinking_done_time, elapsedSeconds)
+        else -> stringResource(R.string.chat_thinking_done)
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 28.dp)
+                .clickable { toggleExpanded(!expanded) },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ThinkingGlyph(tint = Brand.IconGray, iconSize = 16.dp)
+            Spacer(Modifier.width(Spacing.sm))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
+                tint = Brand.IconGray,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+        ) {
+            Column {
+                Spacer(Modifier.height(Spacing.sm))
+                val scrollState = rememberScrollState()
+                val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                val fadeColor = MaterialTheme.colorScheme.background
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 28.dp)
-                        .clickable { expanded = !expanded },
-                    verticalAlignment = Alignment.CenterVertically
+                        // 左侧竖线：高度自动等于内容高度（内容已限高，不会超过窗口）
+                        .drawBehind {
+                            val stroke = 1.dp.toPx()
+                            drawRect(
+                                color = lineColor,
+                                topLeft = Offset(Spacing.sm.toPx(), 0f),
+                                size = Size(stroke, size.height)
+                            )
+                        }
+                        // 内容整体右移，给竖线让位
+                        .padding(start = Spacing.sm + 2.dp + Spacing.md)
                 ) {
-                    ThinkingGlyph(
-                        tint = Brand.IconGray,
-                        iconSize = 16.dp
-                    )
-                    Spacer(Modifier.width(Spacing.sm))
-                    // 收起态只给一行预览：思考进行中是正在写的那一行（跟着内容滚动），
-                    // 结束后是思考的第一行；整行放不下就省略号截断，内容为空时回落标题文案。
-                    Text(
-                        text = previewLine.ifEmpty { stringResource(R.string.chat_thinking_process) },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (showTimer) {
-                        Spacer(Modifier.width(Spacing.sm))
-                        Icon(
-                            FeatherIcons.Clock,
-                            contentDescription = null,
-                            tint = Brand.IconGray,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(Modifier.width(2.dp))
-                        Text(
-                            text = formatThinkingTime(elapsedSeconds),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
-                        contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
-                        tint = Brand.IconGray,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                if (expanded) {
-                    Spacer(Modifier.height(Spacing.sm))
                     MarkdownContent(
                         text = renderText,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         cache = cache,
                         compact = true,
-                        modifier = Modifier.pointerInput(text) {
-                            detectTapGestures(
-                                onDoubleTap = { expanded = false }
-                            )
-                        }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = ReasoningWindowMaxHeight)
+                            .nestedScroll(InnerScrollConsumeRemainder)
+                            .verticalScroll(scrollState)
+                            .pointerInput(text) {
+                                detectTapGestures(
+                                    onDoubleTap = { toggleExpanded(false) }
+                                )
+                            }
                     )
+                    // 底部渐隐：只有还能继续往下滚时才盖一层，提示“下面还有内容”
+                    if (scrollState.canScrollForward) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .fillMaxWidth()
+                                .height(ReasoningWindowFadeHeight)
+                                .background(Brush.verticalGradient(listOf(Color.Transparent, fadeColor)))
+                        )
+                    }
                 }
             }
         }

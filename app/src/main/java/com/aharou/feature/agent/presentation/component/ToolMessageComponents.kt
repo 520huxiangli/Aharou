@@ -1,7 +1,12 @@
 package com.aharou.feature.agent.presentation.component
 
 import androidx.annotation.StringRes
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -42,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,6 +56,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -106,6 +113,12 @@ internal val DiffRemoveText: Color
 
 internal const val DIFF_COLLAPSE_THRESHOLD = 20
 internal const val TOOL_SECTION_LINE_LIMIT = 20
+
+/** 工具「指令 / 结果」展开窗口的最大高度：超出后在窗口内滚动，不再无限撑高。 */
+private val ToolSectionMaxHeight = 240.dp
+
+/** 工具窗口底部渐隐遮罩高度（仅当内容还可继续下滚时显示）。 */
+private val ToolSectionFadeHeight = 24.dp
 
 /**
  * 工具消息（DSH 扁平行）：一行「工具图标 + 工具名 + 路径 + 增删统计 + 箭头」，行上方一条
@@ -184,7 +197,6 @@ internal fun ToolMessageBody(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        ChatHairline()
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -326,26 +338,37 @@ internal fun ToolMessageBody(
         if (streaming) {
             // 展开态与落库卡片同构：先「指令」（工具参数），再「结果」（实时输出尾部）；
             // 折叠态只保留标题行。「还在跑」由标题行行尾的涟漪场景文案表达，不在这里重复一遍。
-            if (effectiveExpanded) {
-                if (!argsFull.isNullOrBlank()) {
-                    Spacer(Modifier.height(Spacing.sm))
-                    ToolSection(label = stringResource(R.string.tool_instruction), content = argsFull)
-                }
-                if (hasLiveOutput) {
-                    val truncated = remember(liveOutput) { liveOutput.takeLastLines(TOOL_SECTION_LINE_LIMIT) }
-                    Spacer(Modifier.height(Spacing.sm))
-                    ToolSection(label = stringResource(R.string.tool_result), content = truncated)
-                }
-            }
-        } else if (effectiveExpanded) {
-            Column(
-                modifier = Modifier.pointerInput(message.id) {
-                    detectDoubleTapToCollapse {
-                        onExpandedChange?.invoke(false)
-                        onToggle?.invoke()
+            AnimatedVisibility(
+                visible = effectiveExpanded,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+            ) {
+                Column {
+                    if (!argsFull.isNullOrBlank()) {
+                        Spacer(Modifier.height(Spacing.sm))
+                        ToolSection(label = stringResource(R.string.tool_instruction), content = argsFull)
+                    }
+                    if (hasLiveOutput) {
+                        val truncated = remember(liveOutput) { liveOutput.takeLastLines(TOOL_SECTION_LINE_LIMIT) }
+                        Spacer(Modifier.height(Spacing.sm))
+                        ToolSection(label = stringResource(R.string.tool_result), content = truncated)
                     }
                 }
+            }
+        } else {
+            AnimatedVisibility(
+                visible = effectiveExpanded,
+                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
             ) {
+                Column(
+                    modifier = Modifier.pointerInput(message.id) {
+                        detectDoubleTapToCollapse {
+                            onExpandedChange?.invoke(false)
+                            onToggle?.invoke()
+                        }
+                    }
+                ) {
                 if (todoData != null && todoData.items.isNotEmpty()) {
                     Spacer(Modifier.height(Spacing.xs))
                     TodoCard(items = todoData.items)
@@ -379,6 +402,7 @@ internal fun ToolMessageBody(
                         Spacer(Modifier.height(Spacing.sm))
                         ToolSection(label = stringResource(R.string.tool_result), content = resultText)
                     }
+                }
                 }
             }
         }
@@ -644,7 +668,7 @@ internal fun ToolCallGroupHeader(
     }
 }
 
-/** 展开区的一段带小标题的内容块（如「指令」「结果」）：弱底等宽小面板。 */
+/** 展开区的一段带小标题的内容块（如「指令」「结果」）：弱底等宽小面板，超出限高后在窗口内滚动。 */
 @Composable
 internal fun ToolSection(label: String, content: String) {
     Text(
@@ -655,30 +679,35 @@ internal fun ToolSection(label: String, content: String) {
     )
     Spacer(Modifier.height(2.dp))
 
-    val lines = remember(content) { content.split("\n") }
-    val collapsible = lines.size > TOOL_SECTION_LINE_LIMIT
-    var expanded by remember(content) { mutableStateOf(false) }
-    val visibleLines = if (collapsible && !expanded) lines.takeLast(TOOL_SECTION_LINE_LIMIT) else lines
-    val hiddenCount = lines.size - TOOL_SECTION_LINE_LIMIT
-
-    ChatMonoPanel {
-        SelectionContainer {
-            Text(
-                text = visibleLines.joinToString("\n"),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace
+    val scrollState = rememberScrollState()
+    val fadeColor = MaterialTheme.colorScheme.background
+    Box {
+        ChatMonoPanel(
+            modifier = Modifier
+                .heightIn(max = ToolSectionMaxHeight)
+                .nestedScroll(InnerScrollConsumeRemainder)
+                .verticalScroll(scrollState)
+        ) {
+            SelectionContainer {
+                Text(
+                    text = content,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
+                    )
                 )
+            }
+        }
+        // 底部渐隐：只有还能继续往下滚时才盖一层，提示“下面还有内容”
+        if (scrollState.canScrollForward) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .height(ToolSectionFadeHeight)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, fadeColor)))
             )
         }
-    }
-
-    if (collapsible) {
-        DiffExpandToggle(
-            expanded = expanded,
-            hiddenCount = hiddenCount,
-            onToggle = { expanded = !expanded }
-        )
     }
 }
 

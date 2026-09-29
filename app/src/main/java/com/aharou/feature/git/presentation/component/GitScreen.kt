@@ -122,7 +122,7 @@ fun GitScreen(
     var showMasterRenameConfirm by remember { mutableStateOf(false) }
 
     // 三个 tab 的滚动状态统一提升到页面层，聚合出「是否正在滚动」用于底部 tab 栏滚动弱化。
-    val statusScrollState = rememberScrollState()
+    val statusListState = rememberLazyListState()
     val branchesListState = rememberLazyListState()
     val logListState = rememberLazyListState()
 
@@ -130,7 +130,7 @@ fun GitScreen(
 
     val tabsScrolling by remember {
         derivedStateOf {
-            statusScrollState.isScrollInProgress ||
+            statusListState.isScrollInProgress ||
                 branchesListState.isScrollInProgress ||
                 logListState.isScrollInProgress
         }
@@ -204,7 +204,7 @@ fun GitScreen(
                             stashesLoading = state.stashesLoading,
                             untrackedDirFiles = state.untrackedDirFiles,
                             untrackedDirLoading = state.untrackedDirLoading,
-                            scrollState = statusScrollState,
+                            listState = statusListState,
                             onStage = viewModel::stage,
                             onUnstage = viewModel::unstage,
                             onStageAll = viewModel::stageAll,

@@ -65,6 +65,7 @@ import com.aharou.feature.agent.presentation.MessageRole
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.ChevronDown
+import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Copy
@@ -221,6 +222,8 @@ internal fun AgentMessageItem(
     contentSlice: String? = null,
     /** 是否为分块的首块（渲染思考块、顶部圆角）；非分块消息恒为 true。 */
     isChunkHeader: Boolean = true,
+    /** 是否渲染本条消息自带的思考块。默认 true；整轮折叠把思考抽出为独立过程项时传 false，避免重复。 */
+    reasoningVisible: Boolean = true,
     /** 是否为分块的末块（渲染操作行、底部圆角、与下一条列表 item 的间距）；非分块消息恒为 true。 */
     isChunkFooter: Boolean = true,
     /** 是否在正文上方渲染「身份行」（Soul 图标 + 名字）：每轮助手回复的首条为 true。 */
@@ -302,7 +305,7 @@ internal fun AgentMessageItem(
             // 每轮助手回复的首条渲染身份行（图标 + 名字，跟 SOUL.md 实时联动）
             SoulChatHeaderRow()
         }
-        if (hasReasoning && isChunkHeader) {
+        if (hasReasoning && isChunkHeader && reasoningVisible) {
             // 思考默认收起：折叠行只占一行（显示思考的第一行），要看全文手动点开
             ReasoningBubble(text = message.reasoning.orEmpty(), cache = markdownCache)
         }
@@ -471,7 +474,7 @@ internal fun AgentMessageItem(
                         // 「更多选项」排在这一行的**最后**：助手消息里它跟在用量/耗时后面（先给信息，
                         // 再给操作入口）；用户消息没有统计项，它自然接着回退按钮，间距与按钮组一致。
                         if (actionsVisible && onMoreClick != null) {
-                            if (emitted) Spacer(Modifier.width(if (isUser) Spacing.xs else Spacing.sm))
+                            if (emitted) Spacer(Modifier.width(Spacing.xs))
                             MessageActionIconButton(
                                 icon = FeatherIcons.MoreHorizontal,
                                 contentDescription = stringResource(R.string.chat_more_options),
@@ -493,6 +496,55 @@ internal fun AgentMessageItem(
     }
 }
 
+/**
+ * 整轮任务折叠头（最外层）：一行「执行中 / 已完成 Xs + 箭头」，点一下展开/收起整轮过程。
+ *
+ * 收起态用右箭头（ChevronRight），展开态用下箭头（ChevronDown）——与参考图一致；
+ * 运行中（[running]）只显示「执行中」，完成后显示本轮耗时。风格对齐 [ToolCallGroupHeader]。
+ */
+@Composable
+internal fun TurnCollapseHeader(
+    running: Boolean,
+    durationMs: Long?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = ChatStyle.toolRowMinHeight)
+            .clip(RoundedCornerShape(ChatStyle.panelCorner))
+            .clickable(
+                onClickLabel = stringResource(
+                    if (expanded) R.string.common_collapse_action else R.string.common_expand
+                ),
+                onClick = onToggle
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (running) {
+                stringResource(R.string.chat_turn_running)
+            } else {
+                stringResource(R.string.chat_turn_completed, durationMs?.let { formatTaskDuration(it) } ?: "")
+            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Icon(
+            imageVector = if (expanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+            contentDescription = if (expanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
+            tint = Brand.IconGray,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
 @Composable
 private fun MessageActionIconButton(
     icon: ImageVector,
@@ -502,7 +554,7 @@ private fun MessageActionIconButton(
 ) {
     IconButton(
         onClick = onClick,
-        modifier = Modifier.size(28.dp),
+        modifier = Modifier.size(24.dp),
         colors = IconButtonDefaults.iconButtonColors(contentColor = tint),
     ) {
         Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(14.dp))
@@ -512,13 +564,19 @@ private fun MessageActionIconButton(
 /**
  * 后台任务完成通知的轻量提示条：不作为普通用户气泡展示，仅以紧凑横条形式告知用户
  * 哪个后台命令结束了、成功与否。从通知文本里提取 <status>/<summary> 字段。
+ *
+ * 正则提到文件级常量：先在 composable 内构造会在每次重组时重新编译图案，
+ * 长会话里后台通知频繁出现时会明显拖慢主线程。
  */
+private val BG_STATUS_REGEX = Regex("<status>(.*?)</status>")
+private val BG_SUMMARY_REGEX = Regex("<summary>(.*?)</summary>")
+
 @Composable
 private fun BackgroundNotificationBar(message: AgentUIMessage) {
     val content = message.content
-    val statuses = Regex("<status>(.*?)</status>")
+    val statuses = BG_STATUS_REGEX
         .findAll(content).map { it.groupValues.getOrNull(1)?.trim()?.lowercase() }.filterNotNull().toList()
-    val summaries = Regex("<summary>(.*?)</summary>")
+    val summaries = BG_SUMMARY_REGEX
         .findAll(content).map { it.groupValues.getOrNull(1)?.trim() }.filterNotNull().toList()
     val dotColor = when {
         // status 为 message 的是代理间消息（非失败），用主色；其余非 completed 视为失败。

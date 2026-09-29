@@ -3,7 +3,6 @@ package com.aharou.feature.git.presentation.component
 import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,11 +18,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -65,7 +65,6 @@ import com.aharou.feature.git.domain.model.GitFileChange
 import com.aharou.feature.git.domain.model.GitStash
 import com.aharou.feature.git.domain.model.GitStatus
 import com.aharou.feature.settings.presentation.component.SettingsDivider
-import com.aharou.feature.settings.presentation.component.SettingsGroup
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Archive
 import compose.icons.feathericons.Check
@@ -92,7 +91,7 @@ internal fun StatusTab(
     stashesLoading: Boolean = false,
     untrackedDirFiles: Map<String, List<String>>,
     untrackedDirLoading: String?,
-    scrollState: ScrollState,
+    listState: LazyListState,
     onStage: (String) -> Unit,
     onUnstage: (String) -> Unit,
     onStageAll: () -> Unit,
@@ -192,130 +191,136 @@ internal fun StatusTab(
         )
     )
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(horizontal = Spacing.lg)
-            // 底部留出悬浮 tab bar 高度：滚动时内容可滚过 tab 区域被蒙版渐隐，
-            // 滚到底时最后一项停在 tab 上方不被遮挡。
-            .padding(bottom = 70.dp),
-        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+    // 状态页可能包含上千个文件行：外层必须是懒加载列表，否则首帧会一次性组合全部行把主线程卡死。
+    // 分组卡片外观靠逐行拼接实现（见 [FileGroupRow]），未跟踪目录的子文件展平进主列表——
+    // LazyColumn 内嵌纵向 LazyColumn 会因无限高约束直接抛异常。
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        contentPadding = PaddingValues(start = Spacing.lg, end = Spacing.lg, bottom = 70.dp)
     ) {
-        StatusOverview(status = s, clean = clean)
+        item(key = "overview") { StatusOverview(status = s, clean = clean) }
 
         // 主操作：提交。有已暂存改动且已配置署名才可用。
         val commitEnabled = !busy && (s?.staged?.isNotEmpty() == true) && hasIdentity
-        FilledTonalButton(
-            onClick = onCommit,
-            enabled = commitEnabled,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.filledTonalButtonColors(
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
-                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-            )
-        ) {
-            Icon(FeatherIcons.Check, contentDescription = null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text(
-                text = stringResource(R.string.git_commit_changes),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        if (!hasIdentity) {
-            // 禁用原因提示：用户不知道按钮为什么不可点时给出指引；点一下直达「凭据与署名」页填写。
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onNavigateToCredentials),
-                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = stringResource(R.string.git_commit_needs_identity),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = stringResource(R.string.git_commit_needs_identity_action),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
-                )
+        item(key = "commit") {
+            Column(modifier = Modifier.padding(top = Spacing.md)) {
+                FilledTonalButton(
+                    onClick = onCommit,
+                    enabled = commitEnabled,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.50f),
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                    )
+                ) {
+                    Icon(FeatherIcons.Check, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text(
+                        text = stringResource(R.string.git_commit_changes),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (!hasIdentity) {
+                    // 禁用原因提示：用户不知道按钮为什么不可点时给出指引；点一下直达「凭据与署名」页填写。
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onNavigateToCredentials),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = stringResource(R.string.git_commit_needs_identity),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.git_commit_needs_identity_action),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
         }
 
         // 次级操作：暂存全部 / 储藏 / 拉取 / 推送。
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            ActionButton(
-                label = stringResource(R.string.git_stage_all),
-                icon = FeatherIcons.Plus,
-                enabled = !busy && hasChanges,
-                onClick = onStageAll,
-                modifier = Modifier.weight(1f)
-            )
-            ActionButton(
-                label = stringResource(R.string.git_tab_stash),
-                icon = FeatherIcons.Archive,
-                enabled = !busy,
-                onClick = { showStashSheet = true },
-                modifier = Modifier.weight(1f)
-            )
-            ActionButton(
-                label = stringResource(R.string.git_pull),
-                icon = FeatherIcons.DownloadCloud,
-                enabled = !busy && hasRemote,
-                onClick = onPull,
-                modifier = Modifier.weight(1f)
-            )
-            ActionButton(
-                label = stringResource(R.string.git_push),
-                icon = FeatherIcons.UploadCloud,
-                enabled = !busy && hasRemote,
-                onClick = onPush,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        if (clean) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 96.dp, bottom = 32.dp),
-                contentAlignment = Alignment.Center
+        item(key = "actions") {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = Spacing.md),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                Text(
-                    text = stringResource(R.string.git_status_clean),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                ActionButton(
+                    label = stringResource(R.string.git_stage_all),
+                    icon = FeatherIcons.Plus,
+                    enabled = !busy && hasChanges,
+                    onClick = onStageAll,
+                    modifier = Modifier.weight(1f)
+                )
+                ActionButton(
+                    label = stringResource(R.string.git_tab_stash),
+                    icon = FeatherIcons.Archive,
+                    enabled = !busy,
+                    onClick = { showStashSheet = true },
+                    modifier = Modifier.weight(1f)
+                )
+                ActionButton(
+                    label = stringResource(R.string.git_pull),
+                    icon = FeatherIcons.DownloadCloud,
+                    enabled = !busy && hasRemote,
+                    onClick = onPull,
+                    modifier = Modifier.weight(1f)
+                )
+                ActionButton(
+                    label = stringResource(R.string.git_push),
+                    icon = FeatherIcons.UploadCloud,
+                    enabled = !busy && hasRemote,
+                    onClick = onPush,
+                    modifier = Modifier.weight(1f)
                 )
             }
-        } else {
-            val ss = s ?: return@Column
+        }
 
+        val ss = s
+        if (ss == null || clean) {
+            item(key = "clean") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 96.dp, bottom = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.git_status_clean),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
             // 存在冲突时高亮提示并列出冲突文件
             if (ss.conflicted.isNotEmpty()) {
-                GroupHeaderWithAction(
-                    title = stringResource(R.string.git_conflicted_count, ss.conflicted.size),
-                    actionLabel = if (ss.isMerging) stringResource(R.string.git_action_abort_merge) else "",
-                    actionEnabled = !busy,
-                    onAction = { showAbortMergeConfirm = true }
-                )
-                SettingsGroup {
-                    ss.conflicted.forEachIndexed { index, f ->
-                        if (index > 0) SettingsDivider()
+                item(key = "conflicted-header") {
+                    GroupHeaderWithAction(
+                        title = stringResource(R.string.git_conflicted_count, ss.conflicted.size),
+                        actionLabel = if (ss.isMerging) stringResource(R.string.git_action_abort_merge) else "",
+                        actionEnabled = !busy,
+                        onAction = { showAbortMergeConfirm = true }
+                    )
+                }
+                itemsIndexed(ss.conflicted, key = { _, f -> "conflicted:${f.path}" }) { index, f ->
+                    FileGroupRow(index = index, count = ss.conflicted.size) {
                         FileRow(
                             file = f,
                             actionIcon = FeatherIcons.Plus,
@@ -328,47 +333,50 @@ internal fun StatusTab(
                     }
                 }
             } else if (ss.isMerging) {
-                Surface(
-                    color = MaterialTheme.semanticColors.warning.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(Radius.mdLarge),
-                    border = BorderStroke(1.dp, MaterialTheme.semanticColors.warning.copy(alpha = 0.35f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(Spacing.md),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                item(key = "merging-banner") {
+                    Surface(
+                        color = MaterialTheme.semanticColors.warning.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(Radius.mdLarge),
+                        border = BorderStroke(1.dp, MaterialTheme.semanticColors.warning.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth().padding(top = Spacing.md)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                stringResource(R.string.git_conflict_detected),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.semanticColors.warning
-                            )
-                            Text(
-                                stringResource(R.string.git_conflict_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(onClick = { showAbortMergeConfirm = true }, enabled = !busy) {
-                            Text(stringResource(R.string.git_action_abort_merge), color = MaterialTheme.colorScheme.error)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(Spacing.md),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    stringResource(R.string.git_conflict_detected),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.semanticColors.warning
+                                )
+                                Text(
+                                    stringResource(R.string.git_conflict_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { showAbortMergeConfirm = true }, enabled = !busy) {
+                                Text(stringResource(R.string.git_action_abort_merge), color = MaterialTheme.colorScheme.error)
+                            }
                         }
                     }
                 }
             }
 
             if (ss.staged.isNotEmpty()) {
-                GroupHeaderWithAction(
-                    title = stringResource(R.string.git_staged_count, ss.staged.size),
-                    actionLabel = stringResource(R.string.git_action_unstage_all),
-                    actionEnabled = !busy,
-                    onAction = { showUnstageAllConfirm = true }
-                )
-                SettingsGroup {
-                    ss.staged.forEachIndexed { index, f ->
-                        if (index > 0) SettingsDivider()
+                item(key = "staged-header") {
+                    GroupHeaderWithAction(
+                        title = stringResource(R.string.git_staged_count, ss.staged.size),
+                        actionLabel = stringResource(R.string.git_action_unstage_all),
+                        actionEnabled = !busy,
+                        onAction = { showUnstageAllConfirm = true }
+                    )
+                }
+                itemsIndexed(ss.staged, key = { _, f -> "staged:${f.path}" }) { index, f ->
+                    FileGroupRow(index = index, count = ss.staged.size) {
                         FileRow(
                             file = f,
                             actionIcon = FeatherIcons.Minus,
@@ -382,15 +390,16 @@ internal fun StatusTab(
                 }
             }
             if (ss.unstaged.isNotEmpty()) {
-                GroupHeaderWithAction(
-                    title = stringResource(R.string.git_modified_count, ss.unstaged.size),
-                    actionLabel = stringResource(R.string.git_action_revert_all),
-                    actionEnabled = !busy,
-                    onAction = { showRevertAllConfirm = true }
-                )
-                SettingsGroup {
-                    ss.unstaged.forEachIndexed { index, f ->
-                        if (index > 0) SettingsDivider()
+                item(key = "unstaged-header") {
+                    GroupHeaderWithAction(
+                        title = stringResource(R.string.git_modified_count, ss.unstaged.size),
+                        actionLabel = stringResource(R.string.git_action_revert_all),
+                        actionEnabled = !busy,
+                        onAction = { showRevertAllConfirm = true }
+                    )
+                }
+                itemsIndexed(ss.unstaged, key = { _, f -> "unstaged:${f.path}" }) { index, f ->
+                    FileGroupRow(index = index, count = ss.unstaged.size) {
                         FileRow(
                             file = f,
                             actionIcon = FeatherIcons.Plus,
@@ -404,52 +413,53 @@ internal fun StatusTab(
                 }
             }
             if (ss.untracked.isNotEmpty()) {
-                SectionHeader(stringResource(R.string.git_untracked_count, ss.untracked.size))
-                SettingsGroup {
-                    ss.untracked.forEachIndexed { index, path ->
-                        if (index > 0) SettingsDivider()
-                        // git status 默认把新目录折叠成 "dir/" 一行，里面的文件不单独列出，
-                        // 故目录项走单独的行样式，点击才按需展开其中的未跟踪文件。
+                // 未跟踪项展平：目录行 + 展开后的子文件行，整组共用一张卡片（按首/中/末行取圆角）。
+                val untrackedItems = buildList {
+                    ss.untracked.forEach { path ->
                         if (path.endsWith("/")) {
-                            val children = untrackedDirFiles[path]
-                            UntrackedDirRow(
-                                path = path,
-                                childCount = children?.size,
-                                expanded = children != null,
-                                loading = untrackedDirLoading == path,
-                                enabled = !busy,
-                                onClick = { onToggleUntrackedDir(path) },
-                                onLongClick = { actionSheet = untrackedDirMenu(path) },
-                                onStage = { onStage(path) }
-                            )
-                            // 未跟踪目录可能含上千个文件：全量 forEach 会在主线程一次性组合所有行
-                            // 把 UI 卡死；改用受限高度的 LazyColumn 惰性渲染，超长时在列表内滚动。
-                            if (children != null) {
-                                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
-                                    items(children, key = { it }) { child ->
-                                        SettingsDivider()
-                                        FileRow(
-                                            file = GitFileChange(child, "?", staged = false),
-                                            actionIcon = FeatherIcons.Plus,
-                                            actionDesc = stringResource(R.string.git_stage),
-                                            onAction = { onStage(child) },
-                                            enabled = !busy,
-                                            indent = Spacing.lg,
-                                            onClick = { onUntrackedDiff(child) },
-                                            onLongClick = { actionSheet = untrackedFileMenu(child) }
-                                        )
-                                    }
-                                }
-                            }
+                            add(UntrackedItem.Dir(path))
+                            untrackedDirFiles[path]?.forEach { child -> add(UntrackedItem.Child(child, indent = true)) }
                         } else {
-                            FileRow(
-                                file = GitFileChange(path, "?", staged = false),
+                            add(UntrackedItem.Child(path, indent = false))
+                        }
+                    }
+                }
+                item(key = "untracked-header") {
+                    SectionHeader(stringResource(R.string.git_untracked_count, ss.untracked.size))
+                }
+                itemsIndexed(
+                    untrackedItems,
+                    key = { _, item ->
+                        when (item) {
+                            is UntrackedItem.Dir -> "untracked-dir:${item.path}"
+                            is UntrackedItem.Child -> "untracked-file:${item.path}"
+                        }
+                    }
+                ) { index, item ->
+                    FileGroupRow(index = index, count = untrackedItems.size) {
+                        when (item) {
+                            is UntrackedItem.Dir -> {
+                                val children = untrackedDirFiles[item.path]
+                                UntrackedDirRow(
+                                    path = item.path,
+                                    childCount = children?.size,
+                                    expanded = children != null,
+                                    loading = untrackedDirLoading == item.path,
+                                    enabled = !busy,
+                                    onClick = { onToggleUntrackedDir(item.path) },
+                                    onLongClick = { actionSheet = untrackedDirMenu(item.path) },
+                                    onStage = { onStage(item.path) }
+                                )
+                            }
+                            is UntrackedItem.Child -> FileRow(
+                                file = GitFileChange(item.path, "?", staged = false),
                                 actionIcon = FeatherIcons.Plus,
                                 actionDesc = stringResource(R.string.git_stage),
-                                onAction = { onStage(path) },
+                                onAction = { onStage(item.path) },
                                 enabled = !busy,
-                                onClick = { onUntrackedDiff(path) },
-                                onLongClick = { actionSheet = untrackedFileMenu(path) }
+                                indent = if (item.indent) Spacing.lg else 0.dp,
+                                onClick = { onUntrackedDiff(item.path) },
+                                onLongClick = { actionSheet = untrackedFileMenu(item.path) }
                             )
                         }
                     }
@@ -751,6 +761,35 @@ private fun GroupHeaderWithAction(
     }
 }
 
+/**
+ * 懒加载列表中的分组行：把多行拼成一张卡片——首/末行保留圆角、中间行直角，非首行顶部补分隔线。
+ * 观感与 [com.aharou.feature.settings.presentation.component.SettingsGroup] 一致，但每行是独立
+ * LazyColumn item，组内上千行时也只组合可见部分。
+ */
+@Composable
+private fun FileGroupRow(
+    index: Int,
+    count: Int,
+    content: @Composable () -> Unit
+) {
+    val shape = when {
+        count <= 1 -> RoundedCornerShape(Radius.lg)
+        index == 0 -> RoundedCornerShape(topStart = Radius.lg, topEnd = Radius.lg)
+        index == count - 1 -> RoundedCornerShape(bottomStart = Radius.lg, bottomEnd = Radius.lg)
+        else -> RectangleShape
+    }
+    Surface(
+        color = MaterialTheme.semanticColors.cardSurface,
+        shape = shape,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            if (index > 0) SettingsDivider()
+            content()
+        }
+    }
+}
+
 /** 分组内文件行：状态徽标 + 文件名/目录 + 行尾暂存操作；点击看差异，长按开操作菜单。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -918,6 +957,13 @@ private fun UntrackedDirRow(
             )
         }
     }
+}
+
+/** 状态页未跟踪分组的展平项：目录行，或（展开目录后的）子文件行。[indent] 控制子文件缩进。 */
+private sealed interface UntrackedItem {
+    val path: String
+    data class Dir(override val path: String) : UntrackedItem
+    data class Child(override val path: String, val indent: Boolean) : UntrackedItem
 }
 
 /** 长按文件行弹出的菜单：标题路径 + 可执行的操作项。 */

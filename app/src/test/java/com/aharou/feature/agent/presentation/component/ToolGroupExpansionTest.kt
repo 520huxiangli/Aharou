@@ -9,15 +9,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 连续工具调用分组的展开判定。
+ * 连续工具调用分组的展开判定 + 整轮任务折叠。
  *
- * 展开与否 = **上层持久化的手动选择**（[AIAgentViewModel.toolExpansionOverrides]，按 [toolGroupKey] 取）：
- * 没有手动记录就一律收起——工具调用统一默认不展开，组内还在跑、本轮仍在进行都不再自动弹开。
+ * 分组展开与否 = **上层持久化的手动选择**（[AIAgentViewModel.toolExpansionOverrides]，按 [toolGroupKey] 取）：
+ * 没有手动记录就一律收起——工具调用统一默认不展开。
  *
- * 重点守两条：①手动选择跨重建稳定（持久化的语义就是每次重建都按同一份覆盖走）；
- * ②没有手动记录时任何分组都不自动展开。
+ * 整轮折叠（最外层）只认 [AIAgentViewModel.turnExpansionOverrides]；没记录时「末轮运行中默认展开、
+ * 其余默认收起」，任务收工由 activeTurnKey 归 null 自动收起。
+ *
+ * 结构：工具分组与过程项都挂在轮头 item 的 [ChatRenderItem.turnProcess] 里（与折叠头同一 Composable，
+ * 展开时整体动画）；顶层 items 只有「用户消息 / 轮头 / 常显项与结果」。
  */
 class ToolGroupExpansionTest {
+
+    private fun user(id: String) =
+        AgentUIMessage(id = id, role = MessageRole.USER, content = "hi")
 
     private fun tool(id: String) = AgentUIMessage(id = id, role = MessageRole.TOOL, content = "done")
 
@@ -29,23 +35,34 @@ class ToolGroupExpansionTest {
     private fun items(
         messages: List<AgentUIMessage>,
         overrides: Map<String, Boolean> = emptyMap(),
-    ) = buildChatItems(messages, overrides)
+        turnOverrides: Map<String, Boolean> = emptyMap(),
+        activeTurnKey: String? = null,
+    ) = buildChatItems(messages, overrides, turnOverrides, activeTurnKey)
+
+    /** 顶层 item 里唯一的轮头 item。 */
+    private fun List<ChatRenderItem>.header() = first { it.turnHeader != null }
+
+    /** 所有轮头携带的工具分组项（按轮头顺序展开）。 */
+    private fun List<ChatRenderItem>.groupItems(): List<ChatRenderItem> =
+        flatMap { it.turnProcess }.filter { it.toolGroup != null }
+
+    // ---- 连续工具调用分组 ----
 
     @Test
-    fun finishedTurn_collapsesByDefault() {
-        val items = items(listOf(tool("t1"), tool("t2")))
-        assertFalse(items.first().groupExpanded)
-        // 收起时不生成成员行
-        assertFalse(items.any { it.key == "t1" })
-        assertEquals(1, items.size)
+    fun expandedTurn_groupCollapsesByDefault() {
+        // 整轮展开（末轮运行中）时，连续工具分组仍默认收起
+        val items = items(listOf(user("u0"), tool("t1"), tool("t2")), activeTurnKey = "turn:u0")
+        val groups = items.groupItems()
+        assertEquals(1, groups.size)
+        assertFalse(groups.first().groupExpanded)
     }
 
     @Test
-    fun groupWithSingleMember_collapsesByDefault() {
-        // 单条工具调用同样折成一行且默认收起：工具调用的默认态统一，不因成员多少而变
-        val items = items(listOf(tool("t1")))
-        assertEquals(1, items.size)
-        assertFalse(items.first().groupExpanded)
+    fun singleTool_isNotGrouped() {
+        // 只有一条工具时不折成「1 次工具调用」，直接当普通工具行显示
+        val items = items(listOf(user("u0"), tool("t1")), activeTurnKey = "turn:u0")
+        assertEquals(0, items.groupItems().size)
+        assertTrue(items.header().turnProcess.any { it.key == "t1" })
     }
 
     @Test
@@ -53,60 +70,55 @@ class ToolGroupExpansionTest {
         // 回归：曾经「组内还在跑」或「本轮仍在进行且这是最后一个分组」会自动弹开整组。
         // 现在一律默认收起，历史分组与最新分组一视同仁。
         val messages = listOf(
+            user("u0"),
             tool("t1"), tool("t2"),
             assistant("a1"),
             tool("t3"), tool("t4"),
         )
-        val items = items(messages)
-        val headers = items.filter { it.key.startsWith("toolgroup:") }
-        assertEquals(2, headers.size)
-        assertTrue("默认全部收起", headers.none { it.groupExpanded })
-        // 都没展开：两个分组头 + 中间那条助手消息，没有成员行
-        assertEquals(3, items.size)
+        val groups = items(messages, activeTurnKey = "turn:u0").groupItems()
+        assertEquals(2, groups.size)
+        assertTrue("默认全部收起", groups.none { it.groupExpanded })
     }
 
     @Test
     fun manualExpand_survivesRebuild() {
-        val messages = listOf(tool("t1"), tool("t2"))
-        val expanded = items(messages, overrides = mapOf(groupKey to true))
-        assertTrue(expanded.first().groupExpanded)
+        val messages = listOf(user("u0"), tool("t1"), tool("t2"))
+        val expanded = items(messages, overrides = mapOf(groupKey to true), activeTurnKey = "turn:u0")
+        assertTrue(expanded.groupItems().first().groupExpanded)
         // 同一份覆盖重建（列表滚动回收 / 切页返回后重组走的就是这条路径）：状态必须一致
-        val rebuilt = items(messages, overrides = mapOf(groupKey to true))
-        assertTrue(rebuilt.first().groupExpanded)
+        val rebuilt = items(messages, overrides = mapOf(groupKey to true), activeTurnKey = "turn:u0")
+        assertTrue(rebuilt.groupItems().first().groupExpanded)
         assertEquals(expanded.size, rebuilt.size)
-        // 展开时成员行才生成：头 + 2 个成员
-        assertTrue(rebuilt.any { it.key == "t1" })
-        assertTrue(rebuilt.any { it.key == "t2" })
     }
 
     @Test
     fun manualCollapse_isRespected() {
         val items = items(
-            listOf(tool("t1"), tool("t2")),
+            listOf(user("u0"), tool("t1"), tool("t2")),
             overrides = mapOf(groupKey to false),
+            activeTurnKey = "turn:u0",
         )
-        assertFalse("手动收起过：保持收起", items.first().groupExpanded)
-        assertEquals(1, items.size)
+        assertFalse("手动收起过：保持收起", items.groupItems().first().groupExpanded)
     }
 
     @Test
     fun userMessageBreaksGrouping() {
         val messages = listOf(
-            tool("t1"),
-            AgentUIMessage(id = "u1", role = MessageRole.USER, content = "继续"),
-            tool("t2"),
+            user("u0"),
+            tool("t1"), tool("t2"),
+            user("u1"),
+            tool("t3"), tool("t4"),
         )
-        val items = items(messages)
-        val headers = items.filter { it.key.startsWith("toolgroup:") }
-        assertEquals(2, headers.size)
-        assertEquals("toolgroup:t1", headers[0].key)
-        assertEquals("toolgroup:t2", headers[1].key)
+        val groups = items(messages, turnOverrides = mapOf("turn:u0" to true, "turn:u1" to true)).groupItems()
+        assertEquals(2, groups.size)
+        assertEquals("toolgroup:t1", groups[0].key)
+        assertEquals("toolgroup:t3", groups[1].key)
     }
 
     @Test
     fun toolWithAttachments_isNotGrouped() {
         // sendFile / generateImage 产出的文件行就是结果本身：不参与「N 次工具调用」折叠，
-        // 否则分组默认收起就等于把发来的文件藏起来。它自己是一级 item，同时把左右两批工具切开。
+        // 也不参与整轮折叠（常显）。它自己是一级 item，同时把左右两批工具切开。
         val file = AgentAttachment(
             fileName = "report.pdf",
             containerPath = "~/workspace/report.pdf",
@@ -116,72 +128,77 @@ class ToolGroupExpansionTest {
             isImage = false,
         )
         val messages = listOf(
+            user("u0"),
             tool("t1"), tool("t2"),
             tool("send").copy(toolName = "sendFile", attachments = listOf(file)),
             tool("t3"), tool("t4"),
         )
-        val items = items(messages)
-        assertEquals("带附件的工具自己要是一级 item", 1, items.count { it.key == "send" })
-        // 两侧的连续工具各自成组（分组默认收起，所以只剩两个头）
-        val headers = items.filter { it.key.startsWith("toolgroup:") }
-        assertEquals(listOf("toolgroup:t1", "toolgroup:t3"), headers.map { it.key })
-        assertTrue("分组默认收起", headers.none { it.groupExpanded })
-        // send 不是任何分组的成员：不会因为它落在两个分组之间而被折叠吞掉
-        assertFalse(items.any { it.toolGroup?.any { member -> member.id == "send" } == true })
+        val items = items(messages, activeTurnKey = "turn:u0")
+        // send 是常显项：顶层独立 item
+        assertTrue("带附件的工具是顶层常显项", items.any { it.key == "send" })
+        val groups = items.groupItems()
+        assertEquals(listOf("toolgroup:t1", "toolgroup:t3"), groups.map { it.key })
+        assertTrue("分组默认收起", groups.none { it.groupExpanded })
+        // send 不是任何分组的成员
+        assertFalse(groups.any { group -> group.toolGroup.orEmpty().any { it.id == "send" } })
     }
 
-    // ---- 成员行缩进判定（isExpandedGroupMember）----
+    // ---- 整轮任务折叠 ----
 
     @Test
-    fun membersOfExpandedGroup_areIndented() {
-        val items = items(listOf(tool("t1"), tool("t2")), overrides = mapOf(groupKey to true))
-        // items = [头, t1, t2]
-        assertFalse("分组头自身不缩进", isExpandedGroupMember(items, 0, isToolRow = false))
-        assertTrue("展开组的成员应缩进", isExpandedGroupMember(items, 1, isToolRow = true))
-        assertTrue(isExpandedGroupMember(items, 2, isToolRow = true))
-    }
-
-    @Test
-    fun collapsedGroupHasNoMembers() {
-        val items = items(listOf(tool("t1"), tool("t2")))
-        assertEquals(1, items.size)
-        assertFalse(isExpandedGroupMember(items, 0, isToolRow = false))
+    fun activeTurn_expandsByDefault() {
+        // 末轮且 agent 忙：折叠头显示「执行中」并默认展开，过程项照常挂载
+        val items = items(listOf(user("u0"), tool("t1"), tool("t2")), activeTurnKey = "turn:u0")
+        val header = items.header().turnHeader!!
+        assertTrue(header.running)
+        assertTrue(header.expanded)
+        assertEquals(1, items.groupItems().size)
     }
 
     @Test
-    fun ordinaryToolRowOutsideGroup_isNotIndented() {
-        // 两组都被手动展开：中间那条是单成员组，它必须从**自己的**分组头判定，
-        // 不能越过助手正文去继承前一个分组的缩进。
-        val messages = listOf(
-            tool("t1"), tool("t2"),
-            assistant("a1"),
-            tool("t9"),
-        )
+    fun finishedTurn_autoCollapses() {
+        // 收工（activeTurnKey 归 null）：折叠头转为「已完成」并默认收起；过程数据仍在，由动画收起
+        val items = items(listOf(user("u0"), tool("t1"), tool("t2")), activeTurnKey = null)
+        val header = items.header().turnHeader!!
+        assertFalse(header.running)
+        assertFalse(header.expanded)
+        assertEquals(1, items.groupItems().size)
+    }
+
+    @Test
+    fun manualTurnExpand_survivesFinish() {
+        // 用户手动展开过：任务收工也不自动收起
         val items = items(
-            messages,
-            overrides = mapOf(groupKey to true, "toolgroup:t9" to true),
+            listOf(user("u0"), tool("t1"), tool("t2")),
+            turnOverrides = mapOf("turn:u0" to true),
+            activeTurnKey = null,
         )
-        val firstMember = items.indexOfFirst { it.key == "t1" }
-        val secondHeader = items.indexOfFirst { it.key == "toolgroup:t9" }
-        val secondMember = items.indexOfFirst { it.key == "t9" }
-        assertTrue("前置条件：两个分组都应展开", firstMember > 0 && secondHeader > firstMember && secondMember > secondHeader)
-
-        assertTrue("第一组与其成员连续，成员应缩进", isExpandedGroupMember(items, firstMember, isToolRow = true))
-        assertFalse("分组头自身不缩进", isExpandedGroupMember(items, secondHeader, isToolRow = false))
-        assertTrue("第二组自己的成员应缩进", isExpandedGroupMember(items, secondMember, isToolRow = true))
+        val header = items.header().turnHeader!!
+        assertTrue(header.expanded)
+        assertEquals(1, items.groupItems().size)
     }
 
     @Test
-    fun nonToolRow_isNeverIndented() {
-        val items = items(listOf(tool("t1"), tool("t2")), overrides = mapOf(groupKey to true))
-        assertFalse(isExpandedGroupMember(items, 1, isToolRow = false))
+    fun plainTextTurn_hasNoHeader() {
+        // 无过程（无思考、无工具）的纯文本轮：退化为现状，不加折叠头
+        val messages = listOf(
+            user("u0"),
+            AgentUIMessage(id = "a1", role = MessageRole.ASSISTANT, content = "直接回答"),
+        )
+        val items = items(messages, activeTurnKey = null)
+        assertTrue(items.none { it.turnHeader != null })
+        assertTrue(items.any { it.key == "a1" })
     }
 
     @Test
-    fun outOfRangeIndex_isNotIndented() {
-        val items = items(listOf(tool("t1"), tool("t2")), overrides = mapOf(groupKey to true))
-        assertFalse(isExpandedGroupMember(items, 0, isToolRow = true))
-        assertFalse(isExpandedGroupMember(items, items.size, isToolRow = true))
-        assertFalse(isExpandedGroupMember(items, -1, isToolRow = true))
+    fun resultReasoning_becomesProcessItem() {
+        // 轮末助手的思考抽为过程项；结果正文块不再重复渲染思考
+        val messages = listOf(
+            user("u0"),
+            AgentUIMessage(id = "a1", role = MessageRole.ASSISTANT, content = "最终答案", reasoning = "想一下"),
+        )
+        val items = items(messages, turnOverrides = mapOf("turn:u0" to true), activeTurnKey = null)
+        assertTrue("思考成为轮头过程项", items.header().turnProcess.any { it.key == "a1#reasoning" })
+        assertFalse("结果正文块不重复渲染思考", items.first { it.key == "a1" }.reasoningVisible)
     }
 }

@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
@@ -35,6 +36,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
@@ -227,6 +229,17 @@ internal fun ChatMonoPanel(
     ) {
         content()
     }
+}
+
+/**
+ * 内层滚动窗口（工具输出 / 思考正文）的嵌套滚动拦截：窗口快速滑到顶 / 底后，**惯性（fling）**不再
+ * 传给外层消息列表——否则在窗口里甩一下到底，整个聊天列表会跟着一起滑走。
+ *
+ * 只拦惯性、不拦拖动（onPostFling 消费掉剩余速度；onPostScroll 保持默认）：内容没超出窗口、
+ * 或已经滚到顶 / 底后继续拖动，仍会正常带动外层列表——这正是用户想要的。
+ */
+internal val InnerScrollConsumeRemainder = object : NestedScrollConnection {
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
 }
 
 /**
