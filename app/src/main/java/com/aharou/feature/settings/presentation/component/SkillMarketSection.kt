@@ -1,8 +1,7 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.FilterChip
@@ -46,7 +46,6 @@ import com.aharou.feature.settings.presentation.MarketSkillUi
  *
  * 列表为空可能是源本身没内容、网络不通或还在加载，统一给一句提示，不区分——对用户没有可操作的区别。
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SkillMarketSection(
     sources: List<Pair<String, String>>,
@@ -72,12 +71,12 @@ internal fun SkillMarketSection(
                 .padding(top = Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            // 选源放在最前面：它决定下面出哪个输入框（检索型源才有关键词框）。
-            // 源一多单行就排不下（横向滚动没有任何提示，新源会整个看不见），所以换行排。
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            // 源多了一行排不下就左右滑（历史行为，用户已习惯）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 sources.forEach { (id, label) ->
                     FilterChip(

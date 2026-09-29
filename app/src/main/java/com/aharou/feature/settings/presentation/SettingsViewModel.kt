@@ -1256,7 +1256,10 @@ class SettingsViewModel @Inject constructor(
     /** 市场源列表（id → 显示名），并在当前选中源失效时重置为第一个。 */
     fun refreshMarketSources() {
         val lang = java.util.Locale.getDefault().language
-        val sources = skillMarketRepository.sources().map { (id, def) -> id to def.displayName(lang) }
+        val sources = skillMarketRepository.sources()
+            // 检索型源不进源列表：它没有自己的技能清单，只是给关键词搜索提供接口
+            .filterValues { !it.isSearch }
+            .map { (id, def) -> id to def.displayName(lang) }
         _marketSources.value = sources + adhocSourceEntry()
         if (_marketSources.value.none { it.first == _marketSourceId.value }) {
             _marketSourceId.value = _marketSources.value.firstOrNull()?.first.orEmpty()
@@ -1296,8 +1299,6 @@ class SettingsViewModel @Inject constructor(
     fun searchMarket(query: String) {
         if (query.isBlank()) return
         val sourceId = searchSourceId() ?: return
-        // 顺手把源选上，否则列表里是搜索结果、源却高亮着别的
-        _marketSourceId.value = sourceId
         viewModelScope.launch {
             _marketLoading.value = true
             _marketAlert.value = null
@@ -1326,9 +1327,8 @@ class SettingsViewModel @Inject constructor(
         val trimmed = input.trim()
         if (trimmed.isBlank()) return
         // 贴的是检索型源的站点地址（如 https://skills.sh）：它没有「列全部」的入口，
-        // 地址本身当不了仓库，但那个源就是它的家，直接切过去接着输关键词。
-        searchSourceFor(trimmed)?.let { id ->
-            selectMarketSource(id)
+        // 站本身当不了仓库，直接提醒用下面的关键词框。
+        if (searchSourceFor(trimmed) != null) {
             _marketAlert.value = MarketAlert.SearchByKeyword
             return
         }
