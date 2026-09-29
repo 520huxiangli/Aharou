@@ -19,6 +19,7 @@ class SkillRepositoryTest {
     @Test
     fun mergeAll_combinesGlobalAndProject() {
         val merged = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("a"), skill("b")),
             project = listOf(skill("c"))
         )
@@ -32,8 +33,23 @@ class SkillRepositoryTest {
     }
 
     @Test
+    fun mergeAll_builtinOverriddenByUserSkill() {
+        val merged = SkillRepository.mergeAll(
+            builtin = listOf(skill("same"), skill("only-builtin")),
+            global = listOf(skill("same")),
+            project = emptyList()
+        )
+
+        assertEquals(listOf("only-builtin", "same"), merged.map { it.skill.name })
+        assertEquals(SkillScope.BUILTIN, merged.first { it.skill.name == "only-builtin" }.scope)
+        // 同名时用户的全局技能压过内置
+        assertEquals(SkillScope.GLOBAL, merged.first { it.skill.name == "same" }.scope)
+    }
+
+    @Test
     fun mergeAll_projectOverridesSameName() {
         val merged = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("same")),
             project = listOf(skill("same"))
         )
@@ -46,6 +62,7 @@ class SkillRepositoryTest {
     @Test
     fun mergeAll_caseInsensitiveDedup() {
         val merged = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("MixedCase")),
             project = listOf(skill("mixedcase"))
         )
@@ -57,6 +74,7 @@ class SkillRepositoryTest {
     @Test
     fun mergeAll_sortedByName() {
         val merged = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("zeta"), skill("alpha")),
             project = listOf(skill("middle"))
         )
@@ -67,6 +85,7 @@ class SkillRepositoryTest {
     @Test
     fun filterDisabled_removesDisabledSkills() {
         val entries = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("keep"), skill("drop")),
             project = emptyList()
         )
@@ -79,6 +98,7 @@ class SkillRepositoryTest {
     @Test
     fun filterDisabled_caseInsensitive() {
         val entries = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("Keep")),
             project = emptyList()
         )
@@ -91,6 +111,7 @@ class SkillRepositoryTest {
     @Test
     fun filterDisabled_unknownNamesIgnored() {
         val entries = SkillRepository.mergeAll(
+            builtin = emptyList(),
             global = listOf(skill("keep")),
             project = emptyList()
         )

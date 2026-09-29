@@ -22,12 +22,13 @@ import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.skill.SkillScope
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Archive
+import compose.icons.feathericons.Download
 import compose.icons.feathericons.Edit3
 import compose.icons.feathericons.FileText
 
 /**
- * 「添加技能」底部弹层：顶部选择作用域（全局 / 当前项目），下方三种添加方式——
- * 手动新建（进编辑表单）、从文件导入（.md）、从压缩包导入（.zip，可含多个技能）。
+ * 「添加技能」底部弹层：顶部选择作用域（全局 / 当前项目），下方四种添加方式——
+ * 手动新建（进编辑表单）、从文件导入（.md）、从压缩包导入（.zip，可含多个技能）、从市场安装。
  */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -37,6 +38,7 @@ internal fun SkillAddSheet(
     onManual: () -> Unit,
     onPickFile: () -> Unit,
     onPickZip: () -> Unit,
+    onMarket: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AdaptiveModalBottomSheet(
@@ -100,6 +102,13 @@ internal fun SkillAddSheet(
                     title = stringResource(R.string.skills_add_from_zip),
                     subtitle = stringResource(R.string.skills_add_from_zip_desc),
                     onClick = onPickZip
+                )
+                SettingsDivider()
+                SettingsRow(
+                    icon = FeatherIcons.Download,
+                    title = stringResource(R.string.skills_add_from_market),
+                    subtitle = stringResource(R.string.skills_add_from_market_desc),
+                    onClick = onMarket
                 )
             }
         }

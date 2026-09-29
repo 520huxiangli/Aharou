@@ -2,6 +2,7 @@ package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,8 +44,9 @@ import compose.icons.feathericons.Book
 import compose.icons.feathericons.ChevronRight
 
 /**
- * 技能二级页：与「工具授权」一致的折叠分组列表——「当前项目 / 全局」两组各自可折叠，
- * 每行一个技能（图标 + 名称 + 描述），左滑删除，点击行进入详情。
+ * 技能二级页：与「工具授权」一致的折叠分组列表——「内置 / 当前项目 / 全局」三组各自可折叠，
+ * 每行一个技能（图标 + 名称 + 描述），点击行进入详情。
+ * 用户可管理的两组支持左滑删除；内置技能随 App 打包，不给删除入口。
  */
 @Composable
 internal fun SkillsSection(
@@ -53,6 +55,7 @@ internal fun SkillsSection(
     onDelete: (SkillUiEntry) -> Unit,
     onOpenDetail: (SkillUiEntry) -> Unit
 ) {
+    val builtinSkills = entries.filter { it.builtin }
     val projectSkills = entries.filter { it.scope == SkillScope.PROJECT }
     val globalSkills = entries.filter { it.scope == SkillScope.GLOBAL }
 
@@ -96,6 +99,7 @@ internal fun SkillsSection(
         return
     }
 
+    var builtinExpanded by rememberSaveable { mutableStateOf(true) }
     var projectExpanded by rememberSaveable { mutableStateOf(true) }
     var globalExpanded by rememberSaveable { mutableStateOf(true) }
 
@@ -107,6 +111,26 @@ internal fun SkillsSection(
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        if (builtinSkills.isNotEmpty()) {
+            CollapsibleGroupHeader(
+                text = stringResource(R.string.skills_builtin),
+                expanded = builtinExpanded,
+                onToggle = { builtinExpanded = !builtinExpanded }
+            )
+            AnimatedVisibility(visible = builtinExpanded) {
+                SettingsGroup {
+                    builtinSkills.forEachIndexed { index, entry ->
+                        if (index > 0) SettingsDivider()
+                        SkillRow(
+                            entry = entry,
+                            onDelete = null,
+                            onClick = { onOpenDetail(entry) }
+                        )
+                    }
+                }
+            }
+        }
+
         CollapsibleGroupHeader(
             text = if (projectName != null) {
                 stringResource(R.string.perm_current_project, projectName)
@@ -157,79 +181,101 @@ internal fun SkillsSection(
     }
 }
 
-/** 单个技能行：图标 + 名称/描述 + 右箭头；左滑删除，点击行进入详情。 */
+/**
+ * 单个技能行：图标 + 名称/描述 + 右箭头。[onDelete] 为 null 表示不可删除（内置技能），
+ * 此时连左滑手势都不接——免得滑出个按钮让人以为能删。
+ */
 @Composable
 private fun SkillRow(
     entry: SkillUiEntry,
-    onDelete: () -> Unit,
+    onDelete: (() -> Unit)?,
     onClick: () -> Unit
 ) {
-    val rowBackground = MaterialTheme.semanticColors.cardSurface
-
+    if (onDelete == null) {
+        SkillRowContent(entry, Modifier.clickable { onClick() })
+        return
+    }
     SwipeToDeleteRow(onDelete = onDelete, onClick = onClick) {
-        Row(
+        SkillRowContent(entry, Modifier)
+    }
+}
+
+/** 技能行内容（不含左滑容器与点击处理）。 */
+@Composable
+private fun SkillRowContent(
+    entry: SkillUiEntry,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.semanticColors.cardSurface)
+            .padding(start = Spacing.lg, end = Spacing.xs, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .background(rowBackground)
-                .padding(start = Spacing.lg, end = Spacing.xs, top = 11.dp, bottom = 11.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .size(36.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp)
+                ),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
+            Icon(
+                imageVector = FeatherIcons.Book,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.width(Spacing.md))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(
-                    imageVector = FeatherIcons.Book,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
+                Text(
+                    text = entry.name,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
-            }
-
-            Spacer(modifier = Modifier.width(Spacing.md))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = entry.name,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false)
+                if (entry.builtin) {
+                    McpPill(
+                        text = stringResource(R.string.skills_builtin),
+                        textColor = MaterialTheme.colorScheme.outline,
+                        backgroundColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
                     )
+                } else {
                     McpPill(
                         text = stringResource(if (entry.disabled) R.string.common_disabled else R.string.common_enabled),
                         textColor = if (entry.disabled) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.tertiary,
                         backgroundColor = (if (entry.disabled) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.tertiary).copy(alpha = 0.12f)
                     )
                 }
-                Text(
-                    text = entry.description.ifBlank { stringResource(R.string.mcp_no_description) },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
-
-            Spacer(modifier = Modifier.width(Spacing.sm))
-
-            Icon(
-                imageVector = FeatherIcons.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.semanticColors.subtleText,
-                modifier = Modifier.size(18.dp)
+            Text(
+                text = entry.description.ifBlank { stringResource(R.string.mcp_no_description) },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
+
+        Spacer(modifier = Modifier.width(Spacing.sm))
+
+        Icon(
+            imageVector = FeatherIcons.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.semanticColors.subtleText,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 

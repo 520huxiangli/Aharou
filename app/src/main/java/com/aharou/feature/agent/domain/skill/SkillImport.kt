@@ -63,17 +63,19 @@ internal object SkillImporter {
     /**
      * 从 Markdown 文本导入单个技能：解析 frontmatter 取名称/描述/工具，再归一化为 SKILL.md 落盘。
      * [fallbackName] 用于正文缺 name 时兜底（如源文件名）。
+     * [overwrite] 为 true 时同名技能直接覆盖（用于市场更新），否则按冲突跳过。
      */
     fun importMarkdown(
         provider: FileAccessProvider,
         skillsRoot: String,
         existingNames: Set<String>,
         text: String,
-        fallbackName: String
+        fallbackName: String,
+        overwrite: Boolean = false
     ): SkillImportReport {
         val parsed = SkillParser.parseText(text, fallbackName)
         val name = parsed.name.trim()
-        validate(name, existingNames)?.let { return SkillImportReport(emptyList(), fatal = it) }
+        validate(name, existingNames, overwrite)?.let { return SkillImportReport(emptyList(), fatal = it) }
         if (parsed.instructions.isBlank()) {
             return SkillImportReport(emptyList(), fatal = SkillImportError.EMPTY_CONTENT)
         }
@@ -87,13 +89,14 @@ internal object SkillImporter {
         }
     }
 
-    /** 从 zip 输入流导入技能（一个包内可含多个技能目录）。 */
+    /** 从 zip 输入流导入技能（一个包内可含多个技能目录）。[overwrite] 同 [importMarkdown]。 */
     fun importArchive(
         provider: FileAccessProvider,
         skillsRoot: String,
         existingNames: Set<String>,
         input: InputStream,
-        fallbackName: String
+        fallbackName: String,
+        overwrite: Boolean = false
     ): SkillImportReport {
         val skills = when (val read = readArchive(input, fallbackName)) {
             is ArchiveRead.Failed -> return SkillImportReport(emptyList(), fatal = read.error)
@@ -102,12 +105,18 @@ internal object SkillImporter {
 
         val imported = mutableListOf<String>()
         val failures = mutableListOf<SkillImportFailure>()
-        // 同批导入里已占用的名称，避免一个包内两个同名技能互相覆盖。
-        val used = existingNames.toMutableSet()
+        // 同批导入里已占用的名称，避免一个包内两个同名技能互相覆盖（与 [overwrite] 无关）。
+        val used = mutableSetOf<String>()
 
         for (skill in skills) {
             val name = skill.name.trim()
-            val error = validate(name, used) ?: if (skill.files.isEmpty()) SkillImportError.EMPTY_CONTENT else null
+            val error = when {
+                !SkillRepository.isValidName(name) -> SkillImportError.INVALID_NAME
+                name.lowercase() in used -> SkillImportError.NAME_CONFLICT
+                !overwrite && name.lowercase() in existingNames -> SkillImportError.NAME_CONFLICT
+                skill.files.isEmpty() -> SkillImportError.EMPTY_CONTENT
+                else -> null
+            }
             if (error != null) {
                 failures += SkillImportFailure(name, error)
                 continue
@@ -126,9 +135,9 @@ internal object SkillImporter {
         return SkillImportReport(imported = imported, failures = failures)
     }
 
-    private fun validate(name: String, existingNames: Set<String>): SkillImportError? = when {
+    private fun validate(name: String, existingNames: Set<String>, overwrite: Boolean = false): SkillImportError? = when {
         !SkillRepository.isValidName(name) -> SkillImportError.INVALID_NAME
-        name.lowercase() in existingNames -> SkillImportError.NAME_CONFLICT
+        !overwrite && name.lowercase() in existingNames -> SkillImportError.NAME_CONFLICT
         else -> null
     }
 

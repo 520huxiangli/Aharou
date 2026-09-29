@@ -1,0 +1,32 @@
+{
+  "sources": {
+    "aharou": {
+      "name": { "zh": "Aharou 官方", "en": "Aharou Official" },
+      "kind": "index",
+      "repo": "520huxiangli/Aharou",
+      "branch": "master",
+      "path": "data/skill-packs.json"
+    },
+    "anthropics": {
+      "name": { "zh": "Anthropic 官方", "en": "Anthropic" },
+      "kind": "directory",
+      "repo": "anthropics/skills",
+      "branch": "main",
+      "path": "skills"
+    },
+    "trae": {
+      "name": { "zh": "Trae 社区", "en": "Trae Community" },
+      "kind": "directory",
+      "repo": "trae-community/trae-skills",
+      "branch": "main",
+      "path": "skills"
+    },
+    "workbuddy": {
+      "name": { "zh": "腾讯 WorkBuddy", "en": "Tencent WorkBuddy" },
+      "kind": "directory",
+      "repo": "infometa/workbuddyskills",
+      "branch": "main",
+      "path": "skills"
+    }
+  }
+}

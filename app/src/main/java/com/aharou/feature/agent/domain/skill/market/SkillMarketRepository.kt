@@ -1,0 +1,405 @@
+package com.aharou.feature.agent.domain.skill.market
+
+import android.content.Context
+import com.aharou.core.net.AppProxy
+import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
+import com.aharou.feature.agent.domain.skill.SkillImportReport
+import com.aharou.feature.agent.domain.skill.SkillRepository
+import com.aharou.feature.agent.domain.skill.SkillScope
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.Request
+
+/**
+ * 技能市场的读写：列技能、下载技能包、安装、查更新。
+ *
+ * 两类源的差别只在「怎么拿到技能列表」：
+ * - `index` 型：拉源里的 JSON 索引，元数据直接可读；
+ * - `directory` 型：先用平台的目录接口拿整棵文件树，筛出含 SKILL.md 的目录，
+ *   再逐个读 SKILL.md 的 frontmatter 补元数据。
+ *
+ * 平台差异全部交给 [SkillRepoAccess]，`directory` 型每个技能要读一次 SKILL.md，
+ * 所以列表结果按源缓存在磁盘上——不然每进一次市场都要重跑几十个请求。
+ */
+@Singleton
+class SkillMarketRepository @Inject constructor(
+    private val catalog: SkillMarketCatalog,
+    private val installRepository: SkillInstallRepository,
+    private val skillRepository: SkillRepository,
+    @param:ApplicationContext private val context: Context
+) {
+    // 与 RepoDataFetcher.DEFAULT_CLIENT 保持一致的代理与超时配置：
+    // 用户配了上游代理时，裸 client 会连不通（缺 proxyAuthenticator）。
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .proxyAuthenticator(AppProxy.okHttpAuthenticator)
+        .build()
+
+    /** 并发上限：CDN 对同 IP 并发请求会限流，一次打几十个会集体超时。 */
+    private val fetchLimiter = Semaphore(permits = 5)
+
+    /** 已配置的源：id → 定义（保持 JSON 顺序）。 */
+    fun sources(): Map<String, SkillMarketSourceDef> = catalog.load().sources
+
+    /**
+     * 列出某个源下可安装的全部技能。
+     * 12 小时内的结果直接读磁盘缓存（列表要读几十个 SKILL.md，重跑一次很慢），
+     * 缓存过期或没有才走网络；网络失败返回空列表，不抛。
+     */
+    /**
+     * 列出某个源下可安装的全部技能。
+     *
+     * 目录型源要逐个读 SKILL.md 才拿得到描述，像 WorkBuddy 这种 295 个技能的源要等很久。
+     * 所以先把技能名铺出来（只需一次目录请求），再在后台逐个补描述，
+     * 每补一批就通过 [onUpdate] 回调一次，UI 可以边看边填。
+     *
+     * 结果按源缓存 12 小时；缓存命中时直接返回，不回调。
+     */
+    suspend fun listSkills(
+        sourceId: String,
+        onUpdate: ((List<MarketSkill>) -> Unit)? = null
+    ): MarketListing {
+        val source = sources()[sourceId] ?: return MarketListing(emptyList())
+        readCache(sourceId)?.let { return MarketListing(it) }
+
+        val skills = runCatching { listFrom(sourceId, source, onUpdate) }.getOrElse {
+            FileLogger.w(TAG, "列技能失败（$sourceId）：${it.message}")
+            return MarketListing(emptyList(), failed = true)
+        }
+        writeCache(sourceId, skills)
+        return MarketListing(skills)
+    }
+
+    /**
+     * 列出任意仓库的技能（「粘贴仓库地址」入口）。
+     * 地址认不出来返回 null，由调用方提示用户；识别出来但没技能则返回空列表。
+     */
+    suspend fun listFromRepo(input: String): RepoListing? {
+        val parsed = SkillRepoAccess.parse(input) ?: return null
+        val coord = parsed.coord
+        // 地址里带子目录（.../tree/main/skills/docx）时只扫那一层，否则扫整仓。
+        val source = SkillMarketSourceDef(
+            kind = "directory",
+            repo = coord.repo,
+            branch = coord.ref,
+            path = parsed.subPath,
+            host = coord.host
+        )
+        val skills = runCatching { listFrom(ADHOC_SOURCE_ID, source, null) }.getOrElse {
+            FileLogger.w(TAG, "列仓库失败（${coord.repo}）：${it.message}")
+            return RepoListing(coord.repo, coord.ref, emptyList(), failed = true)
+        }
+        return RepoListing(coord.repo, coord.ref, skills)
+    }
+
+    /**
+     * 安装（或更新）一个技能：[scope] 决定装到全局还是当前项目。
+     * 已在同作用域存在同名技能时直接覆盖——市场里点「安装」就是对「更新」的语义。
+     */
+    suspend fun install(skill: MarketSkill, scope: SkillScope): SkillImportReport {
+        val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
+
+        // 两种源只是技能包的取得方式不同，拿到 zip 字节后完全同路。
+        val zipBytes: ByteArray? = if (skill.isDirectory) {
+            val bytes = coroutineScope {
+                skill.files.map { relative ->
+                    async(Dispatchers.IO) {
+                        relative to fetchLimiter.withPermit {
+                            fetchBytesFirst(SkillRepoAccess.fileUrls(coord, "${skill.dir}/$relative"))
+                        }
+                    }
+                }.awaitAll()
+            }
+            if (bytes.any { it.second == null }) null
+            else zipOf(bytes.map { it.first to it.second!! })
+        } else {
+            fetchBytesFirst(SkillRepoAccess.fileUrls(coord, skill.archivePath))
+        }
+        if (zipBytes == null || zipBytes.isEmpty()) {
+            FileLogger.w(TAG, "技能包下载失败：${skill.name}")
+            return SkillImportReport(emptyList())
+        }
+
+        val report = withContext(Dispatchers.IO) {
+            skillRepository.importZip(
+                input = zipBytes.inputStream(),
+                fallbackName = skill.name,
+                scope = scope,
+                overwrite = true
+            )
+        }
+        if (report.imported.isNotEmpty()) {
+            installRepository.save(
+                skill.name,
+                SkillInstallRecord(
+                    source = skill.sourceId,
+                    version = skill.version,
+                    installedAt = System.currentTimeMillis()
+                )
+            )
+        }
+        return report
+    }
+
+    /** 市场里的 [skill] 相对已安装记录是否有新版（两边都有非空版本号且不同）。 */
+    fun hasUpdate(skill: MarketSkill): Boolean {
+        val installed = installRepository.record(skill.name) ?: return false
+        if (skill.version.isBlank() || installed.version.isBlank()) return false
+        return skill.version != installed.version
+    }
+
+    /** 某技能已从市场安装过吗。 */
+    fun isInstalled(skill: MarketSkill): Boolean = installRepository.record(skill.name) != null
+
+    // ── 列表 ──
+
+    private suspend fun listFrom(
+        sourceId: String,
+        source: SkillMarketSourceDef,
+        onUpdate: ((List<MarketSkill>) -> Unit)?
+    ): List<MarketSkill> =
+        if (source.isDirectory) listFromDirectory(sourceId, source, onUpdate)
+        else listFromIndex(sourceId, source)
+
+    private suspend fun listFromIndex(sourceId: String, source: SkillMarketSourceDef): List<MarketSkill> {
+        val coord = coordOf(source)
+        // 取不到就抛：让上层区分「源里确实一个技能都没有」与「没取到」
+        val raw = httpGetFirst(SkillRepoAccess.fileUrls(coord, source.path))
+            ?: error("索引文件获取失败：${source.repo}/${source.path}")
+        val parsed = runCatching { json.decodeFromString<SkillPackData>(raw) }.getOrNull()
+            ?: error("索引文件解析失败：${source.repo}/${source.path}")
+        return parsed.skills
+            .filter { it.name.isNotBlank() && it.path.isNotBlank() }
+            .map { entry ->
+                MarketSkill(
+                    sourceId = sourceId,
+                    host = source.host,
+                    repo = source.repo,
+                    branch = source.branch,
+                    isDirectory = false,
+                    dir = entry.path.substringBeforeLast('/', ""),
+                    name = entry.name,
+                    description = entry.description,
+                    version = entry.version,
+                    author = entry.author,
+                    license = entry.license,
+                    archivePath = entry.path
+                )
+            }
+    }
+
+    private suspend fun listFromDirectory(
+        sourceId: String,
+        source: SkillMarketSourceDef,
+        onUpdate: ((List<MarketSkill>) -> Unit)?
+    ): List<MarketSkill> = coroutineScope {
+        val coord = coordOf(source)
+        val prefix = source.path.trim('/')
+        // 取不到就抛：让上层区分「源里确实一个技能都没有」与「没取到」
+        val files = fetchTree(coord) ?: error("目录获取失败：${source.repo}")
+        val dirs = files
+            .filter { it.substringAfterLast('/').equals(SKILL_FILE, ignoreCase = true) }
+            // 根目录的 SKILL.md（单技能仓库）目录名是空串；不传第二参时 substringBeforeLast
+            // 会把 "SKILL.md" 整个当目录名，拼出 SKILL.md/SKILL.md 这种错误路径
+            .map { it.substringBeforeLast('/', "") }
+            // prefix 为空 = 扫整仓；否则只要该目录本身或其子目录（地址直接指向技能目录时命中的是相等）
+            .filter { prefix.isEmpty() || it == prefix || it.startsWith("$prefix/") }
+            // 跳过 `_template` 这类以短横线/下划线开头的脚手架目录
+            .filterNot { it.substringAfterLast('/').startsWith("_") }
+            .distinct()
+        if (dirs.isEmpty()) return@coroutineScope emptyList()
+
+        // 第一步：只用目录名把列表铺出来，不用等任何 SKILL.md
+        val base = dirs.map { dir -> MarketSkill(
+            sourceId = sourceId,
+            host = source.host,
+            repo = source.repo,
+            branch = source.branch,
+            isDirectory = true,
+            dir = dir,
+            name = dir.substringAfterLast('/').ifEmpty { source.repo.substringAfterLast('/') },
+            description = "",
+            // dir 为空串 = 整个仓库就是这一个技能，它的附属文件也就是仓库全部文件
+            files = files.filter { dir.isEmpty() || it.startsWith("$dir/") }
+                .map { if (dir.isEmpty()) it else it.removePrefix("$dir/") }
+        ) }
+        onUpdate?.invoke(base)
+
+        // 第二步：补描述。只补前 [MAX_ENRICH] 个——列表里看得见的就那么几十条，
+        // 几百个技能全读完只是白耗流量。
+        val enrichDirs = dirs.take(MAX_ENRICH)
+        val enriched = enrichDirs.map { dir ->
+            async(Dispatchers.IO) {
+                val relative = "$dir/$SKILL_FILE"
+                val text = fetchLimiter.withPermit {
+                    httpGetFirst(SkillRepoAccess.fileUrls(coord, relative))
+                }
+                val fallback = dir.substringAfterLast('/')
+                val meta = text?.let { SkillFrontmatter.parse(it, fallback) }
+                dir to meta
+            }
+        }.awaitAll().toMap()
+        if (enriched.isEmpty()) return@coroutineScope base
+
+        val full = base.map { skill ->
+            val meta = enriched[skill.dir] ?: return@map skill
+            skill.copy(
+                name = meta?.name ?: skill.name,
+                description = meta?.description.orEmpty(),
+                version = meta?.version.orEmpty(),
+                author = meta?.author.orEmpty(),
+                license = meta?.license.orEmpty()
+            )
+        }
+        onUpdate?.invoke(full)
+        full
+    }
+
+    private fun coordOf(source: SkillMarketSourceDef) =
+        SkillRepoAccess.Coord(source.host, source.repo, source.branch)
+
+    /** 平台的文件树接口：一次拿回整棵树的文件路径（相对仓库根）。 */
+    private suspend fun fetchTree(coord: SkillRepoAccess.Coord): List<String>? {
+        val body = httpGetFastest(SkillRepoAccess.treeUrls(coord)) ?: return null
+        return SkillRepoAccess.parseTree(coord.host, body)
+    }
+
+    // ── 缓存 ──
+
+    private fun cacheFile(sourceId: String) = File(File(context.filesDir, CACHE_DIR), "$sourceId.json")
+
+    private fun readCache(sourceId: String): List<MarketSkill>? {
+        val file = cacheFile(sourceId)
+        if (!file.isFile) return null
+        if (System.currentTimeMillis() - file.lastModified() > CACHE_TTL_MS) return null
+        return runCatching { json.decodeFromString<List<MarketSkill>>(file.readText(Charsets.UTF_8)) }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    private suspend fun writeCache(sourceId: String, skills: List<MarketSkill>) = withContext(Dispatchers.IO) {
+        if (skills.isEmpty()) return@withContext
+        runCatching {
+            cacheFile(sourceId).writeTextSafely(json.encodeToString(skills), TAG)
+        }
+    }
+
+    // ── 网络 ──
+
+    /** 依次尝试候选节点，返回第一个成功的结果；全失败返回 null。 */
+    private suspend fun httpGetFirst(urls: List<String>): String? {
+        urls.forEach { url -> httpGet(url)?.let { return it } }
+        return null
+    }
+
+    /**
+     * 并发请求候选地址，返回最先成功的那一个；全失败返回 null。
+     *
+     * 只在目录接口上用：通路有好几条（直连 api.github.com、两个反代、jsDelivr），
+     * 哪条通取决于当前网络与第三方状态，串行降级一旦踩到不通的那条就要白等一整个连接超时。
+     * 代价是多发一两个请求，换列表不受任何单点影响。
+     *
+     * 逐个下载技能文件时不用这套——那是几十个请求，翻倍发没意义。
+     */
+    private suspend fun httpGetFastest(urls: List<String>): String? = coroutineScope {
+        if (urls.isEmpty()) return@coroutineScope null
+        val winner = CompletableDeferred<String?>()
+        val jobs = urls.map { url -> launch { httpGet(url)?.let { winner.complete(it) } } }
+        // 全军覆没时给 winner 一个了结，否则 await 会一直挂着
+        launch { jobs.joinAll(); winner.complete(null) }
+        val body = winner.await()
+        jobs.forEach { it.cancel() }
+        body
+    }
+
+    private suspend fun fetchBytesFirst(urls: List<String>): ByteArray? {
+        urls.forEach { url -> fetchBytes(url)?.let { return it } }
+        return null
+    }
+
+    private suspend fun httpGet(url: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).get().build()
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) response.body?.string() else null
+            }
+        }.getOrElse { e ->
+            FileLogger.d(TAG, "请求失败 $url：${e.message}")
+            null
+        }
+    }
+
+    private suspend fun fetchBytes(url: String): ByteArray? = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).get().build()
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) response.body?.bytes() else null
+            }
+        }.getOrElse { null }
+    }
+
+    /** 把内存里的文件打成一个 zip，供 [SkillRepository.importZip] 解析。 */
+    private fun zipOf(files: List<Pair<String, ByteArray>>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            files.forEach { (name, bytes) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    /** 「粘贴仓库地址」的结果。[failed] 区分「仓库里没技能」与「没取到」。 */
+    data class RepoListing(
+        val repo: String,
+        val ref: String,
+        val skills: List<MarketSkill>,
+        val failed: Boolean = false
+    )
+
+    /** 列技能的结果。[failed] 用于区分「源里真没技能」与「没取到」（网络不通 / 被拒）。 */
+    data class MarketListing(
+        val skills: List<MarketSkill>,
+        val failed: Boolean = false
+    )
+
+    private companion object {
+        const val TAG = "SkillMarketRepository"
+        const val USER_AGENT = "aharou-android"
+        const val SKILL_FILE = "SKILL.md"
+        const val CACHE_DIR = "aharou/skill-market-cache"
+        const val CACHE_TTL_MS = 12 * 60 * 60 * 1000L
+
+        /** 最多给多少个技能补读 SKILL.md。列表看得见的就几十条，再多是白耗流量。 */
+        const val MAX_ENRICH = 120
+
+        /** 「粘贴地址」这类一次性源共用的 id，不写缓存（不同仓库会互相覆盖）。 */
+        const val ADHOC_SOURCE_ID = "adhoc"
+
+        val json = Json { ignoreUnknownKeys = true }
+    }
+}

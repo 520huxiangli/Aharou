@@ -32,13 +32,16 @@ class ConfigSkillFields @Inject constructor(
         registry.register(SkillCollection())
     }
 
-    private fun skillNames(): List<String> = skillRepository.listAllSkills().map { it.skill.name }
+    private fun skillNames(): List<String> =
+        skillRepository.listAllSkills()
+            .filter { it.scope != SkillScope.BUILTIN }
+            .map { it.skill.name }
 
     private inner class SkillCollection : ConfigCollection {
         override val basePath = "skill.skills"
         override val displayName = "技能"
         override val description =
-            "已安装的技能（全局 + 项目）。子字段：disabled；技能名即集合 id。"
+            "已安装的技能（全局 + 项目）。子字段：disabled；技能名即集合 id。内置技能随 App 打包，不在此列。"
         override val addable = false
         override val removable = false
 

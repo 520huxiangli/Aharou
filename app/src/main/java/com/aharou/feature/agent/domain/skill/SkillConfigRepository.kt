@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.skill
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
@@ -131,10 +132,10 @@ class SkillConfigRepository @Inject constructor(
             val json = serializeDisabled(names)
             // 临时文件 + rename 原子落盘，避免写一半崩溃损坏配置
             val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeText(json)
+            tmp.writeTextSafely(json, TAG)
             if (!tmp.renameTo(file)) {
                 // rename 失败（罕见），回退直接写，避免丢配置
-                file.writeText(json)
+                file.writeTextSafely(json, TAG)
             }
         }
     }

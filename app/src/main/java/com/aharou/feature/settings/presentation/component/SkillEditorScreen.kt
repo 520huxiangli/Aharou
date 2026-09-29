@@ -204,4 +204,5 @@ private fun SkillSaveError.messageRes(): Int = when (this) {
     SkillSaveError.EMPTY_INSTRUCTIONS -> R.string.skills_editor_error_empty_instructions
     SkillSaveError.NAME_CONFLICT -> R.string.skills_editor_error_name_conflict
     SkillSaveError.IO_FAILED -> R.string.skills_editor_error_io
+    SkillSaveError.READ_ONLY -> R.string.skills_editor_error_read_only
 }

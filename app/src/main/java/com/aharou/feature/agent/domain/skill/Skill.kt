@@ -38,5 +38,8 @@ enum class SkillSaveError {
     NAME_CONFLICT,
 
     /** 写盘失败。 */
-    IO_FAILED
+    IO_FAILED,
+
+    /** 目标是内置技能：随 App 打包，只读。 */
+    READ_ONLY
 }

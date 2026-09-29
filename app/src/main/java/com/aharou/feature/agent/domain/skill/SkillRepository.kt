@@ -16,15 +16,19 @@ import javax.inject.Singleton
  */
 @Singleton
 class SkillRepository @Inject constructor(
+    private val builtinSkillSource: BuiltinSkillSource,
     private val localDirectorySkillSource: LocalDirectorySkillSource,
     private val projectDirectorySkillSource: ProjectDirectorySkillSource,
     private val skillConfigRepository: SkillConfigRepository,
     private val localFileAccess: LocalFileAccess,
     private val fileAccess: FileAccessProvider
 ) {
-    /** 全部技能（含来源作用域），未过滤禁用；同名技能项目级优先（与 MCP 两级配置一致）。 */
-    fun listAllSkills(): List<SkillEntry> =
-        mergeAll(localDirectorySkillSource.listSkills(), projectDirectorySkillSource.listSkills())
+    /** 全部技能（含来源作用域），未过滤禁用；同名按 内置 < 全局 < 项目 逐级覆盖。 */
+    fun listAllSkills(): List<SkillEntry> = mergeAll(
+        builtinSkillSource.listSkills(),
+        localDirectorySkillSource.listSkills(),
+        projectDirectorySkillSource.listSkills()
+    )
 
     /** 启用的技能列表（注入系统提示词用），禁用技能被过滤。 */
     fun listSkills(): List<Skill> =
@@ -35,15 +39,18 @@ class SkillRepository @Inject constructor(
         if (name.lowercase() in skillConfigRepository.disabledNames()) return null
         return localDirectorySkillSource.loadInstructions(name)
             ?: projectDirectorySkillSource.loadInstructions(name)
+            ?: builtinSkillSource.loadInstructions(name)
     }
 
     /** 技能是否在任一作用域中被禁用。 */
     fun isSkillDisabled(name: String): Boolean =
         name.lowercase() in skillConfigRepository.disabledNames()
 
-    /** 在指定作用域启用/禁用某个技能。 */
-    fun setSkillDisabled(name: String, disabled: Boolean, scope: SkillScope) =
+    /** 在指定作用域启用/禁用某个技能。内置技能不可停用，直接忽略。 */
+    fun setSkillDisabled(name: String, disabled: Boolean, scope: SkillScope) {
+        if (scope == SkillScope.BUILTIN) return
         skillConfigRepository.setDisabled(name, disabled, scope)
+    }
 
     /**
      * 写入技能文件（新建或编辑）。[originalName] 为编辑前的名称，新建时传 null；返回 null 表示成功。
@@ -52,6 +59,7 @@ class SkillRepository @Inject constructor(
      * 技能正文常按 `~/.aharou/skills/<目录>/run.py` 引用同目录脚本，跟着改名会把这些引用打断。
      */
     fun save(form: SkillForm, scope: SkillScope, originalName: String? = null): SkillSaveError? {
+        if (scope == SkillScope.BUILTIN) return SkillSaveError.READ_ONLY
         val name = form.name.trim()
         if (!isValidName(name)) return SkillSaveError.INVALID_NAME
         if (form.instructions.isBlank()) return SkillSaveError.EMPTY_INSTRUCTIONS
@@ -89,31 +97,45 @@ class SkillRepository @Inject constructor(
         }
     }
 
-    /** 指定作用域的技能根目录（容器路径）。 */
-    fun skillsRoot(scope: SkillScope): String =
-        if (scope == SkillScope.GLOBAL) {
-            localDirectorySkillSource.skillsRoot
-        } else {
-            projectDirectorySkillSource.skillsRoot
-        }
+    /** 指定作用域的技能根目录（容器路径）。内置技能随 App 打包，没有可写目录。 */
+    fun skillsRoot(scope: SkillScope): String = when (scope) {
+        SkillScope.GLOBAL -> localDirectorySkillSource.skillsRoot
+        SkillScope.PROJECT -> projectDirectorySkillSource.skillsRoot
+        SkillScope.BUILTIN -> error("内置技能随 App 打包，没有可写目录")
+    }
 
     /**
      * 从 Markdown 文本导入技能到指定作用域；[fallbackName] 为 frontmatter 缺 name 时的兜底名。
-     * 名称非法 / 同名冲突 / 正文为空时整体失败，不落盘。
+     * 名称非法 / 同名冲突 / 正文为空时整体失败，不落盘；[overwrite] 为 true 时同名直接覆盖。
      */
-    fun importMarkdown(text: String, fallbackName: String, scope: SkillScope): SkillImportReport =
-        SkillImporter.importMarkdown(providerFor(scope), skillsRoot(scope), existingNamesIn(scope), text, fallbackName)
+    fun importMarkdown(
+        text: String,
+        fallbackName: String,
+        scope: SkillScope,
+        overwrite: Boolean = false
+    ): SkillImportReport =
+        SkillImporter.importMarkdown(
+            providerFor(scope), skillsRoot(scope), existingNamesIn(scope), text, fallbackName, overwrite
+        )
 
-    /** 从 zip 输入流导入技能（可含多个技能目录）到指定作用域。 */
-    fun importZip(input: InputStream, fallbackName: String, scope: SkillScope): SkillImportReport =
-        SkillImporter.importArchive(providerFor(scope), skillsRoot(scope), existingNamesIn(scope), input, fallbackName)
+    /** 从 zip 输入流导入技能（可含多个技能目录）到指定作用域。[overwrite] 同 [importMarkdown]。 */
+    fun importZip(
+        input: InputStream,
+        fallbackName: String,
+        scope: SkillScope,
+        overwrite: Boolean = false
+    ): SkillImportReport =
+        SkillImporter.importArchive(
+            providerFor(scope), skillsRoot(scope), existingNamesIn(scope), input, fallbackName, overwrite
+        )
 
     /** 指定作用域下已有技能名（小写），供导入查重。 */
     private fun existingNamesIn(scope: SkillScope): Set<String> =
         listAllSkills().filter { it.scope == scope }.map { it.skill.name.lowercase() }.toSet()
 
-    /** 删除指定作用域的技能（删除其目录，不可恢复）。返回是否成功。 */
+    /** 删除指定作用域的技能（删除其目录，不可恢复）。返回是否成功；内置技能不可删。 */
     fun deleteSkill(name: String, scope: SkillScope): Boolean {
+        if (scope == SkillScope.BUILTIN) return false
         val entry = listAllSkills().firstOrNull {
             it.skill.name.equals(name, ignoreCase = true) && it.scope == scope
         } ?: return false
@@ -121,9 +143,12 @@ class SkillRepository @Inject constructor(
         return safeDeleteSkillDir(providerFor(scope), dirPath)
     }
 
-    /** 全局技能固定在本地私有目录，项目级技能跟随工作区（可能是远程）。 */
-    private fun providerFor(scope: SkillScope): FileAccessProvider =
-        if (scope == SkillScope.GLOBAL) localFileAccess else fileAccess
+    /** 全局技能固定在本地私有目录，项目级技能跟随工作区（可能是远程）；内置技能只读。 */
+    private fun providerFor(scope: SkillScope): FileAccessProvider = when (scope) {
+        SkillScope.GLOBAL -> localFileAccess
+        SkillScope.PROJECT -> fileAccess
+        SkillScope.BUILTIN -> error("内置技能只读，不接受写入")
+    }
 
     companion object {
         private const val TAG = "SkillRepository"
@@ -150,9 +175,14 @@ class SkillRepository @Inject constructor(
             return "${dirPath.trimEnd('/')}/$name"
         }
 
-        /** 合并两级来源：同名项目级覆盖全局，按名称排序。 */
-        internal fun mergeAll(global: List<Skill>, project: List<Skill>): List<SkillEntry> {
+        /** 合并三级来源：同名逐级覆盖（内置 < 全局 < 项目），按名称排序。 */
+        internal fun mergeAll(
+            builtin: List<Skill>,
+            global: List<Skill>,
+            project: List<Skill>
+        ): List<SkillEntry> {
             val byName = LinkedHashMap<String, SkillEntry>()
+            builtin.forEach { byName[it.name.lowercase()] = SkillEntry(it, SkillScope.BUILTIN) }
             global.forEach { byName[it.name.lowercase()] = SkillEntry(it, SkillScope.GLOBAL) }
             project.forEach { byName[it.name.lowercase()] = SkillEntry(it, SkillScope.PROJECT) }
             return byName.values.sortedBy { it.skill.name.lowercase() }
