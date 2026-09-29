@@ -16,12 +16,12 @@ import kotlinx.coroutines.flow.map
  * providerId 为空（未配置）即视为「跟随当前聊天模型」。
  */
 abstract class ModelSelectionSettingsRepository(
-    private val dataStore: DataStore<Preferences>,
+    protected val dataStore: DataStore<Preferences>,
     providerIdKeyName: String,
     modelKeyName: String
 ) {
-    private val providerIdKey = stringPreferencesKey(providerIdKeyName)
-    private val modelKey = stringPreferencesKey(modelKeyName)
+    protected val providerIdKey = stringPreferencesKey(providerIdKeyName)
+    protected val modelKey = stringPreferencesKey(modelKeyName)
 
     /** 当前持久化的专用 providerId 流；未设置时为空字符串（=跟随聊天模型）。 */
     val providerIdFlow: Flow<String> = dataStore.data.map { it[providerIdKey] ?: "" }

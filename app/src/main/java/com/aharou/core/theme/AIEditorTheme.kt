@@ -185,6 +185,7 @@ object StorageUsagePalette {
     val ContainerImages = Color(0xFFA78BFA)
     val Workspaces = Color(0xFF22C55E)
     val AiConfig = Color(0xFF14B8A6)
+    val VoiceModels = Color(0xFFEC4899)
     val Checkpoints = Color(0xFFF59E0B)
     val Logs = Color(0xFFF97316)
     val Caches = Color(0xFF94A3B8)

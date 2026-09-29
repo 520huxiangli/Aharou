@@ -401,6 +401,7 @@ private fun StorageCategory.color(): Color = when (this) {
     StorageCategory.ContainerImages -> StorageUsagePalette.ContainerImages
     StorageCategory.Workspaces -> StorageUsagePalette.Workspaces
     StorageCategory.AiConfig -> StorageUsagePalette.AiConfig
+    StorageCategory.VoiceModels -> StorageUsagePalette.VoiceModels
     StorageCategory.Checkpoints -> StorageUsagePalette.Checkpoints
     StorageCategory.Logs -> StorageUsagePalette.Logs
     StorageCategory.Caches -> StorageUsagePalette.Caches

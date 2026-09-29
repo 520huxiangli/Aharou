@@ -18,6 +18,7 @@ import com.aharou.feature.settings.domain.model.StorageDetail
 import com.aharou.feature.settings.domain.model.StorageDetailKey
 import com.aharou.feature.settings.domain.model.StorageEntry
 import com.aharou.feature.settings.domain.model.formatStorageSize
+import com.aharou.feature.voice.domain.VoiceModels
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,6 +71,7 @@ class StorageUsageScanner @Inject constructor(
         emit(imagesEntry())
         emit(otherDataEntry(cancelled))
         emit(aiConfigEntry(cancelled))
+        emit(voiceModelsEntry(cancelled))
         emit(workspacesEntry(cancelled))
         emit(containerEntry(cancelled))
     }.flowOn(Dispatchers.IO)
@@ -207,6 +209,16 @@ class StorageUsageScanner @Inject constructor(
     private fun checkpointsEntry(cancelled: () -> Boolean): StorageEntry =
         StorageEntry(StorageCategory.Checkpoints, dirSize(File(context.filesDir, CHECKPOINTS_DIR), cancelled))
 
+    /** 离线语音模型：`filesDir/voice_models`，按模型逐个列出（目录名即模型标识）。 */
+    private fun voiceModelsEntry(cancelled: () -> Boolean): StorageEntry {
+        val root = File(context.filesDir, VOICE_MODELS_DIR)
+        val models = root.listFiles { f: File -> f.isDirectory }?.sortedBy { it.name } ?: emptyList()
+        val details = models
+            .map { StorageDetail(label = it.name, bytes = dirSize(it, cancelled)) }
+            .filter { it.bytes > 0 }
+        return StorageEntry(StorageCategory.VoiceModels, details.sumOf { it.bytes }, details)
+    }
+
     /**
      * 日志：直接问两个 logger 要文件清单，而不是猜目录——它们优先写外部私有目录，
      * 外部不可用时回退到内部，路径由 logger 自己决定。
@@ -265,13 +277,14 @@ class StorageUsageScanner @Inject constructor(
         private const val IMAGES_DIR = "rootfs_images"
         private const val PROJECTS_DIR = "projects"
         private const val CHECKPOINTS_DIR = "checkpoints"
+        private const val VOICE_MODELS_DIR = VoiceModels.MODEL_ROOT_DIR
         private const val AHAROU_DIR = "aicode"
         private const val PREFS_DIR = "shared_prefs"
         private const val ATTACHMENTS_RELATIVE = ".aharou/attachments"
 
         /** 已被其它分类覆盖的 filesDir 子项，不再计入「其他数据」。 */
         private val CLASSIFIED_DIRS = setOf(
-            PROJECTS_DIR, AHAROU_DIR, IMAGES_DIR, CHECKPOINTS_DIR, "logs", "ai-logs"
+            PROJECTS_DIR, AHAROU_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, "logs", "ai-logs"
         )
 
         private const val TOP_SESSIONS = 5

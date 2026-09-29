@@ -21,7 +21,7 @@ import javax.inject.Singleton
  * 这两个仓库不是 DataStore 而是 SharedPreferences + StateFlow，但 StateFlow 本身也是 Flow，
  * 因此同样走 [DataStoreBoolField] 一族（字段类的 setter 本就是 suspend lambda，调同步函数没问题）。
  *
- * `network.proxy_password` 标为 SENSITIVE：确认弹窗与审计页会打码，但 `config get` 仍能读到真值。
+ * `network.proxy_password` 标为 SENSITIVE：确认弹窗、审计页与 `config get` 都只看到打码占位文本。
  */
 @Singleton
 class ConfigNetworkFields @Inject constructor(

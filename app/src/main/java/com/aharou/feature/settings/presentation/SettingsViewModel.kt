@@ -36,6 +36,8 @@ import com.aharou.feature.agent.domain.skill.SkillImportReport
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.SkillSaveError
 import com.aharou.feature.agent.domain.skill.SkillScope
+import com.aharou.feature.agent.domain.skill.market.MarketSkill
+import com.aharou.feature.agent.domain.skill.market.SkillMarketRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionConfigRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionForm
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -53,6 +55,8 @@ import com.aharou.feature.settings.data.remote.UpdateCheckResult
 import com.aharou.feature.settings.data.remote.UpdateCheckService
 import com.aharou.feature.settings.data.remote.UpdateDownloadSource
 import com.aharou.feature.settings.data.repository.UpdateCheckSettingsRepository
+import com.aharou.feature.settings.data.repository.VoiceSttSettingsRepository
+import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.data.repository.UpdateChannel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.aharou.feature.settings.data.repository.AppThemeMode
@@ -255,7 +259,9 @@ data class SkillUiEntry(
     val disabled: Boolean,
     val instructions: String,
     /** 手写技能里的 `required_tools`，编辑页不展示，保存时原样写回。 */
-    val requiredTools: List<String> = emptyList()
+    val requiredTools: List<String> = emptyList(),
+    /** 内置技能：随 App 打包，不可编辑、删除或停用。 */
+    val builtin: Boolean = false
 )
 
 /** 子代理列表页的 UI 状态：定义内容 + 来源作用域 + 启停状态。 */
@@ -288,6 +294,19 @@ sealed interface SkillImportState {
     data object Running : SkillImportState
     data class Done(val report: SkillImportReport) : SkillImportState
 }
+
+/** 市场列表里的一条技能：技能本体 + 已装 / 可更新标记。 */
+data class MarketSkillUi(
+    val skill: MarketSkill,
+    val installed: Boolean,
+    val hasUpdate: Boolean
+)
+
+/** 市场页的提示；文案由 UI 层映射成资源串。 */
+enum class MarketAlert { InvalidAddress, NoSkills, LoadFailed }
+
+/** 「粘贴地址」临时源在源列表里的 id。 */
+private const val ADHOC_MARKET_ID = "adhoc"
 
 /** 子代理编辑页的保存结果：UI 据此决定是退回列表还是就地报错。 */
 sealed interface SubAgentSaveState {
@@ -346,7 +365,10 @@ class SettingsViewModel @Inject constructor(
     private val agentDefinitionConfigRepository: AgentDefinitionConfigRepository,
     private val toolRegistry: ToolRegistry,
     private val skillConfigRepository: SkillConfigRepository,
+    private val skillMarketRepository: SkillMarketRepository,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
+    private val voiceSttSettingsRepository: VoiceSttSettingsRepository,
+    private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
@@ -483,6 +505,29 @@ class SettingsViewModel @Inject constructor(
     private val _imageGenModel = MutableStateFlow("")
     val imageGenModel: StateFlow<String> = _imageGenModel.asStateFlow()
 
+    /** 语音识别（STT）专用模型：providerId 为空即未配置（回退内置离线模型）。 */
+    private val _voiceSttProviderId = MutableStateFlow("")
+    val voiceSttProviderId: StateFlow<String> = _voiceSttProviderId.asStateFlow()
+
+    private val _voiceSttModel = MutableStateFlow("")
+    val voiceSttModel: StateFlow<String> = _voiceSttModel.asStateFlow()
+
+    /** 语音合成（TTS）专用模型：providerId 为空即未配置（不朗读）。 */
+    private val _voiceTtsProviderId = MutableStateFlow("")
+    val voiceTtsProviderId: StateFlow<String> = _voiceTtsProviderId.asStateFlow()
+
+    private val _voiceTtsModel = MutableStateFlow("")
+    val voiceTtsModel: StateFlow<String> = _voiceTtsModel.asStateFlow()
+
+    /** 合成音色名；不同服务商格式不同，原样透传，为空时用服务端默认。 */
+    private val _voiceTtsVoice = MutableStateFlow("")
+    val voiceTtsVoice: StateFlow<String> = _voiceTtsVoice.asStateFlow()
+
+    private val _autoReadAloud = MutableStateFlow(false)
+
+    /** 自动朗读开关：开了之后 AI 每条回复落地就自动念。 */
+    val autoReadAloud: StateFlow<Boolean> = _autoReadAloud.asStateFlow()
+
     private val _logLevel = MutableStateFlow(LogLevel.VERBOSE)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
 
@@ -580,6 +625,24 @@ class SettingsViewModel @Inject constructor(
 
     private val _skillImportState = MutableStateFlow<SkillImportState>(SkillImportState.Idle)
     val skillImportState: StateFlow<SkillImportState> = _skillImportState.asStateFlow()
+
+    private val _marketSources = MutableStateFlow<List<Pair<String, String>>>(emptyList())
+    val marketSources: StateFlow<List<Pair<String, String>>> = _marketSources.asStateFlow()
+
+    private val _marketSourceId = MutableStateFlow("")
+    val marketSourceId: StateFlow<String> = _marketSourceId.asStateFlow()
+
+    private val _marketSkills = MutableStateFlow<List<MarketSkillUi>>(emptyList())
+    val marketSkills: StateFlow<List<MarketSkillUi>> = _marketSkills.asStateFlow()
+
+    private val _marketLoading = MutableStateFlow(false)
+    val marketLoading: StateFlow<Boolean> = _marketLoading.asStateFlow()
+
+    private val _marketAlert = MutableStateFlow<MarketAlert?>(null)
+    val marketAlert: StateFlow<MarketAlert?> = _marketAlert.asStateFlow()
+
+    /** 「粘贴仓库地址」加载出来的仓库（owner/name），作为临时源挂在源列表末尾。 */
+    private var marketAdhocRepo: String? = null
 
     private val _subAgents = MutableStateFlow<List<SubAgentUiEntry>>(emptyList())
     val subAgents: StateFlow<List<SubAgentUiEntry>> = _subAgents.asStateFlow()
@@ -790,6 +853,39 @@ class SettingsViewModel @Inject constructor(
             launch {
                 imageGenModelSettingsRepository.modelFlow.collectLatest {
                     _imageGenModel.value = it
+                }
+            }
+
+            launch {
+                voiceSttSettingsRepository.providerIdFlow.collectLatest {
+                    _voiceSttProviderId.value = it
+                }
+            }
+
+            launch {
+                voiceSttSettingsRepository.modelFlow.collectLatest {
+                    _voiceSttModel.value = it
+                }
+            }
+
+            launch {
+                voiceTtsSettingsRepository.providerIdFlow.collectLatest {
+                    _voiceTtsProviderId.value = it
+                }
+            }
+
+            launch {
+                voiceTtsSettingsRepository.modelFlow.collectLatest {
+                    _voiceTtsModel.value = it
+                }
+            }
+
+            launch {
+                voiceTtsSettingsRepository.voiceFlow.collectLatest {
+                    _voiceTtsVoice.value = it
+                }
+                voiceTtsSettingsRepository.autoReadAloudFlow.collectLatest {
+                    _autoReadAloud.value = it
                 }
             }
 
@@ -1154,6 +1250,100 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // ── 技能市场 ──
+
+    /** 市场源列表（id → 显示名），并在当前选中源失效时重置为第一个。 */
+    fun refreshMarketSources() {
+        val lang = java.util.Locale.getDefault().language
+        val sources = skillMarketRepository.sources().map { (id, def) -> id to def.displayName(lang) }
+        _marketSources.value = sources + adhocSourceEntry()
+        if (_marketSources.value.none { it.first == _marketSourceId.value }) {
+            _marketSourceId.value = _marketSources.value.firstOrNull()?.first.orEmpty()
+        }
+    }
+
+    /** 切换市场源并重新拉取其技能列表。 */
+    fun selectMarketSource(sourceId: String) {
+        if (_marketSourceId.value == sourceId) return
+        _marketSourceId.value = sourceId
+        if (sourceId == ADHOC_MARKET_ID) {
+            marketAdhocRepo?.let { loadMarketFromRepo(it) }
+        } else {
+            loadMarketSkills()
+        }
+    }
+
+    /**
+     * 按用户粘贴的仓库地址列出技能：地址认不出来或仓库里没技能时给一句提示，不清空现有列表。
+     * 支持 GitHub / Gitee / GitLab / Gitea 系（带 `tree/分支/子目录` 的链接也能直接贴）。
+     */
+    fun loadMarketFromRepo(input: String) {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            _marketLoading.value = true
+            _marketAlert.value = null
+            val listing = withContext(Dispatchers.IO) { skillMarketRepository.listFromRepo(trimmed) }
+            if (listing == null) {
+                _marketAlert.value = MarketAlert.InvalidAddress
+            } else {
+                marketAdhocRepo = listing.repo
+                _marketSourceId.value = ADHOC_MARKET_ID
+                _marketSources.value = (_marketSources.value.filterNot { it.first == ADHOC_MARKET_ID }) +
+                    adhocSourceEntry()
+                _marketSkills.value = listing.skills.map { toMarketUi(it) }
+                _marketAlert.value = when {
+                    listing.failed -> MarketAlert.LoadFailed
+                    listing.skills.isEmpty() -> MarketAlert.NoSkills
+                    else -> null
+                }
+            }
+            _marketLoading.value = false
+        }
+    }
+
+    private fun adhocSourceEntry(): List<Pair<String, String>> =
+        marketAdhocRepo?.let { listOf(ADHOC_MARKET_ID to it) }.orEmpty()
+
+    /**
+     * 拉取当前源的技能列表。列表先铺出来、描述随后流式补上，所以不等全部读完就能看到内容；
+     * 真取不到时给「加载失败」提示，而不是当作「这个源没技能」（那是两回事）。
+     */
+    fun loadMarketSkills() {
+        val sourceId = _marketSourceId.value
+        if (sourceId.isBlank()) return
+        viewModelScope.launch {
+            _marketLoading.value = true
+            _marketAlert.value = null
+            val listing = withContext(Dispatchers.IO) {
+                skillMarketRepository.listSkills(sourceId) { partial ->
+                    _marketSkills.value = partial.map { toMarketUi(it) }
+                }
+            }
+            _marketSkills.value = listing.skills.map { toMarketUi(it) }
+            if (listing.failed) _marketAlert.value = MarketAlert.LoadFailed
+            _marketLoading.value = false
+        }
+    }
+
+    private fun toMarketUi(skill: MarketSkill) = MarketSkillUi(
+        skill = skill,
+        installed = skillMarketRepository.isInstalled(skill),
+        hasUpdate = skillMarketRepository.hasUpdate(skill)
+    )
+
+    /** 从市场安装（已存在则覆盖更新）一个技能到指定作用域，完成后刷新市场与本地列表。 */
+    fun installFromMarket(skill: MarketSkill, scope: SkillScope) {
+        if (_skillImportState.value is SkillImportState.Running) return
+        _skillImportState.value = SkillImportState.Running
+        viewModelScope.launch {
+            val report = withContext(Dispatchers.IO) { skillMarketRepository.install(skill, scope) }
+            finishSkillImport(report)
+            loadMarketSkills()
+            refreshSkills()
+        }
+    }
+
     /** 重新扫描技能（进入设置页 / 启停切换后调用，反映磁盘上增删改）。 */
     fun refreshSkills() {
         viewModelScope.launch {
@@ -1165,7 +1355,8 @@ class SettingsViewModel @Inject constructor(
                         scope = entry.scope,
                         disabled = skillRepository.isSkillDisabled(entry.skill.name),
                         instructions = entry.skill.instructions,
-                        requiredTools = entry.skill.requiredTools
+                        requiredTools = entry.skill.requiredTools,
+                        builtin = entry.scope == SkillScope.BUILTIN
                     )
                 }
             }
@@ -1982,6 +2173,48 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 设置语音识别模型；providerId 留空等同 [clearVoiceSttModel]（回退内置离线模型）。 */
+    fun setVoiceSttModel(providerId: String, model: String) {
+        viewModelScope.launch {
+            voiceSttSettingsRepository.setSttModel(providerId, model)
+        }
+    }
+
+    /** 清空语音识别模型——回退到内置离线模型。 */
+    fun clearVoiceSttModel() {
+        viewModelScope.launch {
+            voiceSttSettingsRepository.clear()
+        }
+    }
+
+    /** 设置语音合成模型与音色；providerId 留空等同 [clearVoiceTtsModel]。 */
+    fun setVoiceTtsModel(providerId: String, model: String, voice: String) {
+        viewModelScope.launch {
+            voiceTtsSettingsRepository.setTtsModel(providerId, model, voice)
+        }
+    }
+
+    /** 切换自动朗读。 */
+    fun setAutoReadAloud(enabled: Boolean) {
+        viewModelScope.launch {
+            voiceTtsSettingsRepository.setAutoReadAloud(enabled)
+        }
+    }
+
+    /** 只改音色，保留当前合成模型选择。 */
+    fun setVoiceTtsVoice(voice: String) {
+        viewModelScope.launch {
+            voiceTtsSettingsRepository.setVoice(voice)
+        }
+    }
+
+    /** 清空语音合成模型——AI 回复不再朗读。 */
+    fun clearVoiceTtsModel() {
+        viewModelScope.launch {
+            voiceTtsSettingsRepository.clear()
+        }
+    }
+
     /** 设置压缩专用模型；providerId 留空等同 [clearCompactionModel]（跟随聊天模型）。 */
     fun setCompactionModel(providerId: String, model: String) {
         viewModelScope.launch {
@@ -2152,6 +2385,16 @@ class SettingsViewModel @Inject constructor(
             visionModelSettingsRepository.getVisionModel() in removed
         ) {
             visionModelSettingsRepository.clear()
+        }
+        if (voiceSttSettingsRepository.getSttProviderId() == provider.id &&
+            voiceSttSettingsRepository.getSttModel() in removed
+        ) {
+            voiceSttSettingsRepository.clear()
+        }
+        if (voiceTtsSettingsRepository.getTtsProviderId() == provider.id &&
+            voiceTtsSettingsRepository.getTtsModel() in removed
+        ) {
+            voiceTtsSettingsRepository.clear()
         }
         if (imageGenModelSettingsRepository.getImageGenProviderId() == provider.id &&
             imageGenModelSettingsRepository.getImageGenModel() in removed

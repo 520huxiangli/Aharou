@@ -48,6 +48,14 @@
     <string name="settings_compaction_model">Compaction Model</string>
     <string name="settings_title_model">Title Model</string>
     <string name="settings_image_gen_model">Image Generation Model</string>
+    <string name="settings_voice_stt_model">Speech Recognition Model</string>
+    <string name="settings_voice_tts_model">Speech Synthesis Model</string>
+    <string name="settings_voice_auto_read">Auto read aloud</string>
+    <string name="settings_voice_auto_read_desc">Read every reply aloud automatically</string>
+    <string name="settings_voice_tts_voice">Voice</string>
+    <string name="settings_voice_tts_voice_hint">Leave empty to use the server default</string>
+    <string name="settings_voice_local_fallback">Built-in offline model</string>
+    <string name="settings_voice_tts_unconfigured">Not configured</string>
     <string name="settings_mcp">MCP Servers</string>
     <string name="settings_skills">Skills</string>
     <string name="settings_container">Container &amp; Images</string>
@@ -154,6 +162,7 @@
     <string name="storage_category_container_images">Container images</string>
     <string name="storage_category_workspaces">Workspaces</string>
     <string name="storage_category_ai_config">AI config &amp; output</string>
+    <string name="storage_category_voice_models">Offline voice models</string>
     <string name="storage_category_checkpoints">Checkpoints</string>
     <string name="storage_category_logs">Logs</string>
     <string name="storage_category_caches">Caches</string>
@@ -179,6 +188,7 @@
     <!-- SettingsScreen common -->
     <string name="common_back">Back</string>
     <string name="common_scroll_to_bottom">Back to bottom</string>
+    <string name="common_scroll_to_prev_user">Previous message</string>
     <string name="common_prev">Previous</string>
     <string name="common_next">Next</string>
     <string name="settings_add_provider">Add vendor</string>
@@ -1061,6 +1071,22 @@
     <string name="skills_empty_hint">Tap + in the top bar to create or import one, or put a folder containing SKILL.md into ~/.aharou/skills/</string>
     <string name="skills_no_project_skills">No skills for the current project</string>
     <string name="skills_no_global_skills">No global skills</string>
+    <string name="skills_builtin">Built-in</string>
+    <string name="skills_no_builtin_skills">No built-in skills</string>
+    <string name="skills_editor_error_read_only">Built-in skills cannot be modified</string>
+    <string name="skills_market">Skill Market</string>
+    <string name="skills_market_install">Install</string>
+    <string name="skills_market_installed">Installed</string>
+    <string name="skills_market_update">Update</string>
+    <string name="skills_market_loading">Loading skills…</string>
+    <string name="skills_market_empty">No skills available from this source</string>
+    <string name="skills_market_repo_hint">Paste a repo URL, e.g. github.com/user/repo</string>
+    <string name="skills_market_repo_load">Load</string>
+    <string name="skills_market_repo_invalid">Unrecognized address</string>
+    <string name="skills_market_no_skills">No skills found in this repository</string>
+    <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
+    <string name="skills_add_from_market">Install from market</string>
+    <string name="skills_add_from_market_desc">Browse official and community skill sources</string>
     <string name="skills_enable">Enable</string>
     <string name="skills_summary">Summary</string>
     <string name="skills_delete_confirm_title">Delete Skill</string>
@@ -1454,6 +1480,8 @@
 
     <!-- Image Generation Model -->
     <string name="image_gen_no_models">No models available. Please add and configure a model in "AI Vendors" (must support image output, e.g. gpt-image-1 / dall-e-3) before selecting an image generation model.</string>
+    <string name="voice_no_models">No speech recognition models available. Add one in "AI Vendors" first (e.g. whisper-large-v3, FunAudioLLM/SenseVoiceSmall), or enter the model name manually on the vendor page.</string>
+    <string name="voice_tts_no_models">No speech synthesis models available. Add one in "AI Vendors" first (e.g. FunAudioLLM/CosyVoice2-0.5B, tts-1), or enter the model name manually on the vendor page.</string>
 
     <!-- Web Search Result -->
     <string name="web_search_title">Web Search</string>
@@ -1463,8 +1491,6 @@
     <!-- Workspace Picker -->
     <string name="workspace_select">Select Workspace</string>
     <string name="workspace_switch">Switch Workspace</string>
-    <string name="workspace_switch_confirm">Switching workspace will stop all running AI sessions and close terminal tabs in the current workspace. Continue?</string>
-    <string name="workspace_confirm">Confirm</string>
     <string name="workspace_open">Open Workspace</string>
     <string name="workspace_new">New</string>
     <string name="workspace_empty_hint">No workspaces, tap "New" to create one</string>
@@ -1657,8 +1683,6 @@
     <string name="browser_empty_hint">Enter a URL in the address bar above to start browsing</string>
     <string name="browser_tabs_manage">Manage Tabs</string>
     <string name="browser_empty_click_hint">Tap above to enter a URL and start browsing</string>
-    <string name="browser_night_mode_on">Turn off night mode</string>
-    <string name="browser_night_mode_off">Turn on night mode</string>
     <string name="browser_devtools">Developer tools</string>
     <!-- Browser（自 OpenMinis 移植）-->
 <string name="browser_downloads_cancel">Cancel download</string>
@@ -1976,4 +2000,34 @@
     <string name="memory_delete_title">Delete \"%1$s\"?</string>
     <string name="memory_delete_body">This cannot be undone; the memory will no longer be injected.</string>
     <string name="memory_read_error">Could not read this file (too large or already deleted).</string>
+
+    <!-- Voice input -->
+    <string name="voice_input_hold">Hold to talk</string>
+    <string name="voice_input_recording">Release to transcribe</string>
+    <string name="voice_model_downloading">Downloading voice model…</string>
+    <string name="voice_model_extracting">Extracting voice model…</string>
+    <string name="voice_model_preparing">Preparing voice model…</string>
+    <string name="voice_model_failed">Failed to prepare voice model</string>
+    <string name="voice_record_failed">Could not start recording</string>
+    <string name="voice_permission_required">Microphone permission needed, enable it in Settings</string>
+    <string name="voice_not_heard">Didn\'t catch that, try again</string>
+    <string name="voice_tts_not_configured">No speech engine available on this device — install one, or configure cloud synthesis in Settings → Default Models</string>
+    <string name="voice_tts_failed">Read aloud failed, check the synthesis model config</string>
+    <string name="voice_read_aloud">Read aloud</string>
+    <string name="voice_stop_read_aloud">Stop reading</string>
+
+    <!-- Voice call -->
+    <string name="voice_call_title">Voice call</string>
+    <string name="voice_call_state_preparing">Preparing…</string>
+    <string name="voice_call_state_listening">Listening…</string>
+    <string name="voice_call_state_thinking">Thinking…</string>
+    <string name="voice_call_state_speaking">Speaking…</string>
+    <string name="voice_call_end">Hang up</string>
+    <string name="voice_call_expand">Expand</string>
+    <string name="voice_call_collapse">Collapse</string>
+    <string name="voice_call_interrupt">Interrupt</string>
+    <string name="voice_call_no_workspace">Open a workspace first</string>
+    <string name="voice_call_failed">Couldn\'t start the call</string>
+    <string name="voice_call_notification_title">Voice call in progress</string>
+    <string name="voice_call_notification_text">Tap to return to Aharou</string>
 </resources>

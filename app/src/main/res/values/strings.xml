@@ -48,6 +48,14 @@
     <string name="settings_compaction_model">压缩模型</string>
     <string name="settings_title_model">标题总结模型</string>
     <string name="settings_image_gen_model">生图模型</string>
+    <string name="settings_voice_stt_model">语音识别模型</string>
+    <string name="settings_voice_tts_model">语音合成模型</string>
+    <string name="settings_voice_auto_read">自动朗读</string>
+    <string name="settings_voice_auto_read_desc">AI 每条回复落地后自动念出来</string>
+    <string name="settings_voice_tts_voice">音色</string>
+    <string name="settings_voice_tts_voice_hint">留空用服务端默认音色</string>
+    <string name="settings_voice_local_fallback">内置离线模型</string>
+    <string name="settings_voice_tts_unconfigured">未配置</string>
     <string name="settings_mcp">MCP 服务器</string>
     <string name="settings_skills">技能</string>
     <string name="settings_container">容器与镜像</string>
@@ -154,6 +162,7 @@
     <string name="storage_category_container_images">容器镜像包</string>
     <string name="storage_category_workspaces">工作区</string>
     <string name="storage_category_ai_config">AI 配置与产物</string>
+    <string name="storage_category_voice_models">离线语音模型</string>
     <string name="storage_category_checkpoints">检查点</string>
     <string name="storage_category_logs">日志</string>
     <string name="storage_category_caches">缓存</string>
@@ -179,6 +188,7 @@
     <!-- SettingsScreen 通用 -->
     <string name="common_back">返回</string>
     <string name="common_scroll_to_bottom">回到底部</string>
+    <string name="common_scroll_to_prev_user">上一条消息</string>
     <string name="common_prev">上一页</string>
     <string name="common_next">下一页</string>
     <string name="settings_add_provider">添加供应商</string>
@@ -1061,6 +1071,22 @@
     <string name="skills_empty_hint">点右上角「+」新建或导入，也可把含 SKILL.md 的目录放进 ~/.aharou/skills/</string>
     <string name="skills_no_project_skills">当前项目暂无技能</string>
     <string name="skills_no_global_skills">暂无全局技能</string>
+    <string name="skills_builtin">内置</string>
+    <string name="skills_no_builtin_skills">暂无内置技能</string>
+    <string name="skills_editor_error_read_only">内置技能不可修改</string>
+    <string name="skills_market">技能市场</string>
+    <string name="skills_market_install">安装</string>
+    <string name="skills_market_installed">已安装</string>
+    <string name="skills_market_update">更新</string>
+    <string name="skills_market_loading">正在加载技能列表…</string>
+    <string name="skills_market_empty">这个源暂时没有可用技能</string>
+    <string name="skills_market_repo_hint">粘贴仓库地址，如 github.com/某人/某仓库</string>
+    <string name="skills_market_repo_load">加载</string>
+    <string name="skills_market_repo_invalid">认不出这个地址</string>
+    <string name="skills_market_no_skills">这个仓库里没找到技能</string>
+    <string name="skills_market_load_failed">加载失败，检查网络或换个源再试</string>
+    <string name="skills_add_from_market">从市场安装</string>
+    <string name="skills_add_from_market_desc">浏览官方与社区技能源，一键安装</string>
     <string name="skills_enable">是否启用</string>
     <string name="skills_summary">摘要</string>
     <string name="skills_delete_confirm_title">删除技能</string>
@@ -1453,6 +1479,8 @@
 
     <!-- Image Generation Model -->
     <string name="image_gen_no_models">暂无可用模型。请在「AI 供应商」中添加并配置模型后（需支持图片输出，如 gpt-image-1 / dall-e-3），再选生图模型。</string>
+    <string name="voice_no_models">暂无可用语音识别模型。请先在「AI 供应商」里添加（如 whisper-large-v3、FunAudioLLM/SenseVoiceSmall），或在供应商页面手动填入模型名。</string>
+    <string name="voice_tts_no_models">暂无可用语音合成模型。请先在「AI 供应商」里添加（如 FunAudioLLM/CosyVoice2-0.5B、tts-1），或在供应商页面手动填入模型名。</string>
 
     <!-- Web Search Result -->
     <string name="web_search_title">网络搜索</string>
@@ -1462,8 +1490,6 @@
     <!-- Workspace Picker -->
     <string name="workspace_select">选择工作区</string>
     <string name="workspace_switch">切换工作区</string>
-    <string name="workspace_switch_confirm">切换工作区会停止当前工作区所有正在运行的 AI 会话并关闭终端标签。确定要切换吗？</string>
-    <string name="workspace_confirm">确定</string>
     <string name="workspace_open">打开工作区</string>
     <string name="workspace_new">新建</string>
     <string name="workspace_empty_hint">暂无工作区，点击「新建」创建一个</string>
@@ -1656,8 +1682,6 @@
     <string name="browser_empty_hint">在上方地址栏输入网址开始浏览</string>
     <string name="browser_tabs_manage">标签页管理</string>
     <string name="browser_empty_click_hint">点击上方输入网址开始浏览</string>
-    <string name="browser_night_mode_on">关闭夜间模式</string>
-    <string name="browser_night_mode_off">开启夜间模式</string>
     <string name="browser_devtools">开发者工具</string>
     <!-- Browser（自 OpenMinis 移植）-->
 <string name="browser_downloads_cancel">取消下载</string>
@@ -1975,4 +1999,34 @@
     <string name="memory_delete_title">删除「%1$s」？</string>
     <string name="memory_delete_body">删除后不可恢复；相关记忆将不再注入。</string>
     <string name="memory_read_error">读不出这个文件（可能过大或已删除）</string>
+
+    <!-- 语音输入 -->
+    <string name="voice_input_hold">按住说话</string>
+    <string name="voice_input_recording">松手识别</string>
+    <string name="voice_model_downloading">下载语音模型…</string>
+    <string name="voice_model_extracting">解压语音模型…</string>
+    <string name="voice_model_preparing">准备语音模型…</string>
+    <string name="voice_model_failed">语音模型准备失败</string>
+    <string name="voice_record_failed">无法启动录音</string>
+    <string name="voice_permission_required">需要录音权限，去设置里开启</string>
+    <string name="voice_not_heard">没听清，再说一次</string>
+    <string name="voice_tts_not_configured">手机上也没有可用的语音引擎：装一个，或者去「设置 → 默认模型」配置云端合成</string>
+    <string name="voice_tts_failed">朗读失败，检查一下合成模型配置</string>
+    <string name="voice_read_aloud">朗读</string>
+    <string name="voice_stop_read_aloud">停止朗读</string>
+
+    <!-- 语音通话 -->
+    <string name="voice_call_title">语音通话</string>
+    <string name="voice_call_state_preparing">准备中…</string>
+    <string name="voice_call_state_listening">正在听…</string>
+    <string name="voice_call_state_thinking">思考中…</string>
+    <string name="voice_call_state_speaking">正在说…</string>
+    <string name="voice_call_end">挂断</string>
+    <string name="voice_call_expand">全屏</string>
+    <string name="voice_call_collapse">收起</string>
+    <string name="voice_call_interrupt">打断</string>
+    <string name="voice_call_no_workspace">先打开一个工作区再通话</string>
+    <string name="voice_call_failed">通话启动失败</string>
+    <string name="voice_call_notification_title">语音通话中</string>
+    <string name="voice_call_notification_text">点按返回 Aharou</string>
 </resources>

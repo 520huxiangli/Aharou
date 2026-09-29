@@ -59,6 +59,7 @@ class SecretEncryptionMigrator @Inject constructor(
         val connections = remoteConnectionDao.getAllConnectionsOnce()
         val migrated = connections.map { c ->
             c.copy(
+                // 忽略大小写：本迁移器要容忍迁移 58 归一之前的历史取值（PASSWORD/PRIVATE_KEY）。
                 authData = if (c.authType.equals("PASSWORD", ignoreCase = true)) enc(c.authData) else c.authData,
                 passphrase = c.passphrase?.let { enc(it) }
             )

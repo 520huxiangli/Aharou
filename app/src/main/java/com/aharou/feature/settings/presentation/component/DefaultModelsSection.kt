@@ -24,6 +24,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
+import com.aharou.core.ui.AppSwitch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import compose.icons.feathericons.Layers
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.AppTextField
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -62,7 +64,9 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Camera
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
+import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Type
+import compose.icons.feathericons.Volume2
 
 /**
  * 默认模型二级页：集中管理应用中的默认/特定用途模型设置（如识图模型、压缩模型）。
@@ -78,6 +82,13 @@ internal fun DefaultModelsSection(
     titleModel: String,
     imageGenProviderId: String,
     imageGenModel: String,
+    voiceSttProviderId: String,
+    voiceSttModel: String,
+    voiceTtsProviderId: String,
+    voiceTtsModel: String,
+    voiceTtsVoice: String,
+    autoReadAloud: Boolean = false,
+    onAutoReadAloudChange: (Boolean) -> Unit = {},
     modelMetadata: Map<String, ModelMetadata>,
     onLoadMetadata: () -> Unit,
     onSelectVisionModel: (providerId: String, model: String) -> Unit,
@@ -87,12 +98,19 @@ internal fun DefaultModelsSection(
     onSelectTitleModel: (providerId: String, model: String) -> Unit,
     onClearTitleModel: () -> Unit,
     onSelectImageGenModel: (providerId: String, model: String) -> Unit,
-    onClearImageGenModel: () -> Unit
+    onClearImageGenModel: () -> Unit,
+    onSelectVoiceModel: (providerId: String, model: String) -> Unit,
+    onClearVoiceModel: () -> Unit,
+    onSelectVoiceTtsModel: (providerId: String, model: String) -> Unit,
+    onChangeVoiceTtsVoice: (String) -> Unit,
+    onClearVoiceTtsModel: () -> Unit
 ) {
     var showVisionSheet by remember { mutableStateOf(false) }
     var showCompactionSheet by remember { mutableStateOf(false) }
     var showTitleSheet by remember { mutableStateOf(false) }
     var showImageGenSheet by remember { mutableStateOf(false) }
+    var showVoiceSttSheet by remember { mutableStateOf(false) }
+    var showVoiceTtsSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { onLoadMetadata() }
 
@@ -130,6 +148,18 @@ internal fun DefaultModelsSection(
         stringResource(R.string.settings_image_gen_unconfigured)
     } else {
         imageGenModel
+    }
+
+    val voiceSttValue = if (voiceSttProviderId.isBlank() || voiceSttModel.isBlank()) {
+        stringResource(R.string.settings_voice_local_fallback)
+    } else {
+        voiceSttModel
+    }
+
+    val voiceTtsValue = if (voiceTtsProviderId.isBlank() || voiceTtsModel.isBlank()) {
+        stringResource(R.string.settings_voice_tts_unconfigured)
+    } else {
+        voiceTtsModel
     }
 
     Column(
@@ -205,6 +235,53 @@ internal fun DefaultModelsSection(
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.End,
                         modifier = Modifier.weight(2f)
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Mic,
+                title = stringResource(R.string.settings_voice_stt_model),
+                onClick = { showVoiceSttSheet = true },
+                trailing = {
+                    Text(
+                        text = voiceSttValue,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(2f)
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Volume2,
+                title = stringResource(R.string.settings_voice_tts_model),
+                onClick = { showVoiceTtsSheet = true },
+                trailing = {
+                    Text(
+                        text = voiceTtsValue,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(2f)
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Volume2,
+                title = stringResource(R.string.settings_voice_auto_read),
+                subtitle = stringResource(R.string.settings_voice_auto_read_desc),
+                onClick = { onAutoReadAloudChange(!autoReadAloud) },
+                trailing = {
+                    AppSwitch(
+                        checked = autoReadAloud,
+                        onCheckedChange = onAutoReadAloudChange
                     )
                 }
             )
@@ -294,7 +371,64 @@ internal fun DefaultModelsSection(
             onDismiss = { showImageGenSheet = false }
         )
     }
+
+    if (showVoiceSttSheet) {
+        ModelSelectionSheet(
+            title = stringResource(R.string.settings_voice_stt_model),
+            noModelsText = stringResource(R.string.voice_no_models),
+            providers = providers,
+            currentProviderId = voiceSttProviderId,
+            currentModel = voiceSttModel,
+            modelMetadata = modelMetadata,
+            modelFilter = ::isSpeechModel,
+            onSelect = { pid, model ->
+                onSelectVoiceModel(pid, model)
+                showVoiceSttSheet = false
+            },
+            onClear = {
+                onClearVoiceModel()
+                showVoiceSttSheet = false
+            },
+            onDismiss = { showVoiceSttSheet = false }
+        )
+    }
+
+    if (showVoiceTtsSheet) {
+        ModelSelectionSheet(
+            title = stringResource(R.string.settings_voice_tts_model),
+            noModelsText = stringResource(R.string.voice_tts_no_models),
+            providers = providers,
+            currentProviderId = voiceTtsProviderId,
+            currentModel = voiceTtsModel,
+            modelMetadata = modelMetadata,
+            modelFilter = ::isSpeechModel,
+            voiceField = VoiceFieldState(
+                value = voiceTtsVoice,
+                onValueChange = onChangeVoiceTtsVoice,
+                placeholder = stringResource(R.string.settings_voice_tts_voice_hint)
+            ),
+            onSelect = { pid, model ->
+                onSelectVoiceTtsModel(pid, model)
+                showVoiceTtsSheet = false
+            },
+            onClear = {
+                onClearVoiceTtsModel()
+                showVoiceTtsSheet = false
+            },
+            onDismiss = { showVoiceTtsSheet = false }
+        )
+    }
 }
+
+/**
+ * 合成音色输入框的状态。音色名各家格式不同（`alloy` / `longxiaochun` /
+ * `FunAudioLLM/CosyVoice2-0.5B:alex`），无法用统一枚举，故纯文本输入、原样透传。
+ */
+internal data class VoiceFieldState(
+    val value: String,
+    val onValueChange: (String) -> Unit,
+    val placeholder: String
+)
 
 /**
  * 模型选择弹窗：风格与拉取模型弹窗保持一致（iOS 胶囊搜索框、提供商分组卡片、能力 Tag）。
@@ -312,7 +446,11 @@ internal fun ModelSelectionSheet(
     modelMetadata: Map<String, ModelMetadata>,
     onSelect: (providerId: String, model: String) -> Unit,
     onClear: (() -> Unit)?,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** 模型名过滤：语音模型等专用场景用它把不相关的模型挡在外面（模型组的整组选择不受影响）。 */
+    modelFilter: ((String) -> Boolean)? = null,
+    /** 非空时在列表上方插一个音色输入框（仅语音合成用）。 */
+    voiceField: VoiceFieldState? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
@@ -401,8 +539,38 @@ internal fun ModelSelectionSheet(
                 placeholder = stringResource(R.string.provider_filter_models_hint)
             )
 
+            voiceField?.let { field ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.lg),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.settings_voice_tts_voice),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.width(64.dp)
+                    )
+                    AppTextField(
+                        value = field.value,
+                        onValueChange = field.onValueChange,
+                        placeholder = field.placeholder,
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
             val activeProviders = providers.filter { it.isEnabled && it.models.isNotEmpty() }
-            if (activeProviders.isEmpty()) {
+            // 过滤后的可选项：过滤为空时视为该 provider 无可用模型，不展示它的分组
+            fun visibleModels(provider: AIProviderConfig): List<String> =
+                provider.models.filter {
+                    (modelFilter == null || modelFilter(it)) &&
+                        (searchQuery.isBlank() || it.contains(searchQuery, ignoreCase = true))
+                }
+            val hasAnyVisible = activeProviders.any { visibleModels(it).isNotEmpty() }
+            if (!hasAnyVisible) {
                 SettingsGroup {
                     Box(
                         modifier = Modifier
@@ -426,9 +594,7 @@ internal fun ModelSelectionSheet(
                     verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                 ) {
                     activeProviders.forEach { provider ->
-                        val filteredModels = provider.models.filter {
-                            searchQuery.isBlank() || it.contains(searchQuery, ignoreCase = true)
-                        }
+                        val filteredModels = visibleModels(provider)
                         if (filteredModels.isNotEmpty()) {
                             // 搜索时强制展开，否则用折叠状态：用户搜到名字却看不到结果会很困惑。
                             val expanded = searchQuery.isNotBlank() || provider.id !in collapsedProviderIds
@@ -592,3 +758,25 @@ private fun formatTokenLimit(tokens: Int): String =
 
 private fun String.trimDecimal(): String =
     replace(Regex("(\\.\\d)\\d+"), "$1").removeSuffix(".0")
+
+/**
+ * 判断模型名是否属于「语音模型」（语音转文字 / 文字转语音）。
+ *
+ * 供应商的 `/v1/models` 返回的是自家全部模型，其中绝大多数是对话模型，而语音模型没有统一的能力字段
+ * 可供筛选——这里按业界常见的命名约定做关键词匹配。匹配不到时用户仍可在供应商里手动添加模型名。
+ */
+internal fun isSpeechModel(model: String): Boolean {
+    val name = model.lowercase()
+    return SPEECH_MODEL_KEYWORDS.any { name.contains(it) }
+}
+
+private val SPEECH_MODEL_KEYWORDS = listOf(
+    // 语音转文字
+    "whisper", "transcrib", "sensevoice", "paraformer", "funasr",
+    "speech-to-text", "stt", "asr", "-speech", "speech-", "audio-transcri",
+    // 文字转语音
+    "tts", "text-to-speech", "cosyvoice", "sovits", "fish-speech", "fishaudio",
+    "chattts", "moss-ttsd", "index-tts", "f5-tts", "kokoro",
+    // 语音对话类
+    "voice-", "-voice", "realtime-audio", "audio-preview",
+)

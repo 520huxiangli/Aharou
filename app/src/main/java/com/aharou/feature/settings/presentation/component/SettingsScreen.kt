@@ -161,6 +161,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Skills(R.string.settings_skills),
     SkillDetail(R.string.settings_skills),
     SkillEditor(R.string.settings_skills),
+    SkillMarket(R.string.skills_market),
     SubAgents(R.string.settings_subagents),
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
@@ -251,6 +252,12 @@ fun SettingsScreen(
     val titleModel by viewModel.titleModel.collectAsStateWithLifecycle()
     val imageGenProviderId by viewModel.imageGenProviderId.collectAsStateWithLifecycle()
     val imageGenModel by viewModel.imageGenModel.collectAsStateWithLifecycle()
+    val voiceSttProviderId by viewModel.voiceSttProviderId.collectAsStateWithLifecycle()
+    val voiceSttModel by viewModel.voiceSttModel.collectAsStateWithLifecycle()
+    val voiceTtsProviderId by viewModel.voiceTtsProviderId.collectAsStateWithLifecycle()
+    val voiceTtsModel by viewModel.voiceTtsModel.collectAsStateWithLifecycle()
+    val voiceTtsVoice by viewModel.voiceTtsVoice.collectAsStateWithLifecycle()
+    val autoReadAloud by viewModel.autoReadAloud.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
     val containerProfiles by viewModel.profiles.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
@@ -388,6 +395,7 @@ fun SettingsScreen(
         SettingsSection.ProviderEditor -> SettingsSection.Providers
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail -> SettingsSection.Skills
+        SettingsSection.SkillMarket -> SettingsSection.Skills
         SettingsSection.SkillEditor -> skillEditorReturn
         SettingsSection.SubAgentDetail -> SettingsSection.SubAgents
         SettingsSection.SubAgentEditor -> subAgentEditorReturn
@@ -689,17 +697,20 @@ fun SettingsScreen(
                             )
                         }
                         SettingsSection.SkillDetail -> selectedSkill?.let { entry ->
-                            IconButton(onClick = {
-                                editingSkill = entry
-                                skillEditorReturn = SettingsSection.SkillDetail
-                                section = SettingsSection.SkillEditor
-                            }) {
-                                Icon(
-                                    FeatherIcons.Edit2,
-                                    contentDescription = stringResource(R.string.skills_edit),
-                                    tint = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                            // 内置技能只读，不给编辑入口
+                            if (!entry.builtin) {
+                                IconButton(onClick = {
+                                    editingSkill = entry
+                                    skillEditorReturn = SettingsSection.SkillDetail
+                                    section = SettingsSection.SkillEditor
+                                }) {
+                                    Icon(
+                                        FeatherIcons.Edit2,
+                                        contentDescription = stringResource(R.string.skills_edit),
+                                        tint = MaterialTheme.colorScheme.onBackground,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                         SettingsSection.SubAgents -> IconButton(onClick = {
@@ -816,6 +827,13 @@ fun SettingsScreen(
                     titleModel = titleModel,
                     imageGenProviderId = imageGenProviderId,
                     imageGenModel = imageGenModel,
+                    voiceSttProviderId = voiceSttProviderId,
+                    voiceSttModel = voiceSttModel,
+                    voiceTtsProviderId = voiceTtsProviderId,
+                    voiceTtsModel = voiceTtsModel,
+                    voiceTtsVoice = voiceTtsVoice,
+                    autoReadAloud = autoReadAloud,
+                    onAutoReadAloudChange = viewModel::setAutoReadAloud,
                     modelMetadata = modelMetadata,
                     onLoadMetadata = { viewModel.loadAllModelMetadata() },
                     onSelectVisionModel = { pid, m -> viewModel.setVisionModel(pid, m) },
@@ -825,7 +843,16 @@ fun SettingsScreen(
                     onSelectTitleModel = { pid, m -> viewModel.setTitleModel(pid, m) },
                     onClearTitleModel = { viewModel.clearTitleModel() },
                     onSelectImageGenModel = { pid, m -> viewModel.setImageGenModel(pid, m) },
-                    onClearImageGenModel = { viewModel.clearImageGenModel() }
+                    onClearImageGenModel = { viewModel.clearImageGenModel() },
+                    onSelectVoiceModel = { pid, m -> viewModel.setVoiceSttModel(pid, m) },
+                    onClearVoiceModel = { viewModel.clearVoiceSttModel() },
+                    onSelectVoiceTtsModel = { pid, m ->
+                        // 选模型时一并写入当前音色：setTtsModel 是三项整体覆写，不带上会把已配音色清掉。
+                        // pid/model 为空（重置）时不带音色，让 clear 那一路统一处理。
+                        viewModel.setVoiceTtsModel(pid, m, if (pid.isBlank()) "" else voiceTtsVoice)
+                    },
+                    onChangeVoiceTtsVoice = { viewModel.setVoiceTtsVoice(it) },
+                    onClearVoiceTtsModel = { viewModel.clearVoiceTtsModel() }
                 )
                 SettingsSection.Mcp -> McpSection(
                     entries = mcpEntries,
@@ -848,6 +875,25 @@ fun SettingsScreen(
                         section = SettingsSection.SkillDetail
                     }
                 )
+                SettingsSection.SkillMarket -> {
+                    val marketSources by viewModel.marketSources.collectAsStateWithLifecycle()
+                    val marketSourceId by viewModel.marketSourceId.collectAsStateWithLifecycle()
+                    val marketSkills by viewModel.marketSkills.collectAsStateWithLifecycle()
+                    val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
+                    val marketAlert by viewModel.marketAlert.collectAsStateWithLifecycle()
+                    SkillMarketSection(
+                        sources = marketSources,
+                        selectedSourceId = marketSourceId,
+                        skills = marketSkills,
+                        loading = marketLoading,
+                        alert = marketAlert,
+                        scope = skillImportScope,
+                        onScopeChange = { skillImportScope = it },
+                        onSelectSource = { viewModel.selectMarketSource(it) },
+                        onInstall = { viewModel.installFromMarket(it, skillImportScope) },
+                        onLoadRepo = { viewModel.loadMarketFromRepo(it) }
+                    )
+                }
                 SettingsSection.SkillDetail -> selectedSkill?.let { entry ->
                     SkillDetailSection(
                         entry = entry,
@@ -1060,6 +1106,12 @@ fun SettingsScreen(
             onPickZip = {
                 showSkillAddSheet = false
                 skillZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+            },
+            onMarket = {
+                showSkillAddSheet = false
+                viewModel.refreshMarketSources()
+                viewModel.loadMarketSkills()
+                section = SettingsSection.SkillMarket
             },
             onDismiss = { showSkillAddSheet = false }
         )

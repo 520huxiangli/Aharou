@@ -15,6 +15,7 @@ enum class StorageCategory(@param:StringRes val labelRes: Int) {
     ContainerImages(R.string.storage_category_container_images),
     Workspaces(R.string.storage_category_workspaces),
     AiConfig(R.string.storage_category_ai_config),
+    VoiceModels(R.string.storage_category_voice_models),
     Checkpoints(R.string.storage_category_checkpoints),
     Logs(R.string.storage_category_logs),
     Caches(R.string.storage_category_caches),

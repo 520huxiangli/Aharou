@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -300,6 +301,32 @@ fun McpServerEditDialog(
 
                             Spacer(modifier = Modifier.height(8.dp))
                         }
+                    } else if (tools.isEmpty()) {
+                        // Tab 1: 工具（空状态，垂直居中）
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 20.dp)
+                                .navigationBarsPadding(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    FeatherIcons.Tool,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(32.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                )
+                                Text(
+                                    text = if (initial == null) stringResource(R.string.mcp_save_first_hint) else stringResource(R.string.mcp_no_tools_hint),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     } else {
                         // Tab 1: 工具
                         Column(
@@ -310,115 +337,89 @@ fun McpServerEditDialog(
                                 .navigationBarsPadding(),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            if (tools.isEmpty()) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 48.dp),
-                                    contentAlignment = Alignment.Center
+                            tools.forEach { tool ->
+                                val isToolEnabled = tool.name !in disabledToolsSet
+                                var descriptionExpanded by remember(tool.name) { mutableStateOf(false) }
+
+                                Card(
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp)
                                     ) {
-                                        Icon(
-                                            FeatherIcons.Tool,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(32.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = tool.name,
+                                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                color = if (isToolEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            AppSwitch(
+                                                checked = isToolEnabled,
+                                                onCheckedChange = { checked ->
+                                                    if (checked) disabledToolsSet.remove(tool.name) else disabledToolsSet.add(tool.name)
+                                                }
+                                            )
+                                        }
+
+                                        Text(
+                                            text = tool.description ?: stringResource(R.string.mcp_no_description),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = if (descriptionExpanded) Int.MAX_VALUE else 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = if (initial == null) stringResource(R.string.mcp_save_first_hint) else stringResource(R.string.mcp_no_tools_hint),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            } else {
-                                tools.forEach { tool ->
-                                    val isToolEnabled = tool.name !in disabledToolsSet
-                                    var descriptionExpanded by remember(tool.name) { mutableStateOf(false) }
-
-                                    Card(
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(
+                                            text = stringResource(if (descriptionExpanded) R.string.common_collapse else R.string.common_expand),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(10.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                .clickable { descriptionExpanded = !descriptionExpanded }
+                                                .padding(top = 2.dp)
+                                        )
+
+                                        val paramKeys = remember(tool.inputSchema) {
+                                            (tool.inputSchema?.get("properties") as? JsonObject)?.keys ?: emptySet()
+                                        }
+                                        if (paramKeys.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                Text(
-                                                    text = tool.name,
-                                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                                    color = if (isToolEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                AppSwitch(
-                                                    checked = isToolEnabled,
-                                                    onCheckedChange = { checked ->
-                                                        if (checked) disabledToolsSet.remove(tool.name) else disabledToolsSet.add(tool.name)
-                                                    }
-                                                )
-                                            }
-
-                                            Text(
-                                                text = tool.description ?: stringResource(R.string.mcp_no_description),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = if (descriptionExpanded) Int.MAX_VALUE else 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = stringResource(if (descriptionExpanded) R.string.common_collapse else R.string.common_expand),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier
-                                                    .clickable { descriptionExpanded = !descriptionExpanded }
-                                                    .padding(top = 2.dp)
-                                            )
-
-                                            val paramKeys = remember(tool.inputSchema) {
-                                                (tool.inputSchema?.get("properties") as? JsonObject)?.keys ?: emptySet()
-                                            }
-                                            if (paramKeys.isNotEmpty()) {
-                                                Spacer(modifier = Modifier.height(8.dp))
-                                                FlowRow(
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    paramKeys.forEach { key ->
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .background(
-                                                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
-                                                                    RoundedCornerShape(6.dp)
-                                                                )
-                                                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                                                        ) {
-                                                            Text(
-                                                                text = key,
-                                                                style = MaterialTheme.typography.labelSmall,
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                paramKeys.forEach { key ->
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .background(
+                                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+                                                                RoundedCornerShape(6.dp)
                                                             )
-                                                        }
+                                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = key,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
                                                     }
                                                 }
                                             }
-
-                                            Spacer(modifier = Modifier.height(10.dp))
                                         }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         }
                     }
                 }
