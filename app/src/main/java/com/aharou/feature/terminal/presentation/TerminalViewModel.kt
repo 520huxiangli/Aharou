@@ -58,6 +58,10 @@ class TerminalViewModel @Inject constructor(
     private val _prepareState = MutableStateFlow<PrepareState>(PrepareState.Loading)
     val prepareState: StateFlow<PrepareState> = _prepareState.asStateFlow()
 
+    /** 正在新建标签：SSH 模式下建立 shell channel 需等服务器响应，UI 据此显示等待动画并拦截重复点击。 */
+    private val _creatingTab = MutableStateFlow(false)
+    val creatingTab: StateFlow<Boolean> = _creatingTab.asStateFlow()
+
     /** 容器初始化实时进度（解压/部署/装包），Loading 阶段用它展示细粒度文案。 */
     val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
 
@@ -106,11 +110,15 @@ class TerminalViewModel @Inject constructor(
     }
 
     fun newTab() {
+        if (_creatingTab.value) return
+        _creatingTab.value = true
         viewModelScope.launch {
             try {
                 if (isRemote()) remoteManager.createInteractiveTab() else localManager.createInteractiveTab()
             } catch (e: Exception) {
                 FileLogger.e(TAG, "新建标签失败", e)
+            } finally {
+                _creatingTab.value = false
             }
         }
     }

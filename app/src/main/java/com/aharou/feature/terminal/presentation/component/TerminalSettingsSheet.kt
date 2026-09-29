@@ -190,8 +190,8 @@ fun TerminalSettingsSheet(
             Slider(
                 value = settings.fontSizeSp.toFloat(),
                 onValueChange = { onChangeFontSize(it.toInt()) },
-                valueRange = 10f..22f,
-                steps = 11,
+                valueRange = 5f..22f,
+                steps = 16,
                 modifier = Modifier.fillMaxWidth()
             )
 

@@ -47,7 +47,7 @@ class TerminalSettingsRepository @Inject constructor(
     val settingsFlow: Flow<TerminalSettings> = context.terminalDataStore.data.map { prefs ->
         TerminalSettings(
             themeId = prefs[THEME_ID_KEY] ?: TerminalThemePreset.TERMIUS_DARK.id,
-            fontSizeSp = prefs[FONT_SIZE_SP_KEY]?.coerceIn(10, 22) ?: 12,
+            fontSizeSp = prefs[FONT_SIZE_SP_KEY]?.coerceIn(5, 22) ?: 12,
             cursorStyle = prefs[CURSOR_STYLE_KEY] ?: 0,
             // 未设过字体的用户给内置字体；显式选过“系统等宽”（空串）的保持原样；导入字体被删时回落内置
             fontPath = when (val saved = prefs[FONT_PATH_KEY]) {
@@ -63,7 +63,7 @@ class TerminalSettingsRepository @Inject constructor(
     }
 
     suspend fun setFontSizeSp(sizeSp: Int) {
-        context.terminalDataStore.edit { it[FONT_SIZE_SP_KEY] = sizeSp.coerceIn(10, 22) }
+        context.terminalDataStore.edit { it[FONT_SIZE_SP_KEY] = sizeSp.coerceIn(5, 22) }
     }
 
     suspend fun setCursorStyle(style: Int) {

@@ -21,6 +21,12 @@ public interface TerminalViewClient {
      */
     float onScale(float scale);
 
+    /** Called when a pinch-to-zoom gesture starts. */
+    void onScaleBegin();
+
+    /** Called when a pinch-to-zoom gesture ends. */
+    void onScaleEnd();
+
 
 
     /**

@@ -14,6 +14,7 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import kotlin.math.roundToInt
 
 /**
  * 由额外按键行（Esc/Ctrl/Alt 等）驱动的虚拟修饰键状态。
@@ -100,13 +101,40 @@ class AppTerminalSessionClient(
 class AppTerminalViewClient(
     private val context: Context,
     private val viewProvider: () -> TerminalView?,
-    private val modifiers: TerminalKeyModifiers
+    private val modifiers: TerminalKeyModifiers,
+    private val currentFontSizeSp: () -> Int,
+    private val onFontSizeCommit: (Int) -> Unit
 ) : TerminalViewClient {
 
-    private companion object { const val TAG = "TerminalView" }
+    private companion object {
+        const val TAG = "TerminalView"
+        const val MIN_FONT_SP = 5
+        const val MAX_FONT_SP = 22
+    }
 
-    // 暂不支持双指缩放字号：原样返回，不改变字号。
-    override fun onScale(scale: Float): Float = scale
+    private var baseFontSizeSp = 0
+    private var accumulatedScale = 1f
+    private var lastFontSizeSp = 0
+
+    override fun onScaleBegin() {
+        baseFontSizeSp = currentFontSizeSp()
+        accumulatedScale = 1f
+        lastFontSizeSp = baseFontSizeSp
+    }
+
+    // 捏合：累积增量倍数得到目标字号（钳在 5–22），返回等价预览缩放倍数给视图做画布缩放。
+    // 这里不改字号、不 resize PTY（避免给 shell 连发 SIGWINCH 导致内容错乱），
+    // 手势结束在 onScaleEnd 按最终字号 resize 一次。
+    override fun onScale(scale: Float): Float {
+        accumulatedScale *= scale
+        val target = (baseFontSizeSp * accumulatedScale).roundToInt().coerceIn(MIN_FONT_SP, MAX_FONT_SP)
+        lastFontSizeSp = target
+        return if (baseFontSizeSp > 0) target.toFloat() / baseFontSizeSp else 1f
+    }
+
+    override fun onScaleEnd() {
+        if (lastFontSizeSp != baseFontSizeSp) onFontSizeCommit(lastFontSizeSp)
+    }
 
     override fun onSingleTapUp(e: MotionEvent?) {
         val view = viewProvider() ?: return
