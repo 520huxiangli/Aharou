@@ -1086,7 +1086,7 @@
     <string name="skills_market_search_hint">Type a keyword to search skills (at least 2 characters)</string>
     <string name="skills_market_search">Search</string>
     <string name="skills_market_search_by_keyword">This skill site only supports keyword search — switched to it, type a keyword</string>
-    <string name="skills_market_site_needs_detail">That is the site's catalog page; paste the address of a specific skill page instead</string>
+    <string name="skills_market_site_needs_detail">That is the catalog page; paste the address of a specific skill page instead</string>
     <string name="skills_market_no_skills">No skills found in this repository</string>
     <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
     <string name="skills_add_from_market">Install from market</string>

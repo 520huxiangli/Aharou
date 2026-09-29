@@ -1431,7 +1431,17 @@ class SettingsViewModel @Inject constructor(
     /** 删除指定作用域的技能（删除其目录，不可恢复），随后立即刷新列表。 */
     fun deleteSkill(name: String, scope: SkillScope) {
         viewModelScope.launch {
-            skillRepository.deleteSkill(name, scope)
+            val deleted = withContext(Dispatchers.IO) { skillRepository.deleteSkill(name, scope) }
+            // 市场装来的技能删掉后要一并清安装记录，否则市场一直显示「已安装」。
+            // 安装记录只按名字存、不分作用域，所以同名技能在别的地方还在时要留着。
+            if (deleted) {
+                val stillPresent = withContext(Dispatchers.IO) {
+                    skillRepository.listAllSkills().any { it.skill.name.equals(name, ignoreCase = true) }
+                }
+                if (!stillPresent) {
+                    withContext(Dispatchers.IO) { skillMarketRepository.forgetInstall(name) }
+                }
+            }
             refreshSkills()
         }
     }

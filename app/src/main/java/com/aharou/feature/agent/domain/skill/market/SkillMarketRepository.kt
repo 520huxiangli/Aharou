@@ -250,6 +250,12 @@ class SkillMarketRepository @Inject constructor(
     /** 某技能已从市场安装过吗。 */
     fun isInstalled(skill: MarketSkill): Boolean = installRepository.record(skill.name) != null
 
+    /**
+     * 忘掉一个技能的安装记录。用户把技能删了之后要调它，
+     * 否则市场会一直把已删的技能显示成「已安装」。
+     */
+    fun forgetInstall(name: String) = installRepository.remove(name)
+
     // ── 列表 ──
 
     private suspend fun listFrom(
