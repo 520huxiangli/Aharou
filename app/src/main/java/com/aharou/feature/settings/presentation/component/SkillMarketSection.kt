@@ -58,7 +58,7 @@ internal fun SkillMarketSection(
     onSelectSource: (String) -> Unit,
     onInstall: (MarketSkill) -> Unit,
     onLoadRepo: (String) -> Unit,
-    onSearch: (String) -> Unit
+    onSearch: (String, String) -> Unit
 ) {
     var repoInput by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
@@ -107,7 +107,8 @@ internal fun SkillMarketSection(
                 }
             }
 
-            // 两个框都常驻：上面填网页地址，这里填关键词搜索。行为不跟选中的源挂钩。
+            // 两个框都常驻：上面填网页地址（可单独点「加载」），下面填关键词。
+            // 地址框填了内容时，搜索就在那个仓库里筛；空着才走全网检索。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -118,11 +119,11 @@ internal fun SkillMarketSection(
                     modifier = Modifier.weight(1f),
                     placeholder = stringResource(R.string.skills_market_search_hint),
                     singleLine = true,
-                    keyboardActions = KeyboardActions(onDone = { onSearch(query) })
+                    keyboardActions = KeyboardActions(onDone = { onSearch(query, repoInput) })
                 )
                 // 检索接口要求关键词至少 2 个字，不够就置灰，省得白跑一趟
                 TextButton(
-                    onClick = { onSearch(query) },
+                    onClick = { onSearch(query, repoInput) },
                     enabled = query.trim().length >= 2 && !loading
                 ) {
                     Text(stringResource(R.string.skills_market_search))
@@ -153,6 +154,7 @@ internal fun SkillMarketSection(
             when (alert) {
                 MarketAlert.InvalidAddress -> MarketAlertText(stringResource(R.string.skills_market_repo_invalid))
                 MarketAlert.NoSkills -> MarketAlertText(stringResource(R.string.skills_market_no_skills))
+                MarketAlert.NoMatchInRepo -> MarketAlertText(stringResource(R.string.skills_market_no_match_in_repo))
                 MarketAlert.LoadFailed -> MarketAlertText(stringResource(R.string.skills_market_load_failed))
                 MarketAlert.SearchByKeyword -> MarketAlertText(stringResource(R.string.skills_market_search_by_keyword))
                 MarketAlert.SkillSiteNeedsDetail -> MarketAlertText(stringResource(R.string.skills_market_site_needs_detail))

@@ -892,7 +892,7 @@ fun SettingsScreen(
                         onSelectSource = { viewModel.selectMarketSource(it) },
                         onInstall = { viewModel.installFromMarket(it, skillImportScope) },
                         onLoadRepo = { viewModel.loadMarketFromRepo(it) },
-                        onSearch = { viewModel.searchMarket(it) }
+                        onSearch = { query, address -> viewModel.searchMarket(query, address) }
                     )
                 }
                 SettingsSection.SkillDetail -> selectedSkill?.let { entry ->

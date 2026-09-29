@@ -304,7 +304,7 @@ data class MarketSkillUi(
 )
 
 /** 市场页的提示；文案由 UI 层映射成资源串。 */
-enum class MarketAlert { InvalidAddress, NoSkills, LoadFailed, SearchByKeyword, SkillSiteNeedsDetail }
+enum class MarketAlert { InvalidAddress, NoSkills, NoMatchInRepo, LoadFailed, SearchByKeyword, SkillSiteNeedsDetail }
 
 /** 「粘贴地址」临时源在源列表里的 id。 */
 private const val ADHOC_MARKET_ID = "adhoc"
@@ -641,6 +641,13 @@ class SettingsViewModel @Inject constructor(
 
     private val _marketAlert = MutableStateFlow<MarketAlert?>(null)
     val marketAlert: StateFlow<MarketAlert?> = _marketAlert.asStateFlow()
+
+    /** 列表当前显示的是关键词检索结果（不是某个源/仓库的完整列表），用于「点回原源」时判断要不要重新拉。 */
+    private val _marketSearching = MutableStateFlow(false)
+
+    /** 上次按地址列出的仓库与它的完整技能列表：同一地址再搜就在这份缓存里筛，不重复拉。 */
+    private var marketAdhocInput = ""
+    private var marketAdhocSkills: List<MarketSkill> = emptyList()
 
     /** 「粘贴仓库地址」加载出来的仓库（owner/name），作为临时源挂在源列表末尾。 */
     private var marketAdhocRepo: String? = null
@@ -1260,7 +1267,8 @@ class SettingsViewModel @Inject constructor(
             // 检索型源不进源列表：它没有自己的技能清单，只是给关键词搜索提供接口
             .filterValues { !it.isSearch }
             .map { (id, def) -> id to def.displayName(lang) }
-        _marketSources.value = sources + adhocSourceEntry()
+        // 自己贴的仓库排第一个：刚加载完就在最显眼处，不会被挤到滑动条的末尾看不见
+        _marketSources.value = adhocSourceEntry() + sources
         if (_marketSources.value.none { it.first == _marketSourceId.value }) {
             _marketSourceId.value = _marketSources.value.firstOrNull()?.first.orEmpty()
         }
@@ -1279,8 +1287,10 @@ class SettingsViewModel @Inject constructor(
 
     /** 切换市场源并重新拉取其技能列表。 */
     fun selectMarketSource(sourceId: String) {
-        if (_marketSourceId.value == sourceId) return
+        // 列表显示的是检索结果时，即使选中源没变也要重新拉——否则点回该源毫无反应
+        if (_marketSourceId.value == sourceId && !_marketSearching.value) return
         _marketSourceId.value = sourceId
+        _marketSearching.value = false
         when {
             sourceId == ADHOC_MARKET_ID -> marketAdhocRepo?.let { loadMarketFromRepo(it) }
             // 检索型源没有「列全部」的入口，清空列表等用户输关键词
@@ -1293,11 +1303,20 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 技能搜索：一律走检索型源，跟当前选中的是哪个源无关。
+     * 关键词搜索：地址框填了仓库地址就在那个仓库里就地筛，没填才走检索型源的全局检索。
+     */
+    fun searchMarket(query: String, address: String) {
+        val q = query.trim()
+        if (q.isBlank()) return
+        val addr = address.trim()
+        if (addr.isEmpty()) searchMarketGlobal(q) else searchMarketInRepo(addr, q)
+    }
+
+    /**
+     * 全局检索：走检索型源的检索接口。
      * 结果里的技能只带名字与所在仓库，安装时再去仓库里定位目录。
      */
-    fun searchMarket(query: String) {
-        if (query.isBlank()) return
+    private fun searchMarketGlobal(query: String) {
         val sourceId = searchSourceId() ?: return
         viewModelScope.launch {
             _marketLoading.value = true
@@ -1305,6 +1324,7 @@ class SettingsViewModel @Inject constructor(
             val listing = withContext(Dispatchers.IO) {
                 skillMarketRepository.searchSkills(sourceId, query)
             }
+            _marketSearching.value = true
             _marketSkills.value = listing.skills.map { toMarketUi(it) }
             _marketAlert.value = when {
                 listing.failed -> MarketAlert.LoadFailed
@@ -1313,6 +1333,49 @@ class SettingsViewModel @Inject constructor(
             }
             _marketLoading.value = false
         }
+    }
+
+    /** 在指定地址的仓库里筛技能：同一地址已经列过就直接在缓存里筛，不重复拉。 */
+    private fun searchMarketInRepo(address: String, query: String) {
+        viewModelScope.launch {
+            _marketLoading.value = true
+            _marketAlert.value = null
+            val listing = if (address == marketAdhocInput && marketAdhocSkills.isNotEmpty()) {
+                SkillMarketRepository.RepoListing(marketAdhocRepo.orEmpty(), "", marketAdhocSkills)
+            } else {
+                withContext(Dispatchers.IO) { skillMarketRepository.listFromRepo(address) }
+                    ?.also { marketAdhocInput = address; marketAdhocSkills = it.skills }
+            }
+            if (listing == null) {
+                // 与「加载」一致：技能站的目录页和认不出的地址分开提示
+                _marketAlert.value = if (SkillRepoAccess.isSkillSite(address)) {
+                    MarketAlert.SkillSiteNeedsDetail
+                } else {
+                    MarketAlert.InvalidAddress
+                }
+            } else {
+                marketAdhocRepo = listing.repo
+                _marketSourceId.value = ADHOC_MARKET_ID
+                refreshAdhocSourceEntry()
+                val hits = listing.skills.filter { it.matchesQuery(query) }
+                _marketSearching.value = true
+                _marketSkills.value = hits.map { toMarketUi(it) }
+                _marketAlert.value = when {
+                    listing.failed -> MarketAlert.LoadFailed
+                    hits.isEmpty() -> MarketAlert.NoMatchInRepo
+                    else -> null
+                }
+            }
+            _marketLoading.value = false
+        }
+    }
+
+    /** 技能名、中文名、描述任一命中即算匹配（中文无大小写，混着英文关键词也能筛）。 */
+    private fun MarketSkill.matchesQuery(query: String): Boolean {
+        val q = query.lowercase()
+        return name.lowercase().contains(q) ||
+            displayName.lowercase().contains(q) ||
+            description.lowercase().contains(q)
     }
 
     /** 检索型源的 id（技能搜索用；目前预置的源里就 skills.sh 一个）。 */
@@ -1345,9 +1408,11 @@ class SettingsViewModel @Inject constructor(
                 }
             } else {
                 marketAdhocRepo = listing.repo
+                marketAdhocInput = trimmed
+                marketAdhocSkills = listing.skills
                 _marketSourceId.value = ADHOC_MARKET_ID
-                _marketSources.value = (_marketSources.value.filterNot { it.first == ADHOC_MARKET_ID }) +
-                    adhocSourceEntry()
+                _marketSearching.value = false
+                refreshAdhocSourceEntry()
                 _marketSkills.value = listing.skills.map { toMarketUi(it) }
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
@@ -1362,6 +1427,12 @@ class SettingsViewModel @Inject constructor(
     private fun adhocSourceEntry(): List<Pair<String, String>> =
         marketAdhocRepo?.let { listOf(ADHOC_MARKET_ID to it) }.orEmpty()
 
+    /** 把「粘贴地址」那个源插到源列表最前面（没加载过仓库时就相当于没这一项）。 */
+    private fun refreshAdhocSourceEntry() {
+        _marketSources.value =
+            adhocSourceEntry() + _marketSources.value.filterNot { it.first == ADHOC_MARKET_ID }
+    }
+
     /**
      * 拉取当前源的技能列表。列表先铺出来、描述随后流式补上，所以不等全部读完就能看到内容；
      * 真取不到时给「加载失败」提示，而不是当作「这个源没技能」（那是两回事）。
@@ -1372,6 +1443,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _marketLoading.value = true
             _marketAlert.value = null
+            _marketSearching.value = false
             val listing = withContext(Dispatchers.IO) {
                 skillMarketRepository.listSkills(sourceId) { partial ->
                     _marketSkills.value = partial.map { toMarketUi(it) }
@@ -1396,8 +1468,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val report = withContext(Dispatchers.IO) { skillMarketRepository.install(skill, scope) }
             finishSkillImport(report)
-            // 检索型源的结果是一次性查询出来的，装完不能重新「列源」把列表换掉
-            if (!isSearchSource(_marketSourceId.value)) loadMarketSkills()
+            // 检索结果（全局检索或仓库内筛选）是一次性查询出来的，装完只刷新安装状态，
+            // 不能重新「列源」把列表换掉
+            if (_marketSearching.value) {
+                _marketSkills.value = _marketSkills.value.map { toMarketUi(it.skill) }
+            } else if (!isSearchSource(_marketSourceId.value)) {
+                loadMarketSkills()
+            }
             refreshSkills()
         }
     }

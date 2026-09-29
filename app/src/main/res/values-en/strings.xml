@@ -1083,11 +1083,12 @@
     <string name="skills_market_repo_hint">Paste a repo URL, e.g. github.com/user/repo</string>
     <string name="skills_market_repo_load">Load</string>
     <string name="skills_market_repo_invalid">Unrecognized address</string>
-    <string name="skills_market_search_hint">Type a keyword to search skills (at least 2 characters)</string>
+    <string name="skills_market_search_hint">Search by keyword (2+ characters); with a repo above, only that repo is searched</string>
     <string name="skills_market_search">Search</string>
     <string name="skills_market_search_by_keyword">This skill site only supports keyword search — use the keyword box below</string>
     <string name="skills_market_site_needs_detail">That is the catalog page; paste the address of a specific skill page instead</string>
     <string name="skills_market_no_skills">No skills found in this repository</string>
+    <string name="skills_market_no_match_in_repo">No matching skill in this repository</string>
     <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
     <string name="skills_add_from_market">Install from market</string>
     <string name="skills_add_from_market_desc">Browse official and community skill sources</string>
