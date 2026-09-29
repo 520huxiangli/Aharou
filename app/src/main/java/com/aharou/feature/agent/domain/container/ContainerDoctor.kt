@@ -42,7 +42,28 @@ data class HealthItem(
     val summaryArgs: List<Any> = emptyList(),
     @param:StringRes val detailRes: Int? = null,
     val detailArgs: List<Any> = emptyList(),
+    /**
+     * 缺哪几个基础工具。非空时 UI 会给出「安装」入口。
+     *
+     * 这里存工具名而不是拼好的句子，UI 要的是「能拿去做安装入参」的原始名字。
+     */
+    val missingTools: List<String> = emptyList(),
 )
+
+/** 自动补装基础工具的结果。 */
+sealed interface InstallOutcome {
+    /** 命令跑完且退出码为 0。 */
+    data class Installed(val packages: List<String>) : InstallOutcome
+
+    /** 沙箱未就绪，没法执行。 */
+    data object NotReady : InstallOutcome
+
+    /** 认不出包管理器（既没 apk 也没 apt-get）。 */
+    data object NoPackageManager : InstallOutcome
+
+    /** 装了但失败，[output] 是末尾输出，用来告诉用户到底卡在哪。 */
+    data class Failed(val output: String) : InstallOutcome
+}
 
 /** 一次体检的完整结果。 */
 data class HealthReport(
@@ -142,7 +163,73 @@ class ContainerDoctor @Inject constructor(
                 R.string.container_health_tools_missing_names
             },
             detailArgs = if (missing.isEmpty()) emptyList() else listOf(missing.joinToString("、")),
+            missingTools = missing,
         )
+    }
+
+    /**
+     * 补装缺的基础工具。
+     *
+     * 装在**运行中的容器**里，不进镜像：重写 rootfs 是分钟级的重建，而缺一个 xz 这类
+     * 配套工具不值得让用户为它重建一次。代价是镜像重建后要重新装一次，UI 里已注明。
+     *
+     * 包管理器靠探测而不是看发行版名：自定义镜像可能既不是标准 Alpine 也不是标准 Debian，
+     * 但手里有哪个包管理器是确定的。
+     */
+    suspend fun installMissingTools(tools: List<String>): InstallOutcome = withContext(Dispatchers.IO) {
+        if (tools.isEmpty()) return@withContext InstallOutcome.Installed(emptyList())
+        val manager = detectPackageManager() ?: return@withContext InstallOutcome.NoPackageManager
+        val packages = tools.map { manager.packageFor(it) }.distinct()
+        val result = runCatching {
+            engine.runCommandSyncIfReady(manager.installCommand(packages), null, INSTALL_TIMEOUT_MS)
+        }.getOrNull() ?: return@withContext InstallOutcome.NotReady
+        if ((result.exitCode ?: -1) == 0) {
+            InstallOutcome.Installed(packages)
+        } else {
+            InstallOutcome.Failed(result.output.trim().takeLast(FAILURE_TAIL_CHARS))
+        }
+    }
+
+    private suspend fun detectPackageManager(): PackageManagerKind? {
+        val result = runCatching {
+            engine.runCommandSyncIfReady(
+                "command -v apk >/dev/null 2>&1 && echo apk; " +
+                    "command -v apt-get >/dev/null 2>&1 && echo apt-get",
+                null,
+                PROBE_TIMEOUT_MS
+            )
+        }.getOrNull() ?: return null
+        val names = result.output.lines().map { it.trim() }
+        return when {
+            names.any { it == "apk" } -> PackageManagerKind.APK
+            names.any { it == "apt-get" } -> PackageManagerKind.APT
+            else -> null
+        }
+    }
+
+    private enum class PackageManagerKind {
+        APK,
+        APT;
+
+        /**
+         * 工具名到包名的映射。
+         *
+         * Alpine 下这些工具名就是包名；Debian 系把 xz 放在 xz-utils 里，sh 由 dash 提供。
+         * 不在表里的按同名试，比不认识就放弃有用地多。
+         */
+        fun packageFor(tool: String): String = when (this) {
+            APK -> tool
+            APT -> APT_PACKAGES[tool] ?: tool
+        }
+
+        fun installCommand(packages: List<String>): String {
+            val list = packages.joinToString(" ")
+            return when (this) {
+                APK -> "apk add --no-cache $list"
+                // update 先跑：自定义镜像的索引可能从来没刷过，直接 install 会 404。
+                APT -> "apt-get update -qq && apt-get install -y --no-install-recommends $list"
+            }
+        }
     }
 
     private suspend fun checkDns(): HealthItem = runProbe(
@@ -236,5 +323,15 @@ class ContainerDoctor @Inject constructor(
         const val ID_DNS = "container_dns"
         const val ID_NETWORK = "container_network"
         const val TOOL_COUNT = 5
+        const val PROBE_TIMEOUT_MS = 15_000L
+
+        /** 装包要刷新索引再下载，宽松些；再久就该让用户看见失败而不是干等。 */
+        const val INSTALL_TIMEOUT_MS = 180_000L
+        const val FAILURE_TAIL_CHARS = 400
+
+        val APT_PACKAGES = mapOf(
+            "xz" to "xz-utils",
+            "sh" to "dash",
+        )
     }
 }

@@ -722,6 +722,12 @@
     <string name="container_health_tools_missing_detail">可在容器环境安装里补装基础依赖</string>
     <string name="container_health_tools_ready">已就绪 %1$d/%2$d</string>
     <string name="container_health_tools_partial_detail">缺少的项会让对应功能不可用，可在容器环境安装里补装</string>
+    <string name="container_health_tools_install">安装</string>
+    <string name="container_health_tools_installing">正在安装…</string>
+    <string name="container_health_tools_install_scope">装在当前容器，重建镜像后需重装</string>
+    <string name="container_health_tools_installed">已安装 %1$s</string>
+    <string name="container_health_tools_install_failed">安装失败：%1$s</string>
+    <string name="container_health_tools_no_manager">没认出发行版的包管理器，无法自动安装</string>
     <string name="container_health_title_dns">容器 DNS 解析</string>
     <string name="container_health_dns_ok">github.com 可解析</string>
     <string name="container_health_dns_fail">github.com 解析失败</string>

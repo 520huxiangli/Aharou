@@ -722,6 +722,12 @@
     <string name="container_health_tools_missing_detail">Install the missing basics from the container environment installer</string>
     <string name="container_health_tools_ready">Ready %1$d/%2$d</string>
     <string name="container_health_tools_partial_detail">Missing tools disable the features that need them. Install them from the container environment installer</string>
+    <string name="container_health_tools_install">Install</string>
+    <string name="container_health_tools_installing">Installing…</string>
+    <string name="container_health_tools_install_scope">Installs into the running container; lost when the image is rebuilt</string>
+    <string name="container_health_tools_installed">Installed %1$s</string>
+    <string name="container_health_tools_install_failed">Install failed: %1$s</string>
+    <string name="container_health_tools_no_manager">Could not detect the package manager for this distribution, so it cannot be installed automatically</string>
     <string name="container_health_title_dns">Container DNS</string>
     <string name="container_health_dns_ok">github.com resolves</string>
     <string name="container_health_dns_fail">github.com failed to resolve</string>

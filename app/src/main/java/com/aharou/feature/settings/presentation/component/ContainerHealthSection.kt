@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +34,7 @@ import com.aharou.feature.agent.domain.container.ContainerDoctor
 import com.aharou.feature.agent.domain.container.HealthItem
 import com.aharou.feature.agent.domain.container.HealthReport
 import com.aharou.feature.agent.domain.container.HealthStatus
+import com.aharou.feature.agent.domain.container.InstallOutcome
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -53,6 +55,10 @@ internal fun ContainerHealthSection() {
     val scope = rememberCoroutineScope()
     var report by remember { mutableStateOf<HealthReport?>(null) }
     var running by remember { mutableStateOf(false) }
+    // 正在装的那一项 id。同一时刻只可能有一项在装，用单值比 Map 简单。
+    var installingId by remember { mutableStateOf<String?>(null) }
+    // 安装结果的提示文案。key 是体检项 id，重新体检时清空。
+    var installMessage by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     SettingsGroup {
         SettingsRow(
@@ -68,6 +74,7 @@ internal fun ContainerHealthSection() {
                     TextButton(
                         onClick = {
                             running = true
+                            installMessage = null
                             scope.launch {
                                 report = runCatching { doctor.check() }.getOrNull()
                                 running = false
@@ -90,13 +97,56 @@ internal fun ContainerHealthSection() {
 
         report?.items?.forEach { item ->
             SettingsDivider()
-            HealthItemRow(item)
+            HealthItemRow(
+                item = item,
+                installing = installingId == item.id,
+                message = installMessage?.takeIf { it.first == item.id }?.second,
+                onInstall = if (item.missingTools.isEmpty()) null else {
+                    {
+                        installingId = item.id
+                        installMessage = null
+                        scope.launch {
+                            val text = describeInstall(context, doctor.installMissingTools(item.missingTools))
+                            installMessage = item.id to text
+                            installingId = null
+                            // 装完直接重测：用户关心的是「现在齐了没」，不该让他再点一次。
+                            report = runCatching { doctor.check() }.getOrNull()
+                        }
+                    }
+                }
+            )
         }
     }
 }
 
+/**
+ * 把安装结果转成给用户看的一句话。
+ *
+ * 不能做成 @Composable：它要在协程里被调用（安装是挂起操作），那个上下文取不到 stringResource。
+ * 失败时带上命令末尾输出——装不上多半是源不通或包名不对，只说「失败」等于让用户去翻日志。
+ */
+private fun describeInstall(context: android.content.Context, outcome: InstallOutcome): String =
+    when (outcome) {
+        is InstallOutcome.Installed -> context.getString(
+            R.string.container_health_tools_installed,
+            outcome.packages.joinToString("、")
+        )
+
+        InstallOutcome.NotReady -> context.getString(R.string.container_health_busy)
+        InstallOutcome.NoPackageManager ->
+            context.getString(R.string.container_health_tools_no_manager)
+
+        is InstallOutcome.Failed ->
+            context.getString(R.string.container_health_tools_install_failed, outcome.output)
+    }
+
 @Composable
-private fun HealthItemRow(item: HealthItem) {
+private fun HealthItemRow(
+    item: HealthItem,
+    installing: Boolean = false,
+    message: String? = null,
+    onInstall: (() -> Unit)? = null,
+) {
     // 不用 SettingsRow 的 trailing：那个槽是整行垂直居中，副标题换行后状态点会落到
     // 两行之间，和标题对不齐。这里把点放进标题那一行，无论副标题几行都对齐。
     Row(
@@ -124,6 +174,50 @@ private fun HealthItemRow(item: HealthItem) {
                     text = stringResource(it, *item.detailArgs.toTypedArray()),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (onInstall != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = Spacing.xs)
+                ) {
+                    if (installing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(Spacing.sm))
+                        Text(
+                            text = stringResource(R.string.container_health_tools_installing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        TextButton(
+                            onClick = onInstall,
+                            contentPadding = PaddingValues(horizontal = Spacing.sm, vertical = 0.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.container_health_tools_install),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+                // 装进的是运行中的容器，不是镜像：重写 rootfs 会把它冲掉。这点必须写明，
+                // 否则用户重建镜像后发现工具又没了，只会以为功能坏了。
+                Text(
+                    text = stringResource(R.string.container_health_tools_install_scope),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            message?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = Spacing.xs)
                 )
             }
         }
