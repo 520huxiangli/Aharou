@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.FilterChip
@@ -25,7 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValueimport androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +73,22 @@ internal fun SkillMarketSection(
                 .padding(top = Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
+            // 选源放在最前面：它决定下面出哪个输入框（检索型源才有关键词框）。
+            // 源一多单行就排不下（横向滚动没有任何提示，新源会整个看不见），所以换行排。
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            ) {
+                sources.forEach { (id, label) ->
+                    FilterChip(
+                        selected = id == selectedSourceId,
+                        onClick = { onSelectSource(id) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -136,21 +152,6 @@ internal fun SkillMarketSection(
                     onClick = { onScopeChange(SkillScope.PROJECT) },
                     label = { Text(stringResource(R.string.skills_scope_project)) }
                 )
-            }
-
-            // 源一多单行就排不下（横向滚动没有任何提示，新源会整个看不见），换成换行排
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-            ) {
-                sources.forEach { (id, label) ->
-                    FilterChip(
-                        selected = id == selectedSourceId,
-                        onClick = { onSelectSource(id) },
-                        label = { Text(label) }
-                    )
-                }
             }
 
             when (alert) {
