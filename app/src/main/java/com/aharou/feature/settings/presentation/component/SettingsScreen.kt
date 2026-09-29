@@ -173,6 +173,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     BackgroundRun(R.string.settings_category_background),
     RemoteServers(R.string.settings_remote_servers),
     Storage(R.string.settings_storage),
+    Performance(R.string.settings_performance),
     TokenStats(R.string.settings_token_stats_title),
     Backup(R.string.settings_backup),
     About(R.string.settings_about)
@@ -977,6 +978,7 @@ fun SettingsScreen(
                     onClearFilters = { viewModel.clearTokenStatsFilters() }
                 )
                 SettingsSection.Storage -> storageViewModel?.let { StorageSectionHost(viewModel = it) }
+                SettingsSection.Performance -> PerformanceSection()
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SkillEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SubAgentEditor -> {} // 已在上方 early return 处理
@@ -1490,6 +1492,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.BookOpen,
                 title = stringResource(SettingsSection.Memory.titleRes),
                 onClick = { onOpen(SettingsSection.Memory) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Cpu,
+                title = stringResource(SettingsSection.Performance.titleRes),
+                onClick = { onOpen(SettingsSection.Performance) }
             )
             SettingsDivider()
             SettingsRow(
