@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -664,13 +665,10 @@ fun AIChatPanel(
     // 附件状态由 ViewModel 持有：分享文件是跨 Activity 投递的，而 remember 局部状态
     // 活不过面板的重组窗口（冷启动时 _currentSessionId 还没就绪），表现为「点了插入，
     // 当次不显示；退出重进才出现」。切换会话时的清空也已在 VM 里接管。
-    val pendingAttachments by viewModel.pendingAttachments.collectAsStateWithLifecycle()
+    // 这里刻意不用 collectAsStateWithLifecycle：分享是外部 App 发来的，投递时机不受本进程控制。
+    // 实测在同一组合里并列两条订阅时，裸 collect 收到了 emit 而绑 lifecycle 的那个没有。
+    val pendingAttachments by viewModel.pendingAttachments.collectAsState()
     val pastedTexts by viewModel.pastedTexts.collectAsStateWithLifecycle()
-    // 诊断：本面板每次重组时它读到的附件数。与 ChatInputBarDbg 对照使用——
-    // 若本行在分享后不再出现，说明整个面板停转，问题在订阅层而非渲染层。
-    androidx.compose.runtime.SideEffect {
-        FileLogger.i("AIChatPanelDbg", "recomposed: attachments=${pendingAttachments.size}")
-    }
     LaunchedEffect(pendingAttachments) {
         FileLogger.i("ChatAttachDbg", "附件状态变化 -> ${pendingAttachments.size} 项：${pendingAttachments.joinToString { it.fileName }}")
     }
