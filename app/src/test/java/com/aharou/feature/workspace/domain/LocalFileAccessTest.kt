@@ -5,6 +5,7 @@ import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -27,8 +28,9 @@ class LocalFileAccessTest {
     private val pathMapper: WorkspacePathMapper = mockk()
 
     private fun newAccess(): LocalFileAccess {
-        every { pathMapper.toHostFile(any()) } answers { File(tmp.root, firstArg<String>()) }
-        every { pathMapper.toContainerPath(any()) } answers { firstArg<String>() }
+        // 生产代码恒以两参形式调用（path, boundWorkspace），单参桩匹配不上，必须写全两个
+        every { pathMapper.toHostFile(any(), any()) } answers { File(tmp.root, firstArg<String>()) }
+        every { pathMapper.toContainerPath(any(), any()) } answers { firstArg<String>() }
         return LocalFileAccess(pathMapper)
     }
 
@@ -293,5 +295,49 @@ class LocalFileAccessTest {
         val access = newAccess()
         access.writeFile("f.txt", "x", overwrite = true)
         assertEquals(File(tmp.root, "f.txt"), access.copyToLocal("f.txt"))
+    }
+
+    // ---------- forWorkspace：会话绑定工作区 ----------
+
+    /**
+     * 绑定后的副本按自己的工作区解析路径，且不改写单例本体——两个会话并行时各写各的目录。
+     * 工作区若存到本类实例字段上（单例被多会话共享），两边会互相覆盖，这条就是防它。
+     */
+    @Test
+    fun forWorkspace_boundCopiesKeepTheirOwnWorkspace() {
+        every { pathMapper.toHostFile(any(), any()) } answers {
+            File(File(tmp.root, secondArg<String?>() ?: "unbound"), firstArg<String>())
+        }
+        val base = LocalFileAccess(pathMapper)
+        val sessionA = base.forWorkspace("ws-a")
+        val sessionB = base.forWorkspace("ws-b")
+
+        sessionA.writeFile("a.txt", "A", overwrite = true)
+        sessionB.writeFile("a.txt", "B", overwrite = true)
+
+        assertEquals("A", File(File(tmp.root, "ws-a"), "a.txt").readText())
+        assertEquals("B", File(File(tmp.root, "ws-b"), "a.txt").readText())
+    }
+
+    @Test
+    fun forWorkspace_blank_returnsSameInstance() {
+        val base = LocalFileAccess(pathMapper)
+        assertSame(base, base.forWorkspace(""))
+    }
+
+    /** 路径回显也得带上绑定的工作区，否则会话里显示的是别的目录。 */
+    @Test
+    fun forWorkspace_echoUsesBoundWorkspace() {
+        val seen = mutableListOf<String?>()
+        every { pathMapper.toHostFile(any(), any()) } answers {
+            seen += secondArg<String?>()
+            File(tmp.root, firstArg<String>())
+        }
+        every { pathMapper.toContainerPath(any(), any()) } answers {
+            seen += secondArg<String?>()
+            firstArg<String>()
+        }
+        LocalFileAccess(pathMapper).forWorkspace("ws-b").toDisplayPath("f.txt")
+        assertEquals(listOf<String?>("ws-b", "ws-b"), seen)
     }
 }

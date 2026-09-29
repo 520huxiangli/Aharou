@@ -148,6 +148,12 @@ interface FileAccessProvider {
 
     /** 把内部真实路径还原为 AI 视角的容器路径（回显用）。 */
     fun toDisplayPath(path: String): String
+
+    /**
+     * 返回一个绑定到 [workspacePath] 的访问器：会话里的文件操作应落到会话自己的工作区，
+     * 而不是全局「当前工作区」。空串表示不绑定（跟随全局），默认实现即如此。
+     */
+    fun forWorkspace(workspacePath: String): FileAccessProvider = this
 }
 
 /**

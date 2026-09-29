@@ -23,7 +23,15 @@ class LocalFileAccess @Inject constructor(
     private val pathMapper: WorkspacePathMapper
 ) : FileAccessProvider {
 
-    private fun resolve(path: String): File = pathMapper.toHostFile(path)
+    /** 会话绑定的工作区路径；null = 跟随全局当前工作区。 */
+    private var boundWorkspace: String? = null
+
+    private fun resolve(path: String): File = pathMapper.toHostFile(path, boundWorkspace)
+
+    override fun forWorkspace(workspacePath: String): FileAccessProvider {
+        if (workspacePath.isBlank()) return this
+        return LocalFileAccess(pathMapper).also { it.boundWorkspace = workspacePath }
+    }
 
     override fun readFile(path: String): String {
         val file = resolve(path)
@@ -210,11 +218,11 @@ class LocalFileAccess @Inject constructor(
 
     override fun parentPath(path: String): String? {
         val parent = resolve(path).parentFile ?: return null
-        return pathMapper.toContainerPath(parent.absolutePath)
+        return pathMapper.toContainerPath(parent.absolutePath, boundWorkspace)
     }
 
     override fun toDisplayPath(path: String): String {
-        return pathMapper.toContainerPath(resolve(path).absolutePath)
+        return pathMapper.toContainerPath(resolve(path).absolutePath, boundWorkspace)
     }
 
     private companion object {

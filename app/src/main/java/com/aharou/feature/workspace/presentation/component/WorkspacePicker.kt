@@ -68,8 +68,7 @@ import com.aharou.R
 @Composable
 fun WorkspaceChip(
     viewModel: WorkspaceViewModel,
-    hasRunningSessions: () -> Boolean = { false },
-    onSwitchConfirmed: () -> Unit = {},
+    onStopCurrentSessions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val current by viewModel.current.collectAsStateWithLifecycle()
@@ -109,8 +108,7 @@ fun WorkspaceChip(
         visible = showSheet,
         onDismiss = { showSheet = false },
         viewModel = viewModel,
-        hasRunningSessions = hasRunningSessions,
-        onSwitchConfirmed = onSwitchConfirmed
+        onStopCurrentSessions = onStopCurrentSessions
     )
 }
 
@@ -120,8 +118,7 @@ fun WorkspaceChip(
 @Composable
 fun WorkspaceIconButton(
     viewModel: WorkspaceViewModel,
-    hasRunningSessions: () -> Boolean = { false },
-    onSwitchConfirmed: () -> Unit = {},
+    onStopCurrentSessions: () -> Unit = {},
     modifier: Modifier = Modifier,
     iconSize: Dp = 24.dp
 ) {
@@ -153,23 +150,18 @@ fun WorkspaceIconButton(
         visible = showSheet,
         onDismiss = { showSheet = false },
         viewModel = viewModel,
-        hasRunningSessions = hasRunningSessions,
-        onSwitchConfirmed = onSwitchConfirmed
+        onStopCurrentSessions = onStopCurrentSessions
     )
 }
 
-/**
- * 工作区选择面板 + 切换确认弹窗的公共宿主：Chip 与 IconButton 两个入口共用，
- * 有会话运行时切换需先确认（确认回调由调用方执行停止逻辑）。
- */
+/** 工作区选择面板的公共宿主：Chip 与 IconButton 两个入口共用。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspaceSelectionHost(
     visible: Boolean,
     onDismiss: () -> Unit,
     viewModel: WorkspaceViewModel,
-    hasRunningSessions: () -> Boolean,
-    onSwitchConfirmed: () -> Unit
+    onStopCurrentSessions: () -> Unit
 ) {
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val current by viewModel.current.collectAsStateWithLifecycle()
@@ -178,18 +170,12 @@ private fun WorkspaceSelectionHost(
     val externalWarningDismissed by viewModel.externalWarningDismissed.collectAsStateWithLifecycle()
     val deleteExternalWorkspaceSessions by viewModel.deleteExternalWorkspaceSessions.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var pendingWorkspaceSelect by remember { mutableStateOf<Workspace?>(null) }
     var showExternalWarning by remember { mutableStateOf(false) }
     var dontShowExternalWarningAgain by remember { mutableStateOf(false) }
 
     fun select(ws: Workspace) {
-        if (hasRunningSessions()) {
-            pendingWorkspaceSelect = ws
-        } else {
-            onSwitchConfirmed()
-            viewModel.selectWorkspace(ws.name)
-            onDismiss()
-        }
+        viewModel.selectWorkspace(ws.name)
+        onDismiss()
     }
 
     // 添加外部本地工作区失败提示：消费后清除，避免重复弹 Toast
@@ -252,7 +238,7 @@ private fun WorkspaceSelectionHost(
                     }
                 }
             },
-            onStopCurrentSessions = onSwitchConfirmed,
+            onStopCurrentSessions = onStopCurrentSessions,
             deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
             onDismiss = onDismiss
         )
@@ -292,25 +278,6 @@ private fun WorkspaceSelectionHost(
                 TextButton(onClick = { showExternalWarning = false }) {
                     Text(stringResource(R.string.common_cancel))
                 }
-            }
-        )
-    }
-
-    pendingWorkspaceSelect?.let { ws ->
-        AlertDialog(
-            onDismissRequest = { pendingWorkspaceSelect = null },
-            title = { Text(stringResource(R.string.workspace_switch)) },
-            text = { Text(stringResource(R.string.workspace_switch_confirm)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onSwitchConfirmed()
-                    viewModel.selectWorkspace(ws.name)
-                    pendingWorkspaceSelect = null
-                    onDismiss()
-                }) { Text(stringResource(R.string.workspace_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingWorkspaceSelect = null }) { Text(stringResource(R.string.common_cancel)) }
             }
         )
     }

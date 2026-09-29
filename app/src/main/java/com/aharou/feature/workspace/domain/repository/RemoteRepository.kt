@@ -126,7 +126,7 @@ class RemoteRepository @Inject constructor(
     }
 
     suspend fun addConnection(conn: RemoteConnection, auth: RemoteAuth) {
-        val authType = if (auth is RemoteAuth.Password) "PASSWORD" else "PRIVATE_KEY"
+        val authType = if (auth is RemoteAuth.Password) "password" else "key"
         val authData = if (auth is RemoteAuth.Password) auth.password else (auth as RemoteAuth.PrivateKey).privateKeyPath
         val passphrase = if (auth is RemoteAuth.PrivateKey) auth.passphrase else null
         // 编辑（updateConnection 复用本方法）时保留原创建时间，避免刷新排序位置
@@ -139,7 +139,7 @@ class RemoteRepository @Inject constructor(
             port = conn.port,
             username = conn.username,
             authType = authType,
-            authData = if (authType == "PASSWORD") KeystoreCipher.encryptString(authData) else authData,
+            authData = if (auth is RemoteAuth.Password) KeystoreCipher.encryptString(authData) else authData,
             passphrase = passphrase?.let { KeystoreCipher.encryptString(it) },
             createdAt = existing?.createdAt ?: System.currentTimeMillis()
         )
@@ -209,7 +209,7 @@ class RemoteRepository @Inject constructor(
                 RemoteProtocol.FTP -> FtpSyncClient()
             }
 
-            val auth = if (connEntity.authType == "PASSWORD") {
+            val auth = if (connEntity.authType == "password") {
                 RemoteAuth.Password(KeystoreCipher.decryptString(connEntity.authData))
             } else {
                 RemoteAuth.PrivateKey(connEntity.authData, connEntity.passphrase?.let { KeystoreCipher.decryptString(it) })
@@ -335,7 +335,7 @@ class RemoteRepository @Inject constructor(
                 RemoteProtocol.SFTP -> SftpSyncClient(hostKeyVerifier, privateKeyStore)
                 RemoteProtocol.FTP -> FtpSyncClient()
             }
-            val auth = if (connEntity.authType == "PASSWORD") {
+            val auth = if (connEntity.authType == "password") {
                 RemoteAuth.Password(KeystoreCipher.decryptString(connEntity.authData))
             } else {
                 RemoteAuth.PrivateKey(connEntity.authData, connEntity.passphrase?.let { KeystoreCipher.decryptString(it) })
@@ -357,8 +357,8 @@ class RemoteRepository @Inject constructor(
         host = host,
         port = port,
         username = username,
-        password = if (authType == "PASSWORD") KeystoreCipher.decryptString(authData) else "",
-        authType = if (authType == "PRIVATE_KEY") "key" else "password",
+        password = if (authType == "password") KeystoreCipher.decryptString(authData) else "",
+        authType = authType,
         authData = authData,
         passphrase = passphrase?.let { KeystoreCipher.decryptString(it) }
     )

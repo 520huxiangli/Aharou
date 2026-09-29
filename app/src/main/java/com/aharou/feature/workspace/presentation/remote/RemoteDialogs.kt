@@ -126,15 +126,16 @@ private fun SheetTitle(text: String) {
     }
 }
 
-/** 紧凑分段选择器：样式与 MCP 编辑弹窗的分段控件一致（无额外外边距）。 */
+/** 紧凑分段选择器：样式与 MCP 编辑弹窗的分段控件一致。 */
 @Composable
 private fun CompactSegments(
     selected: Int,
     onSelect: (Int) -> Unit,
-    tabs: List<String>
+    tabs: List<String>,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(
                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -274,7 +275,8 @@ fun AddRemoteConnectionDialog(
                     }
                     protocol = newProtocol
                 },
-                tabs = listOf("SFTP", "FTP")
+                tabs = listOf("SFTP", "FTP"),
+                modifier = Modifier.padding(horizontal = 20.dp)
             )
 
             Spacer(modifier = Modifier.height(10.dp))

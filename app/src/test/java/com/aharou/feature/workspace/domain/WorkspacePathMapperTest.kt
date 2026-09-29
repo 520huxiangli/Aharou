@@ -7,6 +7,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
 
@@ -24,6 +25,8 @@ class WorkspacePathMapperTest {
     private val pathHomeResolver: PathHomeResolver = mockk()
 
     private val wsRoot = "/data/ws"
+    private val wsA = "/data/ws-a"
+    private val wsB = "/data/ws-b"
     private val aicodeDir = "/data/aicode"
     private val rootfsDir = "/data/rootfs"
     private val sharedDir = "/data/shared"
@@ -145,5 +148,46 @@ class WorkspacePathMapperTest {
     @Test
     fun toContainerPath_unmappedPath_unchanged() {
         assertEquals("/somewhere/else", newMapper().toContainerPath("/somewhere/else"))
+    }
+
+    // ---------- 会话绑定工作区 ----------
+    // 本单例被多个会话共享，工作区必须由调用方传进来；全局「当前工作区」只是没传时的回退。
+
+    @Test
+    fun toHostFile_explicitWorkspace_overridesGlobalCurrent() {
+        val mapper = newMapper()
+        assertEquals(File(wsB, "src/Main.kt"), mapper.toHostFile("~/workspace/src/Main.kt", wsB))
+        assertEquals(File(wsB), mapper.toHostFile("~/workspace", wsB))
+    }
+
+    @Test
+    fun toHostFile_relativePath_usesExplicitWorkspace() {
+        assertEquals(File(wsB, "a.txt"), newMapper().toHostFile("a.txt", wsB))
+    }
+
+    @Test
+    fun toHostFile_blankOrNullWorkspace_fallsBackToGlobalCurrent() {
+        val mapper = newMapper()
+        assertEquals(File(wsRoot, "a.txt"), mapper.toHostFile("~/workspace/a.txt", null))
+        assertEquals(File(wsRoot, "a.txt"), mapper.toHostFile("~/workspace/a.txt", ""))
+        assertEquals(File(wsRoot, "a.txt"), mapper.toHostFile("~/workspace/a.txt", "   "))
+    }
+
+    @Test
+    fun toHostFile_explicitWorkspace_stillRejectsEscape() {
+        assertThrows(IllegalArgumentException::class.java) {
+            newMapper().toHostFile("~/workspace/../../shared_prefs/x.xml", wsB)
+        }
+    }
+
+    @Test
+    fun toContainerPath_explicitWorkspace_mapsToContainerForm() {
+        assertEquals("~/workspace/a.txt", newMapper().toContainerPath("$wsB/a.txt", wsB))
+    }
+
+    @Test
+    fun toContainerPath_otherWorkspace_notTreatedAsCurrent() {
+        // 既不是全局当前也不是绑定目标的工作区，不能被当成 ~/workspace 回显
+        assertEquals("$wsA/a.txt", newMapper().toContainerPath("$wsA/a.txt", wsB))
     }
 }

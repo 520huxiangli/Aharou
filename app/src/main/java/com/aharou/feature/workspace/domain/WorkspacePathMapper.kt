@@ -74,8 +74,14 @@ class WorkspacePathMapper @Inject constructor(
             ?: ContainerProfile.BUILTIN_ALPINE
     }
 
-    /** 当前工作区在宿主上的根目录。 */
-    private fun hostRoot(): File = File(workspaceRepository.currentPath())
+    /**
+     * 工作区在宿主上的根目录。[workspacePath] 为空时用全局当前工作区。
+     *
+     * 会话绑定的调用方（文件工具）必须显式传会话自己的工作区：本类是无状态的单例，
+     * 不能拿字段存「当前会话工作区」，两个会话并行时会互相覆盖。
+     */
+    private fun hostRoot(workspacePath: String? = null): File =
+        File(workspacePath?.takeIf { it.isNotBlank() } ?: workspaceRepository.currentPath())
 
     /** [CONTAINER_ROOT] 展开后的绝对路径（`$HOME/workspace`），供路径匹配使用。home 未就绪时回退 `/root`。 */
     private fun resolvedContainerRoot(): String =
@@ -102,8 +108,8 @@ class WorkspacePathMapper @Inject constructor(
      *
      * `/root/.aicode` 必须先于通用 `/`→rootfs 规则匹配，否则会落到 rootfs 内的临时副本（升级即丢）。
      */
-    fun toHostFile(path: String): File {
-        val root = hostRoot()
+    fun toHostFile(path: String, workspacePath: String? = null): File {
+        val root = hostRoot(workspacePath)
         val wsRoot = resolvedContainerRoot()
         val p = pathHomeResolver.expandHome(path.trim())
         val file = when {
@@ -149,8 +155,8 @@ class WorkspacePathMapper @Inject constructor(
      * 工作区在 `filesDir/projects`、AI 配置在 `filesDir/aicode`、rootfs 在 `filesDir/rootfs`，三者互不重叠，
      * 判断顺序无歧义。
      */
-    fun toContainerPath(hostPath: String): String {
-        val rootPath = hostRoot().absolutePath.replace('\\', '/')
+    fun toContainerPath(hostPath: String, workspacePath: String? = null): String {
+        val rootPath = hostRoot(workspacePath).absolutePath.replace('\\', '/')
         val aicodePath = aicodeRoot().absolutePath.replace('\\', '/')
         val memoryPath = aharouMemoryRoot().absolutePath.replace('\\', '/')
         val sharedPath = sharedRoot().absolutePath.replace('\\', '/')

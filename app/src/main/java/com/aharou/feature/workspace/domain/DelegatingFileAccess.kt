@@ -16,18 +16,33 @@ import javax.inject.Singleton
  * 真正读写文件时才读取当前模式。
  */
 @Singleton
-class DelegatingFileAccess @Inject constructor(
+class DelegatingFileAccess private constructor(
     private val modeHolder: ExecutionModeHolder,
-    private val localFileAccess: LocalFileAccess,
-    private val remoteSftpFileAccess: RemoteSftpFileAccess
+    private val localLeg: FileAccessProvider,
+    private val remoteLeg: FileAccessProvider,
 ) : FileAccessProvider {
 
-    /** 远程腿包一层防崩壳：远程失败（连接失败/主机密钥待确认/SFTP 错误）绝不把异常抛进上层协程（防闪退）。 */
-    private val safeRemoteFileAccess: FileAccessProvider by lazy { SafeFileAccessProvider(remoteSftpFileAccess) }
+    @Inject
+    constructor(
+        modeHolder: ExecutionModeHolder,
+        localFileAccess: LocalFileAccess,
+        remoteSftpFileAccess: RemoteSftpFileAccess,
+    ) : this(
+        modeHolder,
+        localFileAccess,
+        // 远程腿包一层防崩壳：远程失败（连接失败/主机密钥待确认/SFTP 错误）绝不把异常抛进上层协程（防闪退）。
+        SafeFileAccessProvider(remoteSftpFileAccess),
+    )
 
     private fun delegate(): FileAccessProvider =
-        if (modeHolder.currentMode() == ExecutionMode.REMOTE_SSH) safeRemoteFileAccess
-        else localFileAccess
+        if (modeHolder.currentMode() == ExecutionMode.REMOTE_SSH) remoteLeg
+        else localLeg
+
+    /** 绑定会话工作区的副本：本地腿指向该工作区，远程腿不变。 */
+    override fun forWorkspace(workspacePath: String): FileAccessProvider {
+        if (workspacePath.isBlank()) return this
+        return DelegatingFileAccess(modeHolder, localLeg.forWorkspace(workspacePath), remoteLeg)
+    }
 
     override fun readFile(path: String): String = delegate().readFile(path)
 
