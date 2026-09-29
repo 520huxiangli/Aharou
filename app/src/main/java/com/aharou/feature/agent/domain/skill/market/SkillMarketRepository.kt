@@ -97,7 +97,8 @@ class SkillMarketRepository @Inject constructor(
      * 地址认不出来返回 null，由调用方提示用户；识别出来但没技能则返回空列表。
      */
     suspend fun listFromRepo(input: String): RepoListing? {
-        val parsed = SkillRepoAccess.parse(input) ?: return null
+        val address = resolveSkillSite(input.trim()) ?: return null
+        val parsed = SkillRepoAccess.parse(address) ?: return null
         val coord = parsed.coord
         // 地址里带子目录（.../tree/main/skills/docx）时只扫那一层，否则扫整仓。
         val source = SkillMarketSourceDef(
@@ -107,11 +108,80 @@ class SkillMarketRepository @Inject constructor(
             path = parsed.subPath,
             host = coord.host
         )
-        val skills = runCatching { listFrom(ADHOC_SOURCE_ID, source, null) }.getOrElse {
+        val found = runCatching { listFrom(ADHOC_SOURCE_ID, source, null) }.getOrElse {
             FileLogger.w(TAG, "列仓库失败（${coord.repo}）：${it.message}")
             return RepoListing(coord.repo, coord.ref, emptyList(), failed = true)
         }
-        return RepoListing(coord.repo, coord.ref, skills)
+        if (found.isNotEmpty() || parsed.subPath.isEmpty()) {
+            return RepoListing(coord.repo, coord.ref, found)
+        }
+        // 技能网站给的技能名未必等于仓库里的目录名（skills.sh 的 `/anthropics/skills/pdf`
+        // 在仓库里其实是 `skills/pdf`），按子目录扫不到就退回整仓，让用户从列表里挑。
+        val wholeRepo = runCatching { listFrom(ADHOC_SOURCE_ID, source.copy(path = ""), null) }
+            .getOrDefault(emptyList())
+        return RepoListing(coord.repo, coord.ref, wholeRepo)
+    }
+
+    /**
+     * 技能网站的地址先读一次页面、换算成它对应的 GitHub 仓库地址；
+     * 普通仓库地址原样返回，认不出来返回 null。
+     */
+    private suspend fun resolveSkillSite(input: String): String? {
+        if (input.isBlank()) return null
+        val page = SkillRepoAccess.siteLookupUrl(input) ?: return input
+        val repo = httpGet(page)?.let { SkillRepoAccess.repoFromSitePage(it) } ?: return null
+        FileLogger.d(TAG, "技能网站地址换算为仓库：$input -> $repo")
+        return "https://github.com/$repo"
+    }
+
+    /**
+     * 检索型源：拿关键词打站点的检索接口。
+     * 接口是关键词驱动的，同一个源不同词的结果互不相同，所以不走列表缓存。
+     */
+    suspend fun searchSkills(sourceId: String, query: String): MarketListing {
+        val source = sources()[sourceId] ?: return MarketListing(emptyList())
+        val url = source.searchUrlFor(query) ?: return MarketListing(emptyList())
+        val body = httpGet(url) ?: return MarketListing(emptyList(), failed = true)
+        val parsed = runCatching { json.decodeFromString<SkillSearchResponse>(body) }.getOrNull()
+            ?: return MarketListing(emptyList(), failed = true)
+        val skills = parsed.skills
+            .filter { it.source.contains('/') && it.skillId.isNotBlank() }
+            .map { item ->
+                MarketSkill(
+                    sourceId = sourceId,
+                    host = SkillRepoAccess.GITHUB,
+                    repo = item.source,
+                    branch = SkillRepoAccess.HEAD,
+                    isDirectory = true,
+                    // 目录与文件清单要等安装时拉一次文件树才知道
+                    dir = "",
+                    name = item.skillId,
+                    description = "",
+                    needsLocate = true,
+                    installs = item.installs
+                )
+            }
+        return MarketListing(skills)
+    }
+
+    /**
+     * 检索型源的结果落在某个仓库里，但只知道技能名：拉一次文件树，按目录名（不区分大小写）
+     * 找到含 SKILL.md 的那一层，再补全它自己的文件清单，之后与普通目录型技能同路。
+     */
+    private suspend fun locateInRepo(skill: MarketSkill): MarketSkill? {
+        val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
+        val files = fetchTree(coord) ?: return null
+        val dir = files
+            .filter { it.substringAfterLast('/').equals(SKILL_FILE, ignoreCase = true) }
+            .map { it.substringBeforeLast('/', "") }
+            .firstOrNull { it.substringAfterLast('/').equals(skill.name, ignoreCase = true) }
+            ?: return null
+        return skill.copy(
+            dir = dir,
+            files = files.filter { dir.isEmpty() || it.startsWith("$dir/") }
+                .map { if (dir.isEmpty()) it else it.removePrefix("$dir/") },
+            needsLocate = false
+        )
     }
 
     /**
@@ -119,6 +189,13 @@ class SkillMarketRepository @Inject constructor(
      * 已在同作用域存在同名技能时直接覆盖——市场里点「安装」就是对「更新」的语义。
      */
     suspend fun install(skill: MarketSkill, scope: SkillScope): SkillImportReport {
+        // 检索型源只给了技能名与所在仓库，不知道它在仓库里的哪个目录
+        // （skills.sh 的 `pdf` 在 `anthropics/skills` 里其实是 `skills/pdf`），先定位再下载。
+        val resolved = if (skill.needsLocate) locateInRepo(skill) ?: return SkillImportReport(emptyList()) else skill
+        return installResolved(resolved, scope)
+    }
+
+    private suspend fun installResolved(skill: MarketSkill, scope: SkillScope): SkillImportReport {
         val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
 
         // 两种源只是技能包的取得方式不同，拿到 zip 字节后完全同路。

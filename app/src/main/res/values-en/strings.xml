@@ -1083,6 +1083,8 @@
     <string name="skills_market_repo_hint">Paste a repo URL, e.g. github.com/user/repo</string>
     <string name="skills_market_repo_load">Load</string>
     <string name="skills_market_repo_invalid">Unrecognized address</string>
+    <string name="skills_market_search_hint">Type a keyword to search skills (at least 2 characters)</string>
+    <string name="skills_market_search">Search</string>
     <string name="skills_market_no_skills">No skills found in this repository</string>
     <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
     <string name="skills_add_from_market">Install from market</string>

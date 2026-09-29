@@ -632,6 +632,10 @@ class SettingsViewModel @Inject constructor(
     private val _marketSourceId = MutableStateFlow("")
     val marketSourceId: StateFlow<String> = _marketSourceId.asStateFlow()
 
+    private val _marketSearchable = MutableStateFlow(false)
+    /** 当前源是不是检索型：界面据此出一个搜索框，而不是直接列技能。 */
+    val marketSearchable: StateFlow<Boolean> = _marketSearchable.asStateFlow()
+
     private val _marketSkills = MutableStateFlow<List<MarketSkillUi>>(emptyList())
     val marketSkills: StateFlow<List<MarketSkillUi>> = _marketSkills.asStateFlow()
 
@@ -1260,16 +1264,47 @@ class SettingsViewModel @Inject constructor(
         if (_marketSources.value.none { it.first == _marketSourceId.value }) {
             _marketSourceId.value = _marketSources.value.firstOrNull()?.first.orEmpty()
         }
+        _marketSearchable.value = isSearchSource(_marketSourceId.value)
     }
+
+    private fun isSearchSource(sourceId: String) =
+        skillMarketRepository.sources()[sourceId]?.isSearch == true
 
     /** 切换市场源并重新拉取其技能列表。 */
     fun selectMarketSource(sourceId: String) {
         if (_marketSourceId.value == sourceId) return
         _marketSourceId.value = sourceId
-        if (sourceId == ADHOC_MARKET_ID) {
-            marketAdhocRepo?.let { loadMarketFromRepo(it) }
-        } else {
-            loadMarketSkills()
+        _marketSearchable.value = isSearchSource(sourceId)
+        when {
+            sourceId == ADHOC_MARKET_ID -> marketAdhocRepo?.let { loadMarketFromRepo(it) }
+            // 检索型源没有「列全部」的入口，清空列表等用户输关键词
+            isSearchSource(sourceId) -> {
+                _marketSkills.value = emptyList()
+                _marketAlert.value = null
+            }
+            else -> loadMarketSkills()
+        }
+    }
+
+    /**
+     * 检索型源：按关键词拉结果。结果里的技能只带名字与所在仓库，
+     * 安装时再去仓库里定位目录（见 SkillMarketRepository.install）。
+     */
+    fun searchMarket(query: String) {
+        if (query.isBlank()) return
+        viewModelScope.launch {
+            _marketLoading.value = true
+            _marketAlert.value = null
+            val listing = withContext(Dispatchers.IO) {
+                skillMarketRepository.searchSkills(_marketSourceId.value, query)
+            }
+            _marketSkills.value = listing.skills.map { toMarketUi(it) }
+            _marketAlert.value = when {
+                listing.failed -> MarketAlert.LoadFailed
+                listing.skills.isEmpty() -> MarketAlert.NoSkills
+                else -> null
+            }
+            _marketLoading.value = false
         }
     }
 
@@ -1339,7 +1374,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val report = withContext(Dispatchers.IO) { skillMarketRepository.install(skill, scope) }
             finishSkillImport(report)
-            loadMarketSkills()
+            // 检索型源的结果是一次性查询出来的，装完不能重新「列源」把列表换掉
+            if (!isSearchSource(_marketSourceId.value)) loadMarketSkills()
             refreshSkills()
         }
     }

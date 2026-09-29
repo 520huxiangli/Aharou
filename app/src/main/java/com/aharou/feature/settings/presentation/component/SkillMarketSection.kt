@@ -54,12 +54,15 @@ internal fun SkillMarketSection(
     loading: Boolean,
     alert: MarketAlert?,
     scope: SkillScope,
+    searchable: Boolean,
     onScopeChange: (SkillScope) -> Unit,
     onSelectSource: (String) -> Unit,
     onInstall: (MarketSkill) -> Unit,
-    onLoadRepo: (String) -> Unit
+    onLoadRepo: (String) -> Unit,
+    onSearch: (String) -> Unit
 ) {
     var repoInput by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -86,6 +89,30 @@ internal fun SkillMarketSection(
                     enabled = repoInput.isNotBlank() && !loading
                 ) {
                     Text(stringResource(R.string.skills_market_repo_load))
+                }
+            }
+
+            // 检索型源没有「列全部」的入口，得多一个关键词搜索框
+            if (searchable) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                ) {
+                    AppTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = stringResource(R.string.skills_market_search_hint),
+                        singleLine = true,
+                        keyboardActions = KeyboardActions(onDone = { onSearch(query) })
+                    )
+                    // 检索接口要求关键词至少 2 个字，不够就置灰，省得白跑一趟
+                    TextButton(
+                        onClick = { onSearch(query) },
+                        enabled = query.trim().length >= 2 && !loading
+                    ) {
+                        Text(stringResource(R.string.skills_market_search))
+                    }
                 }
             }
 
@@ -141,7 +168,7 @@ internal fun SkillMarketSection(
                     .padding(horizontal = Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                items(skills, key = { it.skill.dir + "@" + it.skill.sourceId }) { ui ->
+                items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) {
                     MarketSkillRow(ui, onInstall)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
@@ -184,6 +211,8 @@ private fun MarketSkillRow(ui: MarketSkillUi, onInstall: (MarketSkill) -> Unit) 
                 listOfNotNull(
                     // 显示名与技能标识不同时，把标识也带上——调用技能/排查时认的是它
                     skill.name.takeIf { it.isNotBlank() && it != skill.displayName },
+                    // 检索结果来自各个仓库，带上来源才知道装的是谁的
+                    skill.repo.takeIf { skill.needsLocate && it.isNotBlank() },
                     skill.author.takeIf { it.isNotBlank() },
                     skill.version.takeIf { it.isNotBlank() },
                     skill.license.takeIf { it.isNotBlank() }
