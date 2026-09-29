@@ -16,6 +16,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.aharou.R
 import com.aharou.feature.agent.domain.runtime.AgentRuntimeStatus
+import com.aharou.feature.voice.call.VoiceCallService
+import com.aharou.feature.voice.call.VoiceCallSession
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +35,7 @@ import kotlinx.coroutines.launch
  * 持有 [FloatingToolOverlay]；按 AND 门控显隐：**App 不在前台 && Agent 有工具在跑 && 有权限**。
  * 由设置页「悬浮窗」开关启停；进程内全局运行状态来自 [AgentRuntimeStatus]。
  */
+@AndroidEntryPoint
 class FloatingToolService : Service() {
 
     companion object {
@@ -83,6 +88,10 @@ class FloatingToolService : Service() {
     private lateinit var overlay: FloatingToolOverlay
     private val appForeground = MutableStateFlow(true)
 
+    /** 通话状态要从服务里拿（跨进程级的单例）。 */
+    @Inject
+    internal lateinit var callSession: VoiceCallSession
+
     private val foregroundObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
             appForeground.value = true
@@ -110,22 +119,68 @@ class FloatingToolService : Service() {
         overlay = FloatingToolOverlay(this)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
         collectorJob = scope.launch {
-            combine(AgentRuntimeStatus.state, appForeground) { status, foreground ->
-                Triple(status, foreground, overlay.hasOverlayPermission())
-            }.collect { (status, foreground, hasPermission) ->
-                // 整轮门控：任务在跑 && App 不在前台 && 有权限 —— 任务期间常显（只更新文字），
-                // 不再按「单个工具的执行窗口」开关，避免一连串快工具导致胶囊闪烁。
-                val shouldShow = status.active && !foreground && hasPermission
-                if (shouldShow) {
-                    val statusText = if (status.busy) status.statusText
-                    else getString(R.string.floating_thinking)
-                    overlay.show(status.toolName, statusText)
-                } else {
+            combine(
+                AgentRuntimeStatus.state,
+                appForeground,
+                VoiceCallService.running,
+                callSession.state,
+                callSession.displayText,
+            ) { status, foreground, callRunning, callState, displayText ->
+                OverlaySnapshot(status, foreground, callRunning, callState, displayText)
+            }.collect { snap ->
+                if (!overlay.hasOverlayPermission()) {
                     overlay.hide()
+                    return@collect
                 }
+                // 通话中常显（它就是通话的唯一界面）；否则只在本轮任务跑着且 App 不在前台时显示。
+                // 两种状态共用同一枚胶囊：头像当通话开关，状态行改显它正在说的那句。
+                val shouldShow = snap.callRunning ||
+                    (snap.status.active && !snap.foreground)
+                if (!shouldShow) {
+                    overlay.hide()
+                    return@collect
+                }
+                val title = if (snap.callRunning) getString(R.string.voice_call_title)
+                else snap.status.toolName
+                val statusText = when {
+                    !snap.callRunning && snap.status.busy -> snap.status.statusText
+                    !snap.callRunning -> getString(R.string.floating_thinking)
+                    snap.displayText.isNotBlank() -> snap.displayText
+                    else -> getString(callStateLabel(snap.callState))
+                }
+                overlay.show(
+                    toolName = title,
+                    statusText = statusText,
+                    iconAction = ::toggleCall,
+                    callActive = snap.callRunning,
+                    expandable = snap.callRunning,
+                )
             }
         }
     }
+
+    /** 头像上的动作：通话开着就关，关着就开。 */
+    private fun toggleCall() {
+        if (VoiceCallService.isRunning()) VoiceCallService.stop(this)
+        else VoiceCallService.start(this)
+    }
+
+    private fun callStateLabel(state: VoiceCallSession.State): Int = when (state) {
+        VoiceCallSession.State.Listening -> R.string.voice_call_state_listening
+        VoiceCallSession.State.Thinking -> R.string.voice_call_state_thinking
+        VoiceCallSession.State.Speaking -> R.string.voice_call_state_speaking
+        VoiceCallSession.State.Preparing, VoiceCallSession.State.Idle ->
+            R.string.voice_call_state_preparing
+    }
+
+    /** 合并后的显示状态：同时装着 Agent 进度与通话状态。 */
+    private data class OverlaySnapshot(
+        val status: AgentRuntimeStatus.State,
+        val foreground: Boolean,
+        val callRunning: Boolean,
+        val callState: VoiceCallSession.State,
+        val displayText: String,
+    )
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
