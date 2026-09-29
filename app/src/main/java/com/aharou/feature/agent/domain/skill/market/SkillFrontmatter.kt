@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.skill.market
 
 import com.aharou.core.util.FileLogger
 import org.yaml.snakeyaml.Yaml
+import java.util.Locale
 
 /**
  * 从 SKILL.md 的 YAML frontmatter 里提取市场展示用的元数据。
@@ -15,6 +16,8 @@ internal object SkillFrontmatter {
 
     data class Meta(
         val name: String,
+        /** 面向用户的显示名。各家仓库叫法不一，WorkBuddy 用 display_name（基本是中文）。 */
+        val displayName: String,
         val description: String,
         val author: String = "",
         val license: String = "",
@@ -24,20 +27,32 @@ internal object SkillFrontmatter {
     fun parse(text: String, fallbackName: String): Meta {
         val map = readFrontmatter(text)
         val name = map["name"]?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackName
-        // WorkBuddy 的技能只有 description_zh / description_en，没有 description 字段
-        val description = sequenceOf("description", "description_zh", "description_en")
-            .mapNotNull { key -> map[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() } }
-            .firstOrNull()
-            .orEmpty()
-            .take(MAX_DESC_CHARS)
         return Meta(
             name = name,
-            description = description,
+            displayName = pick(map, listOf("display_name", "display_name_zh", "display_name_en"))
+                .ifEmpty { name },
+            description = pick(map, descriptionKeys()).take(MAX_DESC_CHARS),
             author = map["author"]?.toString()?.trim().orEmpty(),
             license = map["license"]?.toString()?.trim().orEmpty(),
             version = map["version"]?.toString()?.trim().orEmpty()
         )
     }
+
+    /**
+     * 描述字段的取值顺序。WorkBuddy 这类国内仓库同时给了 `description_zh` / `description_en`，
+     * 按界面语言挑，缺哪个就退到通用字段（Trae 只给一个 `description`，那就是中文）。
+     */
+    private fun descriptionKeys(): List<String> =
+        if (Locale.getDefault().language == "zh") {
+            listOf("description_zh", "description", "description_en")
+        } else {
+            listOf("description_en", "description", "description_zh")
+        }
+
+    private fun pick(map: Map<String, Any>, keys: List<String>): String =
+        keys.firstNotNullOfOrNull { key ->
+            map[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        }.orEmpty()
 
     private fun readFrontmatter(text: String): Map<String, Any> {
         val normalized = text.replace("\r\n", "\n")

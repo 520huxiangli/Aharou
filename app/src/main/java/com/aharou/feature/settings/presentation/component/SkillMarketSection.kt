@@ -165,7 +165,7 @@ private fun MarketSkillRow(ui: MarketSkillUi, onInstall: (MarketSkill) -> Unit) 
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = skill.name,
+                text = skill.displayName.ifBlank { skill.name },
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
@@ -182,6 +182,8 @@ private fun MarketSkillRow(ui: MarketSkillUi, onInstall: (MarketSkill) -> Unit) 
             }
             val meta = remember(skill) {
                 listOfNotNull(
+                    // 显示名与技能标识不同时，把标识也带上——调用技能/排查时认的是它
+                    skill.name.takeIf { it.isNotBlank() && it != skill.displayName },
                     skill.author.takeIf { it.isNotBlank() },
                     skill.version.takeIf { it.isNotBlank() },
                     skill.license.takeIf { it.isNotBlank() }

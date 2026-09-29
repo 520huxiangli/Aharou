@@ -267,6 +267,7 @@ class SkillMarketRepository @Inject constructor(
             val meta = enriched[skill.dir] ?: return@map skill
             skill.copy(
                 name = meta?.name ?: skill.name,
+                displayName = meta?.displayName.orEmpty(),
                 description = meta?.description.orEmpty(),
                 version = meta?.version.orEmpty(),
                 author = meta?.author.orEmpty(),

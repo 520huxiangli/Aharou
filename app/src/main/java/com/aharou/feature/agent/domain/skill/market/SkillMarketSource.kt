@@ -69,6 +69,8 @@ data class MarketSkill(
     /** 技能目录相对源仓库根的路径，如 `skills/git-commit-generator`。 */
     val dir: String,
     val name: String,
+    /** 展示给用户看的名，优先仓库给的 display_name（国内仓库多为中文）；为空时用 [name]。 */
+    val displayName: String = "",
     val description: String,
     val version: String = "",
     val author: String = "",
