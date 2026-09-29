@@ -25,6 +25,15 @@ object SkillRepoAccess {
     const val GITEE = "gitee"
     const val GITLAB = "gitlab"
 
+    /** skills.sh 的路径就是 GitHub 的 `owner/repo[/技能名]`，光靠地址就能换算，不用联网查。 */
+    private const val SKILLS_SH = "skills.sh"
+
+    /** LobeHub 的技能页 `/skills/<标识>`：标识拼不回仓库，得先读一次页面才知道对应哪个仓库。 */
+    private const val LOBEHUB = "lobehub.com"
+
+    /** 技能网站页面里指向 GitHub 仓库的链接。 */
+    private val REPO_URL = Regex("github\\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
+
     /** 默认分支：用户只给仓库地址、没指定分支时用它，由服务端重定向到真正的默认分支。 */
     const val HEAD = "HEAD"
 
@@ -88,6 +97,14 @@ object SkillRepoAccess {
         val segments = uri.path.trim('/').split('/').filter { it.isNotBlank() }
         if (segments.size < 2) return null
 
+        // 技能网站：路径前两段就是仓库坐标，后续段是技能名
+        if (hostRaw.endsWith(SKILLS_SH)) {
+            return Parsed(
+                Coord(GITHUB, "${segments[0]}/${segments[1]}", HEAD),
+                segments.drop(2).joinToString("/")
+            )
+        }
+
         val host = when {
             hostRaw.contains("github") -> GITHUB
             hostRaw.contains("gitee") -> GITEE
@@ -106,6 +123,29 @@ object SkillRepoAccess {
         val subPath = segments.drop(sepIndex + 2).joinToString("/")
         return Parsed(Coord(host, repo, ref), subPath)
     }
+
+    /**
+     * 需要先读一次页面才知道对应哪个仓库的技能网站地址，返回要抓的那个页面；
+     * 其余地址（包括普通仓库地址）返回 null，由调用方按仓库地址处理。
+     */
+    fun siteLookupUrl(input: String): String? {
+        val uri = runCatching { java.net.URI(input.trim().removeSuffix("/")) }.getOrNull() ?: return null
+        val host = uri.host?.lowercase() ?: return null
+        if (!host.endsWith(LOBEHUB)) return null
+        val segments = uri.path.trim('/').split('/').filter { it.isNotBlank() }
+        if (segments.size < 2 || segments[0] != "skills") return null
+        return "https://$LOBEHUB/skills/${segments[1]}"
+    }
+
+    /**
+     * 从技能网站的页面正文里找出它指向的 GitHub 仓库（`owner/repo`）。
+     * LobeHub 的技能页直接返回 markdown 正文，里面带着仓库地址；没有则返回 null。
+     */
+    fun repoFromSitePage(body: String): String? =
+        REPO_URL.find(body)?.value
+            ?.removePrefix("github.com/")
+            ?.trimEnd('.', ',', ')', '"', '\'')
+            ?.takeIf { it.count { c -> c == '/' } == 1 }
 
     /** 取单个文件的候选地址，按优先级排列（前一个失败换下一个）。 */
     fun fileUrls(coord: Coord, path: String): List<String> {
