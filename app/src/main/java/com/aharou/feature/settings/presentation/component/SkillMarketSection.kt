@@ -168,7 +168,7 @@ internal fun SkillMarketSection(
                     .padding(horizontal = Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) {
+                items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
                     MarketSkillRow(ui, onInstall)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
