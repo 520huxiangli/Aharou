@@ -4,6 +4,7 @@ import android.content.Context
 import com.aharou.core.net.AppProxy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -52,8 +53,9 @@ class UpdateApkDownloader @Inject constructor(
     }
 
     /**
-     * 逐个候选源尝试下载。单个源连接不上、返回非 200、内容不是 APK 或长度对不上，
-     * 都视为该源失败并删除半成品，换下一个；全部失败抛 [IOException]。
+     * 逐个候选源尝试。失败**不删半成品**：下次（含换个源）用 HTTP Range 接着下，
+     * 不用从 0 重来——安装包 100MB+，断点续传是刚需。只有内容不是安装包、
+     * 或全部源都失败才回错。
      *
      * @param expectedSize GitHub API 报的资产大小，用于校验完整性（<=0 表示未知，跳过校验）
      */
@@ -65,17 +67,19 @@ class UpdateApkDownloader @Inject constructor(
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val dest = File(downloadDir(), fileName)
+        // 已下完的直接复用：更新弹窗会被反复打开，没必要每次重下
+        if (expectedSize > 0 && dest.isFile && dest.length() == expectedSize) {
+            return@withContext dest
+        }
         var lastError: Exception? = null
         for (url in candidates) {
             try {
                 val file = fetch(url, dest, expectedSize, onSource, onProgress)
                 return@withContext file
             } catch (e: CancellationException) {
-                dest.delete()
                 throw e
             } catch (e: Exception) {
                 lastError = e
-                dest.delete()
             }
         }
         throw IOException(lastError?.message ?: "没有可用的下载源")
@@ -88,7 +92,18 @@ class UpdateApkDownloader @Inject constructor(
         onSource: (String) -> Unit,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
     ): File = suspendCancellableCoroutine { cont ->
-        val call = client.newCall(Request.Builder().url(url).build())
+        // 半成品接着下：各个候选源给的是同一个资产，内容一致，换源也能续
+        val already = if (dest.isFile && dest.length() > 0 &&
+            (expectedSize <= 0 || dest.length() < expectedSize)
+        ) {
+            dest.length()
+        } else {
+            if (dest.isFile) dest.delete() // 比预期还大 = 上次是坏文件
+            0L
+        }
+        val builder = Request.Builder().url(url)
+        if (already > 0) builder.header("Range", "bytes=$already-")
+        val call = client.newCall(builder.build())
         cont.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -103,34 +118,31 @@ class UpdateApkDownloader @Inject constructor(
                         // 反代/镜像故障时会回一段 HTML 错误页，别把它当 APK 存下来
                         throw IOException("响应不是安装包（$it）")
                     }
+                    // 请求了 Range 却回 200：该源不支持续传，从头写
+                    val resuming = already > 0 && response.code == 206
+                    if (already > 0 && !resuming) dest.delete()
+                    val base = if (resuming) already else 0L
                     val body = response.body ?: throw IOException("响应体为空")
-                    val total = body.contentLength().takeIf { it > 0 } ?: expectedSize
+                    val total = body.contentLength().takeIf { it > 0 }?.let { base + it } ?: expectedSize
                     onSource(url)
-                    val startedAt = System.currentTimeMillis()
                     val buffer = ByteArray(64 * 1024)
-                    var read = 0L
+                    var session = 0L
+                    // 不按速度判死源：慢但一直在下就让它下（手机流量本来就慢）。
+                    // 「源彻底卡住」由 OkHttp 的 readTimeout(60s) 兜底，不用另设阀值。
                     body.byteStream().use { input ->
-                        dest.outputStream().use { output ->
+                        FileOutputStream(dest, resuming).use { output ->
                             while (true) {
                                 val n = input.read(buffer)
                                 if (n < 0) break
                                 output.write(buffer, 0, n)
-                                read += n
-                                onProgress(read, total)
-                                // 慢源早退：实测 GitHub 直连约 0.03 MB/s、已失效的反代约 0.04 MB/s，
-                                // 正常源至少 1 MB/s。读到阀定量还没达最低速度就换下一个候选，
-                                // 别让用户抱着一个龟速源干等十几分钟。
-                                val elapsed = System.currentTimeMillis() - startedAt
-                                if (read >= SLOW_PROBE_BYTES && elapsed > SLOW_PROBE_MILLIS) {
-                                    throw IOException(
-                                        "下载源速度过慢（${read / 1024} KB 用了 ${elapsed / 1000} s）"
-                                    )
-                                }
+                                session += n
+                                onProgress(base + session, total)
                             }
                         }
                     }
-                    if (expectedSize > 0 && read != expectedSize) {
-                        throw IOException("安装包不完整（$read / $expectedSize 字节）")
+                    val downloaded = dest.length()
+                    if (expectedSize > 0 && downloaded != expectedSize) {
+                        throw IOException("安装包不完整（$downloaded / $expectedSize 字节）")
                     }
                     cont.resume(dest)
                 } catch (e: Exception) {
@@ -139,11 +151,5 @@ class UpdateApkDownloader @Inject constructor(
                 }
             }
         })
-    }
-
-    private companion object {
-        /** 慢源判定：读到 1 MB 仍耗时超过 10 秒（低于 0.1 MB/s）即判该源不可用。 */
-        const val SLOW_PROBE_BYTES = 1L * 1024 * 1024
-        const val SLOW_PROBE_MILLIS = 10_000L
     }
 }
