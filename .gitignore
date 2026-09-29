@@ -37,3 +37,8 @@ __pycache__/
 
 # 参考源码（opencode 仓库，仅本地查阅不跟踪）
 opencode/
+
+# 离线语音模型（单个 encoder.int8.onnx 就 153MB，超 GitHub 单文件 100MB 硬上限）。
+# 发布时不内置，App 首次使用语音时自动从上游 Release 资产下载（见 VoiceModelManager）。
+# 本地开发想内置的话，把解压后的模型目录放回这里即可，构建会自动打进 APK。
+app/src/main/assets/voice_models/
