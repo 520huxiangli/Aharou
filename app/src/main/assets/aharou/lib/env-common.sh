@@ -76,6 +76,19 @@ pkg_add() {
             ;;
         apt)
             export DEBIAN_FRONTEND=noninteractive
+            # 手机网络 IPv6 半残（能配 v6 路由但出不去）是 apt 卡慢/探测假死的头号元凶，强制走 IPv4；
+            # Languages=en 跳过 Translation 翻译文件下载（每次 apt update 省约 24MB）。
+            # 只在文件不存在时写，用户自己改过的配置不被覆盖。
+            local apt_conf=/etc/apt/apt.conf.d/99-aharou-network
+            if [ ! -f "$apt_conf" ]; then
+                {
+                    echo 'Acquire::ForceIPv4 "true";'
+                    echo 'Acquire::Languages "en";'
+                    echo 'Acquire::Retries "3";'
+                    echo 'Acquire::http::Timeout "60";'
+                    echo 'Acquire::https::Timeout "60";'
+                } > "$apt_conf" 2>/dev/null || true
+            fi
             apt-get update -y
             apt-get install -y "$@"
             ;;

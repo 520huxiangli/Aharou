@@ -19,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -126,6 +128,9 @@ internal fun MarkdownContent(
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val semantic = MaterialTheme.semanticColors
 
+    // markdownColor / markdownTypography / markdownPadding / markdownDimens / markdownComponents
+    // 都是库提供的 @Composable 工厂函数（内部自带 remember 记忆化），不能也无需再套一层
+    // remember（套了会报 “@Composable invocations can only happen from ...”）。直接调用即可。
     val mdColors = markdownColor(
         text = color,
         codeBackground = semantic.mutedSurface,
@@ -178,6 +183,19 @@ internal fun MarkdownContent(
         MathImageTransformer(baseTransformer, body.fontSize.value)
     }
 
+    // 后台预热本条消息里的所有 LaTeX 公式：在 item 首次组合时就把 measure+render 摆到后台算好
+    // 写缓存，等快速 fling 掠过时主线程 getOrMeasure 直接命中、不再同步 build drawable（实测单
+    // 次高达 113ms，是 fling 抽搐的直接根因）。
+    val density = LocalDensity.current
+    val textSizePx = with(density) { body.fontSize.toPx() }
+    val colorArgb = color.toArgb()
+    LaunchedEffect(processed, textSizePx, colorArgb) {
+        if (!processed.contains("aicode-math-")) return@LaunchedEffect
+        withContext(Dispatchers.Default) {
+            MathImageTransformer.prewarm(processed, textSizePx, colorArgb)
+        }
+    }
+
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.material3.LocalContentColor provides color
     ) {
@@ -219,20 +237,25 @@ internal fun MarkdownContent(
 
         if (renderState != null) {
             // 长文本用 LazyColumn 逐块渲染时，animations（文本尺寸动画等）不适用，属预期。
+            // 下面三个对象（successRenderer / mdComponents / mdAnimations）均 remember：不缓存的话
+            // 每次重组都新建 lambda 实例，令下游 Markdown 无法 skip。
             val successRenderer: @Composable (
                 state: MarkdownParseState.Success,
                 components: MarkdownComponents,
                 modifier: Modifier
-            ) -> Unit = if (lazyScroll) {
-                { state, components, m ->
-                    LazyMarkdownSuccess(state = state, components = components, modifier = m)
-                }
-            } else {
-                { state, components, m ->
-                    MarkdownSuccess(state = state, components = components, modifier = m)
+            ) -> Unit = remember(lazyScroll) {
+                if (lazyScroll) {
+                    { state, components, m ->
+                        LazyMarkdownSuccess(state = state, components = components, modifier = m)
+                    }
+                } else {
+                    { state, components, m ->
+                        MarkdownSuccess(state = state, components = components, modifier = m)
+                    }
                 }
             }
 
+            // markdownComponents 是 @Composable（内部自带记忆化），不能套 remember，直接调用。
             val mdComponents = markdownComponents(
                 // 外层 SelectionContainer（MessageBubbles）统一负责选区；超长助手消息已由
                 // AIChatPanel 拆成多条有界 item，不存在超长单 item 的选区树/交互失效问题。
@@ -315,6 +338,28 @@ internal fun MarkdownContent(
  * 调用方 try/catch 拦不住，表现为聊天页闪退。越界（end > code.length）同样会导致崩溃，
  * 一并丢弃。
  */
+/**
+ * 代码高亮结果的进程级缓存。高亮本身跑在 Dispatchers.Default（不卡主线程），但无跨视口
+ * 缓存时 item 每次重进视口都会重跑高亮，完成后又触发一次主线程重组（从纯文本切到
+ * 高亮文本）。fling 快速滚过大量代码块时这会挤满 Default 线程并制造密集重组。命中缓存
+ * 时直接同步拿到结果作为 produceState 初值，既不重算也不闪纯文本。key 含 isDark（主题影响颜色）。
+ */
+private object CodeHighlightCache {
+    private data class Key(val code: String, val language: String?, val dark: Boolean)
+
+    private const val MAX = 128
+    private val cache = object : LinkedHashMap<Key, AnnotatedString>(MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, AnnotatedString>?): Boolean = size > MAX
+    }
+
+    fun get(code: String, language: String?, dark: Boolean): AnnotatedString? =
+        synchronized(cache) { cache[Key(code, language, dark)] }
+
+    fun put(code: String, language: String?, dark: Boolean, value: AnnotatedString) {
+        synchronized(cache) { cache[Key(code, language, dark)] = value }
+    }
+}
+
 @Composable
 private fun SafeMarkdownHighlightedCode(
     code: String,
@@ -323,14 +368,18 @@ private fun SafeMarkdownHighlightedCode(
     highlightsBuilder: Highlights.Builder,
     showHeader: Boolean,
 ) {
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val cached = CodeHighlightCache.get(code, language, isDark)
     val highlighted: AnnotatedString by produceState(
-        initialValue = AnnotatedString(code),
+        initialValue = cached ?: AnnotatedString(code),
         code,
         language,
+        isDark,
     ) {
+        if (CodeHighlightCache.get(code, language, isDark) != null) return@produceState
         value = withContext(Dispatchers.Default) {
             buildHighlightedText(code, language, highlightsBuilder)
-        }
+        }.also { CodeHighlightCache.put(code, language, isDark, it) }
     }
 
     MarkdownCodeBackground(

@@ -120,6 +120,21 @@
 
     <!-- 存储空间页 -->
     <string name="settings_storage">存储空间</string>
+    <string name="settings_performance">性能分析</string>
+    <string name="performance_collecting">正在采集…</string>
+    <string name="performance_app_cpu">本应用 CPU</string>
+    <string name="performance_cores">共 %1$d 核，已按核心数归一</string>
+    <string name="performance_device_cpu">整机 CPU</string>
+    <string name="performance_threads">线程数</string>
+    <string name="performance_app_memory">本应用内存（PSS）</string>
+    <string name="performance_device_memory">设备内存</string>
+    <string name="performance_device_memory_detail">共 %1$d MB，可用 %2$d MB</string>
+    <string name="performance_network_app">本应用流量</string>
+    <string name="performance_network_app_note">按 UID 统计，含容器等子进程</string>
+    <string name="performance_network_device">整机流量</string>
+    <string name="performance_network_device_note">所有应用的收发总量</string>
+    <string name="performance_rx">下行</string>
+    <string name="performance_tx">上行</string>
     <string name="storage_refresh">重新统计</string>
     <string name="storage_total_title">应用占用</string>
     <string name="storage_scanning">统计中…</string>
@@ -589,6 +604,8 @@
     <string name="chat_input_fullscreen_title">全屏输入</string>
     <string name="chat_queue_title">待发送队列（%1$d）</string>
     <string name="chat_queue_remove">移除排队消息</string>
+    <string name="chat_pasted_remove">移除粘贴内容</string>
+    <string name="common_ok">好</string>
     <string name="chat_upload_file">上传文件</string>
     <string name="chat_upload_image">上传图片</string>
     <string name="chat_remove_attachment">移除附件</string>    <string name="chat_no_models_hint">暂无可用模型，请在「AI 供应商」中添加</string>
@@ -634,6 +651,8 @@
     <string name="chat_tool_succeeded">工具执行成功</string>
     <string name="chat_tool_failed">工具执行失败</string>
     <string name="chat_tool_calls_count">%1$d 次工具调用</string>
+    <string name="chat_turn_running">执行中</string>
+    <string name="chat_turn_completed">已完成 %1$s</string>
     <string name="chat_context_usage">上下文已用 %1$d%%</string>
     <string name="chat_bg_command_done">后台命令已完成</string>
     <string name="chat_bg_commands_done">%1$d 个后台任务已完成</string>
@@ -659,6 +678,9 @@
     <string name="retry_error_unknown">网络异常</string>
     <string name="retry_error_with_code">%1$s (%2$d)</string>
     <string name="chat_thinking_process">思考过程</string>
+    <string name="chat_thinking_running_time">正在思考（耗时 %1$d 秒）</string>
+    <string name="chat_thinking_done_time">思考完成（耗时 %1$d 秒）</string>
+    <string name="chat_thinking_done">思考完成</string>
 
     <!-- Container Settings -->
     <string name="container_reset">重置</string>
@@ -681,6 +703,37 @@
     <string name="container_empty">暂无容器与镜像</string>
     <string name="container_empty_desc">添加一个自定义镜像，或恢复内置 Alpine。</string>
     <string name="container_restore_builtin">恢复内置 Alpine</string>
+    <string name="container_health_section">环境体检</string>
+    <string name="container_health_overall_healthy">全部正常</string>
+    <string name="container_health_overall_warning">有需要注意的项</string>
+    <string name="container_health_overall_error">发现问题</string>
+    <string name="container_health_overall_unknown">部分项无法确认</string>
+    <string name="container_health_attention_count">%1$d 项待处理</string>
+    <string name="container_health_tools_missing_names">缺少：%1$s</string>
+    <string name="container_health_run">开始体检</string>
+    <string name="container_health_running">体检中…</string>
+    <string name="container_health_rerun">重新体检</string>
+    <string name="container_health_title_storage">共享存储访问权限</string>
+    <string name="container_health_storage_ok">已授予</string>
+    <string name="container_health_storage_missing">未授予「所有文件访问」</string>
+    <string name="container_health_storage_missing_detail">缺少该权限时读写 /sdcard 会失败，可在系统设置里为本应用开启</string>
+    <string name="container_health_title_tools">沙箱基础工具</string>
+    <string name="container_health_tools_missing">缺少 git / curl / tar / xz 中的一项</string>
+    <string name="container_health_tools_missing_detail">可在容器环境安装里补装基础依赖</string>
+    <string name="container_health_tools_ready">已就绪 %1$d/%2$d</string>
+    <string name="container_health_tools_partial_detail">缺少的项会让对应功能不可用，可在容器环境安装里补装</string>
+    <string name="container_health_title_dns">容器 DNS 解析</string>
+    <string name="container_health_dns_ok">github.com 可解析</string>
+    <string name="container_health_dns_fail">github.com 解析失败</string>
+    <string name="container_health_dns_fail_detail">容器内 DNS 不通时拉取仓库与安装依赖都会失败，可尝试重启容器</string>
+    <string name="container_health_title_network">容器出网</string>
+    <string name="container_health_net_ok">api.github.com 可达（HTTP %1$s）</string>
+    <string name="container_health_net_fail">api.github.com 不可达</string>
+    <string name="container_health_net_fail_detail">网络不通或需要代理；部分站点也会因网络环境单独超时</string>
+    <string name="container_health_busy">沙箱正忙，暂时无法确认</string>
+    <string name="container_health_busy_detail">沙箱正在处理其他任务，稍后重新体检即可</string>
+    <string name="container_health_parse_fail">探测结果无法解析</string>
+    <string name="container_health_parse_fail_detail">探测返回了无法识别的输出，详情见日志</string>
     <string name="container_active">当前使用中</string>
     <string name="container_set_as_default">设为默认容器</string>
     <string name="container_default_badge">默认</string>

@@ -40,6 +40,40 @@ import ru.noties.jlatexmath.JLatexMathDrawable
  * @param delegate 处理非数学图片链接的下游 transformer（通常是本地图片渲染器或 NoOp）。
  * @param baseTextSizeSp 行内公式的基准字号（sp），与所在文本正文字号对齐。
  */
+/**
+ * 公式排版尺寸的进程级缓存。measure 需要构建 [JLatexMathDrawable]（解析 TeX + 排版），
+ * 是主线程上的重活。LazyColumn 里公式 item 滚出视口会被 dispose，仅靠 Composable 内的
+ * remember 缓存，滚回来重新组合就得再算一遍——快速 fling 时反复进出反复排版造成卡顿。
+ * 这里按 (latex, textSizePx) 做进程级缓存，同一公式只排版测量一次。
+ */
+private const val TAG = "MarkdownMath"
+
+private object LatexMeasureCache {
+    private data class Key(val latex: String, val textSizePx: Float)
+
+    // 上限取得大：每条只存一个 android.util.Size（两个 int），内存可忽略；而 fling 快速滚过
+    // 长历史时，上限太小会把旧公式挤掉、导致滚回去又在主线程重新排版。512 足够盖住常见会话。
+    private const val MAX = 512
+    private val sizes = object : LinkedHashMap<Key, android.util.Size>(MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, android.util.Size>?): Boolean = size > MAX
+    }
+
+    fun peek(latex: String, textSizePx: Float): android.util.Size? =
+        synchronized(sizes) { sizes[Key(latex, textSizePx)] }
+
+    fun put(latex: String, textSizePx: Float, size: android.util.Size) {
+        synchronized(sizes) { sizes[Key(latex, textSizePx)] = size }
+    }
+
+    fun getOrMeasure(latex: String, textSizePx: Float, measure: () -> android.util.Size): android.util.Size =
+        synchronized(sizes) {
+            val key = Key(latex, textSizePx)
+            // 主线程同步 build drawable 拿尺寸是重活（实测复杂公式单次 20~113ms）。正常情况下缓存已
+            // 由后台预热（renderLatex 完成后回写 measure 缓存）填好，这里直接命中；只有预热还没跑到时才同步兜底。
+            sizes[key] ?: measure().also { sizes[key] = it }
+        }
+}
+
 private object LatexBitmapCache {
     private data class Key(
         val link: String,
@@ -47,9 +81,16 @@ private object LatexBitmapCache {
         val textSizePx: Float,
     )
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val bitmaps = object : LinkedHashMap<Key, Deferred<Bitmap?>>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Deferred<Bitmap?>>?): Boolean = size > 64
+    // 限制并发：JLatexMathDrawable.build（TeX 排版）很吃 CPU。预热会一次性提交上百个 render，
+    // 若直接丢给 Dispatchers.Default（线程数=核数）会把线程池打满：单个 render 实测飙到 250ms+，
+    // 而且同跑在 Default 上的 Markdown 解析/代码高亮被饿死，CPU 饱和又拖累主线程/渲染线程掉帧。
+    // 限到 2 并发：公式逐步出现，不抢光所有 CPU。
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val renderDispatcher = Dispatchers.Default.limitedParallelism(2)
+    private val scope = CoroutineScope(SupervisorJob() + renderDispatcher)
+    private const val MAX = 256
+    private val bitmaps = object : LinkedHashMap<Key, Deferred<Bitmap?>>(MAX, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Deferred<Bitmap?>>?): Boolean = size > MAX
     }
     fun getOrStartBitmap(
         link: String,
@@ -69,12 +110,44 @@ private object LatexBitmapCache {
             }
         }
     }
+
+    /** 预热：仅启动后台渲染（写入缓存），不等结果。已在缓存则不重复启动。 */
+    fun prewarm(link: String, colorArgb: Int, textSizePx: Float, render: suspend () -> Bitmap?) {
+        getOrStartBitmap(link, colorArgb, textSizePx, render)
+    }
 }
 
 internal class MathImageTransformer(
     private val delegate: ImageTransformer,
     private val baseTextSizeSp: Float,
 ) : ImageTransformer {
+
+    // 重写占位尺寸：上滑抽搐的真正根因。库默认 placeholderConfig 在图片真实尺寸未知（首帧）时
+    // 会给一个 200dp 正方形（或受容器限制的边长正方形）占位；公式真实高度只有约 50dp，渲染完成
+    // 后占位从 200dp 骤降到真实高度——上滑时这个收缩发生在视口上方，触发 LazyColumn 顶部锚点补偿，
+    // 表现为“往回拽/抽搐”。公式真实尺寸我们自己有（LatexMeasureCache），直接返回精确占位，占位从
+    // 第一帧就等于最终高度，上滑不再补偿。非公式链接委托 delegate。
+    override fun placeholderConfig(
+        link: String,
+        density: androidx.compose.ui.unit.Density,
+        containerSize: androidx.compose.ui.geometry.Size,
+        imageWidth: com.mikepenz.markdown.model.ImageWidth,
+        imageSize: androidx.compose.ui.geometry.Size,
+        imageSizeChanged: ((link: String, androidx.compose.ui.geometry.Size) -> Unit)?,
+    ): com.mikepenz.markdown.model.PlaceholderConfig {
+        val spec = MarkdownPreprocessor.decodeMathLink(link)
+            ?: return super.placeholderConfig(link, density, containerSize, imageWidth, imageSize, imageSizeChanged)
+        val latex = spec.first
+        val textSizePx = with(density) { baseTextSizeSp.sp.toPx() }
+        val sizePx = LatexMeasureCache.getOrMeasure(latex, textSizePx) { measureLatex(latex, textSizePx) }
+        val sizeDp = with(density) {
+            androidx.compose.ui.geometry.Size(sizePx.width.toDp().value, sizePx.height.toDp().value)
+        }
+        return com.mikepenz.markdown.model.PlaceholderConfig(
+            size = sizeDp,
+            verticalAlign = androidx.compose.ui.text.PlaceholderVerticalAlign.Bottom,
+        )
+    }
 
     @Composable
     override fun transform(link: String): ImageData? {
@@ -88,7 +161,7 @@ internal class MathImageTransformer(
         // 首次组合时同步取得真实尺寸，避免用字符长度估算造成公式忽大忽小、宽度过大时
         // 从中间开始显示。尺寸一旦确定就不再异步替换，因此不会改写 LazyColumn 锚点。
         val layoutSize = remember(link, textSizePx) {
-            measureLatex(latex, textSizePx)
+            LatexMeasureCache.getOrMeasure(latex, textSizePx) { measureLatex(latex, textSizePx) }
         }
         val renderTask = remember(link, colorArgb, textSizePx) {
             LatexBitmapCache.getOrStartBitmap(link, colorArgb, textSizePx) {
@@ -159,27 +232,51 @@ internal class MathImageTransformer(
         }
     }
 
-    private fun renderLatex(latex: String, textSizePx: Float, colorArgb: Int): Bitmap? {
-        return try {
-            val drawable = JLatexMathDrawable.builder(latex)
-                .textSize(textSizePx)
-                .color(colorArgb)
-                .padding(2)
-                .build()
-            val w = drawable.intrinsicWidth.coerceAtLeast(1)
-            val h = drawable.intrinsicHeight.coerceAtLeast(1)
-            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            drawable.setBounds(0, 0, w, h)
-            drawable.draw(canvas)
-            bitmap
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "LaTeX 渲染失败: $latex", e)
-            null
+    companion object {
+        /**
+         * 在后台预热一整段 processed markdown 里的所有 LaTeX 公式：解析出数学链接、逐个启动
+         * 后台渲染（写入 bitmap 缓存）。渲染完成后会回写 measure 缓存，于是主线程后续的
+         * getOrMeasure 会直接命中、不再同步 build drawable——这是消除 fling 抽搐（主线程单次
+         * measure 实测高达 113ms）的关键。缓存已存则不重复启动。
+         *
+         * 在 IO/Default 线程调用，不阻塞组合。
+         */
+        fun prewarm(processedMarkdown: String, textSizePx: Float, colorArgb: Int) {
+            if (!processedMarkdown.contains("aicode-math-")) return
+            // 从 Markdown 图片链接 ![](aicode-math-xxx://enc) 中抽取 link
+            for (match in MATH_LINK_REGEX.findAll(processedMarkdown)) {
+                val link = match.groupValues[1]
+                val spec = MarkdownPreprocessor.decodeMathLink(link) ?: continue
+                val latex = spec.first
+                if (LatexMeasureCache.peek(latex, textSizePx) != null) continue
+                LatexBitmapCache.prewarm(link, colorArgb, textSizePx) {
+                    renderLatex(latex, textSizePx, colorArgb)
+                }
+            }
         }
-    }
 
-    private companion object {
-        const val TAG = "MarkdownMath"
+        private val MATH_LINK_REGEX = Regex("""!\[]\((aicode-math-(?:block|inline)://[^)]+)\)""")
+
+        private fun renderLatex(latex: String, textSizePx: Float, colorArgb: Int): Bitmap? {
+            return try {
+                val drawable = JLatexMathDrawable.builder(latex)
+                    .textSize(textSizePx)
+                    .color(colorArgb)
+                    .padding(2)
+                    .build()
+                val w = drawable.intrinsicWidth.coerceAtLeast(1)
+                val h = drawable.intrinsicHeight.coerceAtLeast(1)
+                // 回写 measure 缓存：后台 build 既已得到真实尺寸，主线程就不必再 build 一次。
+                LatexMeasureCache.put(latex, textSizePx, android.util.Size(w, h))
+                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                drawable.setBounds(0, 0, w, h)
+                drawable.draw(canvas)
+                bitmap
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "LaTeX 渲染失败: $latex", e)
+                null
+            }
+        }
     }
 }

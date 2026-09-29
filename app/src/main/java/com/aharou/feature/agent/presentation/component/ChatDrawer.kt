@@ -120,6 +120,7 @@ import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * 侧边栏内容：顶部 Tab 切换「会话」/「文件」，底部「设置」入口卡片。
@@ -142,6 +143,8 @@ fun ChatDrawerContent(
     subSessionsByParent: Map<String, List<ChatSession>> = emptyMap(),
     browseState: FileBrowseState,
     expandedPaths: Set<String>,
+    expandingPath: String? = null,
+    fileOpPaths: Set<String> = emptySet(),
     clipboard: BrowseClipboard? = null,
     pasteConflict: Pair<String, String>? = null,
     onToggleExpand: (String) -> Unit,
@@ -322,6 +325,8 @@ fun ChatDrawerContent(
                 1 -> FileBrowserTab(
                     state = browseState,
                     expandedPaths = expandedPaths,
+                    expandingPath = expandingPath,
+                    fileOpPaths = fileOpPaths,
                     clipboard = clipboard,
                     onToggleExpand = onToggleExpand,
                     onOpenFile = onOpenFile,
@@ -867,6 +872,8 @@ private fun SubAgentExpandToggle(
 private fun FileBrowserTab(
     state: FileBrowseState,
     expandedPaths: Set<String>,
+    expandingPath: String?,
+    fileOpPaths: Set<String>,
     clipboard: BrowseClipboard?,
     onToggleExpand: (String) -> Unit,
     onOpenFile: (String) -> Unit,
@@ -941,6 +948,8 @@ private fun FileBrowserTab(
                             FileTreeRow(
                                 node = node,
                                 rowWidth = rowWidth,
+                                expanding = node.entry.isDirectory && node.path == expandingPath,
+                                busy = node.path in fileOpPaths,
                                 onClick = {
                                     if (node.entry.isDirectory) onToggleExpand(node.path)
                                     else onOpenFile(node.path)
@@ -965,6 +974,13 @@ private fun FileBrowserTab(
                     clipboard = clip,
                     onClear = onClearClipboard,
                     modifier = Modifier.padding(end = Spacing.xs)
+                )
+            }
+            if (fileOpPaths.isNotEmpty()) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(end = Spacing.xs).size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
             IconButton(
@@ -1240,9 +1256,21 @@ private fun FileTreeActionSheet(
 private fun FileTreeRow(
     node: FileTreeNode,
     rowWidth: Dp,
+    expanding: Boolean,
+    busy: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
+    // 展开加载态加最小延迟：本地模式列目录极快，避免每次展开都闪一下转圈。
+    var showExpanding by remember { mutableStateOf(false) }
+    LaunchedEffect(expanding) {
+        if (expanding) {
+            delay(180)
+            showExpanding = true
+        } else {
+            showExpanding = false
+        }
+    }
     val isDotfile = !node.isRoot && node.entry.name.startsWith(".")
     val decorationColor: Color? = when {
         node.hasError -> MaterialTheme.colorScheme.error
@@ -1261,19 +1289,35 @@ private fun FileTreeRow(
     ) {
         Spacer(Modifier.width(Spacing.lg * node.depth))
         if (node.entry.isDirectory) {
-            Icon(
-                imageVector = if (node.isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
-                contentDescription = stringResource(
-                    if (node.isExpanded) R.string.file_browser_collapse else R.string.file_browser_expand
-                ),
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (showExpanding) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                Icon(
+                    imageVector = if (node.isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+                    contentDescription = stringResource(
+                        if (node.isExpanded) R.string.file_browser_collapse else R.string.file_browser_expand
+                    ),
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         } else {
             Spacer(Modifier.width(16.dp))
         }
         Spacer(Modifier.width(Spacing.xs))
-        FileTreeIcon(node = node, decorationColor = decorationColor)
+        if (busy) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            FileTreeIcon(node = node, decorationColor = decorationColor)
+        }
         Spacer(Modifier.width(Spacing.sm))
         Text(
             text = if (node.isRoot) WORKSPACE_LABEL else node.entry.name,

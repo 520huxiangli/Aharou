@@ -120,6 +120,21 @@
 
     <!-- Storage page -->
     <string name="settings_storage">Storage</string>
+    <string name="settings_performance">Performance</string>
+    <string name="performance_collecting">Collecting…</string>
+    <string name="performance_app_cpu">App CPU</string>
+    <string name="performance_cores">%1$d cores, normalized by core count</string>
+    <string name="performance_device_cpu">Device CPU</string>
+    <string name="performance_threads">Threads</string>
+    <string name="performance_app_memory">App memory (PSS)</string>
+    <string name="performance_device_memory">Device memory</string>
+    <string name="performance_device_memory_detail">Total %1$d MB, available %2$d MB</string>
+    <string name="performance_network_app">App traffic</string>
+    <string name="performance_network_app_note">Counted by UID, includes the container and child processes</string>
+    <string name="performance_network_device">Device traffic</string>
+    <string name="performance_network_device_note">Total across all apps</string>
+    <string name="performance_rx">Down</string>
+    <string name="performance_tx">Up</string>
     <string name="storage_refresh">Rescan</string>
     <string name="storage_total_title">Used by Aharou</string>
     <string name="storage_scanning">Calculating…</string>
@@ -589,6 +604,8 @@
     <string name="chat_input_fullscreen_title">Full-screen input</string>
     <string name="chat_queue_title">Queue (%1$d)</string>
     <string name="chat_queue_remove">Remove from queue</string>
+    <string name="chat_pasted_remove">Remove pasted text</string>
+    <string name="common_ok">OK</string>
     <string name="chat_upload_file">Upload File</string>
     <string name="chat_upload_image">Upload Image</string>
     <string name="chat_remove_attachment">Remove attachment</string>    <string name="chat_no_models_hint">No models available, add one in "AI Vendors"</string>
@@ -634,6 +651,8 @@
     <string name="chat_tool_succeeded">Tool succeeded</string>
     <string name="chat_tool_failed">Tool failed</string>
     <string name="chat_tool_calls_count">%1$d tool calls</string>
+    <string name="chat_turn_running">Running</string>
+    <string name="chat_turn_completed">Completed in %1$s</string>
     <string name="chat_context_usage">Context %1$d%% used</string>
     <string name="chat_bg_command_done">Background command completed</string>
     <string name="chat_bg_commands_done">%1$d background tasks completed</string>
@@ -659,6 +678,9 @@
     <string name="retry_error_unknown">Network error</string>
     <string name="retry_error_with_code">%1$s (%2$d)</string>
     <string name="chat_thinking_process">Thinking process</string>
+    <string name="chat_thinking_running_time">Thinking (%1$ds)</string>
+    <string name="chat_thinking_done_time">Thought for %1$ds</string>
+    <string name="chat_thinking_done">Thought</string>
 
     <!-- Container Settings -->
     <string name="container_reset">Reset</string>
@@ -681,6 +703,37 @@
     <string name="container_empty">No containers or images</string>
     <string name="container_empty_desc">Add a custom image, or restore the built-in Alpine.</string>
     <string name="container_restore_builtin">Restore Built-in Alpine</string>
+    <string name="container_health_section">Environment Check</string>
+    <string name="container_health_overall_healthy">All good</string>
+    <string name="container_health_overall_warning">Some items need attention</string>
+    <string name="container_health_overall_error">Problems found</string>
+    <string name="container_health_overall_unknown">Some items could not be confirmed</string>
+    <string name="container_health_attention_count">%1$d item(s) need attention</string>
+    <string name="container_health_tools_missing_names">Missing: %1$s</string>
+    <string name="container_health_run">Run Check</string>
+    <string name="container_health_running">Checking…</string>
+    <string name="container_health_rerun">Run Check Again</string>
+    <string name="container_health_title_storage">Shared storage access</string>
+    <string name="container_health_storage_ok">Granted</string>
+    <string name="container_health_storage_missing">"All files access" not granted</string>
+    <string name="container_health_storage_missing_detail">Without it, reading and writing /sdcard fails. Enable it for this app in system settings</string>
+    <string name="container_health_title_tools">Sandbox basic tools</string>
+    <string name="container_health_tools_missing">Missing one of git / curl / tar / xz</string>
+    <string name="container_health_tools_missing_detail">Install the missing basics from the container environment installer</string>
+    <string name="container_health_tools_ready">Ready %1$d/%2$d</string>
+    <string name="container_health_tools_partial_detail">Missing tools disable the features that need them. Install them from the container environment installer</string>
+    <string name="container_health_title_dns">Container DNS</string>
+    <string name="container_health_dns_ok">github.com resolves</string>
+    <string name="container_health_dns_fail">github.com failed to resolve</string>
+    <string name="container_health_dns_fail_detail">With broken container DNS, cloning repositories and installing packages fail. Try restarting the container</string>
+    <string name="container_health_title_network">Container network</string>
+    <string name="container_health_net_ok">api.github.com reachable (HTTP %1$s)</string>
+    <string name="container_health_net_fail">api.github.com unreachable</string>
+    <string name="container_health_net_fail_detail">Network is down or needs a proxy; some hosts may also time out independently</string>
+    <string name="container_health_busy">Sandbox busy, cannot confirm yet</string>
+    <string name="container_health_busy_detail">The sandbox is handling another task. Run the check again in a moment</string>
+    <string name="container_health_parse_fail">Could not parse the probe result</string>
+    <string name="container_health_parse_fail_detail">The probe returned unrecognized output; see the logs for details</string>
     <string name="container_active">Currently in use</string>
     <string name="container_set_as_default">Set as default container</string>
     <string name="container_default_badge">Default</string>
