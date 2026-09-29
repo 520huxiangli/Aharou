@@ -110,6 +110,11 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 
+      # 离线语音模型不进 git（单个 onnx 154MB，超过 GitHub 单文件 100MB 上限），
+      # 构建前拉下来放进 assets，正式包才内置它、用户拿到就能离线用。
+      - name: Fetch offline voice model
+        run: bash scripts/fetch-voice-model.sh
+
       # 一次性构建全部 flavor 的 release APK（universal/armsolo/x86solo）
       # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。
       - name: Build all flavor Release APKs
