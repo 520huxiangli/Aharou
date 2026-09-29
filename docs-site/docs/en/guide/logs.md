@@ -23,7 +23,7 @@ To keep large logs from causing lag, the app only shows the tail end of the curr
 
 No root access is needed — your phone's built-in file manager can open it.
 
-Workspace project files and AI configuration live in the app's private directory, which ordinary file managers cannot see; see [File Browsing & Code Editing](/en/guide/files#where-workspace-files-live-on-your-phone) for how to get to them.
+Workspace project files and AI configuration live in the app's private directory, which ordinary file managers cannot see; see [File Browsing & Code Editing](/guide/files) for how to get to them.
 
 ## Filtering by MCP Name
 
@@ -58,4 +58,4 @@ Data refreshes once per second and is sampled **only while the page is open** �
 
 ## Long Tasks Killed When Switching to the Background
 
-If the AI is running a long task (such as compiling or a deep code review) or the terminal is running a time-consuming command, and it often gets killed when you switch away, go to "Settings → System Permissions" and enable **background keep-alive**, **ignore battery optimization** and **autostart management**. See [System Permissions](/en/guide/app-permissions) for details.
+If the AI is running a long task (such as compiling or a deep code review) or the terminal is running a time-consuming command, and it often gets killed when you switch away, go to "Settings → System Permissions" and enable **background keep-alive**, **ignore battery optimization** and **autostart management**. See [System Permissions](/guide/app-permissions) for details.

@@ -2,7 +2,7 @@
 
 In Aharou, the place where the AI runs commands is called the "container". The entry point is "Settings → Container & Images"; the list is single-select — whichever one you pick is where the AI's commands, file reads and writes, and terminal all run.
 
-Backends come in two kinds: a **local container** (runs a Linux system on your phone) and **remote SSH** (runs on your own server). You must pick one of them. For remote mode, see [Remote SSH mode](/en/guide/remote-ssh).
+Backends come in two kinds: a **local container** (runs a Linux system on your phone) and **remote SSH** (runs on your own server). You must pick one of them. For remote mode, see [Remote SSH mode](/guide/remote-ssh).
 
 ## Container List
 

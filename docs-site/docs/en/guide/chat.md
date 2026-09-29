@@ -28,13 +28,13 @@ A short press switches to a session; **a long press opens an action menu**:
 - **Batch select**: enter multi-select mode, where you can check several sessions, use one-tap "Select all" and "Delete selected" (with a second confirmation). Leave multi-select with the × at the top-left or the back key.
 - **Delete**: a confirmation dialog appears; confirming deletes the session and all its messages.
 
-For a session that has spawned subagents, the row shows the subagent count and an expand arrow at the end; tap it to see its subagents listed below (**since 1.11.0**). See [subagents](/en/guide/subagent).
+For a session that has spawned subagents, the row shows the subagent count and an expand arrow at the end; tap it to see its subagents listed below (**since 1.11.0**). See [subagents](/guide/subagent).
 
 Below the sidebar's tab bar is **chat search** (**since 1.12.0**): type a keyword to search message content across all sessions in the current workspace, and the list area shows the matches in place (session title plus the matching snippet, with the keyword highlighted). Tapping a result switches to that session and jumps to that message; tap the × on the right of the search box or clear the text to return to the session list. Search covers the current workspace only, and matches only the body text of your messages and the AI's — tool execution output is not included.
 
 ### Files Tab
 
-Browse the files of the current workspace; tapping a file opens the code editing page (**since 1.11.0**). See [File browsing & code editing](/en/guide/files).
+Browse the files of the current workspace; tapping a file opens the code editing page (**since 1.11.0**). See [File browsing & code editing](/guide/files).
 
 At the bottom of the sidebar is the "Settings" entry.
 
@@ -42,7 +42,7 @@ At the bottom of the sidebar is the "Settings" entry.
 
 From left to right:
 
-- **Mode button**: cycles between BUILD, PLAN and AUTO — see [the three modes](/en/guide/modes).
+- **Mode button**: cycles between BUILD, PLAN and AUTO — see [the three modes](/guide/modes).
 - **Model button**: shows the current model; tapping it opens the picker. A search box at the top filters models fuzzily, models are grouped by vendor, and tapping a group header collapses or expands it (the collapsed state is remembered, and kept when you reopen the dialog or restart the app; while searching, matching groups expand automatically). Each row is labelled with capability tags (`Image`, `Tools`, input and output length) — one tap switches the model.
 - **Workspace button**: shows the current workspace name; tapping it opens the workspace management panel (see below).
 - **File button**: upload a file as an attachment, whose content the AI can read.
@@ -186,4 +186,4 @@ The line under an AI reply's body: **stats are counted per turn and hang only un
 - **Cache hit rate** (**since 1.11.0**): the percentage next to the database icon is the share of this turn's input that hit the server-side cache, out of the turn's total input. The higher the hit rate, the cheaper and faster it is. It is not shown when nothing hit the cache, or when the vendor doesn't return cache data. This field has been recorded since 1.11.0, so older messages don't show it.
 - **Turn duration** (**since 1.11.0**): the time next to the clock icon, shown only under a turn's last reply. It counts from the moment you hit send until the AI wraps up, including tool execution and the time spent waiting for you to approve something. Under a minute it shows as `12s`, and longer as `2:05` (minutes:seconds) or `1:02:05` (hours:minutes:seconds). It is not shown while the task is still running — it appears once the turn is done.
 
-Cumulative usage and cache hit rate for a whole conversation or a whole vendor are on [Token stats](/en/guide/token-stats).
+Cumulative usage and cache hit rate for a whole conversation or a whole vendor are on [Token stats](/guide/token-stats).

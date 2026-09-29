@@ -6,10 +6,7 @@ The entry point is "Settings → AI Vendors".
 
 ## Adding a Vendor
 
-Tap + at the top-right, and a bottom sheet slides up with two tabs: "Manual Setup" and "Ready to Use".
-
-- **Manual Setup** tab: lists mainstream model services (OpenAI, Anthropic, DeepSeek, Zhipu, Qwen, etc.) in a unified list, with **Custom Vendor** as the first entry (configure from scratch). Picking a built-in vendor pre-fills the name, upstream format and Base URL — just add your API Key in the edit page and it works. You can also modify any field.
-- **Ready to Use** tab: free model services that need no registration are a placeholder for now and will be opened in a future release.
+Tap + at the top-right, and a bottom sheet slides up. **Custom Vendor** is the first entry (configure from scratch), followed by the built-in official vendors (OpenAI, Anthropic, DeepSeek, Zhipu, Qwen, etc.) in the same style. Picking a built-in vendor pre-fills the name, upstream format and Base URL — just add your API Key in the edit page and it works. You can also modify any field.
 
 For custom setup, three fields are enough: **Upstream Format**, **API Key** and **Base URL**.
 
