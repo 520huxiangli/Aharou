@@ -633,10 +633,6 @@ class SettingsViewModel @Inject constructor(
     private val _marketSourceId = MutableStateFlow("")
     val marketSourceId: StateFlow<String> = _marketSourceId.asStateFlow()
 
-    private val _marketSearchable = MutableStateFlow(false)
-    /** 当前源是不是检索型：界面据此出一个搜索框，而不是直接列技能。 */
-    val marketSearchable: StateFlow<Boolean> = _marketSearchable.asStateFlow()
-
     private val _marketSkills = MutableStateFlow<List<MarketSkillUi>>(emptyList())
     val marketSkills: StateFlow<List<MarketSkillUi>> = _marketSkills.asStateFlow()
 
@@ -1265,7 +1261,6 @@ class SettingsViewModel @Inject constructor(
         if (_marketSources.value.none { it.first == _marketSourceId.value }) {
             _marketSourceId.value = _marketSources.value.firstOrNull()?.first.orEmpty()
         }
-        _marketSearchable.value = isSearchSource(_marketSourceId.value)
     }
 
     private fun isSearchSource(sourceId: String) =
@@ -1283,7 +1278,6 @@ class SettingsViewModel @Inject constructor(
     fun selectMarketSource(sourceId: String) {
         if (_marketSourceId.value == sourceId) return
         _marketSourceId.value = sourceId
-        _marketSearchable.value = isSearchSource(sourceId)
         when {
             sourceId == ADHOC_MARKET_ID -> marketAdhocRepo?.let { loadMarketFromRepo(it) }
             // 检索型源没有「列全部」的入口，清空列表等用户输关键词
@@ -1296,16 +1290,19 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 检索型源：按关键词拉结果。结果里的技能只带名字与所在仓库，
-     * 安装时再去仓库里定位目录（见 SkillMarketRepository.install）。
+     * 技能搜索：一律走检索型源，跟当前选中的是哪个源无关。
+     * 结果里的技能只带名字与所在仓库，安装时再去仓库里定位目录。
      */
     fun searchMarket(query: String) {
         if (query.isBlank()) return
+        val sourceId = searchSourceId() ?: return
+        // 顺手把源选上，否则列表里是搜索结果、源却高亮着别的
+        _marketSourceId.value = sourceId
         viewModelScope.launch {
             _marketLoading.value = true
             _marketAlert.value = null
             val listing = withContext(Dispatchers.IO) {
-                skillMarketRepository.searchSkills(_marketSourceId.value, query)
+                skillMarketRepository.searchSkills(sourceId, query)
             }
             _marketSkills.value = listing.skills.map { toMarketUi(it) }
             _marketAlert.value = when {
@@ -1316,6 +1313,10 @@ class SettingsViewModel @Inject constructor(
             _marketLoading.value = false
         }
     }
+
+    /** 检索型源的 id（技能搜索用；目前预置的源里就 skills.sh 一个）。 */
+    private fun searchSourceId(): String? =
+        skillMarketRepository.sources().entries.firstOrNull { it.value.isSearch }?.key
 
     /**
      * 按用户粘贴的仓库地址列出技能：地址认不出来或仓库里没技能时给一句提示，不清空现有列表。

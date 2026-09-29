@@ -881,7 +881,6 @@ fun SettingsScreen(
                     val marketSkills by viewModel.marketSkills.collectAsStateWithLifecycle()
                     val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
                     val marketAlert by viewModel.marketAlert.collectAsStateWithLifecycle()
-                    val marketSearchable by viewModel.marketSearchable.collectAsStateWithLifecycle()
                     SkillMarketSection(
                         sources = marketSources,
                         selectedSourceId = marketSourceId,
@@ -889,7 +888,6 @@ fun SettingsScreen(
                         loading = marketLoading,
                         alert = marketAlert,
                         scope = skillImportScope,
-                        searchable = marketSearchable,
                         onScopeChange = { skillImportScope = it },
                         onSelectSource = { viewModel.selectMarketSource(it) },
                         onInstall = { viewModel.installFromMarket(it, skillImportScope) },

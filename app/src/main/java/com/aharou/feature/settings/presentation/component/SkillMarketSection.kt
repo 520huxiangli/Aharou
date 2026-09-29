@@ -55,7 +55,6 @@ internal fun SkillMarketSection(
     loading: Boolean,
     alert: MarketAlert?,
     scope: SkillScope,
-    searchable: Boolean,
     onScopeChange: (SkillScope) -> Unit,
     onSelectSource: (String) -> Unit,
     onInstall: (MarketSkill) -> Unit,
@@ -64,19 +63,6 @@ internal fun SkillMarketSection(
 ) {
     var repoInput by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
-
-    // 关键词框常驻：检索型源拿它去网上搜，其它源拿它在已拉到的列表里就地筛（大数据源这样找快得多）
-    val visibleSkills = remember(skills, searchable, query) {
-        val kw = query.trim()
-        if (searchable || kw.isEmpty()) {
-            skills
-        } else {
-            skills.filter {
-                it.skill.name.contains(kw, ignoreCase = true) ||
-                    it.skill.displayName.contains(kw, ignoreCase = true)
-            }
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -122,7 +108,7 @@ internal fun SkillMarketSection(
                 }
             }
 
-            // 检索型源没有「列全部」的入口，靠这个框输关键词；别的源就当本地筛选用
+            // 两个框都常驻：上面填网页地址，这里填关键词搜索。行为不跟选中的源挂钩。
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
@@ -131,22 +117,16 @@ internal fun SkillMarketSection(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = stringResource(
-                        if (searchable) R.string.skills_market_search_hint
-                        else R.string.skills_market_filter_hint
-                    ),
+                    placeholder = stringResource(R.string.skills_market_search_hint),
                     singleLine = true,
-                    keyboardActions = KeyboardActions(onDone = { if (searchable) onSearch(query) })
+                    keyboardActions = KeyboardActions(onDone = { onSearch(query) })
                 )
-                // 只有检索型源需要提交：本地筛选是随打随出，不用点
-                if (searchable) {
-                    // 检索接口要求关键词至少 2 个字，不够就置灰，省得白跑一趟
-                    TextButton(
-                        onClick = { onSearch(query) },
-                        enabled = query.trim().length >= 2 && !loading
-                    ) {
-                        Text(stringResource(R.string.skills_market_search))
-                    }
+                // 检索接口要求关键词至少 2 个字，不够就置灰，省得白跑一趟
+                TextButton(
+                    onClick = { onSearch(query) },
+                    enabled = query.trim().length >= 2 && !loading
+                ) {
+                    Text(stringResource(R.string.skills_market_search))
                 }
             }
 
@@ -183,15 +163,13 @@ internal fun SkillMarketSection(
 
         when {
             // 列表已有内容就先显示——描述还在后台补，不必等全部读完
-            skills.isNotEmpty() && visibleSkills.isEmpty() ->
-                MarketHint(stringResource(R.string.skills_market_no_match))
             skills.isNotEmpty() -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                items(visibleSkills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
+                items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
                     MarketSkillRow(ui, onInstall)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
