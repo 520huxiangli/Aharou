@@ -72,7 +72,7 @@ internal fun ShadowScreenSection(viewModel: VdViewModel = hiltViewModel()) {
                 )
                 if (shizuku != ShizukuState.READY) {
                     Text(
-                        text = stringResource(R.string.vd_shizuku_hint, shizuku.name),
+                        text = stringResource(R.string.vd_shizuku_hint, stringResource(shizuku.statusRes())),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.error,
                     )

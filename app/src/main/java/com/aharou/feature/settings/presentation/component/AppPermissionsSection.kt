@@ -479,7 +479,7 @@ internal fun BackgroundRunSection(
 
 /** Shizuku 状态对应的右侧状态文字。 */
 @StringRes
-private fun ShizukuState.statusRes(): Int = when (this) {
+internal fun ShizukuState.statusRes(): Int = when (this) {
     ShizukuState.NOT_INSTALLED -> R.string.settings_shizuku_status_not_installed
     ShizukuState.NOT_RUNNING -> R.string.settings_shizuku_status_not_running
     ShizukuState.PERMISSION_DENIED -> R.string.settings_shizuku_status_denied
