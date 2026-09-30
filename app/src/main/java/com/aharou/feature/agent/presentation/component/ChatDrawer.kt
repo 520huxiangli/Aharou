@@ -107,6 +107,7 @@ import compose.icons.feathericons.FilePlus
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.FolderPlus
 import compose.icons.feathericons.Globe
+import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.Trash2
@@ -156,6 +157,7 @@ fun ChatDrawerContent(
     onDeleteEntry: (String) -> Unit,
     onCopyEntry: (String, String) -> Unit,
     onCutEntry: (String, String) -> Unit,
+    onAddToInput: (String) -> Unit,
     onPasteEntry: (String, (Boolean) -> Unit) -> Unit,
     onPasteOverwrite: () -> Unit,
     onCancelPasteOverwrite: () -> Unit,
@@ -337,6 +339,7 @@ fun ChatDrawerContent(
                     onDeleteEntry = onDeleteEntry,
                     onCopyEntry = onCopyEntry,
                     onCutEntry = onCutEntry,
+                    onAddToInput = onAddToInput,
                     onPasteEntry = onPasteEntry,
                     onClearClipboard = onClearClipboard
                 )
@@ -866,7 +869,7 @@ private fun SubAgentExpandToggle(
 /**
  * Tab1：当前工作区的文件树。从工作区根就地展开，缩进表示层级；
  * 每行共享同一横向滚动，路径过深时左右滑动查看完整名称，不再截断成省略号。
- * 新建文件/文件夹通过长按目录（含工作区根）行的菜单发起。
+ * 新建文件/文件夹通过长按目录（含工作区根）行的菜单发起；文件与目录都可在同一菜单里「加入输入栏」。
  */
 @Composable
 private fun FileBrowserTab(
@@ -884,6 +887,7 @@ private fun FileBrowserTab(
     onDeleteEntry: (String) -> Unit,
     onCopyEntry: (String, String) -> Unit,
     onCutEntry: (String, String) -> Unit,
+    onAddToInput: (String) -> Unit,
     onPasteEntry: (String, (Boolean) -> Unit) -> Unit,
     onClearClipboard: () -> Unit
 ) {
@@ -1044,6 +1048,11 @@ private fun FileBrowserTab(
                 menuNode = null
                 onCutEntry(node.path, node.entry.name)
             },
+            onAddToInput = {
+                val path = node.path
+                menuNode = null
+                onAddToInput(path)
+            },
             onPasteHere = {
                 val target = node.path
                 menuNode = null
@@ -1159,8 +1168,8 @@ private fun ClipboardIndicator(
     }
 }
 
-/** 文件树节点长按弹出的功能菜单：目录（含工作区根）可新建，非根节点可复制/剪切/重命名/删除，
- * 剪切板非空时目录可「粘贴到此处」。 */
+/** 文件树节点长按弹出的功能菜单：文件与目录均可「加入输入栏」，目录（含工作区根）可新建，
+ * 非根节点可复制/剪切/重命名/删除，剪切板非空时目录可「粘贴到此处」。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileTreeActionSheet(
@@ -1172,6 +1181,7 @@ private fun FileTreeActionSheet(
     onDelete: () -> Unit,
     onCopy: () -> Unit,
     onCut: () -> Unit,
+    onAddToInput: () -> Unit,
     onPasteHere: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1219,6 +1229,12 @@ private fun FileTreeActionSheet(
                 )
             }
             if (!node.isRoot) {
+                SheetActionRow(
+                    icon = FeatherIcons.MessageSquare,
+                    label = stringResource(R.string.common_add_to_input),
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onAddToInput
+                )
                 SheetActionRow(
                     icon = FeatherIcons.Copy,
                     label = stringResource(R.string.common_copy),

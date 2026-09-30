@@ -179,6 +179,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configVoiceFields: com.aharou.feature.settings.data.ConfigVoiceFields
 
+    /** 记忆的 AI 蒸馏：启动时后台判一次「是否到点」，到点才调模型。 */
+    @Inject
+    lateinit var memoryDistiller: com.aharou.feature.agent.domain.memory.MemoryDistiller
+
     /** MCP 服务器集合注册。 */
     @Inject
     lateinit var configMcpFields: com.aharou.feature.agent.data.ConfigMcpFields
@@ -298,6 +302,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this)
         com.aharou.core.config.audit.ConfigAuditLog.init(this)
         com.aharou.core.soul.SoulStore.ensureExists(this)
+        // 记忆的 AI 蒸馏：后台跑，失败静默。默认 7 天才跑一次，所以这里只是一次轻量判活。
+        appScope.launch {
+            runCatching { memoryDistiller.distillIfDue() }
+        }
         // 读取 SOUL.md 到缓存（聊天身份行用）；改名/改图标后由保存路径刷新。
         com.aharou.core.soul.SoulStore.refreshCache(this)
         // 把提供商级代理注册表挂到 AppProxy（applyGlobal 已在 attachBaseContext 完成），

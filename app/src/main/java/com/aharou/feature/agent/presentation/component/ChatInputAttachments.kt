@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,14 +35,17 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -146,9 +150,13 @@ internal fun QueuedRequestPanel(
 internal fun PendingAttachmentPreviewList(
     attachments: List<PendingUploadAttachment>,
     onRemoveAttachment: (Int) -> Unit,
+    onReadAttachment: suspend (String) -> String?,
     modifier: Modifier = Modifier
 ) {
     if (attachments.isEmpty()) return
+
+    // 预览目标放列表层：卡片自身被 key 复用时状态不会错位，同时切换目标不会重建行。
+    var previewTarget by remember { mutableStateOf<PendingUploadAttachment?>(null) }
 
     Row(
         modifier = modifier
@@ -163,18 +171,29 @@ internal fun PendingAttachmentPreviewList(
             key(attachment.localPath) {
                 PendingAttachmentPreviewItem(
                     attachment = attachment,
-                    onRemove = { onRemoveAttachment(index) }
+                    onRemove = { onRemoveAttachment(index) },
+                    onPreview = { previewTarget = attachment }
                 )
             }
         }
+    }
+
+    previewTarget?.let { target ->
+        AttachmentPreviewSheet(
+            attachment = target,
+            onReadAttachment = onReadAttachment,
+            onDismiss = { previewTarget = null }
+        )
     }
 }
 
 @Composable
 private fun PendingAttachmentPreviewItem(
     attachment: PendingUploadAttachment,
-    onRemove: () -> Unit
+    onRemove: () -> Unit,
+    onPreview: () -> Unit
 ) {
+    val previewLabel = stringResource(R.string.common_preview)
     Surface(
         shape = RoundedCornerShape(Radius.md),
         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
@@ -183,7 +202,6 @@ private fun PendingAttachmentPreviewItem(
         Box(modifier = Modifier.fillMaxSize()) {
             if (attachment.image != null) {
                 val viewer = LocalImageViewer.current
-                val previewLabel = stringResource(R.string.common_image_preview)
                 ImageThumbnail(
                     attachment = attachment,
                     // 右上角的移除按钮是 Box 里后声明的兄弟节点，绘制在上层、命中测试也先到，两者不抢
@@ -194,7 +212,13 @@ private fun PendingAttachmentPreviewItem(
                         }
                 )
             } else {
-                FileAttachmentPreview(attachment = attachment)
+                // 文件附件同样可点开：文本/代码直接读出来看，不必先翻到文件树去找。
+                FileAttachmentPreview(
+                    attachment = attachment,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(onClickLabel = previewLabel) { onPreview() }
+                )
             }
             Surface(
                 shape = CircleShape,
@@ -266,9 +290,12 @@ private fun ImageThumbnail(
 }
 
 @Composable
-private fun FileAttachmentPreview(attachment: PendingUploadAttachment) {
+private fun FileAttachmentPreview(
+    attachment: PendingUploadAttachment,
+    modifier: Modifier = Modifier
+) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .padding(Spacing.xs),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -295,6 +322,59 @@ private fun FileAttachmentPreview(attachment: PendingUploadAttachment) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+/**
+ * 附件内容预览：文本/代码直接展示（等宽、超长可滚），读不到或过大时给一句提示。
+ * 二进制文件不在这里特殊处理——tool 通道的附件本来也读不到内容，与读失败同一条路径。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachmentPreviewSheet(
+    attachment: PendingUploadAttachment,
+    onReadAttachment: suspend (String) -> String?,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val content by produceState<String?>(null, attachment.containerPath) {
+        value = onReadAttachment(attachment.containerPath)
+    }
+    AdaptiveModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl)
+        ) {
+            Text(
+                text = attachment.fileName,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(Spacing.sm))
+            val loaded = content
+            when {
+                loaded == null -> Text(
+                    text = stringResource(R.string.chat_attachment_preview_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> Text(
+                    text = loaded,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+            }
+        }
     }
 }
 

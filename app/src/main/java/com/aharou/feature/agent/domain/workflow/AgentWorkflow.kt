@@ -115,6 +115,13 @@ interface AgentWorkflow {
     suspend fun generateTitle(sessionId: String, request: String): String?
 
     /**
+     * 通用一次性调用：给定系统提示词 + 单条用户文本，直接拿模型返回的文本。
+     * 供记忆蒸馏这类后台任务用——不经过会话历史与工具循环，也不改任何会话状态；
+     * 取当前生效供应商，未配置或调用失败返回 null（调用方静默跳过）。
+     */
+    suspend fun completeOnce(systemPrompt: String, userText: String, sessionId: String? = null): String?
+
+    /**
      * 根据 Git 差异文本生成符合 Conventional Commits 规范的提交信息。
      * 默认使用全局生效的 AI 供应商及默认模型。
      * @param diff 变更内容差异文本（`git diff --cached` 或工作区差异）

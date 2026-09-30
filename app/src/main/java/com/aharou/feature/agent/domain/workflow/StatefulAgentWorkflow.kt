@@ -1035,6 +1035,25 @@ class StatefulAgentWorkflow @Inject constructor(
         FileLogger.w(TAG, "生成会话标题失败", e)
     }.getOrNull()
 
+    /**
+     * 通用一次性调用：系统提示词 + 单条用户文本 ⇒ 模型回复文本。
+     * 供记忆蒸馏等后台任务用：不走会话历史与工具循环，也不改任何会话状态。
+     */
+    override suspend fun completeOnce(
+        systemPrompt: String,
+        userText: String,
+        sessionId: String?
+    ): String? = runCatching {
+        val provider = getEffectiveProvider(sessionId)
+        provider.complete(
+            systemPrompt = systemPrompt,
+            messages = listOf(AgentMessage.UserMessage(content = userText)),
+            tools = emptyList()
+        ).content.trim().ifBlank { null }
+    }.onFailure { e ->
+        FileLogger.w(TAG, "一次性调用失败", e)
+    }.getOrNull()
+
     override suspend fun generateCommitMessage(diff: String): String? = runCatching {
         if (diff.isBlank()) return@runCatching null
         val provider = getEffectiveProvider(sessionId = null)

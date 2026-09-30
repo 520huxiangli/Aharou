@@ -192,7 +192,7 @@ class SystemPromptProvider @Inject constructor(
             val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
             val cached = cachedByKey[key]
             if (cached != null) return cached.ifEmpty { null }
-            val memories = try { memoryRepository.listMemories(ctx.projectRoot) } catch (e: Exception) { return null }
+            val memories = try { memoryRepository.listMemoriesForPrompt(ctx.projectRoot) } catch (e: Exception) { return null }
             if (memories.isEmpty()) {
                 cachedByKey[key] = ""
                 return null

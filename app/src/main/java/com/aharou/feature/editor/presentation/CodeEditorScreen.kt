@@ -1,8 +1,11 @@
 package com.aharou.feature.editor.presentation
 
 import android.graphics.Typeface
+import android.view.View
 import android.view.ViewGroup
 import android.util.TypedValue
+import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -77,6 +80,7 @@ import compose.icons.feathericons.Eye
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.X
+import io.github.rosemoe.sora.event.ColorSchemeUpdateEvent
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.event.ScrollEvent
 import io.github.rosemoe.sora.event.SelectionChangeEvent
@@ -85,6 +89,7 @@ import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
 import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
 import io.github.rosemoe.sora.text.UndoManager
 import io.github.rosemoe.sora.widget.CodeEditor
+import io.github.rosemoe.sora.widget.component.EditorTextActionWindow
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlin.math.abs
 
@@ -99,6 +104,7 @@ fun CodeEditorScreen(
     onBack: () -> Unit,
     initialLine: Int = 0,
     embedded: Boolean = false,
+    onAddSelectionToInput: (String) -> Unit,
     viewModel: CodeEditorViewModel = hiltViewModel()
 ) {
     LaunchedEffect(path) { viewModel.load(path) }
@@ -281,6 +287,7 @@ fun CodeEditorScreen(
                     settings = settings,
                     baselineText = baselineText,
                     initialLine = initialLine,
+                    onAddSelectionToInput = onAddSelectionToInput,
                     onBackgroundResolved = { editorBackground = it },
                     onCursorChanged = { l, c ->
                         cursorLine = l
@@ -404,6 +411,7 @@ private fun EditorSurface(
     settings: EditorSettings,
     baselineText: MutableState<String>,
     initialLine: Int = 0,
+    onAddSelectionToInput: (String) -> Unit,
     onBackgroundResolved: (Color) -> Unit,
     onCursorChanged: (line: Int, column: Int) -> Unit,
     onContentChanged: (canUndo: Boolean, canRedo: Boolean, dirty: Boolean) -> Unit
@@ -490,6 +498,7 @@ private fun EditorSurface(
                     }
                 }
                 editorRef.value = this
+                installAddToInputAction(this, ctx.getString(R.string.common_add_to_input), onAddSelectionToInput)
             }
         },
         onRelease = {
@@ -720,6 +729,58 @@ private fun moveCursorHorizontally(editor: CodeEditor, forward: Boolean) {
     }
 }
 
+/**
+ * 往 sora 自带的选中工具条上挂一个「加入输入栏」。
+ *
+ * 库没留扩展点，只能自己往它的按钮行里塞一个：工具条内容视图 = 横向滚动容器 > 按钮行，
+ * 结构对不上就整体放弃（静默），一个入口不值得去冒崩溃风险。
+ * 按钮只在有选区时露出——没选中就没有可投递的内容；点它把当前选中的文本交给 [onAdd]。
+ */
+private fun installAddToInputAction(editor: CodeEditor, label: String, onAdd: (String) -> Unit) {
+    val scroller = editor.getComponent(EditorTextActionWindow::class.java)?.view as? ViewGroup
+        ?: return
+    val row = scroller.getChildAt(0) as? ViewGroup ?: return
+    val buttons = row.getChildAt(0) as? ViewGroup ?: return
+
+    val context = editor.context
+    val selectableItem = TypedValue()
+    context.theme.resolveAttribute(android.R.attr.selectableItemBackground, selectableItem, true)
+    val density = context.resources.displayMetrics.density
+    val horizontalPadding = (ADD_TO_INPUT_PADDING_DP * density).toInt()
+    val button = Button(context).apply {
+        text = label
+        isAllCaps = false
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, ADD_TO_INPUT_TEXT_SP)
+        setBackgroundResource(selectableItem.resourceId)
+        minWidth = 0
+        minimumWidth = 0
+        setPadding(horizontalPadding, 0, horizontalPadding, 0)
+        setOnClickListener {
+            val cursor = editor.cursor
+            val selected = editor.text.subSequence(cursor.left, cursor.right).toString()
+            if (selected.isNotEmpty()) onAdd(selected)
+        }
+    }
+    button.setTextColor(editor.colorScheme.getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR))
+    // 工具条换色时文字也要跟着走，否则切主题后这一项会压在相近的底色上看不清。
+    editor.subscribeAlways(ColorSchemeUpdateEvent::class.java) {
+        button.setTextColor(editor.colorScheme.getColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR))
+    }
+    val syncVisibility = {
+        button.visibility = if (editor.cursor.isSelected) View.VISIBLE else View.GONE
+    }
+    editor.subscribeAlways(SelectionChangeEvent::class.java) { syncVisibility() }
+    syncVisibility()
+
+    buttons.addView(
+        button,
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    )
+}
+
 /** 底部快捷栏的常用符号，点击在光标处插入。 */
 private val EDITOR_SYMBOLS = listOf(
     "{", "}", "(", ")", "[", "]", "<", ">",
@@ -730,6 +791,10 @@ private val EDITOR_SYMBOLS = listOf(
 
 /** 内容渐显时长：给后台语法分析留出窗口，同时不致于让用户觉得打开变慢。 */
 private const val HIGHLIGHT_REVEAL_MS = 200
+
+/** 工具条上「加入输入栏」的字号（sp）与左右内边距（dp）：与库里的图标按钮同高，但不喧宾夺主。 */
+private const val ADD_TO_INPUT_TEXT_SP = 13f
+private const val ADD_TO_INPUT_PADDING_DP = 12f
 
 /** 撤销合并窗口：间隔超过它的输入不再并入上一条撤销记录，撤销才是分步的。sora 默认 8000ms。 */
 private const val UNDO_MERGE_WINDOW_MS = 500L

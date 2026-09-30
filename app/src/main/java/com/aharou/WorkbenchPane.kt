@@ -36,6 +36,7 @@ internal fun WorkbenchPaneContent(
     editorPath: String,
     editorLine: Int,
     onClose: () -> Unit,
+    onAddSelectionToInput: (String) -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -47,7 +48,8 @@ internal fun WorkbenchPaneContent(
                 path = editorPath,
                 initialLine = editorLine,
                 onBack = onClose,
-                embedded = true
+                embedded = true,
+                onAddSelectionToInput = onAddSelectionToInput
             )
 
             WorkbenchPaneKind.TERMINAL -> {

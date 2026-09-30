@@ -36,6 +36,15 @@ class AharouMemoryStore @Inject constructor(
         /** 注入提示词时日志尾巴上限（字符）。 */
         private const val MAX_LOG_TAIL_CHARS = 1600
 
+        /** 日文件保留天数：超过就并进月归档。 */
+        private const val LOG_RETENTION_DAYS = 7L
+
+        /** 上次蒸馏日期（yyyy-MM-dd），用于把规则蒸馏限成一天一次。 */
+        private const val KEY_LAST_DISTILL = "last_distill_day"
+
+        /** 上次 AI 蒸馏时间（毫秒），用于「距上次多久才再蒸一次」。 */
+        private const val KEY_LAST_DISTILL_AT = "last_distill_at_ms"
+
         private val DEFAULT_CORE = """
             # 核心档案
 
@@ -100,7 +109,41 @@ class AharouMemoryStore @Inject constructor(
             dir.mkdirs()
             val core = File(dir, "CORE.md")
             if (!core.exists()) core.writeTextSafely(DEFAULT_CORE, TAG)
+            distillLogsIfNeeded()
         }.onFailure { FileLogger.w(TAG, "ensureExists failed: ${it.message}") }
+    }
+
+    /**
+     * 日志自动蒸馏：超过保留期的日文件并进月归档，再删掉零散日文件。
+     *
+     * 记忆目录只增不减、日文件一天一个，不处理就会一直堆下去（也会把记忆清单挤满）。
+     * 规则化处理、**不调模型**：内容按文件名顺序追加进 `LOG-ARCHIVE-YYYY-MM.md`，
+     * 原文一行不丢，只是把碎片合成一份；归档文件本身不参与下一轮蒸馏（靠文件名前缀排除）。
+     * 一天最多跑一次，免得每次拼提示词都扫目录。
+     */
+    fun distillLogsIfNeeded() {
+        runCatching {
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+            if (prefs.getString(KEY_LAST_DISTILL, null) == today) return
+            prefs.edit().putString(KEY_LAST_DISTILL, today).apply()
+
+            val cutoff = System.currentTimeMillis() - LOG_RETENTION_DAYS * 24L * 60 * 60 * 1000
+            val dayLogs = (dir.listFiles() ?: emptyArray()).filter {
+                it.isFile && it.name.startsWith("LOG-") && it.name.endsWith(".md") &&
+                    !it.name.startsWith("LOG-ARCHIVE-") && it.lastModified() < cutoff
+            }
+            if (dayLogs.isEmpty()) return
+
+            dayLogs.groupBy { it.name.substring(4, 11) }.forEach { (month, files) ->
+                val archive = File(dir, "LOG-ARCHIVE-$month.md")
+                if (!archive.exists()) archive.writeTextSafely("# $month 归档\n", TAG)
+                files.sortedBy { it.name }.forEach { src ->
+                    val body = runCatching { src.readText() }.getOrNull() ?: return@forEach
+                    archive.appendText("\n" + body.trimEnd() + "\n")
+                    runCatching { src.delete() }
+                }
+            }
+        }.onFailure { FileLogger.w(TAG, "日志蒸馏失败: ${it.message}") }
     }
 
     fun file(name: String): File = File(dir, name)
@@ -155,6 +198,54 @@ class AharouMemoryStore @Inject constructor(
 
     /** 读核心档案（CORE.md）。 */
     fun readCore(): String? = File(dir, "CORE.md").takeIf { it.exists() }?.readText()
+
+    /** 读全局记忆（GLOBAL.md）。 */
+    fun readGlobal(): String? = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()
+
+    /**
+     * 向 GLOBAL.md **追加**一段（只追加、不覆盖）。
+     *
+     * 蒸馏结果只能追加：模型写坏了也只多一段废话，原有记忆一字不动，人工删掉那段就能回滚。
+     * 同时把追加前的文件备一份为 `GLOBAL.md.bak-<yyyy-MM-dd>`（当天已存在则不覆盖）。
+     */
+    fun appendGlobalSection(title: String, body: String): Boolean = runCatching {
+        dir.mkdirs()
+        val target = File(dir, "GLOBAL.md")
+        if (target.exists()) {
+            val bak = File(dir, "GLOBAL.md.bak-${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}")
+            if (!bak.exists()) target.copyTo(bak, overwrite = false)
+        }
+        target.appendText("\n## $title\n\n" + body.trim() + "\n")
+        true
+    }.getOrElse {
+        FileLogger.w(TAG, "appendGlobalSection failed: ${it.message}")
+        false
+    }
+
+    /** 上次 AI 蒸馏时间（毫秒）；从未蒸馏过返回 0。 */
+    fun lastDistillAt(): Long = prefs.getLong(KEY_LAST_DISTILL_AT, 0L)
+
+    fun markDistilled(at: Long = System.currentTimeMillis()) {
+        prefs.edit().putLong(KEY_LAST_DISTILL_AT, at).apply()
+    }
+
+    /** 待蒸馏素材：超过 [distillSince] 之后有改动的日志与归档文件的内容（最新在前）。 */
+    fun collectDistillSource(since: Long, maxChars: Int): String {
+        val logs = (dir.listFiles() ?: emptyArray())
+            .filter { it.isFile && it.name.startsWith("LOG-") && it.name.endsWith(".md") }
+            .filter { it.lastModified() > since }
+            .sortedByDescending { it.name }
+        if (logs.isEmpty()) return ""
+        val sb = StringBuilder()
+        for (f in logs) {
+            if (sb.length >= maxChars) break
+            val body = runCatching { f.readText() }.getOrNull() ?: continue
+            sb.append("\n### ").append(f.name.removeSuffix(".md")).append('\n')
+            val room = maxChars - sb.length
+            sb.append(if (body.length <= room) body else body.take(room))
+        }
+        return sb.toString()
+    }
 
     /** 覆盖写核心档案（CORE.md）。 */
     fun writeCore(text: String) {

@@ -689,6 +689,9 @@ fun AppNavigation(
             onCutEntry = { path, name ->
                 agentViewModel.cutBrowseEntry(path, name)
             },
+            onAddToInput = { path ->
+                agentViewModel.attachWorkspaceEntryToInput(path)
+            },
             onPasteEntry = { targetDir, onResult ->
                 agentViewModel.pasteBrowseEntry(targetDir, onResult)
             },
@@ -807,6 +810,9 @@ fun AppNavigation(
                             editorLine = paneEditorLine,
                             onClose = { paneKind = WorkbenchPaneKind.NONE },
                             onOpenFile = { path -> openFile(path, 0, false) },
+                            onAddSelectionToInput = { text ->
+                                agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
+                            },
                             modifier = Modifier.weight(1f - paneSplit)
                         )
                     }
@@ -957,6 +963,12 @@ fun AppNavigation(
                     onBack = {
                         navController.popBackStack()
                         if (openDrawerOnBack && !expanded) scope.launch { drawerState.open() }
+                    },
+                    onAddSelectionToInput = { text ->
+                        agentViewModel.attachEditorSelectionToInput(
+                            entry.arguments?.getString("path").orEmpty(),
+                            text
+                        )
                     }
                 )
             }

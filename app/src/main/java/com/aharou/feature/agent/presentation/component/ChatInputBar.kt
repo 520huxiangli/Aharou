@@ -160,6 +160,7 @@ internal fun ChatInputBar(
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
     pendingAttachments: List<PendingUploadAttachment>,
     onRemoveAttachment: (Int) -> Unit,
+    onReadAttachment: suspend (String) -> String?,
     pastedTexts: List<PastedText> = emptyList(),
     onStashPaste: (String) -> String = { it },
     onRemovePaste: (Int) -> Unit = {},
@@ -384,6 +385,7 @@ internal fun ChatInputBar(
                 PendingAttachmentPreviewList(
                     attachments = pendingAttachments,
                     onRemoveAttachment = onRemoveAttachment,
+                    onReadAttachment = onReadAttachment,
                     modifier = Modifier.padding(bottom = Spacing.xs)
                 )
             }

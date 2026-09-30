@@ -327,6 +327,8 @@
     <string name="common_go_to_settings">去设置</string>
     <string name="common_name">名称</string>
     <string name="common_image_preview">图片预览</string>
+    <string name="common_preview">预览</string>
+    <string name="chat_attachment_preview_unavailable">读不到内容，或该文件不支持预览</string>
     <string name="common_image_load_failed">图片加载失败，文件可能已被移动或删除</string>
     <string name="common_expand">展开</string>
     <string name="common_workspace">工作区</string>
@@ -572,6 +574,7 @@
     <string name="file_browser_rename_failed">重命名失败，可能已存在同名项</string>
     <string name="file_browser_delete_failed">删除失败</string>
     <string name="file_browser_paste_here">粘贴到此处</string>
+    <string name="common_add_to_input">加入输入栏</string>
     <string name="file_browser_paste_conflict_title">同名文件已存在</string>
     <string name="file_browser_paste_conflict_message">目标位置已存在同名项目「%1$s」，是否覆盖？</string>
     <string name="common_overwrite">覆盖</string>

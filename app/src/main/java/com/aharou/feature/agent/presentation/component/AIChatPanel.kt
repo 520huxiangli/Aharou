@@ -1704,6 +1704,7 @@ fun AIChatPanel(
                 onReasoningEffortChange = { viewModel.setSessionReasoningEffort(it) },
                 pendingAttachments = pendingAttachments,
                 onRemoveAttachment = ::removePendingAttachment,
+                onReadAttachment = { path -> viewModel.readAttachmentText(path) },
                 pastedTexts = pastedTexts,
                 onStashPaste = { viewModel.stashPastedText(it) },
                 onRemovePaste = { viewModel.removePastedText(it) },
@@ -1820,7 +1821,10 @@ fun AIChatPanel(
                 ScrollToPrevUserButton(
                     onClick = {
                         followBottom = false
-                        scope.launch { listState.animateScrollToItem(prevUserItemIndex) }
+                        // 下标在点击后重算：launch 里的代码要等到下一帧才跑，那一刻列表可能已经变了
+                        // （新消息、压缩、切会话），原值会变成 -1，而 animateScrollToItem 对负下标直接抛。
+                        val target = prevUserItemIndex
+                        scope.launch { if (target >= 0) listState.animateScrollToItem(target) }
                     }
                 )
             }

@@ -327,6 +327,8 @@
     <string name="common_go_to_settings">Go to Settings</string>
     <string name="common_name">Name</string>
     <string name="common_image_preview">Image Preview</string>
+    <string name="common_preview">Preview</string>
+    <string name="chat_attachment_preview_unavailable">Can\'t read this file, or preview isn\'t supported</string>
     <string name="common_image_load_failed">Failed to load image; the file may have been moved or deleted</string>
     <string name="common_expand">Expand</string>
     <string name="common_workspace">Workspace</string>
@@ -577,6 +579,7 @@
     <string name="file_browser_rename_failed">Rename failed: the name may already exist</string>
     <string name="file_browser_delete_failed">Delete failed</string>
     <string name="file_browser_paste_here">Paste here</string>
+    <string name="common_add_to_input">Add to input</string>
     <string name="file_browser_paste_conflict_title">Same name already exists</string>
     <string name="file_browser_paste_conflict_message">An item named "%1$s" already exists at the destination. Overwrite?</string>
     <string name="common_overwrite">Overwrite</string>

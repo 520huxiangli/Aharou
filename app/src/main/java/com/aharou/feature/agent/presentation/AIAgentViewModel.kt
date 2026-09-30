@@ -122,8 +122,17 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.launch
+import java.io.BufferedOutputStream
+import java.io.FileInputStream
+import java.io.IOException
 import java.io.OutputStream
+import java.io.PipedInputStream
+import java.io.PipedOutputStream
 import java.util.Calendar
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.concurrent.thread
 import java.util.UUID
 import javax.inject.Inject
 
@@ -347,6 +356,217 @@ class AIAgentViewModel @Inject constructor(
     internal fun removePendingAttachmentAt(index: Int) {
         if (index !in _pendingAttachments.value.indices) return
         _pendingAttachments.value = _pendingAttachments.value.filterIndexed { i, _ -> i != index }
+    }
+
+    /**
+     * 「加入输入栏」：把文件树里的一个文件 / 目录投递进待发附件列表。
+     *
+     * 目录只作为单个条目投递，不递归展开——具体要读什么交给 AI。这里也不预先拉本地副本：
+     * 远程工作区拖一份大文件下来纯属浪费，分享 / 打开时再按需取（见 resolveLocalFile）。
+     */
+    internal fun attachWorkspaceEntryToInput(path: String) {
+        if (path.isBlank()) return
+        viewModelScope.launch {
+            val item = withContext(Dispatchers.IO) { entryAttachment(path) } ?: return@launch
+            addPendingAttachments(listOf(item))
+        }
+    }
+
+    /**
+     * 「加入输入栏」：把编辑器里选中的片段落成文件再投递（附件通道只认文件）。
+     *
+     * 落在工作区 `.aharou/attachments/`（与分享进来的文件同目录，不污染源码树）。文件名取当前时间
+     * （如 `20.22.txt`）——同一个文件选多少次都各成一个条目；同一分钟内选中多次时追加序号，
+     * 后者不能把前者覆盖掉。
+     */
+    internal fun attachEditorSelectionToInput(sourcePath: String, text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            val item = withContext(Dispatchers.IO) { selectionAttachment(text) }
+                ?: return@launch
+            addPendingAttachments(listOf(item))
+        }
+    }
+
+    /**
+     * 读取待发附件的内容用于预览。
+     *
+     * 只给 UI 预览用，所以超过 [PREVIEW_MAX_CHARS] 就截断并在尾部标记——直接把几百 KB 的文本
+     * 塞进 Compose 的 Text 会卡死主线程与测量。读不到（二进制/权限/已删）返回 null，由 UI 提示。
+     */
+    internal suspend fun readAttachmentText(containerPath: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val size = fileAccess.fileSize(containerPath)
+            if (size > PREVIEW_MAX_BYTES) return@runCatching null
+            val text = fileAccess.readFile(containerPath).take(PREVIEW_MAX_CHARS)
+            if (!looksLikeText(text)) return@runCatching null
+            text
+        }.getOrNull()
+    }
+
+    /**
+     * 二进制文件（zip / 图片 / 音频）读成字符串是一团乱码，比不预览还差。不维护后缀白名单，
+     * 直接看内容：出现 NUL，或控制字符超过 5%，就当非文本——压缩包/媒体文件必定命中。
+     */
+    private fun looksLikeText(text: String): Boolean {
+        if (text.isEmpty()) return true
+        var bad = 0
+        for (c in text) {
+            if (c == '\u0000') return false
+            if (c.code < 0x09 || c.code in 0x0E..0x1F) bad++
+        }
+        return bad * 100 <= text.length * 5
+    }
+
+    private fun entryAttachment(path: String): PendingUploadAttachment? {
+        val name = path.trimEnd('/').substringAfterLast('/')
+        if (name.isEmpty()) return null
+        return runCatching {
+            val isDirectory = fileAccess.isDirectory(path)
+            if (isDirectory) return@runCatching directoryAttachment(path, name)
+            PendingUploadAttachment(
+                fileName = name,
+                containerPath = path,
+                localPath = "",
+                mimeType = if (isDirectory) DIRECTORY_MIME_TYPE else mimeTypeForFileName(name),
+                sizeBytes = if (isDirectory) 0L else fileAccess.fileSize(path),
+                image = null
+            )
+        }.getOrNull()
+    }
+
+    private fun selectionAttachment(text: String): PendingUploadAttachment? {
+        val stamp = java.time.LocalTime.now().format(SELECTION_STAMP_FORMAT)
+        return runCatching {
+            var fileName = "$stamp.txt"
+            var index = 1
+            while (fileAccess.exists("$ATTACHMENTS_DIR/$fileName")) {
+                fileName = "$stamp-$index.txt"
+                index += 1
+            }
+            val containerPath = "$ATTACHMENTS_DIR/$fileName"
+            fileAccess.writeFile(containerPath, text, overwrite = false)
+            PendingUploadAttachment(
+                fileName = fileName,
+                containerPath = containerPath,
+                localPath = "",
+                mimeType = mimeTypeForFileName(fileName),
+                sizeBytes = fileAccess.fileSize(containerPath),
+                image = null
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * 把目录打包成 zip 投递。
+     *
+     * 附件通道只认「文件名 + 容器路径」，目录直投时模型拿不到里面任何内容，必须先打包。zip 落
+     * `/root/.aharou/cache/chat-zips/`：它属于 AI 配置目录（见 [WorkspacePathMapper.AHAROU_ROOT]），
+     * 容器内可读，又不污染用户的源码树——几百 MB 的临时包进工作区会被 git 看见。
+     *
+     * 打包在 IO 线程流式进行（管道直通 [FileAccessProvider.writeStream]），不把整包读进内存；
+     * 命中排除目录整棵跳过，累计超过 [MAX_CHAT_ZIP_BYTES] 就中断、把半成品清空并放弃投递。
+     */
+    private fun directoryAttachment(path: String, name: String): PendingUploadAttachment? {
+        val zipName = "$name.zip"
+        val containerZip = "$CHAT_ZIPS_DIR/$zipName"
+        fileAccess.mkdirs(CHAT_ZIPS_DIR)
+        val buffer = ByteArray(ZIP_COPY_BUFFER)
+        var fileCount = 0
+        val oversized = AtomicBoolean(false)
+        val pipeIn = PipedInputStream(buffer.size)
+        val pipeOut = PipedOutputStream(pipeIn)
+        val writer = thread(name = "chat-zip-writer") {
+            runCatching {
+                ZipOutputStream(BufferedOutputStream(pipeOut)).use { zip ->
+                    var written = 0L
+                    fileCount = writeDirectoryIntoZip(zip, path, "", buffer) { delta ->
+                        written += delta
+                        if (written > MAX_CHAT_ZIP_BYTES) {
+                            oversized.set(true)
+                            throw IOException("chat zip exceeds limit")
+                        }
+                    }
+                }
+            }.onFailure { e -> FileLogger.w(TAG, "打包目录失败：$path", e) }
+        }
+        val written = runCatching { fileAccess.writeStream(containerZip, pipeIn, overwrite = true) }
+            .getOrElse { e ->
+                writer.interrupt()
+                FileLogger.w(TAG, "写入 zip 失败：$containerZip", e)
+                return null
+            }
+        writer.join()
+        if (oversized.get()) {
+            // 没有删除接口，把超限的半成品清成空文件，免得留在盘上占地方。
+            runCatching { fileAccess.writeFile(containerZip, "", overwrite = true) }
+            FileLogger.w(TAG, "目录打包超过上限（${MAX_CHAT_ZIP_BYTES / 1024 / 1024}MB），放弃投递：$path")
+            return null
+        }
+        if (fileCount == 0) {
+            FileLogger.w(TAG, "目录里没有可打包的文件，放弃投递：$path")
+            return null
+        }
+        return PendingUploadAttachment(
+            fileName = zipName,
+            containerPath = containerZip,
+            localPath = "",
+            mimeType = ZIP_MIME_TYPE,
+            sizeBytes = if (written > 0L) written else fileAccess.fileSize(containerZip),
+            image = null
+        )
+    }
+
+    /** 递归把 [dir] 下的文件写进 zip，返回写进去的文件数。返回 0 表示排除后没有可打包内容。 */
+    private fun writeDirectoryIntoZip(
+        zip: ZipOutputStream,
+        dir: String,
+        prefix: String,
+        buffer: ByteArray,
+        onBytes: (Long) -> Unit
+    ): Int {
+        val children = runCatching { fileAccess.listFiles(dir) }.getOrElse { e ->
+            FileLogger.w(TAG, "读取目录失败：$dir", e)
+            return 0
+        }
+        var count = 0
+        for (child in children) {
+            val entryName = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (child.isDirectory) {
+                if (child.name in ZIP_EXCLUDED_DIRS) continue
+                zip.putNextEntry(ZipEntry("$entryName/"))
+                zip.closeEntry()
+                count += writeDirectoryIntoZip(zip, "$dir/${child.name}", entryName, buffer, onBytes)
+                continue
+            }
+            val local = runCatching { fileAccess.copyToLocal("$dir/${child.name}") }.getOrElse { e ->
+                FileLogger.w(TAG, "读取文件失败：$dir/${child.name}", e)
+                continue
+            }
+            runCatching {
+                // LocalFileAccess.copyToLocal 返回的就是源文件本身，所以这里只读不删。
+                FileInputStream(local).use { input ->
+                    zip.putNextEntry(ZipEntry(entryName))
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        zip.write(buffer, 0, read)
+                        onBytes(read.toLong())
+                    }
+                    zip.closeEntry()
+                }
+            }.onFailure { e -> FileLogger.w(TAG, "写入 zip 条目失败：$entryName", e) }
+            count += 1
+        }
+        return count
+    }
+
+    /** 按扩展名查 MIME：只用于附件卡片决定点击后怎么打开，查不到归为二进制流。 */
+    private fun mimeTypeForFileName(fileName: String): String {
+        val extension = fileName.substringAfterLast('.', "").lowercase()
+        if (extension.isEmpty()) return FALLBACK_MIME_TYPE
+        return android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            ?: FALLBACK_MIME_TYPE
     }
 
     /** 缓冲 [text]，返回顶替它的 `[Pasted#N]` 标记。 */
@@ -1188,6 +1408,28 @@ class AIAgentViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "AIAgentViewModel"
+        /** 「加入输入栏」投递的文件落点：当前工作区里的附件目录，与分享进来的文件同处一地。 */
+        val ATTACHMENTS_DIR = "${WorkspacePathMapper.CONTAINER_ROOT}/.aharou/attachments"
+        const val DIRECTORY_MIME_TYPE = "inode/directory"
+        const val ZIP_MIME_TYPE = "application/zip"
+        /** 目录打包的落点：AI 配置目录内，容器与本地都能读到，且不属于用户工作区。 */
+        val CHAT_ZIPS_DIR = "${WorkspacePathMapper.AHAROU_ROOT}/cache/chat-zips"
+        /** 单个 zip 的上限，超过就中断并放弃投递。 */
+        const val MAX_CHAT_ZIP_BYTES = 500L * 1024 * 1024
+        const val ZIP_COPY_BUFFER = 64 * 1024
+        /** 打目录时整棵跳过的目录名：依赖、产物、版本库与缓存，塞进 zip 只会把包撑爆。 */
+        val ZIP_EXCLUDED_DIRS = setOf(".git", "build", ".gradle", "node_modules", ".idea", ".cxx", "__pycache__")
+        const val FALLBACK_MIME_TYPE = "application/octet-stream"
+        /** 源文件没有可用文件名时（如无扩展名的隐藏文件）给选中片段兜个名字。 */
+        /** 选中片段落盘的文件名格式（`20.22.txt`，当前时分）；同一分钟内的重名由序号兜底。 */
+        val SELECTION_STAMP_FORMAT: java.time.format.DateTimeFormatter =
+            java.time.format.DateTimeFormatter.ofPattern("HH.mm")
+
+        /** 附件预览的字节上限：超过就不预览，免得把大文件拉进内存。 */
+        const val PREVIEW_MAX_BYTES = 256L * 1024
+
+        /** 附件预览的字符上限。 */
+        const val PREVIEW_MAX_CHARS = 200_000
         const val AGENT_COMPLETE_CHANNEL = "agent_complete"
         const val AGENT_COMPLETE_NOTIFICATION_ID = 100
         /** wakeLock 超时保险：构建、装依赖类工具动辄十几分钟，给足 60 分钟；任务正常结束会主动释放。 */
