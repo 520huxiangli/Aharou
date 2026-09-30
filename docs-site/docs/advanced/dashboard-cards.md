@@ -37,6 +37,8 @@ AI 助手与开发者可以依据此规范，编写面板脚本（Python / Node 
 > **关于「输入 Token」的说明**：`LAST_INPUT_TOKENS` 和 `TOTAL_INPUT_TOKENS` 均为 API 返回的**总输入 Token**（即 `input_tokens` / `prompt_tokens` / `promptTokenCount`），**已包含缓存命中部分**。`LAST_CACHED_TOKENS` 是其中命中服务端缓存的部分（子集）。因此，纯新增输入 = `LAST_INPUT_TOKENS` - `LAST_CACHED_TOKENS`。
 >
 > **关于模型变量的说明**：下表 `AICODE_MODEL_*` 系列都跟着**当前渠道**取——你在供应商 → 模型里给该模型填的自定义窗口、单价与能力开关会直接生效，没填的才回退自动识别结果。
+>
+> 所有变量**同时注入两套前缀**：`AICODE_*`（历史名，照常可用）与 `AHAROU_*`（同名同值），新脚本可任选一套。
 
 | 环境变量名 | 示例值 | 说明 |
 | :--- | :--- | :--- |
