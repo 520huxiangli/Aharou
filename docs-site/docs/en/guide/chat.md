@@ -5,10 +5,14 @@ This page explains what every button and area on the main screen does.
 ## Top Title Bar
 
 - **Menu button** (top-left): opens the sidebar, where you manage your session list and browse files.
-- **Session title and model name**: the top line is the current session name, the bottom line is the model in use.
 - **New session**: starts a new conversation.
 - **Git entry**: jumps to the Git version management page.
 - **Terminal entry**: jumps to the terminal page.
+- **Browser entry**: opens the built-in browser (a floating panel on phones, a right-hand pane on large screens).
+- **Sandbox entry**: opens the sandbox files.
+- **Shared area entry**: opens the shared area (files shared across workspaces).
+
+(The current model is not shown in the title bar but on the model button in the toolbar below the input box; the session title is no longer shown in the title bar either.)
 
 In remote SSH mode an extra line appears below the title bar: the SSH connection status on the left (a dot plus text), and the token totals for the current session on the right (up arrow for input, down arrow for output). The line is not shown in local mode.
 
@@ -18,7 +22,7 @@ Tap the menu button at the top-left, or swipe right from the left edge of the sc
 
 ### Sessions Tab
 
-Sessions are ordered from newest to oldest by last reply time and grouped by time (Today / Yesterday / Within 7 days / Within 30 days / Earlier, by month). Pinned sessions sit separately in a "Pinned" group at the very top, with a light blue card background.
+Sessions are grouped by **workspace folder**: folders are ordered with the current one first and then by most recent activity, and inside a folder pinned sessions come first, followed by last reply time (newest first). A pinned session's card has a light (theme-colour) background, and there is no separate "Pinned" group at the top.
 
 A short press switches to a session; **a long press opens an action menu**:
 
@@ -45,8 +49,9 @@ From left to right:
 - **Mode button**: cycles between BUILD, PLAN and AUTO — see [the three modes](/guide/modes).
 - **Model button**: shows the current model; tapping it opens the picker. A search box at the top filters models fuzzily, models are grouped by vendor, and tapping a group header collapses or expands it (the collapsed state is remembered, and kept when you reopen the dialog or restart the app; while searching, matching groups expand automatically). Each row is labelled with capability tags (`Image`, `Tools`, input and output length) — one tap switches the model.
 - **Workspace button**: shows the current workspace name; tapping it opens the workspace management panel (see below).
-- **File button**: upload a file as an attachment, whose content the AI can read.
-- **Image button**: upload an image as an attachment. Tapping it opens the system gallery directly and lets you pick more than one. The current model must support image input.
+- **Reasoning effort button**: a lightning icon with the current level next to it; tapping it opens a bottom sheet with seven levels (`None` / `Default` / `Low` / `Medium` / `High` / `Extra high` / `Max`) — see [AI Vendors & Models](/guide/providers).
+- **Voice button**: a mic icon; a light tap starts or stops a voice call — see [Voice calls & reading aloud](/guide/voice).
+- **"+" button**: upload attachments. It opens a bottom sheet with **Upload File / Upload Image / Take photo**: a file is attached for the AI to read; an image is picked from the system gallery (multiple selection allowed, and the current model must support image input); Take photo opens the camera directly.
 - **Send button**: a plain send button while the AI is idle. While the AI is working it becomes a stop button if the input box is empty, or an orange send button if there is content (the message is queued).
 
 Once the text you type grows taller than the input box, an **expand button** appears at the top-right of the box: tap it to edit this draft on a full screen, and leave with "Collapse" at the top-right or the system back key. Edits made on the full screen sync back to the input box in real time — both are the same draft — so you can collapse and hit send.

@@ -86,7 +86,7 @@ Switch to the "Models" tab of the edit page.
 
 Your values take priority; unfilled ones fall back to auto-detected results. If auto-detection can't match the model name, it retries after stripping common suffixes like `-thinking`, `-preview`, `-high` — so most renamed relay models are still recognized.
 
-**Thinking effort**: the lightning icon button above the input box is always available. If the current model's supported levels can be detected, only those are listed; otherwise (model has no level info, or the relay renamed it) all levels are shown — `Off` / `Lowest` / `Low` / `Medium` / `High` / `Highest` / `Max` — and you decide. Some relay models force reasoning on but use non-standard names, and this still lets you adjust manually. The choice is remembered and carried over when a new session uses this model.
+**Thinking effort**: the lightning icon button in the toolbar **below** the input box is always available. If the current model's supported levels can be detected, only those are listed; otherwise (model has no level info, or the relay renamed it) all seven are shown — `None` / `Default` / `Low` / `Medium` / `High` / `Extra high` / `Max` — and you decide. Some relay models force reasoning on but use non-standard names, and this still lets you adjust manually. The choice is remembered and carried over when a new session uses this model.
 
 **Test**: every model row has a "Test" button that sends one real request to verify connectivity, with the result shown below the row.
 

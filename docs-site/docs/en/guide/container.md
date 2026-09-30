@@ -6,7 +6,7 @@ Backends come in two kinds: a **local container** (runs a Linux system on your p
 
 ## Container List
 
-Each row is one container config, with a source badge after the name: Built-in, Custom, SSH, told apart by color.
+Each row is one container config, with a source badge after the name: Built-in, Custom, SSH, told apart by color; the current default container also carries a **"Default" badge**, and the edit dialog has a "Set as default container" switch (local containers only). The default container is where local MCP and similar services run in remote workspace mode, and it is the built-in Alpine unless you change it.
 
 Three operations work the same for every container:
 
@@ -32,7 +32,7 @@ Whether it's the built-in Alpine or an image you imported yourself, the first ti
 
 **1. Auto-install dependencies (recommended)**
 
-It first lists what will be installed (base tools such as bash, curl, ripgrep and git, plus Node.js and Python 3). Type `y` to confirm, pick a package mirror, and installation starts.
+It first picks a package mirror and updates the package index, then lists what will be installed (base tools such as bash, curl, ripgrep and git, plus Node.js and Python 3). Type `y` to confirm and installation starts.
 
 **2. Environment setup**
 

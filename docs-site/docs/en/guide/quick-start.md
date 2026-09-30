@@ -55,7 +55,7 @@ Models save automatically after being added.
 
 ## 4. Select a Model
 
-Back on the chat home, tap the model button in the toolbar above the input box and pick the model you just added. The search box at the top filters models, and models are grouped by vendor.
+Back on the chat home, tap the model button in the toolbar below the input box and pick the model you just added. The search box at the top filters models, and models are grouped by vendor.
 
 ## 5. Prepare the Execution Environment
 
