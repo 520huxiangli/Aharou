@@ -29,7 +29,7 @@ Each row shows the name, upstream format, model count and enabled status.
 ## Multi-Key Mode
 
 ::: tip Version note
-Multi-key mode is available since 1.11.0.
+Multi-key mode is available since v1.11.0-dev.
 :::
 
 If you hold multiple keys for the same service, turn on **Multi-Key Mode** in the "Options" of the edit page. When rate-limited or out of quota, the next key is tried automatically. The single-key input hides once enabled, and keys are managed on the "Multi-Key Management" page (the key you had entered automatically becomes the first entry, nothing is lost).

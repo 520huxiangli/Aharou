@@ -5,7 +5,7 @@ This page is a quick index of the user manual, mapping the main UI workflows and
 This index groups entries by **feature topic**, which does not map exactly onto the groups in the settings page: for example, "Accessibility" and "Floating window" are two separate rows under "Permissions & Background", "Config changes" and "Personality (Soul)" sit under the "Aharou" group, "Memory" lives under "Data & Diagnostics", and "Custom prompts" has no settings entry of its own — it is configured through files.
 
 ::: tip Version notes
-Entries marked with a version (e.g. "since 1.11.0") were introduced in that version.
+Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that version.
 :::
 
 ## Core Workflows & Main UI
@@ -18,9 +18,9 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 | Terminal | Multi-tab sessions, auxiliary key bar, color and font settings |
 | Voice calls & reading aloud | Hands-free voice calls with floating-window subtitles, AI reply reading and auto read-aloud (voice input has been retired; the mic in the input bar only toggles calls) |
 | Built-in browser | WebView browser, with AI automation of web pages (navigate, click, fill forms, screenshot, and more) |
-| File browsing & code editing | Indented tree view, syntax highlighting, built-in code editor (since 1.11.0), plus where workspace files live on the phone and how to reach them |
-| Git version management | Visual status management, branch switching, commit history, revert and delete (since 1.11.0) |
-| Tablet & large screen | Responsive split panes, persistent sidebar, side-by-side workbench (since 1.11.0) |
+| File browsing & code editing | Indented tree view, syntax highlighting, built-in code editor (since v1.11.0-dev), plus where workspace files live on the phone and how to reach them |
+| Git version management | Visual status management, branch switching, commit history, revert and delete (since v1.11.0-dev) |
+| Tablet & large screen | Responsive split panes, persistent sidebar, side-by-side workbench (since v1.11.0-dev) |
 
 ## Settings & Extension Index
 
@@ -38,12 +38,12 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 
 | Entry | Description |
 | --- | --- |
-| [AI Vendors](/en/guide/providers) | Connect model services, manage model lists, multi-key (since 1.11.0), reasoning effort |
+| [AI Vendors](/en/guide/providers) | Connect model services, manage model lists, multi-key (since v1.11.0-dev), reasoning effort |
 | Default & dedicated models | Default model for new sessions, plus dedicated models for image recognition, compaction, title summarization and image generation |
 | Model groups | Bundle several models into one group so it can be picked as a whole wherever a model is chosen (currently used for the four default-model roles) |
 | MCP servers | Connect external tools, global and project-level configuration |
 | Skills | On-demand specialist extension packs |
-| Subagents | Spawn independent sessions to run tasks in parallel; create, edit, enable and disable in settings, with custom models and tool sets (since 1.11.0) |
+| Subagents | Spawn independent sessions to run tasks in parallel; create, edit, enable and disable in settings, with custom models and tool sets (since v1.11.0-dev) |
 | Custom prompts | Override and customize AI system prompt fragments |
 | Memory & project rules | Cross-session long-term memory, plus AGENTS.md / CLAUDE.md project rules |
 | Personality (Soul) | The assistant's name, icon, style and personality text, injected into the system prompt |
@@ -53,7 +53,7 @@ Entries marked with a version (e.g. "since 1.11.0") were introduced in that vers
 | Entry | Description |
 | --- | --- |
 | Container & images | Local Linux container, environment health check with one-tap install, custom images, mounting phone directories, remote SSH backend |
-| Network proxy | Global proxy and vendor-level proxy (since 1.11.0) |
+| Network proxy | Global proxy and vendor-level proxy (since v1.11.0-dev) |
 | Connections & sync | SFTP / FTP channels, workspace sync, built-in FTP server |
 | Shizuku execution backend | Run system commands and read/write `/sdcard` as adb shell (uid 2000) |
 | Shadow screen | A virtual display that is not shown on the phone screen; the agent can launch apps, take screenshots and tap inside it |

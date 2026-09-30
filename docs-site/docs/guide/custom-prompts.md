@@ -22,6 +22,7 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 │       ├── subagent-base.md       子代理基础运行规范
 │       ├── compact-summary.md     长对话上下文压缩
 │       ├── title-generator.md     会话标题生成
+│       ├── commit-generator.md    Git 提交信息生成（Git 页的「AI 生成」）
 │       └── init.md                /init 命令的指令正文
 ├── prompts.custom/   你的自定义片段（覆盖或新增，升级不动这里）
 │   ├── 50-我的安全规则.md
@@ -131,6 +132,7 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 | `agent/subagent-base.md` | 子代理基础运行规范（按需注入） |
 | `agent/compact-summary.md` | 长对话上下文压缩的提示词 |
 | `agent/title-generator.md` | 会话标题生成的提示词 |
+| `agent/commit-generator.md` | Git 页「AI 生成」提交信息用的提示词 |
 | `agent/init.md` | `/init` 命令的指令正文（分析代码库并生成/改进 `AGENTS.md`），可在对话输入框用 `/init` 触发 |
 
 ## 恢复默认

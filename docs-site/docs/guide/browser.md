@@ -4,7 +4,7 @@ App 内置了一个 WebView 浏览器，支持 AI 自动化操作网页。AI 可
 
 ## 打开浏览器
 
-在侧边栏底部的卡片中点击「内置浏览器」：
+在侧边栏底部的卡片中点击「浏览器」：
 
 - **大屏（平板）**：浏览器在右栏与聊天并排打开，可拖动分割条调整宽度。
 - **窄屏（手机）**：浏览器全屏打开，按返回键回到聊天。
@@ -35,41 +35,38 @@ AI 也可通过 `browser` 工具的 `navigate` 打开本地页面并截图分析
 
 AI 可通过 `browser` 工具控制浏览器执行以下操作：
 
+动作分两类：读页面（`get_text`、`get_readable`、`get_page_info`、`get_backbone`、`find_elements`、`get_cookies`、`execute_js`、`screenshot`）与动页面（`click`、`type`、`scroll`、`hover`、`navigate`、标签页与 Cookie 写操作）。
+
 | 操作 | 说明 |
 | --- | --- |
 | `navigate` | 导航到指定 URL（支持 `http(s)`，本地文件支持 `file://` 或容器路径），等待页面加载完成 |
-| `evaluate` | 执行任意 JavaScript（支持 Promise/async，返回原生 JSON） |
-| `click` | 点击元素（完整事件链，兼容 React/Vue） |
-| `fill` | 填充表单字段（native setter + React valueTracker hack） |
-| `select` | 选择原生下拉框 `<select>`（按 value 或可见文本） |
-| `hover` | 悬停元素（派发 mouseenter/over/move，可展开下拉菜单） |
-| `press` | 按键（Enter/Escape/Tab/方向键/Backspace/Delete/空格/普通字符） |
-| `getText` | 提取页面文本（可指定选择器），已过滤 script/style |
-| `getHtml` | 提取页面 HTML（可指定选择器） |
-| `getBackbone` | 提取无障碍树（role/name/ref，可指定 `maxDepth`），ref 可直接用于后续操作 |
-| `screenshot` | 截取当前页面，返回图片供视觉模型分析（支持后台离屏截图） |
-| `console` | 取页面控制台日志（可过滤级别、可清空） |
-| `wait` | 等待条件满足（`text=` / `text*=` / `selector=` / `domStable`，可设 `timeout`） |
-| `scroll` | 滚动页面（滚动到指定元素或滚到底部） |
-| `dialog` | 处理挂起的 `confirm`/`prompt` 对话框（接受或取消） |
-| `back` / `forward` / `reload` | 浏览器导航控制，back/forward 会等待导航完成 |
+| `screenshot` | 截取当前页面，返回图片供视觉模型分析（支持后台离屏截图，`full_page` 可整页截图） |
+| `click` | 点击元素（完整事件链，兼容 React/Vue）；不写选择器时可用 `coordinate_x` / `coordinate_y` 按坐标点击 |
+| `type` | 给输入框写入文本（先选中元素再输入） |
+| `get_text` | 提取页面文本（可指定选择器），已过滤 script/style |
+| `scroll` | 滚动页面（可指定元素，或用 `direction` / `amount` 滚固定像素，默认 500） |
+| `get_page_info` | 取当前页面的基本信息（标题、URL 等） |
+| `execute_js` | 执行任意 JavaScript（支持 await / 顶层 return） |
+| `find_elements` | 按选择器批量查找元素，返回位置与可见性 |
+| `hover` | 悬停元素（派发 mouseenter/over，可展开下拉菜单） |
+| `get_readable` | 提取页面的可读正文（去掉导航、广告与脚本） |
+| `set_user_agent` | 切换 UA 档位（`desktop_chrome` / `mobile_chrome`） |
+| `set_viewport` | 设置视口尺寸（`viewport_width` / `viewport_height`，`reset` 清除会话级覆盖） |
+| `get_backbone` | 提取页面几何树（字段与截断规则见下） |
+| `fetch` | 直接发起 HTTP 请求取回内容，不经过页面渲染 |
+| `new_tab` / `close_tab` / `list_tabs` | 标签页管理（最多 3 个标签页） |
+| `get_cookies` | 读取 Cookie（可用 `keywords` 过滤、`fuzzy` 模糊匹配） |
+| `set_cookies` | 写入 Cookie |
+| `scroll_and_collect` | 滚动若干次并收集条目（`item_selector`、`scroll_count`、`keywords`） |
+| `wait_for_dom_stable` | 等待 DOM 稳定（`timeout` 毫秒） |
 
-常规操作不会自动附加截图；需要查看页面视觉内容时，请显式调用 `screenshot`。
-
-页面弹出 `confirm`/`prompt` 时会被挂起，工具响应里会出现 `pendingDialog` 字段，用 `dialog` action 接受或取消（30 秒未处理会自动取消）。
+**交互与导航类动作会自动附截图**：`navigate`、`click`、`scroll`、`hover`、`type` 成功后，结果里会带上当时的页面截图（走图像通道返回），所以不用每次都额外调一次。其余动作用完想确认视觉状态时，再显式调 `screenshot`。
 
 ## 选择器格式
 
-`click`、`fill`、`hover`、`getText`、`getHtml`、`scroll`、`wait` 的选择器支持：
+`click`、`type`、`hover`、`find_elements`、`get_text`、`scroll` 的选择器只支持 **CSS 选择器**（`#id`、`.class`、`a[href=...]`、`div > span` 等），按 `document.querySelector` / `querySelectorAll` 语义匹配。`ref=`、`text=`、`text*=`、`role=`、`xpath=` 这类写法不识别，写了会按 CSS 解析从而找不到元素。
 
-- `ref=e22`：`getBackbone` 返回的元素引用，直接定位快照里的元素
-- CSS：`#id`、`.class`、`a[href=...]`
-- `text=登录`：精确匹配元素文本
-- `text*=登录`：包含匹配
-- `role=button[name="登录"]`：按角色与名称匹配
-- `xpath=//a[@href]`：XPath 表达式
-
-`getBackbone` 返回无障碍树：每个节点形如 `{role,name,ref,url,value,children}`，`role` 是按标签/`role` 属性推导的可访问角色（`link`/`button`/`textbox`/`heading`/`navigation`…），`name` 是可访问名称（`aria-label`/`aria-labelledby`/`alt`/`placeholder`/关联 `label`/内容文本），`ref` 只分配给可交互元素。已过滤 `script`/`style` 与不可见元素，超出 `maxDepth` 的节点以 `truncated:true` 标记。
+`get_backbone` 返回的是**几何树**：在可见元素上按页面结构建树，每个节点形如 `{tag,id,cls,sel,role?,text,href,img,input,rect,pageXY,children}`——`tag` 是标签名，`sel` 是可直接回填到选择器的 CSS 选择器，`role`/`text`/`href` 按元素实际情况出现，`img` 是图片尺寸与地址，`input` 是输入框类型（含已有值与占位符），`rect`（视口坐标）与 `pageXY`（文档坐标）是位置尺寸。树里**没有** `name` / `ref` / `url` / `value` 字段，需要交互时用 `sel` 回填 CSS 选择器。已过滤 `script`/`style` 与不可见元素，超出 `max_depth`（默认 5）的层级会被裁掉，只留到该深度为止。
 
 ## 后台运行
 

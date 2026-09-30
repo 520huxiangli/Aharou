@@ -32,13 +32,13 @@ A short press switches to a session; **a long press opens an action menu**:
 - **Batch select**: enter multi-select mode, where you can check several sessions, use one-tap "Select all" and "Delete selected" (with a second confirmation). Leave multi-select with the × at the top-left or the back key.
 - **Delete**: a confirmation dialog appears; confirming deletes the session and all its messages.
 
-For a session that has spawned subagents, the row shows the subagent count and an expand arrow at the end; tap it to see its subagents listed below (**since 1.11.0**). See [subagents](/guide/subagent).
+For a session that has spawned subagents, the row shows the subagent count and an expand arrow at the end; tap it to see its subagents listed below (**since v1.11.0-dev**). See [subagents](/guide/subagent).
 
 Below the sidebar's tab bar is **chat search** (**since 1.12.0**): type a keyword to search message content across all sessions in the current workspace, and the list area shows the matches in place (session title plus the matching snippet, with the keyword highlighted). Tapping a result switches to that session and jumps to that message; tap the × on the right of the search box or clear the text to return to the session list. Search covers the current workspace only, and matches only the body text of your messages and the AI's — tool execution output is not included.
 
 ### Files Tab
 
-Browse the files of the current workspace; tapping a file opens the code editing page (**since 1.11.0**). See [File browsing & code editing](/guide/files).
+Browse the files of the current workspace; tapping a file opens the code editing page (**since v1.11.0-dev**). See [File browsing & code editing](/guide/files).
 
 At the bottom of the sidebar is the "Settings" entry.
 
@@ -188,7 +188,7 @@ For messages you send, every bubble shows the send time below it (e.g. `17:55`) 
 The line under an AI reply's body: **stats are counted per turn and hang only under that turn's last reply** (the copy and more buttons appear only on the newest reply in the conversation; the order is "Copy → stats → More options", with the `···` action entry at the end of the row):
 
 - **Token usage**: `↑` is this turn's input tokens and `↓` the output tokens. The model may be called several times within one turn (every tool call sends another request), so this is the sum for the whole turn, not the number for one step.
-- **Cache hit rate** (**since 1.11.0**): the percentage next to the database icon is the share of this turn's input that hit the server-side cache, out of the turn's total input. The higher the hit rate, the cheaper and faster it is. It is not shown when nothing hit the cache, or when the vendor doesn't return cache data. This field has been recorded since 1.11.0, so older messages don't show it.
-- **Turn duration** (**since 1.11.0**): the time next to the clock icon, shown only under a turn's last reply. It counts from the moment you hit send until the AI wraps up, including tool execution and the time spent waiting for you to approve something. Under a minute it shows as `12s`, and longer as `2:05` (minutes:seconds) or `1:02:05` (hours:minutes:seconds). It is not shown while the task is still running — it appears once the turn is done.
+- **Cache hit rate** (**since v1.11.0-dev**): the percentage next to the database icon is the share of this turn's input that hit the server-side cache, out of the turn's total input. The higher the hit rate, the cheaper and faster it is. It is not shown when nothing hit the cache, or when the vendor doesn't return cache data. This field has been recorded since v1.11.0-dev, so older messages don't show it.
+- **Turn duration** (**since v1.11.0-dev**): the time next to the clock icon, shown only under a turn's last reply. It counts from the moment you hit send until the AI wraps up, including tool execution and the time spent waiting for you to approve something. Under a minute it shows as `12s`, and longer as `2:05` (minutes:seconds) or `1:02:05` (hours:minutes:seconds). It is not shown while the task is still running — it appears once the turn is done.
 
 Cumulative usage and cache hit rate for a whole conversation or a whole vendor are on [Token stats](/guide/token-stats).
