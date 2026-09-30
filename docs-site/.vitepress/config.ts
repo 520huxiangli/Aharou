@@ -136,7 +136,6 @@ export default defineConfig({
           items: [
             { text: '快速上手', link: '/guide/quick-start' },
             { text: '功能总览', link: '/guide/overview' },
-            { text: '视频教程', link: '/guide/video-tutorials' },
             { text: '免费供应商', link: '/guide/free-providers' },
           ]
         },
