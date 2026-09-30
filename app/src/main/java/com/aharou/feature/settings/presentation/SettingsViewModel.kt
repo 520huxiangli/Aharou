@@ -103,6 +103,7 @@ import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.terminal.data.repository.TerminalSettings
 import com.aharou.feature.terminal.data.repository.TerminalSettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import com.aharou.feature.agent.domain.memory.MemoryDistiller
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -395,8 +396,39 @@ class SettingsViewModel @Inject constructor(
     private val shizukuManager: ShizukuManager,
     private val providerDashboardRunner: ProviderDashboardRunner,
     private val terminalSettingsRepository: TerminalSettingsRepository,
-    private val proxySettingsRepository: ProxySettingsRepository
+    private val proxySettingsRepository: ProxySettingsRepository,
+    private val memoryDistiller: MemoryDistiller
 ) : ViewModel() {
+
+    /** 「立即蒸馏」是否正在跑。 */
+    private val _distilling = MutableStateFlow(false)
+    val distilling: StateFlow<Boolean> = _distilling.asStateFlow()
+
+    /** 蒸馏结果提示，消费后清空。 */
+    private val _distillResult = MutableStateFlow<DistillOutcome?>(null)
+    val distillResult: StateFlow<DistillOutcome?> = _distillResult.asStateFlow()
+
+    /**
+     * 手动跑一次记忆蒸馏，忽略 7 天间隔。
+     *
+     * 全程不抛异常：蒸馏失败不应该让设置页崩，失败与「没有新内容」都归于同一提示。
+     */
+    fun distillNow() {
+        if (_distilling.value) return
+        viewModelScope.launch {
+            _distilling.value = true
+            val wrote = runCatching { memoryDistiller.distillIfDue(force = true) }.getOrDefault(false)
+            _distilling.value = false
+            _distillResult.value = if (wrote) DistillOutcome.WRITTEN else DistillOutcome.NOTHING
+        }
+    }
+
+    fun consumeDistillResult() {
+        _distillResult.value = null
+    }
+
+    /** 「立即蒸馏」的结果。 */
+    enum class DistillOutcome { WRITTEN, NOTHING }
     private companion object {
         /** Shizuku 静默安装的超时（大包 pm install 要几十秒）。 */
         const val SHIZUKU_INSTALL_TIMEOUT_MS = 120_000L

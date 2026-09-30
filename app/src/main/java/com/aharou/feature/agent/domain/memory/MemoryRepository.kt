@@ -49,6 +49,12 @@ class MemoryRepository @Inject constructor(
      * 排序完全由文件 mtime + name 决定，与目录扫描顺序无关，保证同一状态每次注入的集合一致。
      */
     fun listMemoriesForPrompt(projectRoot: String?): List<Memory> = listMemories(projectRoot)
+        // 事件类（某次测试结果、某天的排查记录）只留档：它们不是跨会话仍成立的知识，
+        // 留在清单里只会把真正该被记住的东西挤淡。需要时靠 memory(action=search/read) 取回。
+        .filter { it.type.injected }
+        // 没有一句话摘要的条目不算「摘要式记忆」：注入它的名字等于白占一行，
+        // 使用者看到名字也无从判断要不要读。
+        .filter { it.description.isNotBlank() }
         .filterNot { isStale(it) }
         .sortedWith(
             compareByDescending<Memory> { it.file?.lastModified() ?: 0L }

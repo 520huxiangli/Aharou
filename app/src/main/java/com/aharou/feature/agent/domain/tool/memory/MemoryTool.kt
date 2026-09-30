@@ -35,7 +35,7 @@ class MemoryTool @Inject constructor(
 
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         return when (args["action"]?.jsonPrimitive?.contentOrNull) {
-            "read", "list" -> setOf(ToolCapability.READ_AGENT_CONFIG)
+            "read", "list", "search" -> setOf(ToolCapability.READ_AGENT_CONFIG)
             else -> capabilities
         }
     }
@@ -67,7 +67,7 @@ class MemoryTool @Inject constructor(
             name = "action",
             type = ParameterType.STRING,
             description = "操作类型：read=读取记忆正文；save=保存（创建或全量覆盖）；edit=局部编辑已有正文；delete=删除；list=列出所有记忆摘要",
-            enum = listOf("read", "save", "edit", "delete", "list", "log", "fact", "mindstream", "core"),
+            enum = listOf("read", "save", "edit", "delete", "list", "search", "log", "fact", "mindstream", "core"),
             required = true
         ),
         "name" to ToolParameter(
@@ -119,6 +119,7 @@ class MemoryTool @Inject constructor(
         return try {
             when (action) {
                 "list" -> handleList(context.projectRoot)
+                "search" -> handleSearch(args, context.projectRoot)
                 "read" -> handleRead(memoryName, context.projectRoot)
                 "save" -> handleSave(args, memoryName, scope, context.projectRoot)
                 "edit" -> handleEdit(args, memoryName, scope, context.projectRoot)
@@ -138,9 +139,49 @@ class MemoryTool @Inject constructor(
     private fun handleList(projectRoot: String?): ToolResult {
         val memories = memoryRepository.listMemories(projectRoot)
         if (memories.isEmpty()) return ToolResult.Success(JsonPrimitive("当前没有任何记忆。"))
-        
-        val list = memories.joinToString("\n") { "- ${it.name} (${it.scope.name.lowercase()}): ${it.description}" }
+
+        // 列出全部（含事件类）：清单里见不到的条目得能在这里找到名字，否则无从 read 取回。
+        // 标注 type，便于区分「跨会话仍成立的知识」与「某次事件的留档」。
+        val list = memories.joinToString("\n") {
+            "- ${it.name} (${it.scope.name.lowercase()}/${it.type.key}): ${it.description}"
+        }
         return ToolResult.Success(JsonPrimitive("当前记忆列表：\n$list"))
+    }
+
+    /**
+     * 按关键词检索记忆。
+     *
+     * 打分优先级：keywords（专为此抽取，噪音最低）> 名称/描述 > 正文。
+     * 只返回摘要行，正文靠 read 取——检索结果不该把上下文塞满。
+     */
+    private fun handleSearch(args: Map<String, JsonElement>, projectRoot: String?): ToolResult {
+        val query = (args["query"] ?: args["name"])?.jsonPrimitive?.contentOrNull?.trim()
+        if (query.isNullOrEmpty()) return ToolResult.Error("search 操作需要 query 参数", "MISSING_QUERY")
+
+        val terms = query.lowercase().split(' ', ',', '，', '、', '+').filter { it.isNotBlank() }
+        val scored = memoryRepository.listMemories(projectRoot).mapNotNull { m ->
+            val kw = m.keywords.joinToString(" ").lowercase()
+            val head = "${m.name} ${m.description}".lowercase()
+            val body = m.content.lowercase()
+            var score = 0
+            terms.forEach { t ->
+                if (t in kw) score += 3
+                if (t in head) score += 2
+                if (t in body) score += 1
+            }
+            if (score > 0) m to score else null
+        }.sortedByDescending { it.second }.take(8)
+
+        if (scored.isEmpty()) {
+            return ToolResult.Success(JsonPrimitive("没有匹配「$query」的记忆。可先用 action=list 看全部名称。"))
+        }
+        val text = scored.joinToString("\n") { (m, _) ->
+            val kws = if (m.keywords.isEmpty()) "" else " [关键词: ${m.keywords.joinToString(", ")}]"
+            "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}): ${m.description}$kws"
+        }
+        return ToolResult.Success(
+            JsonPrimitive("匹配「$query」的记忆（最多 8 条）：\n$text\n\n用 action=read + name=<名称> 取完整正文。")
+        )
     }
 
     private fun handleRead(name: String?, projectRoot: String?): ToolResult {

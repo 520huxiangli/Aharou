@@ -75,13 +75,23 @@ class MemoryDistiller @Inject constructor(
         }
 
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-        val written = memoryStore.appendGlobalSection("蒸馏要点（$day）", distilled)
+        // 记账：不报条数就无从判断这轮到底蒸没蒸、是不是在无限膨胀。
+        val prevCount = countEntries(previousDistilled())
+        val nextCount = countEntries(distilled)
+        val written = memoryStore.appendGlobalSection("蒸馏要点（$day · $prevCount→$nextCount 条）", distilled)
         if (written) {
             memoryStore.markDistilled()
-            FileLogger.i(TAG, "已蒸馏 ${source.length} 字素材，写入 ${distilled.length} 字要点")
+            FileLogger.i(
+                TAG,
+                "已蒸馏：$prevCount 条 → $nextCount 条（素材 ${source.length} 字，产出 ${distilled.length} 字）"
+            )
         }
         return written
     }
+
+    /** 数要点条数：蒸馏产出每条以 `- ` 开头，用来对账「这轮到底蒸没蒸」。 */
+    private fun countEntries(text: String?): Int =
+        text?.lineSequence()?.count { it.trimStart().startsWith("- ") } ?: 0
 
     /**
      * 拼输入：上一轮要点在前、本轮新流水在后。
