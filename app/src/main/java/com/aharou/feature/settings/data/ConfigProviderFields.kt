@@ -49,7 +49,7 @@ class ConfigProviderFields @Inject constructor(
         override val basePath = "providers"
         override val displayName = "AI 供应商"
         override val description =
-            "已配置的供应商列表。子字段：name / baseUrl / apiKey / defaultModel / selectedModel / enabled。"
+            "已配置的供应商列表。子字段：name / baseUrl / apiKey / defaultModel / selectedModel / panelScript / enabled。"
 
         override fun childIds(): List<String> =
             runBlocking { providers.getAllProviders().first() }.map { it.id }
@@ -117,6 +117,13 @@ class ConfigProviderFields @Inject constructor(
                     desc = "当前选中的模型；空则回退 defaultModel。",
                     read = { it.selectedModel },
                     write = { p, s -> p.copy(selectedModel = s) },
+                ),
+                str(
+                    field = "panel_script",
+                    name = "面板脚本",
+                    desc = "输入框上方自定义面板的脚本路径（放在 ~/.aharou/scripts/ 下，支持 Python / Bash / Node）；留空则隐藏面板。",
+                    read = { it.dashboardScriptPath },
+                    write = { p, s -> p.copy(dashboardScriptPath = s) },
                 ),
                 ClosureField(
                     path = "$basePath.$forId.enabled",
