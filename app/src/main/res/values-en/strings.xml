@@ -2047,6 +2047,8 @@
     <string name="settings_voice_model_rerelease">Re-extract</string>
     <string name="settings_voice_model_rereleased">Re-extracted</string>
     <string name="settings_voice_model_rerelease_failed">Extraction failed — the model inside the APK may be incomplete</string>
+    <string name="chat_long_session_hint">This session is about %1$d0k tokens; it gets slower the longer it runs — consider starting a new one</string>
+    <string name="chat_long_session_new">New session</string>
     <string name="memory_distill_title">Distill now</string>
     <string name="memory_distill_subtitle">Run a distillation pass now: condense recent logs into long-term notes appended to GLOBAL.md</string>
     <string name="memory_distill_written">Distillation done — written to GLOBAL.md</string>

@@ -2046,6 +2046,8 @@
     <string name="settings_voice_model_rerelease">重新释放</string>
     <string name="settings_voice_model_rereleased">已重新释放</string>
     <string name="settings_voice_model_rerelease_failed">释放失败，安装包里的模型可能不完整</string>
+    <string name="chat_long_session_hint">本会话上下文已约 %1$d 万 token，越往后越慢，建议开新会话</string>
+    <string name="chat_long_session_new">新开会话</string>
     <string name="memory_distill_title">立即蒸馏</string>
     <string name="memory_distill_subtitle">现在就跑一次：把近期记录提炼成长期要点，追加到 GLOBAL.md</string>
     <string name="memory_distill_written">蒸馏完成，已写入 GLOBAL.md</string>

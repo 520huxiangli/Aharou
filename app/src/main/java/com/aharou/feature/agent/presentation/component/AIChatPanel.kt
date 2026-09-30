@@ -23,6 +23,7 @@ import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +41,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
@@ -70,6 +73,7 @@ import dagger.hilt.android.EntryPointAccessors
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
@@ -883,10 +887,21 @@ fun AIChatPanel(
         }
     )
     val latestActiveProvider by rememberUpdatedState(activeProvider)
+    // 最近一次请求报告的输入 token，近似当前上下文规模；用于下方「长会话」提示。
+    var lastInputTokens by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
+        // 流式响应期间每个 chunk 都会产生一个 llmCallEvent。以前每个事件都 force 跑一遍面板脚本，
+        // 而脚本要起 proot 进程，一两秒一遍会把主线程拖到 ANR（实测 2026-09-30 23:56 触发过）。
+        // 这里做节流：同一轮里最多每 4 秒跑一次，脚本本身仍按需刷新。
+        val minGapMs = 4_000L
+        var lastPanelRefreshAt = 0L
         viewModel.llmCallEvents.collect { callEvent ->
+            if (callEvent.inputTokens > 0) lastInputTokens = callEvent.inputTokens
             val provider = latestActiveProvider ?: return@collect
             if (provider.dashboardScriptPath.isBlank()) return@collect
+            val now = System.currentTimeMillis()
+            if (now - lastPanelRefreshAt < minGapMs) return@collect
+            lastPanelRefreshAt = now
             val context = latestBuildDashboardContext(
                 callEvent.inputTokens,
                 callEvent.outputTokens,
@@ -1674,6 +1689,32 @@ fun AIChatPanel(
                         .padding(horizontal = 12.dp)
                         .padding(bottom = 6.dp),
                 )
+            }
+
+            // 长会话提示。上下文越大每轮越慢、越容易把主线程拖到 ANR
+            //（2026-09-30 实测：50 万 token 的会话触发过 ANR），所以到量就提醒开新会话。
+            // 20 万 token 是个保守线：既明显早于压缩阈值，又不至于天天弹。
+            if (lastInputTokens >= 200_000) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.chat_long_session_hint,
+                            lastInputTokens / 10_000,
+                        ),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { viewModel.newSession() }) {
+                        Text(stringResource(R.string.chat_long_session_new), fontSize = 12.sp)
+                    }
+                }
             }
 
             ChatInputBar(
