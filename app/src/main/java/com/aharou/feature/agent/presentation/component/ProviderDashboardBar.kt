@@ -68,7 +68,9 @@ fun ProviderDashboardBar(
     modifier: Modifier = Modifier,
     forceCollapse: Boolean = false,
     onRefreshByButton: () -> Unit = {},
-    onExpandedChange: (Boolean) -> Unit = {}
+    onExpandedChange: (Boolean) -> Unit = {},
+    /** 卡片里的外链交由此回调处理（走内置浏览器）；不传时退回系统浏览器，保证任何宿主都能用。 */
+    onOpenInBrowser: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     var isExpanded by rememberSaveable { mutableStateOf(false) }
@@ -168,13 +170,17 @@ fun ProviderDashboardBar(
                     val onCardAction: (AdaptiveCardAction) -> Unit = { action ->
                         when (action) {
                             is AdaptiveCardAction.OpenUrl -> {
-                                runCatching {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(action.url)).apply {
-                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                if (onOpenInBrowser != null) {
+                                    onOpenInBrowser(action.url)
+                                } else {
+                                    runCatching {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(action.url)).apply {
+                                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        }
+                                        context.startActivity(intent)
+                                    }.onFailure {
+                                        Toast.makeText(context, context.getString(R.string.common_open_link_failed), Toast.LENGTH_SHORT).show()
                                     }
-                                    context.startActivity(intent)
-                                }.onFailure {
-                                    Toast.makeText(context, context.getString(R.string.common_open_link_failed), Toast.LENGTH_SHORT).show()
                                 }
                             }
                             is AdaptiveCardAction.CopyToClipboard -> {

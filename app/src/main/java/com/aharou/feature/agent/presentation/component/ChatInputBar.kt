@@ -181,6 +181,8 @@ internal fun ChatInputBar(
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: () -> Unit = {},
     onDashboardExpandedChange: (Boolean) -> Unit = {},
+    /** 自定义面板卡片里的外链：交由此回调在内置浏览器打开。 */
+    onOpenDashboardUrl: (String) -> Unit = {},
     todoItems: List<TodoItem> = emptyList(),
     sessionId: String = "",
     onTodoExpandedChange: (Boolean) -> Unit = {},
@@ -368,6 +370,7 @@ internal fun ChatInputBar(
                     onRefresh = onRefreshDashboard,
                     onRefreshByButton = onRefreshDashboardByButton,
                     onExpandedChange = onDashboardExpandedChange,
+                    onOpenInBrowser = onOpenDashboardUrl,
                     forceCollapse = forceCollapseDashboard
                 )
             }
