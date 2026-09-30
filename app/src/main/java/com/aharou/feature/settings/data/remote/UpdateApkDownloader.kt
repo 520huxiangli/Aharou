@@ -13,8 +13,12 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
@@ -72,7 +76,9 @@ class UpdateApkDownloader @Inject constructor(
             return@withContext dest
         }
         var lastError: Exception? = null
-        for (url in candidates) {
+        // 先实测各源速度、按快的排前，再逐个尝试（失败仍按序降级）。
+        // 只按「可达」顺序试的话，一个通但只有几十 KB/s 的源会把整包拖慢到底。
+        for (url in rankBySpeed(candidates)) {
             try {
                 val file = fetch(url, dest, expectedSize, onSource, onProgress)
                 return@withContext file
@@ -83,6 +89,56 @@ class UpdateApkDownloader @Inject constructor(
             }
         }
         throw IOException(lastError?.message ?: "没有可用的下载源")
+    }
+
+    /**
+     * 并发探测各候选源的实测速度，按快慢排序返回。
+     *
+     * 「第一个可达的」不等于「最快」——实测里最慢的反代只有 ~0.04 MB/s（与直连 GitHub 相当），
+     * 顺序试就会一路慢到底。这里让每个源各下 [PROBE_BYTES]，谁用时短谁排前；
+     * 探测失败的源排到最后（它们本来也会被跳过）。
+     *
+     * 只探测、不写盘，对目标文件无影响；真正的下载仍带 Range 续传。
+     */
+    private suspend fun rankBySpeed(candidates: List<String>): List<String> = coroutineScope {
+        candidates.map { url ->
+            async(Dispatchers.IO) {
+                val costMs = runCatching {
+                    withTimeout(PROBE_TIMEOUT_MS) {
+                        val req = Request.Builder().url(url)
+                            .header("Range", "bytes=0-${PROBE_BYTES - 1}")
+                            .build()
+                        client.newCall(req).execute().use { resp ->
+                            if (!resp.isSuccessful && resp.code != 206) {
+                                throw IOException("HTTP ${resp.code}")
+                            }
+                            resp.header("Content-Type")?.takeIf { it.startsWith("text/") }
+                                ?.let { throw IOException("响应不是安装包（$it）") }
+                            val body = resp.body ?: throw IOException("响应体为空")
+                            val started = System.currentTimeMillis()
+                            val buf = ByteArray(64 * 1024)
+                            var read = 0L
+                            while (read < PROBE_BYTES) {
+                                val n = body.source().read(buf)
+                                if (n <= 0) break
+                                read += n
+                            }
+                            if (read <= 0) throw IOException("读不到数据")
+                            System.currentTimeMillis() - started
+                        }
+                    }
+                }.getOrElse { Long.MAX_VALUE }
+                url to costMs
+            }
+        }.awaitAll().sortedBy { it.second }.map { it.first }
+    }
+
+    private companion object {
+        /** 测速时每个源只下这么多：够分出快慢，又不白耗流量。 */
+        const val PROBE_BYTES = 512L * 1024
+
+        /** 单个源的测速超时，超时算不可用、排到队尾。 */
+        const val PROBE_TIMEOUT_MS = 6_000L
     }
 
     private suspend fun fetch(

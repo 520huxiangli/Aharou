@@ -78,7 +78,11 @@ class MemoryDistiller @Inject constructor(
         // 记账：不报条数就无从判断这轮到底蒸没蒸、是不是在无限膨胀。
         val prevCount = countEntries(previousDistilled())
         val nextCount = countEntries(distilled)
-        val written = memoryStore.appendGlobalSection("蒸馏要点（$day · $prevCount→$nextCount 条）", distilled)
+        val written = memoryStore.upsertGlobalSection(
+            PREVIOUS_MARKER,
+            "蒸馏要点（$day · $prevCount→$nextCount 条）",
+            distilled,
+        )
         if (written) {
             memoryStore.markDistilled()
             FileLogger.i(

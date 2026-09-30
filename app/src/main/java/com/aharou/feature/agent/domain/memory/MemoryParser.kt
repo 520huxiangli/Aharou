@@ -74,12 +74,20 @@ object MemoryParser {
      * 其余一律当普通事实，宁可多注入一点也不要误把长期知识标成事件而丢出清单。
      */
     private fun inferType(name: String): MemoryType {
-        val upper = name.uppercase()
-        if (upper.contains("CORE") || upper.contains("GLOBAL")) return MemoryType.IDENTITY
+        if (isCoreName(name)) return MemoryType.IDENTITY
         if (DATE_SUFFIX.containsMatchIn(name)) return MemoryType.EVENT
         val lower = name.lowercase()
         if (EVENT_MARKERS.any { lower.contains(it) }) return MemoryType.EVENT
         return MemoryType.FACT
+    }
+
+    /**
+     * 核心档案：基名全大写（CORE / GLOBAL / SOUL / OPS / PROFILE / SECRETS / LIFE / L0_AGENT …）。
+     * 与 MemoryRepository 的判定保持一致：这些是身份与长期约定，永远算 identity、永远不遗忘。
+     */
+    private fun isCoreName(name: String): Boolean {
+        val base = name.substringBeforeLast('.').uppercase()
+        return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 
     /** 解析显式声明的 `keywords`，兼容 YAML 列表与逗号串两种写法。 */

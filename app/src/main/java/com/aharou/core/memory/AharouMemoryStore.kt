@@ -203,23 +203,41 @@ class AharouMemoryStore @Inject constructor(
     fun readGlobal(): String? = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()
 
     /**
-     * 向 GLOBAL.md **追加**一段（只追加、不覆盖）。
+     * 把一段内容写进 GLOBAL.md：同名前缀的旧段先删掉，**合并成一段，不是越积越多**。
      *
-     * 蒸馏结果只能追加：模型写坏了也只多一段废话，原有记忆一字不动，人工删掉那段就能回滚。
-     * 同时把追加前的文件备一份为 `GLOBAL.md.bak-<yyyy-MM-dd>`（当天已存在则不覆盖）。
+     * 蒸馏每次都产出一份完整要点。若只追加，GLOBAL.md 会一段段堆上去、内容大半重合，
+     * 迟早把提示词撑爆。所以这里做 upsert：删掉所有以 [marker] 开头的段（连同其正文），
+     * 再把新段追到末尾。
+     *
+     * 边界仍然很清楚：只动自己那一段，其余内容一字不动（上一轮要点也在被删的旧段里，
+     * 但已由调用方先回嘿给模型合并过了）。写前备一份 `GLOBAL.md.bak-<yyyy-MM-dd>`（当天已存在则不覆盖）。
      */
-    fun appendGlobalSection(title: String, body: String): Boolean = runCatching {
+    fun upsertGlobalSection(marker: String, title: String, body: String): Boolean = runCatching {
         dir.mkdirs()
         val target = File(dir, "GLOBAL.md")
+        val existing = if (target.exists()) target.readText() else ""
         if (target.exists()) {
             val bak = File(dir, "GLOBAL.md.bak-${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}")
             if (!bak.exists()) target.copyTo(bak, overwrite = false)
         }
-        target.appendText("\n## $title\n\n" + body.trim() + "\n")
+        val merged = removeSections(existing, marker).trimEnd() +
+            "\n\n## " + title + "\n\n" + body.trim() + "\n"
+        target.writeText(merged)
         true
     }.getOrElse {
-        FileLogger.w(TAG, "appendGlobalSection failed: ${it.message}")
+        FileLogger.w(TAG, "upsertGlobalSection failed: ${it.message}")
         false
+    }
+
+    /** 删掉所有以 [marker] 开头的 Markdown 段（含其正文，直到下一个同级 `## ` 标题）。 */
+    private fun removeSections(text: String, marker: String): String {
+        val out = mutableListOf<String>()
+        var skipping = false
+        for (line in text.split("\n")) {
+            if (line.startsWith("## ")) skipping = line.startsWith(marker)
+            if (!skipping) out.add(line)
+        }
+        return out.joinToString("\n")
     }
 
     /** 上次 AI 蒸馏时间（毫秒）；从未蒸馏过返回 0。 */

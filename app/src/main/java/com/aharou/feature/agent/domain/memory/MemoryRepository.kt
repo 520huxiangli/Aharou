@@ -54,7 +54,9 @@ class MemoryRepository @Inject constructor(
         .filter { it.type.injected }
         // 没有一句话摘要的条目不算「摘要式记忆」：注入它的名字等于白占一行，
         // 使用者看到名字也无从判断要不要读。
-        .filter { it.description.isNotBlank() }
+        // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
+        // frontmatter，若一并滤掉等于把全局约定和身份直接从提示词里除名。
+        .filter { it.description.isNotBlank() || isCoreArchive(it.name) }
         .filterNot { isStale(it) }
         .sortedWith(
             compareByDescending<Memory> { it.file?.lastModified() ?: 0L }
@@ -76,10 +78,15 @@ class MemoryRepository @Inject constructor(
         return System.currentTimeMillis() - lastModified > STALE_MEMORY_MILLIS
     }
 
-    /** 核心档案：名字含 CORE / GLOBAL 的条目（覆盖 CORE.md、GLOBAL.md 及其派生名）。 */
+    /**
+     * 核心档案：按文件名直接读、不写 frontmatter 的那几份，如 CORE / GLOBAL / SOUL / OPS /
+     * PROFILE / SECRETS / LIFE / L0_AGENT / L1_MAP。它们的共同特征是**基名全大写**。
+     *
+     * 判定不能只认 CORE / GLOBAL：漏掉 SOUL、OPS 就等于把身份与运维约定从提示词里除名。
+     */
     private fun isCoreArchive(name: String): Boolean {
-        val upper = name.uppercase()
-        return upper.contains("CORE") || upper.contains("GLOBAL")
+        val base = name.substringBeforeLast('.').uppercase()
+        return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 
     private companion object {
