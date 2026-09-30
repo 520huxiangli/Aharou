@@ -408,8 +408,8 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
   | :--- | :--- | :--- | :--- |
   | `type` | String | 是 | - | 固定 `"ActionButton"`（别名 `"button"`、`"action"`） |
   | `title` | String | 是 | - | 按钮文本（如 `"前往充值"`, `"复制卡密"`） |
-  | `action` | String | 否 | `"openUrl"` | 行为类型：`"openUrl"`（打开链接）/ `"copy"`（复制文本）/ `"refresh"`（刷新面板） |
-  | `url` | String | 条件 | - | `action=openUrl` 时必填，完整的 HTTP/HTTPS 链接 |
+  | `action` | String | 否 | `"openUrl"` | 行为类型：`"openUrl"`（在**内置浏览器**里打开链接）/ `"copy"`（复制文本）/ `"refresh"`（刷新面板） |
+  | `url` | String | 条件 | - | `action=openUrl` 时必填，完整的 HTTP/HTTPS 链接；指向人看的页面（控制台/充值页），不要填 API 地址 |
   | `value` | String | 条件 | - | `action=copy` 时必填，要复制的文本内容 |
   | `icon` | String | 否 | `null` | 按钮前置图标名称（如 `"external-link"`、`"copy"`） |
   | `style` | String | 否 | `"Default"` | 按钮背景风格：`"Default"`（纯色淡底）、`"Subtle"`、`"Good"`、`"Warning"`、`"Attention"`、`"Accent"` |
@@ -427,7 +427,7 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
       "type": "ActionButton",
       "title": "前往充值",
       "action": "openUrl",
-      "url": "https://api.openai.com",
+      "url": "https://platform.openai.com/usage",
       "icon": "external-link",
       "style": "Accent",
       "color": "Accent"
@@ -591,7 +591,7 @@ Adaptive Cards 使用语义色彩系统，确保在亮色模式（Light Mode）�
           "type": "ActionButton",
           "title": "管理控制台",
           "action": "openUrl",
-          "url": "https://api.openai.com",
+          "url": "https://platform.openai.com/usage",
           "icon": "external-link"
         }
       ]
