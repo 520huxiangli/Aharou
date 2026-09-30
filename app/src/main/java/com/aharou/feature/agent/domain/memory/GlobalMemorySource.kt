@@ -1,20 +1,18 @@
 package com.aharou.feature.agent.domain.memory
 
+import com.aharou.core.memory.AharouMemoryStore
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.writeTextSafely
-import com.aharou.feature.agent.domain.container.ContainerInstaller
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class GlobalMemorySource @Inject constructor(
-    private val containerInstaller: ContainerInstaller
+    private val memoryStore: AharouMemoryStore
 ) : MemorySource {
 
-    private val memoryRoot: File by lazy {
-        File(containerInstaller.aharouDir, "memory").also { it.mkdirs() }
-    }
+    private val memoryRoot: File get() = memoryStore.dir.also { it.mkdirs() }
 
     override fun listMemories(): List<Memory> {
         if (!memoryRoot.exists()) return emptyList()

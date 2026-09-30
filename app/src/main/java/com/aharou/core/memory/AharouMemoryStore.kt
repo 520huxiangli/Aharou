@@ -46,6 +46,22 @@ class AharouMemoryStore @Inject constructor(
     /** 记忆根目录（宿主侧；容器内 = /root/.aharou/memory）。 */
     val dir: File = File(File(context.filesDir, "aharou-global"), "memory")
 
+    init {
+        // 旧版 memory 工具的全局记忆曾落在 filesDir/aharou/memory：那个路径既被容器里
+        // /root/.aharou/memory 的子挂载挡住，也不在设置 → 记忆页的读取范围内。
+        // 一次性并入 canonical 目录，只搬不删。
+        runCatching {
+            val legacy = File(File(context.filesDir, "aharou"), "memory")
+            if (legacy.isDirectory) {
+                dir.mkdirs()
+                legacy.listFiles { f -> f.isFile && f.extension == "md" }?.forEach { src ->
+                    val dst = File(dir, src.name)
+                    if (!dst.exists()) src.copyTo(dst, overwrite = false)
+                }
+            }
+        }.onFailure { FileLogger.w(TAG, "迁移旧全局记忆目录失败", it) }
+    }
+
     // ── 记忆管理（设置页用） ──
     private val prefs = context.getSharedPreferences("aharou_memory_prefs", Context.MODE_PRIVATE)
 
