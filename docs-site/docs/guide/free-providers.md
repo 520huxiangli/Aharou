@@ -56,8 +56,8 @@
 
 拿到平台的 API Key 和 Base URL 后，按 [AI 供应商与模型](/guide/providers) 的步骤配置即可：
 
-1. 打开「设置 → AI 供应商」，点右上角 + 新建。
-2. 填入上游格式、API Key、Base URL（地址不要带 `/v1`）。
+1. 打开「设置 → AI 配置 → AI 供应商」，点右上角 + 新建。
+2. 填入上游格式、API Key、Base URL（填到域名即可，如 `https://api.deepseek.com`；带 `/v1` 也可以，App 会自动去重）。
 3. 切到「模型」标签页拉取模型，回到主页即可开始对话。
 
 如果平台对上游格式、Base URL 有特殊要求（例如提供 OpenAI 兼容或 Anthropic 兼容端点），以平台文档为准。
