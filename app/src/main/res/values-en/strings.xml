@@ -381,6 +381,8 @@
 
     <!-- AI Chat Panel -->
     <string name="chat_attachment_prefix">Attachments:</string>
+    <string name="chat_attachment_directory_suffix"> (directory)</string>
+    <string name="chat_attachment_directory_hint">(Entries marked \"directory\" only carry a path — read their contents with the file tools)</string>
     <string name="chat_attachment_max">Up to %1$s attachments at once</string>
     <string name="chat_attachment_uploaded">%1$s attachments uploaded</string>
     <string name="chat_attachment_uploaded_partial">%1$s attachments uploaded, some were not added</string>

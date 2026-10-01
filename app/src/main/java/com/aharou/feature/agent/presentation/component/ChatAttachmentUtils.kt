@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import com.aharou.R
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import java.io.File
@@ -36,14 +37,23 @@ internal val PendingUploadAttachment.isImage: Boolean
 
 private fun List<PendingUploadAttachment>.toAttachmentText(context: Context): String {
     if (isEmpty()) return ""
+    val hasDirectory = any { it.mimeType == DIRECTORY_MIME_TYPE }
     return buildString {
         append(context.getString(R.string.chat_attachment_prefix))
         this@toAttachmentText.forEach { attachment ->
             append('\n')
             append("- ")
             append(attachment.fileName)
+            if (attachment.mimeType == DIRECTORY_MIME_TYPE) {
+                append(context.getString(R.string.chat_attachment_directory_suffix))
+            }
             append("：")
             append(attachment.containerPath)
+        }
+        // 目录附件只有路径、没有内容，点明一句，免得模型当成空文件或以为内容已在上下文里。
+        if (hasDirectory) {
+            append('\n')
+            append(context.getString(R.string.chat_attachment_directory_hint))
         }
     }
 }

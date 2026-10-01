@@ -55,10 +55,12 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.THUMBNAIL_MAX_EDGE
 import com.aharou.core.ui.decodeSampledBitmap
+import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.agent.presentation.QueuedRequest
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Camera
 import compose.icons.feathericons.FileText
+import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.X
 import java.util.Base64
@@ -294,6 +296,7 @@ private fun FileAttachmentPreview(
     attachment: PendingUploadAttachment,
     modifier: Modifier = Modifier
 ) {
+    val isDirectory = attachment.mimeType == DIRECTORY_MIME_TYPE
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -302,7 +305,7 @@ private fun FileAttachmentPreview(
         verticalArrangement = Arrangement.Center
     ) {
         Icon(
-            FeatherIcons.FileText,
+            if (isDirectory) FeatherIcons.Folder else FeatherIcons.FileText,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(22.dp)
@@ -315,13 +318,16 @@ private fun FileAttachmentPreview(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Text(
-            text = formatBytes(attachment.sizeBytes),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.72f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        // 目录附件只带路径，没有体积可言，显示 0 B 反而误导。
+        if (!isDirectory) {
+            Text(
+                text = formatBytes(attachment.sizeBytes),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.72f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

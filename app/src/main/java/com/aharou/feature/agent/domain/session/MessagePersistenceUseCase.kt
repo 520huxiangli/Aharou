@@ -8,6 +8,7 @@ import com.aharou.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
 import com.aharou.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.agent.presentation.MessageRole
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -266,8 +267,14 @@ class MessagePersistenceUseCase @Inject constructor(
                                 append('\n')
                                 append("- ")
                                 append(att.fileName)
+                                if (att.mimeType == DIRECTORY_MIME_TYPE) append("（目录）")
                                 append("：")
                                 append(att.containerPath)
+                            }
+                            // 与 ChatAttachmentUtils 的实时拼装保持一致：目录只给路径，提示模型自行遍历。
+                            if (attachments.any { it.mimeType == DIRECTORY_MIME_TYPE }) {
+                                append('\n')
+                                append("（标注「目录」的附件只提供路径，内容请用文件工具自行查看）")
                             }
                         }
                         if (rawContent.isBlank()) attachmentText else "${rawContent.trimEnd()}\n\n$attachmentText"

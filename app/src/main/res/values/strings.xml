@@ -381,6 +381,8 @@
 
     <!-- AI Chat Panel -->
     <string name="chat_attachment_prefix">附件：</string>
+    <string name="chat_attachment_directory_suffix">（目录）</string>
+    <string name="chat_attachment_directory_hint">（标注「目录」的附件只提供路径，内容请用文件工具自行查看）</string>
     <string name="chat_attachment_max">最多可同时发送 %1$s 个附件</string>
     <string name="chat_attachment_uploaded">已上传 %1$s 个附件</string>
     <string name="chat_attachment_uploaded_partial">已上传 %1$s 个附件，部分附件未加入</string>

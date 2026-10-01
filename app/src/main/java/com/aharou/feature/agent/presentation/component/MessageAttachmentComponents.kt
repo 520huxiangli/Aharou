@@ -42,10 +42,12 @@ import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.THUMBNAIL_MAX_EDGE
 import com.aharou.core.ui.decodeSampledBitmap
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.FileText
+import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Image
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -96,6 +98,7 @@ private fun MessageAttachmentRow(
     }
     val fallbackName = stringResource(R.string.common_file)
     val name = attachment.fileName.ifBlank { fallbackName }
+    val isDirectory = attachment.mimeType == DIRECTORY_MIME_TYPE
     // 读屏与长按提示用：图片是「预览」，其它是「打开」，两者落到的地方不一样。
     val actionLabel = if (attachment.isImage) {
         stringResource(R.string.chat_attachment_preview, name)
@@ -104,8 +107,8 @@ private fun MessageAttachmentRow(
     }
     // 次要信息：大小 + 容器路径。路径对「AI 发过来的文件」是关键信息（能直接在终端/编辑器里找到），
     // 整行放不下时靠省略号截断，不换行。
-    val meta = remember(attachment.sizeBytes, attachment.containerPath) {
-        listOf(formatBytes(attachment.sizeBytes), attachment.containerPath)
+    val meta = remember(attachment.sizeBytes, attachment.containerPath, isDirectory) {
+        listOf(if (isDirectory) "" else formatBytes(attachment.sizeBytes), attachment.containerPath)
             .filter { it.isNotBlank() }
             .joinToString(" · ")
     }
@@ -173,7 +176,7 @@ private fun AttachmentThumb(attachment: AgentAttachment) {
         } else {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(
-                    FeatherIcons.FileText,
+                    if (attachment.mimeType == DIRECTORY_MIME_TYPE) FeatherIcons.Folder else FeatherIcons.FileText,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)

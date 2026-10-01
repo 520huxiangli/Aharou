@@ -143,6 +143,12 @@ data class AgentAttachment(
     val isImage: Boolean
 )
 
+/**
+ * 目录附件的类型标记。目录不再打包上传，附件只携带路径，内容由 AI 自行遍历；
+ * 提示词拼装与 UI 图标都靠这个值识别目录。
+ */
+const val DIRECTORY_MIME_TYPE = "inode/directory"
+
 enum class MessageRole {
     USER, ASSISTANT, TOOL
 }
