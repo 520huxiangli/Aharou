@@ -273,17 +273,11 @@ internal fun ChatInputBar(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    // 只在真的需要淡化时才建图层：graphicsLayer 会把整块内容（含输入框卡片
-                    // 与附件预览行）画进独立的 RenderNode，正常状态 alpha 恒为 1，这个图层
-                    // 白建不说，内容变动时还可能困在缓存里不重绘——表现就是附件已渲染、
-                    // 位置尺寸都对，屏幕上却一片空白。
-                    .then(
-                        if (contentAlpha < 1f) {
-                            Modifier.graphicsLayer { alpha = contentAlpha }
-                        } else {
-                            Modifier
-                        }
-                    )
+                    // 图层必须常驻：按 contentAlpha 条件增删 graphicsLayer 时，图层从无到有
+                    // 与附件预览行插入撞在同一帧，新建的 RenderNode 当帧抓不到内容，表现为
+                    // 附件已渲染、尺寸位置全对却一片空白（冷启动贴底滚动时最易撞上）。
+                    // 授权面板的淡出一直是常驻图层，没有这个问题。
+                    .graphicsLayer { alpha = contentAlpha }
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.md)
                     .padding(bottom = imeInset)
