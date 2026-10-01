@@ -100,5 +100,15 @@
     "tags": [
       "注册送10元"
     ]
+  },
+  {
+    "id": "happypet",
+    "name": "Happy Pet",
+    "type": "OPENAI",
+    "baseUrl": "https://api.happy-pet.fun/",
+    "isRecommended": false,
+    "badge": null,
+    "websiteUrl": "https://api.happy-pet.fun",
+    "tags": []
   }
 ]
