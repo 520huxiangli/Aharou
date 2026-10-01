@@ -1,11 +1,14 @@
 package com.aharou.feature.settings.presentation.component
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.foundation.ScrollState
@@ -82,6 +85,7 @@ import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.presentation.ShizukuViewModel
+import com.aharou.feature.settings.presentation.SkillExportState
 import com.aharou.feature.settings.presentation.SkillImportState
 import com.aharou.feature.settings.presentation.SkillUiEntry
 import com.aharou.feature.agent.domain.skill.SkillImportError
@@ -162,6 +166,8 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SkillDetail(R.string.settings_skills),
     SkillEditor(R.string.settings_skills),
     SkillMarket(R.string.skills_market),
+    // 详情页与市场页共用一个标题：层级靠返回箭头体现
+    SkillMarketDetail(R.string.skills_market),
     SubAgents(R.string.settings_subagents),
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
@@ -194,6 +200,7 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SubAgentEditor -> 3
     SettingsSection.ProviderEditor,
     SettingsSection.SkillDetail,
+    SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
     SettingsSection.ContainerDownloads,
     SettingsSection.Log -> 2
@@ -398,6 +405,7 @@ fun SettingsScreen(
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail -> SettingsSection.Skills
         SettingsSection.SkillMarket -> SettingsSection.Skills
+        SettingsSection.SkillMarketDetail -> SettingsSection.SkillMarket
         SettingsSection.SkillEditor -> skillEditorReturn
         SettingsSection.SubAgentDetail -> SettingsSection.SubAgents
         SettingsSection.SubAgentEditor -> subAgentEditorReturn
@@ -887,6 +895,7 @@ fun SettingsScreen(
                     val marketSkills by viewModel.marketSkills.collectAsStateWithLifecycle()
                     val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
                     val marketAlert by viewModel.marketAlert.collectAsStateWithLifecycle()
+                    val marketSort by viewModel.marketSort.collectAsStateWithLifecycle()
                     SkillMarketSection(
                         sources = marketSources,
                         selectedSourceId = marketSourceId,
@@ -894,14 +903,49 @@ fun SettingsScreen(
                         loading = marketLoading,
                         alert = marketAlert,
                         scope = skillImportScope,
+                        sort = marketSort,
                         onScopeChange = { skillImportScope = it },
                         onSelectSource = { viewModel.selectMarketSource(it) },
                         onInstall = { viewModel.installFromMarket(it, skillImportScope) },
                         onLoadRepo = { viewModel.loadMarketFromRepo(it) },
-                        onSearch = { query, address -> viewModel.searchMarket(query, address) }
+                        onSearch = { query, address -> viewModel.searchMarket(query, address) },
+                        onSortChange = { viewModel.setMarketSort(it) },
+                        onOpenDetail = { skill ->
+                            viewModel.openMarketDetail(skill)
+                            section = SettingsSection.SkillMarketDetail
+                        }
                     )
                 }
+                SettingsSection.SkillMarketDetail -> {
+                    val detail by viewModel.marketDetail.collectAsStateWithLifecycle()
+                    detail?.let { state ->
+                        SkillMarketDetailSection(
+                            state = state,
+                            scope = skillImportScope,
+                            onScopeChange = { skillImportScope = it },
+                            onInstall = { viewModel.installFromMarket(it, skillImportScope) }
+                        )
+                    }
+                }
                 SettingsSection.SkillDetail -> selectedSkill?.let { entry ->
+                    val exportState by viewModel.skillExportState.collectAsStateWithLifecycle()
+                    LaunchedEffect(exportState) {
+                        when (val state = exportState) {
+                            is SkillExportState.Ready -> {
+                                shareFile(context, state.file, "application/zip")
+                                viewModel.clearSkillExportState()
+                            }
+                            SkillExportState.Failed -> {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.skills_export_failed),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                                viewModel.clearSkillExportState()
+                            }
+                            else -> Unit
+                        }
+                    }
                     SkillDetailSection(
                         entry = entry,
                         cache = skillMarkdownCache,
@@ -909,7 +953,9 @@ fun SettingsScreen(
                             viewModel.setSkillEnabled(entry.name, enabled, entry.scope)
                             // 同步更新详情页快照，开关立即响应
                             selectedSkill = selectedSkill?.copy(disabled = !enabled)
-                        }
+                        },
+                        onExport = { viewModel.exportSkill(entry) },
+                        exporting = exportState is SkillExportState.Running
                     )
                 }
                 SettingsSection.SubAgents -> SubAgentsSection(
@@ -1661,4 +1707,20 @@ private fun SkillImportError.messageRes(): Int = when (this) {
     SkillImportError.INVALID_ARCHIVE -> R.string.skills_import_error_invalid_archive
     SkillImportError.UNSUPPORTED_FILE -> R.string.skills_import_error_unsupported_file
     SkillImportError.IO_FAILED -> R.string.skills_import_error_io
+}
+
+/**
+ * 把导出好的文件交给系统分享（可存到文件管理器、发给别的 App）。
+ * 必须走 FileProvider 授权 URI：targetSdk 28+ 直接用 file:// 会抛 FileUriExposedException。
+ */
+private fun shareFile(context: Context, file: java.io.File, mimeType: String) {
+    val uri = runCatching {
+        FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    }.getOrNull() ?: return
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, null)) }
 }

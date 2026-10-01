@@ -49,6 +49,7 @@ import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.tool.ToolRegistry
+import com.aharou.feature.agent.domain.tool.ToolSearchTool
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.terminal.domain.DelegatingTerminalSessionProvider
@@ -284,6 +285,7 @@ object AgentModule {
         loadSkillTool: LoadSkillTool,
         askUserQuestionTool: AskUserQuestionTool,
         manageMcpTool: ManageMcpTool,
+        toolSearchTool: ToolSearchTool,
         webSearchTool: WebSearchTool,
         webFetchTool: WebFetchTool,
         planModeTool: PlanModeTool,
@@ -311,6 +313,7 @@ object AgentModule {
             register("loadSkill", loadSkillTool)
             register("askUserQuestion", askUserQuestionTool)
             register("manageMcp", manageMcpTool)
+            register("tool_search", toolSearchTool)
             register("websearch", webSearchTool)
             register("webfetch", webFetchTool)
             register("planMode", planModeTool)

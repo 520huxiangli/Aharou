@@ -81,10 +81,18 @@ class RemoteTerminalSessionManager @Inject constructor(
         command: String,
         title: String?,
         notify: Boolean,
-        sourceSessionId: String?
+        sourceSessionId: String?,
+        workspacePath: String?
     ): String {
         if (!ensureRemote()) throw IllegalStateException("非远程模式或 SSH 未连接")
-        val id = openShellTab(command, isBackground = true, notify = notify, title = title, sourceSessionId = sourceSessionId)
+        val id = openShellTab(
+            command,
+            isBackground = true,
+            notify = notify,
+            title = title,
+            sourceSessionId = sourceSessionId,
+            workspacePath = workspacePath
+        )
         FileLogger.i(TAG, "后台命令标签 $id: $command")
         return id
     }
@@ -98,7 +106,8 @@ class RemoteTerminalSessionManager @Inject constructor(
         isBackground: Boolean,
         notify: Boolean,
         title: String?,
-        sourceSessionId: String?
+        sourceSessionId: String?,
+        workspacePath: String? = null
     ): String {
         val id = nextId()
         // sshj startSession/startShell 走网络 I/O，必须离开主线程，否则 NetworkOnMainThreadException。
@@ -112,7 +121,7 @@ class RemoteTerminalSessionManager @Inject constructor(
         termSession.updateSize(DEFAULT_COLUMNS, DEFAULT_ROWS)
         // shell 登录后默认在 home，先 cd 到当前工作区，与命令执行链路（RemoteSshEngine.buildCdCommand）保持一致：
         // 优先 ~/workspace 符号链接，失败回退到真实工作区路径。
-        val wsPath = workspaceRepository.currentPath()
+        val wsPath = workspacePath?.takeIf { it.isNotBlank() } ?: workspaceRepository.currentPath()
         if (wsPath.isNotBlank() && wsPath != "/") {
             termSession.write("cd ~/workspace 2>/dev/null || cd '${wsPath.trimEnd('/')}' 2>/dev/null\n")
         }
@@ -128,6 +137,7 @@ class RemoteTerminalSessionManager @Inject constructor(
             command = command,
             notifyOnExit = notify,
             sourceSessionId = sourceSessionId,
+            workspacePath = wsPath,
             runState = RunState.Running
         )
         addTab(tab)
@@ -173,7 +183,8 @@ class RemoteTerminalSessionManager @Inject constructor(
             title = it.title,
             isBackground = it.isBackground,
             running = it.runState is RunState.Running,
-            command = it.command
+            command = it.command,
+            workspacePath = it.workspacePath
         )
     }
 

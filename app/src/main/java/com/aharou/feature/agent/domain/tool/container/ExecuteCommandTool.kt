@@ -99,12 +99,18 @@ class ExecuteCommandTool @Inject constructor(
      * 一次性 Bash 跑的是带 `--kill-on-exit` 的 proot 进程，调用一结束整棵子进程树都会被回收，
      * 所以长任务必须挂到常驻会话里才不会半途死掉。
      */
-    private suspend fun startBackground(command: String, args: Map<String, JsonElement>): ToolResult =
+    private suspend fun startBackground(
+        command: String,
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext
+    ): ToolResult =
         try {
+            // 工作区按发起会话给：后台标签的 proot 挂载在启动那刻写死，不能用全局当前工作区。
             val tabId = terminalSessionProvider.startBackgroundCommand(
                 command = command,
                 title = command.take(40),
-                notify = true
+                notify = true,
+                workspacePath = context.projectRoot
             )
             FileLogger.i(TAG, "已提交后台任务 tab=$tabId: $command")
             ToolResult.Success(
@@ -148,7 +154,7 @@ class ExecuteCommandTool @Inject constructor(
         val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
 
-        if (isBackground(args)) return startBackground(command, args)
+        if (isBackground(args)) return startBackground(command, args, context)
 
         return try {
             // 在会话绑定的工作区目录内执行，与文件工具保持同一根目录
@@ -182,7 +188,7 @@ class ExecuteCommandTool @Inject constructor(
         }
 
         if (isBackground(args)) {
-            emit(ToolStreamEvent.Completed(startBackground(command, args)))
+            emit(ToolStreamEvent.Completed(startBackground(command, args, context)))
             return@flow
         }
 

@@ -133,6 +133,36 @@ class SkillRepository @Inject constructor(
     private fun existingNamesIn(scope: SkillScope): Set<String> =
         listAllSkills().filter { it.scope == scope }.map { it.skill.name.lowercase() }.toSet()
 
+    /**
+     * 把指定作用域的技能整个导出成一个 zip（见 [SkillExporter]），技能不存在或读不到时返回 null。
+     *
+     * 内置技能没有磁盘目录（正文在 assets），用 [SkillParser.serialize] 现攒一份 SKILL.md 打包，
+     * 包内结构与其它技能一致——导出的东西同样能导回来，不用单开一条「只导 md」的路。
+     */
+    fun exportZip(name: String, scope: SkillScope): ByteArray? {
+        if (scope == SkillScope.BUILTIN) return exportBuiltin(name)
+        val entry = listAllSkills().firstOrNull {
+            it.scope == scope && it.skill.name.equals(name, ignoreCase = true)
+        } ?: return null
+        val dirPath = entry.skill.dirPath ?: return null
+        return SkillExporter.zip(providerFor(scope), dirPath, entry.skill.name)
+    }
+
+    private fun exportBuiltin(name: String): ByteArray? {
+        val skill = builtinSkillSource.listSkills()
+            .firstOrNull { it.name.equals(name, ignoreCase = true) } ?: return null
+        val text = SkillParser.serialize(
+            name = skill.name,
+            description = skill.description,
+            requiredTools = skill.requiredTools,
+            instructions = skill.instructions
+        )
+        return SkillExporter.zipOf(
+            skill.name,
+            mapOf(INSTRUCTION_FILE to text.toByteArray(Charsets.UTF_8))
+        )
+    }
+
     /** 删除指定作用域的技能（删除其目录，不可恢复）。返回是否成功；内置技能不可删。 */
     fun deleteSkill(name: String, scope: SkillScope): Boolean {
         if (scope == SkillScope.BUILTIN) return false

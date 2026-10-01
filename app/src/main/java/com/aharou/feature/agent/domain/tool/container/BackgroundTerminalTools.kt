@@ -10,6 +10,7 @@ import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.ToolStreamEvent
+import com.aharou.feature.terminal.domain.TabInfo
 import com.aharou.feature.terminal.domain.TerminalSessionProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -220,18 +221,22 @@ class TerminalSessionTool @Inject constructor(
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult = execute(args, null)
 
-    /** 非流式兜底路径也带上发起会话 id，与 [executeStream] 保持一致（后台命令通知能回投到源会话）。 */
+    /** 非流式兜底路径也带上发起会话上下文，与 [executeStream] 保持一致（后台命令通知能回投到源会话，
+     *  新建标签绑定源会话的工作区）。 */
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,
         context: com.aharou.feature.agent.domain.model.AgentContext
-    ): ToolResult = execute(args, context.sessionId)
+    ): ToolResult = execute(args, context)
 
-    private suspend fun execute(args: Map<String, JsonElement>, sourceSessionId: String?): ToolResult =
+    private suspend fun execute(
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext?
+    ): ToolResult =
         when (actionOf(args)) {
-            "start" -> start(args, sourceSessionId)
+            "start" -> start(args, context)
             "send" -> send(args)
             "key" -> sendKey(args)
-            "read" -> read(args)
+            "read" -> read(args, context)
             "close" -> close(args)
             else -> ToolResult.Error("缺少或非法的 action 参数（应为 start/send/key/read/close）")
         }
@@ -263,7 +268,15 @@ class TerminalSessionTool @Inject constructor(
         val title = args["title"]?.asPlainString()
         val notify = args["notify"]?.asPlainString()?.toBooleanStrictOrNull() ?: false
         val tabId = try {
-            withContext(Dispatchers.Main) { sessionManager.startBackgroundCommand(command, title, notify, context.sessionId) }
+            withContext(Dispatchers.Main) {
+                sessionManager.startBackgroundCommand(
+                    command,
+                    title,
+                    notify,
+                    context.sessionId,
+                    context.projectRoot
+                )
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -339,13 +352,17 @@ class TerminalSessionTool @Inject constructor(
      *
      * TerminalSessionManager 内部需主线程，故整段切到 Main。
      */
-    private suspend fun start(args: Map<String, JsonElement>, sourceSessionId: String?): ToolResult = withContext(Dispatchers.Main) {
+    private suspend fun start(
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext?
+    ): ToolResult = withContext(Dispatchers.Main) {
         val command = args["command"]?.asPlainString()
             ?: return@withContext ToolResult.Error("start 操作缺少必需参数: command")
         val title = args["title"]?.asPlainString()
         val notify = args["notify"]?.asPlainString()?.toBooleanStrictOrNull() ?: false
         try {
-            val tabId = sessionManager.startBackgroundCommand(command, title, notify, sourceSessionId)
+            // 新建标签绑定发起会话的工作区：proot 挂载写死在进程 argv 里，用全局工作区会在切工作区后落错仓库。
+            val tabId = sessionManager.startBackgroundCommand(command, title, notify, context?.sessionId, context?.projectRoot)
             FileLogger.i(TAG, "后台命令已启动 tab=$tabId: $command")
 
             // 轮询捕获初始输出：命令退出则提前结束，否则最多等满 START_CAPTURE_MS。
@@ -442,8 +459,37 @@ class TerminalSessionTool @Inject constructor(
         }
     }
 
+    /** 标签绑定的工作区与发起会话当前工作区是否不同。 */
+    private fun workspaceMismatch(
+        tab: TabInfo,
+        context: com.aharou.feature.agent.domain.model.AgentContext?
+    ): Boolean {
+        val bound = tab.workspacePath ?: return false
+        val current = context?.projectRoot?.takeIf { it.isNotBlank() } ?: return false
+        return bound != current
+    }
+
+    /**
+     * 标签绑定工作区与当前会话不一致时的提醒。
+     *
+     * proot 挂载参数写死在进程 argv 里：标签起来之后再切工作区，标签不会跟着走，
+     * 往里面发命令仍落在启动时那个仓库。
+     */
+    private fun mismatchNote(
+        tabId: String,
+        context: com.aharou.feature.agent.domain.model.AgentContext?
+    ): String? {
+        val tab = sessionManager.listTabs().firstOrNull { it.id == tabId } ?: return null
+        if (!workspaceMismatch(tab, context)) return null
+        return "注意：标签 $tabId 绑定的工作区是 ${tab.workspacePath}，与当前会话工作区 ${context?.projectRoot} 不同；" +
+            "该标签里的命令仍落在它自己那个工作区，需要在本会话工作区操作请用 start 新建标签。"
+    }
+
     /** 读取终端输出；省略 tab_id 则列出所有标签。TerminalSessionManager 需主线程。 */
-    private suspend fun read(args: Map<String, JsonElement>): ToolResult = withContext(Dispatchers.Main) {
+    private suspend fun read(
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext?
+    ): ToolResult = withContext(Dispatchers.Main) {
         val tabId = args["tab_id"]?.asPlainString()
         if (tabId.isNullOrBlank()) {
             val list = sessionManager.listTabs()
@@ -451,14 +497,17 @@ class TerminalSessionTool @Inject constructor(
             val text = list.joinToString("\n") {
                 val state = if (it.running) "运行中" else "已结束"
                 val kind = if (it.isBackground) "后台" else "交互"
-                "${it.id}  [$kind/$state]  ${it.title}" + (it.command?.let { c -> "  ($c)" } ?: "")
+                val mark = if (workspaceMismatch(it, context)) "  [绑定的是别的工作区：${it.workspacePath}]" else ""
+                "${it.id}  [$kind/$state]  ${it.title}" + (it.command?.let { c -> "  ($c)" } ?: "") + mark
             }
             return@withContext ToolResult.Success(JsonPrimitive(text))
         }
         val output = sessionManager.getTabOutput(tabId)
             ?: return@withContext ToolResult.Error("未找到终端标签: $tabId")
         FileLogger.v(TAG, "读取 $tabId 输出 ${output.length} 字符")
-        ToolResult.Success(JsonPrimitive(output))
+        val note = mismatchNote(tabId, context)
+        if (note == null) ToolResult.Success(JsonPrimitive(output))
+        else ToolResult.Success(JsonPrimitive("$note\n\n$output"))
     }
 
     /** 关闭指定终端标签。TerminalSessionManager 需主线程。 */

@@ -50,6 +50,11 @@ class TerminalTab(
     val notifyOnExit: Boolean = false,
     /** 发起该后台命令的会话 id；交互标签为 null。回调据此路由回原会话。 */
     val sourceSessionId: String? = null,
+    /**
+     * 启动那一刻绑定的工作区路径。proot 挂载参数写死在进程 argv 里，之后切工作区不会跟随，
+     * 故必须记下来：与发起会话当前工作区不一致时，AI 工具会提醒。交互标签为 null。
+     */
+    val workspacePath: String? = null,
     val client: com.termux.terminal.TerminalSessionClient? = null,
     runState: RunState
 ) {
@@ -78,5 +83,6 @@ data class TabInfo(
     val title: String,
     val isBackground: Boolean,
     val running: Boolean,
-    val command: String?
+    val command: String?,
+    val workspacePath: String? = null
 )

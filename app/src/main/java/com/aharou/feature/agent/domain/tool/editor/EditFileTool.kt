@@ -132,6 +132,15 @@ class EditFileTool @Inject constructor(
                 FileLogger.w(TAG, "edit_file 文件不存在: $path")
                 return ToolResult.Error("文件不存在: $path", "FILE_NOT_FOUND")
             }
+            val fileSize = runCatching { access.fileSize(path) }.getOrDefault(0L)
+            if (fileSize > MAX_EDIT_BYTES) {
+                FileLogger.w(TAG, "edit_file 文件过大: $path ($fileSize 字节)")
+                return ToolResult.Error(
+                    "文件 $fileSize 字节，超过 editFile 的 ${MAX_EDIT_BYTES / 1024 / 1024}MB 上限" +
+                        "（精确匹配需整篇载入内存，超大文件会拖垓设备）。请改用 Bash 里的 sed 等工具处理。",
+                    "FILE_TOO_LARGE"
+                )
+            }
 
             // 先在内存里顺序应用所有编辑；任一失败立刻返回、绝不写盘（全有或全无）。
             var content = access.readFile(path)
@@ -215,5 +224,13 @@ class EditFileTool @Inject constructor(
             val all = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
             Edit(old, new, all)
         }.takeIf { it.isNotEmpty() }
+    }
+
+    private companion object {
+        /**
+         * 可编辑的文件大小上限。编辑要整篇载入内存做匹配，每处替换还会再复制一份内容，
+         * 超大文件在手机上会直接 OOM——提前拒绝，把这类文件交给 shell 工具处理。
+         */
+        const val MAX_EDIT_BYTES = 8L * 1024 * 1024
     }
 }

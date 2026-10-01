@@ -250,6 +250,11 @@ class RemoteSshEngine @Inject constructor(
     private fun buildCdCommand(command: String, projectPath: String?): String {
         val prefix = "export GIT_CONFIG_GLOBAL=\"\$HOME/.aharou/gitconfig\"; "
         if (projectPath == null) return prefix + command
-        return prefix + "cd ~/workspace 2>/dev/null || cd '$projectPath' 2>/dev/null; $command"
+        // cd 失败就不要往下跑了：路径写错时在 $HOME 里执行命令，比直接报错危险得多。
+        // 路径用单引号包并转义内部单引号，避免路径含特殊字符时被 shell 拆成别的参数。
+        return prefix + "cd ~/workspace 2>/dev/null || cd ${shellQuote(projectPath)} 2>/dev/null || exit 1; $command"
     }
+
+    /** 单引号包裹并转义内部的单引号（`'` → `'\''`），保证作为整体传给 shell。 */
+    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 }

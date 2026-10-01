@@ -1,5 +1,6 @@
 package com.aharou.feature.settings.presentation.component
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.core.theme.semanticColors
 import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.agent.presentation.component.MarkdownRenderCache
 import com.aharou.feature.settings.presentation.SkillUiEntry
@@ -32,6 +34,8 @@ import com.aharou.feature.settings.presentation.SkillUiEntry
 internal fun SkillDetailSection(
     entry: SkillUiEntry,
     onToggle: (Boolean) -> Unit,
+    onExport: () -> Unit,
+    exporting: Boolean,
     cache: MarkdownRenderCache? = null
 ) {
     Column(
@@ -65,7 +69,38 @@ internal fun SkillDetailSection(
             }
         }
 
-        // 卡片 2：摘要
+        // 卡片 2：导出（内置技能也能导：正文从 assets 现攒一份 SKILL.md 打进包里）
+        SettingsGroup {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !exporting) { onExport() }
+                    .padding(horizontal = Spacing.lg, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.skills_export),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.skills_export_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.semanticColors.subtleText
+                    )
+                }
+                if (exporting) {
+                    Text(
+                        text = stringResource(R.string.skills_export_running),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.semanticColors.subtleText
+                    )
+                }
+            }
+        }
+
+        // 卡片 3：摘要
         SettingsGroupHeader(text = stringResource(R.string.skills_summary))
         SettingsGroup {
             Text(
@@ -78,7 +113,7 @@ internal fun SkillDetailSection(
             )
         }
 
-        // 卡片 3：正文（Markdown 渲染）
+        // 卡片 4：正文（Markdown 渲染）
         SettingsGroupHeader(text = stringResource(R.string.skills_instructions))
         SettingsGroup {
             MarkdownContent(

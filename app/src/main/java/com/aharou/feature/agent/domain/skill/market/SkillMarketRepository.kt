@@ -161,8 +161,68 @@ class SkillMarketRepository @Inject constructor(
                     installs = item.installs
                 )
             }
-        return MarketListing(skills)
+        return MarketListing(enrichSearchResults(skills))
     }
+
+    /**
+     * 检索型源只给「技能名 + 所在仓库」，列表上就一行光名字，没法挑。
+     * 这里按仓库分组拉一次文件树定位目录，再读各技能的 SKILL.md 补出描述与元信息，
+     * 顺便把 needsLocate 消掉（安装时不用再定位一次）。
+     *
+     * 只补前 [MAX_SEARCH_ENRICH] 条：一次检索几十条全补要发上百个请求，而用户看的就是前几条。
+     */
+    private suspend fun enrichSearchResults(skills: List<MarketSkill>): List<MarketSkill> {
+        if (skills.isEmpty()) return skills
+        val limit = minOf(skills.size, MAX_SEARCH_ENRICH)
+        val targets = skills.take(limit)
+
+        // 同一个仓库的多个技能共用一次文件树请求
+        val trees = coroutineScope {
+            targets.map { it.repo }.distinct().map { repo ->
+                async(Dispatchers.IO) {
+                    val sample = targets.first { it.repo == repo }
+                    repo to fetchTree(SkillRepoAccess.Coord(sample.host, repo, sample.branch))
+                }
+            }.awaitAll().toMap()
+        }
+
+        val fixed = coroutineScope {
+            targets.map { skill ->
+                async(Dispatchers.IO) {
+                    val tree = trees[skill.repo] ?: return@async skill
+                    val dir = findSkillDir(tree, skill.name) ?: return@async skill
+                    val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
+                    val relative = if (dir.isEmpty()) SKILL_FILE else "$dir/$SKILL_FILE"
+                    val text = fetchLimiter.withPermit {
+                        httpGetFirst(SkillRepoAccess.fileUrls(coord, relative))
+                    }
+                    val meta = text?.let { SkillFrontmatter.parse(it, skill.name) }
+                    val files = tree
+                        .filter { dir.isEmpty() || it.startsWith("$dir/") }
+                        .map { if (dir.isEmpty()) it else it.removePrefix("$dir/") }
+                    skill.copy(
+                        dir = dir,
+                        files = files,
+                        name = meta?.name ?: skill.name,
+                        displayName = meta?.displayName.orEmpty(),
+                        description = meta?.description.orEmpty(),
+                        version = meta?.version.orEmpty(),
+                        author = meta?.author.orEmpty(),
+                        license = meta?.license.orEmpty(),
+                        needsLocate = false,
+                        safety = SkillSafetyScan.scan(files, text)
+                    )
+                }
+            }.awaitAll()
+        }
+        return fixed + skills.drop(limit)
+    }
+
+    /** 在一棵文件树里按目录名找技能所在目录（不区分大小写）；找不到返回 null。 */
+    private fun findSkillDir(tree: List<String>, name: String): String? =
+        tree.filter { it.substringAfterLast('/').equals(SKILL_FILE, ignoreCase = true) }
+            .map { it.substringBeforeLast('/', "") }
+            .firstOrNull { it.substringAfterLast('/').equals(name, ignoreCase = true) }
 
     /**
      * 检索型源的结果落在某个仓库里，但只知道技能名：拉一次文件树，按目录名（不区分大小写）
@@ -171,11 +231,7 @@ class SkillMarketRepository @Inject constructor(
     private suspend fun locateInRepo(skill: MarketSkill): MarketSkill? {
         val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
         val files = fetchTree(coord) ?: return null
-        val dir = files
-            .filter { it.substringAfterLast('/').equals(SKILL_FILE, ignoreCase = true) }
-            .map { it.substringBeforeLast('/', "") }
-            .firstOrNull { it.substringAfterLast('/').equals(skill.name, ignoreCase = true) }
-            ?: return null
+        val dir = findSkillDir(files, skill.name) ?: return null
         return skill.copy(
             dir = dir,
             files = files.filter { dir.isEmpty() || it.startsWith("$dir/") }
@@ -183,6 +239,32 @@ class SkillMarketRepository @Inject constructor(
             needsLocate = false
         )
     }
+
+    /**
+     * 详情页要的数据：文件清单 + SKILL.md 原文 + 风险提示。
+     *
+     * 文件清单优先用列表阶段已经拿到的；没有时（索引型源只给了个 zip 路径）按目录名补拉一次文件树。
+     * 拉不到 SKILL.md 不算失败——[SkillDetail.skillMd] 为 null，由 UI 说明该源不提供在线预览。
+     */
+    suspend fun loadDetail(skill: MarketSkill): SkillDetail = withContext(Dispatchers.IO) {
+        val coord = SkillRepoAccess.Coord(skill.host, skill.repo, skill.branch)
+        val files = skill.files.ifEmpty {
+            fetchTree(coord)
+                ?.filter { skill.dir.isEmpty() || it.startsWith("${skill.dir}/") }
+                ?.map { if (skill.dir.isEmpty()) it else it.removePrefix("${skill.dir}/") }
+                .orEmpty()
+        }
+        val path = listOf(skill.dir, SKILL_FILE).filter { it.isNotBlank() }.joinToString("/")
+        val text = fetchLimiter.withPermit { httpGetFirst(SkillRepoAccess.fileUrls(coord, path)) }
+        SkillDetail(files = files, skillMd = text, safety = SkillSafetyScan.scan(files, text))
+    }
+
+    /** 详情页的数据。[skillMd] 为 null = 这个技能在源里没有可读取的 SKILL.md（如只提供 zip 包）。 */
+    data class SkillDetail(
+        val files: List<String>,
+        val skillMd: String?,
+        val safety: SkillSafety
+    )
 
     /**
      * 安装（或更新）一个技能：[scope] 决定装到全局还是当前项目。
@@ -341,20 +423,21 @@ class SkillMarketRepository @Inject constructor(
                 }
                 val fallback = dir.substringAfterLast('/')
                 val meta = text?.let { SkillFrontmatter.parse(it, fallback) }
-                dir to meta
+                dir to (text to meta)
             }
         }.awaitAll().toMap()
         if (enriched.isEmpty()) return@coroutineScope base
 
         val full = base.map { skill ->
-            val meta = enriched[skill.dir] ?: return@map skill
+            val (text, meta) = enriched[skill.dir] ?: return@map skill
             skill.copy(
                 name = meta?.name ?: skill.name,
                 displayName = meta?.displayName.orEmpty(),
                 description = meta?.description.orEmpty(),
                 version = meta?.version.orEmpty(),
                 author = meta?.author.orEmpty(),
-                license = meta?.license.orEmpty()
+                license = meta?.license.orEmpty(),
+                safety = SkillSafetyScan.scan(skill.files, text)
             )
         }
         onUpdate?.invoke(full)
@@ -480,6 +563,9 @@ class SkillMarketRepository @Inject constructor(
 
         /** 最多给多少个技能补读 SKILL.md。列表看得见的就几十条，再多是白耗流量。 */
         const val MAX_ENRICH = 120
+
+        /** 检索结果最多补几条描述——一次检索几十条全补要发上百个请求。 */
+        const val MAX_SEARCH_ENRICH = 12
 
         /** 「粘贴地址」这类一次性源共用的 id，不写缓存（不同仓库会互相覆盖）。 */
         const val ADHOC_SOURCE_ID = "adhoc"

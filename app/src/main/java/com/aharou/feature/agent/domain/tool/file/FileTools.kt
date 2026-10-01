@@ -69,6 +69,7 @@ class ReadFileTool @Inject constructor(
             var emittedLines = 0
             var byteCount = 0
             var truncatedByBytes = false
+            var firstLineClipped = false
             var lineNo = 0
             withContext(Dispatchers.IO) {
                 access.readLines(path).forEach { line ->
@@ -81,7 +82,15 @@ class ReadFileTool @Inject constructor(
                     }
                     if (!truncatedByBytes) {
                         val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1
-                        if (byteCount + lineBytes > MAX_BYTES && emittedLines > 0) {
+                        if (byteCount + lineBytes > MAX_BYTES) {
+                            // 首行就超限时也不例外：整行塞进去等于把一条超大单行同时灌进内存和上下文。
+                            if (emittedLines == 0) {
+                                val clipped = line.clipToBytes(MAX_BYTES)
+                                sb.append(clipped)
+                                byteCount += clipped.toByteArray(Charsets.UTF_8).size
+                                emittedLines++
+                                firstLineClipped = true
+                            }
                             truncatedByBytes = true
                         } else {
                             if (emittedLines > 0) sb.append('\n')
@@ -97,9 +106,10 @@ class ReadFileTool @Inject constructor(
             // 用户想要的窗口末行：给了 end_line 取 min(end_line, EOF)，否则到 EOF。
             // 我们只发到了 lastEmittedLine，若它落在窗口末行之前，说明被截断、还有内容可读。
             val wantedEnd = if (requestedEnd != null) minOf(requestedEnd, totalLines) else totalLines
-            val truncated = emittedLines > 0 && lastEmittedLine < wantedEnd
+            val truncated = (emittedLines > 0 && lastEmittedLine < wantedEnd) || firstLineClipped
             val note = when {
                 !truncated -> null
+                firstLineClipped -> "第 $startLine 行本身就超过 ${MAX_BYTES / 1024}KB 上限，该行内容已被截断返回。"
                 truncatedByBytes -> "已达 ${MAX_BYTES / 1024}KB 上限被截断；从第 ${lastEmittedLine + 1} 行起用 start_line 继续读取。"
                 else -> "已达 $MAX_LINES 行上限被截断；从第 ${lastEmittedLine + 1} 行起用 start_line 继续读取。"
             }
@@ -126,6 +136,13 @@ class ReadFileTool @Inject constructor(
         const val MAX_LINES = 2000
         /** 单次最多返回的字节数（UTF-8，约 200KB），防止超大行撑爆内存/上下文。 */
         const val MAX_BYTES = 200 * 1024
+
+        /** 按 UTF-8 字节数截断字符串（用于超大单行）；截到多字节字符中间时以替换字符收尾。 */
+        private fun String.clipToBytes(maxBytes: Int): String {
+            val bytes = toByteArray(Charsets.UTF_8)
+            if (bytes.size <= maxBytes) return this
+            return String(bytes, 0, maxBytes, Charsets.UTF_8)
+        }
     }
 }
 
@@ -188,7 +205,16 @@ class WriteFileTool @Inject constructor(
             }
 
             // 写前留存旧内容，供生成「旧→新」差异（与 edit_file 同构，UI 据此渲染彩色 diff）。
-            val oldContent = if (existed) runCatching { access.readFile(path) }.getOrDefault("") else ""
+            // 写前留存旧内容，供生成「旧→新」差异（与 edit_file 同构，UI 据此渲染彩色 diff）。
+            // 旧文件过大时不读：读进来只为算差异，代价却是整篇驻留内存，不划算。
+            val oldContent = if (
+                existed &&
+                runCatching { access.fileSize(path) }.getOrDefault(0L) <= MAX_DIFF_SOURCE_BYTES
+            ) {
+                runCatching { access.readFile(path) }.getOrDefault("")
+            } else {
+                ""
+            }
 
             access.writeFile(path, content, overwrite = true)
 
@@ -246,5 +272,8 @@ class WriteFileTool @Inject constructor(
     private companion object {
         /** 旧/新任一侧行数超过此值即跳过 LCS：DP 表为 O(n·m) ints，过大会拖垮移动端内存。 */
         const val MAX_DIFF_LINES = 2000
+
+        /** 为算差异而读取旧内容的大小上限；超过就跳过读取，差异退化为「整体新增」。 */
+        const val MAX_DIFF_SOURCE_BYTES = 4L * 1024 * 1024
     }
 }

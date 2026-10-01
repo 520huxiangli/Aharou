@@ -71,7 +71,8 @@ internal fun boundedLines(open: () -> Reader): Sequence<String> = sequence {
     BoundedLineReader(open()).use { reader ->
         while (true) {
             val line = reader.readLine() ?: break
-            yield(line.text)
+            // 截断必须让调用方（AI 工具/模型）看得见，否则会以为自己读到的是完整一行。
+            yield(if (line.truncated) line.text + LINE_TRUNCATED_NOTE else line.text)
         }
     }
 }

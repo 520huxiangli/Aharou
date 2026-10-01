@@ -1693,8 +1693,8 @@ fun AIChatPanel(
 
             // 长会话提示。上下文越大每轮越慢、越容易把主线程拖到 ANR
             //（2026-09-30 实测：50 万 token 的会话触发过 ANR），所以到量就提醒开新会话。
-            // 20 万 token 是个保守线：既明显早于压缩阈值，又不至于天天弹。
-            if (lastInputTokens >= 200_000) {
+            // 40 万 token 是个保守线：明显早于 50 万的 ANR 实测值，又不至于一上来就弹。
+            if (lastInputTokens >= 400_000) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

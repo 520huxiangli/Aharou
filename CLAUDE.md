@@ -69,7 +69,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 改 schema 三步：
 
-1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 57）。
+1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 58）。
 2. 文件式：在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**；AutoMigration：加注解，保证 `to == SCHEMA_VERSION` 且 `from` 衔接文件式最大版本。
 3. 写入 DDL/SQL，启动时自动执行并记入 `migration_history` 表。
 

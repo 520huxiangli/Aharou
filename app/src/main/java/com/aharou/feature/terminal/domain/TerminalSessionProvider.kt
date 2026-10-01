@@ -20,7 +20,9 @@ interface TerminalSessionProvider {
         command: String,
         title: String? = null,
         notify: Boolean = false,
-        sourceSessionId: String? = null
+        sourceSessionId: String? = null,
+        /** 发起会话绑定的工作区；缺省时退回全局当前工作区。 */
+        workspacePath: String? = null
     ): String
 
     /** 按 id 向标签发送输入并回车执行。返回是否命中标签且仍活跃。 */

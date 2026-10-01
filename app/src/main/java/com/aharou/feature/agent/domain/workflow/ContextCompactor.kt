@@ -37,6 +37,26 @@ class ContextCompactor @Inject constructor(
         const val TOOL_OUTPUT_MAX_CHARS = 2_000
         const val COMPACT_PROMPT_FILE = "agent/compact-summary.md"
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
+
+        /**
+         * 触发阈值的绝对上限。内置元数据（api.official.json）把部分模型的窗口标成 100 万，
+         * 只按「窗口 × 百分比」算会把阈值一起拖高，导致模型实际开始退化时仍未触发压缩；
+         * 封顶后大窗口模型按这条线触发，窗口本来就小的模型仍走自己的百分比。
+         */
+        const val COMPACTION_CEILING = 400_000
+
+        /**
+         * 硬触发线：窗口占比。达到就压缩，与「压缩阈值百分比」偏好无关——
+         * 百分比是可调偏好，但再保守的配置也不该等到上下文贴到窗口边缘才动手。
+         */
+        const val HARD_TRIGGER_RATIO = 0.8
+
+        /**
+         * 本地估算的固定开销补偿。[estimateTokens] 只数消息体，不含系统提示词与工具定义，
+         * 而服务端 usage 是含的——不补这笔，取不到 usage 时会把「其实已经快满了」算成还早。
+         * 按内置工具 + 系统提示词的量级取经验值。
+         */
+        const val LOCAL_ESTIMATE_OVERHEAD_TOKENS = 8_000
     }
 
     /**
@@ -71,24 +91,28 @@ class ContextCompactor @Inject constructor(
         val windowMetadata = modelMetadataService.resolve(windowModel.providerId, inferProviderType(windowModel), windowModel.model)
         val summaryMetadata = modelMetadataService.resolve(aiProvider.providerId, inferProviderType(aiProvider), aiProvider.model)
         val contextLimit = windowMetadata.contextTokens.takeIf { it > 0 } ?: ModelContextPolicy.DEFAULT_CONTEXT_TOKENS
-        // 触发阈值百分比由「偏好设置 → 模型」配置（默认 90，见 GeneralSettingsRepository）。
-        val triggerThreshold = (contextLimit * generalSettingsRepository.compactionThresholdPercent() / 100.0).toInt()
-        // 真实 usage 优先（含 system prompt + tools，与上下文窗口同口径）；取不到（0）回退本地估算
-        val currentTokens = lastInputTokens.takeIf { it > 0 } ?: estimatedTokens
-        val reachedThreshold = currentTokens >= triggerThreshold
-        val reachedHardLimit = currentTokens >= contextLimit
-        if (messages.size <= 2 || (!force && !reachedThreshold && !reachedHardLimit)) {
+        // 触发线取「配置百分比」与「硬线（窗口 80%）」中的小者：百分比由「偏好设置 → 模型」配置
+        // （默认 90，见 GeneralSettingsRepository），硬线保证任何配置下都不会拖到窗口边缘。
+        val configuredTrigger = minOf(
+            (contextLimit * generalSettingsRepository.compactionThresholdPercent() / 100.0).toInt(),
+            COMPACTION_CEILING
+        )
+        val triggerThreshold = minOf(configuredTrigger, (contextLimit * HARD_TRIGGER_RATIO).toInt())
+        // 两个来源取大者：服务端 usage 含 system prompt + tools（与窗口同口径，但可能滞后一轮），
+        // 本地估算不含这两块，补固定开销后再跟它比。
+        val currentTokens = maxOf(lastInputTokens, estimatedTokens + LOCAL_ESTIMATE_OVERHEAD_TOKENS)
+        if (messages.size <= 2 || (!force && currentTokens < triggerThreshold)) {
             return messages
         }
 
-        val tokensSource = if (lastInputTokens > 0) "真实 usage" else "本地估算"
+        val tokensSource = if (lastInputTokens >= estimatedTokens + LOCAL_ESTIMATE_OVERHEAD_TOKENS) "真实 usage" else "本地估算+开销"
         // 窗口来源一并打出来：命中目录（含命中的 provider 与自定义覆盖）还是走了 128k 兜底，
         // 是排查「压缩时机与预期不符」的第一手依据。
         val windowSource = if (windowMetadata.contextTokens > 0) "目录 ${windowMetadata.providerId}" else "128k 兜底"
         FileLogger.i(
             TAG,
             "会话 ${sessionId ?: "-"} 上下文约 $currentTokens tokens（$tokensSource），窗口 $contextLimit（$windowSource），" +
-                "${if (force) "手动强制压缩" else "达到压缩触发条件（阈值 $triggerThreshold 或硬上限），触发自动压缩"}。"
+                "${if (force) "手动强制压缩" else "达到压缩触发条件（阈值 $triggerThreshold），触发自动压缩"}。"
         )
         onEvent(AgentEvent.CompactionStarted(currentTokens))
 

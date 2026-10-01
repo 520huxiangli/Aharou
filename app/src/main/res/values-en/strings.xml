@@ -36,7 +36,7 @@
     <string name="settings_enter_to_send">Enter key sends message</string>
     <string name="settings_enter_to_send_desc">When off, Enter inserts a newline and you send with the button</string>
     <string name="settings_compaction_threshold">Auto-compaction threshold</string>
-    <string name="settings_compaction_threshold_desc">Compact context once it reaches this share of the window</string>
+    <string name="settings_compaction_threshold_desc">Auto-compact once the context reaches this share of the window (never later than 80%)</string>
     <string name="settings_percent_value">%1$d%%</string>
     <string name="settings_compaction_threshold_input_hint">Integer percentage between 1 and 100</string>
     <string name="settings_general_tools">Tools</string>
@@ -187,6 +187,7 @@
 
     <!-- SettingsScreen common -->
     <string name="common_back">Back</string>
+    <string name="tool_action_open_preview">View details</string>
     <string name="common_scroll_to_bottom">Back to bottom</string>
     <string name="common_scroll_to_prev_user">Previous message</string>
     <string name="common_prev">Previous</string>
@@ -1093,9 +1094,35 @@
     <string name="skills_market_no_skills">No skills found in this repository</string>
     <string name="skills_market_no_match_in_repo">No matching skill in this repository</string>
     <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
+    <string name="skills_market_sort_default">Default</string>
+    <string name="skills_market_sort_name">Name</string>
+    <string name="skills_market_sort_popular">Popular</string>
+    <string name="skills_market_risk_scripts">%1$d script(s)</string>
+    <string name="skills_market_risk_credentials">Needs credentials</string>
+    <string name="skills_market_risk_title">Before you install</string>
+    <string name="skills_market_risk_scripts_detail">The skill ships executable scripts: %1$s</string>
+    <string name="skills_market_risk_credentials_detail">Using it requires you to provide an API key or token — hold off if the source is unknown</string>
+    <string name="skills_market_detail_source">Source</string>
+    <string name="skills_market_detail_author">Author</string>
+    <string name="skills_market_detail_version">Version</string>
+    <string name="skills_market_detail_license">License</string>
+    <string name="skills_market_detail_installs">Installs</string>
+    <string name="skills_market_detail_installs_value">%1$d</string>
+    <string name="skills_market_detail_content">Documentation</string>
+    <string name="skills_market_detail_loading">Reading…</string>
+    <string name="skills_market_detail_no_content">This source has no online preview — it may only ship as a packaged archive</string>
+    <string name="skills_market_detail_files">Files (%1$d)</string>
+    <string name="skills_market_detail_files_more">%1$d more files not listed</string>
+    <string name="skills_market_detail_install">Install</string>
+    <string name="skills_market_detail_update">Update to latest</string>
+    <string name="skills_market_detail_reinstall">Reinstall</string>
     <string name="skills_add_from_market">Install from market</string>
     <string name="skills_add_from_market_desc">Browse official and community skill sources</string>
     <string name="skills_enable">Enable</string>
+    <string name="skills_export">Export</string>
+    <string name="skills_export_desc">Packed as a zip — share it or keep a copy</string>
+    <string name="skills_export_running">Packing…</string>
+    <string name="skills_export_failed">Export failed</string>
     <string name="skills_summary">Summary</string>
     <string name="skills_delete_confirm_title">Delete Skill</string>
     <string name="skills_delete_confirm_message">This will delete the skill directory of \"%1$s\". This action cannot be undone. Delete?</string>

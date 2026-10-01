@@ -83,7 +83,7 @@ class SearchCodeTool @Inject constructor(
             ToolResult.Success(JsonObject(mapOf(
                 "content" to JsonPrimitive(result.output),
                 "matches" to JsonPrimitive(lines.size),
-                "truncated" to JsonPrimitive(false),
+                "truncated" to JsonPrimitive(result.outputTruncated),
                 "elapsed_ms" to JsonPrimitive(System.currentTimeMillis() - startedAt),
                 "backend" to JsonPrimitive("rg")
             )))

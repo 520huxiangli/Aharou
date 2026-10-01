@@ -760,6 +760,11 @@ fun AppNavigation(
                             androidx.compose.ui.platform.LocalUriHandler provides fileUriHandler,
                             com.aharou.feature.browser.presentation.LocalBrowserOpener provides browserOpener,
                             com.aharou.feature.terminal.presentation.component.LocalTerminalOpener provides terminalOpener,
+                            com.aharou.feature.agent.presentation.component.LocalToolPreviewOpener provides
+                                { msg: com.aharou.feature.agent.presentation.AgentUIMessage ->
+                                    com.aharou.feature.agent.presentation.component.ToolCallPreviewHolder.current = msg
+                                    navController.navigate("toolDetail")
+                                },
                         ) {
                             AIChatPanel(
                                 viewModel = agentViewModel,
@@ -917,6 +922,17 @@ fun AppNavigation(
                 } else {
                     com.aharou.feature.sandbox.FilePreviewScreen(
                         item = previewItem,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
+            composable("toolDetail") {
+                val previewed = com.aharou.feature.agent.presentation.component.ToolCallPreviewHolder.current
+                if (previewed == null) {
+                    LaunchedEffect(Unit) { navController.popBackStack() }
+                } else {
+                    com.aharou.feature.agent.presentation.component.ToolCallPreviewScreen(
+                        message = previewed,
                         onBack = { navController.popBackStack() },
                     )
                 }

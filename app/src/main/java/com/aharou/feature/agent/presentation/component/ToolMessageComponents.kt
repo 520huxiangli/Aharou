@@ -78,6 +78,7 @@ import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Cpu
 import compose.icons.feathericons.Database
 import compose.icons.feathericons.Edit3
+import compose.icons.feathericons.ExternalLink
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Search
@@ -144,30 +145,36 @@ internal fun ToolMessageBody(
 ) {
     val streaming = liveOutput != null
     val running = message.isToolRunning(liveOutput)
+    // 解析结果的缓存键用 content 长度而不是整串内容：工具结果可以有几十万字符，
+    // 逐次重组都拿整串做一次 O(n) 相等比较，本身就是可观的浪费。
+    // 工具结果只会追加增长，长度相同即视为同一份内容。
+    val contentKey = message.content.length
     val edit = if (!running && !message.isError &&
         (message.toolName == "editFile" || message.toolName == "writeFile")
     ) {
-        remember(message.id, message.content) { parseEditDiff(message.content) }
+        remember(message.id, contentKey) { parseEditDiff(message.content) }
     } else null
 
     val resultText = if (!running) {
-        remember(message.id, message.content) { formatToolResult(message.content) }
+        remember(message.id, contentKey) { formatToolResult(message.content) }
     } else null
     val argHint = remember(message.toolArgs) { toolArgHint(message.toolArgs) }
     val argsFull = remember(message.toolArgs) { formatToolArgs(message.toolArgs) }
 
     val todoData = if (message.toolName == "todo" && !running && !message.isError) {
-        remember(message.id, message.content) { parseTodoResult(message.content) }
+        remember(message.id, contentKey) { parseTodoResult(message.content) }
     } else null
     val webSearchData = if (message.toolName == "websearch" && !running && !message.isError) {
-        remember(message.id, message.content) { parseWebSearchResult(message.content) }
+        remember(message.id, contentKey) { parseWebSearchResult(message.content) }
     } else null
 
     // [Aharou] 工具消息互联入口：browser → 地球（围观该 URL）；Bash/terminal → 在终端中运行。
     val browserOpener = com.aharou.feature.browser.presentation.LocalBrowserOpener.current
     val terminalOpener = com.aharou.feature.terminal.presentation.component.LocalTerminalOpener.current
+    // 工具详情页入口（导航层提供；长输出在卡片里只能滚动看，全屏更舒服）
+    val previewOpener = LocalToolPreviewOpener.current
     val browserUrl = if (message.toolName == "browser") {
-        remember(message.id, message.toolArgs, message.content) {
+        remember(message.id, message.toolArgs, contentKey) {
             extractBrowserUrl(message.toolArgs, message.content)
         }
     } else null
@@ -176,7 +183,7 @@ internal fun ToolMessageBody(
     } else null
     // 后台任务/子代理完成通知：搭车在本次工具结果里送给 AI 的，同时常显给用户看。
     val notifications = if (!running) {
-        remember(message.id, message.content) { parseToolNotifications(message.content) }
+        remember(message.id, contentKey) { parseToolNotifications(message.content) }
     } else emptyList()
 
     // 执行中也可折叠/展开（如 bash 刷屏时可收起只看标题行），无论当前是否有输出；无输出时折叠态无内容，但保持可点击与箭头一致
@@ -310,6 +317,20 @@ internal fun ToolMessageBody(
                     Icon(
                         FeatherIcons.Terminal,
                         contentDescription = stringResource(R.string.tool_action_open_terminal),
+                        tint = Brand.IconGray,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            if (previewOpener != null) {
+                Spacer(Modifier.width(Spacing.xs))
+                IconButton(
+                    onClick = { previewOpener.invoke(message) },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        FeatherIcons.ExternalLink,
+                        contentDescription = stringResource(R.string.tool_action_open_preview),
                         tint = Brand.IconGray,
                         modifier = Modifier.size(16.dp),
                     )

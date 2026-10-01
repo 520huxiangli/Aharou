@@ -300,6 +300,14 @@ sealed interface SkillImportState {
     data class Done(val report: SkillImportReport) : SkillImportState
 }
 
+/** 技能导出的 UI 状态：空闲 / 打包中 / 就绪（UI 拿文件弹系统分享）/ 失败。 */
+sealed interface SkillExportState {
+    data object Idle : SkillExportState
+    data object Running : SkillExportState
+    data class Ready(val file: File, val skillName: String) : SkillExportState
+    data object Failed : SkillExportState
+}
+
 /** 市场列表里的一条技能：技能本体 + 已装 / 可更新标记。 */
 data class MarketSkillUi(
     val skill: MarketSkill,
@@ -310,8 +318,21 @@ data class MarketSkillUi(
 /** 市场页的提示；文案由 UI 层映射成资源串。 */
 enum class MarketAlert { InvalidAddress, NoSkills, NoMatchInRepo, LoadFailed, SearchByKeyword, SkillSiteNeedsDetail }
 
+/** 市场列表排序。「热门」按安装量排，只有检索型源带得到这个数（其余源全是 0，等价于不排）。 */
+enum class MarketSort { Default, Name, Popular }
+
+/** 市场详情页的状态。[detail] 为 null 表示还在拉或没拉到。 */
+data class MarketDetailUi(
+    val ui: MarketSkillUi,
+    val loading: Boolean,
+    val detail: SkillMarketRepository.SkillDetail?
+)
+
 /** 「粘贴地址」临时源在源列表里的 id。 */
 private const val ADHOC_MARKET_ID = "adhoc"
+
+/** 技能导出 zip 落在缓存目录下的子目录名。 */
+private const val EXPORT_DIR = "skill-export"
 
 /** 子代理编辑页的保存结果：UI 据此决定是退回列表还是就地报错。 */
 sealed interface SubAgentSaveState {
@@ -688,6 +709,9 @@ class SettingsViewModel @Inject constructor(
     private val _skillImportState = MutableStateFlow<SkillImportState>(SkillImportState.Idle)
     val skillImportState: StateFlow<SkillImportState> = _skillImportState.asStateFlow()
 
+    private val _skillExportState = MutableStateFlow<SkillExportState>(SkillExportState.Idle)
+    val skillExportState: StateFlow<SkillExportState> = _skillExportState.asStateFlow()
+
     private val _marketSources = MutableStateFlow<List<Pair<String, String>>>(emptyList())
     val marketSources: StateFlow<List<Pair<String, String>>> = _marketSources.asStateFlow()
 
@@ -702,6 +726,12 @@ class SettingsViewModel @Inject constructor(
 
     private val _marketAlert = MutableStateFlow<MarketAlert?>(null)
     val marketAlert: StateFlow<MarketAlert?> = _marketAlert.asStateFlow()
+
+    private val _marketSort = MutableStateFlow(MarketSort.Default)
+    val marketSort: StateFlow<MarketSort> = _marketSort.asStateFlow()
+
+    private val _marketDetail = MutableStateFlow<MarketDetailUi?>(null)
+    val marketDetail: StateFlow<MarketDetailUi?> = _marketDetail.asStateFlow()
 
     /** 列表当前显示的是关键词检索结果（不是某个源/仓库的完整列表），用于「点回原源」时判断要不要重新拉。 */
     private val _marketSearching = MutableStateFlow(false)
@@ -1386,7 +1416,7 @@ class SettingsViewModel @Inject constructor(
                 skillMarketRepository.searchSkills(sourceId, query)
             }
             _marketSearching.value = true
-            _marketSkills.value = listing.skills.map { toMarketUi(it) }
+            publishMarket(listing.skills)
             _marketAlert.value = when {
                 listing.failed -> MarketAlert.LoadFailed
                 listing.skills.isEmpty() -> MarketAlert.NoSkills
@@ -1420,7 +1450,7 @@ class SettingsViewModel @Inject constructor(
                 refreshAdhocSourceEntry()
                 val hits = listing.skills.filter { it.matchesQuery(query) }
                 _marketSearching.value = true
-                _marketSkills.value = hits.map { toMarketUi(it) }
+                publishMarket(hits)
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
                     hits.isEmpty() -> MarketAlert.NoMatchInRepo
@@ -1474,7 +1504,7 @@ class SettingsViewModel @Inject constructor(
                 _marketSourceId.value = ADHOC_MARKET_ID
                 _marketSearching.value = false
                 refreshAdhocSourceEntry()
-                _marketSkills.value = listing.skills.map { toMarketUi(it) }
+                publishMarket(listing.skills)
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
                     listing.skills.isEmpty() -> MarketAlert.NoSkills
@@ -1507,10 +1537,10 @@ class SettingsViewModel @Inject constructor(
             _marketSearching.value = false
             val listing = withContext(Dispatchers.IO) {
                 skillMarketRepository.listSkills(sourceId) { partial ->
-                    _marketSkills.value = partial.map { toMarketUi(it) }
+                    publishMarket(partial)
                 }
             }
-            _marketSkills.value = listing.skills.map { toMarketUi(it) }
+            publishMarket(listing.skills)
             if (listing.failed) _marketAlert.value = MarketAlert.LoadFailed
             _marketLoading.value = false
         }
@@ -1521,6 +1551,42 @@ class SettingsViewModel @Inject constructor(
         installed = skillMarketRepository.isInstalled(skill),
         hasUpdate = skillMarketRepository.hasUpdate(skill)
     )
+
+    /** 列表的统一出口：先映射成 UI 模型，再按当前排序方式排一遍。 */
+    private fun publishMarket(skills: List<MarketSkill>) {
+        _marketSkills.value = sortMarket(skills.map { toMarketUi(it) })
+    }
+
+    private fun sortMarket(items: List<MarketSkillUi>): List<MarketSkillUi> = when (_marketSort.value) {
+        MarketSort.Default -> items
+        MarketSort.Name -> items.sortedBy { it.skill.displayName.ifBlank { it.skill.name }.lowercase() }
+        MarketSort.Popular -> items.sortedByDescending { it.skill.installs }
+    }
+
+    /** 切换排序。列表已在内存里，原地重排即可，不用重新拉。 */
+    fun setMarketSort(sort: MarketSort) {
+        if (_marketSort.value == sort) return
+        _marketSort.value = sort
+        _marketSkills.value = sortMarket(_marketSkills.value)
+    }
+
+    /** 打开市场详情页并拉取详情（文件清单 + SKILL.md）。拉不到也进页面，只是内容为空。 */
+    fun openMarketDetail(skill: MarketSkill) {
+        _marketDetail.value = MarketDetailUi(toMarketUi(skill), loading = true, detail = null)
+        viewModelScope.launch {
+            val detail = withContext(Dispatchers.IO) {
+                runCatching { skillMarketRepository.loadDetail(skill) }.getOrNull()
+            }
+            // 拉的过程中用户可能已经返回，或点了另一个技能
+            _marketDetail.value = _marketDetail.value
+                ?.takeIf { it.ui.skill == skill }
+                ?.copy(loading = false, detail = detail)
+        }
+    }
+
+    fun closeMarketDetail() {
+        _marketDetail.value = null
+    }
 
     /** 从市场安装（已存在则覆盖更新）一个技能到指定作用域，完成后刷新市场与本地列表。 */
     fun installFromMarket(skill: MarketSkill, scope: SkillScope) {
@@ -1660,6 +1726,36 @@ class SettingsViewModel @Inject constructor(
 
     fun clearSkillImportState() {
         _skillImportState.value = SkillImportState.Idle
+    }
+
+    /**
+     * 导出技能：在缓存目录打一个 zip，成功后由 UI 弹系统分享。
+     * 内置技能也能导——正文从 assets 现攒一份 SKILL.md 打进包里，导出的东西同样能导回来。
+     */
+    fun exportSkill(entry: SkillUiEntry) {
+        if (_skillExportState.value is SkillExportState.Running) return
+        _skillExportState.value = SkillExportState.Running
+        viewModelScope.launch {
+            val file = withContext(Dispatchers.IO) {
+                val bytes = runCatching { skillRepository.exportZip(entry.name, entry.scope) }.getOrNull()
+                if (bytes == null) return@withContext null
+                runCatching {
+                    // 缓存目录已在 FileProvider 的授权范围里（见 res/xml/file_paths.xml 的 cache-path）
+                    val dir = File(context.cacheDir, EXPORT_DIR).apply { mkdirs() }
+                    File(dir, "${entry.name}.zip").apply { writeBytes(bytes) }
+                }.getOrNull()
+            }
+            _skillExportState.value = if (file == null) {
+                SkillExportState.Failed
+            } else {
+                SkillExportState.Ready(file, entry.name)
+            }
+        }
+    }
+
+    /** UI 弹过分享面板后调，避免重组时重复弹。 */
+    fun clearSkillExportState() {
+        _skillExportState.value = SkillExportState.Idle
     }
 
     /** 查询所选文件的显示名（含扩展名）；取不到时回退到 URI 末段。 */

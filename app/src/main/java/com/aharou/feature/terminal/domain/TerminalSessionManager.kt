@@ -110,14 +110,15 @@ class TerminalSessionManager @Inject constructor(
      */
     suspend fun createEnvToolTab(): String = createTab(runEnvTool = true)
 
-    private suspend fun createTab(runEnvTool: Boolean): String {
+    private suspend fun createTab(runEnvTool: Boolean, workspacePath: String? = null): String {
         FileLogger.i(TAG, "新建交互终端标签：开始准备容器（envTool=$runEnvTool）")
         ensureContainer()
         val id = nextId()
+        val workspace = resolveWorkspace(workspacePath)
         val shellCommand = buildInteractiveCommand(runEnvTool)
         FileLogger.i(TAG, "交互 shell 命令（$id）：$shellCommand")
         val (session, client) = try {
-            buildSession(shellCommand)
+            buildSession(shellCommand, workspace)
         } catch (e: Exception) {
             FileLogger.e(TAG, "创建交互终端会话失败（$id）", e)
             containerEngine.logContainerDiagnostics("创建交互终端会话失败")
@@ -130,6 +131,7 @@ class TerminalSessionManager @Inject constructor(
                 session = session,
                 isBackground = false,
                 command = null,
+                workspacePath = workspace,
                 client = client,
                 runState = RunState.Running
             )
@@ -185,10 +187,12 @@ class TerminalSessionManager @Inject constructor(
         command: String,
         title: String?,
         notify: Boolean,
-        sourceSessionId: String?
+        sourceSessionId: String?,
+        workspacePath: String?
     ): String {
         ensureContainer()
         val id = nextId()
+        val workspace = resolveWorkspace(workspacePath)
         // 用 `ec=$?` 捕获命令真实退出码后再 echo，否则 echo 本身恒为 0 会覆盖进程退出码，导致
         // onFinished 回调里的 exitStatus 永远是 0、与屏幕上 echo 出来的码对不上。
         // notify=true：echo 后 `exit $ec` 让 shell 以命令真实退出码结束 → proot 透传 → 回调 exitStatus
@@ -199,7 +203,7 @@ class TerminalSessionManager @Inject constructor(
         val afterCommand = if (notify) "; exit \$ec" else "; exec ${containerEngine.defaultShell()}"
         val shellCommand = "cd ~/workspace 2>/dev/null; export ENV=/etc/profile; " +
             "$command; ec=\$?; echo \"[command exited: \$ec]\"$afterCommand"
-        val (session, client) = buildSession(shellCommand)
+        val (session, client) = buildSession(shellCommand, workspace)
         addTab(
             TerminalTab(
                 id = id,
@@ -209,6 +213,7 @@ class TerminalSessionManager @Inject constructor(
                 command = command,
                 notifyOnExit = notify,
                 sourceSessionId = sourceSessionId,
+                workspacePath = workspace,
                 client = client,
                 runState = RunState.Running
             )
@@ -281,7 +286,8 @@ class TerminalSessionManager @Inject constructor(
             title = it.title,
             isBackground = it.isBackground,
             running = it.runState is RunState.Running,
-            command = it.command
+            command = it.command,
+            workspacePath = it.workspacePath
         )
     }
 
@@ -409,8 +415,11 @@ class TerminalSessionManager @Inject constructor(
      * client 的 viewProvider/onFinished 都以 session 为键回查 [_tabs]：会话与标签一一对应，
      * 故无需把 tab 引用提前注入 client（避免「构造 client 时 tab 还不存在」的先有鸡先有蛋）。
      */
-    private fun buildSession(shellCommand: String): Pair<TerminalSession, AppTerminalSessionClient> {
-        val workspace = workspaceRepository.currentPath()
+    /** 会话工作区优先，缺省退回全局当前工作区（用户手动开标签时没有发起会话）。 */
+    private fun resolveWorkspace(workspacePath: String?): String =
+        workspacePath?.takeIf { it.isNotBlank() } ?: workspaceRepository.currentPath()
+
+    private fun buildSession(shellCommand: String, workspace: String): Pair<TerminalSession, AppTerminalSessionClient> {
         val invocation = containerEngine.buildProotInvocation(shellCommand, workspace)
         FileLogger.i(
             TAG,

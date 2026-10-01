@@ -123,6 +123,12 @@ class StatefulAgentWorkflow @Inject constructor(
         /** 模型直出图片落盘目录（与 GenerateImageTool 保持一致）。 */
         const val GENERATED_IMAGE_DIR = "~/.aharou/generated-images"
         const val MAX_GENERATED_IMAGE_BYTES = 20L * 1024 * 1024
+
+        /**
+         * 单次任务里工具调用的总次数上限（跨轮累加）。模型可能陷入「调工具→再调工具」的循环，
+         * 到量后回一条提示并结束本轮，不再只能靠用户手动停止。
+         */
+        const val MAX_TOTAL_TOOL_CALLS = 200
     }
 
     /**
@@ -147,7 +153,11 @@ class StatefulAgentWorkflow @Inject constructor(
         /** 已批准、待并行执行的 toolCall */
         val approvedToolCalls: List<ToolCall> = emptyList(),
         /** 被策略/系统拒绝（非用户拒绝）的 tool 结果，key = toolCall.id */
-        val rejectedToolResults: Map<String, ToolBatchResult> = emptyMap()
+        val rejectedToolResults: Map<String, ToolBatchResult> = emptyMap(),
+        /** 累计进入执行阶段的工具调用次数（跨轮累加），用于总次数熔断。 */
+        val totalToolCalls: Int = 0,
+        /** 已达上限并回传过一次提示：再触发时直接结束，不再给模型收尾回合。 */
+        val toolLimitNotified: Boolean = false
     )
 
     /** 改变状态的动作 (Action) */
@@ -358,13 +368,35 @@ class StatefulAgentWorkflow @Inject constructor(
                     // 本批多个 tool_call：全部进入待权限队列，逐个弹窗收集批准；
                     // 全部批准后才进入并行执行阶段（见 PermissionEvaluated / ToolBatchFinished）。
                     val toolCalls = action.response.toolCalls.toList()
-                    newState = newState.copy(
-                        batchToolCalls = toolCalls,
-                        pendingPermissionCalls = toolCalls,
-                        approvedToolCalls = emptyList(),
-                        rejectedToolResults = emptyMap()
-                    )
-                    effects.add(AgentSideEffect.RequestPermission(toolCalls.first()))
+                    if (newState.totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
+                        // 到上限：不再执行，但要按 assistant(toolCalls) 的顺序补齐 tool 响应后收尾。
+                        // 第一次触发先回一条提示让模型收口，再触发就直接结束——
+                        // 否则提示本身又变成一轮模型调用，循环还是停不下来。
+                        val exhausted = toolCalls.map { call ->
+                            AgentMessage.ToolResultMessage(
+                                id = call.id,
+                                toolName = call.name,
+                                result = ToolResult.Error(
+                                    "本次任务的工具调用已达上限（$MAX_TOTAL_TOOL_CALLS 次），该调用未执行。请基于已有信息给出结论，或向用户说明还差什么。",
+                                    "TOOL_CALL_LIMIT"
+                                ).toTransportString()
+                            )
+                        }
+                        if (newState.toolLimitNotified) {
+                            newState = newState.copy(messages = newState.messages + exhausted, isFinished = true)
+                        } else {
+                            newState = newState.copy(messages = newState.messages + exhausted, toolLimitNotified = true)
+                            effects.add(AgentSideEffect.CallLlm)
+                        }
+                    } else {
+                        newState = newState.copy(
+                            batchToolCalls = toolCalls,
+                            pendingPermissionCalls = toolCalls,
+                            approvedToolCalls = emptyList(),
+                            rejectedToolResults = emptyMap()
+                        )
+                        effects.add(AgentSideEffect.RequestPermission(toolCalls.first()))
+                    }
                 }
             }
             is AgentAction.LlmError -> {
@@ -457,7 +489,8 @@ class StatefulAgentWorkflow @Inject constructor(
                     batchToolCalls = emptyList(),
                     pendingPermissionCalls = emptyList(),
                     approvedToolCalls = emptyList(),
-                    rejectedToolResults = emptyMap()
+                    rejectedToolResults = emptyMap(),
+                    totalToolCalls = state.totalToolCalls + newState.batchToolCalls.size
                 )
                 effects.add(AgentSideEffect.CallLlm)
             }
@@ -553,7 +586,12 @@ class StatefulAgentWorkflow @Inject constructor(
                             val messagesToSend = sanitizeImagesForModel(compactedMessages, supportsVision)
                             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
                             var samplingLoopCut = false
-                            providerInUse.completeStream(systemPrompt, messagesToSend, currentTools, currentContext.reasoningEffort)
+                            // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：
+                            // 每轮重新过滤，命中之后下一轮就能直接调用。
+                            val promptTools = currentTools.filter {
+                                !it.deferredLoading || toolRegistry.isActivated(it.name)
+                            }
+                            providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
                                 .takeWhile { !samplingLoopCut }
                                 .collect { chunk ->
                                 when (chunk) {
@@ -706,7 +744,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.RequestPermission -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId)
+                        val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
 
                         if (!checkResult.approved) {
                             val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toTransportString()
@@ -747,17 +785,39 @@ class StatefulAgentWorkflow @Inject constructor(
                             }
                         }
 
+                        // 批内去重：模型偶尔会在同一次响应里给出完全相同的调用（同名同参），
+                        // 重复执行就是真跑两遍（写文件、执行命令都一样）。重复项不执行，只补一条说明，
+                        // 仍按原顺序返回，保持 tool 消息条数与 assistant(toolCalls) 对齐（否则 API 报 400）ｊ
+                        val seenSignatures = HashSet<String>()
+                        val duplicateSignatures = HashSet<String>()
+                        toolCalls.forEach { toolCall ->
+                            if (!seenSignatures.add(toolCallSignature(toolCall))) {
+                                duplicateSignatures.add(toolCallSignature(toolCall))
+                            }
+                        }
+
                         val runResults = if (toolCalls.isEmpty()) {
                             emptyList()
                         } else {
                             coroutineScope {
                                 toolCalls.map { toolCall ->
+                                    val isDuplicate = toolCallSignature(toolCall) in duplicateSignatures
                                     async {
-                                        val tool = toolRegistry.getTool(toolCall.name)
-                                        if (tool is StreamingAgentTool) {
-                                            runToolStream(tool, toolCall, currentContext) { send(it) }
+                                        if (isDuplicate) {
+                                            ToolRunResult(
+                                                ToolResult.Error(
+                                                    "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。",
+                                                    "DUPLICATE_TOOL_CALL"
+                                                ).toTransportString(),
+                                                true
+                                            )
                                         } else {
-                                            runToolSync(tool, toolCall, currentContext)
+                                            val tool = toolRegistry.getTool(toolCall.name)
+                                            if (tool is StreamingAgentTool) {
+                                                runToolStream(tool, toolCall, currentContext) { send(it) }
+                                            } else {
+                                                runToolSync(tool, toolCall, currentContext)
+                                            }
                                         }
                                     }
                                 }.awaitAll()
@@ -853,6 +913,10 @@ class StatefulAgentWorkflow @Inject constructor(
         state.error?.let { send(AgentEvent.Failed(it, state.errorCode)) }
         send(AgentEvent.Completed)
     }
+
+    /** 工具调用的去重签名：同名且参数完全相同才算重复。 */
+    private fun toolCallSignature(toolCall: ToolCall): String =
+        toolCall.name + "\u0000" + JsonObject(toolCall.arguments).toString()
 
     private suspend fun runToolSync(tool: AgentTool?, toolCall: ToolCall, context: AgentContext): ToolRunResult {
         val name = toolCall.name
@@ -1266,7 +1330,9 @@ class StatefulAgentWorkflow @Inject constructor(
         arguments: Map<String, JsonElement>,
         argsPreview: String,
         mode: AgentMode,
-        sessionId: String?
+        sessionId: String?,
+        /** 发起这次调用的会话工作区，授权规则按它读写（不是界面当前选中的工作区）。 */
+        workspacePath: String
     ): PermissionCheckResult {
         if (tool == null) {
             return PermissionCheckResult(true)
@@ -1281,7 +1347,7 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
 
-        val eval = policyEngine.evaluate(tool, tool.name, arguments, mode)
+        val eval = policyEngine.evaluate(tool, tool.name, arguments, mode, workspacePath)
         if (eval.verdict == ToolPermissionPolicyEngine.Verdict.DENY) {
             val reason = eval.denyReason ?: "该工具被项目安全规则策略禁止执行"
             val code = if (mode == AgentMode.PLAN) "PLAN_MODE_REJECTED" else "SYSTEM_DENIED"
@@ -1308,7 +1374,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     PermissionChoice.ONCE -> PermissionCheckResult(true)
                     PermissionChoice.ALWAYS -> {
                         if (eval.rememberablePatterns.isNotEmpty()) {
-                            policyEngine.remember(tool.name, eval.rememberablePatterns, PermissionScope.PROJECT)
+                            policyEngine.remember(tool.name, eval.rememberablePatterns, PermissionScope.PROJECT, workspacePath)
                         }
                         PermissionCheckResult(true)
                     }

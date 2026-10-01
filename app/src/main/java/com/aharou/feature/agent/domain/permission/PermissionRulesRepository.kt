@@ -176,7 +176,7 @@ class PermissionRulesRepository @Inject constructor(
      */
     val currentProjectRulesFlow: Flow<List<PermissionRule>> =
         workspaceRepository.current.flatMapLatest { ws ->
-            if (ws == null) flowOf(emptyList()) else projectRulesFlow(ws.name)
+            if (ws == null) flowOf(emptyList()) else projectRulesFlow(ws.path)
         }
 
     /** 全局规则流，供管理界面观察。 */
@@ -199,9 +199,8 @@ class PermissionRulesRepository @Inject constructor(
         }
     }
 
-    /** 指定项目的规则流，供管理界面观察。 */
-    fun projectRulesFlow(projectName: String): Flow<List<PermissionRule>> {
-        val workspacePath = workspaceRepository.currentPath()
+    /** 指定工作区的项目规则流，供管理界面观察。 */
+    fun projectRulesFlow(workspacePath: String): Flow<List<PermissionRule>> {
         val state = getProjectState(workspacePath)
         return flow {
             ensureProjectLoaded(workspacePath)
@@ -209,26 +208,32 @@ class PermissionRulesRepository @Inject constructor(
         }
     }
 
+    /** UI 用：界面当前选中工作区的生效规则。工具评估请用 [loadEffectiveFor]，避免用错工作区。 */
+    suspend fun loadEffectiveForCurrentProject(): List<PermissionRule> =
+        loadEffectiveFor(workspaceRepository.currentPath())
+
     /**
-     * 评估用：当前项目规则 + 全局规则合并（项目在前）。一次性读取快照。
+     * 评估/记忆用：指定工作区的项目规则 + 全局规则合并（项目在前）。一次性读取快照。
+     *
+     * 必须传「发起这次工具调用的会话所绑定的工作区」——界面当前选中的工作区在多会话并行、
+     * 或权限弹窗挂起期间被切换时都可能与会话工作区不一致，用错会把授权写到别的工作区。
      */
-    suspend fun loadEffectiveForCurrentProject(): List<PermissionRule> {
+    suspend fun loadEffectiveFor(workspacePath: String): List<PermissionRule> {
         ensureGlobalLoaded()
         val global = globalState.value ?: emptyList()
-        val workspacePath = workspaceRepository.currentPath()
         ensureProjectLoaded(workspacePath)
         val project = getProjectState(workspacePath).value ?: emptyList()
         return project + global
     }
 
-    /** 按 scope 新增规则。PROJECT 写入当前项目；无当前项目则忽略并告警。 */
-    suspend fun add(scope: PermissionScope, rule: PermissionRule) {
+    /**
+     * 按 scope 新增规则。PROJECT 写入 [workspacePath] 指向的工作区——由调用方传
+     * 「发起这次调用的会话工作区」，本方法不能自己取界面当前工作区。
+     */
+    suspend fun add(scope: PermissionScope, rule: PermissionRule, workspacePath: String) {
         when (scope) {
             PermissionScope.GLOBAL -> editGlobal { if (rule !in it) it.add(rule) }
-            PermissionScope.PROJECT -> {
-                val workspacePath = workspaceRepository.currentPath()
-                editProject(workspacePath) { if (rule !in it) it.add(rule) }
-            }
+            PermissionScope.PROJECT -> editProject(workspacePath) { if (rule !in it) it.add(rule) }
         }
         FileLogger.i(TAG, "记忆授权规则[$scope]: ${rule.toolName} ${rule.pattern}")
     }
@@ -236,17 +241,20 @@ class PermissionRulesRepository @Inject constructor(
     suspend fun removeGlobalRule(rule: PermissionRule) = editGlobal { it.remove(rule) }
 
     suspend fun removeProjectRule(projectName: String, rule: PermissionRule) {
-        val workspacePath = workspaceRepository.currentPath()
-        editProject(workspacePath) { it.remove(rule) }
+        editProject(projectPathByName(projectName)) { it.remove(rule) }
     }
 
     /** 把一条项目规则提升为全局：项目删、全局加。 */
     suspend fun promoteToGlobal(projectName: String, rule: PermissionRule) {
-        val workspacePath = workspaceRepository.currentPath()
-        editProject(workspacePath) { it.remove(rule) }
+        editProject(projectPathByName(projectName)) { it.remove(rule) }
         editGlobal { if (rule !in it) it.add(rule) }
         FileLogger.i(TAG, "提升为全局: ${rule.toolName} ${rule.pattern}")
     }
+
+    /** 按工作区名解析路径；列表里找不到时退回当前工作区（UI 操作的对象通常就是它）。 */
+    private fun projectPathByName(projectName: String): String =
+        workspaceRepository.workspaces.value.firstOrNull { it.name == projectName }?.path
+            ?: workspaceRepository.currentPath()
 
     // ── 内部写入 ────────────────────────────────────────────────
 

@@ -98,6 +98,12 @@ abstract class AgentTool {
     open val permissionPolicy: ToolPermissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
     open val capabilities: Set<ToolCapability> = emptySet()
 
+    /**
+     * 延迟加载：为 true 的工具不直接进每轮 tools 数组，先由 `tool_search` 按需发现后才展开 schema。
+     * 用于 MCP 这类「工具多、单轮用不上几个」的来源，避免全量定义长期占上下文。
+     */
+    open val deferredLoading: Boolean = false
+
     open fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         return capabilities
     }

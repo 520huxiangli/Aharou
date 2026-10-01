@@ -9,6 +9,9 @@ class ToolRegistry {
     // 前缀顺序漂移打断隐式前缀缓存；synchronizedMap 保证并发注册/读取安全。
     private val tools = Collections.synchronizedMap(LinkedHashMap<String, AgentTool>())
 
+    /** 已展开的延迟加载工具名。只在 [activate] 里增长，[unregister] 时随之清理。 */
+    private val activated = mutableSetOf<String>()
+
     fun register(name: String, tool: AgentTool) {
         tools[name] = tool
     }
@@ -19,6 +22,7 @@ class ToolRegistry {
 
     fun unregister(name: String) {
         tools.remove(name)
+        synchronized(activated) { activated.remove(name) }
     }
 
     fun getToolNames(): Set<String> {
@@ -34,6 +38,20 @@ class ToolRegistry {
             return tools.values.toList()
         }
     }
+
+    /** 延迟加载工具的目录（名称 + 描述），供 `tool_search` 检索。 */
+    fun getDeferredTools(): List<AgentTool> {
+        synchronized(tools) {
+            return tools.values.filter { it.deferredLoading }
+        }
+    }
+
+    /** 展开一批延迟加载工具，使其进入后续每轮的 tools 数组。 */
+    fun activate(names: Collection<String>) {
+        synchronized(activated) { activated.addAll(names) }
+    }
+
+    fun isActivated(name: String): Boolean = synchronized(activated) { name in activated }
 
     fun hasTool(name: String): Boolean {
         return tools.containsKey(name)

@@ -114,5 +114,10 @@ data class MarketSkill(
      */
     val needsLocate: Boolean = false,
     /** 检索型源带来的安装量，仅用于展示。 */
-    val installs: Long = 0
+    val installs: Long = 0,
+    /**
+     * 安装前的风险提示（附带的脚本、是否要凭据）。
+     * 列表页只有补读过 SKILL.md 的技能才带得上；拿不到时为 null，不代表「安全」。
+     */
+    val safety: SkillSafety? = null
 )

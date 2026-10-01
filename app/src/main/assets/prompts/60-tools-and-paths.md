@@ -19,8 +19,9 @@
   需要看多处代码时，一次 `search` 用 `|` 或 `-e` 覆盖多个模式，或一次 `readFile` 按行范围取足够上下文；
   拿不准范围就先取大一点、一次读完，宁可多读几行也不要反复小步试探。**每多一次调用就多一轮完整上下文重发，是成本的主要来源。**
 - 命令：一次性命令用 `Bash`（内置 `git`、`rg`、`py`/`python`、`node`，不要先问是否安装）；常驻或交互式会话用 `terminal`。
-- `terminal`：会自行结束且需等结果的命令用 `notify=true`（结束后系统主动通知，不要轮询）；常驻服务用 `notify=false`，配合 `read`/`send`/`key`/`close`；启动新会话前先 `read` 查看并复用已有标签。它也能驱动交互式程序（编辑器、问答、REPL、ssh 等）：`start` 后停在提示处，用 `send` 逐行输入，`key` 发控制键。
+- `terminal`：会自行结束且需等结果的命令用 `notify=true`（结束后系统主动通知，不要轮询）；常驻服务用 `notify=false`，配合 `read`/`send`/`key`/`close`；启动新会话前先 `read` 查看并复用已有标签。它也能驱动交互式程序（编辑器、问答、REPL、ssh 等）：`start` 后停在提示处，用 `send` 逐行输入，`key` 发控制键。标签在 `start` 那一刻就绑死发起会话的工作区，之后切工作区不会跟随——`read` 会把绑定了别的工作区的标签标出来，那类标签里发命令只落在它自己那个仓库，要在当前工作区操作就重新 `start` 一个。
 - `Bash` 与 `terminal` 支持 `elevate: true`：命令因内置安全防护（灾难性删除等）被拒且确有必要时，加 `elevate` 重试会弹窗请用户一次性授权；仅非 PLAN 模式有效。
+- MCP 工具默认**不在**工具列表里（server 工具多，全量注入会吃掉大量上下文）：要用时先 `tool_search` 传关键词找，命中后从下一轮起可直接调。不确定有哪些时把 `query` 留空列出目录。
 - 以 adb shell（uid 2000）身份操作宿主 Android 系统用 `Shizuku`（需用户已授权，每次调用都会弹窗确认）。
 - 网络：时效性问题用 `websearch`，抓取网页用 `webfetch`，页面自动化用 `browser`（多标签、可后台运行）。图像生成用 `generateImage`。
 - 交互与流程：需要用户决策时用 `askUserQuestion`（仅当回答会改变下一步行动）；进出 PLAN 模式用 `planMode`（`action="enter"` 进入，`action="exit"` 退出并自动恢复到进入前的模式）；任务清单用 `todo`；长期记忆用 `memory`。

@@ -125,7 +125,17 @@ class ToolPermissionPolicyEngine @Inject constructor(
         val askTitle: String? = null
     )
 
-    suspend fun evaluate(tool: AgentTool?, toolName: String, args: Map<String, JsonElement>, mode: com.aharou.feature.agent.domain.model.AgentMode): EvalResult {
+    /**
+     * @param workspacePath 发起这次工具调用的**会话工作区**（不是界面当前选中的工作区），
+     *   规则读取与「始终允许」落库都以它为准，避免多会话或切工作区时读写到别的范围。
+     */
+    suspend fun evaluate(
+        tool: AgentTool?,
+        toolName: String,
+        args: Map<String, JsonElement>,
+        mode: com.aharou.feature.agent.domain.model.AgentMode,
+        workspacePath: String
+    ): EvalResult {
         val capabilities = tool?.effectiveCapabilities(args).orEmpty()
         if (mode == com.aharou.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args, capabilities)) {
             return EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。")
@@ -162,7 +172,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
         if (toolName == TASK_TOOL) {
             val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
             if (action in TASK_AUTO_ACTIONS) {
-                val rules = rulesRepo.loadEffectiveForCurrentProject().filter { it.toolName == toolName }
+                val rules = rulesRepo.loadEffectiveFor(workspacePath).filter { it.toolName == toolName }
                 val whole = rules.filter { it.pattern == PermissionRule.WHOLE_TOOL }
                 if (whole.any { it.decision == PermissionDecision.DENY }) {
                     return EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行")
@@ -171,7 +181,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
             }
         }
 
-        val rules = rulesRepo.loadEffectiveForCurrentProject().filter { it.toolName == toolName }
+        val rules = rulesRepo.loadEffectiveFor(workspacePath).filter { it.toolName == toolName }
         return if (isShellTool(toolName, args)) {
             evaluateShell(rules, args, forceAsk = toolName == SHIZUKU_TOOL)
         } else {
@@ -252,10 +262,10 @@ class ToolPermissionPolicyEngine @Inject constructor(
             )
         }
 
-    /** 把「始终允许」的选择落库为 ALLOW 规则（去重交给仓库）。 */
-    suspend fun remember(toolName: String, patterns: List<String>, scope: PermissionScope) {
+    /** 把「始终允许」的选择落库为 ALLOW 规则（去重交给仓库）。[workspacePath] 见 [evaluate]。 */
+    suspend fun remember(toolName: String, patterns: List<String>, scope: PermissionScope, workspacePath: String) {
         patterns.distinct().forEach { pattern ->
-            rulesRepo.add(scope, PermissionRule(toolName, pattern, PermissionDecision.ALLOW))
+            rulesRepo.add(scope, PermissionRule(toolName, pattern, PermissionDecision.ALLOW), workspacePath)
         }
     }
 

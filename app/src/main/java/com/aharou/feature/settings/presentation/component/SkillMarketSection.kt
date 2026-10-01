@@ -1,6 +1,7 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,8 +39,10 @@ import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
+import com.aharou.feature.agent.domain.skill.market.SkillSafety
 import com.aharou.feature.settings.presentation.MarketAlert
 import com.aharou.feature.settings.presentation.MarketSkillUi
+import com.aharou.feature.settings.presentation.MarketSort
 
 /**
  * 技能市场页（全屏二级页，与「技能详情」同一层级）：顶部粘贴仓库地址或选源，下方列出可安装的技能。
@@ -54,11 +57,14 @@ internal fun SkillMarketSection(
     loading: Boolean,
     alert: MarketAlert?,
     scope: SkillScope,
+    sort: MarketSort,
     onScopeChange: (SkillScope) -> Unit,
     onSelectSource: (String) -> Unit,
     onInstall: (MarketSkill) -> Unit,
     onLoadRepo: (String) -> Unit,
-    onSearch: (String, String) -> Unit
+    onSearch: (String, String) -> Unit,
+    onSortChange: (MarketSort) -> Unit,
+    onOpenDetail: (MarketSkill) -> Unit
 ) {
     var repoInput by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
@@ -162,6 +168,25 @@ internal fun SkillMarketSection(
             }
         }
 
+        // 排序放在列表正上方：与上面的表单分开，滚列表时不动
+        if (skills.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.sm),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                MarketSort.entries.forEach { option ->
+                    FilterChip(
+                        selected = option == sort,
+                        onClick = { onSortChange(option) },
+                        label = { Text(stringResource(option.labelRes())) }
+                    )
+                }
+            }
+        }
+
         when {
             // 列表已有内容就先显示——描述还在后台补，不必等全部读完
             skills.isNotEmpty() -> LazyColumn(
@@ -171,7 +196,7 @@ internal fun SkillMarketSection(
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
-                    MarketSkillRow(ui, onInstall)
+                    MarketSkillRow(ui, onInstall, onOpenDetail)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
             }
@@ -181,14 +206,19 @@ internal fun SkillMarketSection(
     }
 }
 
-/** 单条市场技能：名称 + 描述 + 作者/许可，右侧是安装/更新/已安装操作。 */
+/** 单条市场技能：名称 + 描述 + 作者/许可/安装量/风险标记，右侧是安装/更新/已安装操作。整行可点进详情。 */
 @Composable
-private fun MarketSkillRow(ui: MarketSkillUi, onInstall: (MarketSkill) -> Unit) {
+private fun MarketSkillRow(
+    ui: MarketSkillUi,
+    onInstall: (MarketSkill) -> Unit,
+    onOpenDetail: (MarketSkill) -> Unit
+) {
     val skill = ui.skill
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.semanticColors.cardSurface, RoundedCornerShape(10.dp))
+            .clickable { onOpenDetail(skill) }
             .padding(horizontal = Spacing.md, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -217,12 +247,24 @@ private fun MarketSkillRow(ui: MarketSkillUi, onInstall: (MarketSkill) -> Unit) 
                     skill.repo.takeIf { skill.needsLocate && it.isNotBlank() },
                     skill.author.takeIf { it.isNotBlank() },
                     skill.version.takeIf { it.isNotBlank() },
-                    skill.license.takeIf { it.isNotBlank() }
+                    skill.license.takeIf { it.isNotBlank() },
+                    skill.installs.takeIf { it > 0 }?.let { formatInstalls(it) }
                 ).joinToString(" · ")
             }
             if (meta.isNotEmpty()) {
                 Text(
                     text = meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.semanticColors.subtleText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            // 风险提示只报「有什么」，不报「危不危险」；列表里给一行浅字，详情页再展开说
+            val risk = skill.safety?.let { safetyHint(it) }
+            if (risk != null) {
+                Text(
+                    text = risk,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.semanticColors.subtleText,
                     maxLines = 1,
@@ -275,4 +317,26 @@ private fun MarketAlertText(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.semanticColors.subtleText
     )
+}
+
+private fun MarketSort.labelRes(): Int = when (this) {
+    MarketSort.Default -> R.string.skills_market_sort_default
+    MarketSort.Name -> R.string.skills_market_sort_name
+    MarketSort.Popular -> R.string.skills_market_sort_popular
+}
+
+/** 安装量折成 1.2k / 10.5k，免得长数字把一整行挤满。 */
+private fun formatInstalls(count: Long): String =
+    if (count >= 1000) "${count / 1000}.${(count % 1000) / 100}k" else count.toString()
+
+/** 列表上的风险概要；没得说的返回 null。 */
+@Composable
+private fun safetyHint(safety: SkillSafety): String? {
+    val parts = buildList {
+        if (safety.scripts.isNotEmpty()) {
+            add(stringResource(R.string.skills_market_risk_scripts, safety.scripts.size))
+        }
+        if (safety.needsCredentials) add(stringResource(R.string.skills_market_risk_credentials))
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }

@@ -70,6 +70,9 @@ class McpTool(
     // 所有 MCP 工具统一走工具权限：默认需审核，可「始终允许」记忆（见 ToolPermissionPolicyEngine）。
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
+    /** MCP 工具默认不直接注入 schema——单轮用不上几个，全量注入会吃掉大量上下文（见 tool_search）。 */
+    override val deferredLoading = true
+
     // MCP 工具直接用原始 schema，不走 parameters 这条路；保留空 map 满足基类契约。
     override val parameters: Map<String, ToolParameter> = emptyMap()
 

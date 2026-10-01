@@ -30,8 +30,9 @@ class DelegatingTerminalSessionProvider @Inject constructor(
         command: String,
         title: String?,
         notify: Boolean,
-        sourceSessionId: String?
-    ): String = delegate().startBackgroundCommand(command, title, notify, sourceSessionId)
+        sourceSessionId: String?,
+        workspacePath: String?
+    ): String = delegate().startBackgroundCommand(command, title, notify, sourceSessionId, workspacePath)
 
     override fun sendInput(id: String, input: String, appendNewline: Boolean): Boolean =
         delegate().sendInput(id, input, appendNewline)
