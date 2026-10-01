@@ -473,10 +473,10 @@
     <string name="about_auto_check_update">Auto check for updates</string>
     <string name="about_auto_check_update_desc">Check for new versions when the app opens</string>
     <string name="about_update_channel">Update Channel</string>
-    <string name="update_channel_stable">Stable</string>
-    <string name="update_channel_stable_desc">Stable releases only</string>
+    <string name="update_channel_stable">Release</string>
+    <string name="update_channel_stable_desc">Release builds only</string>
     <string name="update_channel_latest">Beta</string>
-    <string name="update_channel_latest_desc">Also detects beta builds and pre-releases (RC)</string>
+    <string name="update_channel_latest_desc">Beta builds and RC pre-releases only</string>
     <string name="about_no_changelog">No changelog available</string>
 
     <!-- Ask User Question -->

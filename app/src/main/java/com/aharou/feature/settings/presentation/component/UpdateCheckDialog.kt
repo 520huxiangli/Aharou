@@ -239,7 +239,7 @@ internal fun installDownloadedApk(context: Context, apkPath: String) {
 /**
  * 指定版本 tag 的 GitHub Release 页面地址；tag 为空时回退到最新正式版页面。
  *
- * GitHub 的 `releases/latest` 只解析到最新的**正式** release（预发布不计入），最新版通道
- * 检测到 RC 时跳过去会看到旧的稳定版，因此必须按 tag 直达对应版本页面。
+ * GitHub 的 `releases/latest` 只解析到最新的**正式** release（预发布不计入），测试版通道
+ * 检测到 RC 时跳过去会看到旧的正式版，因此必须按 tag 直达对应版本页面。
  */
 internal fun githubReleaseUrl(tag: String?): String = UpdateDownloadSource.releasePage(tag)

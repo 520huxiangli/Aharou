@@ -246,7 +246,7 @@ private fun AboutHeaderCard(appName: String, appIcon: androidx.compose.ui.graphi
     }
 }
 
-/** 更新通道底部弹窗：稳定版 / 最新版 单选，样式对齐语言切换。 */
+/** 更新通道底部弹窗：正式版 / 测试版 单选，样式对齐语言切换。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun UpdateChannelSheet(

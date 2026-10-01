@@ -2036,7 +2036,7 @@ class SettingsViewModel @Inject constructor(
         _autoInstallEnabled.value = enabled
     }
 
-    /** 更新通道：稳定版 / 最新版。 */
+    /** 更新通道：正式版 / 测试版。 */
     fun setUpdateCheckChannel(channel: UpdateChannel) {
         updateCheckSettingsRepository.channel = channel
         _updateCheckChannel.value = channel

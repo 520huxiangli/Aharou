@@ -39,8 +39,8 @@ sealed interface UpdateCheckResult {
 /**
  * 从 GitHub Releases 拉取版本信息并生成更新日志。
  *
- * 稳定版通道过滤预发布（RC），最新版通道包含预发布；只统计严格高于当前版本的 release，
- * 更新日志按版本从高到低拼接（版本号 + 正文，轻量清理 markdown 标题/粗体）。
+ * 两个通道各收各的：正式版通道只出正式版（且需严格高于当前版本），测试版通道只出预发布
+ * （beta 与 RC）。更新日志按版本从高到低拼接（版本号 + 正文，轻量清理 markdown 标题/粗体）。
  * 结果不落盘，由调用方按需展示。
  */
 @Singleton
@@ -80,10 +80,17 @@ class UpdateCheckService @Inject constructor(
                         )
                     }
 
-                    val updates = releases
-                        .filter { if (channel == UpdateChannel.STABLE) !it.prerelease else true }
-                        .filter { compareVersions(it.version, currentVersion) > 0 }
-                        .sortedWith { a, b -> compareVersions(b.version, a.version) }
+                    // 两个通道各收各的：正式版通道只出正式版，测试版通道只出测试版（beta 与 RC）。
+                    // 测试版不做版本比较 —— beta 的 tag 是固定名（beta-latest），不是版本号，
+                    // 比不了；而且测试包本来就该每次都装最新的。
+                    val updates = when (channel) {
+                        UpdateChannel.STABLE -> releases
+                            .filter { !it.prerelease }
+                            .filter { compareVersions(it.version, currentVersion) > 0 }
+                            .sortedWith { a, b -> compareVersions(b.version, a.version) }
+                        // 只取最近一个：预发布里混着大量历史 dev 版，全拼进更新日志没意义。
+                        UpdateChannel.LATEST -> releases.filter { it.prerelease }.take(1)
+                    }
 
                     if (updates.isEmpty()) {
                         UpdateCheckResult.UpToDate

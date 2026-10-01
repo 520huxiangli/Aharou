@@ -8,7 +8,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import org.json.JSONObject
 
-/** 更新通道：稳定版（仅正式版）/ 最新版（含预览版）。 */
+/** 更新通道：正式版（仅正式版）/ 测试版（仅测试包，含 beta 与 RC）。 */
 enum class UpdateChannel {
     STABLE, LATEST
 }
@@ -31,7 +31,7 @@ class UpdateCheckSettingsRepository @Inject constructor(
             prefs.edit().putBoolean(KEY_ENABLED, value).apply()
         }
 
-    /** 更新通道，默认稳定版。 */
+    /** 更新通道，默认正式版。 */
     var channel: UpdateChannel
         get() = prefs.getString(KEY_CHANNEL, null)
             ?.let { runCatching { UpdateChannel.valueOf(it) }.getOrNull() }

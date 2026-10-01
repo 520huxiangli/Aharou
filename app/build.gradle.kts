@@ -26,9 +26,11 @@ if (keystorePropertiesFile.exists()) {
 //   3. 若无 git 环境或报错，fallback 到默认版本号 "1.7.0-dev"。
 // providers.exec 而非 Runtime.exec：配置缓存要求配置阶段的外部进程调用登记为 provider 输入，
 // 直接 fork 会让缓存条目被丢弃（external process started）。
+// --match "v*"：仓里还有 beta-latest 这类非版本 tag，不限制匹配的话 describe 会把它当成
+// 版本名返回，拼出 "1.7.0-dev+beta-latest" 这种垃圾版本号。
 val gitDescribeOutput = providers.exec {
     workingDir = rootProject.projectDir
-    commandLine("git", "describe", "--tags", "--always", "--dirty")
+    commandLine("git", "describe", "--tags", "--match", "v*", "--always", "--dirty")
     isIgnoreExitValue = true
 }.standardOutput.asText
 
