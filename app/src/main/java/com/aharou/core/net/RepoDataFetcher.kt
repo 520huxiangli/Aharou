@@ -77,7 +77,10 @@ class RepoDataFetcher(
                     .header("User-Agent", "aharou-android")
                     .get()
 
-                if (!cachedEtag.isNullOrBlank()) {
+                // maxAgeMs == 0（强制对账）时不带 If-None-Match：CDN 可能因自身上游副本
+                // 未刷新，拿旧 ETag 比出自家人为"未修改"而回 304，让我们继续沿用旧内容，
+                // 与强制对账的意图相反。强制对账就一定要拿全量正文。
+                if (maxAgeMs > 0 && !cachedEtag.isNullOrBlank()) {
                     reqBuilder.header("If-None-Match", cachedEtag)
                 }
 
@@ -85,6 +88,7 @@ class RepoDataFetcher(
                     when {
                         // 304 未修改：原缓存依旧有效，更新文件修改时间后直接返回
                         response.code == 304 && cachedContent != null -> {
+                            FileLogger.d(TAG, "304 命中缓存 url=$url")
                             cacheFile.setLastModified(now)
                             return@withContext FetchResult.Success(cachedContent, fromCache = true)
                         }
@@ -103,6 +107,7 @@ class RepoDataFetcher(
                                         etagFile.delete()
                                     }
                                 }
+                                FileLogger.d(TAG, "拉取成功 $cleanPath url=$url bytes=${body.length}")
                                 return@withContext FetchResult.Success(body, fromCache = false)
                             }
                         }

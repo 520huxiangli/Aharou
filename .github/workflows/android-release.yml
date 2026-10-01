@@ -246,6 +246,9 @@ jobs:
       # GitCode 那边下一次定时同步会补上。
       - name: Sync release assets to GitCode
         continue-on-error: true
+        # 卡住就早点放弃：GitCode 那边有每日定时同步兜底，没必要占着 runner 几小时。
+        # 底下的单次上传超时也要相应小于这个值。
+        timeout-minutes: 20
         env:
           GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
           GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}

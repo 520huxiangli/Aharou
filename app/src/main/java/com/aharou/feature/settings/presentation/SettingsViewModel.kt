@@ -880,6 +880,13 @@ class SettingsViewModel @Inject constructor(
 
     init {
         _imageCatalog.value = containerImageCatalog.load()
+        // 启动时的远端刷新是异步的：上面的 load() 可能先读到旧缓存并定格，
+        // 刷新成功后需要跟随更新，否则列表一直显示旧内容（含空初值，故忽略空表）。
+        viewModelScope.launch {
+            containerImageCatalog.images.collect { list ->
+                if (list.isNotEmpty()) _imageCatalog.value = list
+            }
+        }
         _imageSourceOptions.value = containerImageCatalog.sourceIds
         _selectedImageSource.value = containerImageCatalog.sourceIds.firstOrNull { it == "aharou" }
             ?: containerImageCatalog.sourceIds.firstOrNull { it == "official" }

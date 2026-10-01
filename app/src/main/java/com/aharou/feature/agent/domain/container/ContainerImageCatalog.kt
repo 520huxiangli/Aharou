@@ -6,6 +6,9 @@ import com.aharou.core.net.RepoDataFetcher
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -64,6 +67,11 @@ class ContainerImageCatalog @Inject constructor(
     @Volatile
     private var refreshAttemptedThisProcess = false
 
+    /** 镜像列表的可观察副本：启动时的刷新是异步的，设置页若先读一次会定格在旧缓存上，
+     *  刷新成功后需要有人推它一把才会重绘。 */
+    private val _images = MutableStateFlow<List<ContainerImageEntry>>(emptyList())
+    val images: StateFlow<List<ContainerImageEntry>> = _images.asStateFlow()
+
     /**
      * 仅供 App 启动阶段后台协程调用：拉取仓库里的最新清单并更新内存缓存。
      * 解析成功且镜像列表非空才采纳；任何失败都静默，UI 仍走磁盘缓存或内置 assets。
@@ -89,6 +97,7 @@ class ContainerImageCatalog @Inject constructor(
         }.getOrNull()
         if (parsed != null && parsed.images.isNotEmpty()) {
             cached = parsed
+            _images.value = parsed.images
             FileLogger.d(TAG, "远端镜像目录已更新：${parsed.images.size} 条、${parsed.sources.size} 个源")
         }
     }
@@ -100,6 +109,7 @@ class ContainerImageCatalog @Inject constructor(
     fun load(): List<ContainerImageEntry> {
         cached?.let {
             data = it
+            _images.value = it.images
             return it.images
         }
 
@@ -114,6 +124,7 @@ class ContainerImageCatalog @Inject constructor(
             if (parsed != null && parsed.images.isNotEmpty()) {
                 cached = parsed
                 data = parsed
+                _images.value = parsed.images
                 return parsed.images
             }
         }
@@ -126,6 +137,7 @@ class ContainerImageCatalog @Inject constructor(
             json.decodeFromString<ContainerImageCatalogData>(raw)
         }.getOrNull()
         data = parsed ?: ContainerImageCatalogData()
+        _images.value = data.images
         return data.images
     }
 
