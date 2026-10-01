@@ -490,12 +490,13 @@ class ToolPermissionPolicyEngineTest {
     @Test
     fun workspaceScope_readsRulesOfItsOwnWorkspace() = runTest {
         val repo = mockk<PermissionRulesRepository>(relaxed = true)
-        coEvery { repo.loadEffectiveFor("/ws/a") } returns listOf(PermissionRule("Bash", "ls", PermissionDecision.ALLOW))
+        // 刻意避开 ls/pwd 这类内置安全命令：它们在读规则之前就自动放行，任何工作区都是 ALLOW，测不出作用域。
+        coEvery { repo.loadEffectiveFor("/ws/a") } returns listOf(PermissionRule("Bash", "npm install", PermissionDecision.ALLOW))
         coEvery { repo.loadEffectiveFor("/ws/b") } returns emptyList()
         val e = ToolPermissionPolicyEngine(repo, mockk(relaxed = true))
 
-        val a = e.evaluate(tool(ToolCapability.EXECUTE_COMMANDS), "Bash", bash("ls"), AgentMode.BUILD, "/ws/a")
-        val b = e.evaluate(tool(ToolCapability.EXECUTE_COMMANDS), "Bash", bash("ls"), AgentMode.BUILD, "/ws/b")
+        val a = e.evaluate(tool(ToolCapability.EXECUTE_COMMANDS), "Bash", bash("npm install"), AgentMode.BUILD, "/ws/a")
+        val b = e.evaluate(tool(ToolCapability.EXECUTE_COMMANDS), "Bash", bash("npm install"), AgentMode.BUILD, "/ws/b")
 
         assertEquals(ToolPermissionPolicyEngine.Verdict.ALLOW, a.verdict)
         assertEquals(ToolPermissionPolicyEngine.Verdict.ASK, b.verdict)
