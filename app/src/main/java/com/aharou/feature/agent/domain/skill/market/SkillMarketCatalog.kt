@@ -36,8 +36,10 @@ class SkillMarketCatalog @Inject constructor(
         if (refreshAttemptedThisProcess) return@withContext
         refreshAttemptedThisProcess = true
 
+        // maxAgeMs = 0：跳过默认 12 小时保鲜期，每次启动条件请求对账，让清单改动立即生效
+        // （内容未变时靠 ETag 回 304）。
         val remote = when (val result = runCatching {
-            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH)
+            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
         }.getOrNull()) {
             is RepoDataFetcher.FetchResult.Success -> result.content
             is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content

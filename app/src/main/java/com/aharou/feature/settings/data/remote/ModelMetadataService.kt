@@ -66,7 +66,8 @@ class ModelMetadataService @Inject constructor(
         if (refreshAttemptedThisProcess) return
         refreshAttemptedThisProcess = true
         withContext(Dispatchers.IO) {
-            val result = runCatching { repoFetcher.fetch(MODELS_REPO_PATH) }.getOrNull()
+            // maxAgeMs = 0：跳过默认 12 小时保鲜期，每次启动条件请求对账，让清单改动立即生效。
+            val result = runCatching { repoFetcher.fetch(MODELS_REPO_PATH, maxAgeMs = 0L) }.getOrNull()
             val body = when (result) {
                 is RepoDataFetcher.FetchResult.Success -> result.content
                 is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content

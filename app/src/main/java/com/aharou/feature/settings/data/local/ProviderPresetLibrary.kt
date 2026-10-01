@@ -56,7 +56,8 @@ object ProviderPresetLibrary {
         refreshAttemptedThisProcess = true
 
         val fetcher = RepoDataFetcher(context)
-        val remoteResult = runCatching { fetcher.fetch(REMOTE_PROVIDERS_PATH) }.getOrNull()
+        // maxAgeMs = 0：跳过默认 12 小时保鲜期，每次启动条件请求对账，让清单改动立即生效。
+        val remoteResult = runCatching { fetcher.fetch(REMOTE_PROVIDERS_PATH, maxAgeMs = 0L) }.getOrNull()
         val remoteContent = when (remoteResult) {
             is RepoDataFetcher.FetchResult.Success -> remoteResult.content
             is RepoDataFetcher.FetchResult.FallbackDiskCache -> remoteResult.content

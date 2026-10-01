@@ -72,8 +72,11 @@ class ContainerImageCatalog @Inject constructor(
         if (refreshAttemptedThisProcess) return@withContext
         refreshAttemptedThisProcess = true
 
+        // maxAgeMs = 0：跳过 12 小时保鲜期，每次启动都做一次条件请求对账。
+        // 清单改动（加新版本、换源）应当立即生效，否则最长滞后 12 小时；
+        // 带 ETag，内容未变时服务端回 304，开销仅几十字节。
         val remote = when (val result = runCatching {
-            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH)
+            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
         }.getOrNull()) {
             is RepoDataFetcher.FetchResult.Success -> result.content
             is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content
