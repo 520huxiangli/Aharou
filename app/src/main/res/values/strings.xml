@@ -2029,6 +2029,29 @@
     <string name="floating_thinking">思考中…</string>
     <string name="floating_oem_hint">部分国产 ROM 还需允许「后台弹出界面」并保持自启动（见「软件权限」页），悬浮窗才能稳定。</string>
 
+    <string name="pet_title">桌宠</string>
+    <string name="pet_enable">启用小染桌宠</string>
+    <string name="pet_hint">开启后，小染会以悬浮窗的形式待在屏幕上：待机时面对你轻轻呼吸，偶尔自己走到别处，转身背对你偷懒；按住可拖动，点一下她会说话，双击换个朝向。她只在角色身上挡一点点击，其它地方不受影响。</string>
+    <string name="pet_size">桌宠大小</string>
+    <string name="pet_size_hint">点一下在小 / 中 / 大之间切换</string>
+    <string name="pet_size_small">小</string>
+    <string name="pet_size_medium">中</string>
+    <string name="pet_size_large">大</string>
+    <string name="pet_lock">锁定位置</string>
+    <string name="pet_lock_hint">锁上后不能拖动，避免误碰</string>
+    <string name="pet_notification_channel">桌宠</string>
+    <string name="pet_notification_text">小染正在屏幕上陪着你</string>
+    <string-array name="pet_lines">
+        <item>干嘛呀，人家在忙呢。</item>
+        <item>哼，又来看我一眼就想跑？</item>
+        <item>别摸头……痒。</item>
+        <item>你今天有没有好好吃饭？</item>
+        <item>我十八岁，永远十八岁。</item>
+        <item>无聊的话，就陪我站一会儿。</item>
+        <item>盯——你又在偷看我。</item>
+        <item>别熬太晚，我在这儿守着你。</item>
+    </string-array>
+
     <string name="memory_settings_title">记忆</string>
     <string name="memory_toggle_title">默认启用记忆</string>
     <string name="memory_toggle_subtitle">关闭后，新会话不再注入核心档案与每日日志（已有会话不受影响）</string>

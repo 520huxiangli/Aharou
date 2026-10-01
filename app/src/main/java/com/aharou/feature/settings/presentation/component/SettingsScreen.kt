@@ -156,6 +156,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ModelGroups(R.string.modelgroups_title),
     Accessibility(R.string.a11y_settings_title),
     FloatingWindow(R.string.floating_title),
+    Pet(R.string.pet_title),
     Memory(R.string.memory_settings_title),
     General(R.string.settings_general),
     Providers(R.string.settings_providers),
@@ -796,6 +797,7 @@ fun SettingsScreen(
                 SettingsSection.ModelGroups -> ModelGroupsSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.FloatingWindow -> FloatingWindowSection()
+                SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
@@ -1572,6 +1574,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.Smartphone,
                 title = stringResource(SettingsSection.FloatingWindow.titleRes),
                 onClick = { onOpen(SettingsSection.FloatingWindow) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Smile,
+                title = stringResource(SettingsSection.Pet.titleRes),
+                onClick = { onOpen(SettingsSection.Pet) }
             )
             SettingsDivider()
             SettingsRow(

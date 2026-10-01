@@ -2030,6 +2030,29 @@
     <string name="floating_thinking">Thinking…</string>
     <string name="floating_oem_hint">Some OEM ROMs also require background-popup permission and autostart for the capsule to stay reliable (see the System permissions page).</string>
 
+    <string name="pet_title">Desktop pet</string>
+    <string name="pet_enable">Enable the Xiaoran pet</string>
+    <string name="pet_hint">When on, Xiaoran lives on your screen as a floating window: she breathes while facing you, wanders off now and then, and turns her back to slack off. Drag to move her, tap for a line, double-tap to change her facing. She only blocks taps on her own body.</string>
+    <string name="pet_size">Pet size</string>
+    <string name="pet_size_hint">Tap to cycle small / medium / large</string>
+    <string name="pet_size_small">Small</string>
+    <string name="pet_size_medium">Medium</string>
+    <string name="pet_size_large">Large</string>
+    <string name="pet_lock">Lock position</string>
+    <string name="pet_lock_hint">When locked she can\'t be dragged by accident</string>
+    <string name="pet_notification_channel">Desktop pet</string>
+    <string name="pet_notification_text">Xiaoran is keeping you company on screen</string>
+    <string-array name="pet_lines">
+        <item>What is it? I\'m busy, you know.</item>
+        <item>Hmph, one look and you\'re already leaving?</item>
+        <item>Don\'t pat my head... that tickles.</item>
+        <item>Did you eat properly today?</item>
+        <item>I\'m eighteen. Always eighteen.</item>
+        <item>If you\'re bored, just stand here with me a while.</item>
+        <item>Staring... you\'re peeking at me again.</item>
+        <item>Don\'t stay up too late. I\'ll keep watch here.</item>
+    </string-array>
+
     <string name="memory_settings_title">Memory</string>
     <string name="memory_toggle_title">Enable memory by default</string>
     <string name="memory_toggle_subtitle">When off, new sessions no longer load the core profile and daily logs (existing sessions unaffected)</string>

@@ -193,6 +193,7 @@ export default defineConfig({
             { text: '工具授权', link: '/guide/permissions' },
             { text: '软件权限', link: '/guide/app-permissions' },
             { text: '无障碍与悬浮窗', link: '/guide/accessibility' },
+            { text: '桌宠', link: '/guide/pet' },
             { text: '配置审计', link: '/guide/config-audit' },
             { text: '后台运行', link: '/guide/background-run' },
             { text: '日志与故障排查', link: '/guide/logs' },

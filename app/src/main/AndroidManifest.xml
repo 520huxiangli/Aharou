@@ -160,6 +160,18 @@
                 android:value="Agent 执行期间在屏幕上显示实时进度胶囊" />
         </service>
 
+        <!-- 桌宠：用户主动开着的「小染」悬浮窗（三视图驱动）。
+             与上面的状态胶囊刻意分成两个服务：胶囊由 Agent 运行状态与 App 前后台门控，
+             桌宠是长期陪伴，显隐规则完全不同，混在一起会互相干扰。 -->
+        <service
+            android:name="com.aharou.feature.pet.PetOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="用户主动开启的桌面宠物悬浮窗" />
+        </service>
+
         <!-- 语音通话：悬浮窗 + 实时语音回合。用 microphone 类型，通话期间必须持有麦克风。 -->
         <service
             android:name="com.aharou.feature.voice.call.VoiceCallService"
