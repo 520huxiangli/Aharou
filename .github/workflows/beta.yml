@@ -98,9 +98,10 @@ jobs:
              "dist/Aharou-universal-beta-${sha7}.apk"
           # AGP 8.x 的 mapping 输出目录是 variant 驼峰名（flavor + BuildType），
           # 即 outputs/mapping/universalBeta/，不是 outputs/mapping/universal/beta/。
+          # mapping.txt 未压缩有 130MB+，gzip 后不到 10MB（与 android-release.yml 一致）。
           if [[ -f "app/build/outputs/mapping/universalBeta/mapping.txt" ]]; then
-            cp "app/build/outputs/mapping/universalBeta/mapping.txt" \
-               "dist/Aharou-universal-beta-${sha7}-mapping.txt"
+            gzip -c "app/build/outputs/mapping/universalBeta/mapping.txt" \
+              > "dist/Aharou-universal-beta-${sha7}-mapping.txt.gz"
           fi
           ls -lh dist/
 
@@ -111,7 +112,7 @@ jobs:
           # Artifacts 默认保留 90 天，无需显式配置。
           path: |
             dist/Aharou-universal-beta-*.apk
-            dist/Aharou-universal-beta-*-mapping.txt
+            dist/Aharou-universal-beta-*-mapping.txt.gz
           if-no-files-found: error
 
       # 固定 tag beta-latest：每次都覆盖同一个 Release，不累积历史版本。
@@ -131,5 +132,5 @@ jobs:
             --notes "master 自动构建的测试包。提交 ${GITHUB_SHA}。\n\n应用内「设置 → 关于 → 更新通道 → 测试版」可直接检测并下载。" \
             --prerelease \
             dist/Aharou-universal-beta-*.apk \
-            dist/Aharou-universal-beta-*-mapping.txt
+            dist/Aharou-universal-beta-*-mapping.txt.gz
           echo "已更新 Release: $tag"
