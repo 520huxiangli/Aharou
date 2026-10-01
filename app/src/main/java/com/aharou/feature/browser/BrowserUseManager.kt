@@ -1610,6 +1610,11 @@ class BrowserUseManager(
      *
      * `fuzzy=false` (default): exact name match (case-insensitive).
      * `fuzzy=true`: substring match within the cookie name.
+     *
+     * Values are truncated to 80 chars for the readable listing, EXCEPT when a
+     * keyword list is given with exact matching (`fuzzy=false`) — that form is
+     * how a caller lifts a specific credential (session token / auth ticket)
+     * out, so it returns the full value verbatim.
      */
     private fun getCookies(keywords: List<String>?, fuzzy: Boolean): BrowserActionResult {
         val url = _currentURL.value.takeIf { it.isNotEmpty() }
@@ -1633,11 +1638,12 @@ class BrowserUseManager(
                 else name.equals(kw, ignoreCase = true)
             }
         }
+        val exactPick = !fuzzy && !keywords.isNullOrEmpty()
         val text = buildString {
             appendLine("Cookies for $url (${filtered.size} of ${pairs.size}):")
             for ((name, value) in filtered) {
-                val preview = if (value.length > 80) value.take(77) + "…" else value
-                appendLine("  $name = $preview")
+                val shown = if (!exactPick && value.length > 80) value.take(77) + "…" else value
+                appendLine("  $name = $shown")
             }
         }.trimEnd()
         return BrowserActionResult(text = text)
