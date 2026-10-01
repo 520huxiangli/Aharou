@@ -62,7 +62,7 @@ class WorkspaceRepository @Inject constructor(
     private val sessionUseCase: SessionUseCase,
     private val generalSettingsRepository: GeneralSettingsRepository
 ) {
-    /** 校验失败时给 UI 的提示文案（如目录不可写/无法解析），消费后置 null。 */
+    /** 操作失败时给 UI 的提示文案（目录不可写/无法解析/删除失败等），消费后置 null。 */
     private val _addError = MutableStateFlow<String?>(null)
     val addError: StateFlow<String?> = _addError.asStateFlow()
 
@@ -253,7 +253,9 @@ class WorkspaceRepository @Inject constructor(
     }
 
     private suspend fun refreshLocalWorkspaces(): List<Workspace> {
-        val internal = projectsRoot.listFiles { f -> f.isDirectory }
+        // 只认非隐藏目录：projects/ 里还可能存在 .aharou 这类配置/残留目录，
+        // 扫进来会被当成工作区列给用户（且删了下次扫描又出现）。
+        val internal = projectsRoot.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }
             ?.sortedBy { it.name.lowercase() }
             ?.map { Workspace(name = it.name, path = it.absolutePath) }
             ?: emptyList()
@@ -495,7 +497,14 @@ class WorkspaceRepository @Inject constructor(
             }
             FileLogger.i(TAG, "移除外部工作区关联: $name")
         } else if (isLocal()) {
-            File(projectsRoot, name).deleteRecursively()
+            val dir = File(projectsRoot, name)
+            // deleteRecursively 碰到只读文件会返回 false 而目录原封不动。不检查的话，
+            // 下次启动扫描 projects/ 又把它列成工作区，看着像「删了又回来」。
+            if (!dir.deleteRecursively() && dir.exists()) {
+                FileLogger.w(TAG, "删除工作区目录失败，目录仍在: ${dir.absolutePath}")
+                _addError.value = context.getString(R.string.workspace_delete_failed, name)
+                return@withContext
+            }
             target?.let { sessionUseCase.deleteSessionsByWorkspace(it.path) }
         } else {
             val cfg = remoteSshConnection.config

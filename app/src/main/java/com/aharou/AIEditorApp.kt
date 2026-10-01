@@ -328,10 +328,6 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             ContainerInstaller.extractPrompts(this@AIEditorApp)
         }
-        // 启动即释放套餐余量示例脚本等内置脚本到 ~/.aharou/scripts/
-        appScope.launch {
-            ContainerInstaller.extractScripts(this@AIEditorApp)
-        }
         // 启动即释放内置子代理定义（Explore）到 ~/.aharou/agents/；已存在不覆盖，用户改过或删掉都不会被升级拉回。
         appScope.launch {
             ContainerInstaller.extractAgents(this@AIEditorApp)

@@ -1,6 +1,5 @@
 ---
 name: dashboard-panel-script
-display_name: 面板脚本编写
 description: "要写或改「自定义面板（DIY Dashboard）」脚本时使用：余额/配额/Token/费用看板、收起态单行条目、展开态卡片、面板脚本报错或显示不出来。用户说「做个面板看余额」「这个卡片怎么不刷新」时读这份。"
 ---
 
@@ -11,7 +10,8 @@ description: "要写或改「自定义面板（DIY Dashboard）」脚本时使�
 ## 放哪、怎么被执行
 
 - 统一目录 `~/.aharou/scripts/`（容器绝对路径 `/root/.aharou/scripts/`）。该目录映射到 App 数据目录，**容器升级重装时保留**。
-- 供应商设置里的「面板脚本」路径支持四种写法：纯文件名（推荐，如 `demo_balance.py`）、`scripts/x.py`、`~/.aharou/scripts/x.py`、容器绝对路径 `/root/...`。
+- 脚本从**手机导入**或直接在容器里写都行：供应商编辑页有「导入脚本」，从文件管理器选一个 `.py` 会拷进该目录。
+- 供应商设置里的「面板脚本」路径支持四种写法：纯文件名（推荐，如 `my_balance.py`）、`scripts/x.py`、`~/.aharou/scripts/x.py`、容器绝对路径 `/root/...`。
 - 按扩展名/权限决定怎么跑：`.py` → `python3 <path>`；`.js` → `node <path>`；`.sh`/`.bash` → `bash <path>`；其它有可执行权限就直接跑，否则用 bash 跑。
 - **脚本非零退出＝面板报错**，错误文本是「脚本退出码: N」+ 输出。写完先在容器里手动跑一遍：`python3 ~/.aharou/scripts/x.py`，确认 stdout 是合法 JSON 再上屏。
 
@@ -67,6 +67,104 @@ description: "要写或改「自定义面板（DIY Dashboard）」脚本时使�
 - 每次 LLM 请求返回后自动重跑脚本刷新。
 - 进入/切换会话、改脚本、点刷新按钮、`ActionButton action=refresh` 也会刷新。
 - 脚本里想区分来源就读 `AICODE_REFRESH_REASON`。
+
+## 最小可用示例
+
+照抄这份就能出面板：把本会话的 Token 用量和按注入单价的估算花费画成卡片。存成 `~/.aharou/scripts/token_board.py`，再到供应商设置的「面板脚本」填 `token_board.py`。
+
+```python
+#!/usr/bin/env python3
+"""Token 用量面板：纯读注入的环境变量，不联网、不读配置。"""
+import json
+import os
+import sys
+
+def env(name, default=""):
+    return (os.environ.get(name) or default).strip()
+
+def to_int(name):
+    try:
+        return int(env(name) or 0)
+    except ValueError:
+        return 0
+
+def to_float(name):
+    try:
+        return float(env(name) or 0)
+    except ValueError:
+        return 0.0
+
+def fmt(n):
+    if n >= 1_000_000:
+        return "%.2fM" % (n / 1e6)
+    if n >= 1000:
+        return "%.1fK" % (n / 1e3)
+    return str(n)
+
+def text(s, size="Default", weight="Default", subtle=False, color=None):
+    d = {"type": "TextBlock", "text": s, "size": size, "weight": weight}
+    if subtle:
+        d["isSubtle"] = True
+    if color:
+        d["color"] = color
+    return d
+
+def main():
+    in_tok = to_int("AICODE_TOTAL_INPUT_TOKENS")
+    out_tok = to_int("AICODE_TOTAL_OUTPUT_TOKENS")
+    last_in = to_int("AICODE_LAST_INPUT_TOKENS")
+    last_cached = to_int("AICODE_LAST_CACHED_TOKENS")
+    # 单价可能取不到（为 0），算费用前先判零
+    p_in = to_float("AICODE_MODEL_INPUT_COST_USD_PER_M")
+    p_out = to_float("AICODE_MODEL_OUTPUT_COST_USD_PER_M")
+    cost = in_tok / 1e6 * p_in + out_tok / 1e6 * p_out if (p_in or p_out) else None
+    model = env("AICODE_MODEL", "(未知)")
+
+    if in_tok == 0 and out_tok == 0:
+        body = [
+            {"type": "ColumnSet", "columns": [
+                {"type": "Column", "width": "auto", "items": [
+                    {"type": "StatusDot", "color": "Attention"}]},
+                {"type": "Column", "width": "stretch", "items": [
+                    text("还没有 Token 数据", "Medium", "Bolder"),
+                    text("本轮对话发起请求后这里会出现统计。", "Small", True)]},
+            ]},
+        ]
+        compact = [{"type": "StatusDot", "color": "Attention"}, text("暂无数据", "Small")]
+    else:
+        facts = [
+            {"title": "本会话输入", "value": fmt(in_tok)},
+            {"title": "本会话输出", "value": fmt(out_tok)},
+            {"title": "上次输入", "value": fmt(last_in)},
+            {"title": "上次命中缓存", "value": fmt(last_cached)},
+        ]
+        body = [
+            {"type": "Metric", "label": "本会话 Token", "value": fmt(in_tok + out_tok),
+             "subText": "输入 %s / 输出 %s" % (fmt(in_tok), fmt(out_tok))},
+            {"type": "Divider"},
+            text("当前模型 · %s" % model, "Small", "Bolder"),
+            {"type": "FactSet", "facts": facts},
+        ]
+        if cost is not None:
+            body.append(text("估算花费 ≈ $%.4f" % cost, "Small", True))
+        compact = [{"type": "StatusDot", "color": "Good"},
+                   text(fmt(in_tok + out_tok) + " tok", "Small", "Bolder")]
+
+    print(json.dumps({"type": "AdaptiveCard", "version": "1.5",
+                      "compact": {"type": "Row", "items": compact},
+                      "body": body}, ensure_ascii=False))
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        # 兜底：出错也吐一张卡片，绝不让脚本非零退出（那会显示成「面板报错」）
+        print(json.dumps({"type": "AdaptiveCard", "version": "1.5", "body": [
+            text("面板脚本出错", "Small", "Bolder", color="Attention"),
+            text(str(e)[:200], "Micro", True)]}, ensure_ascii=False))
+```
+
+**要点**：读不到就画「暂无数据」而不是崩；`cost` 在单价为 0 时不显示；`main()` 外面兜一层 `try`，保证任何异常都还吐合法卡片。
 
 ## 写法建议
 

@@ -3,6 +3,7 @@ package com.aharou.feature.workspace.presentation
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
@@ -38,6 +39,10 @@ class WorkspaceViewModel @Inject constructor(
     val addError: StateFlow<String?> = repository.addError
     val externalWarningDismissed: StateFlow<Boolean> = repository.externalWarningDismissed
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private companion object {
+        const val TAG = "WorkspaceViewModel"
+    }
 
     /** 移除外部本地工作区时是否一并删除其聊天记录（用于删除确认文案）。 */
     val deleteExternalWorkspaceSessions: StateFlow<Boolean> = repository.deleteExternalWorkspaceSessionsFlow
@@ -89,7 +94,10 @@ class WorkspaceViewModel @Inject constructor(
     }
 
     fun deleteWorkspace(name: String) = viewModelScope.launch {
+        // 失败不能静默：目录没删掉却看不见任何提示时，用户会以为删了，
+        // 下次启动扫描又把它列出来。提示文案由 repository 通过 addError 给出。
         runCatching { repository.deleteWorkspace(name) }
+            .onFailure { FileLogger.w(TAG, "删除工作区失败: $name", it) }
     }
 
     /** 重命名工作区；[onResult] 收到改名后的工作区（失败为 null）。 */

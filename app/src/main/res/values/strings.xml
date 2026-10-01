@@ -223,7 +223,7 @@
     <string name="provider_cache_openai_chat_subtitle">为请求携带 prompt_cache_key 缓存键</string>
     <string name="provider_section_dashboard">自定义面板</string>
     <string name="provider_dashboard_script">面板脚本</string>
-    <string name="provider_dashboard_script_placeholder">例如 demo_balance.py</string>
+    <string name="provider_dashboard_script_placeholder">例如 my_balance.py</string>
     <string name="provider_dashboard_select_script">选择脚本</string>
     <string name="provider_dashboard_script_desc">执行并预览面板</string>
     <string name="provider_dashboard_test_btn">运行测试</string>
@@ -1534,6 +1534,7 @@
     <string name="workspace_empty_hint">暂无工作区，点击「新建」创建一个</string>
     <string name="workspace_delete">删除工作区</string>
     <string name="workspace_delete_confirm">确定删除「%1$s」？该目录下的所有文件及该工作区的聊天记录都将被删除，且无法恢复。</string>
+    <string name="workspace_delete_failed">删除工作区「%1$s」失败：目录没能移除（可能含只读文件），请在文件管理器里手动删。</string>
     <string name="workspace_new_workspace">新建工作区</string>
     <string name="workspace_name_hint">例如 my-project</string>
     <string name="workspace_name_exists">已存在同名工作区</string>

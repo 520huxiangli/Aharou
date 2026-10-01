@@ -21,7 +21,7 @@ AI 助手与开发者可以依据此规范，编写面板脚本（Python / Node 
 
 ### 1.3 路径解析规则
 在供应商设置项「面板脚本」中，支持以下几种路径填写方式：
-1. **纯文件名**（推荐，如 `demo_balance.py`）：自动在 `~/.aharou/scripts/` 目录下查找；
+1. **纯文件名**（推荐，如 `my_balance.py`）：自动在 `~/.aharou/scripts/` 目录下查找；
 2. **相对路径**（如 `scripts/my_panel.py` 或 `.aharou/scripts/my_panel.py`）：自动从 `~/.aharou/` 展开；
 3. **波浪号路径**（如 `~/.aharou/scripts/my_panel.py` 或 `~/my_script.py`）：自动展开为 `/root/` 对应路径；
 4. **容器内绝对路径**（如 `/root/workspace/scripts/quota.py`）。

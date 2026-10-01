@@ -223,7 +223,7 @@
     <string name="provider_cache_openai_chat_subtitle">Send prompt_cache_key with requests</string>
     <string name="provider_section_dashboard">Custom Dashboard</string>
     <string name="provider_dashboard_script">Dashboard Script</string>
-    <string name="provider_dashboard_script_placeholder">e.g. demo_balance.py</string>
+    <string name="provider_dashboard_script_placeholder">e.g. my_balance.py</string>
     <string name="provider_dashboard_select_script">Select Script</string>
     <string name="provider_dashboard_script_desc">Execute and preview dashboard output</string>
     <string name="provider_dashboard_test_btn">Run Test</string>
@@ -1535,6 +1535,7 @@
     <string name="workspace_empty_hint">No workspaces, tap "New" to create one</string>
     <string name="workspace_delete">Delete Workspace</string>
     <string name="workspace_delete_confirm">Delete "%1$s"? All files in this directory and this workspace\'s chats will be deleted and cannot be undone.</string>
+    <string name="workspace_delete_failed">Failed to delete workspace "%1$s": the directory could not be removed (it may contain read-only files). Please delete it manually in a file manager.</string>
     <string name="workspace_new_workspace">New Workspace</string>
     <string name="workspace_name_hint">e.g. my-project</string>
     <string name="workspace_name_exists">A workspace with this name already exists</string>
