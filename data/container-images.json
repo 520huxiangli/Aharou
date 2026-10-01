@@ -62,7 +62,7 @@
       "distro": "alpine",
       "path": "alpine/v3.21/releases/{abi}/alpine-minirootfs-3.21.8-{abi}.tar.gz",
       "paths": {
-        "aharou": "alpine-3.21.tar.gz"
+        "aharou": "alpine-3.21-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "aarch64",
@@ -78,7 +78,7 @@
       "distro": "alpine",
       "path": "alpine/v3.22/releases/{abi}/alpine-minirootfs-3.22.6-{abi}.tar.gz",
       "paths": {
-        "aharou": "alpine-3.22.tar.gz"
+        "aharou": "alpine-3.22-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "aarch64",
@@ -94,7 +94,7 @@
       "distro": "alpine",
       "path": "alpine/v3.23/releases/{abi}/alpine-minirootfs-3.23.6-{abi}.tar.gz",
       "paths": {
-        "aharou": "alpine-3.23.tar.gz"
+        "aharou": "alpine-3.23-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "aarch64",
@@ -110,7 +110,7 @@
       "distro": "alpine",
       "path": "alpine/v3.24/releases/{abi}/alpine-minirootfs-3.24.2-{abi}.tar.gz",
       "paths": {
-        "aharou": "alpine-3.24.tar.gz"
+        "aharou": "alpine-3.24-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "aarch64",
@@ -126,7 +126,7 @@
       "distro": "ubuntu",
       "path": "ubuntu-base/releases/20.04/release/ubuntu-base-20.04.5-base-{abi}.tar.gz",
       "paths": {
-        "aharou": "ubuntu-20.04.tar.gz"
+        "aharou": "ubuntu-20.04-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "arm64",
@@ -142,7 +142,7 @@
       "distro": "ubuntu",
       "path": "ubuntu-base/releases/22.04/release/ubuntu-base-22.04.5-base-{abi}.tar.gz",
       "paths": {
-        "aharou": "ubuntu-22.04.tar.gz"
+        "aharou": "ubuntu-22.04-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "arm64",
@@ -158,7 +158,7 @@
       "distro": "ubuntu",
       "path": "ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-{abi}.tar.gz",
       "paths": {
-        "aharou": "ubuntu-24.04.tar.gz"
+        "aharou": "ubuntu-24.04-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "arm64",
@@ -174,7 +174,7 @@
       "distro": "ubuntu",
       "path": "ubuntu-base/releases/25.10/release/ubuntu-base-25.10-base-{abi}.tar.gz",
       "paths": {
-        "aharou": "ubuntu-25.10.tar.gz"
+        "aharou": "ubuntu-25.10-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "arm64",
@@ -190,7 +190,7 @@
       "distro": "ubuntu",
       "path": "ubuntu-base/releases/26.04/release/ubuntu-base-26.04.1-base-{abi}.tar.gz",
       "paths": {
-        "aharou": "ubuntu-26.04.tar.gz"
+        "aharou": "ubuntu-26.04-{abi}.tar.gz"
       },
       "abiNames": {
         "arm64": "arm64",
@@ -206,7 +206,7 @@
       "distro": "debian",
       "path": "job/tianon/job/debuerreotype/job/{abi}/lastSuccessfulBuild/artifact/bookworm/rootfs.tar.xz",
       "paths": {
-        "aharou": "debian-12.tar.xz"
+        "aharou": "debian-12-{abi}.tar.xz"
       },
       "abiNames": {
         "arm64": "arm64v8",
@@ -222,7 +222,7 @@
       "distro": "debian",
       "path": "job/tianon/job/debuerreotype/job/{abi}/lastSuccessfulBuild/artifact/trixie/rootfs.tar.xz",
       "paths": {
-        "aharou": "debian-13.tar.xz"
+        "aharou": "debian-13-{abi}.tar.xz"
       },
       "abiNames": {
         "arm64": "arm64v8",
