@@ -66,6 +66,7 @@ fun modelBrandKey(modelName: String): String {
         target.contains("hunyuan") || target.contains("混元") || target.contains("tencent") -> "hunyuan"
         target.contains("openrouter") -> "openrouter"
         target.contains("perplexity") -> "perplexity"
+        target.contains("happypet") || target.contains("happy-pet") || target.contains("fuck studio") -> "happypet"
         target.contains("siliconflow") || target.contains("硅基") -> "siliconflow"
         // ollama 必须在 meta 之前：ollama 名称含 "llama"，否则会被 meta 规则误匹配
         target.contains("ollama") -> "ollama"
@@ -120,6 +121,7 @@ fun brandLogoRes(key: String): Int? = when (key) {
     "meta" -> R.drawable.logo_meta
     "mistral" -> R.drawable.logo_mistral
     "openai" -> R.drawable.logo_openai
+    "happypet" -> R.drawable.logo_happypet
     else -> null
 }
 
@@ -127,7 +129,7 @@ fun brandLogoRes(key: String): Int? = when (key) {
 private fun shouldTintModelLogo(key: String): Boolean =
     key == "grok" || key == "groq" || key == "moonshot" || key == "openai" ||
         key == "openrouter" || key == "perplexity" ||
-        key == "ollama" || key == "meta" || key == "mistral"
+        key == "ollama" || key == "meta" || key == "mistral" || key == "happypet"
 
 @Composable
 private fun modelLogoTint(): Color {
