@@ -16,6 +16,7 @@ import com.aharou.feature.agent.domain.notification.AgentEventInjector
 import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import com.aharou.feature.agent.domain.notification.AgentNotificationKind
 import com.aharou.feature.agent.domain.notification.PendingNotification
+import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
@@ -105,7 +106,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val keyRotator: ProviderKeyRotator,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val eventInjector: AgentEventInjector,
-    private val fileAccess: FileAccessProvider
+    private val fileAccess: FileAccessProvider,
+    private val ocrEngine: TesseractOcrEngine
 ) : AgentWorkflow {
 
     private companion object {
@@ -997,21 +999,59 @@ class StatefulAgentWorkflow @Inject constructor(
         return -1
     }
 
-    private fun sanitizeImagesForModel(
+    /**
+     * 发送前按模型能力处理图片：能看图就原样发；不能看时改用本地 OCR 把图转成文字塞回去。
+     *
+     * 这里之前是直接把 images 清空 —— 用户消息还剩一句「图片已省略」，工具结果那条连提示都没有，
+     * 而影子屏截图正是走工具结果，模型连「有图」都不知道。现改为 OCR 转文字，
+     * 不支持视觉的模型也能读到屏幕上的内容。
+     */
+    private suspend fun sanitizeImagesForModel(
         messages: List<AgentMessage>,
         supportsVision: Boolean
     ): List<AgentMessage> {
         if (supportsVision) return messages
+        val ocrEnabled = generalSettingsRepository.ocrForTextOnlyModels()
         return messages.map { msg ->
             when (msg) {
                 is AgentMessage.UserMessage ->
                     if (msg.images.isEmpty()) msg
-                    else msg.copy(images = emptyList(), content = msg.content.ifBlank { "（图片已省略：当前模型不支持图片输入）" })
+                    else msg.copy(
+                        images = emptyList(),
+                        content = appendOcrText(
+                            msg.content,
+                            if (ocrEnabled) describeImages(msg.images) else "",
+                            "图片已省略：当前模型不支持图片输入"
+                        )
+                    )
                 is AgentMessage.ToolResultMessage ->
-                    if (msg.images.isEmpty()) msg else msg.copy(images = emptyList())
+                    if (msg.images.isEmpty()) msg
+                    else msg.copy(
+                        images = emptyList(),
+                        modelResult = appendOcrText(
+                            msg.modelResult ?: msg.result,
+                            if (ocrEnabled) describeImages(msg.images) else "",
+                            null
+                        )
+                    )
                 is AgentMessage.AssistantMessage -> msg
             }
         }
+    }
+
+    /** 逐张本地 OCR 并拼成带序号的文字；一张都没认出来时返回空串。 */
+    private suspend fun describeImages(images: List<AgentImage>): String =
+        images.mapIndexedNotNull { index, image ->
+            val text = ocrEngine.recognize(image) ?: return@mapIndexedNotNull null
+            val label = if (images.size == 1) "图片文字" else "图片 ${index + 1} 文字"
+            "[$label]\n$text"
+        }.joinToString("\n\n")
+
+    /** 把 OCR 文字接在原内容后面；没认出来时用 [emptyHint] 兑底，没有就保持原样。 */
+    private fun appendOcrText(original: String, ocrText: String, emptyHint: String?): String = when {
+        ocrText.isNotBlank() -> if (original.isBlank()) ocrText else "$original\n\n$ocrText"
+        emptyHint != null -> original.ifBlank { "（$emptyHint）" }
+        else -> original
     }
 
     /**

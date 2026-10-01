@@ -63,6 +63,16 @@ class ConfigAppFields @Inject constructor(
         )
 
         registry.register(
+            DataStoreBoolField(
+                path = "app.ocr_for_text_only_models",
+                displayName = "为无视觉模型识别图片",
+                description = "当前模型不支持图片输入时，用本机 OCR 把图片与影子屏截图转成文字再发给模型。全在本机识别、不上传。默认开启。",
+                flow = generalSettings.ocrForTextOnlyModelsFlow,
+                setter = { generalSettings.setOcrForTextOnlyModels(it) },
+            ),
+        )
+
+        registry.register(
             DataStoreEnumField(
                 path = "app.startup_session_mode",
                 displayName = "启动进入的会话",

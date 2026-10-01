@@ -265,6 +265,7 @@ fun SettingsScreen(
     val voiceTtsModel by viewModel.voiceTtsModel.collectAsStateWithLifecycle()
     val voiceTtsVoice by viewModel.voiceTtsVoice.collectAsStateWithLifecycle()
     val autoReadAloud by viewModel.autoReadAloud.collectAsStateWithLifecycle()
+    val ocrForTextOnlyModels by viewModel.ocrForTextOnlyModels.collectAsStateWithLifecycle()
     val voiceModelStatus by viewModel.voiceModelStatus.collectAsStateWithLifecycle()
     val voiceModelMessage by viewModel.voiceModelMessage.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
@@ -845,6 +846,8 @@ fun SettingsScreen(
                     autoReadAloud = autoReadAloud,
                     onAutoReadAloudChange = viewModel::setAutoReadAloud,
                     onToggleAutoReadAloud = { viewModel.toggleAutoReadAloud() },
+                    ocrForTextOnlyModels = ocrForTextOnlyModels,
+                    onToggleOcrForTextOnlyModels = { viewModel.toggleOcrForTextOnlyModels() },
                     voiceModelStatus = voiceModelStatus,
                     voiceModelMessage = voiceModelMessage,
                     onRereleaseVoiceModel = { viewModel.rereleaseVoiceModel() },

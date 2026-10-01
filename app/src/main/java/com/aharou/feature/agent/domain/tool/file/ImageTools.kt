@@ -12,6 +12,7 @@ import com.aharou.feature.agent.data.remote.openai.OpenAIApi
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
+import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.provider.AnthropicAdapter
@@ -58,6 +59,7 @@ class ViewImageTool @Inject constructor(
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
+    private val ocrEngine: TesseractOcrEngine,
     private val modelMetadataService: ModelMetadataService,
     private val sessionUseCase: SessionUseCase,
     private val llmCallRecordDao: LlmCallRecordDao,
@@ -172,6 +174,17 @@ class ViewImageTool @Inject constructor(
         )
         return try {
             visionSessionStore.save(id, messages)
+            // 未配识图模型时（=跟随聊天模型）先用本机 OCR 兜一下：聊天模型多半不能看图，
+            // 让它空转一轮再报错，不如直接把字认出来。认出东西就收工，一张都没认到才走模型。
+            if (ocrEnabled() && visionModelSettingsRepository.getVisionProviderId().isBlank()) {
+                val localText = encoded.mapNotNull { ocrEngine.recognize(it) }
+                    .joinToString("\n\n").trim()
+                if (localText.isNotEmpty()) {
+                    val content = "（本机 OCR 结果，未使用识图模型）\n\n$localText"
+                    visionSessionStore.save(id, messages + AgentMessage.AssistantMessage(content = content))
+                    return successResult(id, content)
+                }
+            }
             val provider = resolveVisionProvider(sessionId)
             val response = callVisionProvider(provider, messages, sessionId)
             val content = response.content.ifBlank { "（识图模型未返回内容）" }
@@ -282,6 +295,9 @@ class ViewImageTool @Inject constructor(
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         return metadata.supportsVision
     }
+
+    /** 本机 OCR 兜底开关；与发送前自动转换共用同一个偏好。 */
+    private suspend fun ocrEnabled(): Boolean = generalSettingsRepository.ocrForTextOnlyModels()
 
     private suspend fun resolveVisionProvider(sessionId: String?): AIProvider {
         val visionProviderId = visionModelSettingsRepository.getVisionProviderId().trim()

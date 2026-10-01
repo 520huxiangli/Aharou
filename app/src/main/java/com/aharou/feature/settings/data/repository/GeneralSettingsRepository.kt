@@ -27,10 +27,11 @@ enum class StartupSessionMode {
 /**
  * 「偏好设置」里的用户偏好。
  *
- * 目前八项：拉取模型成功后是否自动移除远端已不存在的本地模型（默认开启）、
+ * 目前九项：拉取模型成功后是否自动移除远端已不存在的本地模型（默认开启）、
  * 启动时进入新会话还是最近会话（默认新开会话）、首字 / 数据块间隔超时（秒）、
  * 网络请求的最大重试次数（默认 6）、回车发送、自动压缩阈值、
- * sendFile 单个文件大小上限（默认 100MB），
+ * sendFile 单个文件大小上限（默认 100MB）、
+ * 不支持图片输入的模型是否自动做本地 OCR（默认开启），
  * 以及移除外部本地工作区时是否一并删除其聊天记录（默认关闭）。
  * DataStore 用法与 [KeepaliveSettingsRepository] 一致。
  */
@@ -48,6 +49,7 @@ class GeneralSettingsRepository @Inject constructor(
         val COMPACTION_THRESHOLD_PERCENT_KEY = intPreferencesKey("compaction_threshold_percent")
         val SENDFILE_MAX_SIZE_MB_KEY = intPreferencesKey("sendfile_max_size_mb")
         val DELETE_EXTERNAL_WORKSPACE_SESSIONS_KEY = booleanPreferencesKey("delete_external_workspace_sessions")
+        val OCR_FOR_TEXT_ONLY_MODELS_KEY = booleanPreferencesKey("ocr_for_text_only_models")
 
         /** 首字超时默认 5 分钟，与原硬编码值一致。 */
         const val DEFAULT_FIRST_BYTE_TIMEOUT_SEC = 300
@@ -69,6 +71,22 @@ class GeneralSettingsRepository @Inject constructor(
     suspend fun setAutoRemoveStaleModels(enabled: Boolean) {
         context.generalDataStore.edit { it[AUTO_REMOVE_STALE_MODELS_KEY] = enabled }
     }
+
+    /**
+     * 当前模型不支持图片输入时，是否把图片先在本机 OCR 成文字再发给模型。未设置时回退到 true。
+     *
+     * 默认开启是因为触发条件苛刻：只在「模型没视觉 + 消息里真有图」时才工作，
+     * 那种状态下图片本来会被丢弃，OCR 是纯增量。
+     */
+    val ocrForTextOnlyModelsFlow: Flow<Boolean> =
+        context.generalDataStore.data.map { it[OCR_FOR_TEXT_ONLY_MODELS_KEY] ?: true }
+
+    suspend fun setOcrForTextOnlyModels(enabled: Boolean) {
+        context.generalDataStore.edit { it[OCR_FOR_TEXT_ONLY_MODELS_KEY] = enabled }
+    }
+
+    /** 发送前读一次 OCR 开关，避免在请求路径上多开一条收集流。 */
+    suspend fun ocrForTextOnlyModels(): Boolean = ocrForTextOnlyModelsFlow.first()
 
     /** 启动时会话偏好流；未设置或值无法识别时回退到 [StartupSessionMode.NEW_SESSION]。 */
     val startupSessionModeFlow: Flow<StartupSessionMode> = context.generalDataStore.data.map { prefs ->

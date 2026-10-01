@@ -255,8 +255,9 @@ android {
 
     // 内置语音模型（model.int8.onnx，78MB）不再压缩：它已是紧凑的二进制权重，再压几无收益，
     // 却要在安装/读取时多一次解压，且会让 APK 启动时的 asset 扫描变慢。
+    // Tesseract 语言包同理：它本身就是压缩包格式，再压一遍几乎没收益。
     androidResources {
-        noCompress += listOf("onnx", "mvn")
+        noCompress += listOf("onnx", "mvn", "traineddata")
     }
 
     // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
@@ -332,6 +333,10 @@ dependencies {
 
     // HTML 解析与清洗 (用于 WebFetchTool)
     implementation("org.jsoup:jsoup:1.18.1")
+
+    // 本地 OCR（Tesseract4Android，JitPack）。给不支持视觉的模型补上「读图」能力：
+    // 影子屏截图与图片附件会先在本机转成文字再进上下文。
+    implementation("com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.9.0")
 
     // 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

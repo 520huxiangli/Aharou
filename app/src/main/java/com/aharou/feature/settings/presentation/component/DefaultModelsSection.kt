@@ -63,6 +63,7 @@ import compose.icons.feathericons.ArrowDown
 import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.Camera
+import compose.icons.feathericons.Eye
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
 import compose.icons.feathericons.Mic
@@ -91,6 +92,8 @@ internal fun DefaultModelsSection(
     autoReadAloud: Boolean = false,
     onAutoReadAloudChange: (Boolean) -> Unit = {},
     onToggleAutoReadAloud: () -> Unit = {},
+    ocrForTextOnlyModels: Boolean = true,
+    onToggleOcrForTextOnlyModels: () -> Unit = {},
     voiceModelStatus: VoiceModelStatus,
     voiceModelMessage: Int? = null,
     onRereleaseVoiceModel: () -> Unit = {},
@@ -274,6 +277,19 @@ internal fun DefaultModelsSection(
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.End,
                         modifier = Modifier.weight(2f)
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Eye,
+                title = stringResource(R.string.settings_ocr_auto),
+                subtitle = stringResource(R.string.settings_ocr_auto_desc),
+                onClick = onToggleOcrForTextOnlyModels,
+                trailing = {
+                    AppSwitch(
+                        checked = ocrForTextOnlyModels,
+                        onCheckedChange = { onToggleOcrForTextOnlyModels() }
                     )
                 }
             )

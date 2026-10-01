@@ -586,6 +586,11 @@ class SettingsViewModel @Inject constructor(
     /** 自动朗读开关：开了之后 AI 每条回复落地就自动念。 */
     val autoReadAloud: StateFlow<Boolean> = _autoReadAloud.asStateFlow()
 
+    private val _ocrForTextOnlyModels = MutableStateFlow(true)
+
+    /** 为不支持图片输入的模型自动做本机 OCR 的开关。 */
+    val ocrForTextOnlyModels: StateFlow<Boolean> = _ocrForTextOnlyModels.asStateFlow()
+
     /** 离线语音模型的当前状态（打开设置页时构造 VM 即算好）。 */
     private val _voiceModelStatus = MutableStateFlow(voiceModelManager.status(VoiceModels.ASR_ZH))
     val voiceModelStatus: StateFlow<VoiceModelStatus> = _voiceModelStatus.asStateFlow()
@@ -985,6 +990,9 @@ class SettingsViewModel @Inject constructor(
                 }
                 voiceTtsSettingsRepository.autoReadAloudFlow.collectLatest {
                     _autoReadAloud.value = it
+                }
+                generalSettingsRepository.ocrForTextOnlyModelsFlow.collectLatest {
+                    _ocrForTextOnlyModels.value = it
                 }
             }
 
@@ -2493,6 +2501,18 @@ class SettingsViewModel @Inject constructor(
     fun setVoiceTtsModel(providerId: String, model: String, voice: String) {
         viewModelScope.launch {
             voiceTtsSettingsRepository.setTtsModel(providerId, model, voice)
+        }
+    }
+
+    /**
+     * 切换「为无视觉模型自动识别图片」：同样以存储里的真实值为准取反，
+     * 不按界面上的 checked 算（界面状态可能过期，会写成同一个值）。
+     */
+    fun toggleOcrForTextOnlyModels() {
+        viewModelScope.launch {
+            val current = runCatching { generalSettingsRepository.ocrForTextOnlyModels() }.getOrDefault(true)
+            generalSettingsRepository.setOcrForTextOnlyModels(!current)
+            _ocrForTextOnlyModels.value = !current
         }
     }
 

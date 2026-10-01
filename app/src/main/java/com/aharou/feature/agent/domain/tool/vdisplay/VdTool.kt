@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -17,6 +18,7 @@ import com.aharou.feature.agent.domain.vdisplay.VdInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -33,6 +35,7 @@ import javax.inject.Inject
  */
 class VdTool @Inject constructor(
     private val vdController: VdController,
+    private val ocrEngine: TesseractOcrEngine,
 ) : AgentTool() {
     private companion object {
         const val TAG = "VdTool"
@@ -46,7 +49,7 @@ class VdTool @Inject constructor(
         "影子屏：宿主上的无头虚拟显示屏（不在设备屏幕显示）。可在其中启动 App、截图、点按、滑动、按键，全程不影响用户主屏。" +
             "操作宿主上第三方 App 的标准手段——要动 Aharou 以外的应用就用它，别用 a11y 抢占用户主屏。" +
             "action=start 创建（可选 width/height/dpi）；status 查询；stop 停止；launch 启动应用（component=\"包名/Activity\" 或仅包名）；" +
-            "shot 截图（图片随结果返回）；tap / swipe / key 触控。需 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
+            "shot 截图（图片随结果返回，传 ocr=true 则改回文字）；tap / swipe / key 触控。需 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
 
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
@@ -68,6 +71,11 @@ class VdTool @Inject constructor(
         "y2" to ToolParameter("y2", ParameterType.INTEGER, "swipe 终点 Y", false),
         "duration" to ToolParameter("duration", ParameterType.INTEGER, "swipe 持续时间（毫秒，默认 300）", false),
         "keycode" to ToolParameter("keycode", ParameterType.STRING, "key 专用：按键（KEYCODE_BACK / 4 等）", false),
+        "ocr" to ToolParameter(
+            "ocr", ParameterType.BOOLEAN,
+            "shot 专用：true 时用本机 OCR 把屏幕画面转成文字返回（不返回图片）。当前模型不支持图片输入时用，省 token。",
+            false
+        ),
     )
 
     override fun buildPermissionRequest(
@@ -138,10 +146,22 @@ class VdTool @Inject constructor(
                 "shot" -> {
                     val (info, file) = vdController.screenshot()
                     val base64 = fileToJpegBase64(file)
-                    ToolResult.Success(
-                        infoJson(info, "已截图（图片随结果返回）"),
-                        if (base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = base64)) else emptyList(),
-                    )
+                    if (args["ocr"]?.jsonPrimitive?.booleanOrNull == true) {
+                        val image = AgentImage(mimeType = "image/jpeg", base64Data = base64)
+                        val text = ocrEngine.recognize(image)
+                        ToolResult.Success(
+                            infoJson(
+                                info,
+                                if (text.isNullOrBlank()) "已截图，但未识别到文字" else "已截图并识别出屏幕文字",
+                                ocrText = text.orEmpty()
+                            )
+                        )
+                    } else {
+                        ToolResult.Success(
+                            infoJson(info, "已截图（图片随结果返回）"),
+                            if (base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = base64)) else emptyList(),
+                        )
+                    }
                 }
 
                 "tap" -> {
@@ -182,7 +202,7 @@ class VdTool @Inject constructor(
         }
     }
 
-    private fun infoJson(info: VdInfo, message: String): JsonElement = buildJsonObject {
+    private fun infoJson(info: VdInfo, message: String, ocrText: String? = null): JsonElement = buildJsonObject {
         put("message", message)
         put("running", true)
         put("displayId", info.displayId)
@@ -190,6 +210,7 @@ class VdTool @Inject constructor(
         put("width", info.width)
         put("height", info.height)
         put("dpi", info.dpi)
+        if (ocrText != null) put("text", ocrText)
     }
 
     /** 截图转 JPEG base64：长边压到 ≤1440，控制给模型的图片体积。 */

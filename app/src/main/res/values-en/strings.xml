@@ -52,6 +52,8 @@
     <string name="settings_voice_tts_model">Speech Synthesis Model</string>
     <string name="settings_voice_auto_read">Auto read aloud</string>
     <string name="settings_voice_auto_read_desc">Read every reply aloud automatically</string>
+    <string name="settings_ocr_auto">OCR images for text-only models</string>
+    <string name="settings_ocr_auto_desc">When the active model cannot take images, recognize pictures and shadow-screen shots into text with on-device OCR. Everything runs locally and is never uploaded.</string>
     <string name="settings_voice_tts_voice">Voice</string>
     <string name="settings_voice_tts_voice_hint">Leave empty to use the server default</string>
     <string name="settings_voice_local_fallback">Built-in offline model</string>

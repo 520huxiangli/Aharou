@@ -52,6 +52,8 @@
     <string name="settings_voice_tts_model">语音合成模型</string>
     <string name="settings_voice_auto_read">自动朗读</string>
     <string name="settings_voice_auto_read_desc">AI 每条回复落地后自动念出来</string>
+    <string name="settings_ocr_auto">为无视觉模型识别图片</string>
+    <string name="settings_ocr_auto_desc">当前模型不支持图片输入时，用本机 OCR 把图片与影子屏截图转成文字。识别全在本机完成，不上传。</string>
     <string name="settings_voice_tts_voice">音色</string>
     <string name="settings_voice_tts_voice_hint">留空用服务端默认音色</string>
     <string name="settings_voice_local_fallback">内置离线模型</string>

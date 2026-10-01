@@ -89,6 +89,7 @@ import com.aharou.feature.agent.domain.tool.search.WebFetchTool
 import com.aharou.feature.agent.domain.tool.search.WebSearchTool
 import com.aharou.feature.browser.BrowserTool
 import com.aharou.feature.agent.domain.workflow.ContextCompactor
+import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
@@ -358,7 +359,8 @@ object AgentModule {
         keyRotator: ProviderKeyRotator,
         agentNotificationCenter: AgentNotificationCenter,
         eventInjector: AgentEventInjector,
-        fileAccess: FileAccessProvider
+        fileAccess: FileAccessProvider,
+        ocrEngine: TesseractOcrEngine
     ): AgentWorkflow {
         return StatefulAgentWorkflow(
             toolRegistry,
@@ -384,7 +386,8 @@ object AgentModule {
             keyRotator,
             agentNotificationCenter,
             eventInjector,
-            fileAccess
+            fileAccess,
+            ocrEngine
         )
     }
 }
