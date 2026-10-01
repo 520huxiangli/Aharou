@@ -103,7 +103,7 @@
   },
   {
     "id": "happypet",
-    "name": "Happy Pet",
+    "name": "Fuck Studio",
     "type": "OPENAI",
     "baseUrl": "https://api.happy-pet.fun/",
     "isRecommended": false,
