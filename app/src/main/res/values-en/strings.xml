@@ -475,8 +475,8 @@
     <string name="about_update_channel">Update Channel</string>
     <string name="update_channel_stable">Stable</string>
     <string name="update_channel_stable_desc">Stable releases only</string>
-    <string name="update_channel_latest">Preview</string>
-    <string name="update_channel_latest_desc">Also detects pre-releases (RC)</string>
+    <string name="update_channel_latest">Beta</string>
+    <string name="update_channel_latest_desc">Also detects beta builds and pre-releases (RC)</string>
     <string name="about_no_changelog">No changelog available</string>
 
     <!-- Ask User Question -->

@@ -475,8 +475,8 @@
     <string name="about_update_channel">更新通道</string>
     <string name="update_channel_stable">稳定版</string>
     <string name="update_channel_stable_desc">仅检测正式版更新</string>
-    <string name="update_channel_latest">预览版</string>
-    <string name="update_channel_latest_desc">除正式版外，还检测预览版（RC）更新</string>
+    <string name="update_channel_latest">测试版</string>
+    <string name="update_channel_latest_desc">除正式版外，还检测测试版与预览版（RC）更新</string>
     <string name="about_no_changelog">暂无更新说明</string>
 
     <!-- Ask User Question -->
