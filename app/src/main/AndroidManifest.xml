@@ -148,28 +148,15 @@
                 android:resource="@xml/aharou_accessibility_service" />
         </service>
 
-        <!-- 悬浮窗：Agent 干活时在系统层面显示实时状态胶囊（需悬浮窗权限）。
-             targetSdk 34 起必须声明 FGS 类型，否则 startForeground 抛 MissingForegroundServiceTypeException；
-             它属于“用户可见的自定义用途”，用 specialUse 并声明 subtype 说明。 -->
-        <service
-            android:name="com.aharou.feature.overlay.FloatingToolService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Agent 执行期间在屏幕上显示实时进度胶囊" />
-        </service>
-
-        <!-- 桌宠：用户主动开着的「小染」悬浮窗（三视图驱动）。
-             与上面的状态胶囊刻意分成两个服务：胶囊由 Agent 运行状态与 App 前后台门控，
-             桌宠是长期陪伴，显隐规则完全不同，混在一起会互相干扰。 -->
+        <!-- 小染悬浮层：用户开着就一直在的桌面伙伴，同时承担原来的「状态胶囊」职责
+             （Agent 进度、通话字幕、通话开关都在她身上）。需悬浮窗权限。 -->
         <service
             android:name="com.aharou.feature.pet.PetOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="用户主动开启的桌面宠物悬浮窗" />
+                android:value="用户主动开启的桌面伙伴悬浮窗，并显示 Agent 进度与通话字幕" />
         </service>
 
         <!-- 语音通话：悬浮窗 + 实时语音回合。用 microphone 类型，通话期间必须持有麦克风。 -->
@@ -182,7 +169,7 @@
              包替换（pm install）与设备重启都不会自动拉起服务，用户会以为开关失效了。
              接收器自己会先查设置里的开关，关着就不启动。 -->
         <receiver
-            android:name="com.aharou.feature.overlay.OverlayRestartReceiver"
+            android:name="com.aharou.feature.pet.PetRestartReceiver"
             android:exported="true"
             android:enabled="true">
             <intent-filter>

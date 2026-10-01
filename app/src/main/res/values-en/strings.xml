@@ -2011,7 +2011,7 @@
     <string name="permissions_phone_desc">Device &amp; call state</string>
     <string name="permissions_grant_all">Grant all runtime permissions</string>
     <string name="permissions_overlay">Display over other apps</string>
-    <string name="permissions_overlay_desc">Show the status capsule above apps</string>
+    <string name="permissions_overlay_desc">Show Xiaoran above other apps</string>
     <string name="permissions_all_files">All files access</string>
     <string name="permissions_all_files_desc">Access the entire storage (Android 11+)</string>
     <string name="permissions_write_settings">Modify system settings</string>
@@ -2021,27 +2021,98 @@
     <string name="permissions_usage_access">Usage access</string>
     <string name="permissions_usage_access_desc">Read app usage statistics</string>
 
-    <string name="floating_title">Floating window</string>
-    <string name="floating_enable">Enable floating window</string>
-    <string name="floating_hint">While the agent is working, a live status capsule floats above other apps (tool name + status). Tap to return to Aharou; drag to place it. Auto-hides when Aharou is in the foreground.</string>
     <string name="floating_grant">Overlay permission</string>
     <string name="floating_status_granted">Granted</string>
     <string name="floating_status_denied">Not granted</string>
     <string name="floating_thinking">Thinking…</string>
     <string name="floating_oem_hint">Some OEM ROMs also require background-popup permission and autostart for the capsule to stay reliable (see the System permissions page).</string>
 
-    <string name="pet_title">Desktop pet</string>
-    <string name="pet_enable">Enable the Xiaoran pet</string>
-    <string name="pet_hint">When on, Xiaoran lives on your screen as a floating window: she breathes while facing you, wanders off now and then, and turns her back to slack off. Drag to move her, tap for a line, double-tap to change her facing. She only blocks taps on her own body.</string>
+    <string name="pet_title">Xiaoran</string>
+    <string name="pet_enable">Show Xiaoran</string>
+    <string name="pet_always">Always on screen</string>
+    <string name="pet_always_hint">When off she only appears while the agent is working or a call is running</string>
+    <string name="pet_hint">When on, Xiaoran lives on your screen: she breathes while facing you and wanders off now and then; leave her alone long enough and she dozes off (any touch wakes her). The bubble above her shows agent progress and call subtitles; long-press her head for the action menu.</string>
+    <string name="pet_menu_hint">Long-press her head to open a ring menu: microphone (call toggle), screenshot, say something, doze, hide. Drag to move her, tap to talk, double-tap to pat her head.</string>
+    <string name="pet_menu_call">Call</string>
+    <string name="pet_menu_say">Speak</string>
+    <string name="pet_menu_sleep">Doze</string>
+    <string name="pet_menu_wake">Wake</string>
+    <string name="pet_menu_hide">Hide</string>
+    <string name="pet_menu_toy">Throw a ball</string>
+    <string name="pet_menu_pass">Ornament mode</string>
+    <string name="pet_menu_shot">Screenshot</string>
+    <string name="pet_shot_sent">Got it — sent to the chat</string>
+    <string name="pet_shot_failed">That shot did not go through — try me again</string>
+    <string name="pet_shot_no_a11y">Screenshots need accessibility: Settings - Permissions and background - Accessibility</string>
+    <string name="pet_shot_unsupported">Screenshots need Android 11 or newer</string>
+    <string name="pet_shot_message">(Screenshot from the pet)</string>
+    <string name="pet_toy_picked">Got it.</string>
+    <string name="pet_scene_tap">your master poked you</string>
+    <string name="pet_perms_header">Permissions needed</string>
+    <string name="pet_perm_overlay_why">Required — without it you can\'t see her on screen</string>
+    <string name="pet_perm_mic">Microphone</string>
+    <string name="pet_perm_mic_why">Needed for voice calls; without it she can\'t hear you or talk</string>
+    <string name="pet_perm_notif">Notifications</string>
+    <string name="pet_perm_notif_why">Keeps the system from killing her, and it\'s the way back when she\'s hidden or in ornament mode</string>
+    <string name="pet_no_mic">I can\'t open my mouth... grant me the microphone permission first, then tap the mic.</string>
+    <string name="pet_pass">Ornament mode</string>
+    <string name="pet_pass_hint">She becomes a pure decoration: touches pass straight through her window. Once it\'s on you can\'t tap her — turn it off here</string>
+    <string name="pet_notification_pass_on">Ornament mode is on — she can\'t be tapped. Turn it off in Settings</string>
+    <string name="pet_notification_pass_off">Turn off ornament</string>
+    <string name="pet_sleeping">Zzz…</string>
+    <string name="pet_patted">Mmh... don\'t pat my head.</string>
+    <string name="pet_patted_cold">...Don\'t touch me.</string>
+    <string name="pet_patted_warm">Mmh... one more pat is fine.</string>
+    <string name="pet_annoyed">Stop poking me already.</string>
+    <string name="pet_hug">...a hug is fine too.</string>
+    <string name="pet_missed_you">...You\'re finally back. I thought you\'d forgotten me.</string>
+    <string name="pet_agent_done">All done — take a look?</string>
+    <string name="pet_agent_waiting">I\'m stuck waiting for your approval... glance at the screen?</string>
+    <string name="pet_brief">Weather &amp; festival brief</string>
+    <string name="pet_brief_hint">Once a day, on her first appearance, she reports a festival greeting plus today\'s weather and what to watch out for. Weather comes from Open-Meteo, and location is read once only while this is on</string>
+    <string name="pet_brief_location">Location permission</string>
+    <string name="pet_brief_location_granted">Granted</string>
+    <string name="pet_brief_location_denied">Not granted (tap to grant)</string>
+    <string name="pet_fest_newyear">Happy New Year — I\'ll be here all year too.</string>
+    <string name="pet_fest_spring">Spring Festival is here. Have a proper meal.</string>
+    <string name="pet_fest_lantern">It\'s the Lantern Festival — have some sweet tangyuan.</string>
+    <string name="pet_fest_qingming">It\'s Qingming today. Check the weather before heading out.</string>
+    <string name="pet_fest_labour">Labour Day — don\'t work too hard today.</string>
+    <string name="pet_fest_dragon">Dragon Boat Festival — sweet zongzi or savoury?</string>
+    <string name="pet_fest_qixi">It\'s Qixi today... you know what I mean.</string>
+    <string name="pet_fest_midautumn">Mid-Autumn — don\'t forget the mooncakes.</string>
+    <string name="pet_fest_national">Happy National Day. Going out or staying in?</string>
+    <string name="pet_fest_double9">It\'s Chongyang — call home if you can.</string>
+    <string name="pet_fest_christmas">Merry Christmas. I can\'t give you a gift... but I\'m here.</string>
+    <string name="pet_fest_year_end">Last day of the year. Thanks for still being here.</string>
+    <string name="pet_brief_weather">Today %1$s~%2$s°C.</string>
+    <string name="pet_brief_weather_advice">Today %1$s~%2$s°C, %3$s.</string>
+    <string name="pet_brief_umbrella">rain is likely, take an umbrella</string>
+    <string name="pet_brief_hot">it\'s hot, drink some water</string>
+    <string name="pet_brief_cold">it\'s getting cold, add a layer</string>
+    <string name="pet_brief_windy">it\'s windy out</string>
+    <string name="pet_brief_uv">UV is strong, use sunscreen</string>
+    <string name="pet_brief_snow">snow — watch your step</string>
+    <string name="pet_brief_storm">thunderstorms — stay in</string>
+    <string name="pet_mood">How she feels about you</string>
+    <string name="pet_mood_hint">Head pats and hanging out raise it; poking her too much makes her sulk; days without her let it fade (with a floor)</string>
+    <string name="pet_mood_cold">Cold</string>
+    <string name="pet_mood_normal">Normal</string>
+    <string name="pet_mood_close">Close</string>
+    <string name="pet_mood_clingy">Clingy</string>
     <string name="pet_size">Pet size</string>
     <string name="pet_size_hint">Tap to cycle small / medium / large</string>
     <string name="pet_size_small">Small</string>
     <string name="pet_size_medium">Medium</string>
     <string name="pet_size_large">Large</string>
     <string name="pet_lock">Lock position</string>
-    <string name="pet_lock_hint">When locked she can\'t be dragged by accident</string>
-    <string name="pet_notification_channel">Desktop pet</string>
+    <string name="pet_lock_hint">When locked she can\'t be dragged (the menu still works)</string>
+    <string name="pet_notification_channel">Xiaoran</string>
     <string name="pet_notification_text">Xiaoran is keeping you company on screen</string>
+    <string name="pet_notification_working">Working on your task — see her bubble for progress</string>
+    <string name="pet_notification_call">In a call — subtitles are in her bubble</string>
+    <string name="pet_notification_hidden">Hidden. Tap here to bring Xiaoran back</string>
+    <string name="pet_notification_no_permission">Overlay permission missing — enable it in Settings → Xiaoran</string>
     <string-array name="pet_lines">
         <item>What is it? I\'m busy, you know.</item>
         <item>Hmph, one look and you\'re already leaving?</item>
@@ -2051,6 +2122,26 @@
         <item>If you\'re bored, just stand here with me a while.</item>
         <item>Staring... you\'re peeking at me again.</item>
         <item>Don\'t stay up too late. I\'ll keep watch here.</item>
+    </string-array>
+
+    <string-array name="pet_lines_cold">
+        <item>...Hmph.</item>
+        <item>Stop poking me.</item>
+        <item>I don\'t feel like talking.</item>
+        <item>Go do your thing.</item>
+        <item>...What is it?</item>
+        <item>Hands off.</item>
+    </string-array>
+
+    <string-array name="pet_lines_warm">
+        <item>You\'re back.</item>
+        <item>I\'ve been right here.</item>
+        <item>With you again today.</item>
+        <item>I was just thinking about you.</item>
+        <item>Wanna take a break?</item>
+        <item>You watch the screen, I watch you. Fair enough.</item>
+        <item>Master, head pats are fine. More than one is fine too.</item>
+        <item>Don\'t stay up too late... you won\'t listen, but I\'ll say it anyway.</item>
     </string-array>
 
     <string name="memory_settings_title">Memory</string>

@@ -96,7 +96,8 @@ internal class VoiceCallService : Service() {
             return
         }
         _running.value = true
-        // 界面由 [FloatingToolService] 那枚常驻胶囊承担（头像 = 通话开关），这里只管通话本身
+        // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
+        // 径向菜单里的麦克风开关通话，这里只管通话本身
         session.start("")
     }
 

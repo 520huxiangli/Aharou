@@ -2010,7 +2010,7 @@
     <string name="permissions_phone_desc">读取设备与通话状态</string>
     <string name="permissions_grant_all">一键申请全部运行时权限</string>
     <string name="permissions_overlay">悬浮窗</string>
-    <string name="permissions_overlay_desc">在其他应用上层显示（状态胶囊）</string>
+    <string name="permissions_overlay_desc">在其他应用上层显示（小染）</string>
     <string name="permissions_all_files">所有文件访问</string>
     <string name="permissions_all_files_desc">访问整个存储空间（Android 11+）</string>
     <string name="permissions_write_settings">修改系统设置</string>
@@ -2020,27 +2020,98 @@
     <string name="permissions_usage_access">使用情况访问</string>
     <string name="permissions_usage_access_desc">读取应用使用统计（统计 / 自动化用）</string>
 
-    <string name="floating_title">悬浮窗</string>
-    <string name="floating_enable">启用悬浮窗</string>
-    <string name="floating_hint">开启后：Agent 干活时，屏幕上会飘出一枚实时状态小胶囊（工具名 + 状态），点一下回到 Aharou，可拖动摆放；Aharou 在前台时自动隐藏。</string>
     <string name="floating_grant">悬浮窗权限</string>
     <string name="floating_status_granted">已授权</string>
     <string name="floating_status_denied">未授权</string>
     <string name="floating_thinking">思考中…</string>
     <string name="floating_oem_hint">部分国产 ROM 还需允许「后台弹出界面」并保持自启动（见「软件权限」页），悬浮窗才能稳定。</string>
 
-    <string name="pet_title">桌宠</string>
-    <string name="pet_enable">启用小染桌宠</string>
-    <string name="pet_hint">开启后，小染会以悬浮窗的形式待在屏幕上：待机时面对你轻轻呼吸，偶尔自己走到别处，转身背对你偷懒；按住可拖动，点一下她会说话，双击换个朝向。她只在角色身上挡一点点击，其它地方不受影响。</string>
-    <string name="pet_size">桌宠大小</string>
+    <string name="pet_title">小染</string>
+    <string name="pet_enable">显示小染</string>
+    <string name="pet_always">常驻待机</string>
+    <string name="pet_always_hint">关闭后她只在 Agent 跑任务或通话时出现</string>
+    <string name="pet_hint">打开后，小染会待在屏幕上：待机时面对你轻轻呼吸，偶尔自己走到别处溜达；长时间没人理她，她会自己打盹（碰一下就醒）。她头顶的气泡会显示 Agent 的进度和通话字幕，长按她的头部能唤出操作菜单。</string>
+    <string name="pet_menu_hint">长按她的头部唤出一圈菜单：麦克风（通话开关）、截屏、说句话、打盹、隐藏。拖动可挪位置，单击说话，双击摸头。</string>
+    <string name="pet_menu_call">通话</string>
+    <string name="pet_menu_say">说话</string>
+    <string name="pet_menu_sleep">打盹</string>
+    <string name="pet_menu_wake">叫醒</string>
+    <string name="pet_menu_hide">隐藏</string>
+    <string name="pet_menu_toy">扔个球</string>
+    <string name="pet_menu_pass">摆件模式</string>
+    <string name="pet_menu_shot">截屏</string>
+    <string name="pet_shot_sent">截好了，发进会话了</string>
+    <string name="pet_shot_failed">刚那下没截上，等会儿再点我</string>
+    <string name="pet_shot_no_a11y">截屏得先开无障碍：设置 → 权限与后台 → 无障碍</string>
+    <string name="pet_shot_unsupported">这台得 Android 11 以上才能截屏</string>
+    <string name="pet_shot_message">（小染截的屏）</string>
+    <string name="pet_toy_picked">捡到了。</string>
+    <string name="pet_scene_tap">主人戳了你一下</string>
+    <string name="pet_perms_header">需要的权限</string>
+    <string name="pet_perm_overlay_why">必须开，不然屏幕上根本看不到她</string>
+    <string name="pet_perm_mic">录音权限</string>
+    <string name="pet_perm_mic_why">通话要用；没有它她听不见你，也说不了话</string>
+    <string name="pet_perm_notif">通知权限</string>
+    <string name="pet_perm_notif_why">保证她不被系统顺手清掉，隐藏或摆件时也靠它叫回</string>
+    <string name="pet_no_mic">我张不开嘴……先去给我录音权限，再点麦克风。</string>
+    <string name="pet_pass">摆件模式</string>
+    <string name="pet_pass_hint">她只当摆件：整块窗不接触摸，手指直接穿过去。开了就点不到她，只能从这里关</string>
+    <string name="pet_notification_pass_on">摆件模式开着，点不到她；想让她能摸就去设置里关</string>
+    <string name="pet_notification_pass_off">取消摆件</string>
+    <string name="pet_sleeping">Zzz…</string>
+    <string name="pet_patted">唔……别摸头。</string>
+    <string name="pet_patted_cold">……别碰我。</string>
+    <string name="pet_patted_warm">嗯……再摸一下也行。</string>
+    <string name="pet_annoyed">别戳了别戳了，烦不烦。</string>
+    <string name="pet_hug">……抱一下也行。</string>
+    <string name="pet_missed_you">……你终于回来了。我还以为你把我忘了。</string>
+    <string name="pet_agent_done">干完了，你去看看？</string>
+    <string name="pet_agent_waiting">我卡在等你点确认……看一眼屏幕嘛。</string>
+    <string name="pet_brief">天气与节日提醒</string>
+    <string name="pet_brief_hint">每天第一次出现时她会报一句：节日祝福 + 今天天气要不要带伞。天气走 Open-Meteo，开了才取一次定位</string>
+    <string name="pet_brief_location">定位权限</string>
+    <string name="pet_brief_location_granted">已授权</string>
+    <string name="pet_brief_location_denied">未授权（点一下授权）</string>
+    <string name="pet_fest_newyear">元旦快乐，新的一年也陪着你。</string>
+    <string name="pet_fest_spring">春节到了，记得吃顿好的。</string>
+    <string name="pet_fest_lantern">今天元宵，汤圆吃点甜的。</string>
+    <string name="pet_fest_qingming">今天是清明，出门记得看天气。</string>
+    <string name="pet_fest_labour">劳动节，今天别太拼。</string>
+    <string name="pet_fest_dragon">端午到了，粽子吃咸的还是甜的？</string>
+    <string name="pet_fest_qixi">今天七夕……你懂我意思吧。</string>
+    <string name="pet_fest_midautumn">中秋了，记得吃月饼。</string>
+    <string name="pet_fest_national">国庆快乐，出去玩还是在家躺？</string>
+    <string name="pet_fest_double9">今天重阳，给家里打个电话吧。</string>
+    <string name="pet_fest_christmas">圣诞快乐。我给不了礼物……但我在。</string>
+    <string name="pet_fest_year_end">今年最后一天了，谢谢你还在。</string>
+    <string name="pet_brief_weather">今天 %1$s~%2$s℃。</string>
+    <string name="pet_brief_weather_advice">今天 %1$s~%2$s℃，%3$s。</string>
+    <string name="pet_brief_umbrella">可能下雨，带把伞</string>
+    <string name="pet_brief_hot">挺热的，多喝水</string>
+    <string name="pet_brief_cold">降温了，加件衣服</string>
+    <string name="pet_brief_windy">风有点大</string>
+    <string name="pet_brief_uv">紫外线强，注意防晒</string>
+    <string name="pet_brief_snow">有雪，路上小心</string>
+    <string name="pet_brief_storm">有雷雨，别乱跑</string>
+    <string name="pet_mood">她对你的态度</string>
+    <string name="pet_mood_hint">摸头、陪着她会加分；一直戳她她会闹别扭；隔好几天不理她会变淡（有下限）</string>
+    <string name="pet_mood_cold">冷淡</string>
+    <string name="pet_mood_normal">平常</string>
+    <string name="pet_mood_close">亲近</string>
+    <string name="pet_mood_clingy">黏人</string>
+    <string name="pet_size">小染大小</string>
     <string name="pet_size_hint">点一下在小 / 中 / 大之间切换</string>
     <string name="pet_size_small">小</string>
     <string name="pet_size_medium">中</string>
     <string name="pet_size_large">大</string>
     <string name="pet_lock">锁定位置</string>
-    <string name="pet_lock_hint">锁上后不能拖动，避免误碰</string>
-    <string name="pet_notification_channel">桌宠</string>
+    <string name="pet_lock_hint">锁上后不能拖动（长按菜单仍可用）</string>
+    <string name="pet_notification_channel">小染</string>
     <string name="pet_notification_text">小染正在屏幕上陪着你</string>
+    <string name="pet_notification_working">正在替你干活，进度看她的气泡</string>
+    <string name="pet_notification_call">通话中，字幕在小染的气泡里</string>
+    <string name="pet_notification_hidden">已隐藏，点这里叫回小染</string>
+    <string name="pet_notification_no_permission">缺少悬浮窗权限，去「设置 → 小染」里开启</string>
     <string-array name="pet_lines">
         <item>干嘛呀，人家在忙呢。</item>
         <item>哼，又来看我一眼就想跑？</item>
@@ -2050,6 +2121,26 @@
         <item>无聊的话，就陪我站一会儿。</item>
         <item>盯——你又在偷看我。</item>
         <item>别熬太晚，我在这儿守着你。</item>
+    </string-array>
+
+    <string-array name="pet_lines_cold">
+        <item>……哼。</item>
+        <item>别戳我，烦。</item>
+        <item>我现在不想说话。</item>
+        <item>你去忙你的吧。</item>
+        <item>……有事吗。</item>
+        <item>手指头拿开。</item>
+    </string-array>
+
+    <string-array name="pet_lines_warm">
+        <item>你回来啦。</item>
+        <item>我一直在这儿哦。</item>
+        <item>今天也陪着你。</item>
+        <item>刚刚想到你了。</item>
+        <item>要不要休息一下？</item>
+        <item>你盯着屏幕，我盯着你，挺公平。</item>
+        <item>主人，摸头可以，多摸两下也行。</item>
+        <item>别熬夜……反正你也不会听，但我还是要说。</item>
     </string-array>
 
     <string name="memory_settings_title">记忆</string>
