@@ -4,6 +4,7 @@ import android.content.Context
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -95,7 +96,10 @@ class RepoDataFetcher(
 
                         response.isSuccessful -> {
                             val body = response.body?.string().orEmpty()
-                            if (body.isNotBlank()) {
+                            // 中间镜像可能返回截断正文：实测 ghproxy.net 对 5MB 的 models.json
+                            // 只回 1/10 而状态码仍是 200。正文不完整就继续试下一个节点——
+                            // 一旦返回，调用方不会再去别的源。
+                            if (body.isNotBlank() && (!cleanPath.endsWith(".json") || isParsableJson(body))) {
                                 // 写入磁盘缓存
                                 runCatching {
                                     cacheFile.parentFile?.mkdirs()
@@ -107,9 +111,10 @@ class RepoDataFetcher(
                                         etagFile.delete()
                                     }
                                 }
-                                FileLogger.d(TAG, "拉取成功 $cleanPath url=$url bytes=${body.length}")
+                                FileLogger.d(TAG, "拉取成功 $cleanPath url=$url chars=${body.length}")
                                 return@withContext FetchResult.Success(body, fromCache = false)
                             }
+                            FileLogger.d(TAG, "节点正文不可用（截断/空），继续试下一个 url=$url chars=${body.length}")
                         }
 
                         else -> {
@@ -138,21 +143,28 @@ class RepoDataFetcher(
     }
 
     /**
-     * 生成候选节点 URL 列表：
-     * 1. jsDelivr (Fastly CDN 加速)
-     * 2. jsDelivr (通用 CDN)
-     * 3. raw.githubusercontent.com (GitHub 官方直连兜底)
+     * 生成候选节点 URL 列表，按「仓库改动后多久能拿到」排序：
+     *
+     * 1. gh-proxy / ghproxy.net：透传 GitHub raw，cache-control 只有 60 秒 / 5 分钟，
+     *    仓库里改了清单很快就能拿到；
+     * 2. jsDelivr 各节点：内容本身还好，但它对「分支名 → commit」的解析要缓 12 小时
+     *    （s-maxage=43200），而 purge 只能清内容那层，于是改了分支后长时间拉到的
+     *    仍是旧内容——只作兜底；
+     * 3. raw.githubusercontent.com：无缓存但国内常不通，放最后。
+     *
+     * 顺序即优先级：第一个返回非空正文的节点即被采用（不比较内容新旧）。
      */
-    fun buildCandidateUrls(path: String): List<String> = listOf(
-        // Fastly 加速的 jsDelivr 节点
-        "https://fastly.jsdelivr.net/gh/$owner/$repo@$branch/$path",
-        // 通用 CDN 镜像
-        "https://cdn.jsdelivr.net/gh/$owner/$repo@$branch/$path",
-        // jsDelivr GCore 节点
-        "https://gcore.jsdelivr.net/gh/$owner/$repo@$branch/$path",
-        // GitHub 源站兜底
-        "https://raw.githubusercontent.com/$owner/$repo/$branch/$path"
-    )
+    fun buildCandidateUrls(path: String): List<String> {
+        val raw = "https://raw.githubusercontent.com/$owner/$repo/$branch/$path"
+        return listOf(
+            "https://gh-proxy.com/$raw",
+            "https://ghproxy.net/$raw",
+            "https://fastly.jsdelivr.net/gh/$owner/$repo@$branch/$path",
+            "https://cdn.jsdelivr.net/gh/$owner/$repo@$branch/$path",
+            "https://gcore.jsdelivr.net/gh/$owner/$repo@$branch/$path",
+            raw,
+        )
+    }
 
     /**
      * 同步读取磁盘缓存（不发网络）：存在则返回文本，否则 null。
@@ -174,6 +186,10 @@ class RepoDataFetcher(
             getEtagFile(cleanPath).delete()
         }
     }
+
+    /** JSON 文件的内容完整性校验：能解析才采纳，防中间镜像返回截断正文。 */
+    private fun isParsableJson(text: String): Boolean =
+        runCatching { Json.parseToJsonElement(text) }.isSuccess
 
     private fun getCacheFile(path: String): File {
         val safeName = path.replace('/', '_')
