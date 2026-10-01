@@ -198,6 +198,10 @@ class SessionUseCase @Inject constructor(
         chatSessionDao.updateReasoningEffort(sessionId, effort)
     }
 
+    suspend fun updateLastInputTokens(sessionId: String, tokens: Int) {
+        chatSessionDao.updateLastInputTokens(sessionId, tokens)
+    }
+
     suspend fun isSessionEmpty(sessionId: String): Boolean {
         return !agentMessageDao.hasMessages(sessionId)
     }

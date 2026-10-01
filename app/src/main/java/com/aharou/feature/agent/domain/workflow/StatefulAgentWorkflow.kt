@@ -546,6 +546,13 @@ class StatefulAgentWorkflow @Inject constructor(
                             }
                             if (compactedMessages !== state.messages) {
                                 state = state.copy(messages = compactedMessages)
+                                // 压缩发生后清零 lastInputTokens：压缩前的旧值含完整消息体 token，
+                                // 若不清零，下一轮 compactIfNeeded 会取旧高值而非估算值，
+                                // 导致消息体已缩短但仍立刻再次触发压缩（循环压缩）。
+                                // 清零后下一轮走本地估算路径，能正确反映压缩后消息体已大幅减少。
+                                currentContext.sessionId?.let { sid ->
+                                    runCatching { sessionUseCase.updateLastInputTokens(sid, 0) }
+                                }
                             }
                         }
 

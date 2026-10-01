@@ -48,8 +48,9 @@ class ContextCompactor @Inject constructor(
         /**
          * 硬触发线：窗口占比。达到就压缩，与「压缩阈值百分比」偏好无关——
          * 百分比是可调偏好，但再保守的配置也不该等到上下文贴到窗口边缘才动手。
+         * 取 0.92 作为真正的「紧急兜底」，正常情况由设置里的百分比决定触发点。
          */
-        const val HARD_TRIGGER_RATIO = 0.8
+        const val HARD_TRIGGER_RATIO = 0.92
 
         /**
          * 本地估算的固定开销补偿。[estimateTokens] 只数消息体，不含系统提示词与工具定义，
