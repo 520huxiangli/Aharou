@@ -1,5 +1,6 @@
 package com.aharou.feature.voice.call
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -14,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.aharou.MainActivity
 import com.aharou.R
+import com.aharou.core.util.FileLogger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +47,15 @@ internal class VoiceCallService : Service() {
         fun isRunning(): Boolean = _running.value
 
         fun start(context: Context) {
+            // microphone 型前台服务要求启动时已能访问麦克风：RECORD_AUDIO 未授予
+            // （或用户给的是一次性授权）时会抛 SecurityException 并拖垮整个进程，
+            // 所以先自查再启。
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                FileLogger.w(TAG, "未授予录音权限，忽略通话启动")
+                return
+            }
             runCatching {
                 ContextCompat.startForegroundService(
                     context,
@@ -66,15 +78,24 @@ internal class VoiceCallService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        _running.value = true
         ensureChannel()
         // targetSdk 34 起 startForeground 必须带类型，且要与 manifest 的 foregroundServiceType 一致
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-        )
+        try {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            )
+        } catch (e: Exception) {
+            // 除权限缺失外，Android 14 起还不允许在 App 不可见时启动 microphone 型前台服务
+            // （悬浮窗胶囊那条入口就会走到这里）。服务没起来就自退，不能把异常抛穿进程。
+            FileLogger.w(TAG, "启动通话前台服务失败：${e.message}")
+            _running.value = false
+            stopSelf()
+            return
+        }
+        _running.value = true
         // 界面由 [FloatingToolService] 那枚常驻胶囊承担（头像 = 通话开关），这里只管通话本身
         session.start("")
     }
