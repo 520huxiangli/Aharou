@@ -1727,10 +1727,8 @@ fun AIChatPanel(
                 workspaceViewModel = workspaceViewModel,
                 onStopCurrentSessions = { viewModel.stopAllAgents() },
                 onOpenDashboardUrl = { url ->
-                    // 自定义面板里的链接走内置浏览器：先建/选中标签页，再 ping 围观信号
-                    // 让浏览器面板自动弹出（与 browser 工具同一条路径）。
+                    // 自定义面板里的链接走内置浏览器：先建/选中标签页再跳过去。
                     viewModel.browserTabPool.selectOrCreateTabForURL(url)
-                    com.aharou.feature.browser.BrowserWatchSignal.ping()
                     onNavigateToBrowser()
                 },
                 activeProvider = activeProvider,

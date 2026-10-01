@@ -548,14 +548,10 @@ fun AppNavigation(
     var paneEditorLine by rememberSaveable { mutableIntStateOf(0) }
     var paneSplit by rememberSaveable { mutableFloatStateOf(DEFAULT_PANE_SPLIT) }
 
-    // Aharou：浏览器围观面板 + 工具消息快捷入口（地球 / 在终端运行）
+    // Aharou：浏览器面板 + 工具消息快捷入口（地球 / 在终端运行）
+    // 面板只在用户主动打开时弹出；Agent 浏览网页的过程在底部小屏幕（浮动工具条缩略图）里围观。
     var browserSheetOpen by remember { mutableStateOf(false) }
     var terminalInitCommand by rememberSaveable { mutableStateOf<String?>(null) }
-    val browserWatchTick by com.aharou.feature.browser.BrowserWatchSignal.tick
-        .collectAsStateWithLifecycle()
-    LaunchedEffect(browserWatchTick) {
-        if (browserWatchTick > 0L) browserSheetOpen = true
-    }
 
     // 右栏打开时返回键先收起它。限定聊天页：其他页面右栏不渲染，不能在那里吞掉返回事件。
     BackHandler(

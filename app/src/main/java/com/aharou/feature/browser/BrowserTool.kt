@@ -71,8 +71,6 @@ class BrowserTool @Inject constructor(
     )
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
-        // 围观信号：聊天页收到后自动弹出浏览器面板（不用手点）
-        BrowserWatchSignal.ping()
         val json = JsonObject(args).toString()
         val input = BrowserActionInput.parse(json)
             ?: return ToolResult.Error("无效的 browser 参数（检查 action 与必填项）", "INVALID_INPUT")
