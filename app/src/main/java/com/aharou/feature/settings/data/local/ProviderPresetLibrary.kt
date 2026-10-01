@@ -68,11 +68,7 @@ object ProviderPresetLibrary {
                 json.decodeFromString<List<ProviderPreset>>(remoteContent)
             }.getOrNull()
             if (!parsedRemote.isNullOrEmpty()) {
-                val sorted = parsedRemote.sortedWith(
-                    compareByDescending<ProviderPreset> { it.isRecommended }
-                        .thenBy { it.name.lowercase() }
-                )
-                cached = sorted
+                cached = mergeWithBuiltIn(parsedRemote, loadFromAssets(context))
             }
         }
     }
@@ -85,6 +81,8 @@ object ProviderPresetLibrary {
     fun loadOfficial(context: Context): List<ProviderPreset> {
         cached?.let { return it }
 
+        val builtIn = loadFromAssets(context)
+
         // 1. 尝试直接读取本地磁盘缓存文件（由 RepoDataFetcher 写入）
         val diskContent = RepoDataFetcher(context).readLocalCache(REMOTE_PROVIDERS_PATH)
         if (!diskContent.isNullOrBlank()) {
@@ -92,27 +90,38 @@ object ProviderPresetLibrary {
                 json.decodeFromString<List<ProviderPreset>>(diskContent)
             }.getOrNull()
             if (!parsed.isNullOrEmpty()) {
-                val sorted = parsed.sortedWith(
-                    compareByDescending<ProviderPreset> { it.isRecommended }
-                        .thenBy { it.name.lowercase() }
-                )
-                cached = sorted
-                return sorted
+                val merged = mergeWithBuiltIn(parsed, builtIn)
+                cached = merged
+                return merged
             }
         }
 
         // 2. 兜底读取内置 assets（必定存在，必定瞬间返回）
-        val fallback = loadFromAssets(context)
-        cached = fallback
-        return fallback
+        cached = builtIn
+        return builtIn
     }
+
+    /**
+     * 磁盘/远端预设与内置预设合并：以远端为主，内置里有而远端没有的补上。
+     *
+     * 远端缓存有 12 小时 TTL，而内置预设随包更新。若直接拿远端结果盖掉内置，
+     * 新装的版本会暂时看不到新增预设（要等缓存过期才出现）——内置项按 id 补齐。
+     */
+    private fun mergeWithBuiltIn(
+        remote: List<ProviderPreset>,
+        builtIn: List<ProviderPreset>
+    ): List<ProviderPreset> {
+        val remoteIds = remote.mapTo(mutableSetOf()) { it.id }
+        val missing = builtIn.filterNot { it.id in remoteIds }
+        return (remote + missing).sortedWith(PRESET_ORDER)
+    }
+
+    private val PRESET_ORDER = compareByDescending<ProviderPreset> { it.isRecommended }
+        .thenBy { it.name.lowercase() }
 
     private fun loadFromAssets(context: Context): List<ProviderPreset> = runCatching {
         val text = context.assets.open(PROVIDERS_ASSET_FILE_NAME).bufferedReader().use { it.readText() }
         val list = json.decodeFromString<List<ProviderPreset>>(text)
-        list.sortedWith(
-            compareByDescending<ProviderPreset> { it.isRecommended }
-                .thenBy { it.name.lowercase() }
-        )
+        list.sortedWith(PRESET_ORDER)
     }.getOrDefault(emptyList())
 }

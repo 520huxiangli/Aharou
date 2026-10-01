@@ -45,6 +45,19 @@ class UpdateApkDownloader @Inject constructor(
     }
 
     /**
+     * 测速专用 client：与下载 client 的唯一区别是带 callTimeout。
+     *
+     * 探测跑在阻塞式 IO 上，协程层的 withTimeout 对它无效（取消要到阻塞调用返回后才抛出），
+     * 只有 OkHttp 自己的 callTimeout 能真正挖断请求。不加这个，慢源会把「选择下载源」
+     * 拖成几十秒：实测反代慢时 512KB 要读半分钟。
+     */
+    private val probeClient by lazy {
+        client.newBuilder()
+            .callTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
+    /**
      * 下载目录：优先 App 外部私有目录（Android/data/<pkg>/files/updates）。
      *
      * 之所以不用内部 filesDir：开关「下载后自动静默安装」时要把包交给 Shizuku（adb shell 身份）
@@ -108,7 +121,7 @@ class UpdateApkDownloader @Inject constructor(
                         val req = Request.Builder().url(url)
                             .header("Range", "bytes=0-${PROBE_BYTES - 1}")
                             .build()
-                        client.newCall(req).execute().use { resp ->
+                        probeClient.newCall(req).execute().use { resp ->
                             if (!resp.isSuccessful && resp.code != 206) {
                                 throw IOException("HTTP ${resp.code}")
                             }
@@ -134,8 +147,9 @@ class UpdateApkDownloader @Inject constructor(
     }
 
     private companion object {
-        /** 测速时每个源只下这么多：够分出快慢，又不白耗流量。 */
-        const val PROBE_BYTES = 512L * 1024
+        /** 测速时每个源只下这么多：够分出快慢，又不白耗流量。
+         *  128KB 在 16KB/s 的慢源上约 8 秒，配合 callTimeout 能及时收算。 */
+        const val PROBE_BYTES = 128L * 1024
 
         /** 单个源的测速超时，超时算不可用、排到队尾。 */
         const val PROBE_TIMEOUT_MS = 6_000L
