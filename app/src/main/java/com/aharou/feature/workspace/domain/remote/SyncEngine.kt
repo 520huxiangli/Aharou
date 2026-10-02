@@ -2,6 +2,7 @@ package com.aharou.feature.workspace.domain.remote
 
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.GitIgnoreMatcher
+import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -9,6 +10,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -25,7 +29,7 @@ class SyncEngine(
 ) {
     companion object {
         private const val TAG = "SyncEngine"
-        private const val PING_INTERVAL_MS = 30_000L
+        private const val PING_INTERVAL_MS = 15_000L
         private const val RECONNECT_BASE_MS = 5_000L
         private const val RECONNECT_MAX_MS = 60_000L
         private const val FILE_SYNC_DELAY_MS = 50L
@@ -61,6 +65,10 @@ class SyncEngine(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val retryCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    private val _connectionState = MutableStateFlow(SyncConnectionState.CONNECTED)
+    /** 连接健康度：探活失败进 RECONNECTING，重连成功回 CONNECTED，供 UI 展示。 */
+    val connectionState: StateFlow<SyncConnectionState> = _connectionState.asStateFlow()
     
     // 使用 Channel 做缓冲和防抖（上限内堆积，满则丢弃最旧项）
     private val syncChannel = Channel<String>(
@@ -109,12 +117,13 @@ class SyncEngine(
                 delay(PING_INTERVAL_MS)
                 if (!syncClient.ping()) {
                     FileLogger.w(TAG, "Sync: 连接已断开（${connection.name}），开始自动重连")
+                    _connectionState.value = SyncConnectionState.RECONNECTING
                     while (isActive && !syncClient.ping()) {
                         delay(backoffMs)
                         try {
-                            syncClient.disconnect()
-                            syncClient.connect(connection.host, connection.port, connection.username, auth)
+                            syncClient.reconnect(connection.host, connection.port, connection.username, auth)
                             backoffMs = RECONNECT_BASE_MS
+                            _connectionState.value = SyncConnectionState.CONNECTED
                             FileLogger.i(TAG, "Sync: 自动重连成功（${connection.name}）")
                         } catch (e: Exception) {
                             FileLogger.e(TAG, "Sync: 自动重连失败（${connection.name}），${backoffMs / 1000}s 后重试: ${e.message}")
@@ -154,7 +163,7 @@ class SyncEngine(
                         delay(FILE_SYNC_DELAY_MS)
                     } catch (e: Exception) {
                         FileLogger.e(TAG, "Download Error for $rPath: ${e.message}")
-                        forceReconnect()
+                        if (e !is RemoteFileRejectedException) forceReconnect()
                     }
                 }
             }
@@ -189,6 +198,7 @@ class SyncEngine(
                         delay(FILE_SYNC_DELAY_MS)
                     } catch (e: Exception) {
                         FileLogger.e(TAG, "Upload Error for $rPath: ${e.message}")
+                        if (e is RemoteFileRejectedException) continue
                         forceReconnect()
                         // 全量同步失败的也放入增量队列兜底重传
                         scope.launch {
@@ -207,6 +217,7 @@ class SyncEngine(
      * 本地变更后投递进来；与失败重试共用同一队列，保持原有批处理与节流语义。
      */
     fun enqueueLocalChange(localPath: String) {
+        FileLogger.d(TAG, "[diag] enqueueLocalChange localPath=$localPath ignored=${isIgnored(localPath)}")
         syncChannel.trySend(localPath)
     }
 
@@ -235,6 +246,11 @@ class SyncEngine(
             retryCounts.remove(localPath) // 成功后清除重试计数
         } catch (e: Exception) {
             FileLogger.e(TAG, "Sync Error for $localPath: ${e.message}", e)
+            if (e is RemoteFileRejectedException) {
+                retryCounts.remove(localPath)
+                FileLogger.w(TAG, "Sync: 服务器拒绝该路径，跳过重连和重试: $remotePath")
+                return
+            }
             forceReconnect()
             val count = retryCounts.getOrDefault(localPath, 0)
             if (count < 3) {

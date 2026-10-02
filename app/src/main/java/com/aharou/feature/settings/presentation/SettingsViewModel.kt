@@ -289,6 +289,7 @@ data class SubAgentUiEntry(
 /** 技能编辑页的保存结果：UI 据此决定是退回列表还是就地报错。 */
 sealed interface SkillSaveState {
     data object Idle : SkillSaveState
+    data object Saving : SkillSaveState
     data object Saved : SkillSaveState
     data class Failed(val error: SkillSaveError) : SkillSaveState
 }
@@ -337,6 +338,7 @@ private const val EXPORT_DIR = "skill-export"
 /** 子代理编辑页的保存结果：UI 据此决定是退回列表还是就地报错。 */
 sealed interface SubAgentSaveState {
     data object Idle : SubAgentSaveState
+    data object Saving : SubAgentSaveState
     data object Saved : SubAgentSaveState
     data class Failed(val error: AgentSaveError) : SubAgentSaveState
 }
@@ -714,6 +716,10 @@ class SettingsViewModel @Inject constructor(
     private val _skillImportState = MutableStateFlow<SkillImportState>(SkillImportState.Idle)
     val skillImportState: StateFlow<SkillImportState> = _skillImportState.asStateFlow()
 
+    /** 正在删除的技能名（非 null 表示删除进行中，用于弹窗转圈与禁用按钮）。 */
+    private val _skillDeleting = MutableStateFlow<String?>(null)
+    val skillDeleting: StateFlow<String?> = _skillDeleting.asStateFlow()
+
     private val _skillExportState = MutableStateFlow<SkillExportState>(SkillExportState.Idle)
     val skillExportState: StateFlow<SkillExportState> = _skillExportState.asStateFlow()
 
@@ -753,6 +759,10 @@ class SettingsViewModel @Inject constructor(
 
     private val _subAgentSaveState = MutableStateFlow<SubAgentSaveState>(SubAgentSaveState.Idle)
     val subAgentSaveState: StateFlow<SubAgentSaveState> = _subAgentSaveState.asStateFlow()
+
+    /** 正在删除的子代理名（非 null 表示删除进行中，用于弹窗转圈与禁用按钮）。 */
+    private val _subAgentDeleting = MutableStateFlow<String?>(null)
+    val subAgentDeleting: StateFlow<String?> = _subAgentDeleting.asStateFlow()
 
     val mcpStatuses: StateFlow<List<McpServerStatus>> = mcpManager.statuses
 
@@ -1648,21 +1658,30 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 删除指定作用域的技能（删除其目录，不可恢复），随后立即刷新列表。 */
+    /**
+     * 删除指定作用域的技能（删除其目录，不可恢复），完成后刷新列表。
+     * 删除本体在 IO 线程跑（远程模式经 SFTP 递归删，不能在主线程）；期间 [skillDeleting] 置名供 UI 转圈。
+     */
     fun deleteSkill(name: String, scope: SkillScope) {
+        if (_skillDeleting.value != null) return
+        _skillDeleting.value = name
         viewModelScope.launch {
-            val deleted = withContext(Dispatchers.IO) { skillRepository.deleteSkill(name, scope) }
-            // 市场装来的技能删掉后要一并清安装记录，否则市场一直显示「已安装」。
-            // 安装记录只按名字存、不分作用域，所以同名技能在别的地方还在时要留着。
-            if (deleted) {
-                val stillPresent = withContext(Dispatchers.IO) {
-                    skillRepository.listAllSkills().any { it.skill.name.equals(name, ignoreCase = true) }
+            try {
+                val deleted = withContext(Dispatchers.IO) { skillRepository.deleteSkill(name, scope) }
+                // 市场装来的技能删掉后要一并清安装记录，否则市场一直显示「已安装」。
+                // 安装记录只按名字存、不分作用域，所以同名技能在别的地方还在时要留着。
+                if (deleted) {
+                    val stillPresent = withContext(Dispatchers.IO) {
+                        skillRepository.listAllSkills().any { it.skill.name.equals(name, ignoreCase = true) }
+                    }
+                    if (!stillPresent) {
+                        withContext(Dispatchers.IO) { skillMarketRepository.forgetInstall(name) }
+                    }
                 }
-                if (!stillPresent) {
-                    withContext(Dispatchers.IO) { skillMarketRepository.forgetInstall(name) }
-                }
+                refreshSkills()
+            } finally {
+                _skillDeleting.value = null
             }
-            refreshSkills()
         }
     }
 
@@ -1671,6 +1690,8 @@ class SettingsViewModel @Inject constructor(
      * 结果转成 [skillSaveState]，编辑页据此退回列表或就地报错。
      */
     fun saveSkill(form: SkillForm, scope: SkillScope, originalName: String? = null) {
+        if (_skillSaveState.value is SkillSaveState.Saving) return
+        _skillSaveState.value = SkillSaveState.Saving
         viewModelScope.launch {
             val error = withContext(Dispatchers.IO) {
                 skillRepository.save(form, scope, originalName)
@@ -1826,6 +1847,8 @@ class SettingsViewModel @Inject constructor(
         scope: AgentDefinitionScope,
         originalName: String? = null
     ) {
+        if (_subAgentSaveState.value is SubAgentSaveState.Saving) return
+        _subAgentSaveState.value = SubAgentSaveState.Saving
         viewModelScope.launch {
             val error = withContext(Dispatchers.IO) {
                 agentDefinitionRepository.save(form, scope, originalName)
@@ -1847,9 +1870,15 @@ class SettingsViewModel @Inject constructor(
     fun availableToolNames(): List<String> = toolRegistry.getAvailableTools().map { it.name }
 
     fun deleteSubAgent(name: String, scope: AgentDefinitionScope) {
+        if (_subAgentDeleting.value != null) return
+        _subAgentDeleting.value = name
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { agentDefinitionRepository.delete(name, scope) }
-            refreshSubAgents()
+            try {
+                withContext(Dispatchers.IO) { agentDefinitionRepository.delete(name, scope) }
+                refreshSubAgents()
+            } finally {
+                _subAgentDeleting.value = null
+            }
         }
     }
 

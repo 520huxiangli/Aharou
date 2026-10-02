@@ -1,5 +1,6 @@
 package com.aharou
 
+import android.app.ActivityManager
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -568,6 +569,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                         putExtra(CrashActivity.EXTRA_STACK, stackTraceOf(throwable))
                         putExtra(CrashActivity.EXTRA_SCREEN, currentRoute)
                         putExtra(CrashActivity.EXTRA_WORKSPACE_MODE, currentWorkspaceMode)
+                        putExtra(CrashActivity.EXTRA_MEMORY, memorySummary())
                     }
                 )
             } catch (t: Throwable) {
@@ -580,6 +582,26 @@ class AIEditorApp : Application(), Configuration.Provider {
             Process.killProcess(Process.myPid())
         }
     }
+
+    /**
+     * 崩溃进程的内存快照，随报告带出。必须在主进程采集——错误页跑在 :crash 独立进程，
+     * 在那里读到的只是汇报进程的堆，对定位 OOM 无意义。
+     */
+    private fun memorySummary(): String = runCatching {
+        val runtime = Runtime.getRuntime()
+        val maxMb = runtime.maxMemory() / 1024 / 1024
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val pssMb = runCatching {
+            am.getProcessMemoryInfo(intArrayOf(Process.myPid())).firstOrNull()?.totalPss?.toLong()?.div(1024)
+        }.getOrNull()
+        buildString {
+            append("heap ").append(usedMb).append('/').append(maxMb).append("MB")
+            if (pssMb != null) append(", PSS ").append(pssMb).append("MB")
+            append(", memoryClass ").append(am.memoryClass).append("MB")
+            append(", lowRam ").append(am.isLowRamDevice)
+        }
+    }.getOrDefault("unavailable")
 
     private fun stackTraceOf(throwable: Throwable): String {
         val sw = java.io.StringWriter()

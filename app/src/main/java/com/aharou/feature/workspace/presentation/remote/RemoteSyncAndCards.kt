@@ -55,6 +55,7 @@ import com.aharou.feature.settings.presentation.component.settingsLightMode
 import com.aharou.feature.workspace.domain.model.RemoteConnection
 import com.aharou.feature.workspace.domain.model.RemoteMount
 import com.aharou.feature.workspace.domain.model.RemoteProtocol
+import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import com.aharou.R
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronRight
@@ -293,6 +294,8 @@ fun RemoteMountCard(
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     val (statusText, statusColor) = when {
+                        mount.connectionState == SyncConnectionState.RECONNECTING ->
+                            stringResource(R.string.status_reconnecting) to MaterialTheme.semanticColors.warning
                         mount.isActive -> stringResource(R.string.status_connected) to MaterialTheme.semanticColors.success
                         isFailed -> stringResource(R.string.status_connection_failed) to MaterialTheme.colorScheme.error
                         else -> stringResource(R.string.status_disconnected) to MaterialTheme.semanticColors.warning

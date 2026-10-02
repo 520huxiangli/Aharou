@@ -772,7 +772,7 @@ internal fun ReasoningBubble(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = ReasoningWindowMaxHeight)
-                            .nestedScroll(InnerScrollConsumeRemainder)
+                            .nestedScroll(rememberBoundNestedScrollConnection(scrollState))
                             .verticalScroll(scrollState)
                             .pointerInput(text) {
                                 detectTapGestures(

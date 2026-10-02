@@ -75,11 +75,12 @@ class CrashActivity : ComponentActivity() {
         val stack = intent.getStringExtra(EXTRA_STACK) ?: ""
         val screen = intent.getStringExtra(EXTRA_SCREEN)
         val mode = intent.getStringExtra(EXTRA_WORKSPACE_MODE)
+        val memory = intent.getStringExtra(EXTRA_MEMORY)
         val logDir = resolveLogDir()
         val appVersion = resolveAppVersion()
         val device = "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-        val report = buildReport(threadName, stack, screen, mode, logDir, appVersion, device, time)
+        val report = buildReport(threadName, stack, screen, mode, memory, logDir, appVersion, device, time)
 
         setContent {
             AIEditorTheme {
@@ -88,6 +89,7 @@ class CrashActivity : ComponentActivity() {
                     stack = stack,
                     screen = screen,
                     mode = mode,
+                    memory = memory,
                     logDir = logDir,
                     appVersion = appVersion,
                     device = device,
@@ -134,6 +136,7 @@ class CrashActivity : ComponentActivity() {
         stack: String,
         screen: String?,
         mode: String?,
+        memory: String?,
         logDir: String,
         appVersion: String,
         device: String,
@@ -146,6 +149,7 @@ class CrashActivity : ComponentActivity() {
         appendLine(getString(R.string.crash_report_version, appVersion))
         appendLine(getString(R.string.crash_report_device, device))
         appendLine(getString(R.string.crash_report_thread, threadName))
+        if (memory != null) appendLine(getString(R.string.crash_report_memory, memory))
         appendLine()
         appendLine(stack)
         appendLine()
@@ -177,6 +181,7 @@ class CrashActivity : ComponentActivity() {
         const val EXTRA_STACK = "stack"
         const val EXTRA_SCREEN = "screen"
         const val EXTRA_WORKSPACE_MODE = "workspace_mode"
+        const val EXTRA_MEMORY = "memory"
     }
 }
 
@@ -187,6 +192,7 @@ private fun CrashScreen(
     stack: String,
     screen: String?,
     mode: String?,
+    memory: String?,
     logDir: String,
     appVersion: String,
     device: String,
@@ -356,6 +362,13 @@ private fun CrashScreen(
                         label = stringResource(R.string.crash_field_thread),
                         value = threadName
                     )
+                    if (memory != null) {
+                        CrashDivider()
+                        CrashInfoRow(
+                            label = stringResource(R.string.crash_field_memory),
+                            value = memory
+                        )
+                    }
                     CrashDivider()
                     CrashInfoRow(
                         label = stringResource(R.string.crash_field_version),

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -136,7 +137,7 @@ internal fun SubAgentEditorScreen(
                 },
                 actions = {
                     TextButton(
-                        enabled = canSave,
+                        enabled = canSave && saveState !is SubAgentSaveState.Saving,
                         onClick = {
                             onSave(
                                 AgentDefinitionForm(
@@ -155,7 +156,11 @@ internal fun SubAgentEditorScreen(
                             )
                         }
                     ) {
-                        Text(stringResource(R.string.common_save))
+                        if (saveState is SubAgentSaveState.Saving) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text(stringResource(R.string.common_save))
+                        }
                     }
                 }
             )

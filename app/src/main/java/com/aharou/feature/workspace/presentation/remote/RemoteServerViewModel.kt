@@ -151,7 +151,7 @@ class RemoteServerViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(hostKeys = remoteSshConnection.savedHostKeys())
     }
 
-    /** 添加登录密钥：读取所选私钥文件复制到应用私有目录，解析公钥指纹后入库。 */
+    /** 添加登录密钥（文件导入）：读取所选私钥文件复制到应用私有目录，解析公钥指纹后入库。 */
     fun addLoginKey(uri: Uri) {
         viewModelScope.launch {
             val staged = withContext(Dispatchers.IO) {
@@ -167,31 +167,79 @@ class RemoteServerViewModel @Inject constructor(
                         } else null
                     }
                 }.getOrNull() ?: "ssh_key"
-                val dir = File(context.filesDir, "ssh_keys").apply { mkdirs() }
-                var target = File(dir, displayName)
-                var n = 1
-                while (target.exists()) {
-                    val dot = displayName.lastIndexOf('.')
-                    val base = if (dot > 0) displayName.substring(0, dot) else displayName
-                    val ext = if (dot > 0) displayName.substring(dot) else ""
-                    target = File(dir, "${base}_$n$ext")
-                    n++
-                }
-                runCatching { privateKeyStore.write(target.absolutePath, bytes) }.getOrNull() ?: return@withContext null
-                target
+                stageLoginKey(displayName, bytes)
             } ?: return@launch
-            val fingerprint = withContext(Dispatchers.IO) {
-                privateKeyStore.fingerprint(privateKeyStore.readPem(staged.absolutePath))
-            }
-            loginKeyStore.add(
-                SshLoginKey(
-                    id = UUID.randomUUID().toString(),
-                    name = staged.name,
-                    path = staged.absolutePath,
-                    fingerprint = fingerprint
-                )
+            registerLoginKey(staged)
+        }
+    }
+
+    /** 添加登录密钥（粘贴内容）：将私钥文本加密写入应用私有目录，解析公钥指纹后入库。 */
+    fun addLoginKeyFromContent(name: String, content: String, passphrase: String) {
+        val bytes = content.trim().toByteArray(Charsets.UTF_8)
+        if (bytes.isEmpty()) return
+        viewModelScope.launch {
+            val staged = withContext(Dispatchers.IO) {
+                stageLoginKey(name, bytes)
+            } ?: return@launch
+            registerLoginKey(staged, passphrase.ifBlank { null })
+        }
+    }
+
+    /** 将私钥字节加密写入应用私有目录，文件名冲突时自动加序号；写入失败返回 null。 */
+    private fun stageLoginKey(preferredName: String, bytes: ByteArray): File? {
+        if (bytes.isEmpty()) return null
+        val dir = File(context.filesDir, "ssh_keys").apply { mkdirs() }
+        val safeName = preferredName.trim().ifBlank { "ssh_key" }.replace(Regex("[/\\\\]"), "_")
+        var target = File(dir, safeName)
+        var n = 1
+        while (target.exists()) {
+            val dot = safeName.lastIndexOf('.')
+            val base = if (dot > 0) safeName.substring(0, dot) else safeName
+            val ext = if (dot > 0) safeName.substring(dot) else ""
+            target = File(dir, "${base}_$n$ext")
+            n++
+        }
+        runCatching { privateKeyStore.write(target.absolutePath, bytes) }.getOrNull() ?: return null
+        return target
+    }
+
+    /** 解析私钥指纹并写入登录密钥库，随后刷新列表。 */
+    private suspend fun registerLoginKey(file: File, passphrase: String? = null) {
+        val fingerprint = withContext(Dispatchers.IO) {
+            privateKeyStore.fingerprint(privateKeyStore.readPem(file.absolutePath))
+        }
+        loginKeyStore.add(
+            SshLoginKey(
+                id = UUID.randomUUID().toString(),
+                name = file.name,
+                path = file.absolutePath,
+                fingerprint = fingerprint,
+                passphrase = passphrase
             )
-            _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
+        )
+        _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
+    }
+
+    /** 编辑登录密钥：更新显示名与口令（私钥内容不可改）。 */
+    fun updateLoginKey(id: String, name: String, passphrase: String) {
+        val existing = loginKeyStore.entries().firstOrNull { it.id == id } ?: return
+        loginKeyStore.add(
+            existing.copy(
+                name = name.trim().ifBlank { existing.name },
+                passphrase = passphrase.ifBlank { null }
+            )
+        )
+        _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
+    }
+
+    /** 读取登录密钥的私钥明文 PEM（供编辑页只读查看）；失败返回 null。 */
+    fun readLoginKeyPem(id: String, onResult: (String?) -> Unit) {
+        val key = loginKeyStore.entries().firstOrNull { it.id == id } ?: return onResult(null)
+        viewModelScope.launch {
+            val pem = withContext(Dispatchers.IO) {
+                runCatching { privateKeyStore.readPem(key.path) }.getOrNull()
+            }
+            onResult(pem)
         }
     }
 

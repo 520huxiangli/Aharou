@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.presentation.component
 
 import android.content.ClipData
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,8 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
@@ -232,14 +235,66 @@ internal fun ChatMonoPanel(
 }
 
 /**
- * 内层滚动窗口（工具输出 / 思考正文）的嵌套滚动拦截：窗口快速滑到顶 / 底后，**惯性（fling）**不再
- * 传给外层消息列表——否则在窗口里甩一下到底，整个聊天列表会跟着一起滑走。
- *
- * 只拦惯性、不拦拖动（onPostFling 消费掉剩余速度；onPostScroll 保持默认）：内容没超出窗口、
- * 或已经滚到顶 / 底后继续拖动，仍会正常带动外层列表——这正是用户想要的。
+ * 内层滚动窗口（工具输出 / 思考正文）的智能嵌套滚动连接器：
+ * 1. 当在窗口内部能够向滑动方向滚动时开始滑动（包括快速甩动产生惯性）：
+ *    本次交互手势（含拖动超量与抬手后的 fling 惯性）完全锁定在窗口内部，
+ *    即使划到底部也绝不透传给外层聊天列表，避免外层消息列表被连带滑跑；
+ * 2. 当窗口内容已经在当前方向到达边界（最顶部继续向下拉、或最底部继续向上推）时再次滑动：
+ *    不拦截，把手势与惯性自然传递给外层 LazyColumn，允许顺畅滚动整个聊天列表。
  */
-internal val InnerScrollConsumeRemainder = object : NestedScrollConnection {
-    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
+@Composable
+internal fun rememberBoundNestedScrollConnection(scrollState: ScrollState): NestedScrollConnection {
+    return remember(scrollState) {
+        object : NestedScrollConnection {
+            // 本次交互手势是否在窗口内部被消费过
+            private var consumedByChildInCurrentGesture = false
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val canScrollInDirection = if (available.y < 0) {
+                    scrollState.canScrollForward
+                } else if (available.y > 0) {
+                    scrollState.canScrollBackward
+                } else {
+                    false
+                }
+                if (canScrollInDirection) {
+                    consumedByChildInCurrentGesture = true
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                if (consumed.y != 0f) {
+                    consumedByChildInCurrentGesture = true
+                }
+                // 内部已在本次手势中发生滚动：剩余超出边界的位移由本层拦截吞掉，不传递给外层
+                return if (consumedByChildInCurrentGesture) {
+                    available
+                } else {
+                    Offset.Zero
+                }
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                val shouldConsume = consumedByChildInCurrentGesture
+                consumedByChildInCurrentGesture = false
+                // 如果是在内部滚动产生的 fling 惯性，全部吸收，绝不透传给外层
+                return if (shouldConsume) {
+                    available
+                } else {
+                    Velocity.Zero
+                }
+            }
+        }
+    }
 }
 
 /**

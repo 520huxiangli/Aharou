@@ -6,6 +6,7 @@ import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.WatchFilter
 import com.aharou.feature.agent.domain.container.SshHostKeyStore
 import com.aharou.feature.agent.domain.container.SshHostKeyVerifier
+import com.aharou.feature.agent.domain.container.SshLoginKeyStore
 import com.aharou.feature.agent.domain.container.SshPrivateKeyStore
 import com.aharou.feature.agent.domain.container.friendlySshError
 import com.aharou.feature.workspace.data.local.dao.RemoteConnectionDao
@@ -15,6 +16,7 @@ import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.model.RemoteConnection
 import com.aharou.feature.workspace.domain.model.RemoteMount
 import com.aharou.feature.workspace.domain.model.RemoteProtocol
+import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.workspace.domain.remote.SyncEngine
 import com.aharou.feature.workspace.domain.remote.ftp.FtpSyncClient
@@ -46,10 +48,15 @@ class RemoteRepository @Inject constructor(
     private val hostKeyStore: SshHostKeyStore,
     private val hostKeyVerifier: SshHostKeyVerifier,
     private val privateKeyStore: SshPrivateKeyStore,
+    private val loginKeyStore: SshLoginKeyStore,
     private val fileChangeHub: FileChangeHub
 ) {
     private val activeEngines = ConcurrentHashMap<String, SyncEngine>()
     private val activeEngineIds = MutableStateFlow<Set<String>>(emptySet())
+
+    /** 各挂载的实时连接健康度，由 SyncEngine.connectionState 回写。 */
+    private val mountStates = MutableStateFlow<Map<String, SyncConnectionState>>(emptyMap())
+    private val stateJobs = ConcurrentHashMap<String, Job>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     /** 每个挂载的自动连接重试协程，切换工作区/手动断开时取消。 */
@@ -115,12 +122,14 @@ class RemoteRepository @Inject constructor(
     
     fun getMounts(): Flow<List<RemoteMount>> = combine(
         dao.getAllMounts(),
-        activeEngineIds
-    ) { list, activeIds ->
+        activeEngineIds,
+        mountStates
+    ) { list, activeIds, states ->
         list.map { mountEntity ->
             val connEntity = dao.getConnectionById(mountEntity.connectionId)
             mountEntity.toDomainModel(connEntity?.toDomainModel()).copy(
-                isActive = activeIds.contains(mountEntity.id)
+                isActive = activeIds.contains(mountEntity.id),
+                connectionState = states[mountEntity.id]
             )
         }
     }
@@ -140,7 +149,10 @@ class RemoteRepository @Inject constructor(
             username = conn.username,
             authType = authType,
             authData = if (auth is RemoteAuth.Password) KeystoreCipher.encryptString(authData) else authData,
-            passphrase = passphrase?.let { KeystoreCipher.encryptString(it) },
+            // 口令以密钥条目为准。这里只在密钥口令有值时镜像到连接；密钥未设置口令时保留连接上的
+            // 存量口令（升级前用户在连接里填的），避免编辑连接把它抹掉。
+            passphrase = passphrase?.let { KeystoreCipher.encryptString(it) }
+                ?: existing?.takeIf { authType == "key" }?.passphrase,
             createdAt = existing?.createdAt ?: System.currentTimeMillis()
         )
         dao.insertConnection(entity)
@@ -197,6 +209,7 @@ class RemoteRepository @Inject constructor(
             activeEngines[mountId]?.shutdown()
             activeEngines.remove(mountId)
             activeEngineIds.update { it - mountId }
+            stopStateWatch(mountId)
 
             val mountEntity = dao.getMountById(mountId) ?: return@withContext Result.failure(Exception("Mount not found"))
             val connEntity = dao.getConnectionById(mountEntity.connectionId) ?: return@withContext Result.failure(Exception("Connection not found"))
@@ -209,11 +222,7 @@ class RemoteRepository @Inject constructor(
                 RemoteProtocol.FTP -> FtpSyncClient()
             }
 
-            val auth = if (connEntity.authType == "password") {
-                RemoteAuth.Password(KeystoreCipher.decryptString(connEntity.authData))
-            } else {
-                RemoteAuth.PrivateKey(connEntity.authData, connEntity.passphrase?.let { KeystoreCipher.decryptString(it) })
-            }
+            val auth = resolveAuth(connEntity)
 
             client.connect(conn.host, conn.port, conn.username, auth)
             
@@ -231,6 +240,7 @@ class RemoteRepository @Inject constructor(
             activeEngines[mountId] = engine
             activeEngineIds.update { it + mountId }
             startLocalWatching(mountId, mount, engine)
+            startStateWatch(mountId, engine)
             Result.success(Unit)
         } catch (e: Exception) {
             // 挂载连接不弹确认：提示用户先去连接配置页测试连通性完成确认
@@ -260,6 +270,7 @@ class RemoteRepository @Inject constructor(
                 ),
                 fallbackPoll = false
             ).collect { batch ->
+                FileLogger.d(TAG, "同步监听收到变更: mount=$mountId count=${batch.changes.size} truncated=${batch.truncated}")
                 for (change in batch.changes) engine.enqueueLocalChange(change.hostPath)
             }
         }
@@ -269,9 +280,26 @@ class RemoteRepository @Inject constructor(
         autoConnectJobs[mountId]?.cancel()
         autoConnectJobs.remove(mountId)
         watchJobs.remove(mountId)?.cancel()
+        stopStateWatch(mountId)
         activeEngines[mountId]?.shutdown()
         activeEngines.remove(mountId)
         activeEngineIds.update { it - mountId }
+    }
+
+    /** 订阅某挂载的实时连接健康度并回写到 [mountStates]。 */
+    private fun startStateWatch(mountId: String, engine: SyncEngine) {
+        mountStates.update { it + (mountId to engine.connectionState.value) }
+        stateJobs[mountId]?.cancel()
+        stateJobs[mountId] = scope.launch {
+            engine.connectionState.collect { state ->
+                mountStates.update { it + (mountId to state) }
+            }
+        }
+    }
+
+    private fun stopStateWatch(mountId: String) {
+        stateJobs.remove(mountId)?.cancel()
+        mountStates.update { it - mountId }
     }
 
     suspend fun forceUploadMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
@@ -335,11 +363,7 @@ class RemoteRepository @Inject constructor(
                 RemoteProtocol.SFTP -> SftpSyncClient(hostKeyVerifier, privateKeyStore)
                 RemoteProtocol.FTP -> FtpSyncClient()
             }
-            val auth = if (connEntity.authType == "password") {
-                RemoteAuth.Password(KeystoreCipher.decryptString(connEntity.authData))
-            } else {
-                RemoteAuth.PrivateKey(connEntity.authData, connEntity.passphrase?.let { KeystoreCipher.decryptString(it) })
-            }
+            val auth = resolveAuth(connEntity)
             
             client.connect(conn.host, conn.port, conn.username, auth)
             val files = client.listFiles(path).filter { it.isDirectory }.map { it.name }
@@ -349,6 +373,16 @@ class RemoteRepository @Inject constructor(
             Result.failure(e)
         }
     }
+
+    /** 解析连接的认证方式：密钥口令优先取密钥条目上的设置，回退到连接自身的存量口令。 */
+    private fun resolveAuth(connEntity: RemoteConnectionEntity): RemoteAuth =
+        if (connEntity.authType == "password") {
+            RemoteAuth.Password(KeystoreCipher.decryptString(connEntity.authData))
+        } else {
+            val passphrase = loginKeyStore.entries().firstOrNull { it.path == connEntity.authData }?.passphrase
+                ?: connEntity.passphrase?.let { KeystoreCipher.decryptString(it) }
+            RemoteAuth.PrivateKey(connEntity.authData, passphrase)
+        }
 
     private fun RemoteConnectionEntity.toDomainModel() = RemoteConnection(
         id = id,

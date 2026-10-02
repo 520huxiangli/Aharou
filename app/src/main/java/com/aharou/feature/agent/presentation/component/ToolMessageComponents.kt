@@ -706,7 +706,7 @@ internal fun ToolSection(label: String, content: String) {
         ChatMonoPanel(
             modifier = Modifier
                 .heightIn(max = ToolSectionMaxHeight)
-                .nestedScroll(InnerScrollConsumeRemainder)
+                .nestedScroll(rememberBoundNestedScrollConnection(scrollState))
                 .verticalScroll(scrollState)
         ) {
             SelectionContainer {

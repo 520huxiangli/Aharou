@@ -227,8 +227,10 @@ fun SettingsScreen(
     val skills by viewModel.skills.collectAsStateWithLifecycle()
     val skillSaveState by viewModel.skillSaveState.collectAsStateWithLifecycle()
     val skillImportState by viewModel.skillImportState.collectAsStateWithLifecycle()
+    val skillDeleting by viewModel.skillDeleting.collectAsStateWithLifecycle()
     val subAgents by viewModel.subAgents.collectAsStateWithLifecycle()
     val subAgentSaveState by viewModel.subAgentSaveState.collectAsStateWithLifecycle()
+    val subAgentDeleting by viewModel.subAgentDeleting.collectAsStateWithLifecycle()
     val globalRules by viewModel.globalRules.collectAsStateWithLifecycle()
     val projectRules by viewModel.projectRules.collectAsStateWithLifecycle()
     val currentProjectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
@@ -1244,18 +1246,35 @@ fun SettingsScreen(
     }
 
     skillToDelete?.let { target ->
+        val deleting = skillDeleting == target.name
+        // 删除进行中保持弹窗（转圈），完成后才关闭，避免无反馈地「突然消失」。
+        var deleteStarted by remember(target) { mutableStateOf(false) }
+        LaunchedEffect(deleteStarted, deleting) {
+            if (deleteStarted && !deleting) skillToDelete = null
+        }
         AlertDialog(
-            onDismissRequest = { skillToDelete = null },
+            onDismissRequest = { if (!deleting) skillToDelete = null },
             title = { Text(stringResource(R.string.skills_delete_confirm_title)) },
             text = { Text(stringResource(R.string.skills_delete_confirm_message, target.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteSkill(target.name, target.scope)
-                    skillToDelete = null
-                }) { Text(stringResource(R.string.common_delete)) }
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleteStarted = true
+                        viewModel.deleteSkill(target.name, target.scope)
+                    }
+                ) {
+                    if (deleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.common_delete))
+                    }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { skillToDelete = null }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(enabled = !deleting, onClick = { skillToDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             }
         )
     }
@@ -1263,18 +1282,34 @@ fun SettingsScreen(
     SkillImportResultDialog(state = skillImportState, onDismiss = { viewModel.clearSkillImportState() })
 
     subAgentToDelete?.let { target ->
+        val deleting = subAgentDeleting == target.name
+        var deleteStarted by remember(target) { mutableStateOf(false) }
+        LaunchedEffect(deleteStarted, deleting) {
+            if (deleteStarted && !deleting) subAgentToDelete = null
+        }
         AlertDialog(
-            onDismissRequest = { subAgentToDelete = null },
+            onDismissRequest = { if (!deleting) subAgentToDelete = null },
             title = { Text(stringResource(R.string.subagents_delete_confirm_title)) },
             text = { Text(stringResource(R.string.subagents_delete_confirm_message, target.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteSubAgent(target.name, target.scope)
-                    subAgentToDelete = null
-                }) { Text(stringResource(R.string.common_delete)) }
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleteStarted = true
+                        viewModel.deleteSubAgent(target.name, target.scope)
+                    }
+                ) {
+                    if (deleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.common_delete))
+                    }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { subAgentToDelete = null }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(enabled = !deleting, onClick = { subAgentToDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             }
         )
     }
