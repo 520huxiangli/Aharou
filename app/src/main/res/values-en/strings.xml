@@ -2218,6 +2218,7 @@
     <!-- Voice call -->
     <string name="voice_call_title">Voice call</string>
     <string name="voice_call_state_preparing">Preparing…</string>
+    <string name="voice_call_state_idle">Not listening</string>
     <string name="voice_call_state_listening">Listening…</string>
     <string name="voice_call_state_thinking">Thinking…</string>
     <string name="voice_call_state_speaking">Speaking…</string>
@@ -2235,6 +2236,7 @@
     <string name="voice_wake_desc">The microphone stays on to listen for the wake word. The recording indicator will remain visible and battery use will increase. We recommend allowing autostart and background running for this app.</string>
     <string name="voice_wake_on">Listening for "Xiaoran Xiaoran"</string>
     <string name="voice_wake_off">Off</string>
+    <string name="voice_wake_mic_hint">Wake word is on — tap to speak</string>
     <string name="voice_err_mic_permission">I don\'t have microphone permission. Please allow recording for me in system settings.</string>
     <string name="voice_err_model">The voice models aren\'t ready. Go to Settings → Default models → Offline voice model and tap \"Re-release\".</string>
     <string name="voice_err_audio">Something else seems to be using the microphone.</string>

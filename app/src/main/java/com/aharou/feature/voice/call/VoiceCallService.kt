@@ -19,9 +19,14 @@ import com.aharou.R
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * 语音通话的前台服务：持有悬浮窗与通话会话，进程活着通话才在跑。
@@ -37,17 +42,43 @@ internal class VoiceCallService : Service() {
     companion object {
         private const val TAG = "VoiceCallService"
         private const val CHANNEL_ID = "aharou_voice_call"
-        private const val NOTIFICATION_ID = 4102
+
+        /** 与桌宠的前台通知（4102）必须错开，否则两条通知互相顶掉，看不出谁在跑。 */
+        private const val NOTIFICATION_ID = 4103
 
         /** 启动意图携带的模式：true = 只跑唤醒词监听。 */
         private const val EXTRA_WAKE_MODE = "wake_mode"
+
+        /** 点麦克风：唤醒常驻中就直接开始一次聆听，不等于挂断再重接。 */
+        private const val ACTION_LISTEN = "com.aharou.feature.voice.action.LISTEN"
 
         private val _running = MutableStateFlow(false)
 
         /** 通话是否在跑。输入栏的麦克风按钮订阅它来显示当前状态。 */
         val running: StateFlow<Boolean> = _running.asStateFlow()
 
+        private val _wakeMode = MutableStateFlow(false)
+
+        /** 当前这轮是不是唤醒词监听。UI 靠它区分「再点一下结束通话」与「点一下直接说话」。 */
+        val wakeModeRunning: StateFlow<Boolean> = _wakeMode.asStateFlow()
+
         fun isRunning(): Boolean = _running.value
+
+        fun isWakeModeRunning(): Boolean = _wakeMode.value
+
+        /**
+         * 请求立刻进入聆听（唤醒常驻时点麦克风按钮走这里）。
+         *
+         * 服务不在跑就什么也不做——唤醒没开时该由调用方去 [start] 一次通话。
+         */
+        fun requestListen(context: Context) {
+            if (!_running.value) return
+            runCatching {
+                context.startService(
+                    Intent(context, VoiceCallService::class.java).setAction(ACTION_LISTEN)
+                )
+            }
+        }
 
         fun start(context: Context, wakeMode: Boolean = false) {
             // microphone 型前台服务要求启动时已能访问麦克风：RECORD_AUDIO 未授予
@@ -78,6 +109,9 @@ internal class VoiceCallService : Service() {
     @Inject
     lateinit var session: VoiceCallSession
 
+    /** 只用于监听会话状态：会话回到空闲就把服务停掉，免得卡在「服务在跑、其实没人听」。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private var sessionStarted = false
     private var wakeMode = false
 
@@ -106,9 +140,15 @@ internal class VoiceCallService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_LISTEN) {
+            session.triggerListen()
+            return START_NOT_STICKY
+        }
         if (!sessionStarted) {
             sessionStarted = true
             wakeMode = intent?.getBooleanExtra(EXTRA_WAKE_MODE, false) ?: false
+            _wakeMode.value = wakeMode
+            watchSessionIdle()
             // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
             // 径向菜单里的麦克风开关通话，这里只管通话本身
             session.start("", wakeMode = wakeMode)
@@ -117,8 +157,31 @@ internal class VoiceCallService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * 会话一旦从「正在用」回到空闲（挂断、模型缺失失败、超时回落失败都算），
+     * 就把服务停掉。
+     *
+     * 不停的话会卡成「服务在跑、会话空闲」：`sessionStarted` 已置位，再点开关
+     * 只会走 [onStartCommand] 的空转分支，会话永远重建不起来——只能杀 App。
+     */
+    private fun watchSessionIdle() {
+        scope.launch {
+            var everRunning = false
+            session.state.collect { state ->
+                if (state != VoiceCallSession.State.Idle) {
+                    everRunning = true
+                } else if (everRunning) {
+                    FileLogger.i(TAG, "会话已回到空闲，服务自退")
+                    stopSelf()
+                }
+            }
+        }
+    }
+
     override fun onDestroy() {
+        scope.cancel()
         _running.value = false
+        _wakeMode.value = false
         session.stop()
         super.onDestroy()
     }

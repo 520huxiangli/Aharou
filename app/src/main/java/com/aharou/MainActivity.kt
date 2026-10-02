@@ -105,6 +105,8 @@ import com.aharou.feature.onboarding.presentation.LocalOnboardingTargetRegistry
 import com.aharou.feature.onboarding.presentation.OnboardingOverlay
 import com.aharou.feature.onboarding.presentation.OnboardingTargetRegistry
 import com.aharou.feature.settings.data.repository.KeepaliveSettingsRepository
+import com.aharou.feature.settings.data.repository.VoiceWakeSettingsRepository
+import com.aharou.feature.voice.call.VoiceCallService
 import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.settings.data.repository.ScreenOnSettingsRepository
@@ -139,6 +141,10 @@ class MainActivity : ComponentActivity() {
     /** 用于冷启动时在前台恢复常驻保活通知（App.onCreate 的启动可能被后台 FGS 限制挡掉）。 */
     @Inject
     lateinit var keepaliveSettings: KeepaliveSettingsRepository
+
+    /** 语音唤醒开关：回到前台时用它补回常驻监听（进程重启后服务不会自己回来）。 */
+    @Inject
+    lateinit var voiceWakeSettings: VoiceWakeSettingsRepository
 
     @Inject
     lateinit var themeSettings: ThemeSettingsRepository
@@ -393,6 +399,16 @@ class MainActivity : ComponentActivity() {
         if (executionModeHolder.currentMode() == com.aharou.feature.settings.data.repository.ExecutionMode.REMOTE_SSH) {
             lifecycleScope.launch {
                 runCatching { remoteSshConnection.tryReconnectIfDisconnected() }
+            }
+        }
+        // 语音唤醒是常驻监听，但服务是 START_NOT_STICKY，装包 / 被系统清理后不会自己回来，
+        // 而开关仍是「开」——不补这一下，用户看到的就是「开关开着、喊她不答应」。
+        // microphone 型前台服务要求 App 可见才能启动，所以放在这里而不是 Application.onCreate。
+        lifecycleScope.launch {
+            runCatching {
+                if (voiceWakeSettings.isEnabled() && !VoiceCallService.isRunning()) {
+                    VoiceCallService.start(this@MainActivity, wakeMode = true)
+                }
             }
         }
     }

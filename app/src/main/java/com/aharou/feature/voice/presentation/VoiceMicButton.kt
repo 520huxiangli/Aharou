@@ -32,6 +32,7 @@ import kotlinx.coroutines.delay
  * 麦克风按钮：语音通话开关。
  *
  * **点一下开始**（免手通话，一路听你说），**再点一下停**。
+ * 唤醒词常驻监听时它不挂断：点一下直接进入聆听，用完自动回到听唤醒词。
  *
  * 不做「按住说话」——一个按钮只干一件事。两种手势并存时用户猜不到：
  * 曾经把「按住录音、轻点切通话」塞在同一个按钮上，被一眼看穿地误解了，已按要求撤掉。
@@ -44,6 +45,7 @@ internal fun VoiceMicButton(
     callRunning: Boolean,
     onToggleCall: () -> Unit,
     modifier: Modifier = Modifier,
+    wakeRunning: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -57,10 +59,14 @@ internal fun VoiceMicButton(
         Icon(
             FeatherIcons.Mic,
             contentDescription = stringResource(
-                if (callRunning) R.string.voice_call_toggle_stop else R.string.voice_call_toggle_start
+                when {
+                    wakeRunning -> R.string.voice_wake_mic_hint
+                    callRunning -> R.string.voice_call_toggle_stop
+                    else -> R.string.voice_call_toggle_start
+                }
             ),
             tint = when {
-                callRunning -> MaterialTheme.colorScheme.primary
+                wakeRunning || callRunning -> MaterialTheme.colorScheme.primary
                 enabled -> MaterialTheme.colorScheme.onSurfaceVariant
                 else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
             },

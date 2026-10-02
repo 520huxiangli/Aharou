@@ -2218,6 +2218,7 @@
     <!-- 语音通话 -->
     <string name="voice_call_title">语音通话</string>
     <string name="voice_call_state_preparing">准备中…</string>
+    <string name="voice_call_state_idle">未在听</string>
     <string name="voice_call_state_listening">正在听…</string>
     <string name="voice_call_state_thinking">思考中…</string>
     <string name="voice_call_state_speaking">正在说…</string>
@@ -2235,6 +2236,7 @@
     <string name="voice_wake_desc">开启后麦克风会常驻监听唤醒词，状态栏会一直显示录音指示，耗电也会增加。建议同时允许本应用自启动与后台运行。</string>
     <string name="voice_wake_on">正在听「小染小染」</string>
     <string name="voice_wake_off">已关闭</string>
+    <string name="voice_wake_mic_hint">唤醒常驻中，点一下直接说话</string>
     <string name="voice_err_mic_permission">我拿不到麦克风权限，去系统设置里允许我录音好不好？</string>
     <string name="voice_err_model">语音模型还没准备好，去「设置 → 默认模型 → 离线语音模型」点一下「重新释放」。</string>
     <string name="voice_err_audio">麦克风好像被别的应用占着，我张不开嘴。</string>

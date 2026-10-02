@@ -219,6 +219,15 @@ internal class VoiceCallSession @Inject constructor(
     }
 
     /**
+     * 手动开始一次聆听（唤醒常驻时点麦克风按钮走这里），语义等同喊了一声唤醒词。
+     * 只在正听唤醒词时生效；通话模式下的点按由调用方走挂断。
+     */
+    fun triggerListen() {
+        if (_state.value != State.WakeListening) return
+        onWakeDetected()
+    }
+
+    /**
      * 从识别切回唤醒监听：同样不重启录音，只把消费者换回 KWS。
      * 必须先把识别结果丢掉（[asrSession] 释放），否则 KWS 会收到被 ASR 消费过的同一批 PCM。
      */

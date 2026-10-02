@@ -445,9 +445,15 @@ class PetOverlayService : Service() {
 
     private fun prefs() = getSharedPreferences(PetOverlay.PREFS, Context.MODE_PRIVATE)
 
-    /** 通话开关：开着就挂断，关着就接通；没录音权限就先跟她说清楚。 */
+    /** 通话开关：唤醒常驻时点一下直接说话；普通通话中点一下挂断；没在跑就接通。 */
     private fun toggleCall() {
         if (VoiceCallService.isRunning()) {
+            // 唤醒常驻中点它不能当挂断：挂断会把常驻监听一起停掉，
+            // 再点一次又只会起通话模式（不通唤醒词）。
+            if (VoiceCallService.isWakeModeRunning()) {
+                callSession.triggerListen()
+                return
+            }
             VoiceCallService.stop(this)
             return
         }
@@ -586,8 +592,8 @@ class PetOverlayService : Service() {
         VoiceCallSession.State.WakeListening -> R.string.voice_wake_on
         VoiceCallSession.State.Thinking -> R.string.voice_call_state_thinking
         VoiceCallSession.State.Speaking -> R.string.voice_call_state_speaking
-        VoiceCallSession.State.Preparing, VoiceCallSession.State.Idle ->
-            R.string.voice_call_state_preparing
+        VoiceCallSession.State.Preparing -> R.string.voice_call_state_preparing
+        VoiceCallSession.State.Idle -> R.string.voice_call_state_idle
     }
 
     /** 合并后的显示状态：Agent 进度 + 通话 + 用户的两个开关。 */

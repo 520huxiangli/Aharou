@@ -585,12 +585,20 @@ internal fun ChatInputBar(
                     }
                     val callContext = LocalContext.current
                     val callRunning by VoiceCallService.running.collectAsState()
+                    val wakeRunning by VoiceCallService.wakeModeRunning.collectAsState()
                     VoiceMicButton(
                         enabled = !isBusy,
                         callRunning = callRunning,
+                        wakeRunning = wakeRunning,
                         onToggleCall = {
-                            if (VoiceCallService.isRunning()) VoiceCallService.stop(callContext)
-                            else VoiceCallService.start(callContext)
+                            when {
+                                !VoiceCallService.isRunning() -> VoiceCallService.start(callContext)
+                                // 唤醒常驻时点麦克风不是挂断，而是直接开始说话；
+                                // 挂断会连带把常驻监听一起停掉（再点一次只会起通话模式）。
+                                VoiceCallService.isWakeModeRunning() ->
+                                    VoiceCallService.requestListen(callContext)
+                                else -> VoiceCallService.stop(callContext)
+                            }
                         }
                     )
                     UploadIconButton(
