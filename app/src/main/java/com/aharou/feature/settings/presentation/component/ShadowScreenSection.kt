@@ -97,7 +97,10 @@ internal fun ShadowScreenSection(viewModel: VdViewModel = hiltViewModel()) {
             ) {
                 Button(
                     onClick = { viewModel.start() },
-                    enabled = shizuku == ShizukuState.READY && vd == null && !busy,
+                    // 只要宿主通道可用（root 或 Shizuku 都算）就该允许启动。
+                    // 之前写死成 Shizuku==READY，有 root 而没开 Shizuku 的机器按钮会直接变灰，
+                    // 而且不给任何理由。
+                    enabled = mode != HostShellMode.UNAVAILABLE && vd == null && !busy,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(stringResource(R.string.vd_start))

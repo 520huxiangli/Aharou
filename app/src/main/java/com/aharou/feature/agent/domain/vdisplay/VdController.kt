@@ -244,6 +244,9 @@ class VdController @Inject constructor(
      */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
         val info = known ?: refresh() ?: error("影子屏未运行，请先 start")
+        check(info.sfDisplayId.isNotEmpty()) {
+            "拿不到影子屏的显示 token（SurfaceFlinger 里没列出这块屏），暂时无法截图"
+        }
         val shot = shotOutFile
         shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
