@@ -147,6 +147,7 @@ class SyncEngineIgnoreTest {
 
         override suspend fun connect(host: String, port: Int, username: String, auth: RemoteAuth) = Unit
         override suspend fun disconnect() = Unit
+        override suspend fun reconnect(host: String, port: Int, username: String, auth: RemoteAuth) = Unit
         override suspend fun listFiles(remotePath: String): List<RemoteFileInfo> =
             remoteFiles[remotePath] ?: emptyList()
         override suspend fun downloadFile(remotePath: String, localPath: String) {
