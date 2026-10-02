@@ -627,6 +627,13 @@ class StatefulAgentWorkflow @Inject constructor(
                                         if (loopStart >= 0) {
                                             reasoningAcc.setLength(loopStart)
                                             samplingLoopCut = true
+                                        } else if (acc.isEmpty() && reasoningAcc.length >= REASONING_RUNAWAY_CHARS) {
+                                            // 正文一直没来、思考却堆到这个量：上下文过长时模型会陷在思考里出不来。
+                                            // 这种打转既没有可截断的重复段（重复单元长度任意，检测不到），也永远
+                                            // 触发不了空闲超时（一直在吐字），只能整体中断，别让界面无限「正在思考」。
+                                            throw IllegalStateException(
+                                                "模型思考反复打转、正文始终为空，已中断本轮；上下文可能过长，建议新开会话后重试。"
+                                            )
                                         }
                                         pendingReasoningDelta = reasoningAcc.toString()
                                         val now = SystemClock.elapsedRealtime()
@@ -960,14 +967,29 @@ class StatefulAgentWorkflow @Inject constructor(
      *   非多模态模型导致请求失败；切回多模态模型后图片上下文仍可正常使用。
      */
     /**
+     * 采样循环检测的候选单元长度：先是短单元（同一句话反复），再是长单元（整段思考重来）。
+     */
+    private val LOOP_UNIT_CANDIDATES = (2..16) + listOf(32, 64, 128, 256, 512)
+
+    /** 长单元判为循环所需的「重复总量」下限（字符）：正常输出不会把上千字符原文重来一遍。 */
+    private val LOOP_MIN_REPEATED_CHARS = 1024
+
+    /** 思考跑飞兜底：正文一直为空、思考却堆到这个量，判为退化，直接中断本轮。 */
+    private val REASONING_RUNAWAY_CHARS = 40_000
+
+    /**
      * 采样循环检测：模型偶尔会连续吐出同一片段（思考里尤其常见，一句话重复几十遍）。
      * 命中时返回重复起点的下标，调用方截断到该处只保留第一次；未命中返回 -1。
      * 单元长度下限 2、连续重复下限 20 次，避免把 `---` 分隔符或少量重复误判成循环。
      */
     private fun samplingLoopStart(text: CharSequence, minRepeat: Int = 20, maxUnit: Int = 16): Int {
         val len = text.length
-        for (unit in 2..maxUnit) {
-            val need = unit * minRepeat
+        for (unit in LOOP_UNIT_CANDIDATES) {
+            // 短单元沿用「连续重复 ≥ minRepeat 次」；长单元改用「重复总量」定门槛——上下文过长时
+            // 模型会把整段思考重来（单元几十上百字符），只查到 maxUnit 就永远判不出来，界面上表现
+            // 为「一直在思考」。长单元要重复到相当体量才算循环，免得误伤正常的结构化输出。
+            val repeats = if (unit <= maxUnit) minRepeat else maxOf(3, LOOP_MIN_REPEATED_CHARS / unit)
+            val need = unit * repeats
             if (len < need) continue
             val end = len
             // 单元内全是同一个字符时不算重复：`--------`、`====` 这类分隔线和表格线
@@ -975,7 +997,7 @@ class StatefulAgentWorkflow @Inject constructor(
             if ((1 until unit).none { text[end - unit] != text[end - unit + it] }) continue
             var repeated = true
             var i = 1
-            while (repeated && i < minRepeat) {
+            while (repeated && i < repeats) {
                 var j = 0
                 while (j < unit) {
                     if (text[end - unit + j] != text[end - unit * (i + 1) + j]) {
@@ -987,7 +1009,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 i++
             }
             if (repeated) {
-                // 尾部窗口只够证明「重复了 minRepeat 次」，前面往往还连着更多次；
+                // 尾部窗口只够证明「重复了 repeats 次」，前面往往还连着更多次；
                 // 向前回溯到周期真正的起点，只留第一次。
                 var start = end - unit
                 while (start - unit >= 0) {

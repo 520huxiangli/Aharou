@@ -139,28 +139,36 @@ class VdController @Inject constructor(
             _state.value = null
             return null
         }
-        val out = runCatching {
+        // 逻辑 display id / 尺寸 / density 都从 DisplayManager 侧取：runner 报的 VD_READY 是创建
+        // 瞬间的编号，之后系统会重排（实测 runner 报 5、AM 实际是 8），拿它去 am/input 会打偏。
+        // mViewports 的字段随 Android 版本变（14+ 有 densityDpi，13 没有，density 只在
+        // DisplayDeviceInfo 行里），别把某一版的字段当成必需项。
+        val displayDump = runCatching {
+            exec("dumpsys display | grep -E 'mViewports|\"$DISPLAY_NAME\":'", 20_000L).output
+        }.getOrDefault("")
+        val vp = Regex(
+            "type=VIRTUAL[^}]*?displayId=(\\d+)[^}]*?uniqueId='[^']*$DISPLAY_NAME[^']*'" +
+                "[^}]*?deviceWidth=(\\d+), deviceHeight=(\\d+)",
+        ).find(displayDump)
+        val id = vp?.groupValues?.get(1)?.toIntOrNull()
+        val w = vp?.groupValues?.get(2)?.toIntOrNull() ?: DEFAULT_WIDTH
+        val h = vp?.groupValues?.get(3)?.toIntOrNull() ?: DEFAULT_HEIGHT
+        val dpi = Regex("density (\\d+)").find(displayDump)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("densityDpi=(\\d+)").find(displayDump)?.groupValues?.get(1)?.toIntOrNull()
+            ?: DEFAULT_DPI
+        // 截图要的是 SurfaceFlinger 的 display token。Android 14+ 的 --display-id 会列出虚拟屏，
+        // Android 13 只列物理屏，得从 DisplayDevice 行（Display <id> (virtual, "aharou-vd")）里捞。
+        val sfOut = runCatching {
             exec(
-                "cat $LOG_FILE 2>/dev/null; dumpsys SurfaceFlinger --display-id | grep $DISPLAY_NAME",
+                "dumpsys SurfaceFlinger --display-id; dumpsys SurfaceFlinger | grep -F '\"$DISPLAY_NAME\")'",
                 20_000L,
             ).output
         }.getOrDefault("")
         val sf = Regex("Display (\\d+) \\(Virtual display\\): displayName=\"$DISPLAY_NAME\"")
-            .find(out)?.groupValues?.get(1)
-        // 逻辑 display id 不能取 runner 的 VD_READY：那是创建瞬间的编号，之后系统会重排
-        // （实测 runner 报 5、AM 实际是 8），拿它去 am/input 全部打偏。
-        // mViewports 把「类型 + displayId + uniqueId + 尺寸/dpi」放在同一条目里，是唯一可靠来源。
-        val viewports = runCatching { exec("dumpsys display | grep mViewports", 15_000L).output }
-            .getOrDefault("")
-        val vd = Regex(
-            "type=VIRTUAL[^}]*?displayId=(\\d+)[^}]*?uniqueId='[^']*$DISPLAY_NAME[^']*'" +
-                "[^}]*?densityDpi=(\\d+)[^}]*?deviceWidth=(\\d+), deviceHeight=(\\d+)",
-        ).find(viewports)
-        val id = vd?.groupValues?.get(1)?.toIntOrNull()
-        val w = vd?.groupValues?.get(3)?.toIntOrNull() ?: DEFAULT_WIDTH
-        val h = vd?.groupValues?.get(4)?.toIntOrNull() ?: DEFAULT_HEIGHT
-        val dpi = vd?.groupValues?.get(2)?.toIntOrNull() ?: DEFAULT_DPI
-        val info = if (id != null && !sf.isNullOrEmpty()) VdInfo(id, sf, w, h, dpi) else null
+            .find(sfOut)?.groupValues?.get(1)
+            ?: Regex("Display (\\d+) \\(virtual, \"$DISPLAY_NAME\"\\)")
+                .find(sfOut)?.groupValues?.get(1)
+        val info = if (id != null) VdInfo(id, sf.orEmpty(), w, h, dpi) else null
         _state.value = info
         return info
     }
@@ -215,6 +223,9 @@ class VdController @Inject constructor(
     /** 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。 */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
         val info = known ?: refresh() ?: error("影子屏未运行，请先 start")
+        check(info.sfDisplayId.isNotEmpty()) {
+            "拿不到影子屏的显示 token（SurfaceFlinger 里没列出这块屏），暂时无法截图"
+        }
         val shot = File(context.getExternalFilesDir(null), "vd/shot.png")
         shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
