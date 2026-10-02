@@ -75,6 +75,18 @@ class VoiceModelManager @Inject constructor(
         return ensureModel(spec)
     }
 
+    /** 全部内置模型的聚合状态（设置页那一行照它显示）。 */
+    fun statusAll(): VoiceModelStatus = VoiceModelStatus(VoiceModels.ALL.flatMap { status(it).files })
+
+    /** 依次重新释放全部内置模型；有一个失败就返回 false，但不半途停下。 */
+    suspend fun rereleaseAll(): Boolean {
+        var ok = true
+        VoiceModels.ALL.forEach { spec ->
+            if (runCatching { rerelease(spec) }.isFailure) ok = false
+        }
+        return ok
+    }
+
     /**
      * 确保模型可用，返回模型目录。已就绪时直接返回。
      *

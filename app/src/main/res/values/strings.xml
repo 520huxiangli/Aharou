@@ -2236,7 +2236,7 @@
     <string name="voice_wake_on">正在听「小染小染」</string>
     <string name="voice_wake_off">已关闭</string>
     <string name="voice_err_mic_permission">我拿不到麦克风权限，去系统设置里允许我录音好不好？</string>
-    <string name="voice_err_model">语音模型还没下好，去设置里的「语音识别」那一栏点一下下载。</string>
+    <string name="voice_err_model">语音模型还没准备好，去「设置 → 默认模型 → 离线语音模型」点一下「重新释放」。</string>
     <string name="voice_err_audio">麦克风好像被别的应用占着，我张不开嘴。</string>
     <string name="voice_err_no_workspace">还没有选工作区，先打开一个工作区我才能干活。</string>
     <string name="voice_err_no_session">会话没建起来，稍后再叫我一次。</string>

@@ -90,4 +90,11 @@ object VoiceModels {
             "keywords.txt" to 286L,
         ),
     )
+
+    /**
+     * 全部内置模型。释放、状态统计都按这份清单走：少算一个，就会出现「看着已就绪、
+     * 唤醒却在用户机上报模型不完整」这种半截状态。
+     * 必须声明在各 spec 之后——object 属性按声明顺序初始化，提前引用只会拿到 null。
+     */
+    val ALL = listOf(KWS_ZH, ASR_ZH, ASR_ZH_OFFLINE)
 }

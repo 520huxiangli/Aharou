@@ -2236,7 +2236,7 @@
     <string name="voice_wake_on">Listening for "Xiaoran Xiaoran"</string>
     <string name="voice_wake_off">Off</string>
     <string name="voice_err_mic_permission">I don\'t have microphone permission. Please allow recording for me in system settings.</string>
-    <string name="voice_err_model">The voice model isn\'t downloaded yet. Open Settings, find the speech recognition section and download it.</string>
+    <string name="voice_err_model">The voice models aren\'t ready. Go to Settings → Default models → Offline voice model and tap \"Re-release\".</string>
     <string name="voice_err_audio">Something else seems to be using the microphone.</string>
     <string name="voice_err_no_workspace">No workspace is open yet. Open one and I can start working.</string>
     <string name="voice_err_no_session">I couldn\'t start a session. Call me again in a moment.</string>

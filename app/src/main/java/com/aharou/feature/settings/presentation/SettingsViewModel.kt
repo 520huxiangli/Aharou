@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.core.net.AppProxy
 import com.aharou.feature.voice.domain.VoiceModelManager
 import com.aharou.feature.voice.domain.VoiceModelStatus
-import com.aharou.feature.voice.domain.VoiceModels
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LogLevel
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
@@ -686,7 +685,7 @@ class SettingsViewModel @Inject constructor(
     val ocrForTextOnlyModels: StateFlow<Boolean> = _ocrForTextOnlyModels.asStateFlow()
 
     /** 离线语音模型的当前状态（打开设置页时构造 VM 即算好）。 */
-    private val _voiceModelStatus = MutableStateFlow(voiceModelManager.status(VoiceModels.ASR_ZH))
+    private val _voiceModelStatus = MutableStateFlow(voiceModelManager.statusAll())
     val voiceModelStatus: StateFlow<VoiceModelStatus> = _voiceModelStatus.asStateFlow()
 
     /** 「重新释放」的结果提示，null 表示无提示。 */
@@ -694,13 +693,13 @@ class SettingsViewModel @Inject constructor(
     val voiceModelMessage: StateFlow<Int?> = _voiceModelMessage.asStateFlow()
 
     fun refreshVoiceModelStatus() {
-        _voiceModelStatus.value = voiceModelManager.status(VoiceModels.ASR_ZH)
+        _voiceModelStatus.value = voiceModelManager.statusAll()
     }
 
-    /** 强制从安装包重新释放模型（文件坏了/缺失时用）。 */
+    /** 强制从安装包重新释放模型（文件坏了/缺失时用）；唤醒与整句识别用的模型一并重放。 */
     fun rereleaseVoiceModel() {
         viewModelScope.launch {
-            val ok = runCatching { voiceModelManager.rerelease(VoiceModels.ASR_ZH) }.isSuccess
+            val ok = voiceModelManager.rereleaseAll()
             _voiceModelMessage.value = if (ok) {
                 R.string.settings_voice_model_rereleased
             } else {
