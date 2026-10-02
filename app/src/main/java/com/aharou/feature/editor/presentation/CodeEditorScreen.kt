@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,9 +68,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
-import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.domain.TextMateSetup
+import com.aharou.feature.editor.presentation.component.MarkdownPreviewWebView
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
 import compose.icons.feathericons.ChevronLeft
@@ -179,7 +178,7 @@ fun CodeEditorScreen(
         if (dirty) showUnsavedDialog = true else onBack()
     }
 
-    BackHandler(enabled = !showSettings) { handleBack() }
+    BackHandler(enabled = !showSettings && !previewMode) { handleBack() }
     BackHandler(enabled = showSettings) { showSettings = false }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -311,14 +310,13 @@ fun CodeEditorScreen(
                     val previewText = remember(previewMode) {
                         editorRef.value?.text?.toString() ?: s.content
                     }
-                    MarkdownContent(
+                    MarkdownPreviewWebView(
                         text = previewText,
-                        color = MaterialTheme.colorScheme.onBackground,
+                        path = path,
+                        onExitPreview = { previewMode = false },
                         modifier = Modifier
                             .fillMaxSize()
                             .background(MaterialTheme.colorScheme.background)
-                            .verticalScroll(rememberScrollState())
-                            .padding(Spacing.lg)
                     )
                 }
             }

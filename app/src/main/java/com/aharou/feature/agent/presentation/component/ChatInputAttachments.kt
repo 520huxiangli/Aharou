@@ -1,9 +1,17 @@
 package com.aharou.feature.agent.presentation.component
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image as ComposeImage
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,47 +43,74 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.THUMBNAIL_MAX_EDGE
+import com.aharou.core.ui.ExpandableChevronIcon
 import com.aharou.core.ui.decodeSampledBitmap
 import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.agent.presentation.QueuedRequest
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Camera
+import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Image
+import compose.icons.feathericons.Menu
 import compose.icons.feathericons.X
+import compose.icons.feathericons.Zap
 import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
  * 待发送队列面板：AI 忙时排队的消息，风格与斜杠命令菜单一致。
- * 内容过长时在面板内部滚动（heightIn 限制 + LazyColumn），可逐条删除。
+ * 内容过长时在面板内部滚动（heightIn 限制 + LazyColumn）；支持长按手柄拖拽排序、
+ * 编辑单条、立即插入当前轮次、逐条删除。
  */
 @Composable
 internal fun QueuedRequestPanel(
     queuedRequests: List<QueuedRequest>,
-    onRemoveQueued: (String) -> Unit
+    sessionId: String,
+    forceCollapse: Boolean = false,
+    onRemoveQueued: (String) -> Unit,
+    onMoveQueued: (Int, Int) -> Unit,
+    onEditQueued: (QueuedRequest) -> Unit,
+    onInterjectQueued: (String) -> Unit
 ) {
+    // 按会话记忆展开状态，默认展开；弹窗/键盘叠加时联动强制收起（同待办面板）。
+    var isExpanded by rememberSaveable(sessionId) { mutableStateOf(true) }
+    val effectiveExpanded = isExpanded && !forceCollapse
+    // 拖拽中读取最新队列与回调：pointerInput 只在 key 变化时重启，用 rememberUpdatedState 避免捕获陈旧值。
+    val currentQueue by rememberUpdatedState(queuedRequests)
+    val moveQueued by rememberUpdatedState(onMoveQueued)
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val rowHeightPx = with(LocalDensity.current) { QueueRowHeight.toPx() }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -94,6 +129,8 @@ internal fun QueuedRequestPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.sm))
+                    .clickable { isExpanded = !isExpanded }
                     .padding(horizontal = Spacing.md, vertical = Spacing.xs),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -102,44 +139,128 @@ internal fun QueuedRequestPanel(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.weight(1f))
+                ExpandableChevronIcon(
+                    expanded = effectiveExpanded,
+                    contentDescription = if (effectiveExpanded) {
+                        stringResource(R.string.common_collapse_action)
+                    } else {
+                        stringResource(R.string.common_expand)
+                    },
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    size = 16.dp
+                )
             }
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 160.dp),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+            AnimatedVisibility(
+                visible = effectiveExpanded,
+                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
             ) {
-                itemsIndexed(queuedRequests, key = { _, req -> req.id }) { index, req ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(Radius.sm))
-                            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "${index + 1}",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(Spacing.sm))
-                        Text(
-                            text = req.request,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        IconButton(
-                            onClick = { onRemoveQueued(req.id) },
-                            modifier = Modifier.size(28.dp)
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 160.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    itemsIndexed(queuedRequests, key = { _, req -> req.id }) { index, req ->
+                        val isDragging = draggingId == req.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .zIndex(if (isDragging) 1f else 0f)
+                                .graphicsLayer { translationY = if (isDragging) dragOffset else 0f }
+                                .clip(RoundedCornerShape(Radius.sm))
+                                .background(
+                                    if (isDragging) MaterialTheme.colorScheme.surfaceVariant
+                                    else MaterialTheme.colorScheme.surface
+                                )
+                                .padding(horizontal = Spacing.md, vertical = Spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                FeatherIcons.X,
-                                contentDescription = stringResource(R.string.chat_queue_remove),
+                                FeatherIcons.Menu,
+                                contentDescription = stringResource(R.string.chat_queue_drag),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .pointerInput(req.id) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                draggingId = req.id
+                                                dragOffset = 0f
+                                            },
+                                            onDrag = { change, amount ->
+                                                change.consume()
+                                                dragOffset += amount.y
+                                                val current = currentQueue.indexOfFirst { it.id == req.id }
+                                                if (current != -1) {
+                                                    if (dragOffset > rowHeightPx && current < currentQueue.lastIndex) {
+                                                        moveQueued(current, current + 1)
+                                                        dragOffset -= rowHeightPx
+                                                    } else if (dragOffset < -rowHeightPx && current > 0) {
+                                                        moveQueued(current, current - 1)
+                                                        dragOffset += rowHeightPx
+                                                    }
+                                                }
+                                            },
+                                            onDragEnd = {
+                                                draggingId = null
+                                                dragOffset = 0f
+                                            },
+                                            onDragCancel = {
+                                                draggingId = null
+                                                dragOffset = 0f
+                                            }
+                                        )
+                                    }
                             )
+                            Spacer(Modifier.width(Spacing.sm))
+                            Text(
+                                text = "${index + 1}",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(Spacing.sm))
+                            Text(
+                                text = req.request,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            IconButton(
+                                onClick = { onInterjectQueued(req.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    FeatherIcons.Zap,
+                                    contentDescription = stringResource(R.string.chat_queue_interject),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { onEditQueued(req) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    FeatherIcons.Edit2,
+                                    contentDescription = stringResource(R.string.chat_queue_edit),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { onRemoveQueued(req.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    FeatherIcons.X,
+                                    contentDescription = stringResource(R.string.chat_queue_remove),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -147,6 +268,9 @@ internal fun QueuedRequestPanel(
         }
     }
 }
+
+/** 队列行拖拽位移换算基准：内容高度（28dp）+ 上下 padding（Spacing.xs×2）。 */
+private val QueueRowHeight = 36.dp
 
 @Composable
 internal fun PendingAttachmentPreviewList(

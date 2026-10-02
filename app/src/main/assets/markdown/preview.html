@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="__ASSET_BASE____MD_CSS__">
+<link rel="stylesheet" href="__ASSET_BASE____HL_CSS__">
+<style>
+  html, body { margin: 0; padding: 0; background-color: __BG__; }
+  /* 页内锚点跳转留一点顶部间距，避免标题贴边 */
+  .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; padding: 16px; }
+  /* 正文图片限宽，避免大截图撑破屏幕；点击行为交给 WebView 默认（无链接） */
+  .markdown-body img { max-width: 100%; }
+  /* README 里常见的居中块 */
+  .markdown-body p[align="center"], .markdown-body div[align="center"], .markdown-body h1[align="center"], .markdown-body h2[align="center"] { text-align: center; }
+</style>
+</head>
+<body>
+<article class="markdown-body" id="content"></article>
+<script id="md-source" type="text/plain">__MD_B64__</script>
+<script src="__ASSET_BASE__marked.min.js"></script>
+<script src="__ASSET_BASE__purify.min.js"></script>
+<script src="__ASSET_BASE__highlight.min.js"></script>
+<script>
+(function () {
+  try {
+    var b64 = document.getElementById('md-source').textContent.trim();
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var md = new TextDecoder('utf-8').decode(bytes);
+
+    marked.setOptions({ gfm: true, breaks: false });
+    var raw = marked.parse(md);
+    // 清洗：剥离 script / 事件属性等，防预览外部 markdown 时注入执行
+    var clean = DOMPurify.sanitize(raw, { ADD_ATTR: ['align', 'target'] });
+
+    var content = document.getElementById('content');
+    content.innerHTML = clean;
+
+    content.querySelectorAll('pre code').forEach(function (el) {
+      try { hljs.highlightElement(el); } catch (e) {}
+    });
+    // 加载失败的图片（网络不通 / 文件不存在）直接隐藏，不留破图
+    content.querySelectorAll('img').forEach(function (img) {
+      img.addEventListener('error', function () { img.style.display = 'none'; });
+    });
+  } catch (e) {
+    document.getElementById('content').textContent = 'Markdown preview error: ' + e;
+  }
+})();
+</script>
+</body>
+</html>

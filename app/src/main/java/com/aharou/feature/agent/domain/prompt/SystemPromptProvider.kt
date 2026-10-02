@@ -34,7 +34,8 @@ class SystemPromptProvider @Inject constructor(
     private val memoryRepository: MemoryRepository,
     private val aharouMemoryStore: com.aharou.core.memory.AharouMemoryStore,
     private val containerInstaller: ContainerInstaller,
-    private val agentDefinitionRepository: AgentDefinitionRepository
+    private val agentDefinitionRepository: AgentDefinitionRepository,
+    private val promptFragmentCatalog: PromptFragmentCatalog
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -42,23 +43,8 @@ class SystemPromptProvider @Inject constructor(
     }
 
     private inner class StaticRuleSource : PromptSource {
-        @Volatile private var cached: String? = null
-
-        override fun build(ctx: AgentContext): String {
-            return cached ?: run {
-                val merged = PromptFragmentResolver.mergeStatic(
-                    BASE_FRAGMENTS.keys.toList(),
-                    PromptFragmentResolver.numberedFragments(customDir)
-                )
-                val pieces = merged.mapNotNull { (number, override) ->
-                    // 内置数字走 resolvePrompt（内部按数字身份查覆盖）；新增片段直接读自定义文件。
-                    val raw = BASE_FRAGMENTS[number]?.let { resolvePrompt(it) }
-                        ?: readFileOrNull(override)
-                    raw?.replace(LEADING_COMMENT, "")?.trim()?.takeIf { it.isNotEmpty() }
-                }
-                pieces.joinToString("\n\n").also { cached = it }
-            }
-        }
+        // 每次都重新读盘：未编辑时字符串一致，KV Cache 照常命中；编辑后立即生效，无需重启。
+        override fun build(ctx: AgentContext): String = promptFragmentCatalog.renderStatic(ctx.projectRoot)
     }
 
     private inner class ActiveSkillsSource : PromptSource {
@@ -323,17 +309,14 @@ class SystemPromptProvider @Inject constructor(
      * 不注入任何内置来源；动态内容仅通过 `{{AICODE_*}}` 变量按需取回。
      */
     private fun buildCustomOnly(ctx: AgentContext): String {
-        val fragments = PromptFragmentResolver.numberedFragments(customDir)
-        if (fragments.isEmpty()) {
+        val content = promptFragmentCatalog.renderCustomOnly(ctx.projectRoot)
+        if (content.isEmpty()) {
             FileLogger.w(
                 TAG,
                 "已启用 ${PromptFragmentResolver.DISABLE_BUILTIN_FILE}，但 $customDir 下没有 <两位数字>-<名称>.md 片段，系统提示词为空"
             )
             return ""
         }
-        val content = fragments
-            .mapNotNull { readFileOrNull(it.second)?.replace(LEADING_COMMENT, "")?.trim()?.takeIf { it.isNotEmpty() } }
-            .joinToString("\n\n")
         return renderVariables(
             content,
             activeSkillsSource.build(ctx),

@@ -37,6 +37,8 @@ import com.aharou.feature.settings.domain.model.TextBlockElement
 import com.aharou.feature.settings.domain.model.TextSize
 import com.aharou.feature.settings.domain.model.TextWeight
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
+import com.aharou.feature.workspace.domain.FileAccessProvider
+import com.aharou.feature.workspace.domain.PathHomeResolver
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -54,7 +56,9 @@ class ProviderDashboardRunner @Inject constructor(
     private val commandEngine: CommandEngine,
     private val containerInstaller: ContainerInstaller,
     private val keyRotator: ProviderKeyRotator,
-    private val workspaceRepository: WorkspaceRepository
+    private val workspaceRepository: WorkspaceRepository,
+    private val fileAccess: FileAccessProvider,
+    private val pathHomeResolver: PathHomeResolver
 ) {
     companion object {
         private const val TAG = "ProviderDashboardRunner"
@@ -642,16 +646,16 @@ class ProviderDashboardRunner @Inject constructor(
     }
 
     /**
-     * 获取 ~/.aharou/scripts 目录下的所有可用脚本文件名列表。
+     * 获取脚本目录 `~/.aharou/scripts` 下的所有可用脚本文件名列表。经 [FileAccessProvider] 访问，
+     * 跟随当前执行环境（本地落 App 私有目录，远程落服务器 home 下的 `.aharou/scripts`）。
      */
     fun listAvailableScripts(): List<String> {
-        val scriptsDir = File(containerInstaller.aharouDir, "scripts")
-        if (!scriptsDir.exists()) {
-            scriptsDir.mkdirs()
-        }
-        return scriptsDir.listFiles { file ->
-            file.isFile && !file.name.startsWith(".")
-        }?.map { it.name }?.sorted() ?: emptyList()
+        val scriptsDir = "${pathHomeResolver.aharouRoot()}/scripts"
+        fileAccess.mkdirs(scriptsDir)
+        return fileAccess.listFiles(scriptsDir)
+            .filter { !it.isDirectory && !it.name.startsWith(".") }
+            .map { it.name }
+            .sorted()
     }
 
     /**
@@ -707,14 +711,16 @@ class ProviderDashboardRunner @Inject constructor(
         parseDashboardJson(output)
     }
 
+    /** 把用户/列表给的脚本路径解析为当前执行环境下的绝对路径（home 随本地/远程而变，不写死 /root）。 */
     private fun resolveContainerScriptPath(path: String): String {
+        val root = pathHomeResolver.aharouRoot()
         return when {
             path.startsWith("/") -> path
-            path.startsWith("~/") -> path.replaceFirst("~", "/root")
-            path.startsWith(".aharou/scripts/") -> "/root/$path"
-            path.startsWith(".aicode/scripts/") -> "/root/$path"
-            path.startsWith("scripts/") -> "/root/.aharou/$path"
-            else -> "/root/.aharou/scripts/$path"
+            path.startsWith("~/") -> pathHomeResolver.expandHome(path)
+            path.startsWith(".aharou/scripts/") -> "$root/${path.removePrefix(".aharou/")}"
+            path.startsWith(".aicode/scripts/") -> "$root/${path.removePrefix(".aicode/")}"
+            path.startsWith("scripts/") -> "$root/$path"
+            else -> "$root/scripts/$path"
         }
     }
 

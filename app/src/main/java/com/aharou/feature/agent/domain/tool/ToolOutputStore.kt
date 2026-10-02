@@ -2,6 +2,8 @@ package com.aharou.feature.agent.domain.tool
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.workspace.domain.FileAccessProvider
+import com.aharou.feature.workspace.domain.PathHomeResolver
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -23,11 +25,12 @@ data class StoredToolOutput(
 
 @Singleton
 class ToolOutputStore @Inject constructor(
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val fileAccess: FileAccessProvider,
+    private val pathHomeResolver: PathHomeResolver
 ) {
     private companion object {
         const val TAG = "ToolOutputStore"
-        const val AHAROU_ROOT = "/root/.aharou"
         const val OUTPUT_DIR = "tool-output"
         const val HEAD_CHARS = 20_000
         const val TAIL_CHARS = 20_000
@@ -38,7 +41,11 @@ class ToolOutputStore @Inject constructor(
 
     private val json = Json { encodeDefaults = true }
 
-    /** 存档目录（宿主路径）。对外只用于占用统计与清理，写入仍走本类。 */
+    /**
+     * 设备本地存档目录（宿主路径），仅供本机存储占用统计与清理。
+     * 写入落在当前执行环境（本地即此目录；远程经 SFTP 落到服务器 home 下的 `.aharou/tool-output`），
+     * 故远程模式下本目录为空、实际存档在远端。
+     */
     val outputDir: File get() = File(containerInstaller.aharouDir, OUTPUT_DIR)
 
     fun process(toolName: String, callId: String, result: ToolResult): ToolResult {
@@ -140,10 +147,10 @@ class ToolOutputStore @Inject constructor(
 
     private fun writeFullOutput(toolName: String, callId: String, text: String): StoredPathResult {
         return try {
-            val dir = outputDir.apply { mkdirs() }
-            val file = uniqueOutputFile(dir, toolName, callId)
-            file.writeText(text, Charsets.UTF_8)
-            val path = "$AHAROU_ROOT/$OUTPUT_DIR/${file.name}"
+            val dir = "${pathHomeResolver.aharouRoot()}/$OUTPUT_DIR"
+            fileAccess.mkdirs(dir)
+            val path = uniqueOutputPath(dir, toolName, callId)
+            fileAccess.writeFile(path, text, overwrite = false)
             FileLogger.i(TAG, "工具输出已保存: $path (${text.length} chars)")
             StoredPathResult(outputPath = path)
         } catch (e: Exception) {
@@ -152,7 +159,7 @@ class ToolOutputStore @Inject constructor(
         }
     }
 
-    private fun uniqueOutputFile(dir: File, toolName: String, callId: String): File {
+    private fun uniqueOutputPath(dir: String, toolName: String, callId: String): String {
         val timestamp = LocalDateTime.now().format(TIMESTAMP_FORMAT)
         val baseName = buildString {
             append(timestamp)
@@ -165,10 +172,11 @@ class ToolOutputStore @Inject constructor(
             }
         }
 
-        var candidate = File(dir, "$baseName.log")
+        val dirSlash = dir.trimEnd('/')
+        var candidate = "$dirSlash/$baseName.log"
         var index = 1
-        while (candidate.exists()) {
-            candidate = File(dir, "$baseName-$index.log")
+        while (fileAccess.exists(candidate)) {
+            candidate = "$dirSlash/$baseName-$index.log"
             index++
         }
         return candidate

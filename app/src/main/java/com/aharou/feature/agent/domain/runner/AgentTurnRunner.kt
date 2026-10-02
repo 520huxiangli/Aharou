@@ -224,6 +224,7 @@ class AgentTurnRunner @Inject constructor(
                         sessionId,
                         MessageRole.ASSISTANT,
                         normalized,
+                        id = event.messageId.ifBlank { UUID.randomUUID().toString() },
                         toolCalls = event.toolCalls,
                         reasoning = reasoning,
                         signature = event.signature.ifEmpty { null },

@@ -141,6 +141,7 @@ import com.aharou.feature.settings.presentation.SettingsViewModel
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
 import compose.icons.feathericons.ArrowLeft
@@ -252,8 +253,6 @@ fun ProviderEditorScreen(
     var showAddModelSheet by remember { mutableStateOf(false) }
     var showFetchDialog by remember { mutableStateOf(false) }
     var showScriptPickerSheet by remember { mutableStateOf(false) }
-    // 递增触发脚本列表重组：导入新脚本后立即出现在选择面板里。
-    var scriptPickerTick by remember { mutableIntStateOf(0) }
     // 从手机选一个脚本导入 ~/.aharou/scripts/（与分享导入同一套逻辑）。
     val scriptImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -265,7 +264,7 @@ fun ProviderEditorScreen(
                         context.getString(R.string.share_script_imported, name),
                         Toast.LENGTH_LONG
                     ).show()
-                    scriptPickerTick++
+                    viewModel.loadDashboardScripts()
                 }
             }
         }
@@ -292,6 +291,7 @@ fun ProviderEditorScreen(
     val testing by viewModel.testing.collectAsStateWithLifecycle()
     val proxyTestState by viewModel.proxyTestState.collectAsStateWithLifecycle()
     val dashboardTestState by viewModel.dashboardTestState.collectAsStateWithLifecycle()
+    val dashboardScripts by viewModel.dashboardScripts.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
     val modelIdSet by remember {
         derivedStateOf { models.toSet() }
@@ -688,7 +688,10 @@ fun ProviderEditorScreen(
                                         }
                                     }
                                     IconButton(
-                                        onClick = { showScriptPickerSheet = true },
+                                        onClick = {
+                                            showScriptPickerSheet = true
+                                            viewModel.loadDashboardScripts()
+                                        },
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
@@ -1075,16 +1078,15 @@ fun ProviderEditorScreen(
 
     if (showScriptPickerSheet) {
         ScriptPickerBottomSheet(
-            scripts = remember(scriptPickerTick) { viewModel.listAvailableDashboardScripts() },
+            scripts = dashboardScripts,
             onImportFromFile = { scriptImportLauncher.launch(arrayOf("*/*")) },
             onSelect = { selectedScript ->
                 dashboardScriptPath = selectedScript
                 showScriptPickerSheet = false
             },
-            // 删除后 list 要重算：scriptPickerTick 是列表的 remember 键。
             onDelete = { scriptName ->
                 viewModel.deleteDashboardScript(scriptName)
-                scriptPickerTick++
+                viewModel.loadDashboardScripts()
             },
             onDismiss = { showScriptPickerSheet = false }
         )
@@ -2269,11 +2271,11 @@ private fun ProviderKeyCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            Icon(
-                imageVector = if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+            ExpandableChevronIcon(
+                expanded = expanded,
                 contentDescription = null,
                 tint = MaterialTheme.semanticColors.subtleText,
-                modifier = Modifier.size(18.dp)
+                size = 18.dp
             )
         }
 

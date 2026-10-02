@@ -693,7 +693,8 @@ class StatefulAgentWorkflow @Inject constructor(
                                         aiResponse.outputTokens,
                                         aiResponse.cachedInputTokens,
                                         aiResponse.thinkingBlocksJson ?: "",
-                                        attachments = attachments
+                                        attachments = attachments,
+                                        messageId = UUID.randomUUID().toString()
                                     )
                                 )
                             }
@@ -712,7 +713,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             // 而落库的接力消息又没产生，表现为「思考显示后凭空消失且无报错」。
                             // 有正文或有思考其一即落库；两者皆空则不写空消息。
                             if (partial.isNotEmpty() || reasoning.isNotBlank()) {
-                                send(AgentEvent.AssistantText(partial, emptyList(), reasoning))
+                                send(AgentEvent.AssistantText(partial, emptyList(), reasoning, messageId = UUID.randomUUID().toString()))
                             }
                             // 多 Key 的自动切换与重发已在 adapter 内完成（见 AIProvider.keySwitcher）；
                             // 走到这里说明不是 Key 问题、或候选 Key 已全部失败，直接上报原始错误。

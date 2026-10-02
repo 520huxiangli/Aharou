@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -33,7 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import com.aharou.core.ui.ChevronRotationStyle
+import com.aharou.core.ui.ExpandableChevronIcon
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,8 +52,6 @@ import com.aharou.feature.settings.domain.model.StorageEntry
 import com.aharou.feature.settings.domain.model.formatStorageSize
 import com.aharou.feature.settings.presentation.StorageUiState
 import com.aharou.feature.settings.presentation.StorageViewModel
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.ChevronRight
 
 /** 分类色点缩进宽度：色点 10dp + 与标题的间距，明细行据此与标题左对齐。 */
 private val DetailIndent = 10.dp + Spacing.md
@@ -289,13 +287,11 @@ private fun CategoryRow(
         )
         if (expandable) {
             Spacer(Modifier.width(Spacing.xs))
-            Icon(
-                imageVector = FeatherIcons.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.semanticColors.subtleText,
-                modifier = Modifier
-                    .size(18.dp)
-                    .rotate(if (expanded) 90f else 0f)
+            ExpandableChevronIcon(
+                expanded = expanded,
+                style = ChevronRotationStyle.RIGHT_DOWN,
+                size = 18.dp,
+                tint = MaterialTheme.semanticColors.subtleText
             )
         }
     }

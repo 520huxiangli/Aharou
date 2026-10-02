@@ -622,6 +622,9 @@
     <string name="chat_input_fullscreen_title">全屏输入</string>
     <string name="chat_queue_title">待发送队列（%1$d）</string>
     <string name="chat_queue_remove">移除排队消息</string>
+    <string name="chat_queue_drag">拖拽排序</string>
+    <string name="chat_queue_edit">编辑</string>
+    <string name="chat_queue_interject">立即插入</string>
     <string name="chat_pasted_remove">移除粘贴内容</string>
     <string name="common_ok">好</string>
     <string name="chat_upload_file">上传文件</string>
@@ -696,8 +699,8 @@
     <string name="retry_error_unknown">网络异常</string>
     <string name="retry_error_with_code">%1$s (%2$d)</string>
     <string name="chat_thinking_process">思考过程</string>
-    <string name="chat_thinking_running_time">正在思考（耗时 %1$d 秒）</string>
-    <string name="chat_thinking_done_time">思考完成（耗时 %1$d 秒）</string>
+    <string name="chat_thinking_running_time">正在思考（耗时 %1$s 秒）</string>
+    <string name="chat_thinking_done_time">思考完成（耗时 %1$s 秒）</string>
     <string name="chat_thinking_done">思考完成</string>
 
     <!-- Container Settings -->
@@ -1489,10 +1492,6 @@
 
     <!-- Terminal Settings & Themes -->
     <string name="terminal_settings_title">终端设置</string>
-    <string name="terminal_tools_title">终端工具</string>
-    <string name="terminal_tools_env_section">环境工具</string>
-    <string name="terminal_tools_run_installer">重新运行环境安装</string>
-    <string name="terminal_tools_run_installer_desc">在新标签中打开依赖安装工具，按场景安装 Node.js、Python、Java、Go 等开发依赖</string>
     <string name="terminal_theme_title">配色主题</string>
     <string name="terminal_font_size_title">字体大小</string>
     <string name="terminal_cursor_style_title">光标样式</string>
@@ -2221,4 +2220,27 @@
     <string name="memory_distill_subtitle">现在就跑一次：把近期记录提炼成长期要点，追加到 GLOBAL.md</string>
     <string name="memory_distill_written">蒸馏完成，已写入 GLOBAL.md</string>
     <string name="memory_distill_nothing">没有新的可提炼内容（或供应商未配）</string>
+    <string name="prompts_title">提示词</string>
+    <string name="prompts_sort_long_press">长按可调整顺序</string>
+    <string name="prompts_empty">暂无可用片段</string>
+    <string name="prompts_source_project">项目</string>
+    <string name="prompts_source_global">全局</string>
+    <string name="prompts_source_local">本地</string>
+    <string name="prompts_source_builtin">内置</string>
+    <string name="prompts_field_basic">基本信息</string>
+    <string name="prompts_field_number">编号</string>
+    <string name="prompts_field_number_placeholder">两位数字，如 35</string>
+    <string name="prompts_field_title">名称</string>
+    <string name="prompts_field_title_placeholder">如：我的安全规则</string>
+    <string name="prompts_field_summary">摘要（可选）</string>
+    <string name="prompts_field_summary_placeholder">简述片段内容，不会注入提示词</string>
+    <string name="prompts_field_content">片段内容</string>
+    <string name="prompts_field_content_placeholder">写模型要遵守的内容</string>
+    <string name="prompts_editor_new">新建提示词</string>
+    <string name="prompts_editor_edit">编辑提示词</string>
+    <string name="prompts_add_sheet_title">提示词</string>
+    <string name="prompts_add_prompt">添加片段</string>
+    <string name="prompts_add_prompt_hint">用未占用的编号新增一条片段</string>
+    <string name="prompts_disable_builtin">完全禁用内置提示词</string>
+    <string name="prompts_disable_builtin_hint">只保留你的片段；需要自己补全全部规则，谨慎开启</string>
 </resources>

@@ -62,15 +62,12 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 终端工具底部抽屉面板：顶部为环境工具入口（重新运行依赖安装），下方为终端偏好
- * （配色主题、字号大小、字体与光标样式），偏好部分提供即时预览。
+ * 终端设置底部抽屉面板：配色主题、字号大小、字体与光标样式，提供即时预览。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TerminalSettingsSheet(
     settings: TerminalSettings,
-    showEnvTool: Boolean,
-    onRunInstaller: () -> Unit,
     onDismiss: () -> Unit,
     onSelectTheme: (String) -> Unit,
     onChangeFontSize: (Int) -> Unit,
@@ -92,46 +89,11 @@ fun TerminalSettingsSheet(
                 .verticalScroll(rememberScrollState())
         ) {
             Text(
-                text = stringResource(
-                    if (showEnvTool) R.string.terminal_tools_title else R.string.terminal_settings_title
-                ),
+                text = stringResource(R.string.terminal_settings_title),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
-
-            if (showEnvTool) {
-                Spacer(Modifier.height(Spacing.md))
-
-                Text(
-                    text = stringResource(R.string.terminal_tools_env_section),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(Spacing.sm))
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = onRunInstaller),
-                    shape = RoundedCornerShape(Radius.md),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(Spacing.md)) {
-                        Text(
-                            text = stringResource(R.string.terminal_tools_run_installer),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(Modifier.height(Spacing.xs))
-                        Text(
-                            text = stringResource(R.string.terminal_tools_run_installer_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-            }
 
             Spacer(Modifier.height(Spacing.md))
 

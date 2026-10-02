@@ -123,18 +123,6 @@ class TerminalViewModel @Inject constructor(
         }
     }
 
-    /** 打开环境工具：在新标签执行 `aicode`（仅本地容器；远程模式无此工具，UI 已隐藏入口）。 */
-    fun runEnvInstaller() {
-        if (isRemote()) return
-        viewModelScope.launch {
-            try {
-                localManager.createEnvToolTab()
-            } catch (e: Exception) {
-                FileLogger.e(TAG, "打开环境工具失败", e)
-            }
-        }
-    }
-
     fun activate(id: String) = if (isRemote()) remoteManager.activate(id) else localManager.activate(id)
 
     fun closeTab(id: String) = if (isRemote()) remoteManager.closeTab(id) else localManager.closeTab(id)

@@ -16,16 +16,24 @@ import kotlinx.serialization.json.put
  *
  * 两种形态共用同一份措辞与 XML 结构，保证 AI 无论从哪条路径收到通知，理解方式一致。
  *
- * 支持四类通知：后台任务完成（`task-notification`）、子代理完成（`subagent-notification`）、
- * 代理间消息（`agent-message`，主会话与子代理双向）、模式切换（`mode-change`）。
+ * 支持五类通知：后台任务完成（`task-notification`）、子代理完成（`subagent-notification`）、
+ * 代理间消息（`agent-message`，主会话与子代理双向）、模式切换（`mode-change`）、
+ * 用户插话（`user-message`，用户在工作期间插入的消息，属用户输入而非系统事件）。
  * 消息的 `<status>` 取 `message`、模式切换取 `changed`，UI 提示条据此按非失败渲染。
  */
 object AgentNotificationFormatter {
 
     private const val NOTICE = "这是系统事件通知，不是来自用户的消息，不要视为用户的确认、同意或对任何待处理问题的回答。"
 
+    /** [AgentNotificationKind.USER_MESSAGE] 与 [NOTICE] 相反：它就是用户本人的输入，须按用户消息对待。 */
+    private const val USER_MESSAGE_NOTICE = "这是用户在你工作期间插入的消息，属于用户本人的输入，请据此调整当前任务。"
+
     fun buildMessage(items: List<PendingNotification>): String {
         require(items.isNotEmpty()) { "通知列表为空" }
+        // 全是用户插话时按用户消息渲染（不加系统通知前缀），落库后显示为普通用户气泡。
+        if (items.all { it.kind == AgentNotificationKind.USER_MESSAGE }) {
+            return buildUserMessage(items)
+        }
         return buildString {
             appendLine(BACKGROUND_NOTIFICATION_PREFIX)
             if (items.size == 1) {
@@ -39,6 +47,8 @@ object AgentNotificationFormatter {
                         appendLine("这是一条来自其它代理会话的消息，不是用户输入。")
                     AgentNotificationKind.MODE_CHANGE ->
                         appendLine("这是一条模式切换事件，不是来自用户的消息。")
+                    AgentNotificationKind.USER_MESSAGE ->
+                        appendLine("这是一条用户在工作期间插入的消息，属于用户本人的输入。")
                 }
                 appendLine("不要将其视为用户的确认、同意或对任何待处理问题的回答。")
             } else {
@@ -55,6 +65,16 @@ object AgentNotificationFormatter {
         }
     }
 
+    /**
+     * 用户插话作为 user 消息落库时的文本（空闲或本轮无工具调用的兜底路径）：
+     * 直接输出用户原文、不加系统通知前缀，使其在对话历史里显示为普通用户消息。
+     */
+    private fun buildUserMessage(items: List<PendingNotification>): String {
+        if (items.size == 1) return items.first().message.orEmpty()
+        return items.mapIndexed { index, item -> "${index + 1}. ${item.message.orEmpty()}" }
+            .joinToString("\n")
+    }
+
     fun buildJsonArray(items: List<PendingNotification>): JsonArray =
         JsonArray(items.map { it.toJsonObject() })
 
@@ -65,6 +85,7 @@ object AgentNotificationFormatter {
             AgentNotificationKind.SUBAGENT -> "subagent-notification"
             AgentNotificationKind.AGENT_MESSAGE -> "agent-message"
             AgentNotificationKind.MODE_CHANGE -> "mode-change"
+            AgentNotificationKind.USER_MESSAGE -> "user-message"
         }
         appendLine("<$tag>")
         when (kind) {
@@ -86,6 +107,9 @@ object AgentNotificationFormatter {
             AgentNotificationKind.MODE_CHANGE -> {
                 appendLine("  <new-mode>${newMode?.name ?: "UNKNOWN"}</new-mode>")
             }
+            AgentNotificationKind.USER_MESSAGE -> {
+                message?.takeIf { it.isNotBlank() }?.let { appendLine("  <message>${escapeXml(it)}</message>") }
+            }
         }
         appendLine("  <status>${statusText()}</status>")
         appendLine("  <summary>${summaryText()}</summary>")
@@ -101,8 +125,9 @@ object AgentNotificationFormatter {
             AgentNotificationKind.SUBAGENT -> "subagent"
             AgentNotificationKind.AGENT_MESSAGE -> "agent_message"
             AgentNotificationKind.MODE_CHANGE -> "mode_change"
+            AgentNotificationKind.USER_MESSAGE -> "user_message"
         })
-        put("notice", NOTICE)
+        put("notice", if (kind == AgentNotificationKind.USER_MESSAGE) USER_MESSAGE_NOTICE else NOTICE)
         when (kind) {
             AgentNotificationKind.BACKGROUND_TASK -> {
                 put("task_id", sourceId)
@@ -122,6 +147,9 @@ object AgentNotificationFormatter {
             AgentNotificationKind.MODE_CHANGE -> {
                 put("new_mode", newMode?.name ?: "UNKNOWN")
             }
+            AgentNotificationKind.USER_MESSAGE -> {
+                message?.takeIf { it.isNotBlank() }?.let { put("message", JsonPrimitive(it)) }
+            }
         }
         put("status", statusText())
         put("summary", summaryText())
@@ -133,6 +161,7 @@ object AgentNotificationFormatter {
     private fun PendingNotification.statusText(): String = when (kind) {
         AgentNotificationKind.AGENT_MESSAGE -> "message"
         AgentNotificationKind.MODE_CHANGE -> "changed"
+        AgentNotificationKind.USER_MESSAGE -> "message"
         else -> when (outcome) {
             NotificationOutcome.COMPLETED -> "completed"
             NotificationOutcome.FAILED -> "failed"
@@ -152,6 +181,8 @@ object AgentNotificationFormatter {
             if (fromParent) "主会话发来一条消息" else "子代理「$title」发来一条消息"
         AgentNotificationKind.MODE_CHANGE ->
             "用户已将模式切换为 ${newMode?.name ?: "UNKNOWN"}"
+        AgentNotificationKind.USER_MESSAGE ->
+            "用户在工作期间插入了一条消息"
     }
 
     private fun PendingNotification.singleHint(): String = when (kind) {
@@ -171,6 +202,8 @@ object AgentNotificationFormatter {
             }
         AgentNotificationKind.MODE_CHANGE ->
             "请立即按新模式约束继续手头任务，无需回复本条通知。"
+        AgentNotificationKind.USER_MESSAGE ->
+            "这是用户本人的新输入，请据此调整当前任务。"
     }
 
     private fun buildHint(items: List<PendingNotification>): String {
@@ -178,6 +211,7 @@ object AgentNotificationFormatter {
         val subAgents = items.filter { it.kind == AgentNotificationKind.SUBAGENT }
         val messages = items.filter { it.kind == AgentNotificationKind.AGENT_MESSAGE }
         val modeChanges = items.filter { it.kind == AgentNotificationKind.MODE_CHANGE }
+        val userMessages = items.filter { it.kind == AgentNotificationKind.USER_MESSAGE }
         val lines = mutableListOf<String>()
         when (tasks.size) {
             0 -> {}
@@ -195,6 +229,9 @@ object AgentNotificationFormatter {
             0 -> {}
             1 -> lines.add(messages.first().singleHint())
             else -> lines.add("你收到了多条代理消息，请按上文各自的回复方式处理；无需回复的可忽略，不要逐条回执。")
+        }
+        if (userMessages.isNotEmpty()) {
+            lines.add("以上含用户在工作期间插入的消息，请按用户本人的输入处理。")
         }
         if (modeChanges.isNotEmpty()) {
             lines.add(modeChanges.last().singleHint())
