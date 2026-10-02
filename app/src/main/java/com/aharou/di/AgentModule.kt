@@ -80,6 +80,7 @@ import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.tool.config.ConfigTool
 import com.aharou.feature.agent.domain.tool.a11y.A11yTool
+import com.aharou.feature.agent.domain.tool.app.OpenAppTool
 import com.aharou.feature.agent.domain.tool.vdisplay.VdTool
 import com.aharou.feature.agent.domain.tool.mcp.ManageMcpTool
 import com.aharou.feature.agent.domain.tool.memory.MemoryTool
@@ -297,7 +298,8 @@ object AgentModule {
         browserTool: BrowserTool,
         configTool: ConfigTool,
         vdTool: VdTool,
-        a11yTool: A11yTool
+        a11yTool: A11yTool,
+        openAppTool: OpenAppTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -326,6 +328,7 @@ object AgentModule {
             register("config", configTool)
             register("vscreen", vdTool)
             register("a11y", a11yTool)
+            register("open_app", openAppTool)
         }
     }
 

@@ -27,6 +27,12 @@
 - 影子屏要文字时直接传 `vscreen(action="shot", ocr=true)`，一次拿到屏幕文字，比先取图再识别省一轮。
 - 两者分工：本机 OCR 只认字，适合读界面、报错、列表这类印刷体；要看画面内容、描述图形、理解版式，用 `viewImage`（走识图模型）。手写体本机 OCR 认不了。
 
+## 宿主应用与导航（open_app）
+- `open_app` 免确认（AUTO_APPROVE），只有两个动作：`open` 打开应用、`navigate` 用地图起导航。语音场景就用它，不要用 `Shizuku`（那个每次弹窗，人不在屏幕前等于卡死）。
+- `open` 的 `target` 优先给**包名**（最准，如抖音 `com.ss.android.ugc.aweme`）；给关键词时工具会在已装包里模糊找，中文名匹配不到就直接返回失败——这时先用 `Shizuku` 跑 `pm list packages` 查到包名再来。
+- `navigate` 的 `target` 给**目的地文字**即可（如「天安门」），不用经纬度；`mode` 选 driving/walking/transit。装了高德走高德、装了百度走百度，都没有则退回系统 `geo:` 让用户选。
+- 两者都依赖宿主通道（root 或 Shizuku）。通道不可用时返回值里已经写好开启指引，**把指引原样转述给用户**，别转头改用 `Shizuku` 弹窗去绕。
+
 ## 路径约定
 - 项目根目录固定为 `~/workspace`；项目文件用 `~/workspace/...` 或相对路径（相对 `~/workspace`）。
 - 用户消息末尾的附件块里，条目若标注「目录」，说明它**只给了路径、没有附带内容**：需要时用 `list` 看目录结构、再 `readFile` 读其中文件，不要当成空文件跳过。

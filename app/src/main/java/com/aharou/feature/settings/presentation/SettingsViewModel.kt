@@ -61,9 +61,17 @@ import com.aharou.feature.settings.data.remote.UpdateDownloadSource
 import com.aharou.feature.settings.data.repository.UpdateCheckSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceSttSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
+import com.aharou.feature.settings.data.repository.VoiceWakeSettingsRepository
+import com.aharou.feature.voice.call.VoiceCallService
+import android.app.role.RoleManager
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import com.aharou.feature.settings.data.repository.UpdateChannel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import com.aharou.feature.settings.data.repository.AppThemeMode
+import com.aharou.feature.voice.assistant.AharouVoiceInteractionService
+import com.aharou.feature.agent.domain.shizuku.ShizukuManager
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.DownloadedImageRecord
 import com.aharou.feature.settings.data.repository.ExecutionMode
@@ -373,6 +381,7 @@ private fun padTrend(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val shizukuManager: ShizukuManager,
     private val repository: AIProviderRepository,
     private val modelApiService: ModelApiService,
     private val modelMetadataService: ModelMetadataService,
@@ -397,6 +406,7 @@ class SettingsViewModel @Inject constructor(
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
     private val voiceSttSettingsRepository: VoiceSttSettingsRepository,
     private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
+    private val voiceWakeSettingsRepository: VoiceWakeSettingsRepository,
     private val voiceModelManager: VoiceModelManager,
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
@@ -587,6 +597,88 @@ class SettingsViewModel @Inject constructor(
 
     /** 自动朗读开关：开了之后 AI 每条回复落地就自动念。 */
     val autoReadAloud: StateFlow<Boolean> = _autoReadAloud.asStateFlow()
+
+    private val _voiceWakeEnabled = MutableStateFlow(false)
+
+    /** 语音唤醒开关：开了麦克风常驻听唤醒词。 */
+    val voiceWakeEnabled: StateFlow<Boolean> = _voiceWakeEnabled.asStateFlow()
+
+    private val _isDefaultAssistant = MutableStateFlow(false)
+
+    /** 本应用当前是不是系统的默认数字助手。 */
+    val isDefaultAssistant: StateFlow<Boolean> = _isDefaultAssistant.asStateFlow()
+
+    fun toggleVoiceWake() {
+        viewModelScope.launch {
+            val next = !voiceWakeSettingsRepository.isEnabled()
+            voiceWakeSettingsRepository.setEnabled(next)
+            _voiceWakeEnabled.value = next
+            if (next) VoiceCallService.start(context, wakeMode = true) else VoiceCallService.stop(context)
+        }
+    }
+
+    /**
+     * 刷新「是否默认助手」。
+     *
+     * 只认 RoleManager 是不够的：国产 ROM 多数不把 ASSISTANT 角色开放给第三方，
+     * 但通过特权通道写 `secure.assistant` 同样能让系统把我们当默认助手用，
+     * 此时 `isRoleHeld` 仍是 false——只按它判断就会一直显示「未设置」。
+     * 所以两者取或，任一成立就算已设置。
+     */
+    fun refreshDefaultAssistant() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null && roleManager.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
+                _isDefaultAssistant.value = true
+                return
+            }
+        }
+        _isDefaultAssistant.value = assistantComponentName() ==
+            Settings.Secure.getString(context.contentResolver, "assistant")
+    }
+
+    /** 我们的语音交互服务组件名，格式包名/类全名。 */
+    private fun assistantComponentName(): String =
+        "${context.packageName}/${AharouVoiceInteractionService::class.java.name}"
+
+    /**
+     * 用特权通道直接把默认助手指向我们自己。
+     *
+     * ColorOS 这类 ROM 的助手设置页不认第三方应用，走 `RoleManager` 或系统设置页
+     * 都落不了地；有 Shizuku/root 时直接写 secure 设置最可靠，写完即刻生效。
+     *
+     * @return true 表示写入成功（调用方随后应调 [refreshDefaultAssistant]）。
+     */
+    suspend fun applyDefaultAssistant(): Boolean {
+        val component = assistantComponentName()
+        val command = "settings put secure assistant $component" +
+            "; settings put secure voice_interaction_service $component"
+        val result = runCatching { shizukuManager.runCommand(command, 5000) }.getOrNull()
+            ?: return false
+        if (result.exitCode != 0) return false
+        return Settings.Secure.getString(context.contentResolver, "assistant") == component
+    }
+
+    /**
+     * 构造「设为默认助手」要打开的页面。
+     *
+     * 只返回 Intent、**由界面层用 Activity 的 context 启动**：早先在这里用 application
+     * context + NEW_TASK 直接 startActivity，系统（尤其 ColorOS）会默默拦掉后台启动，
+     * 表现就是「点了没反应」。
+     *
+     * 返回 null 表示确实无处可去。
+     */
+    fun defaultAssistantIntent(): Intent? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null && roleManager.isRoleAvailable(RoleManager.ROLE_ASSISTANT)) {
+                return roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        }
+        // 不少 ROM（如 ColorOS）不给应用开放 ASSISTANT 角色，退到系统的语音输入设置页
+        return Intent(Settings.ACTION_VOICE_INPUT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
     private val _ocrForTextOnlyModels = MutableStateFlow(true)
 
@@ -1009,9 +1101,25 @@ class SettingsViewModel @Inject constructor(
                 voiceTtsSettingsRepository.voiceFlow.collectLatest {
                     _voiceTtsVoice.value = it
                 }
+            }
+
+            // 每个 flow 必须各起一个协程：collectLatest 挂起后永不返回，
+            // 串在同一个 launch 里的话，后面的根本不会执行——
+            // 表现就是开关值回不到界面，界面显示的永远是初始值（与真实状态相反）。
+            launch {
                 voiceTtsSettingsRepository.autoReadAloudFlow.collectLatest {
                     _autoReadAloud.value = it
                 }
+            }
+            launch {
+                voiceWakeSettingsRepository.enabledFlow.collectLatest {
+                    _voiceWakeEnabled.value = it
+                }
+            }
+
+            refreshDefaultAssistant()
+
+            launch {
                 generalSettingsRepository.ocrForTextOnlyModelsFlow.collectLatest {
                     _ocrForTextOnlyModels.value = it
                 }

@@ -37,6 +37,16 @@ internal class StreamingAsrEngine @Inject constructor() {
     private var loadedDir: String? = null
 
     /**
+     * 预热：提前把识别器加载好。
+     *
+     * 首次加载要 4 秒多（带 161MB 模型），如果等到唤醒词命中才开始加载，
+     * 这几秒里录音还没开，用户接着说的指令会被整段丢掉（实测空窗 4.2s）。
+     */
+    suspend fun warmUp(modelDir: File) = withContext(Dispatchers.Default) {
+        ensureLoaded(modelDir)
+    }
+
+    /**
      * 开一段识别会话。同一时刻只允许一段（[mutex] 保护），
      * 调用方必须在结束时 [AsrSession.release]，否则后续会话会阻塞。
      */

@@ -39,6 +39,9 @@ internal class VoiceCallService : Service() {
         private const val CHANNEL_ID = "aharou_voice_call"
         private const val NOTIFICATION_ID = 4102
 
+        /** 启动意图携带的模式：true = 只跑唤醒词监听。 */
+        private const val EXTRA_WAKE_MODE = "wake_mode"
+
         private val _running = MutableStateFlow(false)
 
         /** 通话是否在跑。输入栏的麦克风按钮订阅它来显示当前状态。 */
@@ -46,7 +49,7 @@ internal class VoiceCallService : Service() {
 
         fun isRunning(): Boolean = _running.value
 
-        fun start(context: Context) {
+        fun start(context: Context, wakeMode: Boolean = false) {
             // microphone 型前台服务要求启动时已能访问麦克风：RECORD_AUDIO 未授予
             // （或用户给的是一次性授权）时会抛 SecurityException 并拖垮整个进程，
             // 所以先自查再启。
@@ -60,6 +63,7 @@ internal class VoiceCallService : Service() {
                 ContextCompat.startForegroundService(
                     context,
                     Intent(context, VoiceCallService::class.java)
+                        .putExtra(EXTRA_WAKE_MODE, wakeMode)
                 )
             }
         }
@@ -73,6 +77,9 @@ internal class VoiceCallService : Service() {
 
     @Inject
     lateinit var session: VoiceCallSession
+
+    private var sessionStarted = false
+    private var wakeMode = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -96,12 +103,19 @@ internal class VoiceCallService : Service() {
             return
         }
         _running.value = true
-        // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
-        // 径向菜单里的麦克风开关通话，这里只管通话本身
-        session.start("")
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_NOT_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!sessionStarted) {
+            sessionStarted = true
+            wakeMode = intent?.getBooleanExtra(EXTRA_WAKE_MODE, false) ?: false
+            // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
+            // 径向菜单里的麦克风开关通话，这里只管通话本身
+            session.start("", wakeMode = wakeMode)
+            notificationManager().notify(NOTIFICATION_ID, buildNotification())
+        }
+        return START_NOT_STICKY
+    }
 
     override fun onDestroy() {
         _running.value = false
@@ -138,10 +152,21 @@ internal class VoiceCallService : Service() {
         }
         return builder
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(getString(R.string.voice_call_notification_title))
-            .setContentText(getString(R.string.voice_call_notification_text))
+            .setContentTitle(
+                getString(
+                    if (wakeMode) R.string.voice_wake_title else R.string.voice_call_notification_title
+                )
+            )
+            .setContentText(
+                getString(
+                    if (wakeMode) R.string.voice_wake_on else R.string.voice_call_notification_text
+                )
+            )
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .build()
     }
+
+    private fun notificationManager(): NotificationManager =
+        getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 }

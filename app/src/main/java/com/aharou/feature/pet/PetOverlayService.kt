@@ -583,6 +583,7 @@ class PetOverlayService : Service() {
 
     private fun callStateLabel(state: VoiceCallSession.State): Int = when (state) {
         VoiceCallSession.State.Listening -> R.string.voice_call_state_listening
+        VoiceCallSession.State.WakeListening -> R.string.voice_wake_on
         VoiceCallSession.State.Thinking -> R.string.voice_call_state_thinking
         VoiceCallSession.State.Speaking -> R.string.voice_call_state_speaking
         VoiceCallSession.State.Preparing, VoiceCallSession.State.Idle ->

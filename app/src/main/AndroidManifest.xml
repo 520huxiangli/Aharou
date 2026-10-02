@@ -165,6 +165,38 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- 数字助手（可选）：用户把它选为默认助手后，系统会一直保活这个服务，
+             唤醒比普通前台服务稳，也能接长按 / 锁屏唤起。代价是系统同时只允许一个
+             默认助手，开了就会顶掉原有的（如小布）。 -->
+        <service
+            android:name="com.aharou.feature.voice.assistant.AharouVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="com.aharou.feature.voice.assistant.AharouVoiceSessionService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!-- 官方要求数字助手必须同时提供识别服务（见 AOSP 语音交互简介）；
+             实际识别走自有引擎，这里只做合法占位。 -->
+        <service
+            android:name="com.aharou.feature.voice.assistant.AharouRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_RECOGNITION_SERVICE">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
         <!-- 开机与应用被更新后把悬浮窗服务拉回来。START_STICKY 只覆盖「被系统查杀」，
              包替换（pm install）与设备重启都不会自动拉起服务，用户会以为开关失效了。
              接收器自己会先查设置里的开关，关着就不启动。 -->

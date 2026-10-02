@@ -68,6 +68,7 @@ import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
 import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Type
+import compose.icons.feathericons.Users
 import compose.icons.feathericons.Volume2
 
 /**
@@ -92,6 +93,10 @@ internal fun DefaultModelsSection(
     autoReadAloud: Boolean = false,
     onAutoReadAloudChange: (Boolean) -> Unit = {},
     onToggleAutoReadAloud: () -> Unit = {},
+    voiceWakeEnabled: Boolean = false,
+    onToggleVoiceWake: () -> Unit = {},
+    isDefaultAssistant: Boolean = false,
+    onRequestDefaultAssistant: () -> Unit = {},
     ocrForTextOnlyModels: Boolean = true,
     onToggleOcrForTextOnlyModels: () -> Unit = {},
     voiceModelStatus: VoiceModelStatus,
@@ -305,6 +310,34 @@ internal fun DefaultModelsSection(
                         // 不信界面上的 checked：界面状态一旦过期，按它算出来的目标值就是错的，
                         // 表现就是「开关只能开、关不掉」。统一走「读存储真值再取反」。
                         onCheckedChange = { onToggleAutoReadAloud() }
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Mic,
+                title = stringResource(R.string.voice_wake_title),
+                subtitle = stringResource(R.string.voice_wake_summary),
+                onClick = onToggleVoiceWake,
+                trailing = {
+                    AppSwitch(
+                        checked = voiceWakeEnabled,
+                        // 同自动朗读：不拿界面上的 checked 当真值，统一读存储再取反，
+                        // 否则界面状态一过期就会「只能开、关不掉」。
+                        onCheckedChange = { onToggleVoiceWake() }
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Users,
+                title = stringResource(R.string.voice_assistant_title),
+                subtitle = stringResource(R.string.voice_assistant_summary),
+                onClick = onRequestDefaultAssistant,
+                trailing = {
+                    Text(
+                        if (isDefaultAssistant) stringResource(R.string.voice_assistant_yes)
+                        else stringResource(R.string.voice_assistant_set)
                     )
                 }
             )
