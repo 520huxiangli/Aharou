@@ -16,12 +16,27 @@ cat vd.log        # => VD_READY id=N
 dumpsys SurfaceFlinger --display-id | grep aharou-vd
 # 4) 开 App（短 id）：
 am start --display N -n pkg/act
-# 5) 截图（SF 长 id）/ 触控（短 id）：
-screencap -d <SF长id> -p /sdcard/Aharou/x.png
+# 5) 触控（短 id）：
 input -d N tap X Y
-# 6) 停止：
+# 6) 截图：Android 14+ 可 `screencap -d <SF长id>`；Android 13 得用 runner 自带出图（见下）
+# 7) 停止：
 touch /data/local/tmp/aharou-vd.stop
 ```
+
+## 自带截图（Android 13 起必需）
+
+`screencap -d <SF长id>` 只在 Android 14+ 对虚拟屏有效；**Android 13 上它只认物理屏 token**，会把目标文件写成 0 字节且不报错。
+因此 runner 支持自己出图：启动时多传「截图输出路径 截图请求文件」两个参数，App 侧 touch 请求文件即触发把最近一帧编成 PNG。
+
+```sh
+CLASSPATH=/data/local/tmp/aharou-vd.jar setsid app_process / com.aharou.vd.VdMain 1080 1920 440 \
+  /sdcard/out.png /data/local/tmp/aharou-vd.shot > vd.log 2>&1 < /dev/null &
+touch /data/local/tmp/aharou-vd.shot   # 触发一次出图 → /sdcard/out.png，日志打 VD_SHOT
+```
+
+- 输出路径要落在 **App 可读**的位置（二进制不能经 Shizuku 的文本通道回来）；写文件先落 `.tmp` 再改名，避免读到半截。
+- 屏上还没有内容时打印 `VD_SHOT_FAILED no-frame`，不写文件。
+- 帧拷贝节流 100ms（画面在动时不必每帧都拷）。
 
 ## 已实测内容
 
@@ -36,4 +51,4 @@ touch /data/local/tmp/aharou-vd.stop
 - flags 与 scrcpy dev 分支一致（PUBLIC|PRESENTATION|OWN_CONTENT_ONLY|SUPPORTS_TOUCH|
   ROTATES_WITH_CONTENT + 13+: TRUSTED|OWN_DISPLAY_GROUP|ALWAYS_UNLOCKED|TOUCH_FEEDBACK_DISABLED
   + 14+: OWN_FOCUS|DEVICE_DISPLAY_GROUP）。
-- screencap 用 SF 长 id；am / input 用短 id（如 5）。
+- am / input 用短 id（如 5）；`screencap -d` 用 SF 长 id，且只在 Android 14+ 可用。

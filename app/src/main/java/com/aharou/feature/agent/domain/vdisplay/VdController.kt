@@ -48,6 +48,12 @@ class VdController @Inject constructor(
         const val LOG_FILE = "/data/local/tmp/vd.log"
         const val ASSET_PATH = "vd/aharou-vd.jar"
 
+        const val SHOT_REQ_FILE = "/data/local/tmp/aharou-vd.shot"
+
+        /** 等 runner 出图的轮询间隔与上限。 */
+        const val SHOT_POLL_MS = 200L
+        const val SHOT_WAIT_MS = 5_000L
+
         const val DEFAULT_WIDTH = 1080
         const val DEFAULT_HEIGHT = 1920
         const val DEFAULT_DPI = 440
@@ -55,6 +61,13 @@ class VdController @Inject constructor(
 
     private val _state = MutableStateFlow<VdInfo?>(null)
     val state: StateFlow<VdInfo?> = _state.asStateFlow()
+
+    /**
+     * runner 出图的落点：App 私有外部目录。runner 以 shell/root 身份可写，App 又能直接读，
+     * 二进制不经 shell 文本通道（那是给命令输出用的）。
+     */
+    private val shotOutFile: File
+        get() = File(context.getExternalFilesDir(null), "vd/frame.png")
 
     private val hostReady: Boolean
         get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
@@ -98,6 +111,7 @@ class VdController @Inject constructor(
         exec(
             "cd /data/local/tmp; rm -f $STOP_FILE $LOG_FILE; " +
                 "CLASSPATH=$JAR_REMOTE setsid app_process / com.aharou.vd.VdMain $width $height $dpi " +
+                "\"${shotOutFile.absolutePath}\" $SHOT_REQ_FILE " +
                 "> $LOG_FILE 2>&1 < /dev/null & echo LAUNCHED",
             30_000L,
         )
@@ -222,17 +236,27 @@ class VdController @Inject constructor(
         ).output.contains("$pkg/")
     }.getOrDefault(false)
 
-    /** 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。 */
+    /**
+     * 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。
+     *
+     * 走 runner 自己出图：Android 13 的 `screencap` 只认物理屏 token，对虚拟屏会静默写出
+     * 0 字节文件（14+ 才支持），所以改成「touch 请求文件 → runner 写 PNG → 直接读结果」。
+     */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
         val info = known ?: refresh() ?: error("影子屏未运行，请先 start")
-        check(info.sfDisplayId.isNotEmpty()) {
-            "拿不到影子屏的显示 token（SurfaceFlinger 里没列出这块屏），暂时无法截图"
-        }
-        val shot = File(context.getExternalFilesDir(null), "vd/shot.png")
+        val shot = shotOutFile
         shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
-        val r = exec("screencap -d ${info.sfDisplayId} -p \"${shot.absolutePath}\"", 30_000L)
-        check(shot.exists() && shot.length() > 0) { "截图失败：${r.output.take(300)}" }
+        exec("touch $SHOT_REQ_FILE", 10_000L)
+        var waited = 0L
+        while (waited < SHOT_WAIT_MS && !(shot.exists() && shot.length() > 0)) {
+            delay(SHOT_POLL_MS)
+            waited += SHOT_POLL_MS
+        }
+        check(shot.exists() && shot.length() > 0) {
+            "截图失败：runner 未在 ${SHOT_WAIT_MS / 1000} 秒内产出画面" +
+                "（日志尾部：${exec("tail -3 $LOG_FILE 2>/dev/null", 10_000L).output.take(200)}）"
+        }
         return info to shot
     }
 
