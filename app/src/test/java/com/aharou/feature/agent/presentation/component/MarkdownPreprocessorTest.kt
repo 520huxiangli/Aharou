@@ -72,81 +72,44 @@ class MarkdownPreprocessorTest {
     }
 
     @Test
-    fun `bold italic strike tags map to markdown`() {
-        assertEquals("**粗**", process("<b>粗</b>"))
-        assertEquals("*斜*", process("<i>斜</i>"))
-        assertEquals("~~删~~", process("<s>删</s>"))
-        assertEquals("**强**", process("<strong>强</strong>"))
+    fun `html tags are kept as literal text`() {
+        assertEquals("<\u200Bb>粗<\u200B/b>", process("<b>粗</b>"))
+        assertEquals("<\u200Bi>斜<\u200B/i>", process("<i>斜</i>"))
+        assertEquals("<\u200Bstrong>强<\u200B/strong>", process("<strong>强</strong>"))
     }
 
     @Test
-    fun `br maps to hard break`() {
-        assertEquals("第一行  \n第二行", process("第一行<br>第二行"))
+    fun `br tag is kept as literal text`() {
+        assertEquals("第一行<\u200Bbr>第二行", process("第一行<br>第二行"))
     }
 
     @Test
-    fun `sub and sup map to unicode scripts`() {
-        assertEquals("H\u2082O", process("H<sub>2</sub>O"))
-        assertEquals("mv\u00B2/2", process("mv<sup>2</sup>/2"))
-        assertEquals("x\u207F", process("x<sup>n</sup>"))
+    fun `sub and sup tags are kept as literal text`() {
+        assertEquals("H<\u200Bsub>2<\u200B/sub>O", process("H<sub>2</sub>O"))
+        assertEquals("mv<\u200Bsup>2<\u200B/sup>/2", process("mv<sup>2</sup>/2"))
     }
 
     @Test
-    fun `unmappable script content keeps raw text`() {
-        assertEquals("xyz", process("<sub>xyz</sub>"))
+    fun `inline tags are kept as literal text`() {
+        assertEquals(
+            "<\u200Bspan style=\"color:red\">红色文字<\u200B/span>",
+            process("""<span style="color:red">红色文字</span>"""),
+        )
     }
 
     @Test
-    fun `unknown inline tags keep text content`() {
-        assertEquals("红色文字", process("""<span style="color:red">红色文字</span>"""))
-    }
-
-    @Test
-    fun `unordered html list maps to markdown list`() {
-        val out = process("<ul><li>一</li><li>二</li></ul>")
-        assertTrue(out.contains("- 一"))
-        assertTrue(out.contains("- 二"))
-    }
-
-    @Test
-    fun `ordered html list maps to numbered list`() {
-        val out = process("<ol><li>甲</li><li>乙</li></ol>")
-        assertTrue(out.contains("1. 甲"))
-        assertTrue(out.contains("2. 乙"))
-    }
-
-    @Test
-    fun `html table maps to gfm table`() {
-        val out = process("<table><tr><th>名</th><th>龄</th></tr><tr><td>张</td><td>18</td></tr></table>")
-        assertTrue(out.contains("| 名 | 龄 |"))
-        assertTrue(out.contains("| --- | --- |"))
-        assertTrue(out.contains("| 张 | 18 |"))
-    }
-
-    @Test
-    fun `blockquote maps to markdown quote`() {
-        val out = process("<blockquote>引用内容</blockquote>")
-        assertTrue(out.contains("> 引用内容"))
-    }
-
-    @Test
-    fun `hr maps to divider`() {
-        assertTrue(process("<hr>").contains("---"))
-    }
-
-    @Test
-    fun `img tag maps to markdown image`() {
-        assertEquals("![测试图](test.png)", process("""<img src="test.png" alt="测试图">"""))
-    }
-
-    @Test
-    fun `anchor maps to markdown link`() {
-        assertEquals("[点这](https://x.com)", process("""<a href="https://x.com">点这</a>"""))
+    fun `block tags are kept as literal text`() {
+        assertEquals("<\u200Bhr>", process("<hr>"))
+        assertEquals("<\u200Bul><\u200Bli>一<\u200B/li><\u200Bli>二<\u200B/li><\u200B/ul>", process("<ul><li>一</li><li>二</li></ul>"))
+        assertEquals("<\u200Bblockquote>引用内容<\u200B/blockquote>", process("<blockquote>引用内容</blockquote>"))
+        assertEquals("<\u200Bimg src=\"test.png\" alt=\"测试图\">", process("""<img src="test.png" alt="测试图">"""))
+        assertEquals("<\u200Ba href=\"https://x.com\">点这<\u200B/a>", process("""<a href="https://x.com">点这</a>"""))
     }
 
     @Test
     fun `html entities are decoded`() {
-        assertEquals("a < b & c > d", process("a &lt; b &amp; c &gt; d"))
+        // `&lt;` 先被解码为 `<`，再被 neutralizeHtmlOpenBracket 插入零宽空格
+        assertEquals("a <\u200B b & c > d", process("a &lt; b &amp; c &gt; d"))
     }
 
     @Test
