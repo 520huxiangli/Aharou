@@ -34,7 +34,8 @@ interface BackupManager {
     suspend fun import(
         input: InputStream,
         password: CharArray?,
-        selectedWorkspaces: Set<String>? = null
+        selectedWorkspaces: Set<String>? = null,
+        providerConflict: ProviderConflictStrategy = ProviderConflictStrategy.OVERWRITE
     ): Result<RestoreStats>
 
     /**
@@ -45,11 +46,31 @@ interface BackupManager {
     suspend fun previewImport(input: InputStream, password: CharArray?): Result<ImportPreview>
 }
 
-/** 导入预览结果：备份中的工作区列表（供勾选）。 */
+/** 导入预览结果：备份中的工作区列表 + 与本机撞 id 的供应商冲突项（供勾选与取舍）。 */
 data class ImportPreview(
-    val workspaces: List<WorkspaceBackupMeta>
+    val workspaces: List<WorkspaceBackupMeta>,
+    val providerConflicts: List<ProviderConflict> = emptyList()
 ) {
     val hasWorkspaceData: Boolean get() = workspaces.isNotEmpty()
+    val hasProviderConflicts: Boolean get() = providerConflicts.isNotEmpty()
+}
+
+/** 备份里的供应商与本机现有条目撞了同一个 id（导入时会整行覆盖）。 */
+data class ProviderConflict(
+    val id: String,
+    val name: String
+)
+
+/** 导入时对撞 id 供应商的处置方式。 */
+enum class ProviderConflictStrategy {
+    /** 保留本机现有条目，跳过备份里的冲突项。 */
+    KEEP_LOCAL,
+
+    /** 用备份里的条目整行覆盖（导入的默认行为，与历史一致）。 */
+    OVERWRITE,
+
+    /** 两者都留：备份里的冲突项换新 id 落库，名字带后缀以便区分。 */
+    KEEP_BOTH
 }
 
 /** 导出数据范围选项；未勾选的段在快照中保持空值，导入时跳过。 */

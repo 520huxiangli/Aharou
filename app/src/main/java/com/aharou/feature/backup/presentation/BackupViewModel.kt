@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.feature.backup.domain.BackupDecryptionException
 import com.aharou.feature.backup.domain.BackupManager
 import com.aharou.feature.backup.domain.BackupOptions
+import com.aharou.feature.backup.domain.ProviderConflict
+import com.aharou.feature.backup.domain.ProviderConflictStrategy
 import com.aharou.feature.backup.domain.RestoreStats
 import com.aharou.feature.backup.domain.WorkspaceBackupMeta
 import com.aharou.core.util.FileLogger
@@ -27,9 +29,10 @@ sealed class BackupState {
     data object Working : BackupState()
     data object ExportDone : BackupState()
     data class ImportSuccess(val stats: RestoreStats) : BackupState()
-    /** 导入预览完成，备份含工作区数据：等待用户勾选要恢复的工作区（暂存 uri 与口令）。 */
+    /** 导入预览完成，需用户确认：勾选要恢复的工作区 + 选择供应商冲突处置方式（暂存 uri 与口令）。 */
     data class WorkspaceSelection(
         val workspaces: List<WorkspaceBackupMeta>,
+        val providerConflicts: List<ProviderConflict>,
         val uri: Uri,
         val password: String
     ) : BackupState()
@@ -105,10 +108,15 @@ class BackupViewModel @Inject constructor(
                 }
                 input.use { backupManager.previewImport(it, pw) }
                     .onSuccess { preview ->
-                        if (preview.hasWorkspaceData) {
-                            _state.value = BackupState.WorkspaceSelection(preview.workspaces, uri, password)
+                        if (preview.hasWorkspaceData || preview.hasProviderConflicts) {
+                            _state.value = BackupState.WorkspaceSelection(
+                                preview.workspaces,
+                                preview.providerConflicts,
+                                uri,
+                                password
+                            )
                         } else {
-                            restoreFromUri(uri, pw, null)
+                            restoreFromUri(uri, pw, null, ProviderConflictStrategy.OVERWRITE)
                         }
                     }
                     .onFailure { _state.value = BackupState.Error(describeImportError(it)) }
@@ -118,13 +126,13 @@ class BackupViewModel @Inject constructor(
         }
     }
 
-    /** 勾选确认后按所选工作区恢复（重新打开输入流执行真正还原）。 */
-    fun confirmImportSelection(selected: Set<String>) {
+    /** 确认后按所选工作区与冲突处置方式恢复（重新打开输入流执行真正还原）。 */
+    fun confirmImportSelection(selected: Set<String>, providerConflict: ProviderConflictStrategy) {
         val current = _state.value as? BackupState.WorkspaceSelection ?: return
         _state.value = BackupState.Working
         viewModelScope.launch {
             val pw = current.password.toCharArray().takeIf { it.isNotEmpty() }
-            restoreFromUri(current.uri, pw, selected)
+            restoreFromUri(current.uri, pw, selected, providerConflict)
         }
     }
 
@@ -135,14 +143,19 @@ class BackupViewModel @Inject constructor(
         }
     }
 
-    private suspend fun restoreFromUri(uri: Uri, pw: CharArray?, selected: Set<String>?) {
+    private suspend fun restoreFromUri(
+        uri: Uri,
+        pw: CharArray?,
+        selected: Set<String>?,
+        providerConflict: ProviderConflictStrategy
+    ) {
         try {
             FileLogger.i(TAG, "开始还原：${describeUri(uri)}${if (selected != null) "，勾选工作区=${selected.size}个" else "，全量"}")
             val input = withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)
                     ?: throw IllegalArgumentException(context.getString(R.string.backup_read_failed))
             }
-            input.use { backupManager.import(it, pw, selected) }
+            input.use { backupManager.import(it, pw, selected, providerConflict) }
                 .onSuccess {
                     FileLogger.i(TAG, "还原成功：$it")
                     _state.value = BackupState.ImportSuccess(it)

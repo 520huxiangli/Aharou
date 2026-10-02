@@ -1,6 +1,7 @@
 package com.aharou.feature.backup.data
 
 import android.content.Context
+import com.aharou.R
 import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.GitIgnoreMatcher
@@ -23,6 +24,8 @@ import com.aharou.feature.backup.domain.BackupOptions
 import com.aharou.feature.backup.domain.BackupSnapshot
 import com.aharou.feature.backup.domain.ChatSessionDto
 import com.aharou.feature.backup.domain.ImportPreview
+import com.aharou.feature.backup.domain.ProviderConflict
+import com.aharou.feature.backup.domain.ProviderConflictStrategy
 import com.aharou.feature.backup.domain.ProviderDto
 import com.aharou.feature.backup.domain.RemoteConnectionDto
 import com.aharou.feature.backup.domain.RemoteMountDto
@@ -49,6 +52,7 @@ import com.aharou.feature.workspace.domain.model.RemoteProtocol
 import com.aharou.feature.workspace.domain.model.Workspace
 import com.aharou.feature.workspace.domain.model.WorkspaceType
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -175,14 +179,15 @@ class BackupManagerImpl @Inject constructor(
     override suspend fun import(
         input: InputStream,
         password: CharArray?,
-        selectedWorkspaces: Set<String>?
+        selectedWorkspaces: Set<String>?,
+        providerConflict: ProviderConflictStrategy
     ): Result<RestoreStats> {
         val pw = password?.takeIf { it.isNotEmpty() }
         return withContext(Dispatchers.IO) {
-            FileLogger.i(TAG, "导入备份开始（${if (pw != null) "加密" else "明文"}${if (selectedWorkspaces != null) "，勾选工作区=${selectedWorkspaces.size}个" else "，全量"}）")
+            FileLogger.i(TAG, "导入备份开始（${if (pw != null) "加密" else "明文"}${if (selectedWorkspaces != null) "，勾选工作区=${selectedWorkspaces.size}个" else "，全量"}，供应商冲突处置=$providerConflict）")
             runCatching {
                 openTar(input, pw).use { source ->
-                    restoreFromTar(source.tar, selectedWorkspaces)
+                    restoreFromTar(source.tar, selectedWorkspaces, providerConflict)
                 }
             }
             .onSuccess { FileLogger.i(TAG, "导入备份完成：$it") }
@@ -199,6 +204,7 @@ class BackupManagerImpl @Inject constructor(
                 openTar(input, pw).use { source ->
                     val tar = source.tar
                     var workspaces: List<WorkspaceBackupMeta> = emptyList()
+                    var providers: List<ProviderDto> = emptyList()
                     var entry = tar.nextEntry
                     while (entry != null) {
                         if (entry.name == FILE_METADATA) {
@@ -206,15 +212,20 @@ class BackupManagerImpl @Inject constructor(
                             val metadata = json.decodeFromString(BackupMetadata.serializer(), String(plain, Charsets.UTF_8))
                             checkVersion(metadata.schemaVersion)
                             workspaces = metadata.workspaces
+                            providers = metadata.providers
                             // 导出时 metadata.json 为首个条目，读到即可停，避免遍历大段 jsonl
                             break
                         }
                         entry = tar.nextEntry
                     }
-                    ImportPreview(workspaces)
+                    val existingIds = aiProviderDao.getAllProvidersOnce().map { it.id }.toSet()
+                    val conflicts = providers
+                        .filter { it.id in existingIds }
+                        .map { ProviderConflict(it.id, it.name) }
+                    ImportPreview(workspaces, conflicts)
                 }
             }
-            .onSuccess { FileLogger.i(TAG, "导入预览完成：${it.workspaces.size} 个工作区") }
+            .onSuccess { FileLogger.i(TAG, "导入预览完成：${it.workspaces.size} 个工作区，${it.providerConflicts.size} 个供应商冲突") }
             .onFailure { FileLogger.e(TAG, "导入预览失败", it) }
             .recoverCatching { e -> mapImportError(e, pw) }
         }
@@ -483,7 +494,11 @@ class BackupManagerImpl @Inject constructor(
 
     // ── 导入辅助 ──────────────────────────────────────────────
 
-    private suspend fun restoreFromTar(tar: TarArchiveInputStream, selectedWorkspaces: Set<String>?): RestoreStats {
+    private suspend fun restoreFromTar(
+        tar: TarArchiveInputStream,
+        selectedWorkspaces: Set<String>?,
+        providerConflict: ProviderConflictStrategy
+    ): RestoreStats {
         val restoreMapping = mutableMapOf<String, Workspace>()
         var metadata: BackupMetadata? = null
         var stats = RestoreStats()
@@ -543,7 +558,7 @@ class BackupManagerImpl @Inject constructor(
             error("不是有效的 Aharou 备份文件：缺少 metadata.json")
         }
         FileLogger.i(TAG, "tar 解析完成，开始还原元数据段")
-        return stats + restoreMeta(meta)
+        return stats + restoreMeta(meta, providerConflict)
     }
 
     /** 逐行解析 jsonl 条目，每 [PAGE_SIZE] 条回调一次批量插入；返回该文件的总条数。 */
@@ -617,14 +632,47 @@ class BackupManagerImpl @Inject constructor(
     }
 
     /** 元数据段还原（小表 + 应用设置），新旧格式共用。 */
-    private suspend fun restoreMeta(meta: BackupMetadata): RestoreStats {
+    /**
+     * 把备份里的供应商写入本地：撞 id 时按用户选择保留本地 / 覆盖 / 各留一份。
+     * [ProviderConflictStrategy.KEEP_BOTH] 会给备份来的冲突项换新 id 并加名字后缀，
+     * 否则两条同 id 会互相覆盖。
+     */
+    private suspend fun insertProvidersWithConflictStrategy(
+        providers: List<ProviderDto>,
+        strategy: ProviderConflictStrategy
+    ) {
+        val existingIds = aiProviderDao.getAllProvidersOnce().map { it.id }.toSet()
+        val toInsert = when (strategy) {
+            ProviderConflictStrategy.OVERWRITE -> providers
+            ProviderConflictStrategy.KEEP_LOCAL -> providers.filterNot { it.id in existingIds }
+            ProviderConflictStrategy.KEEP_BOTH -> providers.map { p ->
+                if (p.id in existingIds) {
+                    p.copy(
+                        id = UUID.randomUUID().toString(),
+                        name = p.name + context.getString(R.string.backup_conflict_imported_suffix)
+                    )
+                } else {
+                    p
+                }
+            }
+        }
+        if (toInsert.isNotEmpty()) {
+            aiProviderDao.insertAllProviders(toInsert.map { it.toEntity() })
+        }
+        FileLogger.i(TAG, "供应商还原：备份 ${providers.size} 项，策略=$strategy，实际写入 ${toInsert.size} 项")
+    }
+
+    private suspend fun restoreMeta(
+        meta: BackupMetadata,
+        providerConflict: ProviderConflictStrategy = ProviderConflictStrategy.OVERWRITE
+    ): RestoreStats {
         FileLogger.i(
             TAG,
             "还原元数据：providers=${meta.providers.size} remoteConnections=${meta.remoteConnections.size} remoteMounts=${meta.remoteMounts.size} " +
                 "mcpServers=${meta.mcpServers.size} permissionRules=${meta.globalPermissionRules.size} syncSettings=${meta.syncSettings != null}"
         )
         if (meta.providers.isNotEmpty()) {
-            aiProviderDao.insertAllProviders(meta.providers.map { it.toEntity() })
+            insertProvidersWithConflictStrategy(meta.providers, providerConflict)
         }
         if (meta.remoteConnections.isNotEmpty()) {
             remoteConnectionDao.insertAllConnections(meta.remoteConnections.mapNotNull { it.toEntity() })

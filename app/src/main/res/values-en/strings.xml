@@ -530,6 +530,11 @@
     <string name="backup_restore_workspaces_warning">Files in local workspaces with the same name will be overwritten and cannot be undone. Select carefully.</string>
     <string name="backup_restore_workspaces_select_all">Select all</string>
     <string name="backup_restore_workspaces_files">%1$d files</string>
+    <string name="backup_conflict_title">Providers with existing IDs found:</string>
+    <string name="backup_conflict_keep_local">Keep existing</string>
+    <string name="backup_conflict_overwrite">Overwrite with backup</string>
+    <string name="backup_conflict_keep_both">Keep both</string>
+    <string name="backup_conflict_imported_suffix"> (imported)</string>
     <string name="backup_restore_workspaces_confirm">Restore</string>
 
     <!-- Backup ViewModel -->
@@ -599,6 +604,10 @@
     <string name="editor_discard">Discard</string>
     <string name="editor_save_and_exit">Save and exit</string>
     <string name="editor_dont_save">Don\'t save</string>
+    <string name="editor_close_tab">Close tab</string>
+    <string name="editor_close_tab_unsaved_title">This file has unsaved changes</string>
+    <string name="editor_close_tab_unsaved_message">%1$s has unsaved changes. Closing the tab will discard them.</string>
+    <string name="editor_close_tab_discard">Discard and close</string>
     <string name="editor_md_preview">Preview Markdown</string>
     <string name="editor_md_show_source">Show source</string>
     <string name="editor_indent">Indent</string>
