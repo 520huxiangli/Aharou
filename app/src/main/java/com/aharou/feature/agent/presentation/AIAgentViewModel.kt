@@ -1867,6 +1867,7 @@ class AIAgentViewModel @Inject constructor(
                 _completedSessions.value = _completedSessions.value + sessionId
             }
             setStreamingText(sessionId, null)
+            setStreamingReasoning(sessionId, null)
 
         } catch (e: CancellationException) {
             val cancelledState = _agentStates.value[sessionId]

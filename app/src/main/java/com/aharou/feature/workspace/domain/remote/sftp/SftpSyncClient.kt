@@ -86,12 +86,25 @@ class SftpSyncClient(
         val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
         val attrs = sftp.statExistence(remotePath)
         if (attrs != null) {
-            if (attrs.type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY) {
-                // 递归删除暂未实现
-                sftp.rmdir(remotePath)
-            } else {
-                sftp.rm(remotePath)
+            deleteRecursive(sftp, remotePath, attrs.type)
+        }
+    }
+
+    /** 递归删除（SFTP 无递归删除原语）：后序遍历，目录在子项删完后 rmdir。 */
+    private fun deleteRecursive(
+        sftp: net.schmizz.sshj.sftp.SFTPClient,
+        path: String,
+        type: net.schmizz.sshj.sftp.FileMode.Type
+    ) {
+        if (type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY) {
+            for (entry in sftp.ls(path)) {
+                val name = entry.name
+                if (name == "." || name == "..") continue
+                deleteRecursive(sftp, entry.path, entry.attributes.type)
             }
+            sftp.rmdir(path)
+        } else {
+            sftp.rm(path)
         }
     }
 

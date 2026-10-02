@@ -10,11 +10,14 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -47,6 +51,7 @@ import compose.icons.feathericons.MapPin
 import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Smile
 import compose.icons.feathericons.Smartphone
+import compose.icons.feathericons.Calendar
 
 /**
  * 设置页「小染」分区：屏幕上的悬浮伙伴。
@@ -66,10 +71,11 @@ internal fun PetSection() {
     var always by remember { mutableStateOf(petAlways(context)) }
     var size by remember { mutableStateOf(PetOverlay.readSize(context)) }
     var locked by remember { mutableStateOf(PetOverlay.readLocked(context)) }
-    var mood by remember { mutableStateOf(PetMoodStore.read(context).level) }
+    var petMood by remember { mutableStateOf(PetMoodStore.read(context)) }
     var passThrough by remember { mutableStateOf(PetOverlay.readPassThrough(context)) }
     var brief by remember { mutableStateOf(PetDailyBrief.readEnabled(context)) }
     var locationGranted by remember { mutableStateOf(PetDailyBrief.hasLocation(context)) }
+    var calendarGranted by remember { mutableStateOf(PetDailyBrief.hasCalendar(context)) }
     var micGranted by remember { mutableStateOf(granted(context, Manifest.permission.RECORD_AUDIO)) }
     var notifGranted by remember { mutableStateOf(notificationsGranted(context)) }
 
@@ -79,14 +85,16 @@ internal fun PetSection() {
         micGranted = granted(context, Manifest.permission.RECORD_AUDIO)
         notifGranted = notificationsGranted(context)
         locationGranted = PetDailyBrief.hasLocation(context)
+        calendarGranted = PetDailyBrief.hasCalendar(context)
     }
 
     LifecycleResumeEffect(Unit) {
         permissionGranted = petOverlayPermission(context)
         enabled = PetOverlayService.isEnabled(context)
-        mood = PetMoodStore.read(context).level
+        petMood = PetMoodStore.read(context)
         passThrough = PetOverlay.readPassThrough(context)
         locationGranted = PetDailyBrief.hasLocation(context)
+        calendarGranted = PetDailyBrief.hasCalendar(context)
         micGranted = granted(context, Manifest.permission.RECORD_AUDIO)
         notifGranted = notificationsGranted(context)
         onPauseOrDispose { }
@@ -263,11 +271,22 @@ internal fun PetSection() {
                 title = stringResource(R.string.pet_mood),
                 subtitle = stringResource(R.string.pet_mood_hint),
                 trailing = {
-                    Text(
-                        text = stringResource(petMoodLabel(mood)),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { petMood.affection / 100f },
+                            modifier = Modifier.width(64.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        Text(
+                            text = stringResource(petMoodLabel(petMood.level)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
                 },
             )
             SettingsDivider()
@@ -321,6 +340,28 @@ internal fun PetSection() {
                             text = stringResource(
                                 if (locationGranted) R.string.pet_brief_location_granted
                                 else R.string.pet_brief_location_denied
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                )
+                SettingsDivider()
+                SettingsRow(
+                    icon = FeatherIcons.Calendar,
+                    title = stringResource(R.string.pet_brief_calendar),
+                    onClick = {
+                        if (!calendarGranted) {
+                            permissionLauncher.launch(
+                                arrayOf(Manifest.permission.READ_CALENDAR)
+                            )
+                        }
+                    },
+                    trailing = {
+                        Text(
+                            text = stringResource(
+                                if (calendarGranted) R.string.pet_brief_calendar_granted
+                                else R.string.pet_brief_calendar_denied
                             ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

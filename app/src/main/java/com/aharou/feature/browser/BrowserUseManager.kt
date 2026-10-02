@@ -468,7 +468,9 @@ class BrowserUseManager(
                 SandboxPathResolver
                     .resolveSessionHostPath(sessionId, linuxPath, ctx)
                     ?.takeIf { it.isFile }
-                    ?: SandboxPathResolver.resolveHostPath(linuxPath)
+                    ?: ctx.let { SandboxPathResolver.resolveHostPath(linuxPath, it) }
+            } else if (ctx != null) {
+                SandboxPathResolver.resolveHostPath(linuxPath, ctx)
             } else {
                 SandboxPathResolver.resolveHostPath(linuxPath)
             }

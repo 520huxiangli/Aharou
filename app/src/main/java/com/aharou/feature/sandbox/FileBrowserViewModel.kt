@@ -271,7 +271,10 @@ class FileBrowserViewModel(
                     .resolveSessionHostPath(sid, linuxPath, ctx)
                     ?.let { return it }
             }
-            com.aharou.feature.browser.SandboxPathResolver.resolveHostPath(linuxPath)?.let { return it }
+            val ctx2 = appContext
+            if (ctx2 != null) {
+                com.aharou.feature.browser.SandboxPathResolver.resolveHostPath(linuxPath, ctx2)?.let { return it }
+            }
         }
         return if (relativePath.isEmpty()) rootPath else File(rootPath, relativePath)
     }

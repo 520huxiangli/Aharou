@@ -429,11 +429,16 @@ class PetOverlay(private val context: Context) {
             mood.level == PetMood.Level.NORMAL -> R.array.pet_lines
             else -> R.array.pet_lines_warm
         }
-        val lines = context.resources.getStringArray(res)
+        val all = context.resources.getStringArray(res)
             .ifEmpty { context.resources.getStringArray(R.array.pet_lines) }
-        if (lines.isEmpty()) return
+        if (all.isEmpty()) return
+        val said = PetMoodStore.readTodaySaid(context)
+        // 排除今日已说过的；若全部说完则清空重来（至少保证能说出一句）
+        val candidates = all.filter { it !in said }.ifEmpty { all.toList() }
+        val chosen = candidates[Random.nextInt(candidates.size)]
+        PetMoodStore.markSaid(context, chosen)
         waveUntil = System.currentTimeMillis() + BUBBLE_MS
-        applyBubble(lines[Random.nextInt(lines.size)], persistent = false)
+        applyBubble(chosen, persistent = false)
     }
 
     /** 直接冒一句（服务用来播报任务结果、提醒、以及生成出来的台词）。[wave] 为真时顺手挥个手。 */
