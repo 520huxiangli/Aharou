@@ -51,8 +51,11 @@ class GeneralSettingsRepository @Inject constructor(
         val DELETE_EXTERNAL_WORKSPACE_SESSIONS_KEY = booleanPreferencesKey("delete_external_workspace_sessions")
         val OCR_FOR_TEXT_ONLY_MODELS_KEY = booleanPreferencesKey("ocr_for_text_only_models")
 
-        /** 首字超时默认 5 分钟，与原硬编码值一致。 */
-        const val DEFAULT_FIRST_BYTE_TIMEOUT_SEC = 300
+        /** 首字超时默认 120 秒：要拦住「服务端一直不回」，也不能误杀慢启动的渠道。 */
+        const val DEFAULT_FIRST_BYTE_TIMEOUT_SEC = 120
+
+        /** 数据块间隔超时默认 120 秒；0 表示不限制。思考增量也是数据块，正常推理不会触发。 */
+        const val DEFAULT_STREAM_IDLE_TIMEOUT_SEC = 120
 
         /** 网络重试次数默认 6，与原硬编码值一致。 */
         const val DEFAULT_MAX_NETWORK_RETRIES = 6
@@ -124,9 +127,9 @@ class GeneralSettingsRepository @Inject constructor(
         (it[FIRST_BYTE_TIMEOUT_SEC_KEY] ?: DEFAULT_FIRST_BYTE_TIMEOUT_SEC).coerceAtLeast(0)
     }
 
-    /** 流式响应相邻数据块间隔超时（秒）；0（默认）表示不限制。 */
+    /** 流式响应相邻数据块间隔超时（秒）；0 表示不限制。 */
     val streamIdleTimeoutSecFlow: Flow<Int> = context.generalDataStore.data.map {
-        (it[STREAM_IDLE_TIMEOUT_SEC_KEY] ?: 0).coerceAtLeast(0)
+        (it[STREAM_IDLE_TIMEOUT_SEC_KEY] ?: DEFAULT_STREAM_IDLE_TIMEOUT_SEC).coerceAtLeast(0)
     }
 
     suspend fun setFirstByteTimeoutSec(sec: Int) {
