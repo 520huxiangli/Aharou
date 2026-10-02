@@ -34,6 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
@@ -52,6 +53,8 @@ import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Power
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Sun
+import compose.icons.feathericons.Cpu
+import compose.icons.feathericons.Shield
 import compose.icons.feathericons.Terminal
 import compose.icons.feathericons.Zap
 
@@ -66,9 +69,11 @@ import compose.icons.feathericons.Zap
 @Composable
 internal fun AppPermissionsSection(
     shizukuState: ShizukuState,
+    hostShellMode: HostShellMode,
+    rootAvailable: Boolean?,
     onRequestShizukuPermission: () -> Unit,
     onOpenShizuku: () -> Unit,
-    onRefreshShizuku: () -> Unit
+    onRefreshHostShell: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -83,7 +88,7 @@ internal fun AppPermissionsSection(
         apkInstallAllowed = context.packageManager.canRequestPackageInstalls()
         storageGranted = checkStorageGranted(context)
         batteryExempt = isIgnoringBatteryOptimizations(context)
-        onRefreshShizuku()
+        onRefreshHostShell()
         onPauseOrDispose { }
     }
 
@@ -362,6 +367,45 @@ internal fun AppPermissionsSection(
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Shield,
+                title = stringResource(R.string.settings_root_title),
+                subtitle = stringResource(
+                    when (rootAvailable) {
+                        true -> R.string.settings_root_hint_granted
+                        false -> R.string.settings_root_hint_denied
+                        null -> R.string.settings_root_hint_unknown
+                    }
+                ),
+                onClick = onRefreshHostShell,
+                trailing = {
+                    Text(
+                        text = stringResource(
+                            when (rootAvailable) {
+                                true -> R.string.settings_root_status_granted
+                                false -> R.string.settings_root_status_denied
+                                null -> R.string.settings_root_status_unknown
+                            }
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Cpu,
+                title = stringResource(R.string.settings_host_channel_title),
+                subtitle = stringResource(R.string.settings_host_channel_subtitle),
+                trailing = {
+                    Text(
+                        text = stringResource(hostShellMode.statusRes()),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
         }
     }
 
@@ -484,6 +528,14 @@ internal fun ShizukuState.statusRes(): Int = when (this) {
     ShizukuState.NOT_RUNNING -> R.string.settings_shizuku_status_not_running
     ShizukuState.PERMISSION_DENIED -> R.string.settings_shizuku_status_denied
     ShizukuState.READY -> R.string.settings_shizuku_status_ready
+}
+
+/** 实际执行通道对应的名称。 */
+@StringRes
+internal fun HostShellMode.statusRes(): Int = when (this) {
+    HostShellMode.ROOT -> R.string.settings_host_channel_root
+    HostShellMode.SHIZUKU -> R.string.settings_host_channel_shizuku
+    HostShellMode.UNAVAILABLE -> R.string.settings_host_channel_unavailable
 }
 
 /** Shizuku 状态对应的副标题（点击提示）。 */

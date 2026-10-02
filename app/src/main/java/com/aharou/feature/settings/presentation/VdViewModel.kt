@@ -2,7 +2,8 @@ package com.aharou.feature.settings.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aharou.feature.agent.domain.shizuku.ShizukuManager
+import com.aharou.feature.agent.domain.shell.HostShellManager
+import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
 import com.aharou.feature.agent.domain.vdisplay.VdController
 import com.aharou.feature.agent.domain.vdisplay.VdInfo
@@ -17,12 +18,19 @@ import javax.inject.Inject
 @HiltViewModel
 class VdViewModel @Inject constructor(
     private val vdController: VdController,
-    private val shizukuManager: ShizukuManager,
+    private val hostShell: HostShellManager,
 ) : ViewModel() {
 
     val vdState: StateFlow<VdInfo?> = vdController.state
 
-    val shizukuState: StateFlow<ShizukuState> = shizukuManager.state
+    /** 实际执行的通道：root / Shizuku / 不可用。 */
+    val hostShellMode: StateFlow<HostShellMode> = hostShell.mode
+
+    /** Shizuku 侧的细分状态，通道不可用时给出具体原因。 */
+    val shizukuState: StateFlow<ShizukuState> = hostShell.shizukuState
+
+    /** root 探测结论；null = 尚未探测。 */
+    val rootAvailable: StateFlow<Boolean?> = hostShell.rootAvailable
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -35,7 +43,10 @@ class VdViewModel @Inject constructor(
     }
 
     fun refresh() {
-        viewModelScope.launch { runCatching { vdController.refresh() } }
+        viewModelScope.launch {
+            runCatching { vdController.refresh() }
+            runCatching { hostShell.refresh() }
+        }
     }
 
     fun start() {

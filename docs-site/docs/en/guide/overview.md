@@ -55,7 +55,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 | Container & images | Local Linux container, environment health check with one-tap install, custom images, mounting phone directories, remote SSH backend |
 | Network proxy | Global proxy and vendor-level proxy (since v1.11.0-dev) |
 | Connections & sync | SFTP / FTP channels, workspace sync, built-in FTP server |
-| Shizuku execution backend | Run system commands and read/write `/sdcard` as adb shell (uid 2000) |
+| Host execution backend | Run system commands and read/write `/sdcard` — as root (uid 0) when root is granted, otherwise as adb shell via Shizuku (uid 2000) |
 | Shadow screen | A virtual display that is not shown on the phone screen; the agent can launch apps, take screenshots and tap inside it |
 | Environment variables | Global environment variables injected into every process in the container (values stored encrypted) |
 
@@ -64,7 +64,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 | Entry | Description |
 | --- | --- |
 | Tool authorization | Rules for which tools the AI may call |
-| App permissions | System permissions such as installing unknown apps, storage, battery optimization, autostart and Shizuku |
+| App permissions | System permissions such as installing unknown apps, storage, battery optimization, autostart, root and Shizuku |
 | Background | Background keepalive, keep screen on, agent completion notification |
 
 ### Data & Diagnostics

@@ -2,9 +2,9 @@ package com.aharou.feature.agent.domain.vdisplay
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.domain.shizuku.ShizukuCommandResult
-import com.aharou.feature.agent.domain.shizuku.ShizukuManager
-import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.agent.domain.shell.HostShellManager
+import com.aharou.feature.agent.domain.shell.HostShellMode
+import com.aharou.feature.agent.domain.shell.ShellCommandResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,14 +30,14 @@ data class VdInfo(
  * 影子屏控制器：在宿主上创建一块**不在设备屏幕显示**的虚拟显示屏。
  *
  * 机制参考并改编自 Genymobile/scrcpy 的 new-display（Apache-2.0，源码见
- * `tools/aharou-vd/`）：资产里内置一个约 3KB 的 runner，经 Shizuku 以 shell
+ * `tools/aharou-vd/`）：资产里内置一个约 3KB 的 runner，经 root 或 Shizuku 以 shell
  * 身份 `app_process` 拉起——创建无头虚拟屏后保活；后续启动 App / 截图 / 触控
- * 全部经 Shizuku 命令行完成，用户主屏零打扰。
+ * 全部经同一条命令行通道完成，用户主屏零打扰。
  */
 @Singleton
 class VdController @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager,
+    private val hostShell: HostShellManager,
 ) {
     companion object {
         private const val TAG = "VdController"
@@ -56,12 +56,14 @@ class VdController @Inject constructor(
     private val _state = MutableStateFlow<VdInfo?>(null)
     val state: StateFlow<VdInfo?> = _state.asStateFlow()
 
-    private val shizukuReady: Boolean
-        get() = shizukuManager.state.value == ShizukuState.READY
+    private val hostReady: Boolean
+        get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
 
-    private suspend fun exec(command: String, timeoutMs: Long = 60_000L): ShizukuCommandResult {
-        check(shizukuReady) { "Shizuku 未就绪（${shizukuManager.state.value}），无法使用影子屏" }
-        return shizukuManager.runCommand(command, timeoutMs)
+    private suspend fun exec(command: String, timeoutMs: Long = 60_000L): ShellCommandResult {
+        check(hostReady) {
+            "影子屏需要 root 或 Shizuku 就绪（当前通道：${hostShell.mode.value}，Shizuku: ${hostShell.shizukuState.value}）"
+        }
+        return hostShell.run(command, timeoutMs)
     }
 
     /** 把资产里的 runner 部署到 /data/local/tmp（md5 不同才覆盖）。 */
@@ -135,7 +137,7 @@ class VdController @Inject constructor(
 
     /** 刷新当前状态；未运行返回 null。 */
     suspend fun refresh(): VdInfo? {
-        if (!shizukuReady) {
+        if (!hostReady) {
             _state.value = null
             return null
         }

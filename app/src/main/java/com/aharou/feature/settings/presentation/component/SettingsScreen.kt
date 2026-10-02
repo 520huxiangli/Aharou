@@ -1151,11 +1151,15 @@ fun SettingsScreen(
                     val shizukuViewModel: ShizukuViewModel =
                         androidx.hilt.navigation.compose.hiltViewModel()
                     val shizukuState by shizukuViewModel.state.collectAsStateWithLifecycle()
+                    val hostShellMode by shizukuViewModel.mode.collectAsStateWithLifecycle()
+                    val rootAvailable by shizukuViewModel.rootAvailable.collectAsStateWithLifecycle()
                     AppPermissionsSection(
                         shizukuState = shizukuState,
+                        hostShellMode = hostShellMode,
+                        rootAvailable = rootAvailable,
                         onRequestShizukuPermission = { shizukuViewModel.requestPermission() },
                         onOpenShizuku = { shizukuViewModel.openShizukuApp() },
-                        onRefreshShizuku = { shizukuViewModel.refresh() }
+                        onRefreshHostShell = { shizukuViewModel.refresh() }
                     )
                 }
                 SettingsSection.BackgroundRun -> BackgroundRunSection(
