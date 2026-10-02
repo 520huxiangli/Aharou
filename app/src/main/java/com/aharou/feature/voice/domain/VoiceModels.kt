@@ -48,4 +48,46 @@ object VoiceModels {
             "tokens.txt" to 20_628L,
         ),
     )
+
+    /**
+     * 中文整段识别：SenseVoice-Small（zh/en/ja/ko/yue，int8）。
+     *
+     * 非自回归架构，必须拿到完整一句才能算——所以它给不出实时字幕、也判不了停顿，
+     * 不是拿来替掉流式的。它的位置是「流式出字与断句之后，把这一句重新识别一遍，
+     * 用更准的结果去提交」（见 OfflineAsrEngine）。中文准确率明显高于流式模型。
+     */
+    val ASR_ZH_OFFLINE = VoiceModelSpec(
+        dirName = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17",
+        displayName = "中文语音识别（SenseVoice 整段）",
+        requiredFiles = listOf("model.int8.onnx", "tokens.txt"),
+        fileSizes = mapOf(
+            "model.int8.onnx" to 239_233_841L,
+            "tokens.txt" to 315_894L,
+        ),
+    )
+
+    /**
+     * 中文唤醒词检测（关键词检测，KWS）：zipformer wenetspeech 3.3M（mobile int8）。
+     *
+     * 只有 3.3M 参数、合计约 4.6MB，常驻跑 CPU 也轻——这是唤醒能做成前台服务长期监听的前提。
+     * 关键词不走这个文件，由 [VoiceWakeWord.KEYWORDS] 在运行时传给 createStream。
+     */
+    val KWS_ZH = VoiceModelSpec(
+        dirName = "sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01",
+        displayName = "中文语音唤醒（Zipformer 关键词检测）",
+        requiredFiles = listOf(
+            "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+            "decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+            "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+            "tokens.txt",
+            "keywords.txt",
+        ),
+        fileSizes = mapOf(
+            "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx" to 3_990_821L,
+            "decoder-epoch-12-avg-2-chunk-16-left-64.onnx" to 675_349L,
+            "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx" to 65_242L,
+            "tokens.txt" to 1_627L,
+            "keywords.txt" to 286L,
+        ),
+    )
 }

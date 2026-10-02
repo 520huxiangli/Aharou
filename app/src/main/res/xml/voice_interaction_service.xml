@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  数字助手的登记表：告诉系统本应用由哪些组件承担助手职责。
+  supportsLaunchVoiceAssistFromKeyguard 打开后，锁屏状态下也能被唤起。
+-->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.aharou.feature.voice.assistant.AharouVoiceSessionService"
+    android:recognitionService="com.aharou.feature.voice.assistant.AharouRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />
