@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import com.aharou.R
 import java.net.HttpURLConnection
@@ -27,6 +28,8 @@ object PetDailyBrief {
 
     private const val KEY_ENABLED = "brief_enabled"
     private const val KEY_LAST_DAY = "brief_last_day"
+    private const val KEY_WEATHER_CACHE_DAY = "brief_weather_cache_day"
+    private const val KEY_WEATHER_CACHE_TEXT = "brief_weather_cache_text"
 
     /**
      * 农历节日的公历日期表（key = 年，value = 「月-日 → 节日字符串资源」）。
@@ -66,6 +69,27 @@ object PetDailyBrief {
 
     fun readEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, true)
 
+    /** 有没有日历读取权限。 */
+    fun hasCalendar(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) ==
+            PackageManager.PERMISSION_GRANTED
+
+    /**
+     * 启动时预拉天气并写入缓存，不阻塞现身流程。
+     * 开关关着或没有定位权限时直接跳过。
+     */
+    suspend fun prefetch(context: Context) {
+        if (!readEnabled(context) || !hasLocation(context)) return
+        val today = todayString()
+        val cached = prefs(context).getString(KEY_WEATHER_CACHE_DAY, null)
+        if (cached == today) return // 今天已经缓存过了
+        val text = weatherLine(context) ?: return
+        prefs(context).edit()
+            .putString(KEY_WEATHER_CACHE_DAY, today)
+            .putString(KEY_WEATHER_CACHE_TEXT, text)
+            .apply()
+    }
+
     fun writeEnabled(context: Context, on: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED, on).apply()
     }
@@ -93,8 +117,65 @@ object PetDailyBrief {
 
         val parts = mutableListOf<String>()
         festivalLine(context, calendar)?.let { parts += it }
-        weatherLine(context)?.let { parts += it }
+        // 优先用启动时预拉的缓存，拿不到才现拉
+        val weather = prefs(context).let { p ->
+            if (p.getString(KEY_WEATHER_CACHE_DAY, null) == today) {
+                p.getString(KEY_WEATHER_CACHE_TEXT, null)
+            } else null
+        } ?: weatherLine(context)
+        weather?.let { parts += it }
+        calendarLine(context, calendar)?.let { parts += it }
         return parts.takeIf { it.isNotEmpty() }?.joinToString(" ")
+    }
+
+    private fun todayString(): String {
+        val c = Calendar.getInstance()
+        return String.format(
+            Locale.US, "%04d-%02d-%02d",
+            c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH),
+        )
+    }
+
+    /**
+     * 读取今日日历事件，挑最近一条提醒用户。
+     * 没有权限、没有事件均返回 null，不报错。
+     */
+    @Suppress("MissingPermission")
+    private fun calendarLine(context: Context, calendar: Calendar): String? {
+        if (!hasCalendar(context)) return null
+        val startOfDay = (calendar.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val endOfDay = startOfDay + 24 * 60 * 60 * 1000L - 1
+        val uri = CalendarContract.Instances.CONTENT_URI.buildUpon()
+            .appendPath(startOfDay.toString())
+            .appendPath(endOfDay.toString())
+            .build()
+        val projection = arrayOf(
+            CalendarContract.Instances.TITLE,
+            CalendarContract.Instances.BEGIN,
+            CalendarContract.Instances.ALL_DAY,
+        )
+        val cursor = runCatching {
+            context.contentResolver.query(uri, projection, null, null,
+                "${CalendarContract.Instances.BEGIN} ASC")
+        }.getOrNull() ?: return null
+        return cursor.use { c ->
+            if (!c.moveToFirst()) return@use null
+            val title = c.getString(0) ?: return@use null
+            val begin = c.getLong(1)
+            val allDay = c.getInt(2) == 1
+            if (allDay) {
+                context.getString(R.string.pet_brief_calendar_allday, title)
+            } else {
+                val hour = Calendar.getInstance().also { it.timeInMillis = begin }
+                    .get(Calendar.HOUR_OF_DAY)
+                val minute = Calendar.getInstance().also { it.timeInMillis = begin }
+                    .get(Calendar.MINUTE)
+                context.getString(R.string.pet_brief_calendar_timed, hour, minute, title)
+            }
+        }
     }
 
     private fun festivalLine(context: Context, calendar: Calendar): String? {

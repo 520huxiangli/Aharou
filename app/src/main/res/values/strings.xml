@@ -2072,6 +2072,9 @@
     <string name="pet_brief_location">定位权限</string>
     <string name="pet_brief_location_granted">已授权</string>
     <string name="pet_brief_location_denied">未授权（点一下授权）</string>
+    <string name="pet_brief_calendar">日历权限</string>
+    <string name="pet_brief_calendar_granted">已授权</string>
+    <string name="pet_brief_calendar_denied">未授权（点一下授权）</string>
     <string name="pet_fest_newyear">元旦快乐，新的一年也陪着你。</string>
     <string name="pet_fest_spring">春节到了，记得吃顿好的。</string>
     <string name="pet_fest_lantern">今天元宵，汤圆吃点甜的。</string>
@@ -2093,6 +2096,8 @@
     <string name="pet_brief_uv">紫外线强，注意防晒</string>
     <string name="pet_brief_snow">有雪，路上小心</string>
     <string name="pet_brief_storm">有雷雨，别乱跑</string>
+    <string name="pet_brief_calendar_allday">今天有全天日程：%1$s</string>
+    <string name="pet_brief_calendar_timed">今天 %1$d:%2$02d 有日程：%3$s</string>
     <string name="pet_mood">她对你的态度</string>
     <string name="pet_mood_hint">摸头、陪着她会加分；一直戳她她会闹别扭；隔好几天不理她会变淡（有下限）</string>
     <string name="pet_mood_cold">冷淡</string>

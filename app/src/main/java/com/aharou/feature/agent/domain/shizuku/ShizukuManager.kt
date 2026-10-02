@@ -65,8 +65,11 @@ class ShizukuManager @Inject constructor(
         /** 服务身份 tag：不设时用类名，类名经 R8 混淆后不稳定，故显式固定。 */
         const val SERVICE_TAG = "shizuku_shell"
 
-        /** 绑定 UserService 的等待上限（毫秒）。Shizuku 启动服务自身超时为 30 秒。 */
-        const val BIND_TIMEOUT_MS = 30_000L
+        /** 绑定 UserService 的等待上限（毫秒）。低端机冷启动/版本升级重建 UserService 可能较慢，给足 60 秒。 */
+        const val BIND_TIMEOUT_MS = 60_000L
+
+        /** 首次绑定超时后的重试次数。 */
+        const val BIND_MAX_RETRIES = 1
 
         /** 命令超时上限（毫秒），与 [com.aharou.feature.agent.domain.container.CommandEngine.MAX_TIMEOUT_MS] 对齐。 */
         const val MAX_TIMEOUT_MS = 1_800_000L
@@ -209,7 +212,7 @@ class ShizukuManager @Inject constructor(
         }
     }
 
-    /** 幂等绑定 UserService，返回可用的 AIDL 代理。 */
+    /** 幂等绑定 UserService，返回可用的 AIDL 代理。超时后重试一次再报错。 */
     private suspend fun ensureBound(): IShizukuShellService {
         shellService?.let { return it }
         return bindMutex.withLock {
@@ -217,13 +220,21 @@ class ShizukuManager @Inject constructor(
             if (computeState() != ShizukuState.READY) {
                 throw IllegalStateException("Shizuku 未就绪（${_state.value}）")
             }
-            val deferred = CompletableDeferred<IShizukuShellService>()
-            pendingBind = deferred
-            withContext(Dispatchers.Main) {
-                Shizuku.bindUserService(userServiceArgs, serviceConnection)
+            var lastError: Throwable = IllegalStateException("绑定 Shizuku 服务超时")
+            repeat(BIND_MAX_RETRIES + 1) { attempt ->
+                val deferred = CompletableDeferred<IShizukuShellService>()
+                pendingBind = deferred
+                withContext(Dispatchers.Main) {
+                    Shizuku.bindUserService(userServiceArgs, serviceConnection)
+                }
+                val result = withTimeoutOrNull(BIND_TIMEOUT_MS) {
+                    runCatching { deferred.await() }.getOrNull()
+                }
+                if (result != null) return@withLock result
+                FileLogger.w(TAG, "绑定 Shizuku UserService 超时（第 ${attempt + 1} 次），${if (attempt < BIND_MAX_RETRIES) "重试中…" else "放弃"}")
+                pendingBind = null
             }
-            withTimeoutOrNull(BIND_TIMEOUT_MS) { deferred.await() }
-                ?: throw IllegalStateException("绑定 Shizuku 服务超时")
+            throw lastError
         }
     }
 }

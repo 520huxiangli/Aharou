@@ -272,6 +272,8 @@ class PetOverlayService : Service() {
         always.value = prefs().getBoolean(PetOverlay.KEY_ALWAYS, true)
         hidden.value = prefs().getBoolean(PetOverlay.KEY_HIDDEN, false)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+        // 启动时预拉天气并写入缓存，现身时直接用缓存而不是当场拉网络
+        scope.launch { PetDailyBrief.prefetch(this@PetOverlayService) }
         collectorJob = scope.launch {
             combine(
                 combine(
@@ -377,6 +379,7 @@ class PetOverlayService : Service() {
             if (line.isNullOrBlank()) {
                 overlay.speakStaticLine()
             } else {
+                PetMoodStore.markSaid(this@PetOverlayService, line)
                 overlay.say(line, wave = true)
             }
         }

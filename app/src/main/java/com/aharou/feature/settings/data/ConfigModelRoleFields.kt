@@ -9,8 +9,10 @@ import com.aharou.core.config.fields.ClosureField
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
 import com.aharou.feature.settings.data.repository.ImageGenModelSettingsRepository
+import com.aharou.feature.settings.data.repository.ModelReasoningEffortRepository
 import com.aharou.feature.settings.data.repository.TitleModelSettingsRepository
 import com.aharou.feature.settings.data.repository.VisionModelSettingsRepository
+import com.aharou.feature.agent.domain.model.ReasoningEffort
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
@@ -30,6 +32,7 @@ class ConfigModelRoleFields @Inject constructor(
     private val compactionModel: CompactionModelSettingsRepository,
     private val visionModel: VisionModelSettingsRepository,
     private val imageGenModel: ImageGenModelSettingsRepository,
+    private val reasoningEffort: ModelReasoningEffortRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -41,6 +44,37 @@ class ConfigModelRoleFields @Inject constructor(
                 read = { runBlocking { defaultModel.providerIdFlow.first() to defaultModel.modelFlow.first() } },
                 write = { p, m -> runBlocking { defaultModel.setDefaultModel(p, m) } },
                 clear = { runBlocking { defaultModel.clear() } },
+            ),
+        )
+        registry.register(
+            ClosureField(
+                path = "model.roles.default_effort",
+                displayName = "默认模型思考强度",
+                description = "针对默认模型的思考强度档位（none/low/medium/high/xhigh/max，空为默认）。读写默认模型的记忆值。",
+                valueSchema = ConfigSchema.Str(),
+                revertable = true,
+                reader = {
+                    val pid = runBlocking { defaultModel.providerIdFlow.first() }
+                    val model = runBlocking { defaultModel.modelFlow.first() }
+                    val effort = if (pid.isBlank() || model.isBlank()) null
+                        else reasoningEffort.get(pid, model)
+                    ConfigValue.Str(effort ?: "")
+                },
+                writer = { v ->
+                    val s = (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+                    val pid = runBlocking { defaultModel.providerIdFlow.first() }
+                    val model = runBlocking { defaultModel.modelFlow.first() }
+                    if (pid.isBlank() || model.isBlank()) {
+                        throw ConfigError.InvalidValue("请先设置默认模型再调思考强度")
+                    }
+                    if (s.isBlank()) {
+                        reasoningEffort.set(pid, model, ReasoningEffort.DEFAULT.name)
+                    } else {
+                        val effort = ReasoningEffort.entries.firstOrNull { it.apiValue == s }
+                            ?: throw ConfigError.InvalidValue("无效的思考强度：$s，可选值：${ReasoningEffort.entries.mapNotNull { it.apiValue }.joinToString("/")}")
+                        reasoningEffort.set(pid, model, effort.name)
+                    }
+                },
             ),
         )
         registry.register(

@@ -2073,6 +2073,9 @@
     <string name="pet_brief_location">Location permission</string>
     <string name="pet_brief_location_granted">Granted</string>
     <string name="pet_brief_location_denied">Not granted (tap to grant)</string>
+    <string name="pet_brief_calendar">Calendar permission</string>
+    <string name="pet_brief_calendar_granted">Granted</string>
+    <string name="pet_brief_calendar_denied">Not granted (tap to grant)</string>
     <string name="pet_fest_newyear">Happy New Year — I\'ll be here all year too.</string>
     <string name="pet_fest_spring">Spring Festival is here. Have a proper meal.</string>
     <string name="pet_fest_lantern">It\'s the Lantern Festival — have some sweet tangyuan.</string>
@@ -2094,6 +2097,8 @@
     <string name="pet_brief_uv">UV is strong, use sunscreen</string>
     <string name="pet_brief_snow">snow — watch your step</string>
     <string name="pet_brief_storm">thunderstorms — stay in</string>
+    <string name="pet_brief_calendar_allday">All-day event today: %1$s</string>
+    <string name="pet_brief_calendar_timed">Today at %1$d:%2$02d: %3$s</string>
     <string name="pet_mood">How she feels about you</string>
     <string name="pet_mood_hint">Head pats and hanging out raise it; poking her too much makes her sulk; days without her let it fade (with a floor)</string>
     <string name="pet_mood_cold">Cold</string>

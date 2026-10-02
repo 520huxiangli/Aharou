@@ -97,6 +97,41 @@ object PetMoodStore {
     private const val KEY_LAST_TOUCH = "mood_last_touch"
     private const val KEY_LAST_SEEN = "mood_last_seen"
     private const val KEY_SULK_UNTIL = "mood_sulk_until"
+    private const val KEY_SAID_DAY = "said_day"
+    private const val KEY_TODAY_SAID = "today_said"
+
+    // ── 今日已说台词（跨进程用 SharedPreferences，自然日重置）────────────────
+
+    /** 读取今天已说过的台词集合；日期不符则视为空集。 */
+    fun readTodaySaid(context: Context): Set<String> {
+        val prefs = context.getSharedPreferences(PetOverlay.PREFS, Context.MODE_PRIVATE)
+        val today = todayKey()
+        if (prefs.getString(KEY_SAID_DAY, null) != today) return emptySet()
+        val raw = prefs.getString(KEY_TODAY_SAID, null) ?: return emptySet()
+        return raw.split("|").filter { it.isNotBlank() }.toSet()
+    }
+
+    /** 把一句台词加入今日已说集合，并刷新自然日 key。 */
+    fun markSaid(context: Context, line: String) {
+        if (line.isBlank()) return
+        val prefs = context.getSharedPreferences(PetOverlay.PREFS, Context.MODE_PRIVATE)
+        val today = todayKey()
+        val existing = readTodaySaid(context)
+        val updated = (existing + line).joinToString("|")
+        prefs.edit()
+            .putString(KEY_SAID_DAY, today)
+            .putString(KEY_TODAY_SAID, updated)
+            .apply()
+    }
+
+    private fun todayKey(): String {
+        val c = java.util.Calendar.getInstance()
+        return "%04d-%02d-%02d".format(
+            c.get(java.util.Calendar.YEAR),
+            c.get(java.util.Calendar.MONTH) + 1,
+            c.get(java.util.Calendar.DAY_OF_MONTH),
+        )
+    }
 
     fun read(context: Context): PetMood {
         val now = System.currentTimeMillis()
