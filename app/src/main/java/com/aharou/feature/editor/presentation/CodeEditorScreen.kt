@@ -45,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -69,6 +70,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.editor.data.EditorSettings
+import com.aharou.feature.editor.domain.EditorSessionManager
 import com.aharou.feature.editor.domain.TextMateSetup
 import com.aharou.feature.editor.presentation.component.MarkdownPreviewWebView
 import compose.icons.FeatherIcons
@@ -107,7 +109,14 @@ fun CodeEditorScreen(
     onAddSelectionToInput: (String) -> Unit,
     viewModel: CodeEditorViewModel = hiltViewModel()
 ) {
-    LaunchedEffect(path) { viewModel.load(path) }
+    // 标签页会话：外部每次带新 path 进编辑器都开（或激活）一个标签页，
+    // 之前打开过的文件留在标签栏里，切文件不再丢未保存的改动。
+    val tabs by EditorSessionManager.tabs.collectAsStateWithLifecycle()
+    val sessionActivePath by EditorSessionManager.activePath.collectAsStateWithLifecycle()
+    val snapshots by EditorSessionManager.snapshots.collectAsStateWithLifecycle()
+    LaunchedEffect(path) { EditorSessionManager.open(path) }
+    val activePath = sessionActivePath.ifBlank { path }
+    LaunchedEffect(activePath) { viewModel.load(activePath) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     val editorRef = remember { mutableStateOf<CodeEditor?>(null) }
@@ -119,25 +128,27 @@ fun CodeEditorScreen(
     var pendingSaveText by remember { mutableStateOf("") }
     var pendingExit by remember { mutableStateOf(false) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
+    var showCloseTabDialog by remember { mutableStateOf(false) }
+    var pendingCloseTab by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var previewMode by remember { mutableStateOf(false) }
     var cursorLine by remember { mutableStateOf(1) }
     var cursorColumn by remember { mutableStateOf(1) }
-    val isMarkdown = remember(path) {
-        path.substringAfterLast('.', "").lowercase() in setOf("md", "markdown")
+    val isMarkdown = remember(activePath) {
+        activePath.substringAfterLast('.', "").lowercase() in setOf("md", "markdown")
     }
     var editorBackground by remember { mutableStateOf<Color?>(null) }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val saving by viewModel.saving.collectAsStateWithLifecycle()
 
-    // 切换文件时重置编辑态，避免旧文件的撤销/脏标记残留到新文件。
-    LaunchedEffect(path) {
+    // 切换标签页时重置编辑态，避免旧文件的撤销/脏标记残留到新文件；带未保存快照的页恢复脏标记与光标。
+    LaunchedEffect(activePath) {
         canUndo = false
         canRedo = false
-        dirty = false
+        dirty = snapshots[activePath]?.dirty == true
         pendingExit = false
-        cursorLine = 1
-        cursorColumn = 1
+        cursorLine = snapshots[activePath]?.cursorLine ?: 1
+        cursorColumn = snapshots[activePath]?.cursorColumn ?: 1
         previewMode = false
     }
 
@@ -148,10 +159,14 @@ fun CodeEditorScreen(
         viewModel.saveEvents.collect { result ->
             when (result) {
                 is SaveResult.Success -> {
-                    baselineText.value = pendingSaveText
-                    dirty = false
+                    // 写盘完成后对应的未保存快照作废（内容已经落到磁盘上）。
+                    EditorSessionManager.forget(result.path)
+                    if (result.path == activePath) {
+                        baselineText.value = pendingSaveText
+                        dirty = false
+                    }
                     Toast.makeText(context, savedText, Toast.LENGTH_SHORT).show()
-                    if (pendingExit) {
+                    if (pendingExit && result.path == activePath) {
                         pendingExit = false
                         onBack()
                     }
@@ -171,11 +186,47 @@ fun CodeEditorScreen(
     fun requestSave() {
         val editor = editorRef.value ?: return
         pendingSaveText = editor.text.toString()
-        viewModel.save(pendingSaveText)
+        viewModel.save(activePath, pendingSaveText)
     }
 
     fun handleBack() {
         if (dirty) showUnsavedDialog = true else onBack()
+    }
+
+    /** 把当前编辑器的内容/光标/滚动存进会话，供切走后再切回来恢复。 */
+    fun persistCurrentTab() {
+        val editor = editorRef.value ?: return
+        EditorSessionManager.saveSnapshot(
+            activePath,
+            EditorSessionManager.Snapshot(
+                content = editor.text.toString(),
+                dirty = dirty,
+                cursorLine = cursorLine,
+                cursorColumn = cursorColumn,
+                scrollY = editor.scrollY
+            )
+        )
+    }
+
+    fun switchTab(target: String) {
+        if (target == activePath) return
+        persistCurrentTab()
+        EditorSessionManager.activate(target)
+    }
+
+    fun performCloseTab(target: String) {
+        EditorSessionManager.close(target)
+        if (EditorSessionManager.tabs.value.isEmpty()) onBack()
+    }
+
+    fun closeTab(target: String) {
+        if (target == activePath) persistCurrentTab()
+        if (EditorSessionManager.snapshot(target)?.dirty == true) {
+            pendingCloseTab = target
+            showCloseTabDialog = true
+        } else {
+            performCloseTab(target)
+        }
     }
 
     BackHandler(enabled = !showSettings && !previewMode) { handleBack() }
@@ -259,11 +310,22 @@ fun CodeEditorScreen(
                 )
                 HorizontalDivider(thickness = 0.5.dp)
                 FileTitleBar(
-                    fileName = path.substringAfterLast('/'),
+                    fileName = activePath.substringAfterLast('/'),
                     dirty = dirty,
                     line = cursorLine,
                     column = cursorColumn
                 )
+                if (tabs.size > 1) {
+                    HorizontalDivider(thickness = 0.5.dp)
+                    EditorTabBar(
+                        tabs = tabs,
+                        activePath = activePath,
+                        activeDirty = dirty,
+                        snapshots = snapshots,
+                        onSelect = { switchTab(it) },
+                        onClose = { closeTab(it) }
+                    )
+                }
                 HorizontalDivider()
             }
         },
@@ -285,8 +347,13 @@ fun CodeEditorScreen(
         when (val s = state) {
             is EditorUiState.Loading -> CenterBox(content) { CircularProgressIndicator() }
             is EditorUiState.Success -> Box(modifier = content) {
+                // 有未保存快照时用快照文本而不是磁盘内容——切走再切回来，改动不能消失。
+                val surfaceState = remember(activePath, s.content) {
+                    snapshots[activePath]?.let { s.copy(content = it.content) } ?: s
+                }
+                key(activePath) {
                 EditorSurface(
-                    state = s,
+                    state = surfaceState,
                     modifier = Modifier.fillMaxSize(),
                     editorRef = editorRef,
                     settings = settings,
@@ -304,15 +371,16 @@ fun CodeEditorScreen(
                         dirty = changed
                     }
                 )
+                }
                 if (previewMode) {
                     // 预览覆盖在编辑器上方（编辑器保留在组合中不销毁，切回源码不丢状态）。
                     // 进入预览时快照编辑器当前文本，确保反映未保存的编辑。
                     val previewText = remember(previewMode) {
-                        editorRef.value?.text?.toString() ?: s.content
+                        editorRef.value?.text?.toString() ?: surfaceState.content
                     }
                     MarkdownPreviewWebView(
                         text = previewText,
-                        path = path,
+                        path = activePath,
                         onExitPreview = { previewMode = false },
                         modifier = Modifier
                             .fillMaxSize()
@@ -335,6 +403,38 @@ fun CodeEditorScreen(
                 HintText(s.detail ?: stringResource(R.string.editor_load_failed))
             }
         }
+    }
+
+    if (showCloseTabDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showCloseTabDialog = false
+                pendingCloseTab = null
+            },
+            title = { Text(stringResource(R.string.editor_close_tab_unsaved_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.editor_close_tab_unsaved_message,
+                        pendingCloseTab?.substringAfterLast('/') ?: ""
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = pendingCloseTab
+                    showCloseTabDialog = false
+                    pendingCloseTab = null
+                    target?.let { performCloseTab(it) }
+                }) { Text(stringResource(R.string.editor_close_tab_discard)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showCloseTabDialog = false
+                    pendingCloseTab = null
+                }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
     }
 
     if (showUnsavedDialog) {
@@ -361,6 +461,72 @@ fun CodeEditorScreen(
     if (showSettings) {
         EditorSettingsScreen(onBack = { showSettings = false })
     }
+    }
+}
+
+/** 顶部标签栏：多文件时才出现；点选切换、点 × 关闭，未保存的页名前带圆点。 */
+@Composable
+private fun EditorTabBar(
+    tabs: List<String>,
+    activePath: String,
+    activeDirty: Boolean,
+    snapshots: Map<String, EditorSessionManager.Snapshot>,
+    onSelect: (String) -> Unit,
+    onClose: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        tabs.forEach { tab ->
+            val selected = tab == activePath
+            val tabDirty = if (selected) activeDirty else snapshots[tab]?.dirty == true
+            Row(
+                modifier = Modifier
+                    .padding(end = Spacing.xs)
+                    .clip(RoundedCornerShape(Spacing.sm))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.surfaceContainerHigh
+                        else MaterialTheme.colorScheme.surfaceContainer
+                    )
+                    .clickable { onSelect(tab) }
+                    .padding(start = Spacing.sm, end = Spacing.xs, top = Spacing.xs, bottom = Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (tabDirty) {
+                    Text(
+                        text = "●",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(end = 2.dp)
+                    )
+                }
+                Text(
+                    text = tab.trimEnd('/').substringAfterLast('/'),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (selected) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(
+                    onClick = { onClose(tab) },
+                    modifier = Modifier.size(20.dp)
+                ) {
+                    Icon(
+                        FeatherIcons.X,
+                        contentDescription = stringResource(R.string.editor_close_tab),
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 

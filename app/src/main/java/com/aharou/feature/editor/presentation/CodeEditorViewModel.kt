@@ -31,10 +31,10 @@ sealed interface EditorUiState {
     data class Error(val detail: String?) : EditorUiState
 }
 
-/** 保存结果，一次性事件，经 [CodeEditorViewModel.saveEvents] 下发。 */
+/** 保存结果，一次性事件，经 [CodeEditorViewModel.saveEvents] 下发；带 path 以便标签页分辨来源。 */
 sealed interface SaveResult {
-    data object Success : SaveResult
-    data class Error(val detail: String?) : SaveResult
+    data class Success(val path: String) : SaveResult
+    data class Error(val path: String, val detail: String?) : SaveResult
 }
 
 @HiltViewModel
@@ -57,15 +57,22 @@ class CodeEditorViewModel @Inject constructor(
     val settings: StateFlow<EditorSettings> = editorSettings.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EditorSettings())
 
-    private var loadedPath: String? = null
+    private var currentPath: String? = null
+
+    /** 每个路径只读一次盘，结果缓存下来供标签页来回切换复用。 */
+    private val loadedStates = mutableMapOf<String, EditorUiState>()
 
     /** 重复调用同一路径不会重复读盘，供 Compose 重组时安全调用。 */
     fun load(path: String) {
-        if (loadedPath == path) return
-        loadedPath = path
+        if (currentPath == path) return
+        currentPath = path
+        loadedStates[path]?.let { cached ->
+            _uiState.value = cached
+            return
+        }
         _uiState.value = EditorUiState.Loading
         viewModelScope.launch(Dispatchers.IO) {
-            _uiState.value = runCatching {
+            val state = runCatching {
                 if (!fileAccess.exists(path) || !fileAccess.isFile(path)) {
                     return@runCatching EditorUiState.Error(null)
                 }
@@ -94,21 +101,23 @@ class CodeEditorViewModel @Inject constructor(
                 FileLogger.w(TAG, "打开文件失败: $path", e)
                 EditorUiState.Error(e.message)
             }
+            loadedStates[path] = state
+            // 读盘期间用户可能已切到别的标签页，只在仍停留在这个路径时更新界面。
+            if (currentPath == path) _uiState.value = state
         }
     }
 
-    /** 把编辑器当前内容写回文件。写入在 IO 线程进行，结果通过 [saveEvents] 通知，期间 [saving] 置位。 */
-    fun save(content: String) {
-        val path = loadedPath ?: return
+    /** 把指定路径的内容写回磁盘。写入在 IO 线程进行，结果通过 [saveEvents] 通知，期间 [saving] 置位。 */
+    fun save(path: String, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _saving.value = true
             try {
                 val result = runCatching { fileAccess.writeFile(path, content) }
                     .fold(
-                        onSuccess = { SaveResult.Success },
+                        onSuccess = { SaveResult.Success(path) },
                         onFailure = { e ->
                             FileLogger.w(TAG, "保存文件失败: $path", e)
-                            SaveResult.Error(e.message)
+                            SaveResult.Error(path, e.message)
                         }
                     )
                 _saveEvents.send(result)
