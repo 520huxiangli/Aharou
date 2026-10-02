@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -53,8 +52,7 @@ import com.aharou.feature.settings.domain.model.AdaptiveCardAction
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronUp
+import com.aharou.core.ui.ExpandableChevronIcon
 
 /**
  * 位于聊天输入框上方的自定义面板栏。
@@ -233,16 +231,14 @@ fun ProviderDashboardBar(
 
                         Spacer(Modifier.width(Spacing.sm))
 
-                        Icon(
-                            imageVector = if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                        ExpandableChevronIcon(
+                            expanded = effectiveExpanded,
                             contentDescription = if (effectiveExpanded) {
                                 stringResource(R.string.common_collapse)
                             } else {
                                 stringResource(R.string.common_expand)
                             },
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clip(CircleShape),
+                            size = 18.dp,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }

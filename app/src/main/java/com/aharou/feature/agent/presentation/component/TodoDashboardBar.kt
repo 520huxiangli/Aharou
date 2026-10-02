@@ -47,8 +47,7 @@ import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.domain.model.TodoStatus
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.CheckSquare
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronUp
+import com.aharou.core.ui.ExpandableChevronIcon
 
 /**
  * 位于输入框上方的待办任务常驻面板：
@@ -159,15 +158,15 @@ fun TodoDashboardBar(
                     Spacer(Modifier.weight(1f))
                 }
 
-                Icon(
-                    imageVector = if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                ExpandableChevronIcon(
+                    expanded = effectiveExpanded,
                     contentDescription = if (effectiveExpanded) {
                         stringResource(R.string.common_collapse_action)
                     } else {
                         stringResource(R.string.common_expand)
                     },
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
+                    size = 16.dp
                 )
             }
 

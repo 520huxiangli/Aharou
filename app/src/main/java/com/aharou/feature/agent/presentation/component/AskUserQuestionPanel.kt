@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
@@ -56,9 +55,7 @@ import com.aharou.feature.agent.domain.tool.question.SingleAnswer
 import com.aharou.feature.agent.domain.tool.question.UserQuestionAnswer
 import androidx.compose.ui.res.stringResource
 import com.aharou.R
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronUp
+import com.aharou.core.ui.ExpandableChevronIcon
 
 
 /** 「其他」选项在选中集合内的内部哨兵：用 AI 不可能传出的控制字符前缀，避免与预设选项 label 撞车。 */
@@ -138,11 +135,11 @@ fun AskUserQuestionPanel(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.width(Spacing.xs))
-                Icon(
-                    if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                ExpandableChevronIcon(
+                    expanded = expanded,
                     contentDescription = if (expanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
+                    size = 18.dp
                 )
             }
 

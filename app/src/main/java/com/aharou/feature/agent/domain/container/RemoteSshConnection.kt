@@ -318,6 +318,39 @@ class RemoteSshConnection @Inject constructor(
     }
 
     /**
+     * 释放 App 内置资源（子代理定义、面板示例脚本等）到远程 `~/.aharou/<subdir>/`。
+     * 仅补齐服务器上缺失的文件、**不覆盖已存在**（保留用户修改），脚本赋可执行位。
+     * 与 [uploadDocs] 一样在连接/重连后调用——远程模式下全局 agents/scripts 以远端为准，
+     * 内置默认需在远端存在才能「开箱即用」。二进制安全（base64 传输）。
+     */
+    suspend fun uploadBuiltinFiles(
+        destSubdir: String,
+        files: Map<String, ByteArray>,
+        executable: Boolean = false
+    ) {
+        if (files.isEmpty()) return
+        val client = sshClient ?: return
+        val home = remoteHome ?: return
+        val destDir = home.trimEnd('/') + "/.aharou/" + destSubdir.trim('/')
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val mk = client.startSession()
+                mk.exec("mkdir -p '$destDir'").join()
+                mk.close()
+                for ((name, bytes) in files) {
+                    val dest = "$destDir/$name"
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    val chmod = if (executable) " chmod +x '$dest';" else ""
+                    val session = client.startSession()
+                    session.exec("if [ ! -e '$dest' ]; then printf %s '$b64' | base64 -d > '$dest';$chmod fi").join()
+                    session.close()
+                }
+                FileLogger.i(TAG, "已释放 ${files.size} 个内置文件到远程 $destDir")
+            }.onFailure { FileLogger.w(TAG, "释放内置文件到远程失败: $destSubdir", it) }
+        }
+    }
+
+    /**
      * 把 App 的 git 凭据注入远程服务器（仅当用户开启「自动注入」时调用）：
      * 写 `~/.aharou/git-credentials`（store 格式）+ `~/.aharou/gitconfig` + `~/.aharou/gitconfig.credential`。
      *

@@ -2,31 +2,29 @@ package com.aharou.feature.agent.domain.skill
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.workspace.domain.FileAccessProvider
-import com.aharou.feature.workspace.domain.LocalFileAccess
 import java.io.InputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Skill 仓库，聚合各 [SkillSource]（全局目录 + 项目目录）提供的技能，
+ * Skill 仓库，聚合各 [SkillSource]（内置 + 全局目录 + 项目目录）提供的技能，
  * 并按 [SkillConfigRepository] 的禁用名单过滤注入清单。
  *
- * 全局技能固定在 App 私有目录（始终本地），项目级技能随工作区（本地宿主目录或远程 SSH 工作区），
- * 读写都经 [FileAccessProvider] 以容器路径完成。
+ * 全局技能 `~/.aharou/skills`、项目级技能 `<workspace>/.aharou/skills`，两者都经 [FileAccessProvider]
+ * 以容器路径读写，跟随当前执行环境（本地宿主目录或远程 SSH 工作区）；内置技能随 App 打包，只读。
  */
 @Singleton
 class SkillRepository @Inject constructor(
     private val builtinSkillSource: BuiltinSkillSource,
-    private val localDirectorySkillSource: LocalDirectorySkillSource,
+    private val globalDirectorySkillSource: GlobalDirectorySkillSource,
     private val projectDirectorySkillSource: ProjectDirectorySkillSource,
     private val skillConfigRepository: SkillConfigRepository,
-    private val localFileAccess: LocalFileAccess,
     private val fileAccess: FileAccessProvider
 ) {
     /** 全部技能（含来源作用域），未过滤禁用；同名按 内置 < 全局 < 项目 逐级覆盖。 */
     fun listAllSkills(): List<SkillEntry> = mergeAll(
         builtinSkillSource.listSkills(),
-        localDirectorySkillSource.listSkills(),
+        globalDirectorySkillSource.listSkills(),
         projectDirectorySkillSource.listSkills()
     )
 
@@ -37,7 +35,7 @@ class SkillRepository @Inject constructor(
     /** 读取指定 skill 的完整指令正文；不存在 / 解析失败 / 已被禁用时返回 null。 */
     fun loadInstructions(name: String): String? {
         if (name.lowercase() in skillConfigRepository.disabledNames()) return null
-        return localDirectorySkillSource.loadInstructions(name)
+        return globalDirectorySkillSource.loadInstructions(name)
             ?: projectDirectorySkillSource.loadInstructions(name)
             ?: builtinSkillSource.loadInstructions(name)
     }
@@ -84,7 +82,7 @@ class SkillRepository @Inject constructor(
             instructions = form.instructions
         )
 
-        val provider = providerFor(scope)
+        val provider = fileAccess
         return try {
             val dir = existingDir?.takeIf { provider.isDirectory(it) } ?: "${skillsRoot(scope)}/$name"
             provider.mkdirs(dir)
@@ -99,7 +97,7 @@ class SkillRepository @Inject constructor(
 
     /** 指定作用域的技能根目录（容器路径）。内置技能随 App 打包，没有可写目录。 */
     fun skillsRoot(scope: SkillScope): String = when (scope) {
-        SkillScope.GLOBAL -> localDirectorySkillSource.skillsRoot
+        SkillScope.GLOBAL -> globalDirectorySkillSource.skillsRoot
         SkillScope.PROJECT -> projectDirectorySkillSource.skillsRoot
         SkillScope.BUILTIN -> error("内置技能随 App 打包，没有可写目录")
     }
@@ -115,7 +113,7 @@ class SkillRepository @Inject constructor(
         overwrite: Boolean = false
     ): SkillImportReport =
         SkillImporter.importMarkdown(
-            providerFor(scope), skillsRoot(scope), existingNamesIn(scope), text, fallbackName, overwrite
+            fileAccess, skillsRoot(scope), existingNamesIn(scope), text, fallbackName, overwrite
         )
 
     /** 从 zip 输入流导入技能（可含多个技能目录）到指定作用域。[overwrite] 同 [importMarkdown]。 */
@@ -126,7 +124,7 @@ class SkillRepository @Inject constructor(
         overwrite: Boolean = false
     ): SkillImportReport =
         SkillImporter.importArchive(
-            providerFor(scope), skillsRoot(scope), existingNamesIn(scope), input, fallbackName, overwrite
+            fileAccess, skillsRoot(scope), existingNamesIn(scope), input, fallbackName, overwrite
         )
 
     /** 指定作用域下已有技能名（小写），供导入查重。 */
@@ -145,7 +143,7 @@ class SkillRepository @Inject constructor(
             it.scope == scope && it.skill.name.equals(name, ignoreCase = true)
         } ?: return null
         val dirPath = entry.skill.dirPath ?: return null
-        return SkillExporter.zip(providerFor(scope), dirPath, entry.skill.name)
+        return SkillExporter.zip(fileAccess, dirPath, entry.skill.name)
     }
 
     private fun exportBuiltin(name: String): ByteArray? {
@@ -170,14 +168,7 @@ class SkillRepository @Inject constructor(
             it.skill.name.equals(name, ignoreCase = true) && it.scope == scope
         } ?: return false
         val dirPath = entry.skill.dirPath ?: return false
-        return safeDeleteSkillDir(providerFor(scope), dirPath)
-    }
-
-    /** 全局技能固定在本地私有目录，项目级技能跟随工作区（可能是远程）；内置技能只读。 */
-    private fun providerFor(scope: SkillScope): FileAccessProvider = when (scope) {
-        SkillScope.GLOBAL -> localFileAccess
-        SkillScope.PROJECT -> fileAccess
-        SkillScope.BUILTIN -> error("内置技能只读，不接受写入")
+        return safeDeleteSkillDir(fileAccess, dirPath)
     }
 
     companion object {

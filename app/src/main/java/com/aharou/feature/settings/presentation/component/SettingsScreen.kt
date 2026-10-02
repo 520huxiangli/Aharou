@@ -76,6 +76,8 @@ import com.aharou.R
 import com.aharou.feature.agent.domain.mcp.McpServerEntry
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.mcp.McpServerStatus
+import com.aharou.feature.agent.domain.prompt.PromptFragment
+import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
 import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.agent.presentation.component.MarkdownRenderCache
 import com.aharou.feature.backup.presentation.BackupSection
@@ -83,6 +85,7 @@ import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
+import com.aharou.feature.settings.presentation.PromptsViewModel
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.presentation.ShizukuViewModel
 import com.aharou.feature.settings.presentation.SkillExportState
@@ -110,6 +113,7 @@ import compose.icons.feathericons.Info
 import compose.icons.feathericons.Key
 import compose.icons.feathericons.Layers
 import compose.icons.feathericons.Lock
+import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.Edit2
@@ -171,6 +175,9 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SubAgents(R.string.settings_subagents),
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
+    Prompts(R.string.prompts_title),
+    PromptDetail(R.string.prompts_title),
+    PromptEditor(R.string.prompts_title),
     Container(R.string.settings_container),
     ContainerDownloads(R.string.container_download_image),
     Proxy(R.string.proxy_title),
@@ -197,11 +204,13 @@ private fun SettingsSection.depth(): Int = when (this) {
     // 技能/子代理编辑页既可从列表(1) 进也可从详情页(2) 进，必须比详情页更深：
     // 同深度会让「编辑 → 详情」也被当成前进，返回时页面从右侧滑入，方向是反的。
     SettingsSection.SkillEditor,
-    SettingsSection.SubAgentEditor -> 3
+    SettingsSection.SubAgentEditor,
+    SettingsSection.PromptEditor -> 3
     SettingsSection.ProviderEditor,
     SettingsSection.SkillDetail,
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
+    SettingsSection.PromptDetail,
     SettingsSection.ContainerDownloads,
     SettingsSection.Log -> 2
     else -> 1
@@ -227,8 +236,10 @@ fun SettingsScreen(
     val skills by viewModel.skills.collectAsStateWithLifecycle()
     val skillSaveState by viewModel.skillSaveState.collectAsStateWithLifecycle()
     val skillImportState by viewModel.skillImportState.collectAsStateWithLifecycle()
+    val skillDeleting by viewModel.skillDeleting.collectAsStateWithLifecycle()
     val subAgents by viewModel.subAgents.collectAsStateWithLifecycle()
     val subAgentSaveState by viewModel.subAgentSaveState.collectAsStateWithLifecycle()
+    val subAgentDeleting by viewModel.subAgentDeleting.collectAsStateWithLifecycle()
     val globalRules by viewModel.globalRules.collectAsStateWithLifecycle()
     val projectRules by viewModel.projectRules.collectAsStateWithLifecycle()
     val currentProjectName by viewModel.currentProjectName.collectAsStateWithLifecycle()
@@ -386,6 +397,12 @@ fun SettingsScreen(
     val subAgentMarkdownCache = remember { MarkdownRenderCache() }
     // 技能正文 Markdown 解析缓存：详情页多次进入复用，避免重复解析卡顿
     val skillMarkdownCache = remember { MarkdownRenderCache() }
+    // 自定义提示词：右上角「+」弹层可见性 + 编辑目标（新建/编辑）
+    var showPromptsAddSheet by remember { mutableStateOf(false) }
+    var promptEditTarget by remember { mutableStateOf<PromptEditTarget?>(null) }
+    var selectedPrompt by remember { mutableStateOf<PromptFragment?>(null) }
+    // 编辑页返回目标：从详情进就回详情，从列表「+」进就回列表。
+    var promptEditorReturn by remember { mutableStateOf(SettingsSection.Prompts) }
     var showContainerAddSheet by remember { mutableStateOf(false) }
     var showContainerAnnouncement by remember { mutableStateOf(false) }
     var showImageSourceSheet by remember { mutableStateOf(false) }
@@ -410,6 +427,8 @@ fun SettingsScreen(
         SettingsSection.SkillEditor -> skillEditorReturn
         SettingsSection.SubAgentDetail -> SettingsSection.SubAgents
         SettingsSection.SubAgentEditor -> subAgentEditorReturn
+        SettingsSection.PromptDetail -> SettingsSection.Prompts
+        SettingsSection.PromptEditor -> promptEditorReturn
         SettingsSection.ContainerDownloads -> SettingsSection.Container
         else -> if (expanded) null else SettingsSection.Menu
     }
@@ -587,6 +606,28 @@ fun SettingsScreen(
                 }
             )
 
+            current == SettingsSection.PromptEditor -> {
+                val promptsViewModel: PromptsViewModel =
+                    androidx.hilt.navigation.compose.hiltViewModel()
+                val promptsState by promptsViewModel.state.collectAsStateWithLifecycle()
+                val number = promptEditTarget?.number
+                val fragment = number?.let { value -> promptsState.fragments.firstOrNull { it.number == value } }
+                PromptEditorScreen(
+                    isNew = number == null,
+                    initialNumber = fragment?.number ?: number ?: 0,
+                    initialTitle = fragment?.title.orEmpty(),
+                    initialDescription = fragment?.description.orEmpty(),
+                    initialContent = fragment?.body.orEmpty(),
+                    initialScope = fragment?.source ?: PromptFragmentSource.GLOBAL,
+                    hasWorkspace = promptsState.hasWorkspace,
+                    onSave = { savedNumber, title, scope, content ->
+                        promptsViewModel.saveFragment(savedNumber, title, scope, content, previousNumber = number)
+                        section = promptEditorReturn
+                    },
+                    onNavigateBack = { section = promptEditorReturn }
+                )
+            }
+
             current == SettingsSection.RemoteServers ->
                 com.aharou.feature.workspace.presentation.remote.RemoteServerScreen(
                     onNavigateBack = { section = SettingsSection.Menu }
@@ -745,6 +786,30 @@ fun SettingsScreen(
                                 Icon(
                                     FeatherIcons.Edit2,
                                     contentDescription = stringResource(R.string.subagent_edit),
+                                    tint = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                        SettingsSection.Prompts -> IconButton(onClick = {
+                            showPromptsAddSheet = true
+                        }) {
+                            Icon(
+                                FeatherIcons.Plus,
+                                contentDescription = stringResource(R.string.prompts_add_prompt),
+                                tint = MaterialTheme.colorScheme.onBackground,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        SettingsSection.PromptDetail -> selectedPrompt?.let { fragment ->
+                            IconButton(onClick = {
+                                promptEditTarget = PromptEditTarget(fragment.number)
+                                promptEditorReturn = SettingsSection.PromptDetail
+                                section = SettingsSection.PromptEditor
+                            }) {
+                                Icon(
+                                    FeatherIcons.Edit2,
+                                    contentDescription = stringResource(R.string.prompts_editor_edit),
                                     tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -970,6 +1035,43 @@ fun SettingsScreen(
                         section = SettingsSection.SubAgentDetail
                     }
                 )
+                SettingsSection.Prompts -> {
+                    val promptsViewModel: PromptsViewModel =
+                        androidx.hilt.navigation.compose.hiltViewModel()
+                    val promptsState by promptsViewModel.state.collectAsStateWithLifecycle()
+                    LaunchedEffect(Unit) { promptsViewModel.refresh() }
+                    PromptsSection(
+                        state = promptsState,
+                        onOpenFragment = { fragment ->
+                            selectedPrompt = fragment
+                            section = SettingsSection.PromptDetail
+                        },
+                        onDeleteFragment = promptsViewModel::deleteFragment,
+                        onReorder = promptsViewModel::reorderFragments,
+                        onToggleBuiltinDisabled = promptsViewModel::setBuiltinDisabled
+                    )
+                    if (showPromptsAddSheet) {
+                        PromptsAddSheet(
+                            onDismiss = { showPromptsAddSheet = false },
+                            onAddFragment = {
+                                showPromptsAddSheet = false
+                                promptEditTarget = PromptEditTarget(null)
+                                promptEditorReturn = SettingsSection.Prompts
+                                section = SettingsSection.PromptEditor
+                            }
+                        )
+                    }
+                }
+                SettingsSection.PromptDetail -> {
+                    val promptsViewModel: PromptsViewModel =
+                        androidx.hilt.navigation.compose.hiltViewModel()
+                    val promptsState by promptsViewModel.state.collectAsStateWithLifecycle()
+                    selectedPrompt?.let { sel ->
+                        promptsState.fragments.firstOrNull { it.number == sel.number }?.let { fragment ->
+                            PromptDetailSection(fragment = fragment)
+                        }
+                    }
+                }
                 SettingsSection.SubAgentDetail -> selectedSubAgent?.let { entry ->
                     SubAgentDetailSection(
                         entry = entry,
@@ -1084,6 +1186,7 @@ fun SettingsScreen(
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SkillEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SubAgentEditor -> {} // 已在上方 early return 处理
+                SettingsSection.PromptEditor -> {} // 已在上方 early return 处理
                 SettingsSection.RemoteServers -> {} // 已在上方 early return 处理
                 SettingsSection.About -> AboutSection(
                     updateCheckEnabled = updateCheckEnabled,
@@ -1188,8 +1291,6 @@ fun SettingsScreen(
     if (showTerminalSettingsSheet) {
         TerminalSettingsSheet(
             settings = terminalSettings,
-            showEnvTool = false,
-            onRunInstaller = {},
             onDismiss = { showTerminalSettingsSheet = false },
             onSelectTheme = { viewModel.setTerminalTheme(it) },
             onChangeFontSize = { viewModel.setTerminalFontSize(it) },
@@ -1244,18 +1345,35 @@ fun SettingsScreen(
     }
 
     skillToDelete?.let { target ->
+        val deleting = skillDeleting == target.name
+        // 删除进行中保持弹窗（转圈），完成后才关闭，避免无反馈地「突然消失」。
+        var deleteStarted by remember(target) { mutableStateOf(false) }
+        LaunchedEffect(deleteStarted, deleting) {
+            if (deleteStarted && !deleting) skillToDelete = null
+        }
         AlertDialog(
-            onDismissRequest = { skillToDelete = null },
+            onDismissRequest = { if (!deleting) skillToDelete = null },
             title = { Text(stringResource(R.string.skills_delete_confirm_title)) },
             text = { Text(stringResource(R.string.skills_delete_confirm_message, target.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteSkill(target.name, target.scope)
-                    skillToDelete = null
-                }) { Text(stringResource(R.string.common_delete)) }
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleteStarted = true
+                        viewModel.deleteSkill(target.name, target.scope)
+                    }
+                ) {
+                    if (deleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.common_delete))
+                    }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { skillToDelete = null }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(enabled = !deleting, onClick = { skillToDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             }
         )
     }
@@ -1263,18 +1381,34 @@ fun SettingsScreen(
     SkillImportResultDialog(state = skillImportState, onDismiss = { viewModel.clearSkillImportState() })
 
     subAgentToDelete?.let { target ->
+        val deleting = subAgentDeleting == target.name
+        var deleteStarted by remember(target) { mutableStateOf(false) }
+        LaunchedEffect(deleteStarted, deleting) {
+            if (deleteStarted && !deleting) subAgentToDelete = null
+        }
         AlertDialog(
-            onDismissRequest = { subAgentToDelete = null },
+            onDismissRequest = { if (!deleting) subAgentToDelete = null },
             title = { Text(stringResource(R.string.subagents_delete_confirm_title)) },
             text = { Text(stringResource(R.string.subagents_delete_confirm_message, target.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteSubAgent(target.name, target.scope)
-                    subAgentToDelete = null
-                }) { Text(stringResource(R.string.common_delete)) }
+                TextButton(
+                    enabled = !deleting,
+                    onClick = {
+                        deleteStarted = true
+                        viewModel.deleteSubAgent(target.name, target.scope)
+                    }
+                ) {
+                    if (deleting) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(stringResource(R.string.common_delete))
+                    }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { subAgentToDelete = null }) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(enabled = !deleting, onClick = { subAgentToDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
             }
         )
     }
@@ -1510,6 +1644,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.Users,
                 title = stringResource(SettingsSection.SubAgents.titleRes),
                 onClick = { onOpen(SettingsSection.SubAgents) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.MessageSquare,
+                title = stringResource(SettingsSection.Prompts.titleRes),
+                onClick = { onOpen(SettingsSection.Prompts) }
             )
         }
 

@@ -60,9 +60,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ClipEntry
@@ -88,6 +85,7 @@ import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.AIAgentViewModel
 import com.aharou.feature.agent.presentation.MessageRole
+import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
@@ -718,6 +716,7 @@ fun AIChatPanel(
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
+    var queuedEditing by remember { mutableStateOf<QueuedRequest?>(null) }
     val listState = rememberLazyListState()
     // 消息未就绪时的加载提示：本地读库通常几十毫秒，立刻显示反而闪一下，等一小会儿还没就绪才提示。
     var showMessagesLoading by remember(currentSessionId) { mutableStateOf(false) }
@@ -784,17 +783,27 @@ fun AIChatPanel(
     val turnUsages = remember(messages, isBusy) {
         computeTurnUsage(messages, lastTurnFinished = !isBusy)
     }
-    // 「复制 / 更多」只挂在整段会话最新的一条助手消息下面（工具消息不算），
-    // 否则每条回复都吊一排小按钮，既吵又打断文档流的阅读。用户消息不受此限，逐条常驻（见 AgentMessageItem）。
-    // **本轮收工前不挂**：一轮任务里 AI 常常分好几步（工具调用后继续生成），轮内就把按钮挂到
-    // 当前的"最后一条"上，下一步一到按钮又跳到下一条，看起来像按钮在追着消息跑；判据与
-    // computeTaskDurations / computeTurnUsage 的 lastTurnFinished 一致（忙 = 本轮还没收工）。
-    // **只有本轮正常收尾（收到完成标记）才挂**：进行中不挂；主动暂停 / 出错 / 未开始也不挂，
-    // 否则按钮会吊在半截输出上。判据用 ViewModel 的 completedSessions（完成时标记、暂停/出错时清除）。
-    val completedSessions by viewModel.completedSessions.collectAsStateWithLifecycle()
-    val lastActionableMessageId = remember(messages, isBusy, currentSessionId, completedSessions) {
-        val finished = !isBusy && currentSessionId != null && currentSessionId in completedSessions
-        if (finished) messages.lastOrNull { it.rendersActionRow() }?.id else null
+    val reasoningDurations = viewModel.reasoningDurations
+    // 方案 A：每轮正常收尾的最终回复（包括历史所有轮次的回复）均挂操作行（复制/更多），
+    // 彻底解决依赖内存集合导致重启 App 后历史消息丢失操作按钮的 Bug。
+    // 仅在最新一轮正在生成（isBusy == true）时暂不挂出，避免生成中途按钮乱跳。
+    val actionableMessageIds = remember(messages, isBusy) {
+        val (leading, turns) = splitChatTurns(messages)
+        val ids = mutableSetOf<String>()
+        leading.filter { it.rendersActionRow() }.forEach { ids += it.id }
+        for (i in turns.indices) {
+            val turn = turns[i]
+            val isLastTurn = i == turns.lastIndex
+            val turnFinished = !isLastTurn || !isBusy
+            if (turnFinished) {
+                val resultMsg = turn.messages.lastOrNull { it.isResultCandidate() && it.rendersActionRow() }
+                    ?: turn.messages.lastOrNull { it.rendersActionRow() }
+                if (resultMsg != null) {
+                    ids += resultMsg.id
+                }
+            }
+        }
+        ids
     }
     val activeModel = activeProvider?.effectiveModel.orEmpty()
     val activeModelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, activeModel)] }
@@ -1385,24 +1394,8 @@ fun AIChatPanel(
                     enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                     exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                 ) {
-                    val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            // 左侧竖线（与思考窗口一致）：高度自动等于过程内容高度
-                            .drawBehind {
-                                val stroke = 1.dp.toPx()
-                                drawRect(
-                                    color = lineColor,
-                                    topLeft = Offset(Spacing.sm.toPx(), 0f),
-                                    size = Size(stroke, size.height)
-                                )
-                            }
-                            .padding(start = Spacing.sm + 2.dp + Spacing.md)
-                    ) {
-                        Column {
-                            item.turnProcess.forEach { child -> RenderChatItem(child) }
-                        }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        item.turnProcess.forEach { child -> RenderChatItem(child) }
                     }
                 }
             }
@@ -1411,6 +1404,7 @@ fun AIChatPanel(
                 ReasoningBubble(
                     text = item.message.reasoning.orEmpty(),
                     cache = markdownCache,
+                    durationMs = reasoningDurations[item.message.id],
                     expandedOverride = reasoningOverrideSnapshot[item.message.id],
                     onExpandedChange = { viewModel.setReasoningExpanded(item.message.id, it) }
                 )
@@ -1435,7 +1429,7 @@ fun AIChatPanel(
                             val live = runningTool.firstOrNull { it.messageId == member.id }?.text
                             AgentMessageItem(
                                 message = member,
-                                showActions = member.id == lastActionableMessageId,
+                                showActions = member.id in actionableMessageIds,
                                 liveOutput = live,
                                 markdownCache = markdownCache,
                                 onRewindClick = { viewModel.openRewindMenu(it) },
@@ -1458,7 +1452,7 @@ fun AIChatPanel(
                 val live = runningTool.firstOrNull { it.messageId == message.id }?.text
                 AgentMessageItem(
                     message = message,
-                    showActions = message.id == lastActionableMessageId,
+                    showActions = message.id in actionableMessageIds,
                     liveOutput = live,
                     markdownCache = markdownCache,
                     contentSlice = item.slice,
@@ -1473,6 +1467,7 @@ fun AIChatPanel(
                     toolExpandedOverride = toolGroupOverrideSnapshot[message.id],
                     onToolExpandedChange = { isExpanded -> viewModel.setToolExpanded(message.id, isExpanded) },
                     onToolToggle = onToolItemToggled,
+                    reasoningDurationMs = reasoningDurations[message.id],
                     taskDurationMs = taskDurations[message.id],
                     turnUsage = turnUsages[message.id],
                     entryDelayMs = messageEntryDelays[message.id]
@@ -1544,7 +1539,10 @@ fun AIChatPanel(
                         }
                     }
                 } else if (messages.isEmpty()) {
-                    WelcomeState(modifier = Modifier.fillMaxSize())
+                    WelcomeState(
+                        bottomReserve = with(LocalDensity.current) { inputBarReservePx.toDp() },
+                        modifier = Modifier.fillMaxSize()
+                    )
                 } else {
                     LazyColumn(
                         state = listState,
@@ -1772,6 +1770,9 @@ fun AIChatPanel(
                 slashCommands = slashCommands,
                 queuedRequests = queuedRequests,
                 onRemoveQueued = { viewModel.removeQueuedRequest(it) },
+                onMoveQueued = { from, to -> viewModel.moveQueuedRequest(from, to) },
+                onEditQueued = { queuedEditing = it },
+                onInterjectQueued = { viewModel.interjectQueuedRequest(it) },
                 dashboardState = currentDashboardState,
                 todoItems = currentTodoItems,
                 sessionId = currentSessionId.orEmpty(),
@@ -1925,6 +1926,17 @@ fun AIChatPanel(
                     onConfirm = { newContent ->
                         viewModel.updateMessageContent(message.id, newContent)
                         editingMessage = null
+                    }
+                )
+            }
+
+            queuedEditing?.let { req ->
+                EditMessageDialog(
+                    initialText = req.request,
+                    onDismiss = { queuedEditing = null },
+                    onConfirm = { newContent ->
+                        viewModel.updateQueuedRequest(req.id, newContent)
+                        queuedEditing = null
                     }
                 )
             }

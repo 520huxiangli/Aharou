@@ -1,5 +1,6 @@
 package com.aharou
 
+import android.app.ActivityManager
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -377,6 +378,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                 runCatching { workspaceRepository.initialize() }
                     .onFailure { FileLogger.w(TAG, "SSH 重连后重新加载工作区失败", it) }
                 syncDocsToRemote()
+                releaseBuiltinAssetsToRemote()
             }
         }
         // 当前激活 profile 的连接配置变化（编辑连接/编辑 profile/切 profile/切模式）即重连，改连接即时生效。
@@ -391,6 +393,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                     remoteSshConnection.connect(config)
                     // 连接成功后同步内置文档到远程 ~/.aharou/docs/，供 AI 查阅。
                     syncDocsToRemote()
+                    releaseBuiltinAssetsToRemote()
                 }.onFailure { FileLogger.e(TAG, "SSH 连接失败，将在首次命令时重试", it) }
             }
         }
@@ -466,6 +469,24 @@ class AIEditorApp : Application(), Configuration.Provider {
             collectAssetDocs("docs", "", docs)
             remoteSshConnection.uploadDocs(docs)
         }.onFailure { FileLogger.w(TAG, "同步内置文档到远程失败", it) }
+    }
+
+    /**
+     * 释放内置子代理定义（Explore）到远程 `~/.aharou/agents`。远程模式下全局 agents 以远端为准，
+     * 内置默认需在远端存在才能开箱即用；仅补齐缺失、不覆盖用户修改。
+     */
+    private suspend fun releaseBuiltinAssetsToRemote() {
+        remoteSshConnection.uploadBuiltinFiles("agents", collectAssetBytes("agents"))
+    }
+
+    /** 收集 assets 目录下的扁平文件（name → 字节）。目录项会被跳过。 */
+    private fun collectAssetBytes(assetDir: String): Map<String, ByteArray> {
+        val out = linkedMapOf<String, ByteArray>()
+        assets.list(assetDir)?.forEach { entry ->
+            runCatching { assets.open("$assetDir/$entry").use { out[entry] = it.readBytes() } }
+                .onFailure { FileLogger.w(TAG, "读取内置资源失败: $assetDir/$entry", it) }
+        }
+        return out
     }
 
     /** 递归收集 assets 文档，key 为相对 docs/ 的路径（如 guide/terminal.md）。 */
@@ -568,6 +589,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                         putExtra(CrashActivity.EXTRA_STACK, stackTraceOf(throwable))
                         putExtra(CrashActivity.EXTRA_SCREEN, currentRoute)
                         putExtra(CrashActivity.EXTRA_WORKSPACE_MODE, currentWorkspaceMode)
+                        putExtra(CrashActivity.EXTRA_MEMORY, memorySummary())
                     }
                 )
             } catch (t: Throwable) {
@@ -580,6 +602,26 @@ class AIEditorApp : Application(), Configuration.Provider {
             Process.killProcess(Process.myPid())
         }
     }
+
+    /**
+     * 崩溃进程的内存快照，随报告带出。必须在主进程采集——错误页跑在 :crash 独立进程，
+     * 在那里读到的只是汇报进程的堆，对定位 OOM 无意义。
+     */
+    private fun memorySummary(): String = runCatching {
+        val runtime = Runtime.getRuntime()
+        val maxMb = runtime.maxMemory() / 1024 / 1024
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val pssMb = runCatching {
+            am.getProcessMemoryInfo(intArrayOf(Process.myPid())).firstOrNull()?.totalPss?.toLong()?.div(1024)
+        }.getOrNull()
+        buildString {
+            append("heap ").append(usedMb).append('/').append(maxMb).append("MB")
+            if (pssMb != null) append(", PSS ").append(pssMb).append("MB")
+            append(", memoryClass ").append(am.memoryClass).append("MB")
+            append(", lowRam ").append(am.isLowRamDevice)
+        }
+    }.getOrDefault("unavailable")
 
     private fun stackTraceOf(throwable: Throwable): String {
         val sw = java.io.StringWriter()

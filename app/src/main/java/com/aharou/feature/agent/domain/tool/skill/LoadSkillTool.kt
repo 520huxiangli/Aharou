@@ -17,8 +17,8 @@ import javax.inject.Inject
  * 让 AI 按需加载一个技能的完整指令正文。
  *
  * 系统提示里只注入了各 skill 的 name+description 清单；AI 判断某个 skill 适用时，调用本工具拿到
- * SKILL.md 正文（可能含「先 apk add python3，再 python /root/.aicode/skills/<name>/x.py」之类的执行步骤），
- * 随后用 read_file/execute_command 等工具按正文行事。skill 目录在容器内为 `/root/.aicode/skills/<name>/`。
+ * SKILL.md 正文（可能含「先 apk add python3，再 python ~/.aharou/skills/<name>/x.py」之类的执行步骤），
+ * 随后用 read_file/execute_command 等工具按正文行事。skill 目录在当前执行环境为 `~/.aharou/skills/<name>/`。
  */
 class LoadSkillTool @Inject constructor(
     private val skillRepository: SkillRepository

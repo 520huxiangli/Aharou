@@ -4,6 +4,17 @@
         <item name="android:colorPrimary">@color/primary</item>
     </style>
 
+    <!-- 内置浏览器 WebView 专用主题：WebView 依据所在主题的 android:isLightTheme 决定向网页
+         报告 prefers-color-scheme，而 App 自身是固定 Light 主题 + Compose 控色，故为 WebView
+         单独提供明/暗两套，由 BrowserManager 按浏览器夜间模式选用。 -->
+    <style name="Theme.AICode.WebView" parent="Theme.AICode">
+        <item name="android:isLightTheme">true</item>
+    </style>
+
+    <style name="Theme.AICode.WebView.Dark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:isLightTheme">false</item>
+    </style>
+
     <!-- 冷启动闪屏主题：以 App 图标与应用表面底色作为系统 Window 启动背景，杜绝冷启动刺眼纯白 -->
     <style name="Theme.AICode.Splash" parent="Theme.AICode">
         <item name="android:windowBackground">@drawable/splash_background</item>

@@ -45,10 +45,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -69,8 +67,7 @@ import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.agent.domain.provider.RetryErrorKind
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronUp
+import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Key
 import kotlinx.coroutines.delay
@@ -670,6 +667,8 @@ internal fun ReasoningBubble(
     text: String,
     cache: MarkdownRenderCache? = null,
     showTimer: Boolean = false,
+    /** 已完成思考的总耗时（毫秒）。非空且大于 0 时，折叠行文案展示精确耗时。 */
+    durationMs: Long? = null,
     /** 文本已由外部打字机驱动（流式尾巴场景），跳过内部防抖直接渲染。 */
     preRendered: Boolean = false,
     /** 思考所属会话：切会话时重新计时，否则会拿上一个会话的起点算出离谱的时长。 */
@@ -687,12 +686,12 @@ internal fun ReasoningBubble(
         if (onExpandedChange != null) onExpandedChange(next) else localExpanded = next
     }
     // 思考计时：仅流式思考场景开启，思考结束组件卸载自然停止。存绝对起始时间戳而非累加
-    // 秒数，切页返回或气泡滚出视口重挂载后显示的仍是真实时长；起始戳连同已见文本的长度与
+    // 毫秒数，切页返回或气泡滚出视口重挂载后显示的仍是真实时长；起始戳连同已见文本的长度与
     // 指纹一起进 saveable，恢复时文本若不是同一轮的延续（期间已换轮）则重新计时。
     var timerStartMillis by rememberSaveable { mutableStateOf(0L) }
     var timerSeenChars by rememberSaveable { mutableStateOf(0) }
     var timerSeenHead by rememberSaveable { mutableStateOf(0) }
-    var elapsedSeconds by remember { mutableStateOf(0) }
+    var elapsedMillis by remember { mutableStateOf(0L) }
     val latestText by rememberUpdatedState(text)
     LaunchedEffect(showTimer, sessionKey) {
         if (!showTimer) return@LaunchedEffect
@@ -700,18 +699,28 @@ internal fun ReasoningBubble(
             timerStartMillis = System.currentTimeMillis()
         }
         while (true) {
-            elapsedSeconds = ((System.currentTimeMillis() - timerStartMillis) / 1000).toInt()
+            elapsedMillis = (System.currentTimeMillis() - timerStartMillis).coerceAtLeast(0L)
             timerSeenChars = latestText.length
             timerSeenHead = streamHeadFingerprint(latestText)
-            delay(1000)
+            delay(100)
         }
     }
     // 展开渲染用节流文本（流式思考时降低 md 解析频率）；preRendered 时外部已按打字机节奏给出渲染文本。
     val renderText = if (preRendered) text else rememberThrottledStreamingText(text)
+    val effectiveDurationMs = durationMs?.takeIf { it > 0 } ?: elapsedMillis.takeIf { it > 0 }
+    val formattedDuration = remember(effectiveDurationMs, live) {
+        effectiveDurationMs?.let { ms ->
+            val sec = (ms / 1000.0).coerceAtLeast(0.1)
+            String.format(java.util.Locale.US, "%.1f", sec)
+        }
+    }
     // 折叠行文案：进行中显示实时耗时，完成后显示总耗时（拿不到耗时数据时只显示「思考完成」）。
     val label = when {
-        live -> stringResource(R.string.chat_thinking_running_time, elapsedSeconds)
-        elapsedSeconds > 0 -> stringResource(R.string.chat_thinking_done_time, elapsedSeconds)
+        live -> {
+            val secText = formattedDuration ?: "0.1"
+            stringResource(R.string.chat_thinking_running_time, secText)
+        }
+        formattedDuration != null -> stringResource(R.string.chat_thinking_done_time, formattedDuration)
         else -> stringResource(R.string.chat_thinking_done)
     }
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -729,14 +738,14 @@ internal fun ReasoningBubble(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                overflow = TextOverflow.Ellipsis
             )
-            Icon(
-                if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+            Spacer(Modifier.width(Spacing.xs))
+            ExpandableChevronIcon(
+                expanded = expanded,
                 contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                 tint = Brand.IconGray,
-                modifier = Modifier.size(18.dp)
+                size = 18.dp
             )
         }
         AnimatedVisibility(
@@ -747,22 +756,9 @@ internal fun ReasoningBubble(
             Column {
                 Spacer(Modifier.height(Spacing.sm))
                 val scrollState = rememberScrollState()
-                val lineColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                 val fadeColor = MaterialTheme.colorScheme.background
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // 左侧竖线：高度自动等于内容高度（内容已限高，不会超过窗口）
-                        .drawBehind {
-                            val stroke = 1.dp.toPx()
-                            drawRect(
-                                color = lineColor,
-                                topLeft = Offset(Spacing.sm.toPx(), 0f),
-                                size = Size(stroke, size.height)
-                            )
-                        }
-                        // 内容整体右移，给竖线让位
-                        .padding(start = Spacing.sm + 2.dp + Spacing.md)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     MarkdownContent(
                         text = renderText,
@@ -772,7 +768,7 @@ internal fun ReasoningBubble(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = ReasoningWindowMaxHeight)
-                            .nestedScroll(InnerScrollConsumeRemainder)
+                            .nestedScroll(rememberBoundNestedScrollConnection(scrollState))
                             .verticalScroll(scrollState)
                             .pointerInput(text) {
                                 detectTapGestures(

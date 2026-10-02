@@ -27,7 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
+import com.aharou.core.ui.ChevronRotationStyle
+import com.aharou.core.ui.ExpandableChevronIcon
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
@@ -82,13 +83,11 @@ internal fun CollapsibleGroupHeader(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)
         )
-        Icon(
-            imageVector = FeatherIcons.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.semanticColors.subtleText,
-            modifier = Modifier
-                .size(16.dp)
-                .rotate(if (expanded) 90f else 0f)
+        ExpandableChevronIcon(
+            expanded = expanded,
+            style = ChevronRotationStyle.RIGHT_DOWN,
+            size = 16.dp,
+            tint = MaterialTheme.semanticColors.subtleText
         )
     }
 }

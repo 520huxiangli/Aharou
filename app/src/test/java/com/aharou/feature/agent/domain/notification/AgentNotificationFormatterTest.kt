@@ -48,6 +48,14 @@ class AgentNotificationFormatterTest {
         newMode = AgentMode.AUTO
     )
 
+    private val userMessage = PendingNotification(
+        kind = AgentNotificationKind.USER_MESSAGE,
+        sourceId = "session-1",
+        title = "",
+        outcome = NotificationOutcome.COMPLETED,
+        message = "改用 <方案 B> & 注意兼容性"
+    )
+
     @Test
     fun message_singleBackgroundTask_hasFenceAndFields() {
         val text = AgentNotificationFormatter.buildMessage(listOf(backgroundTask))
@@ -174,5 +182,31 @@ class AgentNotificationFormatterTest {
         assertEquals("AUTO", (obj["new_mode"] as JsonPrimitive).content)
         assertEquals("changed", (obj["status"] as JsonPrimitive).content)
         assertTrue((obj["hint"] as JsonPrimitive).content.contains("新模式"))
+    }
+
+    /**
+     * 用户插话作为 user 消息落库时直接输出原文、不带系统通知前缀——否则 UI 会渲染成
+     * 系统提示条、完成通知正文也会误判。
+     */
+    @Test
+    fun message_userMessageIsPlainUserText() {
+        val text = AgentNotificationFormatter.buildMessage(listOf(userMessage))
+
+        assertEquals(userMessage.message, text)
+        assertFalse(text.startsWith(BACKGROUND_NOTIFICATION_PREFIX))
+        assertFalse(text.contains("不是来自用户的消息"))
+    }
+
+    /** 搭车注入的 JSON 形态：kind=user_message，notice 说明它是用户本人输入而非系统事件。 */
+    @Test
+    fun jsonArray_userMessageCarriesUserNotice() {
+        val array = AgentNotificationFormatter.buildJsonArray(listOf(userMessage))
+        val obj = array[0] as JsonObject
+
+        assertEquals("user_message", (obj["kind"] as JsonPrimitive).content)
+        assertEquals("message", (obj["status"] as JsonPrimitive).content)
+        assertEquals(userMessage.message, (obj["message"] as JsonPrimitive).content)
+        assertTrue((obj["notice"] as JsonPrimitive).content.contains("用户"))
+        assertFalse((obj["notice"] as JsonPrimitive).content.contains("不是来自用户的消息"))
     }
 }

@@ -116,8 +116,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
 import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Check
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronUp
+import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Maximize
 import compose.icons.feathericons.Minimize
@@ -177,6 +176,9 @@ internal fun ChatInputBar(
     slashCommands: List<SlashCommand> = emptyList(),
     queuedRequests: List<QueuedRequest> = emptyList(),
     onRemoveQueued: (String) -> Unit = {},
+    onMoveQueued: (Int, Int) -> Unit = { _, _ -> },
+    onEditQueued: (QueuedRequest) -> Unit = {},
+    onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
@@ -345,7 +347,12 @@ internal fun ChatInputBar(
             if (queuedRequests.isNotEmpty()) {
                 QueuedRequestPanel(
                     queuedRequests = queuedRequests,
-                    onRemoveQueued = onRemoveQueued
+                    sessionId = sessionId,
+                    forceCollapse = forceCollapseDashboard,
+                    onRemoveQueued = onRemoveQueued,
+                    onMoveQueued = onMoveQueued,
+                    onEditQueued = onEditQueued,
+                    onInterjectQueued = onInterjectQueued
                 )
             }
 
@@ -925,11 +932,11 @@ internal fun ToolPermissionPanel(
                     onClick = { expanded = !expanded },
                     modifier = Modifier.size(28.dp)
                 ) {
-                    Icon(
-                        imageVector = if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                    ExpandableChevronIcon(
+                        expanded = effectiveExpanded,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
+                        size = 18.dp
                     )
                 }
             }
@@ -1085,11 +1092,11 @@ private fun ErrorBubble(message: String) {
                         modifier = Modifier.size(16.dp)
                     )
                 }
-                Icon(
-                    if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                ExpandableChevronIcon(
+                    expanded = expanded,
                     contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
                     tint = Brand.IconGray,
-                    modifier = Modifier.size(18.dp)
+                    size = 18.dp
                 )
             }
             AnimatedVisibility(
@@ -1163,11 +1170,11 @@ internal fun PlanApprovalPanel(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-                Icon(
-                    imageVector = if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                ExpandableChevronIcon(
+                    expanded = effectiveExpanded,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
+                    size = 18.dp
                 )
             }
 

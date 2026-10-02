@@ -30,6 +30,13 @@ class PathHomeResolver @Inject constructor(
         else -> containerHome ?: "/root"
     }
 
+    /**
+     * 当前执行环境下的 AI 配置根目录（`<home>/.aharou`）：本地容器为 `/root/.aharou`，
+     * 远程为服务器用户 home 下的 `.aharou`。供需要执行/回显该目录内文件的代码统一取用，
+     * 避免写死 `/root`（远程非 root 用户会指错）。
+     */
+    fun aharouRoot(): String = home().trimEnd('/') + "/.aharou"
+
     /** 展开 `~` 或 `~/` 前缀为当前环境的 home 路径；其它路径原样返回。 */
     fun expandHome(path: String): String {
         val h = home()

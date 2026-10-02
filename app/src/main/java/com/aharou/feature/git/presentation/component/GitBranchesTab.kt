@@ -1,8 +1,6 @@
 package com.aharou.feature.git.presentation.component
 
 import androidx.annotation.StringRes
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,7 +47,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -67,7 +64,8 @@ import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.git.domain.model.GitBranch
 import com.aharou.feature.git.domain.model.GitTag
 import compose.icons.FeatherIcons
-import compose.icons.feathericons.ChevronRight
+import com.aharou.core.ui.ChevronRotationStyle
+import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.GitBranch
@@ -597,11 +595,6 @@ private fun RefSectionHeader(
     onToggle: () -> Unit,
     onAdd: (() -> Unit)? = null
 ) {
-    val rotation by animateFloatAsState(
-        targetValue = if (isExpanded) 90f else 0f,
-        animationSpec = tween(180),
-        label = "ref-chevron"
-    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -609,10 +602,11 @@ private fun RefSectionHeader(
             .padding(start = Spacing.md + (indent * 16).dp, end = Spacing.sm, top = Spacing.sm, bottom = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = FeatherIcons.ChevronRight,
+        ExpandableChevronIcon(
+            expanded = isExpanded,
+            style = ChevronRotationStyle.RIGHT_DOWN,
             contentDescription = if (isExpanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
-            modifier = Modifier.size(16.dp).rotate(rotation),
+            size = 16.dp,
             tint = MaterialTheme.semanticColors.subtleText
         )
         Spacer(Modifier.width(Spacing.xs))

@@ -1,5 +1,9 @@
 package com.aharou.feature.agent.presentation.component
 
+import android.os.Build
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,12 +28,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Radius
@@ -268,16 +274,21 @@ internal fun RemoteConnectingPlaceholder(
 }
 
 @Composable
-internal fun WelcomeState(modifier: Modifier = Modifier) {
+internal fun WelcomeState(bottomReserve: Dp, modifier: Modifier = Modifier) {
     BoxWithConstraints(
         modifier = modifier.padding(Spacing.xl),
         contentAlignment = Alignment.Center
     ) {
+        val targetOffset = minOf(-(maxHeight * 0.13f), -(bottomReserve / 2))
+        val animatedOffset by animateDpAsState(
+            targetValue = targetOffset,
+            animationSpec = if (Build.VERSION.SDK_INT >= 30) snap() else tween(durationMillis = 220),
+            label = "welcome-offset"
+        )
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-            // 底部悬浮输入框占据大量空间，纯居中会显得偏下；整体上移 13% 屏高，让重心落在顶栏与输入框之间的空白正中
-            modifier = Modifier.offset(y = -(maxHeight * 0.13f))
+            modifier = Modifier.offset(y = animatedOffset)
         ) {
             Text(
                 text = stringResource(R.string.chat_placeholder),

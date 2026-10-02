@@ -68,8 +68,8 @@ import com.aharou.feature.settings.presentation.component.SettingsDivider
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Archive
 import compose.icons.feathericons.Check
-import compose.icons.feathericons.ChevronDown
-import compose.icons.feathericons.ChevronRight
+import com.aharou.core.ui.ChevronRotationStyle
+import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.DownloadCloud
 import compose.icons.feathericons.EyeOff
@@ -942,11 +942,12 @@ private fun UntrackedDirRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Icon(
-                if (expanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+            ExpandableChevronIcon(
+                expanded = expanded,
+                style = ChevronRotationStyle.RIGHT_DOWN,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(16.dp)
+                size = 16.dp
             )
         }
         IconButton(onClick = onStage, enabled = enabled) {
