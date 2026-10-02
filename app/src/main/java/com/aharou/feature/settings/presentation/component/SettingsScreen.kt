@@ -16,6 +16,7 @@ import androidx.compose.animation.ContentTransform
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,6 +96,7 @@ import com.aharou.feature.settings.presentation.SkillExportState
 import com.aharou.feature.settings.presentation.SkillImportState
 import com.aharou.feature.settings.presentation.SkillUiEntry
 import com.aharou.feature.agent.domain.skill.SkillImportError
+import com.aharou.feature.agent.domain.skill.SkillMoveResult
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
@@ -319,6 +322,8 @@ fun SettingsScreen(
 
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
+    // 市场列表的滚动位置：放在这一层，进技能详情页再返回时不会跳回第一条
+    val marketListState = rememberLazyListState()
     var logReturnSection by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
     var showAddProviderSheet by remember { mutableStateOf(false) }
@@ -383,6 +388,8 @@ fun SettingsScreen(
     // 「添加技能」底部弹层：选择作用域后走手动新建 / 文件导入 / 压缩包导入。
     var showSkillAddSheet by remember { mutableStateOf(false) }
     var skillImportScope by remember { mutableStateOf(SkillScope.GLOBAL) }
+    // 最近一次发起搬运的目标作用域：结果回来时靠它决定提示文案（详情页与列表长按菜单共用）。
+    var skillMoveTarget by remember { mutableStateOf(SkillScope.GLOBAL) }
     // 技能文件 / 压缩包选择器：结果交给 ViewModel 读取并落盘到所选作用域。
     val skillFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.importSkillFromMarkdown(uri, skillImportScope)
@@ -456,6 +463,47 @@ fun SettingsScreen(
             selectedSkill = fresh
             pendingSkillName = null
         }
+    }
+
+    // 技能导出结果（详情页「导出」与列表长按菜单都能触发）统一在这里处理：成功后调系统分享。
+    val skillExportState by viewModel.skillExportState.collectAsStateWithLifecycle()
+    LaunchedEffect(skillExportState) {
+        when (val state = skillExportState) {
+            is SkillExportState.Ready -> {
+                shareFile(context, state.file, "application/zip")
+                viewModel.clearSkillExportState()
+            }
+            SkillExportState.Failed -> {
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.skills_export_failed),
+                    Toast.LENGTH_SHORT
+                ).show()
+                viewModel.clearSkillExportState()
+            }
+            else -> Unit
+        }
+    }
+
+    // 搬运结果提示（详情页「存放位置」行与列表长按菜单都能触发）。
+    val skillMoveResult by viewModel.skillMoveResult.collectAsStateWithLifecycle()
+    LaunchedEffect(skillMoveResult) {
+        val result = skillMoveResult ?: return@LaunchedEffect
+        val text = when (result) {
+            SkillMoveResult.OK -> context.getString(
+                if (skillMoveTarget == SkillScope.PROJECT) R.string.skills_move_ok_project
+                else R.string.skills_move_ok_global
+            )
+            SkillMoveResult.NAME_CONFLICT -> context.getString(R.string.skills_move_conflict)
+            SkillMoveResult.READ_ONLY -> context.getString(R.string.skills_move_readonly)
+            SkillMoveResult.FAILED -> context.getString(R.string.skills_move_failed)
+        }
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        if (result == SkillMoveResult.OK) {
+            // 搬完作用域变了：详情页开着的话靠 pendingSkillName 换成列表里的新快照
+            pendingSkillName = selectedSkill?.name
+        }
+        viewModel.clearSkillMoveResult()
     }
 
     // 编辑保存后回详情页：等列表刷新出新快照再换，避免详情页停在保存前的旧值（改名时按新名找）。
@@ -743,10 +791,30 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                        SettingsSection.SkillMarket -> {
+                            val marketRefreshing by viewModel.marketLoading.collectAsStateWithLifecycle()
+                            IconButton(
+                                onClick = { viewModel.refreshMarket() },
+                                enabled = !marketRefreshing
+                            ) {
+                                if (marketRefreshing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(
+                                        FeatherIcons.RefreshCw,
+                                        contentDescription = stringResource(R.string.skills_market_refresh),
+                                        tint = MaterialTheme.colorScheme.onBackground,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                        }
                         SettingsSection.Skills -> IconButton(onClick = {
                             showSkillAddSheet = true
-                        }) {
-                            Icon(
+                        }) {                            Icon(
                                 FeatherIcons.Plus,
                                 contentDescription = stringResource(R.string.skills_add),
                                 tint = MaterialTheme.colorScheme.onBackground,
@@ -989,6 +1057,11 @@ fun SettingsScreen(
                     projectName = currentProjectName,
                     entries = skills,
                     onDelete = { skillToDelete = it },
+                    onMove = { name, from, to ->
+                        skillMoveTarget = to
+                        viewModel.moveSkill(name, from, to)
+                    },
+                    onExport = { viewModel.exportSkill(it) },
                     onOpenDetail = {
                         selectedSkill = it
                         section = SettingsSection.SkillDetail
@@ -1000,21 +1073,19 @@ fun SettingsScreen(
                     val marketSkills by viewModel.marketSkills.collectAsStateWithLifecycle()
                     val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
                     val marketAlert by viewModel.marketAlert.collectAsStateWithLifecycle()
-                    val marketSort by viewModel.marketSort.collectAsStateWithLifecycle()
+                    val marketTranslations by viewModel.marketTranslations.collectAsStateWithLifecycle()
                     SkillMarketSection(
                         sources = marketSources,
                         selectedSourceId = marketSourceId,
                         skills = marketSkills,
+                        translations = marketTranslations,
                         loading = marketLoading,
                         alert = marketAlert,
-                        scope = skillImportScope,
-                        sort = marketSort,
-                        onScopeChange = { skillImportScope = it },
+                        listState = marketListState,
                         onSelectSource = { viewModel.selectMarketSource(it) },
                         onInstall = { viewModel.installFromMarket(it, skillImportScope) },
                         onLoadRepo = { viewModel.loadMarketFromRepo(it) },
                         onSearch = { query, address -> viewModel.searchMarket(query, address) },
-                        onSortChange = { viewModel.setMarketSort(it) },
                         onOpenDetail = { skill ->
                             viewModel.openMarketDetail(skill)
                             section = SettingsSection.SkillMarketDetail
@@ -1023,9 +1094,11 @@ fun SettingsScreen(
                 }
                 SettingsSection.SkillMarketDetail -> {
                     val detail by viewModel.marketDetail.collectAsStateWithLifecycle()
+                    val marketTranslations by viewModel.marketTranslations.collectAsStateWithLifecycle()
                     detail?.let { state ->
                         SkillMarketDetailSection(
                             state = state,
+                            translations = marketTranslations,
                             scope = skillImportScope,
                             onScopeChange = { skillImportScope = it },
                             onInstall = { viewModel.installFromMarket(it, skillImportScope) }
@@ -1033,24 +1106,6 @@ fun SettingsScreen(
                     }
                 }
                 SettingsSection.SkillDetail -> selectedSkill?.let { entry ->
-                    val exportState by viewModel.skillExportState.collectAsStateWithLifecycle()
-                    LaunchedEffect(exportState) {
-                        when (val state = exportState) {
-                            is SkillExportState.Ready -> {
-                                shareFile(context, state.file, "application/zip")
-                                viewModel.clearSkillExportState()
-                            }
-                            SkillExportState.Failed -> {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.skills_export_failed),
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                                viewModel.clearSkillExportState()
-                            }
-                            else -> Unit
-                        }
-                    }
                     SkillDetailSection(
                         entry = entry,
                         cache = skillMarkdownCache,
@@ -1059,8 +1114,12 @@ fun SettingsScreen(
                             // 同步更新详情页快照，开关立即响应
                             selectedSkill = selectedSkill?.copy(disabled = !enabled)
                         },
+                        onMove = { target ->
+                            skillMoveTarget = target
+                            viewModel.moveSkill(entry.name, entry.scope, target)
+                        },
                         onExport = { viewModel.exportSkill(entry) },
-                        exporting = exportState is SkillExportState.Running
+                        exporting = skillExportState is SkillExportState.Running
                     )
                 }
                 SettingsSection.SubAgents -> SubAgentsSection(
@@ -1555,6 +1614,11 @@ internal fun SettingsMenu(
     onRerunOnboarding: () -> Unit,
     onOpen: (SettingsSection) -> Unit
 ) {
+    // 低频三组默认收起：首屏不至拉成一条长单（点标题展开，状态在本次设置会话里保留）
+    var envExpanded by rememberSaveable { mutableStateOf(false) }
+    var dataExpanded by rememberSaveable { mutableStateOf(false) }
+    var helpExpanded by rememberSaveable { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1695,8 +1759,12 @@ internal fun SettingsMenu(
         }
 
         // ── 运行环境 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_environment))
-        SettingsGroup {
+        SettingsGroupHeader(
+            text = stringResource(R.string.settings_category_environment),
+            expanded = envExpanded,
+            onToggle = { envExpanded = !envExpanded }
+        )
+        SettingsGroup(visible = envExpanded) {
             SettingsRow(
                 icon = FeatherIcons.HardDrive,
                 title = stringResource(SettingsSection.Container.titleRes),
@@ -1763,8 +1831,12 @@ internal fun SettingsMenu(
         }
 
         // ── 数据与诊断 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_data))
-        SettingsGroup {
+        SettingsGroupHeader(
+            text = stringResource(R.string.settings_category_data),
+            expanded = dataExpanded,
+            onToggle = { dataExpanded = !dataExpanded }
+        )
+        SettingsGroup(visible = dataExpanded) {
             SettingsRow(
                 icon = FeatherIcons.BarChart2,
                 title = stringResource(SettingsSection.TokenStats.titleRes),
@@ -1803,8 +1875,12 @@ internal fun SettingsMenu(
         }
 
         // ── 帮助与关于 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_help))
-        SettingsGroup {
+        SettingsGroupHeader(
+            text = stringResource(R.string.settings_category_help),
+            expanded = helpExpanded,
+            onToggle = { helpExpanded = !helpExpanded }
+        )
+        SettingsGroup(visible = helpExpanded) {
             SettingsRow(
                 icon = FeatherIcons.BookOpen,
                 title = stringResource(R.string.settings_user_guide),

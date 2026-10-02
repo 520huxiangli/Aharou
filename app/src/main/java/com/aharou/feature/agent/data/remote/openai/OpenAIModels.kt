@@ -23,8 +23,19 @@ data class OpenAIChatMessage(
     /** DeepSeek 思考模式要求将上轮 assistant 消息的 reasoning_content 原样回传，否则 400。 */
     val reasoning_content: String? = null,
     /** 部分第三方兼容服务（如 mimo）用顶层 reasoning 而非 reasoning_content 传思考内容。 */
-    val reasoning: String? = null
+    val reasoning: String? = null,
+    /** 生图模型的响应扩展：部分兼容服务在 assistant message 里返回 `images` 数组（本项目用户中转站即此格式）。 */
+    val images: List<OpenAIImagePart>? = null
 )
+
+/** Chat Completions 生图扩展里的单个图片项（流式 `delta.images` 与非流式 `message.images` 同形）。 */
+data class OpenAIImagePart(
+    val type: String? = null,
+    val image_url: OpenAIImageUrl? = null,
+    val index: Int? = null
+)
+
+data class OpenAIImageUrl(val url: String? = null)
 
 data class OpenAIToolDefinition(
     val type: String = "function",
@@ -75,9 +86,13 @@ data class Usage(
     val prompt_tokens_details: PromptTokensDetails? = null
 )
 
-/** Chat Completions 的输入 token 明细：cached_tokens 为命中缓存的部分。 */
+/**
+ * Chat Completions 的输入 token 明细：cached_tokens 为命中缓存的部分，
+ * cache_write_tokens 为写入缓存的部分（GPT-5.6 起才有、按高于输入价计费）。
+ */
 data class PromptTokensDetails(
-    val cached_tokens: Int? = null
+    val cached_tokens: Int? = null,
+    val cache_write_tokens: Int? = null
 )
 
 /**

@@ -192,7 +192,7 @@ internal fun TokenStatsSection(
                     SummaryCard(
                         label = stringResource(R.string.settings_token_stats_cache_hit_rate),
                         value = if (hasData) formatCacheHitRate(summary) else "-",
-                        sub = if (hasData) formatCache(context, summary.cachedInputTokens) else null,
+                        sub = if (hasData) formatCache(context, summary.cachedInputTokens, summary.cacheCreationTokens) else null,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -901,7 +901,8 @@ private fun CallRecordsTable(
                     TableCell(stringResource(R.string.settings_token_stats_col_status), mutedColor, COL_STATUS_W, FontWeight.Medium)
                     TableCell(stringResource(R.string.settings_token_stats_col_input), mutedColor, COL_TOKENS_W, FontWeight.Medium)
                     TableCell(stringResource(R.string.settings_token_stats_col_output), mutedColor, COL_TOKENS_W, FontWeight.Medium)
-                    TableCell(stringResource(R.string.settings_token_stats_col_cached), mutedColor, COL_TOKENS_W, FontWeight.Medium)
+                    TableCell(stringResource(R.string.settings_token_stats_col_cached_read), mutedColor, COL_TOKENS_W, FontWeight.Medium)
+                    TableCell(stringResource(R.string.settings_token_stats_col_cached_write), mutedColor, COL_TOKENS_W, FontWeight.Medium)
                     TableCell(stringResource(R.string.settings_token_stats_col_cache_hit_rate), mutedColor, COL_TOKENS_W, FontWeight.Medium)
                     TableCell(stringResource(R.string.settings_token_stats_col_ttfb), mutedColor, COL_DURATION_W, FontWeight.Medium)
                     TableCell(stringResource(R.string.settings_token_stats_col_duration), mutedColor, COL_DURATION_W, FontWeight.Medium)
@@ -937,6 +938,7 @@ private fun CallRecordRow(call: RecentCallRecord, cost: Double?, textColor: Colo
         TableCell(call.record.inputTokens.toString(), textColor, COL_TOKENS_W)
         TableCell(call.record.outputTokens.toString(), textColor, COL_TOKENS_W)
         TableCell(call.record.cachedInputTokens.toString(), textColor, COL_TOKENS_W)
+        TableCell(call.record.cacheCreationTokens.toString(), textColor, COL_TOKENS_W)
         TableCell(formatRecordCacheHitRate(call.record), textColor, COL_TOKENS_W)
         TableCell(formatDuration(call.record.ttfbMillis?.toDouble()), mutedColor, COL_DURATION_W)
         TableCell(formatDuration(call.record.durationMillis?.toDouble()), mutedColor, COL_DURATION_W)
@@ -958,8 +960,16 @@ private fun TableCell(text: String, color: Color, width: Dp, fontWeight: FontWei
 }
 
 /** 与对话页头部一致的 token 缩写格式（见 MarkdownContent.formatTokenCount）：1234 -> 1.2k。 */
-private fun formatCache(context: android.content.Context, cached: Long): String =
-    if (cached > 0) context.getString(R.string.settings_token_stats_cached, formatTokenCount(cached)) else ""
+private fun formatCache(context: android.content.Context, cachedRead: Long, cachedWrite: Long): String =
+    if (cachedRead > 0 || cachedWrite > 0) {
+        context.getString(
+            R.string.settings_token_stats_cache_read_write,
+            formatTokenCount(cachedRead),
+            formatTokenCount(cachedWrite)
+        )
+    } else {
+        ""
+    }
 
 private fun formatCallTime(epochMillis: Long): String =
     SimpleDateFormat("yyyy/M/d HH:mm", Locale.getDefault()).format(Date(epochMillis))

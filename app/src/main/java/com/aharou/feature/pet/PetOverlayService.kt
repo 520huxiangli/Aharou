@@ -92,11 +92,13 @@ class PetOverlayService : Service() {
         private const val LEGACY_KEY_ENABLED = "enabled"
 
         private const val ACTION_SET_SIZE = "com.aharou.feature.pet.action.SET_SIZE"
+        private const val ACTION_SET_ROLE = "com.aharou.feature.pet.action.SET_ROLE"
         private const val ACTION_SET_ALWAYS = "com.aharou.feature.pet.action.SET_ALWAYS"
         private const val ACTION_SHOW = "com.aharou.feature.pet.action.SHOW"
         private const val ACTION_HIDE = "com.aharou.feature.pet.action.HIDE"
         private const val ACTION_PASS_OFF = "com.aharou.feature.pet.action.PASS_OFF"
         private const val ACTION_SET_PASS = "com.aharou.feature.pet.action.SET_PASS"
+        private const val ACTION_SET_ISLAND = "com.aharou.feature.pet.action.SET_ISLAND"
         private const val EXTRA_PASS = "pass"
 
         /** 任务至少跑了这么久才值得播报「干完了」，免得短问答也叮一下。 */
@@ -111,6 +113,7 @@ class PetOverlayService : Service() {
         /** 生成一句台词的超时：超了就退回写死的台词，不能让她干张着嘴。 */
         private const val LINE_TIMEOUT_MS = 12_000L
         private const val EXTRA_SIZE = "size"
+        private const val EXTRA_ROLE = "role"
         private const val EXTRA_ALWAYS = "always"
 
         /**
@@ -174,6 +177,20 @@ class PetOverlayService : Service() {
             send(context, ACTION_SET_ALWAYS) { it.putExtra(EXTRA_ALWAYS, always) }
         }
 
+        /** 换角色：写偏好 + 让正在跑的悬浮窗立刻重载素材（没在跑就下次 attach 生效）。 */
+        fun applyRole(context: Context, roleId: String) {
+            PetOverlay.writeRole(context, roleId)
+            if (!running) return
+            send(context, ACTION_SET_ROLE) { it.putExtra(EXTRA_ROLE, roleId) }
+        }
+
+        /** 开关灵动岛：先落盘（服务没跑时下次生效），在跑就立即生效。 */
+        fun applyIsland(context: Context, on: Boolean) {
+            PetIsland.writeEnabled(context, on)
+            if (!running) return
+            send(context, ACTION_SET_ISLAND)
+        }
+
         /** 改摆件模式：先落盘（服务没跑时下次生效），在跑就让她重设窗口属性。 */
         fun applyPassThrough(context: Context, on: Boolean) {
             PetOverlay.writePassThrough(context, on)
@@ -197,6 +214,9 @@ class PetOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collectorJob: Job? = null
     private lateinit var overlay: PetOverlay
+
+    /** 灵动岛（可选的贴屏胶囊）；没开或没权限时是 null。 */
+    private var island: PetIsland? = null
     private val appForeground = MutableStateFlow(true)
 
     private val always = MutableStateFlow(false)
@@ -265,12 +285,15 @@ class PetOverlayService : Service() {
                     PetRadialMenu.ID_HIDE -> setHidden(true)
                     PetRadialMenu.ID_PASS -> setPassThrough(true)
                     PetRadialMenu.ID_SHOT -> captureScreen()
+                    PetRadialMenu.ID_EASTER ->
+                        PetEasterEgg.showRandom(this, PetOverlay.readRole(this))
                 }
             }
             pet.onSpeakRequest = { requestLine() }
         }
         always.value = prefs().getBoolean(PetOverlay.KEY_ALWAYS, true)
         hidden.value = prefs().getBoolean(PetOverlay.KEY_HIDDEN, false)
+        syncIsland()
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
         // 启动时预拉天气并写入缓存，现身时直接用缓存而不是当场拉网络
         scope.launch { PetDailyBrief.prefetch(this@PetOverlayService) }
@@ -568,6 +591,32 @@ class PetOverlayService : Service() {
         }
     }
 
+    /**
+     * 按开关同步灵动岛：开着就拉起来（没建过就建），关了或没有悬浮窗权限就收掉。
+     * 权限判断走 [PetOverlay.hasOverlayPermission]，与桌宠本体同一套。
+     */
+    private fun syncIsland() {
+        if (!PetIsland.isEnabled(this) || !overlay.hasOverlayPermission()) {
+            island?.dismiss()
+            island = null
+            return
+        }
+        if (island?.isShowing == true) return
+        val view = island ?: PetIsland(this).also { it.onTogglePet = { togglePetVisible() } }
+        view.show()
+        island = view
+    }
+
+    /** 灵动岛单击：桌宠在就藏起来，藏起来了就放出来。 */
+    private fun togglePetVisible() {
+        if (hidden.value) {
+            setHidden(false)
+            overlay.show()
+        } else {
+            setHidden(true)
+        }
+    }
+
     private fun setHidden(value: Boolean) {
         prefs().edit().putBoolean(PetOverlay.KEY_HIDDEN, value).apply()
         hidden.value = value
@@ -622,6 +671,9 @@ class PetOverlayService : Service() {
                 val key = intent.getStringExtra(EXTRA_SIZE)
                 overlay.setSize(PetOverlay.Size.from(key))
             }
+            ACTION_SET_ROLE -> {
+                intent.getStringExtra(EXTRA_ROLE)?.let { overlay.setRole(it) }
+            }
             ACTION_SET_ALWAYS -> {
                 always.value = intent.getBooleanExtra(EXTRA_ALWAYS, false)
             }
@@ -632,6 +684,7 @@ class PetOverlayService : Service() {
             ACTION_HIDE -> setHidden(true)
             ACTION_PASS_OFF -> setPassThrough(false)
             ACTION_SET_PASS -> setPassThrough(intent.getBooleanExtra(EXTRA_PASS, false))
+            ACTION_SET_ISLAND -> syncIsland()
             else -> {
                 if (!isEnabled(this)) {
                     // 开关被关掉但服务还在（例如被系统重建）——收干净。
@@ -657,6 +710,8 @@ class PetOverlayService : Service() {
         runCatching { tone?.release() }
         tone = null
         runCatching { ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver) }
+        island?.dismiss()
+        island = null
         runCatching { overlay.release() }
         scope.cancel()
         super.onDestroy()

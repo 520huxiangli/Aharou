@@ -19,12 +19,12 @@ interface GeminiApi {
 
     @Streaming
     @POST
-    suspend fun streamGenerateContent(
+    fun streamGenerateContent(
         @Url url: String,
         @Header("x-goog-api-key") apiKey: String,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
-    ): ResponseBody
+    ): retrofit2.Call<ResponseBody>
 
     /** Interactions API（`v1beta/interactions`）的非流式请求。 */
     @POST
@@ -41,10 +41,10 @@ interface GeminiApi {
      */
     @Streaming
     @POST
-    suspend fun streamInteraction(
+    fun streamInteraction(
         @Url url: String,
         @Header("x-goog-api-key") apiKey: String,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
-    ): ResponseBody
+    ): retrofit2.Call<ResponseBody>
 }

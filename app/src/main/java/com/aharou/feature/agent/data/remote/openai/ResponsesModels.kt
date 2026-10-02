@@ -47,6 +47,8 @@ object ResponsesItem {
     const val FUNCTION_CALL = "function_call"
     const val FUNCTION_CALL_OUTPUT = "function_call_output"
     const val REASONING = "reasoning"
+    /** 模型经服务端 image_generation 工具产出的图片项，`result` 为 base64。 */
+    const val IMAGE_GENERATION_CALL = "image_generation_call"
 }
 
 /** Responses content part 的 `type` 取值。 */

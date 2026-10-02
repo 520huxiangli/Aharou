@@ -262,6 +262,56 @@ class LocalFileAccessTest {
     }
 
     @Test
+    fun copy_samePathOverwrite_preservesSource() {
+        val access = newAccess()
+        access.writeFile("src.txt", "content", overwrite = true)
+        assertThrows(java.io.IOException::class.java) {
+            access.copy("src.txt", "./src.txt", overwrite = true)
+        }
+        assertEquals("content", access.readFile("src.txt"))
+    }
+
+    @Test
+    fun move_samePathOverwrite_preservesSource() {
+        val access = newAccess()
+        access.writeFile("src.txt", "content", overwrite = true)
+        assertThrows(java.io.IOException::class.java) {
+            access.move("src.txt", "./src.txt", overwrite = true)
+        }
+        assertEquals("content", access.readFile("src.txt"))
+    }
+
+    @Test
+    fun copy_directoryIntoDescendant_preservesSource() {
+        val access = newAccess()
+        access.writeFile("dir/file.txt", "content", overwrite = true)
+        assertThrows(java.io.IOException::class.java) {
+            access.copy("dir", "dir/child", overwrite = true)
+        }
+        assertEquals("content", access.readFile("dir/file.txt"))
+        assertFalse(access.exists("dir/child"))
+    }
+
+    @Test
+    fun move_directoryIntoDescendant_preservesSource() {
+        val access = newAccess()
+        access.writeFile("dir/file.txt", "content", overwrite = true)
+        assertThrows(java.io.IOException::class.java) {
+            access.move("dir", "dir/child", overwrite = true)
+        }
+        assertEquals("content", access.readFile("dir/file.txt"))
+        assertFalse(access.exists("dir/child"))
+    }
+
+    @Test
+    fun copy_directoryToSiblingWithSharedPrefix_succeeds() {
+        val access = newAccess()
+        access.writeFile("dir/file.txt", "content", overwrite = true)
+        access.copy("dir", "directory", overwrite = false)
+        assertEquals("content", access.readFile("directory/file.txt"))
+    }
+
+    @Test
     fun move_file() {
         val access = newAccess()
         access.writeFile("src.txt", "x", overwrite = true)

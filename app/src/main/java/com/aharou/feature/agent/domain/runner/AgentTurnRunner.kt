@@ -142,8 +142,8 @@ class AgentTurnRunner @Inject constructor(
         val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
         val isFirst = history.isEmpty()
 
+        val userMsgId = UUID.randomUUID().toString()
         if (!turn.isAutoTrigger) {
-            val userMsgId = UUID.randomUUID().toString()
             messagePersistenceUseCase.persist(
                 sessionId,
                 MessageRole.USER,
@@ -159,7 +159,16 @@ class AgentTurnRunner @Inject constructor(
                     agentWorkflow.generateTitle(sessionId, turn.text)?.let { sessionUseCase.updateTitle(sessionId, it) }
                 }
             }
+        } else {
+            messagePersistenceUseCase.persist(
+                sessionId,
+                MessageRole.USER,
+                turn.modelRequest,
+                id = userMsgId,
+                attachments = turn.inputAttachments,
+            )
         }
+        messagePersistenceUseCase.invalidateHistory(sessionId)
         sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
 
         val sessionEntity = sessionUseCase.getSessionById(sessionId)
@@ -179,6 +188,8 @@ class AgentTurnRunner @Inject constructor(
             history = history,
             inputImages = turn.inputImages,
             sessionId = sessionId,
+            inputMessageId = userMsgId,
+            lastInputTokens = sessionEntity?.lastInputTokens ?: 0,
             mode = mode,
             modeBeforePlan = sessionDomain?.modeBeforePlan,
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
@@ -244,6 +255,7 @@ class AgentTurnRunner @Inject constructor(
                             }
                         }
                     }
+                    event.persisted?.complete(Unit)
                 }
 
                 is AgentEvent.ToolCallStarted -> {
@@ -276,6 +288,7 @@ class AgentTurnRunner @Inject constructor(
                         attachments = event.attachments,
                     )
                     toolArgsByMsgId.remove(msgId)
+                    event.persisted?.complete(Unit)
                 }
 
                 is AgentEvent.Failed -> if (isSub) {

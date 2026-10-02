@@ -64,6 +64,14 @@ class SkillMarketRepository @Inject constructor(
     fun sources(): Map<String, SkillMarketSourceDef> = catalog.load().sources
 
     /**
+     * App 内当前语言（跟随系统或用户在设置里选的）。
+     * 不能用 [java.util.Locale.getDefault]：per-app 语言下进程 Locale 未必跟着 App 走，
+     * 系统英文 + App 选中文时会挑到英文那份描述。
+     */
+    private val appLanguage: String
+        get() = context.resources.configuration.locales[0].language
+
+    /**
      * 列出某个源下可安装的全部技能。
      * 12 小时内的结果直接读磁盘缓存（列表要读几十个 SKILL.md，重跑一次很慢），
      * 缓存过期或没有才走网络；网络失败返回空列表，不抛。
@@ -75,14 +83,15 @@ class SkillMarketRepository @Inject constructor(
      * 所以先把技能名铺出来（只需一次目录请求），再在后台逐个补描述，
      * 每补一批就通过 [onUpdate] 回调一次，UI 可以边看边填。
      *
-     * 结果按源缓存 12 小时；缓存命中时直接返回，不回调。
+     * 结果按源缓存 12 小时；缓存命中时直接返回，不回调。[useCache] 为 false 时跳过缓存重新拉（手动刷新）。
      */
     suspend fun listSkills(
         sourceId: String,
-        onUpdate: ((List<MarketSkill>) -> Unit)? = null
+        onUpdate: ((List<MarketSkill>) -> Unit)? = null,
+        useCache: Boolean = true
     ): MarketListing {
         val source = sources()[sourceId] ?: return MarketListing(emptyList())
-        readCache(sourceId)?.let { return MarketListing(it) }
+        if (useCache) readCache(sourceId)?.let { return MarketListing(it) }
 
         val skills = runCatching { listFrom(sourceId, source, onUpdate) }.getOrElse {
             FileLogger.w(TAG, "列技能失败（$sourceId）：${it.message}")
@@ -196,7 +205,7 @@ class SkillMarketRepository @Inject constructor(
                     val text = fetchLimiter.withPermit {
                         httpGetFirst(SkillRepoAccess.fileUrls(coord, relative))
                     }
-                    val meta = text?.let { SkillFrontmatter.parse(it, skill.name) }
+                    val meta = text?.let { SkillFrontmatter.parse(it, skill.name, appLanguage) }
                     val files = tree
                         .filter { dir.isEmpty() || it.startsWith("$dir/") }
                         .map { if (dir.isEmpty()) it else it.removePrefix("$dir/") }
@@ -422,7 +431,7 @@ class SkillMarketRepository @Inject constructor(
                     httpGetFirst(SkillRepoAccess.fileUrls(coord, relative))
                 }
                 val fallback = dir.substringAfterLast('/')
-                val meta = text?.let { SkillFrontmatter.parse(it, fallback) }
+                val meta = text?.let { SkillFrontmatter.parse(it, fallback, appLanguage) }
                 dir to (text to meta)
             }
         }.awaitAll().toMap()

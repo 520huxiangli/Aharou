@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +40,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -372,7 +375,7 @@ internal fun ToolMessageBody(
                     if (hasLiveOutput) {
                         val truncated = remember(liveOutput) { liveOutput.takeLastLines(TOOL_SECTION_LINE_LIMIT) }
                         Spacer(Modifier.height(Spacing.sm))
-                        ToolSection(label = stringResource(R.string.tool_result), content = truncated)
+                        ToolSection(label = stringResource(R.string.tool_result), content = truncated, live = true)
                     }
                 }
             }
@@ -691,7 +694,7 @@ internal fun ToolCallGroupHeader(
 
 /** 展开区的一段带小标题的内容块（如「指令」「结果」）：弱底等宽小面板，超出限高后在窗口内滚动。 */
 @Composable
-internal fun ToolSection(label: String, content: String) {
+internal fun ToolSection(label: String, content: String, live: Boolean = false) {
     Text(
         text = label,
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -701,6 +704,24 @@ internal fun ToolSection(label: String, content: String) {
     Spacer(Modifier.height(2.dp))
 
     val scrollState = rememberScrollState()
+    var followLive by remember { mutableStateOf(true) }
+    var displayedContent by remember { mutableStateOf(content) }
+    LaunchedEffect(scrollState, live) {
+        if (!live) return@LaunchedEffect
+        scrollState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) followLive = false
+        }
+    }
+    LaunchedEffect(scrollState, live) {
+        if (!live) return@LaunchedEffect
+        snapshotFlow { scrollState.isScrollInProgress to scrollState.canScrollForward }
+            .collect { (scrolling, canScrollForward) ->
+                if (!scrolling && !canScrollForward) followLive = true
+            }
+    }
+    LaunchedEffect(content, live, followLive, scrollState.isScrollInProgress) {
+        if (!live || (followLive && !scrollState.isScrollInProgress)) displayedContent = content
+    }
     val fadeColor = MaterialTheme.colorScheme.background
     Box {
         ChatMonoPanel(
@@ -711,7 +732,7 @@ internal fun ToolSection(label: String, content: String) {
         ) {
             SelectionContainer {
                 Text(
-                    text = content,
+                    text = if (live) displayedContent else content,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace

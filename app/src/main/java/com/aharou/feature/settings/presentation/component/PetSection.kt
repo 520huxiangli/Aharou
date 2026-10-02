@@ -14,12 +14,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,12 +39,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.pet.PetDailyBrief
+import com.aharou.feature.pet.PetIsland
 import com.aharou.feature.pet.PetMood
 import com.aharou.feature.pet.PetMoodStore
 import com.aharou.feature.pet.PetOverlay
 import com.aharou.feature.pet.PetOverlayService
+import com.aharou.feature.pet.PetRoles
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
 import compose.icons.feathericons.CloudRain
@@ -52,6 +59,8 @@ import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Smile
 import compose.icons.feathericons.Smartphone
 import compose.icons.feathericons.Calendar
+import compose.icons.feathericons.Check
+import compose.icons.feathericons.User
 
 /**
  * 设置页「小染」分区：屏幕上的悬浮伙伴。
@@ -63,6 +72,7 @@ import compose.icons.feathericons.Calendar
  *  - **显示小染**：总开关，关掉等于停掉悬浮服务；
  *  - **常驻待机**：关掉后她只在 Agent 跑任务或通话时出现（等同旧胶囊的行为）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun PetSection() {
     val context = LocalContext.current
@@ -70,9 +80,13 @@ internal fun PetSection() {
     var enabled by remember { mutableStateOf(PetOverlayService.isEnabled(context)) }
     var always by remember { mutableStateOf(petAlways(context)) }
     var size by remember { mutableStateOf(PetOverlay.readSize(context)) }
+    var role by remember { mutableStateOf(PetOverlay.readRole(context)) }
+    val petRoles = remember { PetRoles.load(context) }
+    var showRoleSheet by remember { mutableStateOf(false) }
     var locked by remember { mutableStateOf(PetOverlay.readLocked(context)) }
     var petMood by remember { mutableStateOf(PetMoodStore.read(context)) }
     var passThrough by remember { mutableStateOf(PetOverlay.readPassThrough(context)) }
+    var islandEnabled by remember { mutableStateOf(PetIsland.isEnabled(context)) }
     var brief by remember { mutableStateOf(PetDailyBrief.readEnabled(context)) }
     var locationGranted by remember { mutableStateOf(PetDailyBrief.hasLocation(context)) }
     var calendarGranted by remember { mutableStateOf(PetDailyBrief.hasCalendar(context)) }
@@ -230,6 +244,22 @@ internal fun PetSection() {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.Smartphone,
+                title = stringResource(R.string.pet_island),
+                subtitle = stringResource(R.string.pet_island_desc),
+                trailing = {
+                    AppSwitch(
+                        checked = islandEnabled,
+                        enabled = enabled,
+                        onCheckedChange = { value ->
+                            PetOverlayService.applyIsland(context, value)
+                            islandEnabled = value
+                        },
+                    )
+                },
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Smile,
                 title = stringResource(R.string.pet_size),
                 subtitle = stringResource(R.string.pet_size_hint),
@@ -245,6 +275,20 @@ internal fun PetSection() {
                 trailing = {
                     Text(
                         text = stringResource(petSizeLabel(size)),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.User,
+                title = stringResource(R.string.pet_role_title),
+                subtitle = stringResource(R.string.pet_role_hint),
+                onClick = { showRoleSheet = true },
+                trailing = {
+                    Text(
+                        text = petRoles.firstOrNull { it.id == role }?.name ?: role,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -387,6 +431,57 @@ internal fun PetSection() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp),
             )
+        }
+    }
+
+    if (showRoleSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        AdaptiveModalBottomSheet(
+            onDismissRequest = { showRoleSheet = false },
+            sheetState = sheetState,
+            containerColor = settingsPageBackground(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.lg),
+            ) {
+                Text(
+                    text = stringResource(R.string.pet_role_title),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(
+                        start = Spacing.lg,
+                        top = Spacing.sm,
+                        bottom = Spacing.sm,
+                    ),
+                )
+                SettingsGroup {
+                    petRoles.forEachIndexed { index, item ->
+                        if (index > 0) SettingsDivider()
+                        SettingsRow(
+                            icon = FeatherIcons.Smile,
+                            title = item.name,
+                            onClick = {
+                                PetOverlayService.applyRole(context, item.id)
+                                role = item.id
+                                showRoleSheet = false
+                            },
+                            trailing = {
+                                if (item.id == role) {
+                                    Icon(
+                                        imageVector = FeatherIcons.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+            }
         }
     }
 }

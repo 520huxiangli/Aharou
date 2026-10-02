@@ -102,7 +102,7 @@
     <string name="settings_token_stats_requests">Requests</string>
     <string name="settings_token_stats_cost">Cost</string>
     <string name="settings_token_stats_cache_hit_rate">Cache hit rate</string>
-    <string name="settings_token_stats_cached">Cached %1$s</string>
+    <string name="settings_token_stats_cache_read_write">Read %1$s / Write %2$s</string>
     <string name="settings_token_stats_trend">Usage trend</string>
     <string name="settings_token_stats_legend_input">Input</string>
     <string name="settings_token_stats_legend_output">Output</string>
@@ -120,7 +120,8 @@
     <string name="settings_token_stats_col_provider">Vendor</string>
     <string name="settings_token_stats_col_input">Input</string>
     <string name="settings_token_stats_col_output">Output</string>
-    <string name="settings_token_stats_col_cached">Cached</string>
+    <string name="settings_token_stats_col_cached_read">Cache read</string>
+    <string name="settings_token_stats_col_cached_write">Cache write</string>
     <string name="settings_token_stats_col_cache_hit_rate">Hit rate</string>
     <string name="settings_token_stats_col_ttfb">TTFB</string>
     <string name="settings_token_stats_col_duration">Duration</string>
@@ -162,15 +163,13 @@
     <string name="storage_scanning">Calculating…</string>
     <string name="storage_device_free">%1$s free of %2$s</string>
     <string name="storage_section_breakdown">Breakdown</string>
-    <string name="storage_section_reclaimable">Reclaimable space</string>
     <string name="storage_breakdown_note">Tap a category with an arrow to expand details. Delete sessions to shrink chat history; reset or remove containers and workspaces from their own pages. External folder workspaces live on device storage and are not counted.</string>
     <string name="storage_freed">Freed %1$s</string>
     <string name="storage_clean">Clean</string>
-    <string name="storage_clean_all">Clean all</string>
-    <string name="storage_clean_all_desc">Cleans every item above; chat history, containers and workspaces are untouched</string>
+    <string name="storage_clean_selected">Clean selected · %1$s</string>
     <string name="storage_clean_confirm_title">Confirm cleanup</string>
-    <string name="storage_clean_confirm_all">Caches, logs, tool output and vision session cache will be deleted (about %1$s). Chat history, containers and workspaces are not affected.</string>
-    <string name="storage_clean_confirm_single">“%1$s” will be deleted (about %2$s). This cannot be undone.</string>
+    <string name="storage_clean_confirm_selected">The selected items below will be deleted (about %1$s). This cannot be undone.</string>
+    <string name="storage_clean_scope">Only selected local app caches, logs and data in global directories are cleaned. This may affect historical output access or image follow-ups across multiple workspaces. Chat history, workspace files, containers, AI configuration and remote server data are not deleted.</string>
     <string name="storage_category_chat">Chat history</string>
     <string name="storage_category_container">Containers</string>
     <string name="storage_category_container_images">Container images</string>
@@ -447,7 +446,9 @@
     <string name="agent_stopped_by_user">Stopped by user</string>
     <string name="agent_tool_executing">%1$s running…</string>
     <string name="agent_stop_refusal">The model declined to answer under its content safety policy.</string>
-    <string name="agent_stop_context_exceeded">This request exceeds the model\'s context window. Compact the context or start a new session.</string>    <string name="agent_context_no_compaction">No compaction needed (too few messages)</string>
+    <string name="agent_stop_context_exceeded">This request exceeds the model\'s context window. Compact the context or start a new session.</string>
+    <string name="agent_input_budget_exceeded">Context exceeds the model input budget. Shorten the input or reduce tool definitions.</string>
+    <string name="chat_context_usage_estimated">Estimated input budget usage: %1$d%%</string>    <string name="agent_context_no_compaction">No compaction needed (too few messages)</string>
     <string name="agent_compaction_failed">Compaction failed: %1$s</string>
     <string name="agent_model_not_selected">Not selected</string>
     <!-- About -->
@@ -1112,19 +1113,18 @@
     <string name="skills_market_update">Update</string>
     <string name="skills_market_loading">Loading skills…</string>
     <string name="skills_market_empty">No skills available from this source</string>
-    <string name="skills_market_repo_hint">Paste a repo URL, e.g. github.com/user/repo</string>
+    <string name="skills_market_repo_hint">Paste a repo URL</string>
     <string name="skills_market_repo_load">Load</string>
+    <string name="skills_market_refresh">Refresh</string>
     <string name="skills_market_repo_invalid">Unrecognized address</string>
-    <string name="skills_market_search_hint">Search by keyword (2+ characters); with a repo above, only that repo is searched</string>
+    <string name="skills_market_search_hint">Search keywords</string>
     <string name="skills_market_search">Search</string>
-    <string name="skills_market_search_by_keyword">This skill site only supports keyword search — use the keyword box below</string>
+    <string name="skills_market_not_loaded">The skill list is still loading — try again in a moment</string>
+    <string name="skills_market_translate_unavailable">English entries weren\'t translated: check the provider under Settings → Default models</string>
     <string name="skills_market_site_needs_detail">That is the catalog page; paste the address of a specific skill page instead</string>
     <string name="skills_market_no_skills">No skills found in this repository</string>
-    <string name="skills_market_no_match_in_repo">No matching skill in this repository</string>
+    <string name="skills_market_no_match_in_repo">No matching skill in this source</string>
     <string name="skills_market_load_failed">Loading failed — check your network or try another source</string>
-    <string name="skills_market_sort_default">Default</string>
-    <string name="skills_market_sort_name">Name</string>
-    <string name="skills_market_sort_popular">Popular</string>
     <string name="skills_market_risk_scripts">%1$d script(s)</string>
     <string name="skills_market_risk_credentials">Needs credentials</string>
     <string name="skills_market_risk_title">Before you install</string>
@@ -1164,6 +1164,16 @@
     <string name="skills_editor_scope">Scope</string>
     <string name="skills_scope_global">Global</string>
     <string name="skills_scope_project">This project</string>
+    <string name="skills_scope_label">Location</string>
+    <string name="skills_move_to_project">Move to project</string>
+    <string name="skills_move_to_project_desc">Move into this project&#8217;s skill folder</string>
+    <string name="skills_move_to_global">Move to global</string>
+    <string name="skills_move_to_global_desc">Move into the global skill folder, shared by all projects</string>
+    <string name="skills_move_ok_project">Moved to this project</string>
+    <string name="skills_move_ok_global">Moved to global</string>
+    <string name="skills_move_conflict">A skill with the same name is already there</string>
+    <string name="skills_move_readonly">Built-in skills can&#8217;t be moved</string>
+    <string name="skills_move_failed">Move failed - the skill stayed where it was</string>
     <string name="skills_name_hint">Lowercase is recommended, e.g. pdf-report</string>
     <string name="skills_description_hint">When to use it; the AI decides whether to load it by this text</string>
     <string name="skills_instructions_hint">Describe the standard workflow and caveats for this kind of task; Markdown supported</string>
@@ -1299,6 +1309,8 @@
     <string name="provider_test_success">Connected · %1$dms</string>
     <string name="common_error">Error</string>
     <string name="common_select">Select</string>
+    <string name="provider_model_context_total">Total Context Window (tokens)</string>
+    <string name="provider_model_window_invalid">Enter a valid positive integer, or leave blank to use the automatically detected value</string>
     <string name="provider_model_context_input">Input Window (tokens)</string>
     <string name="provider_model_context_output">Output Window (tokens)</string>
     <string name="provider_new">New Vendor</string>
@@ -1341,6 +1353,7 @@
     <string name="provider_model_price_input">Input Price (USD/1M tokens)</string>
     <string name="provider_model_price_output">Output Price (USD/1M tokens)</string>
     <string name="provider_model_price_cache_read">Cache Read Price (USD/1M tokens)</string>
+    <string name="provider_model_price_cache_write">Cache Write Price (USD/1M tokens)</string>
     <string name="provider_model_cap_vision">Image Input</string>
     <string name="provider_model_cap_image_output">Image Output</string>
     <string name="provider_model_capabilities">Capabilities</string>
@@ -2079,6 +2092,9 @@
     <string name="pet_menu_toy">Throw a ball</string>
     <string name="pet_menu_pass">Ornament mode</string>
     <string name="pet_menu_shot">Screenshot</string>
+    <string name="pet_menu_easter">Easter egg</string>
+    <string name="pet_island">Dynamic island</string>
+    <string name="pet_island_desc">A capsule at the top of the screen: shows the time, tap to show/hide the pet, drag it and it snaps to the top</string>
     <string name="pet_shot_sent">Got it — sent to the chat</string>
     <string name="pet_shot_failed">That shot did not go through — try me again</string>
     <string name="pet_shot_no_a11y">Screenshots need accessibility: Settings - Permissions and background - Accessibility</string>
@@ -2150,6 +2166,8 @@
     <string name="pet_size_large">Large</string>
     <string name="pet_lock">Lock position</string>
     <string name="pet_lock_hint">When locked she can\'t be dragged (the menu still works)</string>
+    <string name="pet_role_title">Pet character</string>
+    <string name="pet_role_hint">Switch the artwork set (missing poses fall back to the front view)</string>
     <string name="pet_notification_channel">Xiaoran</string>
     <string name="pet_notification_text">Xiaoran is keeping you company on screen</string>
     <string name="pet_notification_working">Working on your task — see her bubble for progress</string>

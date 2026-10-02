@@ -63,7 +63,7 @@ fun modelBrandKey(modelName: String): String {
         target.contains("claude") || target.contains("anthropic") -> "anthropic"
         // google / gemini：gemma、gemini 都归 google 品牌。
         target.contains("google") || target.contains("gemini") || target.contains("gemma") -> "google"
-        target.contains("hunyuan") || target.contains("混元") || target.contains("tencent") -> "hunyuan"
+        target.contains("hunyuan") || target.contains("混元") || target.contains("tencent") || target.contains("hy") -> "hunyuan"
         target.contains("openrouter") -> "openrouter"
         target.contains("perplexity") -> "perplexity"
         target.contains("happypet") || target.contains("happy-pet") || target.contains("fuck studio") -> "happypet"

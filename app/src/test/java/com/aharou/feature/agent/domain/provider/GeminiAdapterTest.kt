@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.Call
 
 class GeminiAdapterTest {
 
@@ -32,12 +33,12 @@ class GeminiAdapterTest {
             return JsonParser.parseString(responseJson).asJsonObject
         }
 
-        override suspend fun streamGenerateContent(
+        override fun streamGenerateContent(
             url: String,
             apiKey: String,
             extraHeaders: Map<String, String>,
             request: Any
-        ): ResponseBody = throw UnsupportedOperationException("本测试只覆盖非流式路径")
+        ): Call<ResponseBody> = throw UnsupportedOperationException("本测试只覆盖非流式路径")
 
         override suspend fun createInteraction(
             url: String,
@@ -50,12 +51,12 @@ class GeminiAdapterTest {
             return JsonParser.parseString(responseJson).asJsonObject
         }
 
-        override suspend fun streamInteraction(
+        override fun streamInteraction(
             url: String,
             apiKey: String,
             extraHeaders: Map<String, String>,
             request: Any
-        ): ResponseBody = throw UnsupportedOperationException("本测试只覆盖非流式路径")
+        ): Call<ResponseBody> = throw UnsupportedOperationException("本测试只覆盖非流式路径")
     }
 
     private fun textResponse(

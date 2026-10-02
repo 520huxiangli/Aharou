@@ -2,7 +2,6 @@ package com.aharou.feature.agent.domain.skill.market
 
 import com.aharou.core.util.FileLogger
 import org.yaml.snakeyaml.Yaml
-import java.util.Locale
 
 /**
  * 从 SKILL.md 的 YAML frontmatter 里提取市场展示用的元数据。
@@ -24,14 +23,13 @@ internal object SkillFrontmatter {
         val version: String = ""
     )
 
-    fun parse(text: String, fallbackName: String): Meta {
+    fun parse(text: String, fallbackName: String, lang: String): Meta {
         val map = readFrontmatter(text)
         val name = map["name"]?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: fallbackName
         return Meta(
             name = name,
-            displayName = pick(map, listOf("display_name", "display_name_zh", "display_name_en"))
-                .ifEmpty { name },
-            description = pick(map, descriptionKeys()).take(MAX_DESC_CHARS),
+            displayName = pick(map, displayNameKeys(lang)).ifEmpty { name },
+            description = pick(map, descriptionKeys(lang)).take(MAX_DESC_CHARS),
             author = map["author"]?.toString()?.trim().orEmpty(),
             license = map["license"]?.toString()?.trim().orEmpty(),
             version = map["version"]?.toString()?.trim().orEmpty()
@@ -42,11 +40,19 @@ internal object SkillFrontmatter {
      * 描述字段的取值顺序。WorkBuddy 这类国内仓库同时给了 `description_zh` / `description_en`，
      * 按界面语言挑，缺哪个就退到通用字段（Trae 只给一个 `description`，那就是中文）。
      */
-    private fun descriptionKeys(): List<String> =
-        if (Locale.getDefault().language == "zh") {
+    private fun descriptionKeys(lang: String): List<String> =
+        if (lang == "zh") {
             listOf("description_zh", "description", "description_en")
         } else {
             listOf("description_en", "description", "description_zh")
+        }
+
+    /** 显示名同理：有中文名就先给中文名。 */
+    private fun displayNameKeys(lang: String): List<String> =
+        if (lang == "zh") {
+            listOf("display_name", "display_name_zh", "display_name_en")
+        } else {
+            listOf("display_name", "display_name_en", "display_name_zh")
         }
 
     private fun pick(map: Map<String, Any>, keys: List<String>): String =

@@ -24,6 +24,7 @@ data class StorageUiState(
     val deviceSpace: DeviceSpace = DeviceSpace(0, 0),
     val expanded: Set<StorageCategory> = emptySet(),
     val cleaning: Boolean = false,
+    val selectedCleanup: Set<CleanupKind> = setOf(CleanupKind.Caches, CleanupKind.Logs),
     /** 上一次清理释放的字节数，非空时界面给出提示。 */
     val freedBytes: Long? = null
 ) {
@@ -38,7 +39,8 @@ data class StorageUiState(
             CleanupKind.VisionSessions to aiConfigDetail(StorageDetailKey.VISION_SESSIONS)
         )
 
-    val reclaimableBytes: Long get() = cleanableSizes.values.sum()
+    val selectedBytes: Long
+        get() = cleanableSizes.filterKeys { it in selectedCleanup }.values.sum()
 
     private fun aiConfigDetail(key: String): Long =
         entries[StorageCategory.AiConfig]?.details?.firstOrNull { it.key == key }?.bytes ?: 0L
@@ -84,10 +86,17 @@ class StorageViewModel @Inject constructor(
         }
     }
 
-    /** 执行清理（[kinds] 为空表示全部可清理项），完成后自动重新统计。 */
-    fun clean(vararg kinds: CleanupKind) {
-        if (_state.value.cleaning) return
-        val targets = if (kinds.isEmpty()) CleanupKind.entries else kinds.toList()
+    fun toggleCleanup(kind: CleanupKind) {
+        _state.update {
+            if (it.cleaning) return@update it
+            val selected = if (kind in it.selectedCleanup) it.selectedCleanup - kind else it.selectedCleanup + kind
+            it.copy(selectedCleanup = selected)
+        }
+    }
+
+    fun clean(kinds: List<CleanupKind>) {
+        if (_state.value.cleaning || kinds.isEmpty()) return
+        val targets = kinds.distinct()
         viewModelScope.launch {
             _state.update { it.copy(cleaning = true) }
             val freed = targets.sumOf { scanner.clean(it) }

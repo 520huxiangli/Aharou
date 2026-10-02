@@ -97,7 +97,8 @@ class MessagePersistenceUseCase @Inject constructor(
         inputTokens: Int = 0,
         outputTokens: Int = 0,
         cachedInputTokens: Int = 0,
-        isCompacted: Boolean = false
+        isCompacted: Boolean = false,
+        isContextExcluded: Boolean = false
     ) {
         agentMessageDao.insert(
             AgentMessageEntity(
@@ -118,9 +119,22 @@ class MessagePersistenceUseCase @Inject constructor(
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
                 cachedInputTokens = cachedInputTokens,
-                isCompacted = isCompacted
+                isCompacted = isCompacted,
+                isContextExcluded = isContextExcluded
             )
         )
+    }
+
+    fun invalidateHistory(sessionId: String) {
+        dbVersion.incrementAndGet()
+        synchronized(historyCache) {
+            historyCache.remove(sessionId)
+        }
+    }
+
+    suspend fun rewindConversation(sessionId: String, cutoff: Long) {
+        agentMessageDao.rewindConversation(sessionId, cutoff)
+        invalidateHistory(sessionId)
     }
 
     suspend fun updateContent(messageId: String, newContent: String) {
@@ -224,7 +238,7 @@ class MessagePersistenceUseCase @Inject constructor(
 
     private suspend fun buildHistoryUncached(sessionId: String, pendingToolMarker: String): List<AgentMessage> {
         val entities = agentMessageDao.getMessagesBySessionOnce(sessionId)
-            .filter { !it.isCompacted }
+            .filter { !it.isCompacted && !it.isContextExcluded }
 
         // 第一遍：求 assistant 声明的 toolCallId 与 tool 结果 toolCallId 的交集。
         val declaredIds = mutableSetOf<String>()
@@ -315,6 +329,7 @@ class MessagePersistenceUseCase @Inject constructor(
                                 reasoning = e.reasoning ?: "",
                                 signature = e.signature ?: "",
                                 thinkingBlocksJson = e.thinkingBlocksJson ?: "",
+                                inputTokens = e.inputTokens,
                                 // 附件里的图片按路径重建 base64（带缓存），供下一轮上下文回放。
                                 images = imageAttachments.mapNotNull { it.toAgentImage() }
                             )
@@ -327,6 +342,7 @@ class MessagePersistenceUseCase @Inject constructor(
                         result.add(
                             AgentMessage.ToolResultMessage(
                                 id = tcId,
+                                messageId = e.id,
                                 toolName = e.toolName ?: "unknown",
                                 result = e.content
                             )

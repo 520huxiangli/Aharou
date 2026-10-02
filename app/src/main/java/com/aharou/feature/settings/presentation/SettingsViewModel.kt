@@ -35,12 +35,17 @@ import com.aharou.feature.agent.domain.skill.SkillConfigRepository
 import com.aharou.feature.agent.domain.skill.SkillForm
 import com.aharou.feature.agent.domain.skill.SkillImportError
 import com.aharou.feature.agent.domain.skill.SkillImportReport
+import com.aharou.feature.agent.domain.skill.SkillMoveResult
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.SkillSaveError
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
 import com.aharou.feature.agent.domain.skill.market.SkillMarketRepository
+import com.aharou.feature.agent.domain.skill.market.SkillMarketTranslator
 import com.aharou.feature.agent.domain.skill.market.SkillRepoAccess
+import com.aharou.feature.agent.domain.skill.market.SkillTranslation
+import com.aharou.feature.agent.domain.skill.market.needsTranslation
+import com.aharou.feature.agent.domain.skill.market.translationKey
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionConfigRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionForm
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -324,10 +329,7 @@ data class MarketSkillUi(
 )
 
 /** 市场页的提示；文案由 UI 层映射成资源串。 */
-enum class MarketAlert { InvalidAddress, NoSkills, NoMatchInRepo, LoadFailed, SearchByKeyword, SkillSiteNeedsDetail }
-
-/** 市场列表排序。「热门」按安装量排，只有检索型源带得到这个数（其余源全是 0，等价于不排）。 */
-enum class MarketSort { Default, Name, Popular }
+enum class MarketAlert { InvalidAddress, NoSkills, NoMatchInRepo, LoadFailed, SkillSiteNeedsDetail, MarketNotLoaded, TranslateUnavailable }
 
 /** 市场详情页的状态。[detail] 为 null 表示还在拉或没拉到。 */
 data class MarketDetailUi(
@@ -402,6 +404,7 @@ class SettingsViewModel @Inject constructor(
     private val toolRegistry: ToolRegistry,
     private val skillConfigRepository: SkillConfigRepository,
     private val skillMarketRepository: SkillMarketRepository,
+    private val skillMarketTranslator: SkillMarketTranslator,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
     private val voiceSttSettingsRepository: VoiceSttSettingsRepository,
     private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
@@ -811,6 +814,13 @@ class SettingsViewModel @Inject constructor(
     private val _skillDeleting = MutableStateFlow<String?>(null)
     val skillDeleting: StateFlow<String?> = _skillDeleting.asStateFlow()
 
+    /** 正搬动的技能名（防重复点）；结果经 [skillMoveResult] 交给界面提示一次。 */
+    private val _skillMoving = MutableStateFlow<String?>(null)
+    val skillMoving: StateFlow<String?> = _skillMoving.asStateFlow()
+
+    private val _skillMoveResult = MutableStateFlow<SkillMoveResult?>(null)
+    val skillMoveResult: StateFlow<SkillMoveResult?> = _skillMoveResult.asStateFlow()
+
     private val _skillExportState = MutableStateFlow<SkillExportState>(SkillExportState.Idle)
     val skillExportState: StateFlow<SkillExportState> = _skillExportState.asStateFlow()
 
@@ -823,14 +833,18 @@ class SettingsViewModel @Inject constructor(
     private val _marketSkills = MutableStateFlow<List<MarketSkillUi>>(emptyList())
     val marketSkills: StateFlow<List<MarketSkillUi>> = _marketSkills.asStateFlow()
 
+    /** 市场条目的中文译文（键＝仓库@技能目录）：仓库没给中文的由模型后台翻，翻好一批刷新一批。 */
+    private val _marketTranslations = MutableStateFlow<Map<String, SkillTranslation>>(emptyMap())
+    val marketTranslations: StateFlow<Map<String, SkillTranslation>> = _marketTranslations.asStateFlow()
+
+    /** 当前源的后台翻译任务：换源时取消上一轮，免得旧源的译文回来刷到新列表上。 */
+    private var marketTranslateJob: Job? = null
+
     private val _marketLoading = MutableStateFlow(false)
     val marketLoading: StateFlow<Boolean> = _marketLoading.asStateFlow()
 
     private val _marketAlert = MutableStateFlow<MarketAlert?>(null)
     val marketAlert: StateFlow<MarketAlert?> = _marketAlert.asStateFlow()
-
-    private val _marketSort = MutableStateFlow(MarketSort.Default)
-    val marketSort: StateFlow<MarketSort> = _marketSort.asStateFlow()
 
     private val _marketDetail = MutableStateFlow<MarketDetailUi?>(null)
     val marketDetail: StateFlow<MarketDetailUi?> = _marketDetail.asStateFlow()
@@ -844,6 +858,9 @@ class SettingsViewModel @Inject constructor(
 
     /** 「粘贴仓库地址」加载出来的仓库（owner/name），作为临时源挂在源列表末尾。 */
     private var marketAdhocRepo: String? = null
+
+    /** 当前源拉到的完整列表（不随搜索变）：关键词搜索在它上面筛，不是筛上一次的结果。 */
+    private var marketSourceSkills: List<MarketSkill> = emptyList()
 
     private val _subAgents = MutableStateFlow<List<SubAgentUiEntry>>(emptyList())
     val subAgents: StateFlow<List<SubAgentUiEntry>> = _subAgents.asStateFlow()
@@ -1507,7 +1524,8 @@ class SettingsViewModel @Inject constructor(
 
     /** 市场源列表（id → 显示名），并在当前选中源失效时重置为第一个。 */
     fun refreshMarketSources() {
-        val lang = java.util.Locale.getDefault().language
+        // 用 App 内语言（per-app 语言下进程 Locale 未必跟着 App 走，详见 SkillMarketRepository.appLanguage）
+        val lang = context.resources.configuration.locales[0].language
         val sources = skillMarketRepository.sources()
             // 检索型源不进源列表：它没有自己的技能清单，只是给关键词搜索提供接口
             .filterValues { !it.isSearch }
@@ -1522,62 +1540,76 @@ class SettingsViewModel @Inject constructor(
     private fun isSearchSource(sourceId: String) =
         skillMarketRepository.sources()[sourceId]?.isSearch == true
 
-    /** 贴的是某个检索型源的站点地址时，返回那个源的 id（用它自己的检索接口当源）。 */
-    private fun searchSourceFor(input: String): String? {
-        val host = runCatching { java.net.URI(input.trim()) }.getOrNull()?.host?.lowercase() ?: return null
-        return skillMarketRepository.sources().entries
-            .firstOrNull { (_, def) -> def.isSearch && def.searchUrl.contains(host, ignoreCase = true) }
-            ?.key
-    }
-
     /** 切换市场源并重新拉取其技能列表。 */
     fun selectMarketSource(sourceId: String) {
-        // 列表显示的是检索结果时，即使选中源没变也要重新拉——否则点回该源毫无反应
-        if (_marketSourceId.value == sourceId && !_marketSearching.value) return
+        if (_marketSourceId.value == sourceId) {
+            when {
+                // 搜过之后点回当前源＝把完整列表拿回来（否则停在筛过的结果上出不去）
+                _marketSearching.value -> loadMarketSkills()
+                // 没搜过就是手动刷新：列表可能来自 12 小时缓存，用户要的是现在重拉
+                !isSearchSource(sourceId) -> loadMarketSkills(force = true)
+            }
+            return
+        }
         _marketSourceId.value = sourceId
         _marketSearching.value = false
         when {
             sourceId == ADHOC_MARKET_ID -> marketAdhocRepo?.let { loadMarketFromRepo(it) }
-            // 检索型源没有「列全部」的入口，清空列表等用户输关键词
+            // 检索型源没有「列全部」的入口，清空列表等用关键词搜
             isSearchSource(sourceId) -> {
                 _marketSkills.value = emptyList()
+                marketSourceSkills = emptyList()
                 _marketAlert.value = null
             }
-            else -> loadMarketSkills()
+            else -> {
+                // 换源先清掉上一个源的列表：新源（如 WorkBuddy 这类两百多技能的）要拉很久，
+                // 留着旧列表会让人以为「点了没反应、还是别人家的技能」。
+                _marketSkills.value = emptyList()
+                marketSourceSkills = emptyList()
+                loadMarketSkills()
+            }
+        }
+    }
+
+    /** 手动刷新当前源：跳过 12 小时列表缓存重新拉一次。 */
+    fun refreshMarket() {
+        val sourceId = _marketSourceId.value
+        when {
+            sourceId.isBlank() || sourceId == ADHOC_MARKET_ID ->
+                marketAdhocInput.takeIf { it.isNotBlank() }?.let { loadMarketFromRepo(it) }
+            !isSearchSource(sourceId) -> loadMarketSkills(force = true)
         }
     }
 
     /**
-     * 关键词搜索：地址框填了仓库地址就在那个仓库里就地筛，没填才走检索型源的全局检索。
+     * 关键词搜索：地址框填了仓库地址就在那个仓库里筛，没填就在当前选中的源里筛。
      */
     fun searchMarket(query: String, address: String) {
         val q = query.trim()
         if (q.isBlank()) return
         val addr = address.trim()
-        if (addr.isEmpty()) searchMarketGlobal(q) else searchMarketInRepo(addr, q)
+        when {
+            addr.isNotEmpty() -> searchMarketInRepo(addr, q)
+            _marketSourceId.value == ADHOC_MARKET_ID ->
+                marketAdhocInput.takeIf { it.isNotBlank() }?.let { searchMarketInRepo(it, q) }
+            else -> searchMarketInSource(q)
+        }
     }
 
     /**
-     * 全局检索：走检索型源的检索接口。
-     * 结果里的技能只带名字与所在仓库，安装时再去仓库里定位目录。
+     * 在当前源的完整列表里就地筛，不发网络请求（进市场页时已经拉过）。
+     * 结果是列表的视图，点回当前源名就能回到完整列表。
      */
-    private fun searchMarketGlobal(query: String) {
-        val sourceId = searchSourceId() ?: return
-        viewModelScope.launch {
-            _marketLoading.value = true
-            _marketAlert.value = null
-            val listing = withContext(Dispatchers.IO) {
-                skillMarketRepository.searchSkills(sourceId, query)
-            }
-            _marketSearching.value = true
-            publishMarket(listing.skills)
-            _marketAlert.value = when {
-                listing.failed -> MarketAlert.LoadFailed
-                listing.skills.isEmpty() -> MarketAlert.NoSkills
-                else -> null
-            }
-            _marketLoading.value = false
+    private fun searchMarketInSource(query: String) {
+        val all = marketSourceSkills
+        if (all.isEmpty()) {
+            _marketAlert.value = MarketAlert.MarketNotLoaded
+            return
         }
+        val hits = all.filter { it.matchesQuery(query) }
+        _marketSearching.value = true
+        publishMarket(hits)
+        _marketAlert.value = if (hits.isEmpty()) MarketAlert.NoMatchInRepo else null
     }
 
     /** 在指定地址的仓库里筛技能：同一地址已经列过就直接在缓存里筛，不重复拉。 */
@@ -1605,6 +1637,7 @@ class SettingsViewModel @Inject constructor(
                 val hits = listing.skills.filter { it.matchesQuery(query) }
                 _marketSearching.value = true
                 publishMarket(hits)
+                translateMarket(hits)
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
                     hits.isEmpty() -> MarketAlert.NoMatchInRepo
@@ -1623,10 +1656,6 @@ class SettingsViewModel @Inject constructor(
             description.lowercase().contains(q)
     }
 
-    /** 检索型源的 id（技能搜索用；目前预置的源里就 skills.sh 一个）。 */
-    private fun searchSourceId(): String? =
-        skillMarketRepository.sources().entries.firstOrNull { it.value.isSearch }?.key
-
     /**
      * 按用户粘贴的仓库地址列出技能：地址认不出来或仓库里没技能时给一句提示，不清空现有列表。
      * 支持 GitHub / Gitee / GitLab / Gitea 系（带 `tree/分支/子目录` 的链接也能直接贴）。
@@ -1634,12 +1663,6 @@ class SettingsViewModel @Inject constructor(
     fun loadMarketFromRepo(input: String) {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return
-        // 贴的是检索型源的站点地址（如 https://skills.sh）：它没有「列全部」的入口，
-        // 站本身当不了仓库，直接提醒用下面的关键词框。
-        if (searchSourceFor(trimmed) != null) {
-            _marketAlert.value = MarketAlert.SearchByKeyword
-            return
-        }
         viewModelScope.launch {
             _marketLoading.value = true
             _marketAlert.value = null
@@ -1659,6 +1682,7 @@ class SettingsViewModel @Inject constructor(
                 _marketSearching.value = false
                 refreshAdhocSourceEntry()
                 publishMarket(listing.skills)
+                translateMarket(listing.skills)
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
                     listing.skills.isEmpty() -> MarketAlert.NoSkills
@@ -1682,7 +1706,7 @@ class SettingsViewModel @Inject constructor(
      * 拉取当前源的技能列表。列表先铺出来、描述随后流式补上，所以不等全部读完就能看到内容；
      * 真取不到时给「加载失败」提示，而不是当作「这个源没技能」（那是两回事）。
      */
-    fun loadMarketSkills() {
+    fun loadMarketSkills(force: Boolean = false) {
         val sourceId = _marketSourceId.value
         if (sourceId.isBlank()) return
         viewModelScope.launch {
@@ -1690,13 +1714,42 @@ class SettingsViewModel @Inject constructor(
             _marketAlert.value = null
             _marketSearching.value = false
             val listing = withContext(Dispatchers.IO) {
-                skillMarketRepository.listSkills(sourceId) { partial ->
-                    publishMarket(partial)
-                }
+                skillMarketRepository.listSkills(
+                    sourceId = sourceId,
+                    onUpdate = { partial ->
+                        marketSourceSkills = partial
+                        publishMarket(partial)
+                    },
+                    useCache = !force
+                )
             }
+            marketSourceSkills = listing.skills
             publishMarket(listing.skills)
+            translateMarket(listing.skills)
             if (listing.failed) _marketAlert.value = MarketAlert.LoadFailed
             _marketLoading.value = false
+        }
+    }
+
+    /**
+     * 把列表里没有中文的条目丢给模型翻（后台、逐批回流）。
+     * 换源/换仓库会取消上一轮：译文按「仓库@技能目录」归属，回来也不会串到别的源上。
+     */
+    private fun translateMarket(skills: List<MarketSkill>) {
+        marketTranslateJob?.cancel()
+        if (skills.isEmpty()) return
+        marketTranslateJob = viewModelScope.launch {
+            val cached = skillMarketTranslator.cached()
+            _marketTranslations.value = cached
+            val pending = skills.count { it.needsTranslation() && it.translationKey() !in cached }
+            if (pending == 0) return@launch
+            var translated = 0
+            skillMarketTranslator.translate(skills) { batch ->
+                translated += batch.size
+                _marketTranslations.value = _marketTranslations.value + batch
+            }
+            // 该翻的一条都没翻出来（多半是供应商没配好）：把原因说出来，别让人以为没这功能
+            if (translated == 0) _marketAlert.value = MarketAlert.TranslateUnavailable
         }
     }
 
@@ -1706,22 +1759,9 @@ class SettingsViewModel @Inject constructor(
         hasUpdate = skillMarketRepository.hasUpdate(skill)
     )
 
-    /** 列表的统一出口：先映射成 UI 模型，再按当前排序方式排一遍。 */
+    /** 列表的统一出口：把领域模型映射成 UI 模型（已安装 / 有无更新）。 */
     private fun publishMarket(skills: List<MarketSkill>) {
-        _marketSkills.value = sortMarket(skills.map { toMarketUi(it) })
-    }
-
-    private fun sortMarket(items: List<MarketSkillUi>): List<MarketSkillUi> = when (_marketSort.value) {
-        MarketSort.Default -> items
-        MarketSort.Name -> items.sortedBy { it.skill.displayName.ifBlank { it.skill.name }.lowercase() }
-        MarketSort.Popular -> items.sortedByDescending { it.skill.installs }
-    }
-
-    /** 切换排序。列表已在内存里，原地重排即可，不用重新拉。 */
-    fun setMarketSort(sort: MarketSort) {
-        if (_marketSort.value == sort) return
-        _marketSort.value = sort
-        _marketSkills.value = sortMarket(_marketSkills.value)
+        _marketSkills.value = skills.map { toMarketUi(it) }
     }
 
     /** 打开市场详情页并拉取详情（文件清单 + SKILL.md）。拉不到也进页面，只是内容为空。 */
@@ -1782,7 +1822,7 @@ class SettingsViewModel @Inject constructor(
     /** 切换技能的启用/禁用状态（写入对应作用域的 skills.json）。 */
     fun setSkillEnabled(name: String, enabled: Boolean, scope: SkillScope) {
         viewModelScope.launch {
-            skillRepository.setSkillDisabled(name, !enabled, scope)
+            withContext(Dispatchers.IO) { skillRepository.setSkillDisabled(name, !enabled, scope) }
             refreshSkills()
         }
     }
@@ -1812,6 +1852,30 @@ class SettingsViewModel @Inject constructor(
                 _skillDeleting.value = null
             }
         }
+    }
+
+    /**
+     * 把技能在全局与当前项目之间搬（整包导出 → 导入 → 删源，见 [SkillRepository.moveSkill]）。
+     * 本体在 IO 线程跑，期间 [skillMoving] 置名供 UI 转圈；结果写进 [skillMoveResult]。
+     */
+    fun moveSkill(name: String, fromScope: SkillScope, toScope: SkillScope) {
+        if (_skillMoving.value != null || fromScope == toScope) return
+        _skillMoving.value = name
+        viewModelScope.launch {
+            try {
+                _skillMoveResult.value = withContext(Dispatchers.IO) {
+                    skillRepository.moveSkill(name, fromScope, toScope)
+                }
+                refreshSkills()
+            } finally {
+                _skillMoving.value = null
+            }
+        }
+    }
+
+    /** 界面提示过之后清掉，避免重组时又弹一次。 */
+    fun clearSkillMoveResult() {
+        _skillMoveResult.value = null
     }
 
     /**
@@ -2211,6 +2275,17 @@ class SettingsViewModel @Inject constructor(
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
     }.getOrDefault("unknown")
 
+    /**
+     * 判断日志行是否属于某个 MCP server：只认 MCP 组件写下的日志（tag 以 `Mcp` 开头，
+     * 如 McpManager/McpClient/McpStdioTransport/McpTool），且消息里引用了该 server——
+     * 要么是消息前缀 `[名字]`，要么是命名空间工具名 `mcp__名字__`。
+     * 不能只按 server 名做子串匹配：那会把任何恰好提到该名字的无关日志一并捞进来。
+     */
+    private fun isMcpServerLogLine(line: String, serverName: String): Boolean {
+        if (!line.contains("[Mcp")) return false
+        return line.contains("[$serverName]") || line.contains("mcp__${serverName}__")
+    }
+
     fun refreshLogs(filterServerName: String? = _logViewerState.value.filterServerName, silent: Boolean = false) {
         loadLogs(
             filterServerName = filterServerName?.takeIf { it.isNotBlank() },
@@ -2255,10 +2330,7 @@ class SettingsViewModel @Inject constructor(
                     val filteredLines = if (filterServerName.isNullOrBlank()) {
                         rawLines
                     } else {
-                        rawLines.filter { line ->
-                            line.contains("[$filterServerName]") ||
-                                line.contains(filterServerName, ignoreCase = true)
-                        }
+                        rawLines.filter { line -> isMcpServerLogLine(line, filterServerName) }
                     }
                     val visibleLines = filteredLines.takeLast(MAX_LOG_LINES)
 

@@ -23,6 +23,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.nio.charset.Charset
+import java.nio.file.Paths
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
 import java.util.EnumSet
@@ -279,10 +280,13 @@ class RemoteSftpFileAccess @Inject constructor(
     }
 
     override fun copy(path: String, newPath: String, overwrite: Boolean) {
-        val from = toRemotePath(path)
-        val to = toRemotePath(newPath)
+        val from = Paths.get(toRemotePath(path)).normalize().toString()
+        val to = Paths.get(toRemotePath(newPath)).normalize().toString()
         withSftp { sftp ->
-            if (sftp.statExistence(from) == null) throw NoSuchFileException(File(from))
+            val source = sftp.statExistence(from) ?: throw NoSuchFileException(File(from))
+            if (to == from || (source.type == FileMode.Type.DIRECTORY && Paths.get(to).startsWith(Paths.get(from)))) {
+                throw IOException("destination is the source or its descendant: $newPath")
+            }
             if (sftp.statExistence(to) != null) {
                 if (!overwrite) throw FileAlreadyExistsException(File(to))
                 deleteRecursive(sftp, to)
@@ -292,10 +296,13 @@ class RemoteSftpFileAccess @Inject constructor(
     }
 
     override fun move(path: String, newPath: String, overwrite: Boolean) {
-        val from = toRemotePath(path)
-        val to = toRemotePath(newPath)
+        val from = Paths.get(toRemotePath(path)).normalize().toString()
+        val to = Paths.get(toRemotePath(newPath)).normalize().toString()
         withSftp { sftp ->
-            if (sftp.statExistence(from) == null) throw NoSuchFileException(File(from))
+            val source = sftp.statExistence(from) ?: throw NoSuchFileException(File(from))
+            if (to == from || (source.type == FileMode.Type.DIRECTORY && Paths.get(to).startsWith(Paths.get(from)))) {
+                throw IOException("destination is the source or its descendant: $newPath")
+            }
             if (sftp.statExistence(to) != null) {
                 if (!overwrite) throw FileAlreadyExistsException(File(to))
                 deleteRecursive(sftp, to)

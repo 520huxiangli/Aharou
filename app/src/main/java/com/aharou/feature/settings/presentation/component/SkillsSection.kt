@@ -1,8 +1,10 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,12 +18,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -37,22 +42,29 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.settings.presentation.SkillUiEntry
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Archive
 import compose.icons.feathericons.Book
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Folder
+import compose.icons.feathericons.Globe
 
 /**
  * 技能二级页：与「工具授权」一致的折叠分组列表——「内置 / 当前项目 / 全局」三组各自可折叠，
  * 每行一个技能（图标 + 名称 + 描述），点击行进入详情。
- * 用户可管理的两组支持左滑删除；内置技能随 App 打包，不给删除入口。
+ * 用户可管理的两组支持左滑删除；长按任一行弹操作单（搬运 / 导出 / 删除，内置技能只有导出）。
+ * 装到哪个作用域由右上角「＋」里的选择决定（与市场安装共用）。
  */
 @Composable
 internal fun SkillsSection(
     projectName: String?,
     entries: List<SkillUiEntry>,
     onDelete: (SkillUiEntry) -> Unit,
+    onMove: (String, SkillScope, SkillScope) -> Unit,
+    onExport: (SkillUiEntry) -> Unit,
     onOpenDetail: (SkillUiEntry) -> Unit
 ) {
     val builtinSkills = entries.filter { it.builtin }
@@ -102,6 +114,8 @@ internal fun SkillsSection(
     var builtinExpanded by rememberSaveable { mutableStateOf(true) }
     var projectExpanded by rememberSaveable { mutableStateOf(true) }
     var globalExpanded by rememberSaveable { mutableStateOf(true) }
+    // 长按某一行弹出的操作单；null 表示没弹
+    var actionEntry by remember { mutableStateOf<SkillUiEntry?>(null) }
 
     Column(
         modifier = Modifier
@@ -124,6 +138,7 @@ internal fun SkillsSection(
                         SkillRow(
                             entry = entry,
                             onDelete = null,
+                            onLongClick = { actionEntry = entry },
                             onClick = { onOpenDetail(entry) }
                         )
                     }
@@ -150,6 +165,7 @@ internal fun SkillsSection(
                         SkillRow(
                             entry = entry,
                             onDelete = { onDelete(entry) },
+                            onLongClick = { actionEntry = entry },
                             onClick = { onOpenDetail(entry) }
                         )
                     }
@@ -172,6 +188,7 @@ internal fun SkillsSection(
                         SkillRow(
                             entry = entry,
                             onDelete = { onDelete(entry) },
+                            onLongClick = { actionEntry = entry },
                             onClick = { onOpenDetail(entry) }
                         )
                     }
@@ -179,24 +196,111 @@ internal fun SkillsSection(
             }
         }
     }
+
+    actionEntry?.let { entry ->
+        SkillRowActionsSheet(
+            entry = entry,
+            onMove = { target ->
+                actionEntry = null
+                onMove(entry.name, entry.scope, target)
+            },
+            onExport = {
+                actionEntry = null
+                onExport(entry)
+            },
+            onDismiss = { actionEntry = null }
+        )
+    }
 }
 
 /**
- * 单个技能行：图标 + 名称/描述 + 右箭头。[onDelete] 为 null 表示不可删除（内置技能），
- * 此时连左滑手势都不接——免得滑出个按钮让人以为能删。
+ * 技能行：图标 + 名称/描述 + 右箭头。[onDelete] 为 null 表示不可删除（内置技能），
+ * 此时连左滑手势都不接——免得滑出个按钮让人以为能删；长按仍可用（弹操作单，只给导出）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SkillRow(
     entry: SkillUiEntry,
     onDelete: (() -> Unit)?,
+    onLongClick: (() -> Unit)?,
     onClick: () -> Unit
 ) {
     if (onDelete == null) {
-        SkillRowContent(entry, Modifier.clickable { onClick() })
+        SkillRowContent(
+            entry = entry,
+            modifier = if (onLongClick != null) {
+                Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            } else {
+                Modifier.clickable { onClick() }
+            }
+        )
         return
     }
-    SwipeToDeleteRow(onDelete = onDelete, onClick = onClick) {
+    SwipeToDeleteRow(onDelete = onDelete, onClick = onClick, onLongClick = onLongClick) {
         SkillRowContent(entry, Modifier)
+    }
+}
+
+/**
+ * 长按技能行的操作单：搬动（全局 ⇄ 当前项目）与导出。
+ * 删除仍走左滑那条路，不在这里重复；内置技能随 App 打包，既不能搬也不能删，只剩导出。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillRowActionsSheet(
+    entry: SkillUiEntry,
+    onMove: (SkillScope) -> Unit,
+    onExport: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AdaptiveModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                text = entry.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(bottom = Spacing.xs)
+            )
+            SettingsGroup {
+                if (!entry.builtin) {
+                    SettingsRow(
+                        icon = if (entry.scope == SkillScope.GLOBAL) FeatherIcons.Folder else FeatherIcons.Globe,
+                        title = stringResource(
+                            if (entry.scope == SkillScope.GLOBAL) R.string.skills_move_to_project
+                            else R.string.skills_move_to_global
+                        ),
+                        subtitle = stringResource(
+                            if (entry.scope == SkillScope.GLOBAL) R.string.skills_move_to_project_desc
+                            else R.string.skills_move_to_global_desc
+                        ),
+                        onClick = {
+                            onMove(
+                                if (entry.scope == SkillScope.GLOBAL) SkillScope.PROJECT
+                                else SkillScope.GLOBAL
+                            )
+                        }
+                    )
+                    SettingsDivider()
+                }
+                SettingsRow(
+                    icon = FeatherIcons.Archive,
+                    title = stringResource(R.string.skills_export),
+                    subtitle = stringResource(R.string.skills_export_desc),
+                    onClick = onExport
+                )
+            }
+        }
     }
 }
 

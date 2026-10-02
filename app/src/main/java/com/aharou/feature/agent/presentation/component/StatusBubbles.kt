@@ -669,6 +669,7 @@ internal fun ReasoningBubble(
     showTimer: Boolean = false,
     /** 已完成思考的总耗时（毫秒）。非空且大于 0 时，折叠行文案展示精确耗时。 */
     durationMs: Long? = null,
+    timerStartMs: Long? = null,
     /** 文本已由外部打字机驱动（流式尾巴场景），跳过内部防抖直接渲染。 */
     preRendered: Boolean = false,
     /** 思考所属会话：切会话时重新计时，否则会拿上一个会话的起点算出离谱的时长。 */
@@ -685,7 +686,7 @@ internal fun ReasoningBubble(
     val toggleExpanded: (Boolean) -> Unit = { next ->
         if (onExpandedChange != null) onExpandedChange(next) else localExpanded = next
     }
-    // 思考计时：仅流式思考场景开启，思考结束组件卸载自然停止。存绝对起始时间戳而非累加
+    // 存绝对起始时间戳而非累加
     // 毫秒数，切页返回或气泡滚出视口重挂载后显示的仍是真实时长；起始戳连同已见文本的长度与
     // 指纹一起进 saveable，恢复时文本若不是同一轮的延续（期间已换轮）则重新计时。
     var timerStartMillis by rememberSaveable { mutableStateOf(0L) }
@@ -693,9 +694,11 @@ internal fun ReasoningBubble(
     var timerSeenHead by rememberSaveable { mutableStateOf(0) }
     var elapsedMillis by remember { mutableStateOf(0L) }
     val latestText by rememberUpdatedState(text)
-    LaunchedEffect(showTimer, sessionKey) {
-        if (!showTimer) return@LaunchedEffect
-        if (!isStreamContinuation(latestText, timerSeenChars, timerSeenHead)) {
+    LaunchedEffect(showTimer, live, sessionKey, timerStartMs) {
+        if (!showTimer || !live) return@LaunchedEffect
+        if (timerStartMs != null) {
+            timerStartMillis = timerStartMs
+        } else if (!isStreamContinuation(latestText, timerSeenChars, timerSeenHead)) {
             timerStartMillis = System.currentTimeMillis()
         }
         while (true) {

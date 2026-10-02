@@ -96,6 +96,65 @@ class ModelMetadataMergeTest {
     }
 
     @Test
+    fun priceOnlyEdit_preservesDistinctWindows() {
+        val auto = meta(contextTokens = 200_000, inputTokens = 160_000, outputTokens = 32_000)
+        val custom = auto.copy(inputCostUsdPerM = 1.0)
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals(200_000, merged.contextTokens)
+        assertEquals(160_000, merged.inputTokens)
+        assertEquals(32_000, merged.outputTokens)
+        assertEquals(1.0, merged.inputCostUsdPerM!!, 0.0)
+    }
+
+    @Test
+    fun priceOnlyCustomWithBlankWindows_preservesAutoWindows() {
+        val auto = meta(contextTokens = 200_000, inputTokens = 160_000, outputTokens = 32_000)
+        val custom = meta(contextTokens = 0, inputCost = 1.0)
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals(200_000, merged.contextTokens)
+        assertEquals(160_000, merged.inputTokens)
+        assertEquals(32_000, merged.outputTokens)
+    }
+
+    @Test
+    fun customInputWindow_doesNotReplaceTotalContextWindow() {
+        val auto = meta(contextTokens = 200_000, inputTokens = 160_000)
+        val custom = meta(contextTokens = 0, inputTokens = 120_000)
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals(200_000, merged.contextTokens)
+        assertEquals(120_000, merged.inputTokens)
+    }
+
+    @Test
+    fun customTotalContextWindow_doesNotReplaceInputWindow() {
+        val auto = meta(contextTokens = 200_000, inputTokens = 160_000)
+        val custom = meta(contextTokens = 180_000)
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals(180_000, merged.contextTokens)
+        assertEquals(160_000, merged.inputTokens)
+    }
+
+    @Test
+    fun priceOnlyEdit_preservesAbsentInputWindow() {
+        val auto = meta(contextTokens = 200_000, outputTokens = 32_000)
+        val custom = auto.copy(inputCostUsdPerM = 1.0)
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals(200_000, merged.contextTokens)
+        assertNull(merged.inputTokens)
+        assertEquals(32_000, merged.outputTokens)
+    }
+
+    @Test
     fun customWithoutAuto_fallsBackToDefaultsWithNullPrices() {
         val custom = meta(inputCost = 1.0, outputCost = 2.0)
 

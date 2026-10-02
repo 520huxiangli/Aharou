@@ -156,6 +156,28 @@ class ToolGroupExpansionTest {
     }
 
     @Test
+    fun activeTurn_keepsAssistantBeforeFollowingTools() {
+        val items = items(
+            listOf(user("u0"), assistant("a1"), tool("t1"), tool("t2")),
+            activeTurnKey = "turn:u0",
+        )
+        assertEquals(listOf("a1", "toolgroup:t1"), items.header().turnProcess.map { it.key })
+        assertFalse(items.any { it.key == "a1" })
+    }
+
+    @Test
+    fun activeTurn_keepsSuccessiveAssistantMessagesInOrder() {
+        val messages = listOf(user("u0"), assistant("a1"), tool("t1"), assistant("a2"))
+        val running = items(messages, activeTurnKey = "turn:u0")
+        assertEquals(listOf("a1", "t1", "a2"), running.header().turnProcess.map { it.key })
+        assertFalse(running.any { it.key == "a2" })
+
+        val finished = items(messages, turnOverrides = mapOf("turn:u0" to true))
+        assertEquals(listOf("a1", "t1"), finished.header().turnProcess.map { it.key })
+        assertEquals(1, finished.count { it.key == "a2" })
+    }
+
+    @Test
     fun finishedTurn_autoCollapses() {
         // 收工（activeTurnKey 归 null）：折叠头转为「已完成」并默认收起；过程数据仍在，由动画收起
         val items = items(listOf(user("u0"), tool("t1"), tool("t2")), activeTurnKey = null)

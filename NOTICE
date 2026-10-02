@@ -123,3 +123,20 @@ accordance with the respective license terms.
 
    - JUnit 4 (junit:junit) — Eclipse Public License 2.0
    - AndroidX Test (androidx.test.*) — Apache License 2.0
+
+========================================================================
+10. dsh-pet (pet animations, dynamic island, easter-egg popup)
+------------------------------------------------------------------------
+   Project:  https://github.com/OTFiles/dsh-pet-inAndroid
+             (desktop original: https://github.com/MerZlin/dsh-pet-indesktop)
+   Copyright (c) 2026 Merzlin
+   License:  MIT
+
+   The orca pet's animation clips and easter-egg images under
+   app/src/main/assets/pet/orca/ (videos/, easter/, text_clips.json), and
+   the implementations in feature/pet/PetVideoView.kt (side-by-side alpha
+   video compositing), PetIsland.kt (dynamic island) and
+   PetEasterEgg.kt (easter-egg popup), are derived from the dsh-pet
+   project and redistributed under the MIT license, which is compatible
+   with this product's GPL-3.0 license. The full MIT text is bundled in
+   the APK at assets/licenses/dsh-pet-MIT.txt.

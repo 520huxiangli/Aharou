@@ -176,6 +176,11 @@ class LocalFileAccess @Inject constructor(
         val source = resolve(path)
         val target = resolve(newPath)
         if (!source.exists()) throw NoSuchFileException(source)
+        val sourcePath = source.canonicalFile.toPath()
+        val targetPath = target.canonicalFile.toPath()
+        if (targetPath == sourcePath || (source.isDirectory && targetPath.startsWith(sourcePath))) {
+            throw IOException("destination is the source or its descendant: $newPath")
+        }
         if (target.exists()) {
             if (!overwrite) throw FileAlreadyExistsException(target)
             target.deleteRecursively()
@@ -192,6 +197,11 @@ class LocalFileAccess @Inject constructor(
         val source = resolve(path)
         val target = resolve(newPath)
         if (!source.exists()) throw NoSuchFileException(source)
+        val sourcePath = source.canonicalFile.toPath()
+        val targetPath = target.canonicalFile.toPath()
+        if (targetPath == sourcePath || (source.isDirectory && targetPath.startsWith(sourcePath))) {
+            throw IOException("destination is the source or its descendant: $newPath")
+        }
         if (target.exists()) {
             if (!overwrite) throw FileAlreadyExistsException(target)
             target.deleteRecursively()

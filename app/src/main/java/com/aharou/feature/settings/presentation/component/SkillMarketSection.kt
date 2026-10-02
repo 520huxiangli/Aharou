@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,33 +38,33 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppTextField
-import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
 import com.aharou.feature.agent.domain.skill.market.SkillSafety
+import com.aharou.feature.agent.domain.skill.market.SkillTranslation
+import com.aharou.feature.agent.domain.skill.market.translationKey
 import com.aharou.feature.settings.presentation.MarketAlert
 import com.aharou.feature.settings.presentation.MarketSkillUi
-import com.aharou.feature.settings.presentation.MarketSort
 
 /**
  * 技能市场页（全屏二级页，与「技能详情」同一层级）：顶部粘贴仓库地址或选源，下方列出可安装的技能。
  *
  * 列表为空可能是源本身没内容、网络不通或还在加载，统一给一句提示，不区分——对用户没有可操作的区别。
+ * 列表滚动位置由外部传入的 [listState] 持有，这样进详情页再返回时不会跳回第一条。
+ * 仓库只给英文的条目由后台翻译（[translations]），翻好一批就换一批中文。
  */
 @Composable
 internal fun SkillMarketSection(
     sources: List<Pair<String, String>>,
     selectedSourceId: String,
     skills: List<MarketSkillUi>,
+    translations: Map<String, SkillTranslation>,
     loading: Boolean,
     alert: MarketAlert?,
-    scope: SkillScope,
-    sort: MarketSort,
-    onScopeChange: (SkillScope) -> Unit,
+    listState: LazyListState,
     onSelectSource: (String) -> Unit,
     onInstall: (MarketSkill) -> Unit,
     onLoadRepo: (String) -> Unit,
     onSearch: (String, String) -> Unit,
-    onSortChange: (MarketSort) -> Unit,
     onOpenDetail: (MarketSkill) -> Unit
 ) {
     var repoInput by remember { mutableStateOf("") }
@@ -77,7 +78,7 @@ internal fun SkillMarketSection(
                 .padding(top = Spacing.sm),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            // 源多了一行排不下就左右滑（历史行为，用户已习惯）
+            // 源多了一行排不下就左右滑（保持单行，别占列表的竖向空间）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -136,67 +137,30 @@ internal fun SkillMarketSection(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                Text(
-                    text = stringResource(R.string.skills_editor_scope),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                FilterChip(
-                    selected = scope == SkillScope.GLOBAL,
-                    onClick = { onScopeChange(SkillScope.GLOBAL) },
-                    label = { Text(stringResource(R.string.skills_scope_global)) }
-                )
-                FilterChip(
-                    selected = scope == SkillScope.PROJECT,
-                    onClick = { onScopeChange(SkillScope.PROJECT) },
-                    label = { Text(stringResource(R.string.skills_scope_project)) }
-                )
-            }
-
             when (alert) {
                 MarketAlert.InvalidAddress -> MarketAlertText(stringResource(R.string.skills_market_repo_invalid))
                 MarketAlert.NoSkills -> MarketAlertText(stringResource(R.string.skills_market_no_skills))
                 MarketAlert.NoMatchInRepo -> MarketAlertText(stringResource(R.string.skills_market_no_match_in_repo))
                 MarketAlert.LoadFailed -> MarketAlertText(stringResource(R.string.skills_market_load_failed))
-                MarketAlert.SearchByKeyword -> MarketAlertText(stringResource(R.string.skills_market_search_by_keyword))
+                MarketAlert.MarketNotLoaded -> MarketAlertText(stringResource(R.string.skills_market_not_loaded))
+                MarketAlert.TranslateUnavailable ->
+                    MarketAlertText(stringResource(R.string.skills_market_translate_unavailable))
                 MarketAlert.SkillSiteNeedsDetail -> MarketAlertText(stringResource(R.string.skills_market_site_needs_detail))
                 null -> Unit
-            }
-        }
-
-        // 排序放在列表正上方：与上面的表单分开，滚列表时不动
-        if (skills.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Spacing.lg)
-                    .padding(bottom = Spacing.sm),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                MarketSort.entries.forEach { option ->
-                    FilterChip(
-                        selected = option == sort,
-                        onClick = { onSortChange(option) },
-                        label = { Text(stringResource(option.labelRes())) }
-                    )
-                }
             }
         }
 
         when {
             // 列表已有内容就先显示——描述还在后台补，不必等全部读完
             skills.isNotEmpty() -> LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
-                    MarketSkillRow(ui, onInstall, onOpenDetail)
+                    MarketSkillRow(ui, translations, onInstall, onOpenDetail)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
             }
@@ -210,10 +174,16 @@ internal fun SkillMarketSection(
 @Composable
 private fun MarketSkillRow(
     ui: MarketSkillUi,
+    translations: Map<String, SkillTranslation>,
     onInstall: (MarketSkill) -> Unit,
     onOpenDetail: (MarketSkill) -> Unit
 ) {
     val skill = ui.skill
+    // 仓库只给英文的条目：模型翻好后标题与描述都换成中文（英文原名留在下面那行小字里）
+    val translation = translations[skill.translationKey()]
+    val title = translation?.name?.takeIf { it.isNotBlank() }
+        ?: skill.displayName.ifBlank { skill.name }
+    val description = translation?.description?.takeIf { it.isNotBlank() } ?: skill.description
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -224,15 +194,15 @@ private fun MarketSkillRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = skill.displayName.ifBlank { skill.name },
+                text = title,
                 style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            if (skill.description.isNotBlank()) {
+            if (description.isNotBlank()) {
                 Text(
-                    text = skill.description,
+                    text = description,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -317,12 +287,6 @@ private fun MarketAlertText(text: String) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.semanticColors.subtleText
     )
-}
-
-private fun MarketSort.labelRes(): Int = when (this) {
-    MarketSort.Default -> R.string.skills_market_sort_default
-    MarketSort.Name -> R.string.skills_market_sort_name
-    MarketSort.Popular -> R.string.skills_market_sort_popular
 }
 
 /** 安装量折成 1.2k / 10.5k，免得长数字把一整行挤满。 */

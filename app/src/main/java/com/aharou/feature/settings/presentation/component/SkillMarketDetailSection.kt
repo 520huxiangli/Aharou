@@ -29,6 +29,8 @@ import com.aharou.core.theme.semanticColors
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
 import com.aharou.feature.agent.domain.skill.market.SkillSafety
+import com.aharou.feature.agent.domain.skill.market.SkillTranslation
+import com.aharou.feature.agent.domain.skill.market.translationKey
 import com.aharou.feature.settings.presentation.MarketDetailUi
 
 /**
@@ -40,6 +42,7 @@ import com.aharou.feature.settings.presentation.MarketDetailUi
 @Composable
 internal fun SkillMarketDetailSection(
     state: MarketDetailUi,
+    translations: Map<String, SkillTranslation>,
     scope: SkillScope,
     onScopeChange: (SkillScope) -> Unit,
     onInstall: (MarketSkill) -> Unit
@@ -47,6 +50,11 @@ internal fun SkillMarketDetailSection(
     val skill = state.ui.skill
     val detail = state.detail
     val safety = detail?.safety
+    // 与列表页一致：仓库没给中文的条目显示模型译文（英文标识仍留在下面那行小字）
+    val translation = translations[skill.translationKey()]
+    val title = translation?.name?.takeIf { it.isNotBlank() }
+        ?: skill.displayName.ifBlank { skill.name }
+    val description = translation?.description?.takeIf { it.isNotBlank() } ?: skill.description
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -56,7 +64,7 @@ internal fun SkillMarketDetailSection(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                 Text(
-                    text = skill.displayName.ifBlank { skill.name },
+                    text = title,
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
@@ -67,9 +75,9 @@ internal fun SkillMarketDetailSection(
                         color = MaterialTheme.semanticColors.subtleText
                     )
                 }
-                if (skill.description.isNotBlank()) {
+                if (description.isNotBlank()) {
                     Text(
-                        text = skill.description,
+                        text = description,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

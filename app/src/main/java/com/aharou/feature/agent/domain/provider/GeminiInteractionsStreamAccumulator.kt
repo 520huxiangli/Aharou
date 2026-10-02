@@ -136,6 +136,8 @@ internal sealed class InteractionsDelta {
  * 会一路读到流尾被误判成断流。
  */
 internal class GeminiInteractionsStreamAccumulator {
+    var receivedContent: Boolean = false
+        private set
 
     private class StepAcc {
         var type: String? = null
@@ -214,7 +216,14 @@ internal class GeminiInteractionsStreamAccumulator {
                             val text = content.str("text").orEmpty()
                             budget.add(text)
                             acc.text.append(text)
+                            if (text.isNotEmpty()) receivedContent = true
                         }
+                    }
+                }
+                step.arr("content")?.forEach { block ->
+                    val content = block.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                    if (content.str("type") == InteractionContent.IMAGE && content.toAgentImage() != null) {
+                        receivedContent = true
                     }
                 }
                 declaredName?.let { return InteractionsDelta.ToolCallDeclared(it) }

@@ -76,7 +76,7 @@ interface ChatSessionDao {
     @Query("UPDATE chat_sessions SET workspacePath = :newPath WHERE workspacePath = :oldPath")
     suspend fun updateWorkspacePath(oldPath: String, newPath: String): Int
 
-    @Query("UPDATE chat_sessions SET providerId = :providerId, model = :model WHERE id = :id")
+    @Query("UPDATE chat_sessions SET providerId = :providerId, model = :model, lastInputTokens = 0 WHERE id = :id")
     suspend fun updateProviderModel(id: String, providerId: String?, model: String?)
 
     @Query("UPDATE chat_sessions SET reasoningEffort = :effort WHERE id = :id")

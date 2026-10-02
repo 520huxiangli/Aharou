@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -34,6 +35,40 @@ interface AgentMessageDao {
     /** 将指定会话中 cutoff 时间戳之前的所有消息标记为已压缩（isCompacted=1），不再参与上下文回放和 UI 展示。 */
     @Query("UPDATE agent_messages SET isCompacted = 1 WHERE sessionId = :sessionId AND timestamp < :cutoffTimestamp")
     suspend fun markMessagesCompactedBeforeTimestamp(sessionId: String, cutoffTimestamp: Long)
+
+    @Query("UPDATE agent_messages SET isCompacted = 1, compactedBySummaryId = :summaryId WHERE sessionId = :sessionId AND id IN (:headIds) AND isContextExcluded = 0")
+    suspend fun markMessagesCompactedByIds(sessionId: String, headIds: List<String>, summaryId: String)
+
+    @Query("UPDATE chat_sessions SET lastInputTokens = 0 WHERE id = :sessionId")
+    suspend fun resetLastInputTokens(sessionId: String)
+
+    @Transaction
+    suspend fun commitCompaction(
+        sessionId: String,
+        headIds: List<String>,
+        messages: List<AgentMessageEntity>,
+        summaryId: String
+    ) {
+        headIds.chunked(900).forEach { ids ->
+            markMessagesCompactedByIds(sessionId, ids, summaryId)
+        }
+        insertAll(messages)
+        resetLastInputTokens(sessionId)
+    }
+
+    @Query("DELETE FROM agent_messages WHERE sessionId = :sessionId AND (isCompactionMarker = 1 OR isContextSummary = 1)")
+    suspend fun deleteCompactionMessages(sessionId: String)
+
+    @Query("UPDATE agent_messages SET isCompacted = 0, compactedBySummaryId = NULL WHERE sessionId = :sessionId AND timestamp < :cutoff AND isCompacted = 1 AND isContextExcluded = 0 AND isContextSummary = 0 AND isCompactionMarker = 0")
+    suspend fun restoreCompactedMessagesBefore(sessionId: String, cutoff: Long)
+
+    @Transaction
+    suspend fun rewindConversation(sessionId: String, cutoff: Long) {
+        deleteCompactionMessages(sessionId)
+        restoreCompactedMessagesBefore(sessionId, cutoff)
+        deleteMessagesFromTimestamp(sessionId, cutoff)
+        resetLastInputTokens(sessionId)
+    }
 
     @Query("DELETE FROM agent_messages")
     suspend fun deleteAllMessages()

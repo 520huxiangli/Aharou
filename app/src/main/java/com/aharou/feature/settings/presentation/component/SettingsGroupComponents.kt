@@ -97,24 +97,52 @@ internal fun CollapsibleGroupHeader(
 internal fun settingsPageBackground(): Color =
     MaterialTheme.semanticColors.pageBackground
 
-/** 分组小标题：卡片上方灰色小字，左对齐。 */
+/**
+ * 分组小标题：卡片上方灰色小字，左对齐。
+ *
+ * 传了 [onToggle] 就变成可点折叠的标题（右侧带个朝下/朝右的小箭头），由调用方控制 [expanded]。
+ */
 @Composable
-internal fun SettingsGroupHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
-        fontWeight = FontWeight.Normal,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = Spacing.md, top = Spacing.lg, bottom = Spacing.sm)
-    )
+internal fun SettingsGroupHeader(
+    text: String,
+    expanded: Boolean? = null,
+    onToggle: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (onToggle != null) it.clickable(onClick = onToggle) else it }
+            .padding(start = Spacing.md, end = Spacing.sm, top = Spacing.lg, bottom = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
+            fontWeight = FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        if (expanded != null) {
+            ExpandableChevronIcon(
+                expanded = expanded,
+                style = ChevronRotationStyle.RIGHT_DOWN,
+                size = 16.dp,
+                tint = MaterialTheme.semanticColors.subtleText
+            )
+        }
+    }
 }
 
-/** 白色/深色分组圆角卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。 */
+/** 白色/深色分组圆角卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。[visible] 为 false 时整组不渲染（可折叠分组用）。 */
 @Composable
 internal fun SettingsGroup(
     modifier: Modifier = Modifier,
+    visible: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    // 不用「调用方 if 包一层」：`if (x) SettingsGroup { ... }` 里的花括号会被 Kotlin 当成 if 的语句块，
+    // 整块结构会错位，所以显隐放在组件内部
+    if (!visible) return
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),

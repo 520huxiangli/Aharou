@@ -213,6 +213,7 @@ class GeminiAdapter @Inject constructor(
                     } else false
                 },
                 attemptOnce = { onContent ->
+                    withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
                 val textBuilder = StringBuilder()
                 val budget = StreamBudget()
                 val toolCalls = mutableListOf<ToolCall>()
@@ -224,13 +225,11 @@ class GeminiAdapter @Inject constructor(
                 var streamOutputTokens = 0
                 var streamCachedInputTokens = 0
 
-                val body = api.streamGenerateContent(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request)
+                val body = firstContent.awaitBody(api.streamGenerateContent(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request))
 
                 body.use { rb ->
-                    // 首字节超时 watchdog：超时内未收到首个内容块则关闭流，触发可重试的 IOException。
-                    val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
-                    val watchdog = launchFirstByteWatchdog(firstByteTimeoutMs, { rb.close() }) { firstByteReceived.get() }
-                    val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { rb.close() }
+                    firstContent.attach { rb.close() }
+                    val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { firstContent.closeBody() }
                     val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                         runCatching { rb.close() }
                     }
@@ -267,7 +266,11 @@ class GeminiAdapter @Inject constructor(
                                     content?.getAsJsonArray("parts")?.forEach { partEl ->
                                         val part = partEl.asJsonObject
                                         val isThought = part.get("thought")?.asBoolean == true
-                                        if (part.has("functionCall")) budget.add(part.toString())
+                                        if (part.has("functionCall")) {
+                                            firstContent.receivedContent()
+                                            onContent()
+                                            budget.add(part.toString())
+                                        }
                                         accumulateSnapshotPart(snapshotParts, part, isThought)
                                         if (part.has("text")) {
                                             val text = part.get("text")?.asString ?: ""
@@ -275,12 +278,12 @@ class GeminiAdapter @Inject constructor(
                                                 budget.add(text)
                                                 if (isThought) {
                                                     // 思考增量：仅 UI 实时展示，不计入正文、不计入正文（不落库，重试时可安全重新流出）
-                                                    if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                                    firstContent.receivedContent()
                                                     onContent()
                                                     emit(AIStreamChunk.ReasoningDelta(text))
                                                 } else {
                                                     textBuilder.append(text)
-                                                    if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                                    firstContent.receivedContent()
                                                     onContent()
                                                     emit(AIStreamChunk.TextDelta(text))
                                                 }
@@ -288,7 +291,7 @@ class GeminiAdapter @Inject constructor(
                                         }
                                         part.inlineImagePart()?.let { img ->
                                             images.add(img)
-                                            if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                            firstContent.receivedContent()
                                             onContent()
                                         }
                                         if (part.has("functionCall")) {
@@ -312,13 +315,13 @@ class GeminiAdapter @Inject constructor(
                             }
                         }
                     } finally {
-                        watchdog.cancel()
                         idleWatchdog.cancel()
                         closeHandle?.dispose()
                     }
                 }
 
                 emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images)))
+                    }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )
@@ -462,20 +465,19 @@ class GeminiAdapter @Inject constructor(
                     } else false
                 },
                 attemptOnce = { onContent ->
+                    withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
                     val acc = GeminiInteractionsStreamAccumulator()
 
-                    val body = api.streamInteraction(
+                    val body = firstContent.awaitBody(api.streamInteraction(
                         url = url,
                         apiKey = apiKey,
                         extraHeaders = extraHeaders(),
                         request = request
-                    )
+                    ))
 
                     body.use { rb ->
-                        // 首字节超时 watchdog：超时内未收到首个内容块则关闭流，触发可重试的 IOException。
-                        val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
-                        val watchdog = launchFirstByteWatchdog(firstByteTimeoutMs, { rb.close() }) { firstByteReceived.get() }
-                        val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { rb.close() }
+                        firstContent.attach { rb.close() }
+                        val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { firstContent.closeBody() }
                         val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                             runCatching { rb.close() }
                         }
@@ -495,7 +497,12 @@ class GeminiAdapter @Inject constructor(
                                 // 单个事件的字段类型异常不应废掉整条流，只跳过该事件；
                                 // 但 StreamApiException（error 事件）与取消信号必须放行。
                                 val delta = try {
-                                    acc.accept(obj)
+                                    acc.accept(obj).also {
+                                        if (acc.receivedContent) {
+                                            firstContent.receivedContent()
+                                            onContent()
+                                        }
+                                    }
                                 } catch (e: StreamApiException) {
                                     throw e
                                 } catch (e: CancellationException) {
@@ -506,19 +513,19 @@ class GeminiAdapter @Inject constructor(
                                 }
                                 when (delta) {
                                     is InteractionsDelta.Text -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.TextDelta(delta.text))
                                     }
                                     // 思考增量仅用于 UI 展示，不计入正文；收到即说明连接已活。
                                     is InteractionsDelta.Reasoning -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.ReasoningDelta(delta.text))
                                     }
                                     // 工具名先于参数到达：通知 UI 提前把状态换成具体场景
                                     is InteractionsDelta.ToolCallDeclared -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.ToolCallDeclared(delta.name))
                                     }
@@ -526,13 +533,13 @@ class GeminiAdapter @Inject constructor(
                                 }
                             }
                         } finally {
-                            watchdog.cancel()
                             idleWatchdog.cancel()
                             closeHandle?.dispose()
                         }
                     }
 
                     emit(AIStreamChunk.Final(acc.toResponse()))
+                    }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )

@@ -1,20 +1,97 @@
 package com.aharou.feature.agent.domain.skill
 
 import com.aharou.testutil.TestFileAccessProvider
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.spyk
+import io.mockk.verify
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SkillRepositoryTest {
 
     private val provider = TestFileAccessProvider()
+    private val globalSource = spyk(GlobalDirectorySkillSource(provider)).apply {
+        every { listSkills() } returns emptyList()
+    }
+    private val projectSource = spyk(ProjectDirectorySkillSource(provider)).apply {
+        every { listSkills() } returns emptyList()
+    }
+    private val config = mockk<SkillConfigRepository>().apply {
+        every { disabledNames() } returns emptySet()
+    }
+    private val builtinSource = mockk<BuiltinSkillSource>().apply {
+        every { listSkills() } returns emptyList()
+        every { loadInstructions(any()) } returns null
+    }
+    private val repository = SkillRepository(builtinSource, globalSource, projectSource, config, provider)
 
     private fun skill(name: String) = Skill(
         name = name,
         description = "desc of $name",
         instructions = "body of $name"
     )
+
+    @Test
+    fun loadInstructions_projectOverridesSameNameWithDifferentBody() {
+        val global = skill("same").copy(instructions = "global instructions")
+        val project = skill("same").copy(instructions = "project instructions")
+        every { globalSource.listSkills() } returns listOf(global)
+        every { projectSource.listSkills() } returns listOf(project)
+
+        val listed = repository.listSkills().single()
+        assertEquals(project, listed)
+        assertEquals("project instructions", repository.loadInstructions(listed.name))
+        verify(exactly = 0) { globalSource.loadInstructions(any()) }
+    }
+
+    @Test
+    fun loadInstructions_projectOverridesCaseInsensitiveName() {
+        val global = skill("MixedCase").copy(instructions = "global instructions")
+        val project = skill("mixedcase").copy(instructions = "project instructions")
+        every { globalSource.listSkills() } returns listOf(global)
+        every { projectSource.listSkills() } returns listOf(project)
+
+        assertEquals(listOf(project), repository.listSkills())
+        assertEquals("project instructions", repository.loadInstructions("MIXEDCASE"))
+        verify(exactly = 0) { globalSource.loadInstructions(any()) }
+    }
+
+    @Test
+    fun loadInstructions_fallsBackToGlobalWhenProjectHasNoMatch() {
+        val global = skill("GlobalOnly").copy(instructions = "global instructions")
+        every { globalSource.listSkills() } returns listOf(global)
+        every { projectSource.listSkills() } returns listOf(skill("other"))
+
+        assertEquals("global instructions", repository.loadInstructions("GLOBALONLY"))
+        verify(exactly = 1) { projectSource.loadInstructions("GLOBALONLY") }
+        verify(exactly = 1) { globalSource.loadInstructions("GLOBALONLY") }
+    }
+
+    @Test
+    fun loadInstructions_returnsNullWhenNeitherSourceHasMatch() {
+        every { globalSource.listSkills() } returns listOf(skill("global"))
+        every { projectSource.listSkills() } returns listOf(skill("project"))
+
+        assertNull(repository.loadInstructions("missing"))
+        verify(exactly = 1) { projectSource.loadInstructions("missing") }
+        verify(exactly = 1) { globalSource.loadInstructions("missing") }
+    }
+
+    @Test
+    fun loadInstructions_disabledNameBlocksBothSourcesCaseInsensitively() {
+        every { globalSource.listSkills() } returns listOf(skill("MixedCase"))
+        every { projectSource.listSkills() } returns listOf(skill("mixedcase"))
+        every { config.disabledNames() } returns setOf("mixedcase")
+
+        assertTrue(repository.listSkills().isEmpty())
+        assertNull(repository.loadInstructions("MIXEDCASE"))
+        verify(exactly = 0) { projectSource.loadInstructions(any()) }
+        verify(exactly = 0) { globalSource.loadInstructions(any()) }
+    }
 
     @Test
     fun mergeAll_combinesGlobalAndProject() {

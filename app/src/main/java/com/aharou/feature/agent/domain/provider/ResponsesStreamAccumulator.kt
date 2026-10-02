@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.provider
 import com.aharou.feature.agent.data.remote.openai.ResponsesEvent
 import com.aharou.feature.agent.data.remote.openai.ResponsesItem
 import com.aharou.feature.agent.data.remote.openai.ResponsesPart
+import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -12,6 +13,8 @@ internal data class ResponsesOutput(
     val text: String = "",
     val reasoning: String = "",
     val toolCalls: List<ToolCall> = emptyList(),
+    /** 模型经服务端 image_generation 工具产出的图片（`result` base64）。 */
+    val images: List<AgentImage> = emptyList(),
     /** 官方 Responses 思考项快照（包含 encrypted_content 与 summary），供多轮无状态安全回传。 */
     val thinkingBlocksJson: String? = null
 )
@@ -20,7 +23,8 @@ internal data class ResponsesOutput(
 internal data class ResponsesUsage(
     val inputTokens: Int = 0,
     val outputTokens: Int = 0,
-    val cachedInputTokens: Int = 0
+    val cachedInputTokens: Int = 0,
+    val cacheCreationTokens: Int = 0
 )
 
 /**
@@ -35,6 +39,7 @@ internal fun parseResponsesOutput(output: JsonArray?): ResponsesOutput {
     val text = StringBuilder()
     val reasoning = StringBuilder()
     val toolCalls = mutableListOf<ToolCall>()
+    val images = mutableListOf<AgentImage>()
     var thinkingBlocksSnapshot: String? = null
     output.forEach { element ->
         // 上游字段类型偶有出入，单个 item 解析失败不应废掉整个响应
@@ -57,6 +62,13 @@ internal fun parseResponsesOutput(output: JsonArray?): ResponsesOutput {
                         arguments = parseToolArguments(item.str("arguments").orEmpty())
                     )
                 )
+
+                // 服务端生图：图片整块在 item 的 result（base64）里到达，无流式增量。
+                ResponsesItem.IMAGE_GENERATION_CALL -> {
+                    item.str("result")?.takeIf { it.isNotEmpty() }?.let { result ->
+                        images.add(AgentImage(mimeType = mimeForImageFormat(item.str("output_format")), base64Data = result))
+                    }
+                }
 
                 // 思考内容可能在 content（reasoning_text）或 summary（summary_text），视服务而定；
                 // 两边都可能是 null（如不返回思考明文时）。
@@ -87,7 +99,14 @@ internal fun parseResponsesOutput(output: JsonArray?): ResponsesOutput {
             }
         }
     }
-    return ResponsesOutput(text.toString(), reasoning.toString(), toolCalls, thinkingBlocksSnapshot)
+    return ResponsesOutput(text.toString(), reasoning.toString(), toolCalls, images, thinkingBlocksSnapshot)
+}
+
+/** image_generation_call 的 `output_format` → MIME；缺省为官方默认 png。 */
+private fun mimeForImageFormat(format: String?): String = when (format?.lowercase()) {
+    "jpeg" -> "image/jpeg"
+    "webp" -> "image/webp"
+    else -> "image/png"
 }
 
 internal fun parseResponsesUsage(usage: JsonObject?): ResponsesUsage {
@@ -95,7 +114,8 @@ internal fun parseResponsesUsage(usage: JsonObject?): ResponsesUsage {
     return ResponsesUsage(
         inputTokens = usage.int("input_tokens"),
         outputTokens = usage.int("output_tokens"),
-        cachedInputTokens = usage.obj("input_tokens_details")?.int("cached_tokens") ?: 0
+        cachedInputTokens = usage.obj("input_tokens_details")?.int("cached_tokens") ?: 0,
+        cacheCreationTokens = usage.obj("input_tokens_details")?.int("cache_write_tokens") ?: 0
     )
 }
 
@@ -133,6 +153,8 @@ internal sealed class ResponsesDelta {
  * failed 直接抛 [StreamApiException] 交给重试判定。
  */
 internal class ResponsesStreamAccumulator {
+    var receivedContent: Boolean = false
+        private set
 
     private class CallAcc {
         var callId = ""
@@ -145,6 +167,10 @@ internal class ResponsesStreamAccumulator {
     private val budget = StreamBudget()
     private var thinkingBlocksSnapshotJson: String? = null
     private val calls = LinkedHashMap<String, CallAcc>()
+    /** 流中 output_item.done 里到达的图片，按 item id 去重。 */
+    private val images = LinkedHashMap<String, AgentImage>()
+    /** 终止事件里兜底解析出的图片（流中 delta 事件缺失时的补齐来源）。 */
+    private val finalImages = mutableListOf<AgentImage>()
     /** 终止事件里兜底解析出的工具调用（流中 delta 事件缺失时的补齐来源）。 */
     private val finalCalls = mutableListOf<ToolCall>()
     private var status: String? = null
@@ -197,6 +223,13 @@ internal class ResponsesStreamAccumulator {
                                 item.arr("summary")?.let { add("summary", it) } ?: add("summary", JsonArray())
                             }
                             thinkingBlocksSnapshotJson = snapshot.toString()
+                        }
+                    }
+                    ResponsesItem.IMAGE_GENERATION_CALL -> {
+                        item.str("result")?.takeIf { it.isNotEmpty() }?.let { result ->
+                            val key = item.str("id") ?: event.callKey()
+                            receivedContent = true
+                            images[key] = AgentImage(mimeType = mimeForImageFormat(item.str("output_format")), base64Data = result)
                         }
                     }
                 }
@@ -257,7 +290,9 @@ internal class ResponsesStreamAccumulator {
             thinkingBlocksJson = thinkingBlocksSnapshotJson,
             inputTokens = usage.inputTokens,
             outputTokens = usage.outputTokens,
-            cachedInputTokens = usage.cachedInputTokens
+            cachedInputTokens = usage.cachedInputTokens,
+            cacheCreationTokens = usage.cacheCreationTokens,
+            images = images.values.filter { it.base64Data.isNotEmpty() }.ifEmpty { finalImages }
         )
     }
 
@@ -274,6 +309,8 @@ internal class ResponsesStreamAccumulator {
         if (thinkingBlocksSnapshotJson == null) thinkingBlocksSnapshotJson = parsed.thinkingBlocksJson
         finalCalls.clear()
         finalCalls.addAll(parsed.toolCalls)
+        finalImages.clear()
+        finalImages.addAll(parsed.images)
     }
 
     private fun JsonObject.callKey(): String =

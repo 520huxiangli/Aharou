@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -23,6 +24,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.aharou.R
 import java.util.Calendar
+import org.json.JSONObject
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
@@ -65,6 +67,7 @@ class PetOverlay(private val context: Context) {
         private const val KEY_X = "x"
         private const val KEY_Y = "y"
         internal const val KEY_SIZE = "size"
+        internal const val KEY_ROLE = "role"
         internal const val KEY_LOCKED = "locked"
         internal const val KEY_ENABLED = "enabled"
         internal const val KEY_ALWAYS = "always"
@@ -121,6 +124,36 @@ class PetOverlay(private val context: Context) {
         private const val EDGE_PADDING_DP = 10
         private const val BUBBLE_MIN_WIDTH_DP = 132
 
+        /** 图片气泡的停留时长（比文字略长，图里本来就有内容要看）。 */
+        private const val IMAGE_BUBBLE_MS = 4_500L
+
+        /** 随机搭话时冒图片气泡的概率（角色自带图片气泡时才有意义）。 */
+        private const val IMAGE_BUBBLE_CHANCE = 0.5f
+
+        /** 立绘姿态名。角色没画到的（如只有一张立绘）会在选图时回退 front。 */
+        private val POSE_NAMES = listOf("front", "side", "side_walk", "sleep", "drag", "wave")
+
+        /**
+         * 视频角色的显示比例：素材原片 1280x360（左右拼合），左半边才是真画面，所以是 640/360。
+         */
+        private const val VIDEO_ASPECT = 640f / 360f
+
+        /** 视频角色的一次性动作播多久后回常驻（素材每段都是 10 秒长循环，不能整段放完）。 */
+        private const val ONE_SHOT_MS = 4_000L
+
+        /** 视频角色贴边收起时窗口滑出屏幕的比例（留 40% 在外面）。 */
+        private const val VIDEO_TUCK_RATIO = 0.6f
+
+        /** 视频角色的常驻动作（文件名沿用 dsh-pet 那套素材，搬运时原样保留）。 */
+        private const val VIDEO_IDLE = "待机呼吸休闲.mp4"
+        private const val VIDEO_WALK = "原地漂浮踏步.mp4"
+        private const val VIDEO_SLEEP = "原地小憩沉眠.mp4"
+        private const val VIDEO_DRAG = "被鼠标拖拽悬空反馈.mp4"
+        private const val VIDEO_TURN = "东张西望.mp4"
+
+        /** 闲着时冒一段随机小动作的概率。 */
+        private const val VIDEO_RANDOM_CHANCE = 0.5f
+
         /** 没人搭理她这么久就自己打盹（毫秒）；深夜缩短，她更早睡。 */
         private const val SLEEP_AFTER_MS = 90_000L
 
@@ -152,6 +185,18 @@ class PetOverlay(private val context: Context) {
                 .putString(KEY_SIZE, size.key).apply()
         }
 
+        /** 当前角色（素材目录名）；没设置过或存的是已删掉的 id 时返回默认角色。 */
+        fun readRole(context: Context): String {
+            val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY_ROLE, null).orEmpty()
+            return saved.ifEmpty { PetRoles.DEFAULT_ID }
+        }
+
+        fun writeRole(context: Context, roleId: String) {
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(KEY_ROLE, roleId).apply()
+        }
+
         fun readLocked(context: Context): Boolean =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LOCKED, false)
 
@@ -180,12 +225,36 @@ class PetOverlay(private val context: Context) {
     private var petColumn: LinearLayout? = null
     private var body: FrameLayout? = null
     private var sprite: ImageView? = null
+
+    /** 视频角色的渲染层（素材目录带 `videos/` 时用）；PNG 角色为 null。 */
+    private var videoView: PetVideoView? = null
+    private var videoRole = false
+    private var videoKey: String? = null
+
+    /** 一次性动作覆盖（点击回应、随机小动作），到点回到常驻动作。 */
+    private var videoOverride: String? = null
+    private var videoOverrideUntil = 0L
+
+    /** 含可读文字的动作不能镜像（字会反），名单放在素材目录的 `text_clips.json` 里。 */
+    private var noMirrorNames: Set<String> = emptySet()
     private var bubble: TextView? = null
+
+    /** 气泡容器：文字气泡与图片气泡叠在里面，同时只显示一个。 */
+    private var bubbleBox: FrameLayout? = null
+    private var bubbleImage: ImageView? = null
     var menu: PetRadialMenu? = null
         private set
     private var params: WindowManager.LayoutParams? = null
 
     private var bitmaps: MutableMap<String, Bitmap> = mutableMapOf()
+
+    /** 当前角色（素材目录名 `assets/pet/<role>/`）。切换见 [setRole]。 */
+    private var role: String = readRole(context)
+
+    /** 角色自带的图片气泡；空表示这个角色只用文字气泡。 */
+    private var bubbleImages: List<Bitmap> = emptyList()
+    private var bubbleImageIndex = -1
+
     private var spriteKey: String? = null
     private var spriteW = 0
     private var spriteH = 0
@@ -276,6 +345,8 @@ class PetOverlay(private val context: Context) {
                     tapCount = 0
                     annoyed()
                 } else {
+                    // 视频角色被点一下会换个反应（睁眼、拢手……）
+                    playOneShot("click")
                     speakRandom()
                 }
                 return true
@@ -370,6 +441,10 @@ class PetOverlay(private val context: Context) {
             body = null
             petColumn = null
             sprite = null
+            videoView?.release()
+            videoView = null
+            videoKey = null
+            videoOverride = null
             bubble = null
             menu = null
             params = null
@@ -417,6 +492,8 @@ class PetOverlay(private val context: Context) {
      * 台词：优先问服务要一句（会带记忆去生成），没接那条路就用写死的三档台词兜底。
      */
     fun speakRandom() {
+        // 角色自带图片气泡时先看要不要冒图（她说的是画好的那句），没抽中就照旧走文本
+        if (tryBubbleImage()) return
         val request = onSpeakRequest
         if (request != null) request.invoke() else speakStaticLine()
     }
@@ -478,16 +555,19 @@ class PetOverlay(private val context: Context) {
     private fun applyBubble(text: String, persistent: Boolean, holdMs: Long = BUBBLE_MS) {
         mainHandler.post {
             val view = bubble ?: return@post
+            val img = bubbleImage
             bubblePersistent = persistent
             mainHandler.removeCallbacks(hideBubble)
             if (text.isBlank()) {
-                if (view.visibility == View.VISIBLE) {
+                if (view.visibility == View.VISIBLE || img?.visibility == View.VISIBLE) {
                     view.visibility = View.GONE
+                    img?.visibility = View.GONE
                     bubbleHeightPx = 0
                     applyLayout()
                 }
                 return@post
             }
+            img?.visibility = View.GONE
             view.text = text
             view.visibility = View.VISIBLE
             bubbleHeightPx = measureBubbleHeight()
@@ -516,6 +596,7 @@ class PetOverlay(private val context: Context) {
             maxLines = 4
             textSize = 11.5f
             setTextColor(Color.parseColor("#3C323C"))
+            maxWidth = dpToPx(BUBBLE_MIN_WIDTH_DP) * 2
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 12 * density
@@ -537,10 +618,35 @@ class PetOverlay(private val context: Context) {
         }
         bodyFrame.addView(image)
 
+        // 视频角色用它，PNG 角色时隐藏（两者同时只会显示一个，由 refreshSprite 切换）。
+        // 尺寸在 refreshVideoSprite 里设成画面大小：FrameLayout 默认给子 View 的就是
+        // match_parent，菜单展开把窗口撑大时会连带把视频画面拉大（看着就是「长按人变大了」）。
+        val video = PetVideoView(context).apply { visibility = View.GONE }
+        bodyFrame.addView(video, FrameLayout.LayoutParams(0, 0).apply { gravity = Gravity.CENTER })
+
+        val bubbleImageView = ImageView(context).apply {
+            visibility = View.GONE
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            maxWidth = dpToPx(BUBBLE_MIN_WIDTH_DP) * 2
+        }
+        // 文字气泡与图片气泡同一格：显示哪个由 applyBubble / applyBubbleImage 决定。
+        // 必须给显式 wrap_content 参数：FrameLayout 默认给子 View 的是 match_parent，
+        // 窗口一宽（视频角色的画面有 900 多像素）就会把气泡图横向拉扁。
+        val bubbleParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.CENTER,
+        )
+        val bubbleFrame = FrameLayout(context).apply {
+            addView(bubbleView, bubbleParams)
+            addView(bubbleImageView, bubbleParams)
+        }
+
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            addView(bubbleView)
+            addView(bubbleFrame)
             addView(bodyFrame)
         }
 
@@ -572,7 +678,10 @@ class PetOverlay(private val context: Context) {
         body = bodyFrame
         petColumn = column
         sprite = image
+        videoView = video
         bubble = bubbleView
+        bubbleBox = bubbleFrame
+        bubbleImage = bubbleImageView
         menu = menuView
         params = layoutParams
 
@@ -675,7 +784,8 @@ class PetOverlay(private val context: Context) {
      * 逐像素查 alpha 得不偿失。
      */
     private fun isInHeadZone(x: Float, y: Float): Boolean {
-        val view = sprite ?: return false
+        // 视频角色时 PNG 那层是隐藏的（top 是旧值），得拿真正在显示的那层算
+        val view = if (videoRole) videoView ?: return false else sprite ?: return false
         val top = view.top.toFloat()
         val headTop = top + spriteH * HEAD_TOP_RATIO
         val headBottom = top + spriteH * (HEAD_TOP_RATIO + HEAD_HEIGHT_RATIO)
@@ -706,6 +816,10 @@ class PetOverlay(private val context: Context) {
                 PetRadialMenu.Item(
                     PetRadialMenu.ID_SHOT, R.drawable.ic_pet_shot,
                     context.getString(R.string.pet_menu_shot), false,
+                ),
+                PetRadialMenu.Item(
+                    PetRadialMenu.ID_EASTER, R.drawable.ic_pet_egg,
+                    context.getString(R.string.pet_menu_easter), false,
                 ),
                 PetRadialMenu.Item(
                     PetRadialMenu.ID_SAY, R.drawable.ic_pet_say,
@@ -764,7 +878,10 @@ class PetOverlay(private val context: Context) {
         onMenuAction?.invoke(id)
     }
 
-    private fun menuRadius(): Float = maxOf(spriteW * 0.85f, 54 * density)
+    private fun menuRadius(): Float =
+        // 视频角色的宽度是整块 16:9 画面（九百多像素），直接拿它算半径会把菜单撑到满屏；
+        // 按身高的一半再收一点，圆环就刚好围着她转（PNG 角色算出来与原来基本一致）。
+        maxOf(minOf(spriteW.toFloat(), spriteH * 0.5f) * 0.8f, 48 * density)
 
     private fun menuPad(): Int =
         (menuRadius() + 21 * density + 20 * density + 4 * density).roundToInt()
@@ -774,6 +891,10 @@ class PetOverlay(private val context: Context) {
         val v = root ?: return
         val p = params ?: return
         if (spriteW <= 0 || spriteH <= 0) return
+        if (videoRole) {
+            applyVideoLayout(v, p)
+            return
+        }
 
         val menuOpen = menu?.isOpen == true
         val pad = if (menuOpen) menuPad() else 0
@@ -814,9 +935,47 @@ class PetOverlay(private val context: Context) {
         runCatching { windowManager.updateViewLayout(v, p) }
     }
 
+    /**
+     * 视频角色的窗口布局：尺寸恒定（画面多大就多大），贴边收起靠**把窗口滑出屏幕一截**。
+     *
+     * 素材里没有 PNG 那种「半身探头」图，滑出去是素材作者自己的做法（他靠允许窗口越出屏幕
+     * 让鱼身视觉贴边）。菜单或气泡开着时不收，免得把内容裁掉。
+     */
+    private fun applyVideoLayout(v: View, p: WindowManager.LayoutParams) {
+        val menuOpen = menu?.isOpen == true
+        val pad = if (menuOpen) menuPad() else 0
+        val bubbleH = bubbleHeightPx
+        val t = if (pad > 0 || bubbleH > 0) 0f else eased(tuckProgress)
+
+        val width = (maxOf(spriteW, dpToPx(BUBBLE_MIN_WIDTH_DP)) + pad * 2f).roundToInt()
+        val height = spriteH + bubbleH + pad * 2
+        val slide = spriteW * VIDEO_TUCK_RATIO
+        val x = lerp(
+            anchorX - pad.toFloat(),
+            if (anchorX <= 0) -slide else screenWidth() - width + slide,
+            t,
+        ).roundToInt().coerceIn(-pad, (screenWidth() - width + pad).coerceAtLeast(-pad))
+        val y = anchorY - pad - bubbleH
+
+        val resized = p.width != width || p.height != height
+        if (resized) {
+            p.width = width
+            p.height = height
+            (petColumn?.layoutParams as? FrameLayout.LayoutParams)?.let {
+                it.leftMargin = pad
+                it.topMargin = pad
+            }
+            petColumn?.requestLayout()
+        }
+        if (!resized && p.x == x && p.y == y) return
+        p.x = x
+        p.y = y
+        runCatching { windowManager.updateViewLayout(v, p) }
+    }
+
     /** 气泡高度只在内容变化时量一次（调用方负责缓存到 [bubbleHeightPx]）。 */
     private fun measureBubbleHeight(): Int {
-        val view = bubble ?: return 0
+        val view = bubbleBox ?: return 0
         if (view.visibility != View.VISIBLE) return 0
         view.measure(
             View.MeasureSpec.makeMeasureSpec(
@@ -837,6 +996,11 @@ class PetOverlay(private val context: Context) {
     private fun step() {
         if (spriteW <= 0) return
         val now = System.currentTimeMillis()
+        // 一次性动作到点了就回常驻（只有视频角色会出现）
+        if (videoRole && videoOverride != null && now >= videoOverrideUntil) {
+            videoOverride = null
+            refreshSprite(force = true)
+        }
         // 相位按真实间隔推进：菜单展开与打盹时会降帧，动画速度不该跟着变慢。
         val dt = if (lastFrameAt == 0L) FRAME_MS / 1000f else (now - lastFrameAt) / 1000f
         lastFrameAt = now
@@ -1049,8 +1213,33 @@ class PetOverlay(private val context: Context) {
     }
 
     private fun refreshSprite(force: Boolean) {
+        // 视频角色与 PNG 角色共用窗口、锚点与菜单，只换渲染物
+        sprite?.visibility = if (videoRole) View.GONE else View.VISIBLE
+        videoView?.visibility = if (videoRole) View.VISIBLE else View.GONE
+        if (videoRole) {
+            refreshVideoSprite(force)
+            return
+        }
         val sideways = motion == Motion.WALK || motion == Motion.FLING
-        val key = when {
+        val key = poseKey()
+        if (!force && key == spriteKey) return
+        val mirrored = key.endsWith("_left")
+        val name = if (mirrored) key.removeSuffix("_left") else key
+        // 姿势图还没就位时降到已有的图，别让她整只消失
+        val source = bitmaps[name] ?: bitmaps[if (sideways) "side" else "front"] ?: return
+        val view = sprite ?: return
+        spriteKey = key
+        view.setImageBitmap(source)
+        view.scaleX = if (mirrored) -1f else 1f
+    }
+
+    /**
+     * 当前该摆什么姿势：睡觉与拖拽优先，其次贴边探头，再按走/看的方向取侧视图，最后正面。
+     * PNG 角色按这个名字取图（缺的姿势回退 front），视频角色按类别取素材。
+     */
+    private fun poseKey(): String {
+        val sideways = motion == Motion.WALK || motion == Motion.FLING
+        return when {
             sleeping -> "sleep"
             dragging -> "drag"
             // 贴边收起（含滑动过程）：换侧身、脸朝屏幕里，看上去像从边上探头
@@ -1063,15 +1252,81 @@ class PetOverlay(private val context: Context) {
             System.currentTimeMillis() < waveUntil -> "wave"
             else -> "front"
         }
-        if (!force && key == spriteKey) return
-        val mirrored = key.endsWith("_left")
-        val name = if (mirrored) key.removeSuffix("_left") else key
-        // 姿势图还没就位时降到已有的图，别让她整只消失
-        val source = bitmaps[name] ?: bitmaps[if (sideways) "side" else "front"] ?: return
-        val view = sprite ?: return
-        spriteKey = key
-        view.setImageBitmap(source)
-        view.scaleX = if (mirrored) -1f else 1f
+    }
+
+    /**
+     * 视频角色的选片：一次性动作优先，否则按姿势取对应类别的常驻动作。
+     *
+     * 姿势里的方向（`_left`）只用来决定镜像——素材是同一段视频左右翻，不是两份文件。
+     */
+    private fun refreshVideoSprite(force: Boolean) {
+        val view = videoView ?: return
+        // 固定成画面尺寸，别跟着窗口（菜单展开时窗口会变大）走
+        (view.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.width != spriteW || lp.height != spriteH) {
+                lp.width = spriteW
+                lp.height = spriteH
+                lp.gravity = Gravity.CENTER
+                view.layoutParams = lp
+            }
+        }
+        val now = System.currentTimeMillis()
+        if (videoOverride != null && now >= videoOverrideUntil) videoOverride = null
+        val key = poseKey()
+        val path = videoOverride ?: when {
+            key.startsWith("sleep") -> pickVideo("random", prefer = VIDEO_SLEEP)
+            key.startsWith("drag") -> pickVideo("drag", prefer = VIDEO_DRAG)
+            // 站着往旁边看用它自带的「东张西望」，别拿走路的片子顶
+            idle == Idle.GLANCE -> pickVideo("turn", prefer = VIDEO_TURN)
+            // 收起时继续待机呼吸：没半身素材，靠窗口滑出屏幕做出「只留一半」
+            key.startsWith("peek") -> pickVideo("idle", prefer = VIDEO_IDLE)
+            key.startsWith("side") -> pickVideo("move", prefer = VIDEO_WALK)
+            else -> pickVideo("idle", prefer = VIDEO_IDLE)
+        }
+        // 画面里带文字的动作不镜像，否则字是反的（名单来自素材自带的 text_clips.json）
+        val clip = path?.substringAfterLast('/')?.removeSuffix(".mp4")
+        view.setMirrored(key.endsWith("_left") && (clip == null || clip !in noMirrorNames))
+        if (!force && path == videoKey) return
+        videoKey = path
+        if (path != null) view.play(path)
+    }
+
+    /** 播一段一次性动作（点击回应、随机小动作），[ONE_SHOT_MS] 后自动回常驻动作。 */
+    private fun playOneShot(category: String, exclude: String? = null) {
+        if (!videoRole) return
+        val path = pickVideo(category, exclude = exclude) ?: return
+        videoOverride = path
+        videoOverrideUntil = System.currentTimeMillis() + ONE_SHOT_MS
+        videoKey = null
+        refreshSprite(force = true)
+    }
+
+    /** 从某个类别目录里挑一段视频；[prefer] 优先，[exclude] 用来避开特定片段。 */
+    private fun pickVideo(category: String, prefer: String? = null, exclude: String? = null): String? {
+        val dir = "pet/$role/videos/$category"
+        val files = runCatching {
+            context.assets.list(dir).orEmpty().filter { it.endsWith(".mp4", ignoreCase = true) }
+        }.getOrDefault(emptyList())
+        if (files.isEmpty()) return null
+        val name = files.firstOrNull { prefer != null && it.equals(prefer, ignoreCase = true) }
+            ?: files.filter { exclude == null || !it.contains(exclude) }.randomOrNull()
+            ?: return null
+        return "$dir/$name"
+    }
+
+    /** 角色素材里带 `videos/` 就是视频角色（dsh-pet 那套左右拼合 mp4）。 */
+    private fun hasVideos(): Boolean =
+        runCatching { context.assets.list("pet/$role/videos").orEmpty().isNotEmpty() }
+            .getOrDefault(false)
+
+    /** 载入「含文字、不能镜像」的动作名单（素材自带的 `text_clips.json`）；没这个文件就是空。 */
+    private fun loadNoMirrorNames() {
+        noMirrorNames = runCatching {
+            val raw = context.assets.open("pet/$role/text_clips.json")
+                .use { it.readBytes().decodeToString() }
+            val arr = JSONObject(raw).optJSONArray("no_mirror")
+            buildSet { if (arr != null) for (i in 0 until arr.length()) add(arr.optString(i)) }
+        }.getOrDefault(emptySet())
     }
 
     /** 松手时她要是就在屏幕边附近，直接吸到边上（拖到边就贴住）。 */
@@ -1112,7 +1367,10 @@ class PetOverlay(private val context: Context) {
             Idle.WALK -> startWalk()
             Idle.GLANCE -> startGlance(now)
             Idle.NAP -> enterSleep()
-            Idle.STAY -> Unit
+            Idle.STAY -> if (Random.nextFloat() < VIDEO_RANDOM_CHANCE) {
+                // 闲着时冒一段随机小动作（PNG 角色没素材，playOneShot 自己会跳过）
+                playOneShot("random", exclude = VIDEO_SLEEP)
+            }
         }
     }
 
@@ -1202,6 +1460,7 @@ class PetOverlay(private val context: Context) {
             .start()
         mood = mood.petted(System.currentTimeMillis())
         PetMoodStore.write(context, mood)
+        playOneShot("click")
         applyBubble(context.getString(patLine()), persistent = false)
     }
 
@@ -1231,6 +1490,7 @@ class PetOverlay(private val context: Context) {
         // 戳太多她会记仇：掉分 + 别扭几分钟
         mood = mood.pokedTooMuch(System.currentTimeMillis())
         PetMoodStore.write(context, mood)
+        playOneShot("click")
         applyBubble(context.getString(R.string.pet_annoyed), persistent = false)
     }
 
@@ -1274,8 +1534,19 @@ class PetOverlay(private val context: Context) {
     // ── 工具 ────────────────────────────────────────────────
     private fun loadBitmaps(size: Size) {
         val target = dpToPx(size.heightDp)
+        videoRole = hasVideos()
+        if (videoRole) {
+            // 视频角色不加载 PNG：画面比例 16:9（左半边 640x360），高度照样跟着尺寸档走。
+            // 其余逻辑（锤点、菜单半径、贴边）都只认 spriteW/spriteH，不受影响。
+            spriteH = target
+            spriteW = (target * VIDEO_ASPECT).roundToInt()
+            bitmaps = mutableMapOf()
+            loadBubbleImages()
+            loadNoMirrorNames()
+            return
+        }
         val loaded = mutableMapOf<String, Bitmap>()
-        for (name in listOf("front", "side", "side_walk", "sleep", "drag", "wave")) {
+        for (name in POSE_NAMES) {
             scaleAsset(name, target)?.let { loaded[name] = it }
         }
         loaded["front"]?.let {
@@ -1287,12 +1558,13 @@ class PetOverlay(private val context: Context) {
             scaleByRatio("peek", spriteH / PEEK_CANON)?.let { loaded["peek"] = it }
         }
         bitmaps = loaded
+        loadBubbleImages()
     }
 
     /** 按固定比例缩放某个素材（用于不走「按身高归一」的图，如探头素材）。 */
     private fun scaleByRatio(name: String, ratio: Float): Bitmap? {
         return try {
-            val decoded = context.assets.open("pet/$name.png").use { BitmapFactory.decodeStream(it) }
+            val decoded = context.assets.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
                 ?: return null
             val w = (decoded.width * ratio).roundToInt().coerceAtLeast(1)
             val h = (decoded.height * ratio).roundToInt().coerceAtLeast(1)
@@ -1306,7 +1578,7 @@ class PetOverlay(private val context: Context) {
 
     private fun scaleAsset(name: String, targetHeight: Int): Bitmap? {
         return try {
-            val decoded = context.assets.open("pet/$name.png").use { BitmapFactory.decodeStream(it) }
+            val decoded = context.assets.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
                 ?: return null
             val scale = targetHeight.toFloat() / decoded.height
             val w = (decoded.width * scale).roundToInt().coerceAtLeast(1)
@@ -1321,9 +1593,83 @@ class PetOverlay(private val context: Context) {
     private fun releaseBitmaps() {
         bitmaps.values.forEach { runCatching { it.recycle() } }
         bitmaps = mutableMapOf()
+        bubbleImages.forEach { runCatching { it.recycle() } }
+        bubbleImages = emptyList()
+        bubbleImageIndex = -1
         // 归零：重新载入（如改尺寸）时不该再按旧宽度补偿锚点
         spriteW = 0
         spriteH = 0
+    }
+
+    /**
+     * 换角色：重新载入素材并重排。
+     *
+     * 素材目录不存在就停在当前角色不动——设置里存的 id 可能是已经删掉的。
+     */
+    fun setRole(roleId: String) {
+        if (roleId == role) return
+        mainHandler.post {
+            if (!PetRoles.exists(context, roleId)) {
+                Log.w("PetOverlay", "角色素材不存在，忽略切换：$roleId")
+                return@post
+            }
+            role = roleId
+            spriteKey = null
+            videoKey = null
+            videoOverride = null
+            releaseBitmaps()
+            loadBitmaps(currentSize)
+            // 换角色后必须刷一次：渲染物（PNG 立绘 / 视频层）的显隐是在这里面切的，
+            // 不刷就会两只角色同时在屏幕上。
+            refreshSprite(force = true)
+            applyLayout()
+        }
+    }
+
+    /** 冒一张图片气泡（角色自带的台词图）。 */
+    private fun applyBubbleImage(image: Bitmap) {
+        mainHandler.post {
+            val img = bubbleImage ?: return@post
+            val text = bubble ?: return@post
+            mainHandler.removeCallbacks(hideBubble)
+            bubblePersistent = false
+            text.visibility = View.GONE
+            img.setImageBitmap(image)
+            img.visibility = View.VISIBLE
+            bubbleHeightPx = measureBubbleHeight()
+            applyLayout()
+            mainHandler.postDelayed(hideBubble, IMAGE_BUBBLE_MS)
+        }
+    }
+
+    /**
+     * 随机搭话时要不要冒图片气泡。
+     *
+     * 这个角色没带图（或这次没抽中）就返回 false，由调用方继续走 AI / 写死台词那条路。
+     */
+    private fun tryBubbleImage(): Boolean {
+        val images = bubbleImages
+        if (images.isEmpty() || Random.nextFloat() >= IMAGE_BUBBLE_CHANCE) return false
+        var index = Random.nextInt(images.size)
+        // 别连着两次同一张（只有一张图时就只能重复了）
+        if (images.size > 1 && index == bubbleImageIndex) index = (index + 1) % images.size
+        bubbleImageIndex = index
+        untuck()
+        applyBubbleImage(images[index])
+        return true
+    }
+
+    /** 载入当前角色自带的图片气泡（`assets/pet/<role>/bubbles/` 里的 png）；没有就是空列表。 */
+    private fun loadBubbleImages() {
+        bubbleImages = runCatching {
+            context.assets.list("pet/$role/bubbles").orEmpty()
+                .filter { it.endsWith(".png") }
+                .sorted()
+                .mapNotNull { name ->
+                    context.assets.open("pet/$role/bubbles/$name").use { BitmapFactory.decodeStream(it) }
+                }
+        }.getOrDefault(emptyList())
+        bubbleImageIndex = -1
     }
 
     private fun randomIdle(): Long = Random.nextLong(IDLE_MIN_MS, IDLE_MAX_MS + 1)

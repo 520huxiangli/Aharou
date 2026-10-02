@@ -5,6 +5,7 @@ import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import java.io.File
 import javax.inject.Inject
@@ -29,8 +30,8 @@ import kotlinx.serialization.json.putJsonArray
 
 /**
  * 技能启停配置持久化，支持全局 + 项目级两级：
- * - 全局：`filesDir/aicode/skills.json`（跨项目、跨升级保留）；
- * - 项目级：`workspacePath/.aicode/skills.json`（随工作区走，可 git 追踪）。
+ * - 全局：当前执行环境的 `~/.aharou/skills.json`（跨项目保留）；
+ * - 项目级：`workspacePath/.aharou/skills.json`（随工作区走，可 git 追踪）。
  *
  * 格式：`{"disabled": ["skill-a", "skill-b"]}`，仅存「禁用名单」这一个事实；
  * 生效禁用集合 = 全局 + 项目并集。每次读取都从磁盘加载，外部手工编辑即时生效；
@@ -40,9 +41,10 @@ import kotlinx.serialization.json.putJsonArray
 class SkillConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val projectAicodeRoot: ProjectAharouRoot,
-    private val fileChangeHub: FileChangeHub
+    private val fileChangeHub: FileChangeHub,
+    private val fileAccess: FileAccessProvider
 ) {
-    /** 全局配置文件：`filesDir/aicode/skills.json`。 */
+    /** 本地全局配置文件，仅用于宿主文件变更监听。 */
     private fun globalFile(): File = File(containerInstaller.aharouDir, CONFIG_FILE)
 
     /** 当前工作区的项目级配置文件：`workspacePath/.aicode/skills.json`。 */
@@ -50,17 +52,29 @@ class SkillConfigRepository @Inject constructor(
 
     /** 当前生效的禁用技能名集合（全局 + 项目并集，归一化为小写）。 */
     fun disabledNames(): Set<String> {
-        val global = readDisabled(globalFile())
+        val global = readGlobalDisabled()
         val project = readDisabled(projectFile())
         return (global + project).map { it.lowercase() }.toSet()
     }
 
     /** 在指定作用域的配置中启用/禁用某个技能。 */
     fun setDisabled(name: String, disabled: Boolean, scope: SkillScope) {
-        val file = if (scope == SkillScope.GLOBAL) globalFile() else projectFile()
-        val names = readDisabled(file).toMutableSet()
+        val names = (if (scope == SkillScope.GLOBAL) readGlobalDisabled() else readDisabled(projectFile()))
+            .toMutableSet()
         if (disabled) names.add(name) else names.remove(name)
-        writeDisabled(file, names)
+        if (scope == SkillScope.GLOBAL) {
+            fileAccess.writeFile(GLOBAL_CONFIG_PATH, serializeDisabled(names))
+        } else {
+            writeDisabled(projectFile(), names)
+        }
+    }
+
+    private fun readGlobalDisabled(): Set<String> = runCatching {
+        if (fileAccess.isFile(GLOBAL_CONFIG_PATH)) parseDisabled(fileAccess.readFile(GLOBAL_CONFIG_PATH))
+        else emptySet()
+    }.getOrElse {
+        FileLogger.w(TAG, "读取 $CONFIG_FILE 失败: ${it.message}")
+        emptySet()
     }
 
     // ── 外部变更监听：容器内/手工直接增删改技能目录或 skills.json 后，数秒内通知 UI 刷新 ──
@@ -96,6 +110,7 @@ class SkillConfigRepository @Inject constructor(
     companion object {
         private const val TAG = "SkillConfigRepository"
         private const val CONFIG_FILE = "skills.json"
+        private const val GLOBAL_CONFIG_PATH = "~/.aharou/$CONFIG_FILE"
         private const val AHAROU_DIR = ".aharou"
         private const val SKILLS_DIR = "skills"
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }

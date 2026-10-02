@@ -3,11 +3,15 @@ package com.aharou.feature.agent.domain.provider
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import retrofit2.await
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
@@ -30,30 +34,88 @@ private const val TAG = "RetryPolicy"
 const val MAX_NETWORK_RETRIES = 6
 
 /**
- * 流式请求首字节等待超时：超过此时间未收到首个内容块即关闭流，触发可重试的 IOException。
+ * 每次流式尝试从发起请求到首个有效内容的等待上限，包含等待响应头。
  *
- * OkHttp 的 readTimeout 已设为无限制，首字节之前若卡死只能靠此应用层 watchdog 兜底，
+ * OkHttp 的 readTimeout 已设为无限制，首个内容之前由应用层取消请求兜底，
  * 故放宽到 5 分钟以容纳慢启动与长思考模型。
  */
 const val FIRST_BYTE_TIMEOUT_MS = 300_000L
 
-/**
- * 启动首字节超时 watchdog（作为当前协程的子协程）：在 [timeoutMs] 后
- * 若 [isFirstByteReceived] 仍为 false，则调用 [close]（通常是关闭 ResponseBody），
- * 强制读取抛出 IOException 以被重试机制捕获。
- *
- * [timeoutMs] <= 0 表示不限制，此时不启动计时。
- * 调用方应在收到首个内容块后取消返回的 [Job]。
- */
-suspend fun launchFirstByteWatchdog(
+class FirstContentGuard {
+    @Volatile private var close: (() -> Unit)? = null
+    @Volatile private var cancelCall: (() -> Unit)? = null
+    private var received = false
+    private var expired = false
+    @Volatile private var closed = false
+    internal var timer: Job? = null
+
+    fun attach(close: () -> Unit) {
+        this.close = close
+        if (closed) closeBody()
+    }
+
+    suspend fun awaitBody(call: retrofit2.Call<okhttp3.ResponseBody>): okhttp3.ResponseBody {
+        cancelCall = { call.cancel() }
+        if (closed) call.cancel()
+        return call.await()
+    }
+
+    fun receivedContent() {
+        synchronized(this) {
+            received = true
+            timer?.cancel()
+        }
+    }
+
+    internal fun expire(): Boolean = synchronized(this) {
+        if (received || expired) false else {
+            expired = true
+            true
+        }
+    }
+
+    fun closeBody() {
+        closed = true
+        runCatching { cancelCall?.invoke() }
+        runCatching { close?.invoke() }
+    }
+}
+
+@OptIn(InternalCoroutinesApi::class)
+suspend fun withFirstContentTimeout(
     timeoutMs: Long,
-    close: () -> Unit,
-    isFirstByteReceived: () -> Boolean
-): Job = CoroutineScope(coroutineContext[Job]!!).launch {
-    if (timeoutMs <= 0) return@launch
-    delay(timeoutMs)
-    if (!isFirstByteReceived()) {
-        runCatching { close() }
+    block: suspend (FirstContentGuard) -> Unit
+) {
+    val guard = FirstContentGuard()
+    val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+    try {
+        coroutineScope {
+            val attemptJob = coroutineContext[Job]!!
+            // 阻塞 readLine 无法靠协程取消唤醒，必须在进入 cancelling 时取消底层 Call。
+            val handle = attemptJob.invokeOnCompletion(onCancelling = true, invokeImmediately = true) {
+                if (it != null) guard.closeBody()
+            }
+            val timer = launch(start = CoroutineStart.LAZY) {
+                if (timeoutMs <= 0) return@launch
+                delay(timeoutMs)
+                if (guard.expire()) {
+                    timedOut.set(true)
+                    attemptJob.cancel(CancellationException("First content timeout"))
+                }
+            }
+            guard.timer = timer
+            timer.start()
+            try {
+                block(guard)
+            } finally {
+                timer.cancel()
+                handle.dispose()
+            }
+        }
+    } catch (e: Throwable) {
+        coroutineContext.ensureActive()
+        if (timedOut.get()) throw SocketTimeoutException("First content timeout after ${timeoutMs}ms")
+        throw e
     }
 }
 
@@ -372,9 +434,7 @@ suspend fun <T> retryStaircase(
  * @param onRetry 重试前回调，参数为 (当前重试次数, 最大重试次数)；用于通知上层"正在重试"。
  *                回调在 delay 之前调用，确保 UI 能立即展示重试状态。声明为 suspend 以便
  *                调用方在其中通过 Flow 的 emit() 推送重试事件。
- * @param onContent 流式读取中成功收到内容块时调用（通常在 emit TextDelta/ReasoningDelta 处）。
- *                  一旦收到过内容说明连接已恢复、请求已成功，此后若再断流应重置重试计数，
- *                  否则同一次请求内多次抖动会显示 1,2,3,4,5… 持续累加而不重新计数。
+ * @param attemptOnce 单次流式请求；收到内容后调用 onContent，以判定 Key 切换时是否允许重发。
  * @param maxRetries 最大重试次数（不含首次请求），由调用方按「偏好设置 → 网络」传入；0 表示不重试。
  */
 suspend fun streamWithStaircaseRetry(
@@ -393,8 +453,6 @@ suspend fun streamWithStaircaseRetry(
             throw e
         } catch (e: Throwable) {
             coroutineContext.ensureActive()
-            // 本次尝试已成功收到过内容：视为新一轮请求，重置重试计数
-            if (receivedContent) attempt = 0
             if (!isRetriableNetworkError(e)) {
                 if (onKeyFailure?.invoke(e, !receivedContent) == true) {
                     attempt = 0

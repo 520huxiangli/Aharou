@@ -185,8 +185,8 @@ class ModelMetadataService @Inject constructor(
         }
 
         /**
-         * 模型 id 匹配：原名优先（精确 → 忽略大小写），两者都落空才逐级剥离 vendor 前缀重试；
-         * 每一轮都先按 [preferredProviders] 顺序查，再退到全目录的同名键。
+         * 模型 id 匹配：每轮完整名称（精确 → 忽略大小写）优先于已知后缀候选，再逐级剥离 vendor 前缀重试；
+         * 所有候选落空后才去掉最后一个连字符后缀一次，每次查找都先偏好 provider，再退到全目录。
          */
         internal fun findMetadata(
             catalog: Catalog,
@@ -199,9 +199,19 @@ class ModelMetadataService @Inject constructor(
             } else {
                 modelId
             }
-            for (name in listOf(normalized) + vendorStrippedCandidates(normalized)) {
-                lookup(catalog.byProvider, preferred, strippedCandidates(name))?.let { return it }
-                lookup(catalog.lowerByProvider, preferred, strippedCandidates(name.lowercase()))?.let { return it }
+            val names = listOf(normalized) + vendorStrippedCandidates(normalized)
+            for (name in names) {
+                lookup(catalog.byProvider, preferred, listOf(name))?.let { return it }
+                lookup(catalog.lowerByProvider, preferred, listOf(name.lowercase()))?.let { return it }
+                lookup(catalog.byProvider, preferred, strippedCandidates(name).drop(1))?.let { return it }
+                lookup(catalog.lowerByProvider, preferred, strippedCandidates(name.lowercase()).drop(1))?.let { return it }
+            }
+            for (name in names) {
+                val lastDash = name.lastIndexOf('-')
+                if (lastDash <= name.lastIndexOf('/') + 1) continue
+                val candidate = name.substring(0, lastDash)
+                lookup(catalog.byProvider, preferred, listOf(candidate))?.let { return it }
+                lookup(catalog.lowerByProvider, preferred, listOf(candidate.lowercase()))?.let { return it }
             }
             return null
         }

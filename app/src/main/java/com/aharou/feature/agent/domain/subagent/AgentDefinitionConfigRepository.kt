@@ -5,6 +5,7 @@ import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import java.io.File
 import javax.inject.Inject
@@ -29,8 +30,8 @@ import kotlinx.serialization.json.putJsonArray
 
 /**
  * 子代理启停配置持久化，与技能的 `skills.json` 同一套约定，支持全局 + 项目级两级：
- * - 全局：`filesDir/aicode/agents.json`（跨项目、跨升级保留）；
- * - 项目级：`workspacePath/.aicode/agents.json`（随工作区走，可 git 追踪）。
+ * - 全局：当前执行环境的 `~/.aharou/agents.json`（跨项目保留）；
+ * - 项目级：`workspacePath/.aharou/agents.json`（随工作区走，可 git 追踪）。
  *
  * 格式 `{"disabled": ["name-a"]}`，只存禁用名单；生效禁用集合 = 全局 + 项目并集。
  * 每次读取都从磁盘加载，外部手工编辑即时生效；名单里已不存在的子代理名在过滤时天然被忽略。
@@ -39,8 +40,10 @@ import kotlinx.serialization.json.putJsonArray
 class AgentDefinitionConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val projectAicodeRoot: ProjectAharouRoot,
-    private val fileChangeHub: FileChangeHub
+    private val fileChangeHub: FileChangeHub,
+    private val fileAccess: FileAccessProvider
 ) {
+    /** 本地全局配置文件，仅用于宿主文件变更监听。 */
     private fun globalFile(): File = File(containerInstaller.aharouDir, CONFIG_FILE)
 
     private fun projectFile(): File = File(projectAicodeRoot.current(), CONFIG_FILE)
@@ -77,19 +80,32 @@ class AgentDefinitionConfigRepository @Inject constructor(
 
     /** 当前生效的禁用子代理名集合（全局 + 项目并集，归一化为小写）。 */
     fun disabledNames(): Set<String> =
-        (readDisabled(globalFile()) + readDisabled(projectFile())).map { it.lowercase() }.toSet()
+        (readGlobalDisabled() + readDisabled(projectFile())).map { it.lowercase() }.toSet()
 
     /** 在指定作用域的配置中启用/禁用某个子代理。 */
     fun setDisabled(name: String, disabled: Boolean, scope: AgentDefinitionScope) {
-        val file = if (scope == AgentDefinitionScope.GLOBAL) globalFile() else projectFile()
-        val names = readDisabled(file).toMutableSet()
+        val names = (if (scope == AgentDefinitionScope.GLOBAL) readGlobalDisabled() else readDisabled(projectFile()))
+            .toMutableSet()
         if (disabled) names.add(name) else names.removeAll { it.equals(name, ignoreCase = true) }
-        writeDisabled(file, names)
+        if (scope == AgentDefinitionScope.GLOBAL) {
+            fileAccess.writeFile(GLOBAL_CONFIG_PATH, serializeDisabled(names))
+        } else {
+            writeDisabled(projectFile(), names)
+        }
+    }
+
+    private fun readGlobalDisabled(): Set<String> = runCatching {
+        if (fileAccess.isFile(GLOBAL_CONFIG_PATH)) parseDisabled(fileAccess.readFile(GLOBAL_CONFIG_PATH))
+        else emptySet()
+    }.getOrElse {
+        FileLogger.w(TAG, "读取 $CONFIG_FILE 失败: ${it.message}")
+        emptySet()
     }
 
     companion object {
         private const val TAG = "AgentDefinitionConfigRepository"
         private const val CONFIG_FILE = "agents.json"
+        private const val GLOBAL_CONFIG_PATH = "~/.aharou/$CONFIG_FILE"
         private const val AHAROU_DIR = ".aharou"
         private const val AGENTS_DIR = "agents"
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }

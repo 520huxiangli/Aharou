@@ -259,7 +259,7 @@ android {
     // 却要在安装/读取时多一次解压，且会让 APK 启动时的 asset 扫描变慢。
     // Tesseract 语言包同理：它本身就是压缩包格式，再压一遍几乎没收益。
     androidResources {
-        noCompress += listOf("onnx", "mvn", "traineddata")
+        noCompress += listOf("onnx", "mvn", "traineddata", "mp4")
     }
 
     // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，

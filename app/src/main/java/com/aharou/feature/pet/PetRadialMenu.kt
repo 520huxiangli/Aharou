@@ -32,6 +32,7 @@ class PetRadialMenu(context: Context) : View(context) {
         const val ID_TOY = "toy"
         const val ID_PASS = "pass"
         const val ID_SHOT = "shot"
+        const val ID_EASTER = "easter"
 
         /** 菜单文字字号（sp）。 */
         private const val LABEL_SP = 11f

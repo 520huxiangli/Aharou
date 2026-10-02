@@ -180,6 +180,7 @@ internal fun ChatInputBar(
     onEditQueued: (QueuedRequest) -> Unit = {},
     onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
+    tokenEstimated: Boolean = false,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: () -> Unit = {},
@@ -607,7 +608,7 @@ internal fun ChatInputBar(
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )
-                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, tokenProgress = tokenProgress, onSend = onSend, onStop = onStop)
+                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop)
                 }
             }
         }
@@ -766,6 +767,7 @@ internal fun SendButton(
     hasContent: Boolean,
     isBusy: Boolean,
     tokenProgress: Float,
+    tokenEstimated: Boolean,
     onSend: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -794,7 +796,7 @@ internal fun SendButton(
     ) {
         if (clampedProgress > 0f) {
             val usageLabel = stringResource(
-                R.string.chat_context_usage,
+                if (tokenEstimated) R.string.chat_context_usage_estimated else R.string.chat_context_usage,
                 (clampedProgress * 100).toInt()
             )
             Canvas(

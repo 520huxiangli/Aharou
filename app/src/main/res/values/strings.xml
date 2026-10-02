@@ -102,7 +102,7 @@
     <string name="settings_token_stats_requests">请求次数</string>
     <string name="settings_token_stats_cost">费用</string>
     <string name="settings_token_stats_cache_hit_rate">缓存命中率</string>
-    <string name="settings_token_stats_cached">缓存 %1$s</string>
+    <string name="settings_token_stats_cache_read_write">读取 %1$s / 写入 %2$s</string>
     <string name="settings_token_stats_trend">消耗趋势</string>
     <string name="settings_token_stats_legend_input">输入</string>
     <string name="settings_token_stats_legend_output">输出</string>
@@ -120,7 +120,8 @@
     <string name="settings_token_stats_col_provider">供应商</string>
     <string name="settings_token_stats_col_input">输入</string>
     <string name="settings_token_stats_col_output">输出</string>
-    <string name="settings_token_stats_col_cached">缓存</string>
+    <string name="settings_token_stats_col_cached_read">缓存读取</string>
+    <string name="settings_token_stats_col_cached_write">缓存写入</string>
     <string name="settings_token_stats_col_cache_hit_rate">命中率</string>
     <string name="settings_token_stats_col_ttfb">首字节</string>
     <string name="settings_token_stats_col_duration">耗时</string>
@@ -166,11 +167,10 @@
     <string name="storage_breakdown_note">点击带箭头的分类可展开明细。删会话可减小聊天记录，容器与工作区请在各自的页面重置或删除；外部目录工作区位于设备存储，未计入。</string>
     <string name="storage_freed">已释放 %1$s</string>
     <string name="storage_clean">清理</string>
-    <string name="storage_clean_all">一键清理</string>
-    <string name="storage_clean_all_desc">清理以上全部项，不动聊天记录、容器与工作区</string>
     <string name="storage_clean_confirm_title">确认清理</string>
-    <string name="storage_clean_confirm_all">将清理缓存、日志、工具输出与识图会话缓存，共约 %1$s。聊天记录、容器与工作区不受影响。</string>
-    <string name="storage_clean_confirm_single">将删除「%1$s」，约 %2$s。此操作不可恢复。</string>
+    <string name="storage_clean_selected">清理选中项 · %1$s</string>
+    <string name="storage_clean_confirm_selected">将清理以下选中项，共约 %1$s。此操作不可恢复。</string>
+    <string name="storage_clean_scope">仅清理本机应用缓存、日志及全局目录中的所选数据，可能影响多个工作区的历史输出读取或识图追问；不会删除聊天记录、工作区文件、容器、AI 配置或远程服务器数据。</string>
     <string name="storage_category_chat">聊天记录</string>
     <string name="storage_category_container">容器</string>
     <string name="storage_category_container_images">容器镜像包</string>
@@ -447,7 +447,9 @@
     <string name="agent_stopped_by_user">已被用户停止</string>
     <string name="agent_tool_executing">%1$s 执行中…</string>
     <string name="agent_stop_refusal">模型基于内容安全策略拒绝了本次回答。</string>
-    <string name="agent_stop_context_exceeded">本次输入超出模型上下文窗口，请先压缩上下文或新建会话。</string>    <string name="agent_context_no_compaction">当前上下文无需压缩（消息过少）</string>
+    <string name="agent_stop_context_exceeded">本次输入超出模型上下文窗口，请先压缩上下文或新建会话。</string>
+    <string name="agent_input_budget_exceeded">上下文超过当前模型的可用输入预算，请缩短输入或减少工具定义。</string>
+    <string name="chat_context_usage_estimated">预计占可用输入预算 %1$d%%</string>    <string name="agent_context_no_compaction">当前上下文无需压缩（消息过少）</string>
     <string name="agent_compaction_failed">压缩失败：%1$s</string>
     <string name="agent_model_not_selected">未选择</string>
     <!-- About -->
@@ -1112,19 +1114,18 @@
     <string name="skills_market_update">更新</string>
     <string name="skills_market_loading">正在加载技能列表…</string>
     <string name="skills_market_empty">这个源暂时没有可用技能</string>
-    <string name="skills_market_repo_hint">粘贴仓库地址，如 github.com/某人/某仓库</string>
+    <string name="skills_market_repo_hint">粘贴仓库地址</string>
     <string name="skills_market_repo_load">加载</string>
+    <string name="skills_market_refresh">刷新</string>
     <string name="skills_market_repo_invalid">认不出这个地址</string>
-    <string name="skills_market_search_hint">关键词搜索（至少 2 个字）；填了上面的地址就只在该仓库里搜</string>
+    <string name="skills_market_search_hint">关键词搜索</string>
     <string name="skills_market_search">搜索</string>
-    <string name="skills_market_search_by_keyword">这是个只能用关键词检索的技能站，用下面的输入框搜吧</string>
+    <string name="skills_market_not_loaded">技能列表还没加载出来，稍等一下再搜</string>
+    <string name="skills_market_translate_unavailable">英文条目没能翻成中文：先看看设置 → 默认模型里的供应商是否可用</string>
     <string name="skills_market_site_needs_detail">这是技能站的目录页，贴具体技能页的地址才行</string>
     <string name="skills_market_no_skills">这个仓库里没找到技能</string>
-    <string name="skills_market_no_match_in_repo">这个仓库里没有匹配的技能</string>
+    <string name="skills_market_no_match_in_repo">当前范围内没有匹配的技能</string>
     <string name="skills_market_load_failed">加载失败，检查网络或换个源再试</string>
-    <string name="skills_market_sort_default">默认</string>
-    <string name="skills_market_sort_name">名称</string>
-    <string name="skills_market_sort_popular">热门</string>
     <string name="skills_market_risk_scripts">含 %1$d 个脚本</string>
     <string name="skills_market_risk_credentials">需凭据</string>
     <string name="skills_market_risk_title">装之前看一下</string>
@@ -1164,6 +1165,16 @@
     <string name="skills_editor_scope">作用域</string>
     <string name="skills_scope_global">全局</string>
     <string name="skills_scope_project">当前项目</string>
+    <string name="skills_scope_label">存放位置</string>
+    <string name="skills_move_to_project">移到当前项目</string>
+    <string name="skills_move_to_project_desc">搬到这个项目的技能目录，只在本项目生效</string>
+    <string name="skills_move_to_global">移到全局</string>
+    <string name="skills_move_to_global_desc">搬到全局技能目录，所有项目共用</string>
+    <string name="skills_move_ok_project">已移到当前项目</string>
+    <string name="skills_move_ok_global">已移到全局</string>
+    <string name="skills_move_conflict">那边已有同名技能，没有移动</string>
+    <string name="skills_move_readonly">内置技能不能移动</string>
+    <string name="skills_move_failed">移动失败，技能还在原位置</string>
     <string name="skills_name_hint">建议用英文小写，如 pdf-report</string>
     <string name="skills_description_hint">简述何时该用它，AI 据此判断要不要加载</string>
     <string name="skills_instructions_hint">写清这类任务的标准流程与注意事项，支持 Markdown</string>
@@ -1299,6 +1310,8 @@
     <string name="provider_test_success">连接正常 · %1$dms</string>
     <string name="common_error">错误</string>
     <string name="common_select">选择</string>
+    <string name="provider_model_context_total">总上下文窗口 (Token)</string>
+    <string name="provider_model_window_invalid">请输入有效的正整数，或留空使用自动识别值</string>
     <string name="provider_model_context_input">输入窗口 (Token)</string>
     <string name="provider_model_context_output">输出窗口 (Token)</string>
     <string name="provider_new">新供应商</string>
@@ -1340,7 +1353,8 @@
     <string name="provider_model_section_price">价格</string>
     <string name="provider_model_price_input">输入价格 (USD/1M tokens)</string>
     <string name="provider_model_price_output">输出价格 (USD/1M tokens)</string>
-    <string name="provider_model_price_cache_read">缓存命中价格 (USD/1M tokens)</string>
+    <string name="provider_model_price_cache_read">缓存读取价格 (USD/1M tokens)</string>
+    <string name="provider_model_price_cache_write">缓存写入价格 (USD/1M tokens)</string>
     <string name="provider_model_cap_vision">图片输入</string>
     <string name="provider_model_cap_image_output">图片输出</string>
     <string name="provider_model_capabilities">能力</string>
@@ -2079,6 +2093,9 @@
     <string name="pet_menu_toy">扔个球</string>
     <string name="pet_menu_pass">摆件模式</string>
     <string name="pet_menu_shot">截屏</string>
+    <string name="pet_menu_easter">彩蛋</string>
+    <string name="pet_island">灵动岛</string>
+    <string name="pet_island_desc">屏幕顶部的胶囊：显示时间，点一下显示/隐藏桌宠，可拖动、松手吸顶</string>
     <string name="pet_shot_sent">截好了，发进会话了</string>
     <string name="pet_shot_failed">刚那下没截上，等会儿再点我</string>
     <string name="pet_shot_no_a11y">截屏得先开无障碍：设置 → 权限与后台 → 无障碍</string>
@@ -2150,6 +2167,8 @@
     <string name="pet_size_large">大</string>
     <string name="pet_lock">锁定位置</string>
     <string name="pet_lock_hint">锁上后不能拖动（长按菜单仍可用）</string>
+    <string name="pet_role_title">桌宠角色</string>
+    <string name="pet_role_hint">换一套立绘（没画到的动作会自动用正面图顶上）</string>
     <string name="pet_notification_channel">小染</string>
     <string name="pet_notification_text">小染正在屏幕上陪着你</string>
     <string name="pet_notification_working">正在替你干活，进度看她的气泡</string>

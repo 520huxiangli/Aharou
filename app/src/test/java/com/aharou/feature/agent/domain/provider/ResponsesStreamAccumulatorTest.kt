@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.provider
 
 import com.aharou.feature.agent.data.remote.openai.ResponsesEvent
+import com.aharou.feature.agent.data.remote.openai.ResponsesItem
 import com.google.gson.JsonArray
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
@@ -444,5 +445,63 @@ class ResponsesStreamAccumulatorTest {
         assertEquals("正文", resp.content)
         assertEquals("思考总结", resp.reasoning)
         assertTrue(resp.thinkingBlocksJson != null && resp.thinkingBlocksJson!!.contains("gAAAAABtest_stream"))
+    }
+
+    private fun imageItem(id: String, result: String, outputFormat: String = "png"): JsonObject =
+        JsonObject().apply {
+            addProperty("type", ResponsesItem.IMAGE_GENERATION_CALL)
+            addProperty("id", id)
+            addProperty("status", "completed")
+            addProperty("result", result)
+            addProperty("output_format", outputFormat)
+        }
+
+    @Test
+    fun image_generation_call_in_stream_is_surfaced() {
+        val acc = ResponsesStreamAccumulator()
+
+        // added 事件只有 in_progress 状态、没有 result，不应产生图片
+        acc.accept(
+            itemEvent(
+                ResponsesEvent.OUTPUT_ITEM_ADDED,
+                0,
+                JsonObject().apply {
+                    addProperty("type", ResponsesItem.IMAGE_GENERATION_CALL)
+                    addProperty("id", "ig_1")
+                    addProperty("status", "in_progress")
+                }
+            )
+        )
+        // done 事件携带完整 base64 结果
+        acc.accept(itemEvent(ResponsesEvent.OUTPUT_ITEM_DONE, 0, imageItem("ig_1", "iVBORw0KGgoAAAANS")))
+        acc.accept(terminalEvent(ResponsesEvent.COMPLETED, "completed"))
+
+        val response = acc.toResponse()
+        assertEquals(1, response.images.size)
+        assertEquals("image/png", response.images.single().mimeType)
+        assertEquals("iVBORw0KGgoAAAANS", response.images.single().base64Data)
+        assertEquals("stop", response.stopReason)
+    }
+
+    @Test
+    fun image_generation_call_format_maps_to_mime() {
+        val acc = ResponsesStreamAccumulator()
+        acc.accept(itemEvent(ResponsesEvent.OUTPUT_ITEM_DONE, 0, imageItem("ig_jpg", "QUJD", outputFormat = "jpeg")))
+        acc.accept(itemEvent(ResponsesEvent.OUTPUT_ITEM_DONE, 1, imageItem("ig_webp", "QUJD", outputFormat = "webp")))
+        acc.accept(terminalEvent(ResponsesEvent.COMPLETED, "completed"))
+
+        assertEquals(listOf("image/jpeg", "image/webp"), acc.toResponse().images.map { it.mimeType })
+    }
+
+    @Test
+    fun image_generation_call_in_terminal_output_backfills() {
+        val acc = ResponsesStreamAccumulator()
+        val output = JsonArray().apply { add(imageItem("ig_final", "QUJDRA==")) }
+
+        acc.accept(terminalEvent(ResponsesEvent.COMPLETED, "completed", output = output))
+
+        val response = acc.toResponse()
+        assertEquals(1, response.images.size)
+        assertEquals("QUJDRA==", response.images.single().base64Data)
     }
 }

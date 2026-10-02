@@ -871,11 +871,16 @@ fun AppNavigation(
                     }
                 )
             }
-            composable("terminal") {
+            composable("terminal") { entry ->
                 val terminalViewModel: TerminalViewModel = hiltViewModel()
                 TerminalScreen(
                     viewModel = terminalViewModel,
-                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateBack = {
+                        // 退场期间仍可能收到点击，不能弹出已经成为当前页的聊天首页。
+                        if (navController.currentBackStackEntry === entry) {
+                            navController.popBackStack()
+                        }
+                    },
                     initCommand = terminalInitCommand,
                     onInitCommandConsumed = { terminalInitCommand = null },
                 )

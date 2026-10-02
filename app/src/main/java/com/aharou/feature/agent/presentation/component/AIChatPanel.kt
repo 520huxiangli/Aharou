@@ -60,10 +60,19 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.platform.LocalContext
 import com.aharou.feature.agent.presentation.SharedIntakeEntryPoint
 import dagger.hilt.android.EntryPointAccessors
@@ -307,13 +316,13 @@ internal fun buildChatItems(
         val endAssistant = turn.messages.lastOrNull {
             it.role == MessageRole.ASSISTANT && !it.isPersistentInTurn()
         }
-        val resultId = turn.messages.lastOrNull { it.isResultCandidate() }?.id
+        val running = turn.key == activeTurnKey
+        val resultId = if (running) null else turn.messages.lastOrNull { it.isResultCandidate() }?.id
         val soulHeaderId = turn.messages.firstOrNull {
             it.role == MessageRole.ASSISTANT && !it.isPersistentInTurn() && it.content.hasVisibleContent()
         }?.id
         // 过程项挂在轮头 item 里一起展开（保证展开动画是整体高度变化）；常显项与结果另作独立 item。
         val process = buildTurnProcessItems(turn.messages, resultId, groupOverrides, soulHeaderId)
-        val running = turn.key == activeTurnKey
         val expanded = turnOverrides[turn.key] ?: running
         if (process.isNotEmpty() || running) {
             items += ChatRenderItem(
@@ -611,6 +620,7 @@ fun AIChatPanel(
     val sessionInputTokens = currentSession?.totalInputTokens ?: 0
     val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
     val sessionLastInputTokens = currentSession?.lastInputTokens ?: 0
+    val contextUsages by viewModel.contextUsages.collectAsStateWithLifecycle()
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
@@ -618,6 +628,7 @@ fun AIChatPanel(
     val keySwitchState by viewModel.keySwitchState.collectAsStateWithLifecycle()
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
+    val reasoningTiming by viewModel.reasoningTiming.collectAsStateWithLifecycle()
     val preparingTool by viewModel.preparingTool.collectAsStateWithLifecycle()
     // 等待模型或工具执行时的状态文案：
     // 1. 若当前有正在执行的工具（runningTool）或模型正在准备的工具（preparingTool，工具名先到参数还在流式），
@@ -1113,6 +1124,30 @@ fun AIChatPanel(
     // followBottom 归 true（校准循环把恢复出的位置拉回底部），浏览历史的位置就丢了。
     var positionedSession by rememberSaveable { mutableStateOf<String?>(null) }
     var followBottom by rememberSaveable { mutableStateOf(true) }
+    var userScrollGesture by remember { mutableStateOf(false) }
+    var pointerDown by remember { mutableStateOf(false) }
+    var nestedFling by remember { mutableStateOf(false) }
+    val userScrollConnection = remember(listState) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    userScrollGesture = true
+                    followBottom = false
+                }
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                nestedFling = true
+                return Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                nestedFling = false
+                return Velocity.Zero
+            }
+        }
+    }
 
     // key 必须带上 inputBarReservePx：闭包捕获的是创建时的值，用无 key 的 remember 会让
     // 判定永远停在首帧的兜底留白（156dp）上，面板展开把悬浮层顶高后仍按旧安全区算。
@@ -1131,6 +1166,14 @@ fun AIChatPanel(
             val safeBottom = layout.viewportEndOffset - inputBarReservePx
             lastVisible.index >= lastIndex &&
                 (lastVisible.offset + lastVisible.size) <= safeBottom + AUTO_SCROLL_TOLERANCE_PX
+        }
+    }
+
+    LaunchedEffect(pointerDown, userScrollGesture, nestedFling, listState.isScrollInProgress) {
+        if (!pointerDown && userScrollGesture && !nestedFling && !listState.isScrollInProgress) {
+            delay(150)
+            userScrollGesture = false
+            followBottom = isAtBottom
         }
     }
 
@@ -1180,14 +1223,14 @@ fun AIChatPanel(
                     // 避免「松手在底部但惯性上滑」被立即拉回。
                     scope.launch {
                         delay(150)
-                        followBottom = isAtBottom
+                        if (!userScrollGesture) followBottom = isAtBottom
                     }
                 }
             }
         }
     }
     LaunchedEffect(listState) {
-        snapshotFlow { isAtBottom }.collect { atBottom ->
+        snapshotFlow { isAtBottom && !userScrollGesture }.collect { atBottom ->
             if (atBottom) followBottom = true
         }
     }
@@ -1219,7 +1262,7 @@ fun AIChatPanel(
     val calibrateToAnchor: suspend () -> Unit = remember(listState) {
         {
             // 无向下滚动空间（内容不满屏或已滚到锚点）：最后内容必然在安全区上方，无需校准。
-            if (followBottom && listState.canScrollForward) {
+            if (followBottom && !userScrollGesture && listState.canScrollForward) {
                 val layout = listState.layoutInfo
                 val lastIndex = layout.totalItemsCount - 1
                 if (lastIndex >= 0) {
@@ -1546,7 +1589,22 @@ fun AIChatPanel(
                 } else {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .nestedScroll(userScrollConnection)
+                            .pointerInput(listState) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                                    pointerDown = true
+                                    try {
+                                        do {
+                                            val event = awaitPointerEvent(PointerEventPass.Final)
+                                        } while (event.changes.any { it.pressed })
+                                    } finally {
+                                        pointerDown = false
+                                    }
+                                }
+                            },
                         contentPadding = PaddingValues(
                             start = Spacing.lg,
                             end = Spacing.lg,
@@ -1582,7 +1640,18 @@ fun AIChatPanel(
                             Column {
                                 if (showReasoning) {
                                     // 流式实时：默认收起，折叠行跟着正在写的那一行滚动；点开看全文
-                                    ReasoningBubble(text = typewriterReasoningText, cache = markdownCache, showTimer = true, preRendered = true, sessionKey = currentSessionId, live = true)
+                                    val reasoningLive = reasoningTiming != null && reasoningTiming?.second == null &&
+                                        !showStreaming && preparingTool == null
+                                    ReasoningBubble(
+                                        text = typewriterReasoningText,
+                                        cache = markdownCache,
+                                        showTimer = reasoningLive,
+                                        durationMs = reasoningTiming?.let { (start, end) -> end?.minus(start) },
+                                        timerStartMs = reasoningTiming?.first,
+                                        preRendered = true,
+                                        sessionKey = currentSessionId,
+                                        live = reasoningLive,
+                                    )
                                 }
                                 when (tailKind) {
                                     TailKind.THINKING -> ThinkingBubble(label = thinkingLabel)
@@ -1793,10 +1862,14 @@ fun AIChatPanel(
                         settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
                     }
                 },
+                tokenEstimated = contextUsages[currentSessionId]?.estimated == true,
                 tokenProgress = run {
-                    val contextLimit = activeModelMetadata?.contextTokens ?: 0
+                    val contextLimit = activeModelMetadata?.let {
+                        com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)
+                    } ?: 0
+                    val usage = contextUsages[currentSessionId]?.takeIf { sessionLastInputTokens > 0 || isBusy }
                     if (contextLimit > 0) {
-                        sessionLastInputTokens.toFloat() / contextLimit
+                        (usage?.inputTokens ?: sessionLastInputTokens).toFloat() / contextLimit
                     } else 0f
                 },
                 isScrolling = listState.isScrollInProgress,

@@ -58,14 +58,20 @@ class ModelMetadataServiceTest {
               "openrouter": {
                 "models": {
                   "z-ai/glm-5.3-flash": {"id": "z-ai/glm-5.3-flash"},
-                  "glm-5.3": {"id": "glm-5.3"}
+                  "glm-5.3": {"id": "glm-5.3"},
+                  "priority-model": {"id": "priority-model"},
+                  "priority-model-preview": {"id": "priority-model-preview"},
+                  "relay-model": {"id": "relay-model"}
                 }
               },
               "zhipuai": {
                 "models": {
                   "glm-5.3-flash": {"id": "glm-5.3-flash"},
                   "glm-5.3": {"id": "glm-5.3"},
-                  "zai-org/GLM-5.3-Flash": {"id": "zai-org/GLM-5.3-Flash"}
+                  "zai-org/GLM-5.3-Flash": {"id": "zai-org/GLM-5.3-Flash"},
+                  "priority-model-high": {"id": "priority-model-high"},
+                  "relay-model-channel": {"id": "relay-model-channel"},
+                  "relay-model-preview-channel": {"id": "relay-model-preview-channel"}
                 }
               },
               "some-relay": {
@@ -138,6 +144,58 @@ class ModelMetadataServiceTest {
     fun suffixStripping_ignoresCase() {
         assertEquals("zhipuai", matchedProvider("glm-5.3-flash-high"))
         assertEquals("zhipuai", matchedProvider("GLM-5.3-Flash-High"))
+    }
+
+    @Test
+    fun fullNameExact_winsOverPreferredProviderSuffixMatch() {
+        assertEquals("zhipuai", matchedProvider("priority-model-high"))
+    }
+
+    @Test
+    fun fullNameIgnoringCase_winsOverExactSuffixMatch() {
+        assertEquals("zhipuai", matchedProvider("priority-model-HIGH"))
+    }
+
+    @Test
+    fun fullNameIgnoringCase_winsOverCaseInsensitiveSuffixMatch() {
+        assertEquals("zhipuai", matchedProvider("PRIORITY-MODEL-HIGH"))
+    }
+
+    @Test
+    fun unknownSuffix_stripsLastSegmentOnce() {
+        assertEquals("openrouter", matchedProvider("glm-5.3-custom"))
+        assertEquals("openrouter", matchedProvider("GLM-5.3-Custom"))
+        assertEquals("openrouter", matchedProvider("other-relay/glm-5.3-custom"))
+    }
+
+    @Test
+    fun unknownSuffix_doesNotRepeatedlyShortenName() {
+        assertNull(matchedProvider("glm-5.3-custom-channel"))
+    }
+
+    @Test
+    fun unknownSuffix_doesNotApplyKnownSuffixStrippingAfterFallback() {
+        assertNull(matchedProvider("priority-model-thinking-channel"))
+    }
+
+    @Test
+    fun vendorExactMatch_winsOverUnknownSuffixFallback() {
+        assertEquals("zhipuai", matchedProvider("relay/relay-model-channel"))
+    }
+
+    @Test
+    fun knownSuffixMatch_winsOverUnknownSuffixFallback() {
+        assertEquals("zhipuai", matchedProvider("relay-model-channel-preview"))
+    }
+
+    @Test
+    fun knownSuffixMatchAfterVendorStripping_winsOverUnknownSuffixFallback() {
+        assertEquals("openrouter", matchedProvider("relay/priority-model-preview-high"))
+    }
+
+    @Test
+    fun fallbackCandidateIgnoringCase_winsOverShorterKnownSuffixMatch() {
+        assertEquals("zhipuai", matchedProvider("RELAY-MODEL-PREVIEW-CHANNEL-custom"))
     }
 
     @Test

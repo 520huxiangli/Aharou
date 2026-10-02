@@ -190,6 +190,7 @@ class AnthropicAdapter @Inject constructor(
                     } else false
                 },
                 attemptOnce = { onContent ->
+                    withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
             val textBuilder = StringBuilder()
             val budget = StreamBudget()
             // content block index -> 累积中的 tool_use（仅 tool_use 块建条目，保序）。
@@ -205,13 +206,11 @@ class AnthropicAdapter @Inject constructor(
             // content block index -> thinking / redacted_thinking 累积；按 index 分槽，避免一轮多个思考块被合并。
             val thinkingBlocks = LinkedHashMap<Int, ThinkingBlockAcc>()
 
-            val body = api.streamMessage(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request)
+            val body = firstContent.awaitBody(api.streamMessage(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request))
 
             body.use { rb ->
-                // 首字节超时 watchdog：超时内未收到首个内容块则关闭流，触发可重试的 IOException。
-                val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
-                val watchdog = launchFirstByteWatchdog(firstByteTimeoutMs, { rb.close() }) { firstByteReceived.get() }
-                val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { rb.close() }
+                firstContent.attach { rb.close() }
+                val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { firstContent.closeBody() }
                 val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                     runCatching { rb.close() }
                 }
@@ -246,7 +245,7 @@ class AnthropicAdapter @Inject constructor(
                                     val usage = obj.get("message")?.takeIf { it.isJsonObject }?.asJsonObject
                                         ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
                                     streamInputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
-                                    // 缓存命中数在 message_start 的 usage 里返回（message_delta 的 usage 只有 output_tokens）
+                                    // 缓存命中/写入数在 message_start 的 usage 里返回；部分上游会在 message_delta 补全，见该分支的覆盖逻辑。
                                     streamCachedInputTokens = usage?.get("cache_read_input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                     streamCacheCreationTokens = usage?.get("cache_creation_input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                 }
@@ -255,6 +254,8 @@ class AnthropicAdapter @Inject constructor(
                                     val block = obj.getAsJsonObject("content_block")
                                     when (block?.get("type")?.asString) {
                                         "tool_use" -> {
+                                            firstContent.receivedContent()
+                                            onContent()
                                             val name = block.get("name")?.asString ?: ""
                                             toolBlocks[index] = ToolBlockAcc(
                                                 id = block.get("id")?.asString ?: "",
@@ -268,11 +269,19 @@ class AnthropicAdapter @Inject constructor(
                                             val initial = block.get("thinking")?.takeIf { !it.isJsonNull }?.asString ?: ""
                                             budget.add(initial)
                                             acc.thinking.append(initial)
+                                            if (initial.isNotEmpty()) {
+                                                firstContent.receivedContent()
+                                                onContent()
+                                            }
                                             acc.signature = block.get("signature")?.takeIf { !it.isJsonNull }?.asString
                                         }
                                         // redacted_thinking 的 data 在 start 事件一次性给全，没有对应 delta。
                                         "redacted_thinking" -> thinkingBlocks[index] = ThinkingBlockAcc(type = "redacted_thinking").also { acc ->
                                             acc.data = block.get("data")?.takeIf { !it.isJsonNull }?.asString
+                                            if (!acc.data.isNullOrEmpty()) {
+                                                firstContent.receivedContent()
+                                                onContent()
+                                            }
                                         }
                                     }
                                 }
@@ -284,7 +293,7 @@ class AnthropicAdapter @Inject constructor(
                                             if (t.isNotEmpty()) {
                                                 budget.add(t)
                                                 textBuilder.append(t)
-                                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                                firstContent.receivedContent()
                                                 onContent()
                                                 emit(AIStreamChunk.TextDelta(t))
                                             }
@@ -298,7 +307,7 @@ class AnthropicAdapter @Inject constructor(
                                                         .thinking.append(t)
                                                 }
                                                 // 思考内容不落库、可重试重流出，但收到即说明连接已活，取消首字节超时。
-                                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                                firstContent.receivedContent()
                                                 onContent()
                                                 emit(AIStreamChunk.ReasoningDelta(t))
                                             }
@@ -332,6 +341,12 @@ class AnthropicAdapter @Inject constructor(
                                             stopDetail = it
                                         }
                                     val usage = obj.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
+                                    // 官方协议 message_delta 的 usage 只有 output_tokens，但部分上游（如 New API 中转）
+                                    // 会在此携带完整 usage，且这里的 input_tokens 才是终态值、与 message_start 可能不同，
+                                    // 故存在即覆盖，避免总输入少算未缓存的那部分。
+                                    usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt?.let {
+                                        streamInputTokens = it
+                                    }
                                     usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt?.let {
                                         streamOutputTokens = it
                                     }
@@ -351,7 +366,6 @@ class AnthropicAdapter @Inject constructor(
                         }
                     }
                 } finally {
-                    watchdog.cancel()
                     idleWatchdog.cancel()
                     closeHandle?.dispose()
                 }
@@ -361,6 +375,7 @@ class AnthropicAdapter @Inject constructor(
                 ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString()))
             }
             emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, stopDetail = stopDetail, signature = signature, thinkingBlocksJson = encodeThinkingBlocks(thinkingBlocks.values.map { it.toBlock() }), inputTokens = totalInputTokens(streamInputTokens, streamCachedInputTokens, streamCacheCreationTokens), outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens)))
+                    }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )

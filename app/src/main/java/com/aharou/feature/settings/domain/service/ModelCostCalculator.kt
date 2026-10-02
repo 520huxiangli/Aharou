@@ -31,7 +31,7 @@ class ModelCostCalculator @Inject constructor(
         val outputPrice = meta.outputCostUsdPerM ?: 0.0
         val cachePrice = meta.cacheReadCostUsdPerM ?: inputPrice * CACHE_READ_DISCOUNT
         val cacheWritePrice = meta.cacheWriteCostUsdPerM ?: inputPrice * CACHE_WRITE_MARKUP
-        val uncached = (inputTokens - cachedInputTokens).coerceAtLeast(0)
+        val uncached = (inputTokens - cachedInputTokens - cacheCreationTokens).coerceAtLeast(0)
         return (uncached * inputPrice + cachedInputTokens * cachePrice +
             cacheCreationTokens * cacheWritePrice + outputTokens * outputPrice) / 1_000_000.0
     }

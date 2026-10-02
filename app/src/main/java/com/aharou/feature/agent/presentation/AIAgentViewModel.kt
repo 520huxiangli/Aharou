@@ -267,6 +267,7 @@ class AIAgentViewModel @Inject constructor(
             "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII" ->
                 context.getString(R.string.agent_stop_refusal)
             "model_context_window_exceeded" -> context.getString(R.string.agent_stop_context_exceeded)
+            "input_budget_exceeded" -> context.getString(R.string.agent_input_budget_exceeded)
             else -> null
         } ?: return event.error
         return if (event.error.isBlank()) localized else "$localized\n${event.error}"
@@ -962,6 +963,9 @@ class AIAgentViewModel @Inject constructor(
         val name = clip.sourceName
         if (!isValidFileEntryName(name)) return@launch onResult(false)
         val target = "$targetDir/$name"
+        if (target == clip.sourcePath || target.startsWith("${clip.sourcePath.trimEnd('/')}/")) {
+            return@launch onResult(false)
+        }
         if (withContext(Dispatchers.IO) { fileAccess.exists(target) }) {
             _pasteConflict.value = clip.sourcePath to target
             return@launch
@@ -1117,6 +1121,8 @@ class AIAgentViewModel @Inject constructor(
     }
 
     private val _compactingSessions = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    private val _contextUsages = MutableStateFlow<Map<String, AgentEvent.ContextUsage>>(emptyMap())
+    val contextUsages: StateFlow<Map<String, AgentEvent.ContextUsage>> = _contextUsages.asStateFlow()
 
     private val _llmCallEvents = MutableSharedFlow<LlmCallEvent>(extraBufferCapacity = 16)
     /** 每次单次 LLM 请求返回事件（携带单次 Token 统计）。 */
@@ -1148,6 +1154,13 @@ class AIAgentViewModel @Inject constructor(
         _streamingTexts.value = if (text == null) _streamingTexts.value - sessionId else _streamingTexts.value + (sessionId to text)
     }
 
+    private val _reasoningTimings = MutableStateFlow<Map<String, Pair<Long, Long?>>>(emptyMap())
+    val reasoningTiming: StateFlow<Pair<Long, Long?>?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null) else _reasoningTimings.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     private val _streamingReasonings = MutableStateFlow<Map<String, String?>>(emptyMap())
     val streamingReasoning: StateFlow<String?> = _currentSessionId
         .flatMapLatest { id ->
@@ -1157,6 +1170,7 @@ class AIAgentViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private fun setStreamingReasoning(sessionId: String, text: String?) {
+        if (text == null) _reasoningTimings.value = _reasoningTimings.value - sessionId
         _streamingReasonings.value = if (text == null) _streamingReasonings.value - sessionId else _streamingReasonings.value + (sessionId to text)
     }
 
@@ -1803,6 +1817,15 @@ class AIAgentViewModel @Inject constructor(
 
             // 会话就绪、历史组装、工具装配、落库全在 runner 里；这里只管界面状态。
             var currentReasoningStart: Long? = null
+            var currentReasoningEnd: Long? = null
+            fun finishReasoning() {
+                val start = currentReasoningStart ?: return
+                if (currentReasoningEnd == null) {
+                    val end = System.currentTimeMillis()
+                    currentReasoningEnd = end
+                    _reasoningTimings.value = _reasoningTimings.value + (sessionId to (start to end))
+                }
+            }
             agentTurnRunner.run(
                 AgentTurnRequest(
                     sessionId = sessionId,
@@ -1819,6 +1842,7 @@ class AIAgentViewModel @Inject constructor(
             ).collect { event ->
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
+                        if (event.accumulated.hasVisibleContent()) finishReasoning()
                         setRetryState(sessionId, null)
                         setKeySwitchState(sessionId, null)
                         setStreamingText(sessionId, event.accumulated)
@@ -1828,16 +1852,21 @@ class AIAgentViewModel @Inject constructor(
                         setKeySwitchState(sessionId, null)
                         if (currentReasoningStart == null) {
                             currentReasoningStart = System.currentTimeMillis()
+                            currentReasoningEnd = null
                         }
+                        _reasoningTimings.value = _reasoningTimings.value +
+                            (sessionId to (currentReasoningStart!! to currentReasoningEnd))
                         setStreamingReasoning(sessionId, event.accumulated)
                     }
                     is AgentEvent.ToolCallPreparing -> {
+                        finishReasoning()
                         // 工具名先于参数到达：让 UI 把「正在思考」换成具体场景（「正在编辑文件」）。
                         // 参数流完、工具真正开始执行后由 ToolCallStarted 清掉，改由工具行表达。
                         setPreparingTool(sessionId, event.toolName)
                     }
                     is AgentEvent.Retrying -> {
                         currentReasoningStart = null
+                        currentReasoningEnd = null
                         setRetryState(sessionId, RetryState(event.attempt, event.maxRetries, event.error))
                         // 重试会从头重新流式输出：清掉已展示的正文/思维链气泡，
                         // 否则重连后思维链重新生成而旧正文残留（workflow 已同步清空累积器）。
@@ -1860,6 +1889,10 @@ class AIAgentViewModel @Inject constructor(
                     }
                     AgentEvent.CompactionFinished -> {
                         setCompacting(sessionId, false)
+                        _contextUsages.value = _contextUsages.value - sessionId
+                    }
+                    is AgentEvent.ContextUsage -> {
+                        _contextUsages.value = _contextUsages.value + (sessionId to event)
                     }
                     is AgentEvent.CompactionFailed -> {
                         setCompacting(sessionId, false)
@@ -2204,6 +2237,7 @@ class AIAgentViewModel @Inject constructor(
         val sid = _currentSessionId.value ?: return
         viewModelScope.launch {
             sessionUseCase.updateProviderModel(sid, providerId, model)
+            _contextUsages.value = _contextUsages.value - sid
             // 空会话中的选择视为「新会话默认模型」，供下次新建会话沿用
             if (sessionUseCase.isSessionEmpty(sid)) {
                 defaultModelSettingsRepository.setDefaultModel(providerId, model)

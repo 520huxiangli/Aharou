@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.Call
 
 class AnthropicAdapterTest {
 
@@ -34,13 +35,13 @@ class AnthropicAdapterTest {
             return response
         }
 
-        override suspend fun streamMessage(
+        override fun streamMessage(
             url: String,
             apiKey: String,
             version: String,
             extraHeaders: Map<String, String>,
             request: AnthropicMessageRequest
-        ): ResponseBody = throw UnsupportedOperationException("本测试只覆盖非流式路径")
+        ): Call<ResponseBody> = throw UnsupportedOperationException("本测试只覆盖非流式路径")
     }
 
     private fun response(

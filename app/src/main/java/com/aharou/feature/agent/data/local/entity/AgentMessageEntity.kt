@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -50,7 +51,10 @@ data class AgentMessageEntity(
     // 位置在末尾：备份 DTO 映射按位置参数，插到中间会错位。
     val thinkingBlocksJson: String? = null,
     // 仅 ASSISTANT 行：本轮输入中命中服务端缓存的 token 数，UI 据此显示缓存命中率。同样只能追加在末尾。
-    val cachedInputTokens: Int = 0
+    val cachedInputTokens: Int = 0,
+    @ColumnInfo(defaultValue = "0")
+    val isContextExcluded: Boolean = false,
+    val compactedBySummaryId: String? = null
 ) {
     fun toUIMessage(): AgentUIMessage {
         val roleEnum = MessageRole.valueOf(role)

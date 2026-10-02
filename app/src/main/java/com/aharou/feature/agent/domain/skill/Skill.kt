@@ -43,3 +43,18 @@ enum class SkillSaveError {
     /** 目标是内置技能：随 App 打包，只读。 */
     READ_ONLY
 }
+
+/** 在全局与当前项目之间搬技能的结果。 */
+enum class SkillMoveResult {
+    /** 搬过去了，源目录已删除。 */
+    OK,
+
+    /** 目标位置已有同名技能：两边都不动（不覆盖，搬的地方不对自己改）。 */
+    NAME_CONFLICT,
+
+    /** 内置技能随 App 打包，不可搬。 */
+    READ_ONLY,
+
+    /** 读源 / 写目标 / 删源失败（能回滚的都回滚了，技能仍在原位置）。 */
+    FAILED
+}

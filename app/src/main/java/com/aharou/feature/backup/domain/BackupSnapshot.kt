@@ -221,7 +221,9 @@ data class AgentMessageDto(
     val isContextSummary: Boolean = false,
     val isCompactionMarker: Boolean = false,
     /** Anthropic thinking / redacted_thinking 内容块的原样快照（JSON 数组文本）。 */
-    val thinkingBlocksJson: String? = null
+    val thinkingBlocksJson: String? = null,
+    val isContextExcluded: Boolean = false,
+    val compactedBySummaryId: String? = null
 )
 
 @Serializable

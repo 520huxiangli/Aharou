@@ -29,6 +29,7 @@ import kotlinx.serialization.json.jsonObject
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolDefinition
 import com.aharou.feature.agent.data.remote.openai.OpenAIFunctionDefinition
+import com.aharou.feature.agent.data.remote.openai.OpenAIImagePart
 import com.aharou.feature.agent.data.remote.openai.StreamOptions
 
 class OpenAIAdapter @Inject constructor(
@@ -135,12 +136,13 @@ class OpenAIAdapter @Inject constructor(
         val message = response.choices.firstOrNull()?.message
         val finishReason = response.choices.firstOrNull()?.finish_reason
         val content = message?.content.asTextContent()
+        val images = message?.images?.mapNotNull { it.toAgentImage() } ?: emptyList()
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
         val reasoning = message?.reasoning_content?.takeIf { it.isNotEmpty() }
             ?: message?.reasoning?.takeIf { it.isNotEmpty() }
         val usage = response.usage
 
-        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0, cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?: 0)
+        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0, cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?: 0, cacheCreationTokens = usage?.prompt_tokens_details?.cache_write_tokens ?: 0, images = images)
     }
 
     /**
@@ -258,7 +260,8 @@ class OpenAIAdapter @Inject constructor(
             thinkingBlocksJson = parsed.thinkingBlocksJson,
             inputTokens = usage.inputTokens,
             outputTokens = usage.outputTokens,
-            cachedInputTokens = usage.cachedInputTokens
+            cachedInputTokens = usage.cachedInputTokens,
+            images = parsed.images
         )
     }
 
@@ -319,27 +322,29 @@ class OpenAIAdapter @Inject constructor(
                     } else false
                 },
                 attemptOnce = { onContent ->
+                    withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
             val textBuilder = StringBuilder()
             val budget = StreamBudget()
             // tool_call index -> 累积中的工具调用（保序）。
             val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
+            // 生图扩展：部分兼容服务在 delta.images 里整块返回图片（image_url 的 data URL）。
+            val streamedImages = mutableListOf<AgentImage>()
             var finishReason: String? = null
             var streamInputTokens = 0
             var streamOutputTokens = 0
             var streamCachedInputTokens = 0
+            var streamCacheCreationTokens = 0
 
-            val body = api.streamChatCompletion(
+            val body = firstContent.awaitBody(api.streamChatCompletion(
                 url = url,
                 authorization = "Bearer $apiKey",
                 extraHeaders = extraHeaders(),
                 request = request
-            )
+            ))
 
             body.use { rb ->
-                // 首字节超时 watchdog：超时内未收到首个内容块则关闭流，触发可重试的 IOException。
-                val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
-                val watchdog = launchFirstByteWatchdog(firstByteTimeoutMs, { rb.close() }) { firstByteReceived.get() }
-                val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { rb.close() }
+                firstContent.attach { rb.close() }
+                val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { firstContent.closeBody() }
                 val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                     runCatching { rb.close() }
                 }
@@ -375,6 +380,7 @@ class OpenAIAdapter @Inject constructor(
                                 streamInputTokens = u.get("prompt_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
                                 streamOutputTokens = u.get("completion_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
                                 streamCachedInputTokens = u.getAsJsonObject("prompt_tokens_details")?.get("cached_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamCachedInputTokens
+                                streamCacheCreationTokens = u.getAsJsonObject("prompt_tokens_details")?.get("cache_write_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamCacheCreationTokens
                             }
                             val choice = obj.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject ?: continue
                             val delta = choice.getAsJsonObject("delta") ?: continue
@@ -388,7 +394,7 @@ class OpenAIAdapter @Inject constructor(
                                 if (c.isNotEmpty()) {
                                     budget.add(c)
                                     textBuilder.append(c)
-                                    if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                    firstContent.receivedContent()
                                     onContent()
                                     emit(AIStreamChunk.TextDelta(c))
                                 }
@@ -405,7 +411,7 @@ class OpenAIAdapter @Inject constructor(
                                     }
                             if (!reasoningText.isNullOrEmpty()) {
                                 budget.add(reasoningText)
-                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                firstContent.receivedContent()
                                 onContent()
                                 emit(AIStreamChunk.ReasoningDelta(reasoningText))
                             }
@@ -413,6 +419,10 @@ class OpenAIAdapter @Inject constructor(
                             // 有些模型（如 DeepSeek）在后续增量 chunk 中只传 arguments 片段，
                             // id 和 name 为空字符串 ""，不应覆盖已收到的有效值——否则首次 chunk
                             // 收到的完整 id/name 会被后续空值清空，导致 ToolCall 丢失。
+                            delta.getAsJsonArray("tool_calls")?.takeIf { it.size() > 0 }?.let {
+                                firstContent.receivedContent()
+                                onContent()
+                            }
                             delta.getAsJsonArray("tool_calls")?.forEach { el ->
                                 val tc = el.asJsonObject
                                 val idx = tc.get("index")?.asInt ?: 0
@@ -429,7 +439,18 @@ class OpenAIAdapter @Inject constructor(
                                     fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let { budget.add(it); acc.args.append(it) }
                                 }
                             }
+                            // 生图扩展：图片整块到达、无增量，累积待 Final 交工作流落盘。
+                            delta.getAsJsonArray("images")?.forEach { el ->
+                                val img = el.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                                img.toOpenAIAgentImage()?.let { image ->
+                                    streamedImages.add(image)
+                                    firstContent.receivedContent()
+                                    onContent()
+                                }
+                            }
                         } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: StreamApiException) {
                             throw e
                         } catch (e: Exception) {
                             coroutineContext.ensureActive()
@@ -437,7 +458,6 @@ class OpenAIAdapter @Inject constructor(
                         }
                     }
                 } finally {
-                    watchdog.cancel()
                     idleWatchdog.cancel()
                     closeHandle?.dispose()
                 }
@@ -446,7 +466,8 @@ class OpenAIAdapter @Inject constructor(
             val toolCalls = toolAccs.values
                 .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseToolArguments(acc.args.toString())) }
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens, images = streamedImages)))
+                    }
             },
             onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )
@@ -492,20 +513,19 @@ class OpenAIAdapter @Inject constructor(
                     } else false
                 },
                 attemptOnce = { onContent ->
+                    withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
                     val acc = ResponsesStreamAccumulator()
 
-                    val body = api.streamResponses(
+                    val body = firstContent.awaitBody(api.streamResponses(
                         url = url,
                         authorization = "Bearer $apiKey",
                         extraHeaders = extraHeaders(),
                         request = request
-                    )
+                    ))
 
                     body.use { rb ->
-                        // 首字节超时 watchdog：超时内未收到首个内容块则关闭流，触发可重试的 IOException。
-                        val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
-                        val watchdog = launchFirstByteWatchdog(firstByteTimeoutMs, { rb.close() }) { firstByteReceived.get() }
-                        val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { rb.close() }
+                        firstContent.attach { rb.close() }
+                        val idleWatchdog = launchStreamIdleWatchdog(streamIdleTimeoutMs) { firstContent.closeBody() }
                         val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                             runCatching { rb.close() }
                         }
@@ -531,7 +551,12 @@ class OpenAIAdapter @Inject constructor(
                                 // 单个事件的字段类型异常不应废掉整条流，只跳过该事件；
                                 // 但 StreamApiException（response.failed）与取消信号必须放行。
                                 val delta = try {
-                                    acc.accept(obj)
+                                    acc.accept(obj).also {
+                                        if (acc.receivedContent) {
+                                            firstContent.receivedContent()
+                                            onContent()
+                                        }
+                                    }
                                 } catch (e: StreamApiException) {
                                     throw e
                                 } catch (e: CancellationException) {
@@ -542,19 +567,19 @@ class OpenAIAdapter @Inject constructor(
                                 }
                                 when (delta) {
                                     is ResponsesDelta.Text -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.TextDelta(delta.text))
                                     }
                                     // 思考增量仅用于 UI 展示，不计入正文；收到即说明连接已活，取消首字节超时。
                                     is ResponsesDelta.Reasoning -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.ReasoningDelta(delta.text))
                                     }
                                     // 工具名先于参数到达：通知 UI 提前把状态换成具体场景
                                     is ResponsesDelta.ToolCallDeclared -> {
-                                        if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                        firstContent.receivedContent()
                                         onContent()
                                         emit(AIStreamChunk.ToolCallDeclared(delta.name))
                                     }
@@ -562,13 +587,13 @@ class OpenAIAdapter @Inject constructor(
                                 }
                             }
                         } finally {
-                            watchdog.cancel()
                             idleWatchdog.cancel()
                             closeHandle?.dispose()
                         }
                     }
 
                     emit(AIStreamChunk.Final(acc.toResponse()))
+                    }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )
@@ -702,6 +727,35 @@ class OpenAIAdapter @Inject constructor(
             "detail" to "auto"
         )
     )
+
+    /** `data:` URL（base64 内嵌）→ AgentImage；远程 URL / 非 base64 / 非法一律返回 null。 */
+    private fun dataUrlToAgentImage(url: String): AgentImage? {
+        if (!url.startsWith("data:", ignoreCase = true)) return null
+        val comma = url.indexOf(',')
+        if (comma < 0) return null
+        val header = url.substring(5, comma)
+        if (!header.contains(";base64", ignoreCase = true)) return null
+        val mime = header.substringBefore(';').ifBlank { "image/png" }
+        val data = url.substring(comma + 1)
+        if (data.isBlank()) return null
+        return AgentImage(mimeType = mime, base64Data = data)
+    }
+
+    /** 流式 delta.images 里的单个元素 → AgentImage。 */
+    private fun com.google.gson.JsonObject.toOpenAIAgentImage(): AgentImage? {
+        val url = when (val img = get("image_url")) {
+            is com.google.gson.JsonPrimitive -> img.asString
+            is com.google.gson.JsonObject -> img.get("url")?.takeIf { it.isJsonPrimitive }?.asString
+            else -> null
+        } ?: return null
+        return dataUrlToAgentImage(url)
+    }
+
+    /** 非流式 message.images 的单个图片项 → AgentImage。 */
+    private fun OpenAIImagePart.toAgentImage(): AgentImage? {
+        val url = image_url?.url ?: return null
+        return dataUrlToAgentImage(url)
+    }
 
     /**
      * OpenAI chat completion 返回的 content 可能是字符串或数组（多模态/生图模型）。

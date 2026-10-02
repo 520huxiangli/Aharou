@@ -890,14 +890,41 @@ class BackupManagerImpl @Inject constructor(
     private fun AgentMessageEntity.toDto() = AgentMessageDto(
         id, sessionId, role, content, timestamp, toolCallsJson, toolCallId, toolName, toolArgs,
         isError, reasoning, signature, attachmentsJson, isCompacted, isContextSummary, isCompactionMarker,
-        thinkingBlocksJson
+        thinkingBlocksJson, isContextExcluded, compactedBySummaryId
     )
 
-    private fun AgentMessageDto.toEntity() = AgentMessageEntity(
-        id, sessionId, role, content, timestamp, toolCallsJson, toolCallId, toolName, toolArgs,
-        isError, reasoning, signature, attachmentsJson, isCompacted, isContextSummary, isCompactionMarker,
-        thinkingBlocksJson = thinkingBlocksJson
-    )
+    private fun AgentMessageDto.toEntity(): AgentMessageEntity {
+        val summary = isContextSummary || (role == "ASSISTANT" && content.startsWith(
+            com.aharou.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
+        ))
+        val excluded = isContextExcluded || (
+            isCompacted && !summary && !isCompactionMarker && role == "ASSISTANT" &&
+                toolCallsJson == null && compactedBySummaryId == null && isLegacyUsageTable(content)
+        )
+        return AgentMessageEntity(
+            id, sessionId, role, content, timestamp, toolCallsJson, toolCallId, toolName, toolArgs,
+            isError, reasoning, signature, attachmentsJson, isCompacted && !excluded, summary, isCompactionMarker,
+            thinkingBlocksJson = thinkingBlocksJson,
+            isContextExcluded = excluded,
+            compactedBySummaryId = if (excluded) null else compactedBySummaryId
+        )
+    }
+
+    private fun isLegacyUsageTable(content: String): Boolean {
+        val lines = content.split('\n')
+        if (lines.size != 7 || lines[0] != "| 项目 | 今日 | 累计 |" || lines[1] != "|---|---|---|") {
+            return false
+        }
+        val labels = listOf("调用次数", "输入 tokens", "输出 tokens", "缓存命中 tokens", "预估费用")
+        return labels.indices.all { index ->
+            val line = lines[index + 2]
+            line.startsWith("| ${labels[index]} | ") && line.endsWith(" |") &&
+                line.count { it == '|' } == 4 && line.split('|').let { columns ->
+                    columns[2].startsWith(" ") && columns[2].endsWith(" ") &&
+                        columns[3].startsWith(" ") && columns[3].endsWith(" ")
+                }
+        }
+    }
 
     private fun TodoItemEntity.toDto() = TodoItemDto(id, sessionId, subject, description, status, priority, order, createdAt, updatedAt)
     private fun TodoItemDto.toEntity() = TodoItemEntity(id, sessionId, subject, description, status, priority, order, createdAt, updatedAt)

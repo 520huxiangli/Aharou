@@ -35,8 +35,8 @@ class SkillRepository @Inject constructor(
     /** 读取指定 skill 的完整指令正文；不存在 / 解析失败 / 已被禁用时返回 null。 */
     fun loadInstructions(name: String): String? {
         if (name.lowercase() in skillConfigRepository.disabledNames()) return null
-        return globalDirectorySkillSource.loadInstructions(name)
-            ?: projectDirectorySkillSource.loadInstructions(name)
+        return projectDirectorySkillSource.loadInstructions(name)
+            ?: globalDirectorySkillSource.loadInstructions(name)
             ?: builtinSkillSource.loadInstructions(name)
     }
 
@@ -169,6 +169,38 @@ class SkillRepository @Inject constructor(
         } ?: return false
         val dirPath = entry.skill.dirPath ?: return false
         return safeDeleteSkillDir(fileAccess, dirPath)
+    }
+
+    /**
+     * 在全局与当前项目之间搬一个技能：直接搬它的目录（[FileAccessProvider.move]），目录名原样带走，
+     * 不同名字的技能互不干扰。目标位置已有同名技能时不覆盖，直接返回 [SkillMoveResult.NAME_CONFLICT]。
+     *
+     * 用「搬目录」而不是「导出成 zip 再导入」：后者要经过打包、解包、逐个文件写回三道关，
+     * 任何一道静默失败都会变成“什么都没发生”，而且目录名会被换成技能名——技能名与目录名不一致时就搬歪了。
+     */
+    fun moveSkill(name: String, fromScope: SkillScope, toScope: SkillScope): SkillMoveResult {
+        if (fromScope == SkillScope.BUILTIN || toScope == SkillScope.BUILTIN) return SkillMoveResult.READ_ONLY
+        if (fromScope == toScope) return SkillMoveResult.FAILED
+        if (name.lowercase() in existingNamesIn(toScope)) return SkillMoveResult.NAME_CONFLICT
+
+        val source = listAllSkills().firstOrNull {
+            it.scope == fromScope && it.skill.name.equals(name, ignoreCase = true)
+        }?.skill?.dirPath
+        if (source.isNullOrBlank()) {
+            FileLogger.w(TAG, "移动技能失败（找不到源目录）：$name ($fromScope)")
+            return SkillMoveResult.FAILED
+        }
+
+        val dirName = source.trimEnd('/').substringAfterLast('/')
+        val target = "${skillsRoot(toScope).trimEnd('/')}/$dirName"
+        return try {
+            fileAccess.move(source, target, overwrite = false)
+            FileLogger.i(TAG, "移动技能成功：$name $source -> $target")
+            SkillMoveResult.OK
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "移动技能失败：$name ($source -> $target)", e)
+            SkillMoveResult.FAILED
+        }
     }
 
     companion object {

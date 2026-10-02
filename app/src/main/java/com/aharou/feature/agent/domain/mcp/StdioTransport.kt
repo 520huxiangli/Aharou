@@ -17,6 +17,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -47,6 +48,9 @@ class StdioTransport(
 
         /** 单次请求等待响应的上限：首跑 `npx -y` 可能要联网下载，给足时间。 */
         const val REQUEST_TIMEOUT_MS = 120_000L
+
+        /** stdout 关闭后等进程退出的上限：用于取退出码。 */
+        const val EXIT_WAIT_MS = 2_000L
 
         @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
         val DEFAULT_JSON = Json {
@@ -151,7 +155,9 @@ class StdioTransport(
 
                 val obj = runCatching { json.parseToJsonElement(line) as? JsonObject }.getOrNull()
                 if (obj == null) {
-                    FileLogger.d(TAG, "[$serverName] 跳过非 JSON 行: ${line.take(200)}")
+                    // 提到 INFO 且不截断：规范要求 stdout 只走协议，非 JSON 输出多为 server 启动横幅或 npx 交互提示，
+                    // 是排查启动失败的关键线索；若只在 DEBUG 记录，release 包（minLevel=INFO）会看不到。
+                    FileLogger.i(TAG, "[$serverName] 跳过非 JSON 行: $line")
                     continue
                 }
                 // 带 method 的是 server→client 的请求/通知（如 sampling/roots），当前不支持，忽略。
@@ -176,7 +182,23 @@ class StdioTransport(
             FileLogger.w(TAG, "[$serverName] stdout 读循环异常结束: ${e.message}")
         } finally {
             FileLogger.i(TAG, "[$serverName] stdout 已结束（进程可能已退出）")
+            logExitCode(p)
             failAllPending("server stdout 已关闭")
+        }
+    }
+
+    /**
+     * stdout 关闭后进程通常随即退出，取退出码记一笔——安装失败/异常终止时可直接看到 `exitCode` 非 0，
+     * 无需仅凭 stderr 内容反推。进程尚未退出则在 [EXIT_WAIT_MS] 内等一等；等不到就跳过。
+     */
+    private fun logExitCode(p: Process) {
+        val exited = runCatching { p.waitFor(EXIT_WAIT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+        val code = if (exited) runCatching { p.exitValue() }.getOrNull() else null
+        if (code == null) return
+        if (code == 0) {
+            FileLogger.i(TAG, "[$serverName] 进程已退出 exitCode=0")
+        } else {
+            FileLogger.w(TAG, "[$serverName] 进程已退出 exitCode=$code")
         }
     }
 

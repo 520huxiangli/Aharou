@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AppSwitch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.agent.presentation.component.MarkdownRenderCache
 import com.aharou.feature.settings.presentation.SkillUiEntry
@@ -29,11 +31,15 @@ import com.aharou.feature.settings.presentation.SkillUiEntry
 /**
  * 技能详情页：分组卡片——「是否启用」开关行、「摘要」描述卡、「正文」指令卡（Markdown 渲染）。
  * 卡片左上小标题与设置主页分组一致。
+ *
+ * 「是否启用」那张卡片里还带一行存放位置（全局 / 当前项目）与搬运入口；内置技能随 App 打包，
+ * 既不能停用也不能搬，那一整张卡不对内置显示。
  */
 @Composable
 internal fun SkillDetailSection(
     entry: SkillUiEntry,
     onToggle: (Boolean) -> Unit,
+    onMove: (SkillScope) -> Unit,
     onExport: () -> Unit,
     exporting: Boolean,
     cache: MarkdownRenderCache? = null
@@ -65,6 +71,44 @@ internal fun SkillDetailSection(
                         checked = !entry.disabled,
                         onCheckedChange = onToggle
                     )
+                }
+                SettingsDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.lg, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.skills_scope_label),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(
+                                if (entry.scope == SkillScope.GLOBAL) R.string.skills_scope_global
+                                else R.string.skills_scope_project
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.semanticColors.subtleText
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            onMove(
+                                if (entry.scope == SkillScope.GLOBAL) SkillScope.PROJECT
+                                else SkillScope.GLOBAL
+                            )
+                        }
+                    ) {
+                        Text(
+                            stringResource(
+                                if (entry.scope == SkillScope.GLOBAL) R.string.skills_move_to_project
+                                else R.string.skills_move_to_global
+                            )
+                        )
+                    }
                 }
             }
         }

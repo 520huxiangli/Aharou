@@ -28,6 +28,7 @@ sealed class AgentEvent {
         val attachments: List<com.aharou.feature.agent.presentation.AgentAttachment> = emptyList(),
         /** 本条助手消息落库时使用的 id；由 workflow 生成，ViewModel 据此把思考耗时与落库消息关联。 */
         val messageId: String = "",
+        val persisted: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     ) : AgentEvent()
 
     /** 流式过程中模型逐字吐出的文字（[accumulated] 为本轮已累积的完整文本，用于 UI 实时渲染，不落库）。 */
@@ -58,7 +59,8 @@ sealed class AgentEvent {
         val isError: Boolean,
         val argsPreview: String? = null,
         /** 仅 sendFile 等展示型工具：随结果附带的文件卡片元数据，落库供 UI 渲染，不回放进模型上下文。 */
-        val attachments: List<com.aharou.feature.agent.presentation.AgentAttachment> = emptyList()
+        val attachments: List<com.aharou.feature.agent.presentation.AgentAttachment> = emptyList(),
+        val persisted: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     ) : AgentEvent()
 
     /** 网络请求正在重试（首字节前失败触发自动重试）。仅用于 UI 实时展示，不落库。[error] 为触发重试的错误摘要。 */
@@ -72,6 +74,8 @@ sealed class AgentEvent {
 
     /** 上下文压缩流程已结束（成功或失败）。仅用于 UI 实时展示，不落库。 */
     object CompactionFinished : AgentEvent()
+
+    data class ContextUsage(val inputTokens: Int, val inputBudget: Int, val estimated: Boolean) : AgentEvent()
 
     /** 上下文压缩失败（如压缩模型不可用）。携带失败原因，UI 展示为可展开的失败卡片；不落库。 */
     data class CompactionFailed(val reason: String) : AgentEvent()

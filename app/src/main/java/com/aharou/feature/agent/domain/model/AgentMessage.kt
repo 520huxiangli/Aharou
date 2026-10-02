@@ -8,14 +8,14 @@ import com.aharou.feature.agent.domain.tool.ToolCall
 sealed class AgentMessage {
     @Serializable
     data class UserMessage(
-        val id: String = "",
+        val id: String = java.util.UUID.randomUUID().toString(),
         val content: String,
         val images: List<AgentImage> = emptyList()
     ) : AgentMessage()
 
     @Serializable
     data class AssistantMessage(
-        val id: String = "",
+        val id: String = java.util.UUID.randomUUID().toString(),
         val content: String,
         val toolCalls: List<ToolCall> = emptyList(),
         /** 本轮模型的思考过程（对应 OpenAI/DeepSeek 的 reasoning_content）。回传上下文时需要原样发回，否则 DeepSeek 思考模式会报 400 错误。 */
@@ -28,17 +28,19 @@ sealed class AgentMessage {
          * 本轮模型直接生成的图片（Gemini 图像模型）。内存态下 base64Data 可为空、path 指向容器文件，
          * 回放时按 path 重建 base64 喂模型；落库只存附件路径不存 base64（见 [MessagePersistenceUseCase]）。
          */
-        val images: List<AgentImage> = emptyList()
+        val images: List<AgentImage> = emptyList(),
+        val inputTokens: Int = 0
     ) : AgentMessage()
 
     @Serializable
     data class ToolResultMessage(
-        val id: String = "",
+        val id: String = java.util.UUID.randomUUID().toString(),
         val toolName: String,
         val result: String,
         val images: List<AgentImage> = emptyList(),
         /** 仅喂模型的精简结果文本；null 时回退用 [result]。UI 与持久化仍用 result。 */
-        val modelResult: String? = null
+        val modelResult: String? = null,
+        val messageId: String = "tool_$id"
     ) : AgentMessage()
 }
 
@@ -56,7 +58,7 @@ val AgentMessage.id: String
     get() = when (this) {
         is AgentMessage.UserMessage -> id
         is AgentMessage.AssistantMessage -> id
-        is AgentMessage.ToolResultMessage -> id
+        is AgentMessage.ToolResultMessage -> messageId
     }
 
 data class AgentContext(
@@ -68,6 +70,8 @@ data class AgentContext(
     val inputImages: List<AgentImage> = emptyList(),
     /** 当前会话 id：用于把本轮所有 AI 请求/响应落到该会话的日志文件（[com.aharou.core.util.AILogger]）。 */
     val sessionId: String? = null,
+    val inputMessageId: String = java.util.UUID.randomUUID().toString(),
+    val lastInputTokens: Int = 0,
     val mode: AgentMode = AgentMode.BUILD,
     /** 进入 PLAN 前的模式（如 AUTO）：退出 PLAN 时恢复到它，null 视为 BUILD。 */
     val modeBeforePlan: AgentMode? = null,

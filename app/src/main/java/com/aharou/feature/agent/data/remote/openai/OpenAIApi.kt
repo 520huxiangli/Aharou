@@ -19,12 +19,12 @@ interface OpenAIApi {
     /** 流式（SSE）补全：返回原始响应体，由调用方逐行解析 event-stream。请求需带 stream=true。 */
     @Streaming
     @POST
-    suspend fun streamChatCompletion(
+    fun streamChatCompletion(
         @Url url: String,
         @retrofit2.http.Header("Authorization") authorization: String,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: ChatCompletionRequest
-    ): ResponseBody
+    ): retrofit2.Call<ResponseBody>
     
     @POST
     suspend fun createResponses(
@@ -36,12 +36,12 @@ interface OpenAIApi {
 
     @Streaming
     @POST
-    suspend fun streamResponses(
+    fun streamResponses(
         @Url url: String,
         @retrofit2.http.Header("Authorization") authorization: String,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
-    ): ResponseBody
+    ): retrofit2.Call<ResponseBody>
 
     /** Images API：生成图片（POST /v1/images/generations）。 */
     @POST

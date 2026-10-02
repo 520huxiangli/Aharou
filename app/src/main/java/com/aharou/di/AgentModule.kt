@@ -64,14 +64,24 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import okhttp3.Call
+import okhttp3.Connection
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.Response
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import javax.inject.Named
 import javax.inject.Singleton
 
 import com.aharou.core.db.MigrationLoader
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.notification.AgentEventInjector
 import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
@@ -172,6 +182,82 @@ object AgentModule {
             .connectTimeout(120, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS)
+            .pingInterval(30, TimeUnit.SECONDS)
+            .eventListenerFactory(EventListener.Factory { call ->
+                object : EventListener() {
+                    private val callId = Integer.toHexString(System.identityHashCode(call))
+                    private val host = call.request().url.host
+                    private var callStartNanos = 0L
+                    private var connectStartNanos = 0L
+                    private var connectionId = "none"
+                    private var protocol = "unknown"
+
+                    private fun logStage(stage: String, details: String = "") {
+                        val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - callStartNanos)
+                        FileLogger.i(
+                            "OkHttp",
+                            "call=$callId host=$host connection=$connectionId protocol=$protocol " +
+                                "stage=$stage totalMs=$totalMs$details"
+                        )
+                    }
+
+                    override fun callStart(call: Call) {
+                        callStartNanos = System.nanoTime()
+                        logStage("callStart")
+                    }
+
+                    override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+                        connectStartNanos = System.nanoTime()
+                        connectionId = "none"
+                        protocol = "unknown"
+                    }
+
+                    override fun connectEnd(
+                        call: Call,
+                        inetSocketAddress: InetSocketAddress,
+                        proxy: Proxy,
+                        protocol: Protocol?
+                    ) {
+                        this.protocol = protocol?.toString() ?: "unknown"
+                        val connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
+                        logStage("connectEnd", " connectMs=$connectMs")
+                    }
+
+                    override fun connectFailed(
+                        call: Call,
+                        inetSocketAddress: InetSocketAddress,
+                        proxy: Proxy,
+                        protocol: Protocol?,
+                        ioe: IOException
+                    ) {
+                        this.protocol = protocol?.toString() ?: "unknown"
+                        val connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
+                        logStage("connectFailed", " connectMs=$connectMs exception=${ioe.javaClass.name}")
+                    }
+
+                    override fun connectionAcquired(call: Call, connection: Connection) {
+                        connectionId = Integer.toHexString(System.identityHashCode(connection))
+                        protocol = connection.protocol().toString()
+                        logStage("connectionAcquired")
+                    }
+
+                    override fun requestHeadersEnd(call: Call, request: Request) {
+                        logStage("requestHeadersEnd")
+                    }
+
+                    override fun responseHeadersEnd(call: Call, response: Response) {
+                        logStage("responseHeadersEnd")
+                    }
+
+                    override fun callFailed(call: Call, ioe: IOException) {
+                        logStage("callFailed", " exception=${ioe.javaClass.name}")
+                    }
+
+                    override fun callEnd(call: Call) {
+                        logStage("callEnd")
+                    }
+                }
+            })
             .addInterceptor { chain ->
                 val request = chain.request()
                 val finalRequest = if (request.header("User-Agent") != null) {

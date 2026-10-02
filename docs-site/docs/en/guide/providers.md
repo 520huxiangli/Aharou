@@ -81,7 +81,7 @@ Switch to the "Models" tab of the edit page.
 
 - **Context window**: affects when automatic context compression kicks in.
 - **Output window**: the max length of a single reply.
-- **Pricing**: input / output / cached-input tiers, in USD per million tokens, used for cost statistics.
+- **Pricing**: input / output / cache-read / cache-write tiers, in USD per million tokens, used for cost statistics.
 - **Capability toggles**: image input, image output, tool calls, reasoning.
 
 Your values take priority; unfilled ones fall back to auto-detected results. If auto-detection can't match the model name, it retries after stripping common suffixes like `-thinking`, `-preview`, `-high` — so most renamed relay models are still recognized.

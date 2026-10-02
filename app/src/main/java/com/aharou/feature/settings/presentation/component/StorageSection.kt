@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,12 +45,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.StorageUsagePalette
 import com.aharou.core.theme.semanticColors
 import com.aharou.feature.settings.domain.model.CleanupKind
 import com.aharou.feature.settings.domain.model.StorageCategory
 import com.aharou.feature.settings.domain.model.StorageDetail
+import com.aharou.feature.settings.domain.model.StorageDetailKey
 import com.aharou.feature.settings.domain.model.StorageEntry
 import com.aharou.feature.settings.domain.model.formatStorageSize
 import com.aharou.feature.settings.presentation.StorageUiState
@@ -55,6 +60,7 @@ import com.aharou.feature.settings.presentation.StorageViewModel
 
 /** 分类色点缩进宽度：色点 10dp + 与标题的间距，明细行据此与标题左对齐。 */
 private val DetailIndent = 10.dp + Spacing.md
+private val SelectionWidth = 48.dp
 
 /** 连接 [StorageViewModel] 与 [StorageSection]：state 收集下沉到这里，统计逐项到达时只重组本页。 */
 @Composable
@@ -63,12 +69,13 @@ internal fun StorageSectionHost(viewModel: StorageViewModel) {
     StorageSection(
         state = state,
         onToggleExpand = viewModel::toggleExpanded,
-        onClean = { kind -> if (kind == null) viewModel.clean() else viewModel.clean(kind) }
+        onToggleCleanup = viewModel::toggleCleanup,
+        onClean = viewModel::clean
     )
 }
 
 /**
- * 存储空间页：总览（App 占用、构成条、设备可用）+ 分类明细 + 可释放空间清理。
+ * 存储空间页：总览、分类明细与选中项清理。
  *
  * 统计逐项到达（大目录慢），未算出的分类先占位显示「—」，不阻塞已算出的部分。
  */
@@ -76,91 +83,118 @@ internal fun StorageSectionHost(viewModel: StorageViewModel) {
 internal fun StorageSection(
     state: StorageUiState,
     onToggleExpand: (StorageCategory) -> Unit,
-    onClean: (CleanupKind?) -> Unit
+    onToggleCleanup: (CleanupKind) -> Unit,
+    onClean: (List<CleanupKind>) -> Unit
 ) {
-    // null 表示「一键清理」，非空表示单项；有值即弹确认框。
-    var pendingCleanup by remember { mutableStateOf<CleanupOption?>(null) }
+    var pendingCleanup by remember { mutableStateOf<List<CleanupKind>?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = Spacing.lg)
-            .padding(bottom = Spacing.xl),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-    ) {
-        Spacer(Modifier.height(Spacing.sm))
-        OverviewCard(state)
+    Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+        ) {
+            Spacer(Modifier.height(Spacing.sm))
+            OverviewCard(state)
 
-        SettingsGroupHeader(text = stringResource(R.string.storage_section_breakdown))
-        SettingsGroup {
-            StorageCategory.entries.forEachIndexed { index, category ->
-                if (index > 0) SettingsDivider()
-                val entry = state.entries[category]
-                CategoryRow(
-                    category = category,
-                    entry = entry,
-                    expanded = category in state.expanded,
-                    onToggle = { onToggleExpand(category) }
-                )
-                if (category in state.expanded) {
-                    entry?.details?.forEach { DetailRow(it) }
+            SettingsGroupHeader(text = stringResource(R.string.storage_section_breakdown))
+            SettingsGroup {
+                StorageCategory.entries.forEachIndexed { index, category ->
+                    if (index > 0) SettingsDivider()
+                    val entry = state.entries[category]
+                    val details = entry?.details.orEmpty().filter {
+                        category != StorageCategory.AiConfig ||
+                            it.key == StorageDetailKey.TOOL_OUTPUT || it.key == StorageDetailKey.VISION_SESSIONS
+                    }
+                    val cleanupKind = when (category) {
+                        StorageCategory.Logs -> CleanupKind.Logs
+                        StorageCategory.Caches -> CleanupKind.Caches
+                        else -> null
+                    }
+                    CategoryRow(
+                        category = category,
+                        entry = entry,
+                        expanded = category in state.expanded,
+                        onToggle = { onToggleExpand(category) },
+                        cleanupKind = cleanupKind,
+                        expandable = details.isNotEmpty(),
+                        selected = cleanupKind in state.selectedCleanup,
+                        cleaning = state.cleaning,
+                        onSelect = { cleanupKind?.let(onToggleCleanup) }
+                    )
+                    if (category in state.expanded) {
+                        details.forEach { detail ->
+                            val detailCleanup = when (detail.key) {
+                                StorageDetailKey.TOOL_OUTPUT -> CleanupKind.ToolOutput
+                                StorageDetailKey.VISION_SESSIONS -> CleanupKind.VisionSessions
+                                else -> null
+                            }
+                            DetailRow(
+                                detail = detail,
+                                cleanupKind = detailCleanup,
+                                selected = detailCleanup in state.selectedCleanup,
+                                cleaning = state.cleaning,
+                                onSelect = { detailCleanup?.let(onToggleCleanup) }
+                            )
+                        }
+                    }
+                }
+            }
+            FootNote(stringResource(R.string.storage_breakdown_note))
+
+            state.freedBytes?.let { freed ->
+                FootNote(stringResource(R.string.storage_freed, formatStorageSize(freed)))
+            }
+        }
+
+        Surface(color = MaterialTheme.semanticColors.pageBackground) {
+            Button(
+                onClick = {
+                    pendingCleanup = CleanupKind.entries.filter {
+                        it in state.selectedCleanup && (state.cleanableSizes[it] ?: 0L) > 0L
+                    }
+                },
+                enabled = state.selectedBytes > 0L && !state.cleaning,
+                modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                shape = RoundedCornerShape(Radius.lg)
+            ) {
+                if (state.cleaning) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(stringResource(R.string.storage_clean_selected, formatStorageSize(state.selectedBytes)))
                 }
             }
         }
-        FootNote(stringResource(R.string.storage_breakdown_note))
-
-        SettingsGroupHeader(text = stringResource(R.string.storage_section_reclaimable))
-        SettingsGroup {
-            CleanupKind.entries.forEachIndexed { index, kind ->
-                if (index > 0) SettingsDivider()
-                CleanupRow(
-                    label = stringResource(kind.labelRes),
-                    description = stringResource(kind.descRes),
-                    bytes = state.cleanableSizes[kind] ?: 0L,
-                    working = state.cleaning,
-                    onClean = { pendingCleanup = CleanupOption(kind) }
-                )
-            }
-            SettingsDivider()
-            CleanupRow(
-                label = stringResource(R.string.storage_clean_all),
-                description = stringResource(R.string.storage_clean_all_desc),
-                bytes = state.reclaimableBytes,
-                working = state.cleaning,
-                emphasize = true,
-                onClean = { pendingCleanup = CleanupOption(null) }
-            )
-        }
-        state.freedBytes?.let { freed ->
-            FootNote(stringResource(R.string.storage_freed, formatStorageSize(freed)))
-        }
     }
 
-    pendingCleanup?.let { option ->
-        val kind = option.kind
+    pendingCleanup?.let { kinds ->
         AlertDialog(
             onDismissRequest = { pendingCleanup = null },
             title = { Text(stringResource(R.string.storage_clean_confirm_title)) },
             text = {
-                Text(
-                    if (kind == null) {
-                        stringResource(
-                            R.string.storage_clean_confirm_all,
-                            formatStorageSize(state.reclaimableBytes)
-                        )
-                    } else {
-                        stringResource(
-                            R.string.storage_clean_confirm_single,
-                            stringResource(kind.labelRes),
-                            formatStorageSize(state.cleanableSizes[kind] ?: 0L)
-                        )
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    Text(stringResource(
+                        R.string.storage_clean_confirm_selected,
+                        formatStorageSize(kinds.sumOf { state.cleanableSizes[it] ?: 0L })
+                    ))
+                    kinds.forEach { kind ->
+                        Column {
+                            Text(stringResource(kind.labelRes), fontWeight = FontWeight.Medium)
+                            Text(stringResource(kind.descRes), style = MaterialTheme.typography.bodySmall)
+                        }
                     }
-                )
+                    Text(stringResource(R.string.storage_clean_scope), style = MaterialTheme.typography.bodySmall)
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    onClean(kind)
+                    onClean(kinds)
                     pendingCleanup = null
                 }) { Text(stringResource(R.string.storage_clean)) }
             },
@@ -173,14 +207,11 @@ internal fun StorageSection(
     }
 }
 
-/** 待确认的清理目标；[kind] 为 null 表示一键清理全部。 */
-private data class CleanupOption(val kind: CleanupKind?)
-
 @Composable
 private fun OverviewCard(state: StorageUiState) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(Radius.lg),
         color = MaterialTheme.semanticColors.cardSurface
     ) {
         Column(modifier = Modifier.padding(Spacing.lg)) {
@@ -257,14 +288,19 @@ private fun CategoryRow(
     category: StorageCategory,
     entry: StorageEntry?,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    cleanupKind: CleanupKind?,
+    expandable: Boolean,
+    selected: Boolean,
+    cleaning: Boolean,
+    onSelect: () -> Unit
 ) {
-    val expandable = !entry?.details.isNullOrEmpty()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .let { if (expandable) it.clickable(onClick = onToggle) else it }
-            .padding(horizontal = Spacing.lg, vertical = 11.dp),
+            .heightIn(min = 56.dp)
+            .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -274,108 +310,96 @@ private fun CategoryRow(
                 .background(category.color())
         )
         Spacer(Modifier.width(Spacing.md))
-        Text(
-            text = stringResource(category.labelRes),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = entry?.let { formatStorageSize(it.bytes) } ?: "—",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.semanticColors.subtleText
-        )
-        if (expandable) {
-            Spacer(Modifier.width(Spacing.xs))
-            ExpandableChevronIcon(
-                expanded = expanded,
-                style = ChevronRotationStyle.RIGHT_DOWN,
-                size = 18.dp,
-                tint = MaterialTheme.semanticColors.subtleText
-            )
-        }
-    }
-}
-
-@Composable
-private fun DetailRow(detail: StorageDetail) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(
-                start = Spacing.lg + DetailIndent + if (detail.indent) Spacing.lg else 0.dp,
-                end = Spacing.lg,
-                bottom = 10.dp
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = detail.label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = stringResource(category.labelRes),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f, fill = false)
             )
-            detail.note?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.semanticColors.subtleText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+            if (expandable) {
+                Spacer(Modifier.width(Spacing.xs))
+                ExpandableChevronIcon(
+                    expanded = expanded,
+                    style = ChevronRotationStyle.RIGHT_DOWN,
+                    size = 18.dp,
+                    tint = MaterialTheme.semanticColors.subtleText
                 )
             }
         }
         Spacer(Modifier.width(Spacing.sm))
         Text(
-            text = formatStorageSize(detail.bytes),
-            style = MaterialTheme.typography.bodySmall,
+            text = entry?.let { formatStorageSize(it.bytes) } ?: "—",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.semanticColors.subtleText
         )
+        if (cleanupKind != null) {
+            Checkbox(
+                checked = selected && (entry?.bytes ?: 0L) > 0L,
+                onCheckedChange = { onSelect() },
+                enabled = (entry?.bytes ?: 0L) > 0L && !cleaning
+            )
+        } else {
+            Spacer(Modifier.width(SelectionWidth))
+        }
     }
 }
 
 @Composable
-private fun CleanupRow(
-    label: String,
-    description: String,
-    bytes: Long,
-    working: Boolean,
-    emphasize: Boolean = false,
-    onClean: () -> Unit
+private fun DetailRow(
+    detail: StorageDetail,
+    cleanupKind: CleanupKind?,
+    selected: Boolean,
+    cleaning: Boolean,
+    onSelect: () -> Unit
 ) {
-    val enabled = bytes > 0L && !working
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = Spacing.lg, end = Spacing.sm, top = 11.dp, bottom = 11.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(
+                start = Spacing.lg + DetailIndent + if (detail.indent) Spacing.lg else 0.dp,
+                end = Spacing.lg,
+                top = Spacing.xs,
+                bottom = Spacing.xs
+            )
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Row(
+            modifier = Modifier.heightIn(min = SelectionWidth),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
-                text = label,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = if (emphasize) FontWeight.Medium else FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = description,
+                text = cleanupKind?.let { stringResource(it.labelRes) } ?: detail.label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+                maxLines = if (cleanupKind == null) 1 else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis
             )
-        }
-        Text(
-            text = formatStorageSize(bytes),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.semanticColors.subtleText
-        )
-        TextButton(onClick = onClean, enabled = enabled) {
-            if (working) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(Spacing.sm))
+            Text(
+                text = formatStorageSize(detail.bytes),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.semanticColors.subtleText
+            )
+            if (cleanupKind != null) {
+                Checkbox(
+                    checked = selected && detail.bytes > 0L,
+                    onCheckedChange = { onSelect() },
+                    enabled = detail.bytes > 0L && !cleaning
+                )
             } else {
-                Text(stringResource(R.string.storage_clean))
+                Spacer(Modifier.width(SelectionWidth))
             }
+        }
+        val note = detail.note
+        note?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.semanticColors.subtleText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
