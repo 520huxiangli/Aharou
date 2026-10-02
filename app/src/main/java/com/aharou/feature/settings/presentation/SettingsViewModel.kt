@@ -53,7 +53,7 @@ import com.aharou.feature.settings.data.remote.ModelApiService
 import com.aharou.feature.settings.data.remote.ContainerImageDownloader
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.remote.ModelTestResult
-import com.aharou.feature.agent.domain.shizuku.ShizukuManager
+import com.aharou.feature.agent.domain.shell.HostShellManager
 import com.aharou.feature.settings.data.remote.UpdateApkDownloader
 import com.aharou.feature.settings.data.remote.UpdateCheckResult
 import com.aharou.feature.settings.data.remote.UpdateCheckService
@@ -416,7 +416,7 @@ class SettingsViewModel @Inject constructor(
     private val updateCheckSettingsRepository: UpdateCheckSettingsRepository,
     private val updateCheckService: UpdateCheckService,
     private val updateApkDownloader: UpdateApkDownloader,
-    private val shizukuManager: ShizukuManager,
+    private val hostShell: HostShellManager,
     private val providerDashboardRunner: ProviderDashboardRunner,
     private val terminalSettingsRepository: TerminalSettingsRepository,
     private val proxySettingsRepository: ProxySettingsRepository,
@@ -2058,19 +2058,19 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 用 Shizuku（adb shell 身份）静默安装已下载的更新包。
+     * 用宿主通道（有 root 走 root，否则 adb shell）静默安装已下载的更新包。
      * 失败不弹错误窗：UI 上的「立即安装」按钮仍在，可回落到系统安装器。
      */
     fun installUpdateWithShizuku(path: String, tag: String) {
         if (shizukuInstallJob?.isActive == true) return
         shizukuInstallJob = viewModelScope.launch {
             val result = runCatching {
-                shizukuManager.runCommand("pm install -r \"$path\"", SHIZUKU_INSTALL_TIMEOUT_MS)
+                hostShell.run("pm install -r \"$path\"", SHIZUKU_INSTALL_TIMEOUT_MS)
             }.getOrNull()
             val ok = result != null && result.exitCode == 0 && !result.output.contains("Failure")
             FileLogger.i(
                 "UpdateInstall",
-                "Shizuku 静默安装 tag=$tag exit=${result?.exitCode} ok=$ok"
+                "静默安装 tag=$tag exit=${result?.exitCode} ok=$ok"
             )
             // 成功时 App 马上被替换重启，不必再改状态；失败就保持 Ready，让用户点按钮走系统安装器
         }

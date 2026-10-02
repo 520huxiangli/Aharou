@@ -56,7 +56,7 @@
 | 容器与镜像 | 本地 Linux 容器、环境体检与一键补装、自定义镜像、挂载手机目录、远程 SSH 后端 → [文档](/guide/container) |
 | 网络代理 | 全局代理与供应商级代理（v1.11.0-dev 起）→ [文档](/guide/proxy) |
 | 连接与同步 | SFTP / FTP 通道、工作区同步、内置 FTP 服务端 → [文档](/guide/sync) |
-| Shizuku 执行后端 | 以 adb shell（uid 2000）身份执行系统命令、读写 /sdcard → [文档](/guide/shizuku) |
+| 宿主执行后端 | 执行系统命令、读写 /sdcard：有 root 走 root（uid 0），否则走 Shizuku（adb shell，uid 2000） → [文档](/guide/shizuku) |
 | 影子屏 | 不显示在屏幕上的虚拟显示屏，Agent 可在其中启动 App、截图、点按 → [文档](/guide/shadow-screen) |
 | 环境变量 | 注入容器内所有进程的全局环境变量（值加密存储）→ [文档](/guide/env-vars) |
 
@@ -65,7 +65,7 @@
 | 入口 | 说明 |
 | --- | --- |
 | 工具授权 | AI 调用工具的授权规则 → [文档](/guide/permissions) |
-| 软件权限 | 安装未知应用、存储、电池优化、自启动、Shizuku 等系统权限 → [文档](/guide/app-permissions) |
+| 软件权限 | 安装未知应用、存储、电池优化、自启动、root、Shizuku 等系统权限 → [文档](/guide/app-permissions) |
 | 后台运行 | 后台保活、屏幕常亮、AI 完成通知 → [文档](/guide/background-run) |
 
 ### 数据与诊断

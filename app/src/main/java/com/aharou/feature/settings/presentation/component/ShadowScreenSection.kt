@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.settings.presentation.VdViewModel
 
 /**
@@ -38,6 +39,7 @@ import com.aharou.feature.settings.presentation.VdViewModel
 internal fun ShadowScreenSection(viewModel: VdViewModel = hiltViewModel()) {
     val vd by viewModel.vdState.collectAsStateWithLifecycle()
     val shizuku by viewModel.shizukuState.collectAsStateWithLifecycle()
+    val mode by viewModel.hostShellMode.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
 
@@ -70,11 +72,17 @@ internal fun ShadowScreenSection(viewModel: VdViewModel = hiltViewModel()) {
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (shizuku != ShizukuState.READY) {
+                if (mode == HostShellMode.UNAVAILABLE) {
                     Text(
                         text = stringResource(R.string.vd_shizuku_hint, stringResource(shizuku.statusRes())),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                } else {
+                    Text(
+                        text = stringResource(R.string.vd_channel_current, stringResource(mode.statusRes())),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

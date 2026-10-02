@@ -10,8 +10,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.aharou.accessibility.AharouAccessibilityService
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentImage
-import com.aharou.feature.agent.domain.shizuku.ShizukuManager
-import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.agent.domain.shell.HostShellManager
+import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -39,7 +39,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
  */
 class A11yTool @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager,
+    private val hostShell: HostShellManager,
 ) : AgentTool() {
     private companion object {
         const val TAG = "A11yTool"
@@ -109,9 +109,9 @@ class A11yTool @Inject constructor(
                 "A11Y_NOT_ENABLED",
             )
 
-        // 写动作不碰用户主屏上的第三方 App：有影子屏就让它去影子屏。
-        // 但 Shizuku 未就绪时影子屏根本起不来，这时无障碍是唯一可行路径，放行。
-        if (action in WRITE_ACTIONS && shizukuManager.state.value == ShizukuState.READY) {
+        // 写动作不碰用户主屏上的第三方 App：有影子屏可用就让它去影子屏。
+        // 但宿主通道不可用时影子屏根本起不来，这时无障碍是唯一可行路径，放行。
+        if (action in WRITE_ACTIONS && hostShell.mode.value != HostShellMode.UNAVAILABLE) {
             val (foregroundPkg, _) = service.foregroundPackage()
             if (foregroundPkg != null && !foregroundPkg.startsWith(context.packageName)) {
                 return ToolResult.Error(

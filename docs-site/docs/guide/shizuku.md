@@ -1,37 +1,57 @@
-# Shizuku 执行后端
+# 宿主执行后端（Shizuku / root）
 
-Shizuku 让普通应用在**不 root** 的前提下，以 adb shell（uid 2000）身份执行命令。Aharou 接入后，AI 获得一个名为 `Shizuku` 的工具，可以直接在手机系统上运行 `pm`、`am`、`cmd` 等命令、读写 `/sdcard`，弥补本地容器（PRoot）拿不到系统权限的短板。
+Aharou 需要一条能操作宿主 Android 系统的通道。Shizuku 让普通应用在**不 root** 的前提下，以 adb shell（uid 2000）身份执行命令；设备已 root 时，也可以直接走 root（uid 0）。AI 由此获得一个名为 `Shizuku` 的工具，可以直接在手机上运行 `pm`、`am`、`cmd` 等命令、读写 `/sdcard`，弥补本地容器（PRoot）拿不到系统权限的短板。
 
-它与「本地容器 / 远程 SSH」并列，不需要切换模式：只要 Shizuku 就绪，AI 就能调用。
+两条通道 **root 优先**：root 可用就走 root，否则回退 Shizuku，两条都不可用才报错。当前实际走哪条，在「设置 → 软件权限 → 当前执行通道」里能看到。
+
+它与「本地容器 / 远程 SSH」并列，不需要切换模式。
 
 ## 能做什么
 
-| 能力 | 本地容器（PRoot） | Shizuku |
-| --- | :---: | :---: |
-| `pm` / `am` / `cmd` 等系统命令 | ✗ | ✓ |
-| 读写 `/sdcard` | 有限 | ✓ |
-| 访问其他应用私有目录 `/data/data` | ✗ | ✗ |
-| 需要设备 root | 否 | 否 |
+| 能力 | 本地容器（PRoot） | Shizuku（uid 2000） | root（uid 0） |
+| --- | :---: | :---: | :---: |
+| `pm` / `am` / `cmd` 等系统命令 | ✗ | ✓ | ✓ |
+| 读写 `/sdcard` | 有限 | ✓ | ✓ |
+| 访问其他应用私有目录 `/data/data` | ✗ | ✗ | ✓ |
+| 修改系统设置（`settings put`） | ✗ | 部分 | ✓ |
+| 需安装并启动 Shizuku | — | 是 | 否 |
+| 需要设备 root | 否 | 否 | 是 |
 
-Shizuku 是 shell 身份，**读不到其他应用的私有数据目录**（那是 root 才能做的）。
+Shizuku 是 shell 身份，**读不到其他应用的私有数据目录**；要用这个能力得走 root。
 
-## 前置：安装并启动 Shizuku
+## 前置一：安装并启动 Shizuku（没有 root 时）
 
 1. 从 [Shizuku 官网](https://shizuku.rikka.app/download/) 或应用商店安装 Shizuku。
 2. 打开 Shizuku，按应用内指引启动服务：
    - Android 11 及以上：开启「无线调试」后可直接在手机上启动；
    - Android 10 及以下：需要连接电脑用 adb 启动。
 
+## 前置二：授权 root（设备已 root 时）
+
+在 root 管理器（Magisk / KernelSU 等）里给 Aharou 授予 root 权限。授权后本应用会以 `su -c` 执行命令，不再需要 Shizuku。
+
+首次探测会触发 root 管理器的授权弹窗；没授权时探测会等 8 秒后判为不可用，不影响其他功能。
+
 ## 在 Aharou 中授权
 
-打开「设置 → 软件权限 → Shizuku」，页面会显示当前状态：
+打开「设置 → 软件权限」，有两行相关状态：
+
+**root 权限**：
+
+- **未检测**：点击检测本机是否已授予 root 权限。
+- **未授权**：先在 root 管理器里给本应用授权，再点这一行重新检测。
+- **已授权**：宿主命令将以 uid 0 执行，能力最大。
+
+**Shizuku**：
 
 - **未安装**：点击前往下载安装。
 - **服务未运行**：点击打开 Shizuku 并启动服务。
 - **未授权**：点击申请授权，Shizuku 会弹出授权框，选择「允许」。
 - **已就绪**：授权完成，AI 即可使用 `Shizuku` 工具。
 
-从 Shizuku 应用返回 Aharou 时，状态会自动刷新。
+**当前执行通道**：显示此刻实际用的是 `root` 还是 `Shizuku`（两条都不可用时显示「不可用」）。
+
+从 Shizuku 应用或系统设置返回 Aharou 时，状态会自动刷新。
 
 ## 使用与安全
 
@@ -45,9 +65,9 @@ Shizuku 是 shell 身份，**读不到其他应用的私有数据目录**（那�
 
 ## 常见问题
 
-**命令报「Shizuku 未就绪」**
+**命令报「宿主命令通道不可用」**
 
-按设置页提示依次确认：已安装 → 服务已启动 → 已授权。设备重启后 Shizuku 服务通常需要重新启动（Android 11+ 可在 Shizuku 内重新开启无线调试启动）。
+按设置页提示依次确认：root 已授权，或 Shizuku 已安装 → 服务已启动 → 已授权。设备重启后 Shizuku 服务通常需要重新启动（Android 11+ 可在 Shizuku 内重新开启无线调试启动）；走 root 的则不受影响。
 
 **`Shizuku` 工具执行失败但没有明显报错**
 

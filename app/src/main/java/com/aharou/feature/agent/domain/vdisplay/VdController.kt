@@ -2,9 +2,9 @@ package com.aharou.feature.agent.domain.vdisplay
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.domain.shizuku.ShizukuCommandResult
-import com.aharou.feature.agent.domain.shizuku.ShizukuManager
-import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.agent.domain.shell.HostShellManager
+import com.aharou.feature.agent.domain.shell.HostShellMode
+import com.aharou.feature.agent.domain.shell.ShellCommandResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,14 +30,14 @@ data class VdInfo(
  * 影子屏控制器：在宿主上创建一块**不在设备屏幕显示**的虚拟显示屏。
  *
  * 机制参考并改编自 Genymobile/scrcpy 的 new-display（Apache-2.0，源码见
- * `tools/aharou-vd/`）：资产里内置一个约 3KB 的 runner，经 Shizuku 以 shell
+ * `tools/aharou-vd/`）：资产里内置一个约 3KB 的 runner，经 root 或 Shizuku 以 shell
  * 身份 `app_process` 拉起——创建无头虚拟屏后保活；后续启动 App / 截图 / 触控
- * 全部经 Shizuku 命令行完成，用户主屏零打扰。
+ * 全部经同一条命令行通道完成，用户主屏零打扰。
  */
 @Singleton
 class VdController @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizukuManager: ShizukuManager,
+    private val hostShell: HostShellManager,
 ) {
     companion object {
         private const val TAG = "VdController"
@@ -48,6 +48,12 @@ class VdController @Inject constructor(
         const val LOG_FILE = "/data/local/tmp/vd.log"
         const val ASSET_PATH = "vd/aharou-vd.jar"
 
+        const val SHOT_REQ_FILE = "/data/local/tmp/aharou-vd.shot"
+
+        /** 等 runner 出图的轮询间隔与上限。 */
+        const val SHOT_POLL_MS = 200L
+        const val SHOT_WAIT_MS = 5_000L
+
         const val DEFAULT_WIDTH = 1080
         const val DEFAULT_HEIGHT = 1920
         const val DEFAULT_DPI = 440
@@ -56,12 +62,21 @@ class VdController @Inject constructor(
     private val _state = MutableStateFlow<VdInfo?>(null)
     val state: StateFlow<VdInfo?> = _state.asStateFlow()
 
-    private val shizukuReady: Boolean
-        get() = shizukuManager.state.value == ShizukuState.READY
+    /**
+     * runner 出图的落点：App 私有外部目录。runner 以 shell/root 身份可写，App 又能直接读，
+     * 二进制不经 shell 文本通道（那是给命令输出用的）。
+     */
+    private val shotOutFile: File
+        get() = File(context.getExternalFilesDir(null), "vd/frame.png")
 
-    private suspend fun exec(command: String, timeoutMs: Long = 60_000L): ShizukuCommandResult {
-        check(shizukuReady) { "Shizuku 未就绪（${shizukuManager.state.value}），无法使用影子屏" }
-        return shizukuManager.runCommand(command, timeoutMs)
+    private val hostReady: Boolean
+        get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
+
+    private suspend fun exec(command: String, timeoutMs: Long = 60_000L): ShellCommandResult {
+        check(hostReady) {
+            "影子屏需要 root 或 Shizuku 就绪（当前通道：${hostShell.mode.value}，Shizuku: ${hostShell.shizukuState.value}）"
+        }
+        return hostShell.run(command, timeoutMs)
     }
 
     /** 把资产里的 runner 部署到 /data/local/tmp（md5 不同才覆盖）。 */
@@ -96,6 +111,7 @@ class VdController @Inject constructor(
         exec(
             "cd /data/local/tmp; rm -f $STOP_FILE $LOG_FILE; " +
                 "CLASSPATH=$JAR_REMOTE setsid app_process / com.aharou.vd.VdMain $width $height $dpi " +
+                "\"${shotOutFile.absolutePath}\" $SHOT_REQ_FILE " +
                 "> $LOG_FILE 2>&1 < /dev/null & echo LAUNCHED",
             30_000L,
         )
@@ -135,7 +151,7 @@ class VdController @Inject constructor(
 
     /** 刷新当前状态；未运行返回 null。 */
     suspend fun refresh(): VdInfo? {
-        if (!shizukuReady) {
+        if (!hostReady) {
             _state.value = null
             return null
         }
@@ -220,17 +236,27 @@ class VdController @Inject constructor(
         ).output.contains("$pkg/")
     }.getOrDefault(false)
 
-    /** 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。 */
+    /**
+     * 截图影子屏 → 返回本地 PNG 文件（传入已知 [known] 时跳过状态探测，供高频预览取帧用）。
+     *
+     * 走 runner 自己出图：Android 13 的 `screencap` 只认物理屏 token，对虚拟屏会静默写出
+     * 0 字节文件（14+ 才支持），所以改成「touch 请求文件 → runner 写 PNG → 直接读结果」。
+     */
     suspend fun screenshot(known: VdInfo? = null): Pair<VdInfo, File> {
         val info = known ?: refresh() ?: error("影子屏未运行，请先 start")
-        check(info.sfDisplayId.isNotEmpty()) {
-            "拿不到影子屏的显示 token（SurfaceFlinger 里没列出这块屏），暂时无法截图"
-        }
-        val shot = File(context.getExternalFilesDir(null), "vd/shot.png")
+        val shot = shotOutFile
         shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
-        val r = exec("screencap -d ${info.sfDisplayId} -p \"${shot.absolutePath}\"", 30_000L)
-        check(shot.exists() && shot.length() > 0) { "截图失败：${r.output.take(300)}" }
+        exec("touch $SHOT_REQ_FILE", 10_000L)
+        var waited = 0L
+        while (waited < SHOT_WAIT_MS && !(shot.exists() && shot.length() > 0)) {
+            delay(SHOT_POLL_MS)
+            waited += SHOT_POLL_MS
+        }
+        check(shot.exists() && shot.length() > 0) {
+            "截图失败：runner 未在 ${SHOT_WAIT_MS / 1000} 秒内产出画面" +
+                "（日志尾部：${exec("tail -3 $LOG_FILE 2>/dev/null", 10_000L).output.take(200)}）"
+        }
         return info to shot
     }
 
