@@ -530,6 +530,11 @@
     <string name="backup_restore_workspaces_warning">将直接覆盖本地同名工作区中的文件，且无法撤销，请谨慎勾选</string>
     <string name="backup_restore_workspaces_select_all">全选</string>
     <string name="backup_restore_workspaces_files">%1$d 个文件</string>
+    <string name="backup_conflict_title">检测到与本机同 ID 的供应商：</string>
+    <string name="backup_conflict_keep_local">保留本机现有的</string>
+    <string name="backup_conflict_overwrite">用备份里的覆盖</string>
+    <string name="backup_conflict_keep_both">两者都保留</string>
+    <string name="backup_conflict_imported_suffix">（导入）</string>
     <string name="backup_restore_workspaces_confirm">确认恢复</string>
 
     <!-- Backup ViewModel -->
@@ -594,6 +599,10 @@
     <string name="editor_discard">放弃</string>
     <string name="editor_save_and_exit">保存并退出</string>
     <string name="editor_dont_save">不保存</string>
+    <string name="editor_close_tab">关闭标签页</string>
+    <string name="editor_close_tab_unsaved_title">这个文件还有未保存的改动</string>
+    <string name="editor_close_tab_unsaved_message">%1$s 尚未保存，关闭标签页会丢掉这些改动。</string>
+    <string name="editor_close_tab_discard">丢弃并关闭</string>
     <string name="editor_md_preview">预览 Markdown</string>
     <string name="editor_md_show_source">显示源码</string>
     <string name="editor_indent">缩进</string>

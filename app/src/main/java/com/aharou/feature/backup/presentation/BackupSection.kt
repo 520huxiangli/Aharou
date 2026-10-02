@@ -21,6 +21,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import com.aharou.core.ui.AppSwitch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +43,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.backup.domain.BackupOptions
+import com.aharou.feature.backup.domain.ProviderConflict
+import com.aharou.feature.backup.domain.ProviderConflictStrategy
 import com.aharou.feature.backup.domain.WorkspaceBackupMeta
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
@@ -286,7 +289,8 @@ internal fun BackupSection(viewModel: BackupViewModel) {
         )
         is BackupState.WorkspaceSelection -> WorkspaceRestoreDialog(
             workspaces = (state as BackupState.WorkspaceSelection).workspaces,
-            onConfirm = { selected -> viewModel.confirmImportSelection(selected) },
+            providerConflicts = (state as BackupState.WorkspaceSelection).providerConflicts,
+            onConfirm = { selected, strategy -> viewModel.confirmImportSelection(selected, strategy) },
             onDismiss = { viewModel.cancelImportSelection() }
         )
         else -> {}
@@ -319,10 +323,12 @@ private fun WorkspaceBackupHint() {
 @Composable
 private fun WorkspaceRestoreDialog(
     workspaces: List<WorkspaceBackupMeta>,
-    onConfirm: (Set<String>) -> Unit,
+    providerConflicts: List<ProviderConflict>,
+    onConfirm: (Set<String>, ProviderConflictStrategy) -> Unit,
     onDismiss: () -> Unit
 ) {
     var checked by remember { mutableStateOf(workspaces.associate { it.name to true }) }
+    var strategy by remember { mutableStateOf(ProviderConflictStrategy.OVERWRITE) }
     val anyChecked = checked.values.any { it }
     val allChecked = workspaces.isNotEmpty() && checked.values.all { it }
 
@@ -330,64 +336,113 @@ private fun WorkspaceRestoreDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.backup_restore_workspaces_title)) },
         text = {
-            Column {
-                Text(
-                    text = stringResource(R.string.backup_restore_workspaces_warning),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Spacer(Modifier.height(Spacing.md))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Checkbox(
-                        checked = allChecked,
-                        onCheckedChange = { v -> checked = workspaces.associate { it.name to v } }
-                    )
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (workspaces.isNotEmpty()) {
                     Text(
-                        text = stringResource(R.string.backup_restore_workspaces_select_all),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
+                        text = stringResource(R.string.backup_restore_workspaces_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
                     )
-                }
-                workspaces.forEach { ws ->
+                    Spacer(Modifier.height(Spacing.md))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Checkbox(
-                            checked = checked[ws.name] ?: false,
-                            onCheckedChange = { v -> checked = checked + (ws.name to v) }
+                            checked = allChecked,
+                            onCheckedChange = { v -> checked = workspaces.associate { it.name to v } }
                         )
                         Text(
-                            text = ws.name,
+                            text = stringResource(R.string.backup_restore_workspaces_select_all),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = stringResource(R.string.backup_restore_workspaces_files, ws.fileCount),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
+                    workspaces.forEach { ws ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Checkbox(
+                                checked = checked[ws.name] ?: false,
+                                onCheckedChange = { v -> checked = checked + (ws.name to v) }
+                            )
+                            Text(
+                                text = ws.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = stringResource(R.string.backup_restore_workspaces_files, ws.fileCount),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                if (providerConflicts.isNotEmpty()) {
+                    if (workspaces.isNotEmpty()) Spacer(Modifier.height(Spacing.md))
+                    Text(
+                        text = stringResource(R.string.backup_conflict_title),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(Spacing.xs))
+                    providerConflicts.forEach { conflict ->
+                        Text(
+                            text = "· ${conflict.name}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(Modifier.height(Spacing.sm))
+                    ProviderConflictOption(ProviderConflictStrategy.KEEP_LOCAL, strategy) { strategy = it }
+                    ProviderConflictOption(ProviderConflictStrategy.OVERWRITE, strategy) { strategy = it }
+                    ProviderConflictOption(ProviderConflictStrategy.KEEP_BOTH, strategy) { strategy = it }
                 }
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(checked.filterValues { it }.keys) },
-                enabled = anyChecked
+                onClick = { onConfirm(checked.filterValues { it }.keys, strategy) },
+                enabled = workspaces.isEmpty() || anyChecked
             ) {
                 Text(stringResource(R.string.backup_restore_workspaces_confirm))
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } }
     )
+}
+
+@Composable
+private fun ProviderConflictOption(
+    value: ProviderConflictStrategy,
+    selected: ProviderConflictStrategy,
+    onSelect: (ProviderConflictStrategy) -> Unit
+) {
+    val label = when (value) {
+        ProviderConflictStrategy.KEEP_LOCAL -> stringResource(R.string.backup_conflict_keep_local)
+        ProviderConflictStrategy.OVERWRITE -> stringResource(R.string.backup_conflict_overwrite)
+        ProviderConflictStrategy.KEEP_BOTH -> stringResource(R.string.backup_conflict_keep_both)
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        RadioButton(selected = selected == value, onClick = { onSelect(value) })
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 @Composable
