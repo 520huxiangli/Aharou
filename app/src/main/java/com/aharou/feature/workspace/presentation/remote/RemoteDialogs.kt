@@ -216,20 +216,18 @@ fun AddRemoteConnectionDialog(
     var username by remember(initialConnection) { mutableStateOf(initialConnection?.username ?: "") }
     var password by remember(initialConnection) { mutableStateOf(initialConnection?.password ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var passphraseVisible by remember { mutableStateOf(false) }
     var protocol by remember(initialConnection) { mutableStateOf(initialConnection?.protocol ?: RemoteProtocol.SFTP) }
     var isTesting by remember { mutableStateOf(false) }
     var authMethod by remember(initialConnection) { mutableStateOf(if (initialConnection?.authType == "key") 1 else 0) }
     var selectedKeyId by remember(initialConnection) {
         mutableStateOf(initialConnection?.authData?.let { path -> loginKeys.firstOrNull { it.path == path }?.id } ?: "")
     }
-    var passphrase by remember(initialConnection) { mutableStateOf(initialConnection?.passphrase ?: "") }
     var keyExpanded by remember { mutableStateOf(false) }
 
     val currentAuth: RemoteAuth = when {
         protocol == RemoteProtocol.FTP -> RemoteAuth.Password(password)
         authMethod == 1 -> loginKeys.firstOrNull { it.id == selectedKeyId }
-            ?.let { RemoteAuth.PrivateKey(it.path, passphrase.ifBlank { null }) }
+            ?.let { RemoteAuth.PrivateKey(it.path, it.passphrase) }
             ?: RemoteAuth.Password("")
         else -> RemoteAuth.Password(password)
     }
@@ -359,19 +357,6 @@ fun AddRemoteConnectionDialog(
                                 }
                             }
                         }
-                        SheetOutlinedTextField(
-                            value = passphrase,
-                            onValueChange = { passphrase = it },
-                            label = { Text(stringResource(R.string.remote_key_passphrase)) },
-                            modifier = Modifier.fillMaxWidth(),
-                            visualTransformation = if (passphraseVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                val image = if (passphraseVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
-                                IconButton(onClick = { passphraseVisible = !passphraseVisible }) {
-                                    Icon(image, stringResource(R.string.remote_toggle_password), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        )
                     } else {
                         SheetOutlinedTextField(
                             value = password,

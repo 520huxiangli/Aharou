@@ -237,6 +237,9 @@ fun RemoteServerScreen(
             hostKeys = uiState.hostKeys,
             loginKeys = uiState.loginKeys,
             onAddLoginKey = { uri -> viewModel.addLoginKey(uri) },
+            onAddLoginKeyContent = { name, content, passphrase -> viewModel.addLoginKeyFromContent(name, content, passphrase) },
+            onUpdateLoginKey = { id, name, passphrase -> viewModel.updateLoginKey(id, name, passphrase) },
+            onLoadLoginKeyPem = { id, onResult -> viewModel.readLoginKeyPem(id, onResult) },
             onRemoveHostKey = { host, port -> viewModel.removeHostKey(host, port) },
             onRemoveLoginKey = { id -> viewModel.removeLoginKey(id) },
             onNavigateBack = { showHostKeysScreen = false }

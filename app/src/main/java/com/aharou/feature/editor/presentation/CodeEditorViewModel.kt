@@ -50,6 +50,10 @@ class CodeEditorViewModel @Inject constructor(
     private val _saveEvents = Channel<SaveResult>(Channel.BUFFERED)
     val saveEvents = _saveEvents.receiveAsFlow()
 
+    /** 是否正在写盘（远程模式下经 SFTP，耗时较长，供 UI 转圈）。 */
+    private val _saving = MutableStateFlow(false)
+    val saving: StateFlow<Boolean> = _saving.asStateFlow()
+
     val settings: StateFlow<EditorSettings> = editorSettings.settingsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EditorSettings())
 
@@ -93,19 +97,24 @@ class CodeEditorViewModel @Inject constructor(
         }
     }
 
-    /** 把编辑器当前内容写回文件。写入在 IO 线程进行，结果通过 [saveEvents] 通知。 */
+    /** 把编辑器当前内容写回文件。写入在 IO 线程进行，结果通过 [saveEvents] 通知，期间 [saving] 置位。 */
     fun save(content: String) {
         val path = loadedPath ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val result = runCatching { fileAccess.writeFile(path, content) }
-                .fold(
-                    onSuccess = { SaveResult.Success },
-                    onFailure = { e ->
-                        FileLogger.w(TAG, "保存文件失败: $path", e)
-                        SaveResult.Error(e.message)
-                    }
-                )
-            _saveEvents.send(result)
+            _saving.value = true
+            try {
+                val result = runCatching { fileAccess.writeFile(path, content) }
+                    .fold(
+                        onSuccess = { SaveResult.Success },
+                        onFailure = { e ->
+                            FileLogger.w(TAG, "保存文件失败: $path", e)
+                            SaveResult.Error(e.message)
+                        }
+                    )
+                _saveEvents.send(result)
+            } finally {
+                _saving.value = false
+            }
         }
     }
 

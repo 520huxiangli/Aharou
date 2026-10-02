@@ -86,6 +86,8 @@ class FileChangeHub @Inject constructor(
         /** AI 配置目录在容器内的根路径。 */
         const val AHAROU_ROOT = WorkspacePathMapper.AHAROU_ROOT
 
+        private const val IN_IGNORED = 0x00008000
+
         private val MASK = FileObserver.CREATE or FileObserver.DELETE or FileObserver.MOVED_TO or
             FileObserver.MOVED_FROM or FileObserver.CLOSE_WRITE
     }
@@ -254,7 +256,7 @@ class FileChangeHub @Inject constructor(
         }
 
         private fun attachTree() {
-            registerTree(rootDir)
+            registerTree(rootDir, reportNew = false)
             startPolling()
         }
 
@@ -268,24 +270,55 @@ class FileChangeHub @Inject constructor(
             }
         }
 
-        /** 递归注册目录；剪枝只针对父路径段，故先判后注册。 */
-        private fun registerTree(dir: File) {
+        /** 递归注册目录；剪枝只针对父路径段，故先判后注册。[reportNew] 为真时对新挂上的目录补报其存量直接子项。 */
+        private fun registerTree(dir: File, reportNew: Boolean) {
             val parts = relativePartsOf(rootDir, dir)
             if (parts.isNotEmpty() && rules.isIgnoredDir(parts)) return
-            register(dir)
+            register(dir, reportNew)
             if (!recursive) return
-            dir.listFiles()?.forEach { child -> if (child.isDirectory) registerTree(child) }
+            dir.listFiles()?.forEach { child -> if (child.isDirectory) registerTree(child, reportNew) }
         }
 
-        private fun register(dir: File) {
+        private fun register(dir: File, reportNew: Boolean) {
             val path = dir.absolutePath
-            if (!myDirs.add(path)) return
+            if (!myDirs.add(path)) {
+                FileLogger.d(TAG, "[diag] 目录监听已登记，跳过重复注册: $path")
+                return
+            }
             if (dirWatches.size >= MAX_WATCHED_DIRS && !dirWatches.containsKey(path)) {
                 myDirs.remove(path)
                 FileLogger.w(TAG, "监听目录数达上限 $MAX_WATCHED_DIRS，停止扩展: $path")
                 return
             }
-            dirWatches.computeIfAbsent(path) { DirWatch(dir) }.subscribe(this)
+            // 新出现的目录在 watch 生效前，其内条目没有任何 watcher 在场、inotify 不会汇报。
+            // 补报该目录的存量直接子项来覆盖这段空洞；之后的新增仍由 inotify 汇报。初始注册不补报，
+            // 否则订阅建立时会把整棵工作区当作新增全量上报。
+            val onReady: (() -> Unit)? = if (reportNew) {
+                { ioScope.launch { reportExistingChildren(dir) } }
+            } else null
+            FileLogger.d(TAG, "[diag] 注册目录监听: $path reportNew=$reportNew")
+            dirWatches.computeIfAbsent(path) { DirWatch(dir) }.subscribe(this, onReady)
+        }
+
+        /** 挂载监听后补扫子项，覆盖首次扫描与 startWatching 之间新建的目录。 */
+        private fun reportExistingChildren(dir: File) {
+            val children = dir.listFiles() ?: return
+            FileLogger.d(TAG, "[diag] 补报新目录子项: ${dir.absolutePath} 数量=${children.size}")
+            for (child in children) {
+                events.trySend(RawEvent(child.absolutePath, ChangeKind.CREATED))
+                if (recursive && child.isDirectory) registerTree(child, reportNew = true)
+            }
+        }
+
+        fun onWatchInvalidated(path: String) {
+            if (!myDirs.remove(path)) return
+            FileLogger.w(TAG, "目录监听失效，准备重新挂载: $path")
+            val dir = File(path)
+            if (dir.isDirectory) {
+                registerTree(dir, reportNew = true)
+            } else if (path == rootDir.absolutePath) {
+                awaitRoot()
+            }
         }
 
         fun onEvent(watch: DirWatch, hostPath: String, kind: ChangeKind) {
@@ -294,7 +327,7 @@ class FileChangeHub @Inject constructor(
             if (recursive && kind == ChangeKind.CREATED) {
                 ioScope.launch {
                     val child = File(hostPath)
-                    if (child.isDirectory) registerTree(child)
+                    if (child.isDirectory) registerTree(child, reportNew = true)
                 }
             }
         }
@@ -318,7 +351,7 @@ class FileChangeHub @Inject constructor(
                         events.trySend(RawEvent(hostPath, kind))
                         if (recursive && kind == ChangeKind.CREATED) {
                             val child = File(hostPath)
-                            if (child.isDirectory) registerTree(child)
+                            if (child.isDirectory) registerTree(child, reportNew = true)
                         }
                     }
                 }
@@ -404,13 +437,14 @@ class FileChangeHub @Inject constructor(
 
         private var observer: FileObserver? = null
 
-        fun subscribe(sub: Subscription) {
+        fun subscribe(sub: Subscription, onReady: (() -> Unit)? = null) {
             val firstSubscriber = synchronized(lock) {
                 val first = subscribers.isEmpty()
                 subscribers.add(sub)
                 first
             }
-            if (firstSubscriber) startObserver()
+            // watch 已生效时立即回调；否则排到主线程 startObserver 之后，保证 onReady 晚于 startWatching。
+            if (firstSubscriber) startObserver(onReady) else mainScope.launch { onReady?.invoke() }
         }
 
         fun unsubscribe(sub: Subscription) {
@@ -424,12 +458,20 @@ class FileChangeHub @Inject constructor(
             }
         }
 
-        private fun startObserver() {
+        private fun startObserver(onReady: (() -> Unit)? = null) {
             mainScope.launch {
-                if (observer != null) return@launch
+                if (observer != null) {
+                    onReady?.invoke()
+                    return@launch
+                }
                 @Suppress("DEPRECATION")
                 val created = object : FileObserver(path, MASK) {
                     override fun onEvent(event: Int, child: String?) {
+                        FileLogger.d(TAG, "[diag] FileObserver.onEvent path=$path event=0x${Integer.toHexString(event)} child=$child")
+                        if (event and IN_IGNORED != 0) {
+                            invalidate(this)
+                            return
+                        }
                         val name = child ?: return
                         val kind = kindOf(event) ?: return
                         dispatch(name, kind)
@@ -437,7 +479,21 @@ class FileChangeHub @Inject constructor(
                 }
                 created.startWatching()
                 observer = created
+                FileLogger.d(TAG, "[diag] startWatching path=$path")
+                // 必须在 startWatching 之后：此刻起 inotify 能捕获新增，补报只负责更早的存量，二者无缝衔接。
+                onReady?.invoke()
             }
+        }
+
+        private fun invalidate(current: FileObserver) {
+            if (observer !== current) return
+            observer = null
+            dirWatches.remove(path, this)
+            val affected = synchronized(lock) {
+                subscribers.toList().also { subscribers.clear() }
+            }
+            FileLogger.w(TAG, "目录观察器被系统移除: $path，订阅数=${affected.size}")
+            for (sub in affected) sub.onWatchInvalidated(path)
         }
 
         private fun stopObserver() {
@@ -448,6 +504,7 @@ class FileChangeHub @Inject constructor(
 
         private fun dispatch(name: String, kind: ChangeKind) {
             val hostPath = File(dir, name).absolutePath
+            FileLogger.d(TAG, "[diag] dispatch hostPath=$hostPath kind=$kind subscribers=${subscribers.size}")
             for (sub in subscribers) sub.onEvent(this, hostPath, kind)
         }
 

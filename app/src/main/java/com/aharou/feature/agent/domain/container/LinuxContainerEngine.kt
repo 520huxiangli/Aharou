@@ -849,10 +849,43 @@ class LinuxContainerEngine @Inject constructor(
             "GIT_CONFIG_KEY_0" to "safe.directory",
             "GIT_CONFIG_VALUE_0" to "*",
             "TERM" to "xterm-256color",
-            "LANG" to "C.UTF-8"
+            "LANG" to "C.UTF-8",
+            // 时区跟随手机：容器镜像默认写死 UTC（/etc/localtime → Etc/UTC），注入 TZ 后
+            // date/Python/Node/Go/JVM 等按手机当前时区显示；改手机时区后新起的命令即生效。
+            "TZ" to containerTimeZone(profile)
             // 全局 HTTP 代理：开启时注入 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY，
             // 容器内 curl/git/npm/pip 等一律走代理；关闭或配置不完整时为空 map 不影响直连。
         ) + com.aharou.core.net.AppProxy.proxyEnv(context) + envVarRepository.asMap()
+    }
+
+    /**
+     * 容器内时区（TZ 环境变量值），跟随手机当前系统时区。
+     *
+     * glibc 认 TZ 且优先于 /etc/localtime，注入后容器内所有本地命令都按手机时区显示。
+     * 优先用 IANA 名（含 DST 规则），但需 rootfs 的 /usr/share/zoneinfo 里真有该文件——Alpine
+     * 等精简镜像默认不带 tzdata，或系统返回 "GMT+08:00" 这类非 IANA 名时会缺失；此时退化成
+     * 按当前 UTC 偏移生成的 POSIX 写法（如 `<UTC+8>-8`），不处理 DST 但总能生效。
+     */
+    private fun containerTimeZone(profile: ContainerProfile): String {
+        val timeZone = java.util.TimeZone.getDefault()
+        val zoneInfoFile = java.io.File(
+            containerInstaller.rootfsDirFor(profile),
+            "usr/share/zoneinfo/${timeZone.id}"
+        )
+        if (zoneInfoFile.isFile) return timeZone.id
+
+        // localMinutes 是本地相对 UTC 的偏移（东八区 = +480）。名字按直观方向写成 UTC+8，
+        // POSIX 的 offset 符号与之相反（东八区写作 -8），若两者同号会显示成 "UTC-8" 让人误判西八区。
+        // 名字只取整小时（musl 的 std 名不接受 ':'），offset 用完整 hh:mm 保证分钟级时区也精确。
+        val localMinutes = timeZone.getOffset(System.currentTimeMillis()) / 60_000
+        if (localMinutes == 0) return "UTC0"
+        val absMinutes = Math.abs(localMinutes)
+        val hours = absMinutes / 60
+        val minutes = absMinutes % 60
+        val localSign = if (localMinutes > 0) "+" else "-"
+        val posixSign = if (localMinutes > 0) "-" else "+"
+        val posixOffset = if (minutes == 0) "$hours" else "%d:%02d".format(hours, minutes)
+        return "<UTC$localSign$hours>$posixSign$posixOffset"
     }
 
     private fun buildProcessBuilder(invocation: ProotInvocation): ProcessBuilder {

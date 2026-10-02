@@ -6,10 +6,13 @@ import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.workspace.domain.remote.RemoteFileInfo
 import com.aharou.feature.workspace.domain.remote.RemoteSyncClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.sftp.FileMode
 import net.schmizz.sshj.sftp.SFTPClient
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import net.schmizz.sshj.sftp.SFTPException
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.File
 
@@ -19,18 +22,36 @@ class SftpSyncClient(
 ) : RemoteSyncClient {
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 15_000L
+        private const val CONNECT_TIMEOUT_MS = 15_000
+        private const val READ_TIMEOUT_MS = 15_000
     }
 
+    /** 同一 SFTP 会话上的并发请求会让请求/响应错配，故所有操作串行化。 */
+    private val mutex = Mutex()
     private var sshClient: SSHClient? = null
     private var sftpClient: SFTPClient? = null
 
-    override suspend fun connect(host: String, port: Int, username: String, auth: RemoteAuth) = withContext(Dispatchers.IO) {
+    override suspend fun connect(host: String, port: Int, username: String, auth: RemoteAuth) =
+        withContext(Dispatchers.IO) { mutex.withLock { doConnect(host, port, username, auth) } }
+
+    override suspend fun disconnect() =
+        withContext(Dispatchers.IO) { mutex.withLock { doDisconnect() } }
+
+    override suspend fun reconnect(host: String, port: Int, username: String, auth: RemoteAuth) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                doDisconnect()
+                doConnect(host, port, username, auth)
+            }
+        }
+
+    private fun doConnect(host: String, port: Int, username: String, auth: RemoteAuth) {
         sshClient = SSHClient().apply {
-            setConnectTimeout(CONNECT_TIMEOUT_MS.toInt())
+            setConnectTimeout(CONNECT_TIMEOUT_MS)
+            setTimeout(READ_TIMEOUT_MS)
             addHostKeyVerifier(hostKeyVerifier)
             connect(host, port)
-            
+
             when (auth) {
                 is RemoteAuth.Password -> authPassword(username, auth.password)
                 is RemoteAuth.PrivateKey -> {
@@ -43,60 +64,73 @@ class SftpSyncClient(
         sftpClient = sshClient?.newSFTPClient()
     }
 
-    override suspend fun disconnect() = withContext(Dispatchers.IO) {
-        sftpClient?.close()
-        sshClient?.disconnect()
+    private fun doDisconnect() {
+        runCatching { sftpClient?.close() }
+        runCatching { sshClient?.disconnect() }
         sftpClient = null
         sshClient = null
     }
 
-    override suspend fun listFiles(remotePath: String): List<RemoteFileInfo> = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
-        sftp.ls(remotePath).map {
-            RemoteFileInfo(
-                name = it.name,
-                isDirectory = it.attributes.type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY,
-                size = it.attributes.size,
-                lastModified = it.attributes.mtime * 1000L // mtime is in seconds
-            )
+    override suspend fun listFiles(remotePath: String): List<RemoteFileInfo> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
+                sftp.ls(remotePath).map {
+                    RemoteFileInfo(
+                        name = it.name,
+                        isDirectory = it.attributes.type == FileMode.Type.DIRECTORY,
+                        size = it.attributes.size,
+                        lastModified = it.attributes.mtime * 1000L // mtime is in seconds
+                    )
+                }
+            }
         }
-    }
 
-    override suspend fun downloadFile(remotePath: String, localPath: String) = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
-        val localFile = File(localPath)
-        localFile.parentFile?.mkdirs()
-        sftp.get(remotePath, localPath)
-    }
-
-    override suspend fun uploadFile(localPath: String, remotePath: String) = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
-        val localFile = File(localPath)
-        if (localFile.exists()) {
-            sftp.put(localPath, remotePath)
+    override suspend fun downloadFile(remotePath: String, localPath: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
+                File(localPath).parentFile?.mkdirs()
+                sftp.get(remotePath, localPath)
+            }
         }
-    }
 
-    override suspend fun createDirectory(remotePath: String) = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
-        sftp.mkdirs(remotePath)
-    }
-
-    override suspend fun delete(remotePath: String) = withContext(Dispatchers.IO) {
-        val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
-        val attrs = sftp.statExistence(remotePath)
-        if (attrs != null) {
-            deleteRecursive(sftp, remotePath, attrs.type)
+    override suspend fun uploadFile(localPath: String, remotePath: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
+                if (File(localPath).exists()) {
+                    sftp.put(localPath, remotePath)
+                }
+            }
         }
-    }
+
+    override suspend fun createDirectory(remotePath: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
+                sftp.mkdirs(remotePath)
+            }
+        }
+
+    override suspend fun delete(remotePath: String) =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val sftp = sftpClient ?: throw IllegalStateException("SFTP Client is not connected")
+                val attrs = sftp.statExistence(remotePath)
+                if (attrs != null) {
+                    deleteRecursive(sftp, remotePath, attrs.type)
+                }
+            }
+        }
 
     /** 递归删除（SFTP 无递归删除原语）：后序遍历，目录在子项删完后 rmdir。 */
     private fun deleteRecursive(
-        sftp: net.schmizz.sshj.sftp.SFTPClient,
+        sftp: SFTPClient,
         path: String,
-        type: net.schmizz.sshj.sftp.FileMode.Type
+        type: FileMode.Type
     ) {
-        if (type == net.schmizz.sshj.sftp.FileMode.Type.DIRECTORY) {
+        if (type == FileMode.Type.DIRECTORY) {
             for (entry in sftp.ls(path)) {
                 val name = entry.name
                 if (name == "." || name == "..") continue
@@ -108,20 +142,24 @@ class SftpSyncClient(
         }
     }
 
-    override suspend fun isConnected(): Boolean = sshClient?.isConnected == true && sshClient?.isAuthenticated == true
+    override suspend fun isConnected(): Boolean =
+        sshClient?.isConnected == true && sshClient?.isAuthenticated == true
 
-    override suspend fun ping(): Boolean = withContext(Dispatchers.IO) {
-        val ssh = sshClient ?: return@withContext false
-        val sftp = sftpClient ?: return@withContext false
-        if (!ssh.isConnected || !ssh.isAuthenticated) return@withContext false
-        try {
-            // 任何 SFTP 协议响应（含"路径不存在"等业务错误）都证明连接活着；仅传输/socket 异常才判断开
-            sftp.stat(".")
-            true
-        } catch (e: net.schmizz.sshj.sftp.SFTPException) {
-            true
-        } catch (e: Exception) {
-            false
+    override suspend fun ping(): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val ssh = sshClient ?: return@withLock false
+                val sftp = sftpClient ?: return@withLock false
+                if (!ssh.isConnected || !ssh.isAuthenticated) return@withLock false
+                try {
+                    // 任何 SFTP 协议响应（含"路径不存在"等业务错误）都证明连接活着；仅传输/socket 异常才判断开
+                    sftp.stat(".")
+                    true
+                } catch (e: SFTPException) {
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
         }
-    }
 }
