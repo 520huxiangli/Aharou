@@ -38,6 +38,8 @@ class ContextCompactorTest {
         every { provider.maxOutputTokens } returns 8_000
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata(id = "summary", contextTokens = context)
         coEvery { settings.compactionThresholdPercent() } returns 90
+        // 设成 100%：这些用例只验证硬摘要路径，软分支不该被意外触发
+        coEvery { settings.softCompactionThresholdPercent() } returns 100
         every { prompts.resolvePrompt(any()) } returns "{{INSTRUCTION}}"
         coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("Concise handoff", stopReason = "stop")
     }
