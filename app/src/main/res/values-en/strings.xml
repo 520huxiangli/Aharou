@@ -1109,6 +1109,13 @@
     <string name="skills_editor_error_read_only">Built-in skills cannot be modified</string>
     <string name="skills_market">Skill Market</string>
     <string name="skills_market_install">Install</string>
+    <string name="skills_market_category_all">All</string>
+    <string name="skills_market_sort">Sort</string>
+    <string name="skills_market_sort_default">Default</string>
+    <string name="skills_market_sort_updated">Recently updated</string>
+    <string name="skills_market_sort_installed">Installed first</string>
+    <string name="skills_market_category_empty">No skills in this category yet</string>
+    <string name="skills_market_categorizing">Categorizing, hang on…</string>
     <string name="skills_market_installed">Installed</string>
     <string name="skills_market_update">Update</string>
     <string name="skills_market_loading">Loading skills…</string>

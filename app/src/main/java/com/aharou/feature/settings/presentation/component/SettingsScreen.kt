@@ -1059,11 +1059,15 @@ fun SettingsScreen(
                     val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
                     val marketAlert by viewModel.marketAlert.collectAsStateWithLifecycle()
                     val marketTranslations by viewModel.marketTranslations.collectAsStateWithLifecycle()
+                    val marketCategories by viewModel.marketCategories.collectAsStateWithLifecycle()
                     SkillMarketSection(
                         sources = marketSources,
                         selectedSourceId = marketSourceId,
                         skills = marketSkills,
                         translations = marketTranslations,
+                        categories = marketCategories,
+                        updatedAt = emptyMap(),
+                        onNeedCategories = { viewModel.ensureMarketCategories() },
                         loading = marketLoading,
                         alert = marketAlert,
                         listState = marketListState,

@@ -1,5 +1,6 @@
 package com.aharou.feature.settings.presentation.component
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -18,6 +19,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,6 +42,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
+import com.aharou.feature.agent.domain.skill.market.SkillCategories
 import com.aharou.feature.agent.domain.skill.market.SkillSafety
 import com.aharou.feature.agent.domain.skill.market.SkillTranslation
 import com.aharou.feature.agent.domain.skill.market.translationKey
@@ -58,6 +62,9 @@ internal fun SkillMarketSection(
     selectedSourceId: String,
     skills: List<MarketSkillUi>,
     translations: Map<String, SkillTranslation>,
+    categories: Map<String, List<String>>,
+    updatedAt: Map<String, Long>,
+    onNeedCategories: () -> Unit,
     loading: Boolean,
     alert: MarketAlert?,
     listState: LazyListState,
@@ -69,6 +76,24 @@ internal fun SkillMarketSection(
 ) {
     var repoInput by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf<String?>(null) }
+    var sortMode by remember { mutableStateOf(MarketSort.Default) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+
+    // 分类筛选与排序都在本地做：列表本来就在内存里，不必再问服务端一次
+    val visible = remember(skills, category, sortMode, categories, updatedAt) {
+        val filtered = if (category == null) {
+            skills
+        } else {
+            skills.filter { categories[it.skill.translationKey()]?.contains(category) == true }
+        }
+        when (sortMode) {
+            MarketSort.Default -> filtered
+            // 没有更新时间的（旧缓存 / 查不到）排最后，不打乱有数据那些的相对顺序
+            MarketSort.Updated -> filtered.sortedByDescending { updatedAt[it.skill.translationKey()] ?: 0L }
+            MarketSort.Installed -> filtered.sortedByDescending { if (it.installed) 1 else 0 }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -91,6 +116,58 @@ internal fun SkillMarketSection(
                         onClick = { onSelectSource(id) },
                         label = { Text(label) }
                     )
+                }
+            }
+
+            // 分类筛选（全部 + 固定词表）+ 排序：标签是写死的，列表一出来就显示，
+            // 打标只负责往标签里填技能；没填完时点分类给「正在分类」提示
+            if (skills.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        FilterChip(
+                            selected = category == null,
+                            onClick = { category = null },
+                            label = { Text(stringResource(R.string.skills_market_category_all)) }
+                        )
+                        SkillCategories.ORDER.forEach { name ->
+                            FilterChip(
+                                selected = category == name,
+                                onClick = {
+                                    // 分类是花 token 的打标：用户真要看分类了才开始算
+                                    onNeedCategories()
+                                    category = if (category == name) null else name
+                                },
+                                label = { Text(name) }
+                            )
+                        }
+                    }
+                    Box {
+                        TextButton(onClick = { sortMenuOpen = true }) {
+                            Text(
+                                text = "${stringResource(R.string.skills_market_sort)}：${stringResource(sortMode.labelRes)}"
+                            )
+                        }
+                        DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                            MarketSort.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(mode.labelRes)) },
+                                    onClick = {
+                                        sortMode = mode
+                                        sortMenuOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -159,7 +236,19 @@ internal fun SkillMarketSection(
                     .padding(horizontal = Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                items(skills, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
+                if (visible.isEmpty()) {
+                    // 打标还没铺满时别说「这个分类没有技能」——那会让人以为源里真没有
+                    val categorizing = categories.size < skills.size
+                    item {
+                        MarketHint(
+                            stringResource(
+                                if (categorizing) R.string.skills_market_categorizing
+                                else R.string.skills_market_category_empty
+                            )
+                        )
+                    }
+                }
+                items(visible, key = { ui -> "${ui.skill.sourceId}@${ui.skill.repo}@${ui.skill.dir}@${ui.skill.name}" }) { ui ->
                     MarketSkillRow(ui, translations, onInstall, onOpenDetail)
                 }
                 item { Spacer(modifier = Modifier.padding(bottom = Spacing.xl)) }
@@ -303,4 +392,11 @@ private fun safetyHint(safety: SkillSafety): String? {
         if (safety.needsCredentials) add(stringResource(R.string.skills_market_risk_credentials))
     }
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
+/** 市场列表的排序方式。 */
+private enum class MarketSort(@param:StringRes val labelRes: Int) {
+    Default(R.string.skills_market_sort_default),
+    Updated(R.string.skills_market_sort_updated),
+    Installed(R.string.skills_market_sort_installed)
 }

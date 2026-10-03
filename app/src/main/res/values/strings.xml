@@ -1110,6 +1110,13 @@
     <string name="skills_editor_error_read_only">内置技能不可修改</string>
     <string name="skills_market">技能市场</string>
     <string name="skills_market_install">安装</string>
+    <string name="skills_market_category_all">全部</string>
+    <string name="skills_market_sort">排序</string>
+    <string name="skills_market_sort_default">默认顺序</string>
+    <string name="skills_market_sort_updated">最近更新</string>
+    <string name="skills_market_sort_installed">已安装优先</string>
+    <string name="skills_market_category_empty">这个分类下还没有技能</string>
+    <string name="skills_market_categorizing">正在分类，稍等…</string>
     <string name="skills_market_installed">已安装</string>
     <string name="skills_market_update">更新</string>
     <string name="skills_market_loading">正在加载技能列表…</string>

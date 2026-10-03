@@ -41,6 +41,7 @@ import com.aharou.feature.agent.domain.skill.SkillSaveError
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
 import com.aharou.feature.agent.domain.skill.market.SkillMarketRepository
+import com.aharou.feature.agent.domain.skill.market.SkillCategoryTagger
 import com.aharou.feature.agent.domain.skill.market.SkillMarketTranslator
 import com.aharou.feature.agent.domain.skill.market.SkillRepoAccess
 import com.aharou.feature.agent.domain.skill.market.SkillTranslation
@@ -405,6 +406,7 @@ class SettingsViewModel @Inject constructor(
     private val skillConfigRepository: SkillConfigRepository,
     private val skillMarketRepository: SkillMarketRepository,
     private val skillMarketTranslator: SkillMarketTranslator,
+    private val skillCategoryTagger: SkillCategoryTagger,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
     private val voiceSttSettingsRepository: VoiceSttSettingsRepository,
     private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
@@ -842,6 +844,16 @@ class SettingsViewModel @Inject constructor(
 
     /** 当前源的后台翻译任务：换源时取消上一轮，免得旧源的译文回来刷到新列表上。 */
     private var marketTranslateJob: Job? = null
+
+    /** 最近一次搜索的关键词；译文逐批回流时用它重筛，中文关键词才搜得出来。 */
+    private var lastMarketQuery: String = ""
+
+    /** 市场条目的分类（键＝仓库@技能目录）：技能元数据里没有，交给模型按描述打标。 */
+    private val _marketCategories = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val marketCategories: StateFlow<Map<String, List<String>>> = _marketCategories.asStateFlow()
+
+    /** 当前源的分类打标任务：换源时取消上一轮。 */
+    private var marketCategoryJob: Job? = null
 
     private val _marketLoading = MutableStateFlow(false)
     val marketLoading: StateFlow<Boolean> = _marketLoading.asStateFlow()
@@ -1596,6 +1608,7 @@ class SettingsViewModel @Inject constructor(
     fun searchMarket(query: String, address: String) {
         val q = query.trim()
         if (q.isBlank()) return
+        lastMarketQuery = q
         val addr = address.trim()
         when {
             addr.isNotEmpty() -> searchMarketInRepo(addr, q)
@@ -1615,10 +1628,12 @@ class SettingsViewModel @Inject constructor(
             _marketAlert.value = MarketAlert.MarketNotLoaded
             return
         }
-        val hits = all.filter { it.matchesQuery(query) }
+        val hits = all.filter { it.matchesQuery(query, _marketTranslations.value[it.translationKey()]) }
         _marketSearching.value = true
         publishMarket(hits)
         _marketAlert.value = if (hits.isEmpty()) MarketAlert.NoMatchInRepo else null
+        // 用户可能在译文还没翻出来时就搜中文：把整个源送去翻，翻好一批会自动重筛一次
+        translateMarket(all)
     }
 
     /** 在指定地址的仓库里筛技能：同一地址已经列过就直接在缓存里筛，不重复拉。 */
@@ -1643,10 +1658,11 @@ class SettingsViewModel @Inject constructor(
                 marketAdhocRepo = listing.repo
                 _marketSourceId.value = ADHOC_MARKET_ID
                 refreshAdhocSourceEntry()
-                val hits = listing.skills.filter { it.matchesQuery(query) }
+                val hits = listing.skills.filter { it.matchesQuery(query, _marketTranslations.value[it.translationKey()]) }
                 _marketSearching.value = true
                 publishMarket(hits)
-                translateMarket(hits)
+                // 翻整个仓库而不是只翻命中的：中文关键词可能只存在于还没翻过的条目里
+                translateMarket(listing.skills)
                 _marketAlert.value = when {
                     listing.failed -> MarketAlert.LoadFailed
                     hits.isEmpty() -> MarketAlert.NoMatchInRepo
@@ -1657,12 +1673,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 技能名、中文名、描述任一命中即算匹配（中文无大小写，混着英文关键词也能筛）。 */
-    private fun MarketSkill.matchesQuery(query: String): Boolean {
+    /**
+     * 技能名、显示名、描述，以及模型翻好的中文译文，任一命中即算匹配。
+     *
+     * 译文必须算进来：仓库元数据基本都是英文，用户输入中文时只有译文里才有可匹配的文字。
+     */
+    private fun MarketSkill.matchesQuery(query: String, translation: SkillTranslation?): Boolean {
         val q = query.lowercase()
         return name.lowercase().contains(q) ||
             displayName.lowercase().contains(q) ||
-            description.lowercase().contains(q)
+            description.lowercase().contains(q) ||
+            translation?.name?.lowercase()?.contains(q) == true ||
+            translation?.description?.lowercase()?.contains(q) == true
     }
 
     /**
@@ -1758,10 +1780,53 @@ class SettingsViewModel @Inject constructor(
             skillMarketTranslator.translate(skills) { batch ->
                 translated += batch.size
                 _marketTranslations.value = _marketTranslations.value + batch
+                // 正在搜索的话，新译文可能带来新命中（中文关键词尤其吃这个）
+                if (_marketSearching.value) refilterMarket()
             }
             // 该翻的一条都没翻出来（多半是供应商没配好）：把原因说出来，别让人以为没这功能
             if (translated == 0) _marketAlert.value = MarketAlert.TranslateUnavailable
         }
+    }
+
+    /** 用 [lastMarketQuery] 重新筛一遍当前列表（译文回流后调用）；不在搜索态就直接返回。 */
+    private fun refilterMarket() {
+        val q = lastMarketQuery
+        if (q.isBlank()) return
+        val source = if (_marketSourceId.value == ADHOC_MARKET_ID) marketAdhocSkills else marketSourceSkills
+        if (source.isEmpty()) return
+        val hits = source.filter { it.matchesQuery(q, _marketTranslations.value[it.translationKey()]) }
+        publishMarket(hits)
+        _marketAlert.value = if (hits.isEmpty()) MarketAlert.NoMatchInRepo else null
+    }
+
+    /**
+     * 给列表里的技能打分类（后台、逐批回流）。换源/换仓库会取消上一轮：
+     * 分类按「仓库@技能目录」归属，回来也不会串到别的源上。
+     */
+    private fun categorizeMarket(skills: List<MarketSkill>) {
+        marketCategoryJob?.cancel()
+        if (skills.isEmpty()) return
+        marketCategoryJob = viewModelScope.launch {
+            _marketCategories.value = skillCategoryTagger.cached()
+            if (skills.all { it.translationKey() in _marketCategories.value }) return@launch
+            skillCategoryTagger.categorize(skills) { batch ->
+                _marketCategories.value = _marketCategories.value + batch
+            }
+        }
+    }
+
+    /**
+     * 用户主动按分类筛时才去算分类（默认不跑）。
+     *
+     * 分类是要花 token 的打标，而它只是个筛选项——进市场就自作主张跑一遍，
+     * 对不关心分类的人就是白花钱。已经有任务在跑时直接返回，不打断已有的进度。
+     */
+    fun ensureMarketCategories() {
+        if (marketCategoryJob?.isActive == true) return
+        val skills = if (_marketSourceId.value == ADHOC_MARKET_ID) marketAdhocSkills else marketSourceSkills
+        if (skills.isEmpty()) return
+        if (skills.all { it.translationKey() in _marketCategories.value }) return
+        categorizeMarket(skills)
     }
 
     private fun toMarketUi(skill: MarketSkill) = MarketSkillUi(
