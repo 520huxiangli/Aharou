@@ -46,7 +46,7 @@ class SkillImporterTest {
             assertEquals(listOf("pdf-report"), report.imported)
             val file = File(root, "pdf-report/SKILL.md")
             assertTrue(file.exists())
-            val parsed = SkillParser.parse(provider, File(root, "pdf-report").absolutePath)!!
+            val parsed = SkillParser.parse(provider, File(root, "pdf-report").absolutePath, "zh")!!
             assertEquals("pdf-report", parsed.name)
             assertEquals("生成报告", parsed.description)
             assertEquals("正文步骤", parsed.instructions)

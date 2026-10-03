@@ -25,7 +25,7 @@ class SkillParserTest {
                     instructions = instructions
                 )
             )
-            val parsed = SkillParser.parse(TestFileAccessProvider(), dir.absolutePath)
+            val parsed = SkillParser.parse(TestFileAccessProvider(), dir.absolutePath, "zh")
             assertNotNull(parsed)
             parsed!!
         } finally {

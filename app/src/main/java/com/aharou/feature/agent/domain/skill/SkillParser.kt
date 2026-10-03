@@ -14,7 +14,7 @@ object SkillParser {
      * 解析一个 skill 目录；无 SKILL.md / CLAUDE.md 或无 name 时视为非法，返回 null。
      * 目录经 [provider] 以容器路径读取，本地/远程统一。
      */
-    fun parse(provider: FileAccessProvider, dirPath: String): Skill? {
+    fun parse(provider: FileAccessProvider, dirPath: String, lang: String): Skill? {
         val dir = dirPath.trimEnd('/')
         // 优先 SKILL.md，其次 CLAUDE.md（兼容只用 CLAUDE.md 的技能）；名称匹配忽略大小写
         val fileName = runCatching {
@@ -32,19 +32,21 @@ object SkillParser {
             return null
         }
 
-        return parseText(text, dir.substringAfterLast('/').ifBlank { dir }).copy(dirPath = dir)
+        return parseText(text, dir.substringAfterLast('/').ifBlank { dir }, lang).copy(dirPath = dir)
     }
 
     /**
      * 从原始 Markdown 文本解析技能（不依赖磁盘），供文件/压缩包导入使用。
      * [fallbackName] 为 frontmatter 缺 name 时的兜底（通常传源文件名或所在目录名）。
+     * [lang] 给定时按界面语言挑 `description_zh` / `description_en`；为 null 只取 `description`
+     * 原字段——导入路径要原样写回 frontmatter，不能被译文顶掉原文。
      */
-    fun parseText(text: String, fallbackName: String): Skill {
+    fun parseText(text: String, fallbackName: String, lang: String? = null): Skill {
         val (frontmatter, body) = splitAndParseFrontmatter(text)
 
         // name 优先取 frontmatter，缺省回退到兜底名
         val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() } ?: fallbackName
-        val description = (frontmatter["description"]?.toString() ?: "").take(MAX_DESC_CHARS)
+        val description = langDescription(frontmatter, lang).take(MAX_DESC_CHARS)
 
         val requiredTools = try {
             val toolsRaw = frontmatter["required_tools"]
@@ -87,6 +89,19 @@ object SkillParser {
         }
         
         return map to rest
+    }
+
+    /** 按界面语言挑描述：中文优先 `description_zh`，其它语言优先 `description_en`，都缺再退通用字段。 */
+    private fun langDescription(frontmatter: Map<String, Any>, lang: String?): String {
+        if (lang == null) return frontmatter["description"]?.toString() ?: ""
+        val keys = if (lang == "zh") {
+            listOf("description_zh", "description", "description_en")
+        } else {
+            listOf("description_en", "description", "description_zh")
+        }
+        return keys.firstNotNullOfOrNull { key ->
+            frontmatter[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        } ?: ""
     }
 
     /**

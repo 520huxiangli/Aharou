@@ -62,17 +62,14 @@ class SkillRepository @Inject constructor(
         if (!isValidName(name)) return SkillSaveError.INVALID_NAME
         if (form.instructions.isBlank()) return SkillSaveError.EMPTY_INSTRUCTIONS
 
-        val entries = listAllSkills()
+        val scopeSkills = entriesIn(scope)
         val keepingName = originalName != null && originalName.equals(name, ignoreCase = true)
-        if (!keepingName) {
-            val taken = entries.any { it.scope == scope && it.skill.name.equals(name, ignoreCase = true) }
-            if (taken) return SkillSaveError.NAME_CONFLICT
+        if (!keepingName && scopeSkills.any { it.name.equals(name, ignoreCase = true) }) {
+            return SkillSaveError.NAME_CONFLICT
         }
 
         val existingDir = originalName?.let { old ->
-            entries.firstOrNull {
-                it.scope == scope && it.skill.name.equals(old, ignoreCase = true)
-            }?.skill?.dirPath
+            scopeSkills.firstOrNull { it.name.equals(old, ignoreCase = true) }?.dirPath
         }
 
         val text = SkillParser.serialize(
@@ -127,9 +124,20 @@ class SkillRepository @Inject constructor(
             fileAccess, skillsRoot(scope), existingNamesIn(scope), input, fallbackName, overwrite
         )
 
+    /**
+     * 指定作用域里真实存在的技能。**必须按来源直查**：`listAllSkills()` 是合并视图，
+     * 同名技能只留优先级最高的那一条，用它按作用域找实体时低优先级那侧会被整条藏掉——
+     * 结果就是「目标已有同名」判不出来，删除 / 导出也定位不到目录。
+     */
+    private fun entriesIn(scope: SkillScope): List<Skill> = when (scope) {
+        SkillScope.BUILTIN -> builtinSkillSource.listSkills()
+        SkillScope.GLOBAL -> globalDirectorySkillSource.listSkills()
+        SkillScope.PROJECT -> projectDirectorySkillSource.listSkills()
+    }
+
     /** 指定作用域下已有技能名（小写），供导入查重。 */
     private fun existingNamesIn(scope: SkillScope): Set<String> =
-        listAllSkills().filter { it.scope == scope }.map { it.skill.name.lowercase() }.toSet()
+        entriesIn(scope).map { it.name.lowercase() }.toSet()
 
     /**
      * 把指定作用域的技能整个导出成一个 zip（见 [SkillExporter]），技能不存在或读不到时返回 null。
@@ -139,11 +147,10 @@ class SkillRepository @Inject constructor(
      */
     fun exportZip(name: String, scope: SkillScope): ByteArray? {
         if (scope == SkillScope.BUILTIN) return exportBuiltin(name)
-        val entry = listAllSkills().firstOrNull {
-            it.scope == scope && it.skill.name.equals(name, ignoreCase = true)
-        } ?: return null
-        val dirPath = entry.skill.dirPath ?: return null
-        return SkillExporter.zip(fileAccess, dirPath, entry.skill.name)
+        val skill = entriesIn(scope).firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?: return null
+        val dirPath = skill.dirPath ?: return null
+        return SkillExporter.zip(fileAccess, dirPath, skill.name)
     }
 
     private fun exportBuiltin(name: String): ByteArray? {
@@ -164,10 +171,8 @@ class SkillRepository @Inject constructor(
     /** 删除指定作用域的技能（删除其目录，不可恢复）。返回是否成功；内置技能不可删。 */
     fun deleteSkill(name: String, scope: SkillScope): Boolean {
         if (scope == SkillScope.BUILTIN) return false
-        val entry = listAllSkills().firstOrNull {
-            it.skill.name.equals(name, ignoreCase = true) && it.scope == scope
-        } ?: return false
-        val dirPath = entry.skill.dirPath ?: return false
+        val dirPath = entriesIn(scope).firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?.dirPath ?: return false
         return safeDeleteSkillDir(fileAccess, dirPath)
     }
 
@@ -183,9 +188,7 @@ class SkillRepository @Inject constructor(
         if (fromScope == toScope) return SkillMoveResult.FAILED
         if (name.lowercase() in existingNamesIn(toScope)) return SkillMoveResult.NAME_CONFLICT
 
-        val source = listAllSkills().firstOrNull {
-            it.scope == fromScope && it.skill.name.equals(name, ignoreCase = true)
-        }?.skill?.dirPath
+        val source = entriesIn(fromScope).firstOrNull { it.name.equals(name, ignoreCase = true) }?.dirPath
         if (source.isNullOrBlank()) {
             FileLogger.w(TAG, "移动技能失败（找不到源目录）：$name ($fromScope)")
             return SkillMoveResult.FAILED

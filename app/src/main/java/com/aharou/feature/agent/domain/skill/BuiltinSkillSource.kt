@@ -15,6 +15,7 @@ import javax.inject.Singleton
 @Singleton
 class BuiltinSkillSource @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val language: AppLanguageProvider,
 ) : SkillSource {
 
     override fun listSkills(): List<Skill> =
@@ -34,7 +35,7 @@ class BuiltinSkillSource @Inject constructor(
     private fun readSkill(dir: String): Skill? = runCatching {
         val path = "$ASSETS_ROOT/$dir/$SKILL_FILE"
         val text = context.assets.open(path).bufferedReader().use { it.readText() }
-        SkillParser.parseText(text, dir)
+        SkillParser.parseText(text, dir, language.code)
     }.getOrElse { e ->
         FileLogger.w(TAG, "读取内置技能失败：$dir（${e.message}）")
         null

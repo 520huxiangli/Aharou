@@ -23,7 +23,7 @@ object SkillDirectoryScanner {
      * 扫描失败（远程 SSH 断连时 listFiles 抛 IOException）降级为“没有技能”，
      * 不让异常冒泡到 viewModelScope——那会变成未捕获异常、直接弹全局崩溃页。
      */
-    fun scan(provider: FileAccessProvider, root: String): List<Skill> {
+    fun scan(provider: FileAccessProvider, root: String, lang: String): List<Skill> {
         val files = runCatching { provider.listFilesRecursive(root, MAX_DEPTH) }
             .getOrElse { e ->
                 FileLogger.w(TAG, "扫描技能目录失败（$root）：${e.message}")
@@ -41,7 +41,7 @@ object SkillDirectoryScanner {
         return runCatching {
             dirs.mapNotNull { relative ->
                 val dirPath = if (relative.isEmpty()) base else "$base/$relative"
-                SkillParser.parse(provider, dirPath)
+                SkillParser.parse(provider, dirPath, lang)
             }.sortedBy { it.name.lowercase() }
         }.getOrElse { e ->
             FileLogger.w(TAG, "解析技能失败（$root）：${e.message}")

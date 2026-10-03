@@ -11,12 +11,14 @@ import javax.inject.Singleton
  */
 @Singleton
 class GlobalDirectorySkillSource @Inject constructor(
+    private val language: AppLanguageProvider,
     private val fileAccess: FileAccessProvider
 ) : SkillSource {
 
     val skillsRoot: String = "~/.aharou/skills"
 
-    override fun listSkills(): List<Skill> = SkillDirectoryScanner.scan(fileAccess, skillsRoot)
+    override fun listSkills(): List<Skill> =
+        SkillDirectoryScanner.scan(fileAccess, skillsRoot, language.code)
 
     override fun loadInstructions(name: String): String? =
         listSkills().firstOrNull { it.name.equals(name, ignoreCase = true) }?.instructions

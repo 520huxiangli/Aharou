@@ -14,10 +14,11 @@ import org.junit.Test
 class SkillRepositoryTest {
 
     private val provider = TestFileAccessProvider()
-    private val globalSource = spyk(GlobalDirectorySkillSource(provider)).apply {
+    private val language = mockk<AppLanguageProvider>().apply { every { code } returns "zh" }
+    private val globalSource = spyk(GlobalDirectorySkillSource(language, provider)).apply {
         every { listSkills() } returns emptyList()
     }
-    private val projectSource = spyk(ProjectDirectorySkillSource(provider)).apply {
+    private val projectSource = spyk(ProjectDirectorySkillSource(language, provider)).apply {
         every { listSkills() } returns emptyList()
     }
     private val config = mockk<SkillConfigRepository>().apply {
