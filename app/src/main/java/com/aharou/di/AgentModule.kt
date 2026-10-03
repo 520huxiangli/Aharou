@@ -17,6 +17,7 @@ import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.agent.domain.memory.MemoryCurator
 import com.aharou.feature.agent.domain.container.DelegatingCommandEngine
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
@@ -448,6 +449,7 @@ object AgentModule {
         keyRotator: ProviderKeyRotator,
         agentNotificationCenter: AgentNotificationCenter,
         eventInjector: AgentEventInjector,
+        memoryCurator: MemoryCurator,
         fileAccess: FileAccessProvider,
         ocrEngine: TesseractOcrEngine
     ): AgentWorkflow {
@@ -475,6 +477,7 @@ object AgentModule {
             keyRotator,
             agentNotificationCenter,
             eventInjector,
+            memoryCurator,
             fileAccess,
             ocrEngine
         )

@@ -768,6 +768,9 @@ class SettingsViewModel @Inject constructor(
     private val _compactionThresholdPercent = MutableStateFlow(90)
     val compactionThresholdPercent: StateFlow<Int> = _compactionThresholdPercent.asStateFlow()
 
+    private val _softCompactionThresholdPercent = MutableStateFlow(60)
+    val softCompactionThresholdPercent: StateFlow<Int> = _softCompactionThresholdPercent.asStateFlow()
+
     private val _sendFileMaxSizeMb = MutableStateFlow(100)
     val sendFileMaxSizeMb: StateFlow<Int> = _sendFileMaxSizeMb.asStateFlow()
 
@@ -1204,6 +1207,12 @@ class SettingsViewModel @Inject constructor(
             launch {
                 generalSettingsRepository.compactionThresholdPercentFlow.collectLatest {
                     _compactionThresholdPercent.value = it
+                }
+            }
+
+            launch {
+                generalSettingsRepository.softCompactionThresholdPercentFlow.collectLatest {
+                    _softCompactionThresholdPercent.value = it
                 }
             }
 
@@ -2419,6 +2428,13 @@ class SettingsViewModel @Inject constructor(
     fun setCompactionThresholdPercent(percent: Int) {
         viewModelScope.launch {
             generalSettingsRepository.setCompactionThresholdPercent(percent)
+        }
+    }
+
+    /** 软精简触发阈值（上下文窗口百分比，1..100）：达到即先精简历史工具输出，不调摘要模型。 */
+    fun setSoftCompactionThresholdPercent(percent: Int) {
+        viewModelScope.launch {
+            generalSettingsRepository.setSoftCompactionThresholdPercent(percent)
         }
     }
 

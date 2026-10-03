@@ -47,6 +47,7 @@ class GeneralSettingsRepository @Inject constructor(
         val MAX_NETWORK_RETRIES_KEY = intPreferencesKey("max_network_retries")
         val ENTER_TO_SEND_KEY = booleanPreferencesKey("enter_to_send")
         val COMPACTION_THRESHOLD_PERCENT_KEY = intPreferencesKey("compaction_threshold_percent")
+        val SOFT_COMPACTION_THRESHOLD_PERCENT_KEY = intPreferencesKey("soft_compaction_threshold_percent")
         val SENDFILE_MAX_SIZE_MB_KEY = intPreferencesKey("sendfile_max_size_mb")
         val DELETE_EXTERNAL_WORKSPACE_SESSIONS_KEY = booleanPreferencesKey("delete_external_workspace_sessions")
         val OCR_FOR_TEXT_ONLY_MODELS_KEY = booleanPreferencesKey("ocr_for_text_only_models")
@@ -62,6 +63,9 @@ class GeneralSettingsRepository @Inject constructor(
 
         /** 自动压缩阈值默认 95%，让大窗口模型在大多数情况下不会过早触发压缩。 */
         const val DEFAULT_COMPACTION_THRESHOLD_PERCENT = 95
+
+        /** 软精简阈值默认 60%：达到即先精简历史里的超长工具输出，不调用摘要模型。 */
+        const val DEFAULT_SOFT_COMPACTION_THRESHOLD_PERCENT = 60
 
         /** sendFile 单个文件大小上限默认 100MB，与原硬编码值一致。 */
         const val DEFAULT_SENDFILE_MAX_SIZE_MB = 100
@@ -192,6 +196,18 @@ class GeneralSettingsRepository @Inject constructor(
     /** 压缩前读取一次触发阈值百分比。 */
     suspend fun compactionThresholdPercent(): Int = compactionThresholdPercentFlow.first()
 
+    /** 软精简阈值（上下文窗口的百分比）：达到即先精简历史工具输出，不调 LLM；默认 60，限定 1..100。 */
+    val softCompactionThresholdPercentFlow: Flow<Int> = context.generalDataStore.data.map {
+        (it[SOFT_COMPACTION_THRESHOLD_PERCENT_KEY] ?: DEFAULT_SOFT_COMPACTION_THRESHOLD_PERCENT).coerceIn(1, 100)
+    }
+
+    suspend fun setSoftCompactionThresholdPercent(percent: Int) {
+        context.generalDataStore.edit { it[SOFT_COMPACTION_THRESHOLD_PERCENT_KEY] = percent.coerceIn(1, 100) }
+    }
+
+    /** 压缩前读取一次软精简阈值百分比。 */
+    suspend fun softCompactionThresholdPercent(): Int = softCompactionThresholdPercentFlow.first()
+
     /** 备份快照：回车发送开关与压缩阈值。 */
     suspend fun enterToSendSnapshot(): Boolean = enterToSendFlow.first()
 
@@ -200,6 +216,10 @@ class GeneralSettingsRepository @Inject constructor(
     suspend fun restoreEnterToSend(enabled: Boolean) = setEnterToSend(enabled)
 
     suspend fun restoreCompactionThresholdPercent(percent: Int) = setCompactionThresholdPercent(percent)
+
+    suspend fun softCompactionThresholdPercentSnapshot(): Int = softCompactionThresholdPercentFlow.first()
+
+    suspend fun restoreSoftCompactionThresholdPercent(percent: Int) = setSoftCompactionThresholdPercent(percent)
 
     /** sendFile 单个文件大小上限（MB）；默认 100，下限 1，不设上限。 */
     val sendFileMaxSizeMbFlow: Flow<Int> = context.generalDataStore.data.map {

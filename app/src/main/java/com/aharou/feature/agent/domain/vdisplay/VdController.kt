@@ -54,6 +54,10 @@ class VdController @Inject constructor(
         const val SHOT_POLL_MS = 200L
         const val SHOT_WAIT_MS = 5_000L
 
+        /** 从 runner 的命令行里取截图输出路径；取不到返回 null。 */
+        internal fun parseRunnerShotPath(psArgs: String): String? =
+            Regex("\"([^\"]+\\.png)\"").find(psArgs)?.groupValues?.get(1)
+
         const val DEFAULT_WIDTH = 1080
         const val DEFAULT_HEIGHT = 1920
         const val DEFAULT_DPI = 440
@@ -69,8 +73,23 @@ class VdController @Inject constructor(
     /** 文件名带实例后缀：正式包与调试包各自开影子屏时，画面不会互相覆盖。 */
     private val shotFileName = "vd/frame-${java.util.UUID.randomUUID().toString().take(8)}.png"
 
+    /**
+     * runner 实际写图的路径。本实例自己启动时就是我们传进去的那个名字；复用别的实例
+     * （App 重启后残留、或同机另一个包）留下的 runner 时，输出路径由**启动者**决定，
+     * 必须从它的命令行参数里读回来，否则截图会一直等一个没人写的文件。
+     */
+    @Volatile
+    private var runnerShotPath: String = defaultShotPath()
+
+    /** 本实例是否亲手起过 runner——只有没起过才需要去读别人的启动参数。 */
+    @Volatile
+    private var startedHere = false
+
+    private fun defaultShotPath(): String =
+        File(context.getExternalFilesDir(null), shotFileName).absolutePath
+
     private val shotOutFile: File
-        get() = File(context.getExternalFilesDir(null), shotFileName)
+        get() = File(runnerShotPath)
 
     private val hostReady: Boolean
         get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
@@ -111,6 +130,9 @@ class VdController @Inject constructor(
     ): VdInfo {
         refresh()?.let { return it }
         ensureDeployed()
+        // 自己起就把随机名定下来；之后截图按这个路径等 runner 出图。
+        runnerShotPath = defaultShotPath()
+        startedHere = true
         exec(
             "cd /data/local/tmp; rm -f $STOP_FILE $LOG_FILE; " +
                 "CLASSPATH=$JAR_REMOTE setsid app_process / com.aharou.vd.VdMain $width $height $dpi " +
@@ -149,6 +171,7 @@ class VdController @Inject constructor(
     suspend fun stop() {
         exec("touch $STOP_FILE && echo OK", 15_000L)
         delay(600L)
+        startedHere = false
         _state.value = refresh()
     }
 
@@ -250,7 +273,7 @@ class VdController @Inject constructor(
         check(info.sfDisplayId.isNotEmpty()) {
             "拿不到影子屏的显示 token（SurfaceFlinger 里没列出这块屏），暂时无法截图"
         }
-        val shot = shotOutFile
+        val shot = File(resolveRunnerShotPath())
         shot.parentFile?.mkdirs()
         if (shot.exists()) shot.delete()
         exec("touch $SHOT_REQ_FILE", 10_000L)
@@ -264,6 +287,27 @@ class VdController @Inject constructor(
                 "（日志尾部：${exec("tail -3 $LOG_FILE 2>/dev/null", 10_000L).output.take(200)}）"
         }
         return info to shot
+    }
+
+    /**
+     * 取 runner 实际在写的截图路径。复用别人启动的 runner 时，从它的命令行里读回来
+     * （`VdMain <w> <h> <dpi> "<png路径>" <请求文件>`，路径是唯一带引号的参数）。
+     *
+     * 另一个 Aharou 实例（正式包 / 调试包）的 runner 把图写在自己包的目录里，我们读不到——
+     * 这种情况明确报错让人重建，而不是干等到超时。
+     */
+    private suspend fun resolveRunnerShotPath(): String {
+        if (startedHere) return runnerShotPath
+        val args = runCatching {
+            exec("ps -A -o args | grep -m1 'com[.]aharou[.]vd[.]VdMain'", 10_000L).output
+        }.getOrDefault("")
+        val path = parseRunnerShotPath(args)
+        val ownDir = context.getExternalFilesDir(null)?.absolutePath
+        check(path != null && ownDir != null && path.startsWith(ownDir)) {
+            "影子屏由另一个 Aharou 实例启动（截图写在 ${path ?: "未知路径"}），先 stop 再 start"
+        }
+        runnerShotPath = path
+        return path
     }
 
     /** 在影子屏上点按。 */

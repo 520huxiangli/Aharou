@@ -33,6 +33,7 @@ class SystemPromptProvider @Inject constructor(
     private val skillRepository: SkillRepository,
     private val memoryRepository: MemoryRepository,
     private val aharouMemoryStore: com.aharou.core.memory.AharouMemoryStore,
+    private val promptFileResolver: PromptFileResolver,
     private val containerInstaller: ContainerInstaller,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val promptFragmentCatalog: PromptFragmentCatalog
@@ -181,7 +182,8 @@ class SystemPromptProvider @Inject constructor(
             val memories = try { memoryRepository.listMemoriesForPrompt(ctx.projectRoot) } catch (e: Exception) { return null }
             if (memories.isEmpty()) {
                 cachedByKey[key] = ""
-                return null
+                // 空清单也要注入纪律：首次会话正是建立记忆的起点。
+                return memoryDiscipline()
             }
 
             val globalMemories = memories.filter { it.scope == MemoryScope.GLOBAL }
@@ -199,13 +201,25 @@ class SystemPromptProvider @Inject constructor(
                 }
             }.trimEnd()
 
-            cachedByKey[key] = content
+            // 记忆纪律紧跟清单注入：清单告诉模型「有什么」，纪律告诉它「何时必须写」。
+            val full = listOf(content, memoryDiscipline()).mapNotNull { it }.joinToString("\n\n")
+            if (full.isEmpty()) return null
+
+            cachedByKey[key] = full
             trimIfNeeded()
-            return content
+            return full
         }
+
+        /** 记忆纪律正文（无记忆清单时单独注入）。 */
+        private fun memoryDiscipline(): String? =
+            resolvePrompt(MEMORY_DISCIPLINE_FILE).replace(LEADING_COMMENT, "").trim().ifEmpty { null }
 
         private fun trimIfNeeded() {
             if (cachedByKey.size > SOURCE_CACHE_LIMIT) cachedByKey.clear()
+        }
+
+        fun invalidate(key: SourceCacheKey) {
+            cachedByKey.remove(key)
         }
     }
 
@@ -414,13 +428,14 @@ class SystemPromptProvider @Inject constructor(
      * 再落到 `prompts/<name>`（本地默认副本），最后 assets（内置兜底）。
      *
      * 本地副本由 [ContainerInstaller.extractPrompts] 在启动时全量释放，App 升级后随之更新。
+     *
+     * 实现已抽到 [PromptFileResolver]，这里只做委托。
      */
-    fun resolvePrompt(name: String): String {
-        PromptFragmentResolver.parseNumber(name)
-            ?.let { number -> readFileOrNull(customFragmentsByNumber[number])?.let { return it } }
-        readFileOrNull(File(customDir, name))?.let { return it }
-        readFileOrNull(File(File(containerInstaller.aharouDir, "prompts"), name))?.let { return it }
-        return context.assets.open("prompts/$name").bufferedReader().use { it.readText() }
+    fun resolvePrompt(name: String): String = promptFileResolver.resolve(name)
+
+    /** 失效记忆清单的会话级缓存：整理器写入新记忆后调用，让下一轮 system prompt 看到新清单。 */
+    fun invalidateMemoryCache(sessionId: String?, projectRoot: String?) {
+        memoryListSource.invalidate(SourceCacheKey(sessionId, projectRoot.orEmpty()))
     }
 
     private fun readFileOrNull(file: File?): String? {
@@ -438,6 +453,7 @@ class SystemPromptProvider @Inject constructor(
         const val AGENTS_FILE = "AGENTS.md"
         const val CLAUDE_FILE = "CLAUDE.md"
         const val SUBAGENT_BASE_FILE = "agent/subagent-base.md"
+        const val MEMORY_DISCIPLINE_FILE = "agent/memory-discipline.md"
         const val MAX_AGENTS_CHARS = 32_000
         /** 会话级缓存 key 数量上限：超过后整体清空，仅防长期累积；正常会话数远小于此。 */
         const val SOURCE_CACHE_LIMIT = 32

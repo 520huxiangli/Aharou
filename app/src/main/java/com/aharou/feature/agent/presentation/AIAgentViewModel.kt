@@ -180,6 +180,9 @@ class AIAgentViewModel @Inject constructor(
 
     private val sessionJobs = mutableMapOf<String, Job>()
 
+    /** 记忆兑现节流：每个会话上次自动整理的时间戳，10 分钟内不重复跑。 */
+    private val lastCurateAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /**
      * 「影子屏」取一帧。缩略图轮播用 [sampleSize]=3 就够（每 1.5s 一帧，避免整图进内存）；
      * 工具详情面板里的图要按屏宽铺开，用 2 才看得清。
@@ -1334,6 +1337,8 @@ class AIAgentViewModel @Inject constructor(
         /** 附件预览的字符上限。 */
         const val PREVIEW_MAX_CHARS = 200_000
         const val AGENT_COMPLETE_CHANNEL = "agent_complete"
+        /** 记忆兑现节流：同一会话两次自动整理的最小间隔。 */
+        const val MEMORY_CURATE_INTERVAL_MS = 10 * 60 * 1000L
         const val AGENT_COMPLETE_NOTIFICATION_ID = 100
         /** wakeLock 超时保险：构建、装依赖类工具动辄十几分钟，给足 60 分钟；任务正常结束会主动释放。 */
         const val KEEPALIVE_TIMEOUT_MS = 60 * 60 * 1000L
@@ -1954,6 +1959,24 @@ class AIAgentViewModel @Inject constructor(
                             .isAtLeast(Lifecycle.State.STARTED)
                         if (!inForeground && agentSoundSettings.isEnabled()) {
                             showAgentCompletedNotification(modelRequest)
+                        }
+                        // 引擎级记忆兜底：主模型当轮没调 memory 工具时，后台用轻量模型抽取沉淀。
+                        // 静默失败、不进对话流；同一会话 10 分钟内不重复跑。
+                        val now = System.currentTimeMillis()
+                        if (now - (lastCurateAt[sessionId] ?: 0L) >= MEMORY_CURATE_INTERVAL_MS) {
+                            viewModelScope.launch {
+                                // 本轮对话文本：用户请求 + 流式回答快照。
+                                val transcript = buildString {
+                                    append("用户: ").appendLine(modelRequest)
+                                    _streamingTexts.value[sessionId]?.take(4000)
+                                        ?.let { append("助手: ").appendLine(it) }
+                                }.trim()
+                                if (transcript.isNotBlank()) {
+                                    agentWorkflow.curateMemory(sessionId, projectRoot, transcript)
+                                    // 成功后才记账：失败/取消时不占用 10 分钟窗口，下一轮重试。
+                                    lastCurateAt[sessionId] = System.currentTimeMillis()
+                                }
+                            }
                         }
                     }
                     is AgentEvent.ModeChanged -> {

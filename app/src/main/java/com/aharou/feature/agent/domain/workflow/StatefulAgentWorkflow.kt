@@ -8,6 +8,7 @@ import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
+import com.aharou.feature.agent.domain.memory.MemoryCurator
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -68,6 +69,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonElement
@@ -109,6 +111,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private val keyRotator: ProviderKeyRotator,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val eventInjector: AgentEventInjector,
+    private val memoryCurator: MemoryCurator,
     private val fileAccess: FileAccessProvider,
     private val ocrEngine: TesseractOcrEngine
 ) : AgentWorkflow {
@@ -116,6 +119,12 @@ class StatefulAgentWorkflow @Inject constructor(
     private companion object {
         const val TAG = "StatefulAgentWorkflow"
         const val LIVE_TAIL_CHARS = 4_000
+
+        /**
+         * 等 UI 侧把消息落库的上限。落库回调若因故没到（界面销毁、异常被吞掉），
+         * 原来会无限等待、把整轮对话挂死；超时后按「未落库」继续往下走。
+         */
+        const val PERSIST_WAIT_MS = 15_000L
         const val PROGRESS_INTERVAL_MS = 250L
         const val USER_REJECTED_CODE = "USER_REJECTED"
         const val TITLE_GENERATOR_FILE = "agent/title-generator.md"
@@ -764,7 +773,7 @@ class StatefulAgentWorkflow @Inject constructor(
                                         persisted = persisted
                                     )
                                 )
-                                persisted.await()
+                                withTimeoutOrNull(PERSIST_WAIT_MS) { persisted.await() }
                             }
                             actionQueue.addLast(
                                 AgentAction.LlmResponse(
@@ -995,7 +1004,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             val persisted = kotlinx.coroutines.CompletableDeferred<Unit>()
                             send(AgentEvent.ToolCallFinished(br.id, br.toolName, br.result, br.isError,
                                 attachments = br.attachments, persisted = persisted))
-                            persisted.await()
+                            withTimeoutOrNull(PERSIST_WAIT_MS) { persisted.await() }
                         }
                         if (notifySessionId != null && notifications.isNotEmpty()) {
                             agentNotificationCenter.ack(notifySessionId, notifications.map { it.seq })
@@ -1294,6 +1303,24 @@ class StatefulAgentWorkflow @Inject constructor(
     }.onFailure { e ->
         FileLogger.w(TAG, "生成提交信息失败", e)
     }.getOrNull()
+
+    /**
+     * 会话轮次结束后的记忆兑底：优先用压缩专用模型（轻量、便宜）抽记忆，未配置则回退当前聊天模型。
+     * 全静默，任何失败都不影响调用方。
+     */
+    override suspend fun curateMemory(sessionId: String, projectRoot: String?, transcript: String): Int {
+        if (transcript.isBlank()) return 0
+        return try {
+            val provider = resolveCompactionFallbackProvider(sessionId) ?: getEffectiveProvider(sessionId)
+            val saved = memoryCurator.curate(provider, sessionId, projectRoot, transcript)
+            if (saved > 0) promptProvider.invalidateMemoryCache(sessionId, projectRoot)
+            saved
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            FileLogger.w(TAG, "记忆兑现失败: ${e.message}", e)
+            0
+        }
+    }
 
     private suspend fun runToolStream(
         tool: StreamingAgentTool, 
