@@ -38,6 +38,7 @@ import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
 import com.aharou.feature.agent.domain.tool.ToolStreamEvent
+import com.aharou.feature.agent.domain.tool.foldStoredToolResults
 import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.aharou.feature.agent.domain.tool.toTransportString
 import com.aharou.feature.agent.presentation.AgentAttachment
@@ -627,7 +628,10 @@ class StatefulAgentWorkflow @Inject constructor(
                         try {
                             // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
                             val supportsVision = activeModelSupportsVision(currentContext.sessionId)
-                            val messagesToSend = sanitizeImagesForModel(compactedMessages, supportsVision)
+                            // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。
+                            val messagesToSend = foldStoredToolResults(
+                                sanitizeImagesForModel(compactedMessages, supportsVision)
+                            )
                             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
                             var samplingLoopCut = false
                             // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：

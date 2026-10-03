@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.aharou.R
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.tool.file.ImageCompressor
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -84,13 +85,8 @@ internal fun AgentAttachment.toPendingAttachment(): PendingUploadAttachment {
         val file = File(localPath)
         if (file.exists() && file.isFile && file.length() > 0) {
             try {
-                val bytes = file.readBytes()
-                val base64 = Base64.getEncoder().encodeToString(bytes)
-                AgentImage(
-                    mimeType = mimeType.ifBlank { "image/jpeg" },
-                    base64Data = base64,
-                    path = containerPath
-                )
+                val (base64, mime) = attachmentImageBase64(file, mimeType.ifBlank { "image/jpeg" })
+                AgentImage(mimeType = mime, base64Data = base64, path = containerPath)
             } catch (e: Exception) {
                 null
             }
@@ -105,6 +101,21 @@ internal fun AgentAttachment.toPendingAttachment(): PendingUploadAttachment {
         sizeBytes = sizeBytes,
         image = image
     )
+}
+
+/**
+ * 附件图片进请求用的 base64：最长边超过 [ImageCompressor.HIGH_MAX_EDGE] 时走与截图同一条压缩管线，
+ * 否则原样读出——小图重编码只会更大。压不动（格式怪、解码失败）时回退原字节，宁大不丢。
+ */
+private fun attachmentImageBase64(file: File, fallbackMime: String): Pair<String, String> {
+    val bounds = ImageCompressor.decodeBounds(file)
+    val longEdge = bounds?.let { maxOf(it.width, it.height) } ?: 0
+    if (longEdge > ImageCompressor.HIGH_MAX_EDGE) {
+        runCatching {
+            ImageCompressor.encodeToJpeg(file, ImageCompressor.HIGH_MAX_EDGE, ImageCompressor.HIGH_TARGET_BYTES)
+        }.getOrNull()?.let { return it.base64Data to "image/jpeg" }
+    }
+    return ImageCompressor.rawBase64(file.readBytes()) to fallbackMime
 }
 
 private fun PendingUploadAttachment.toAgentAttachment(): AgentAttachment =
@@ -207,11 +218,8 @@ internal suspend fun copyUriToWorkspace(
         if (bytes.size > MAX_IMAGE_UPLOAD_BYTES) error(imageLimitError(context))
         fileAccess.writeBytes(containerPath, bytes, overwrite = true)
         sizeBytes = bytes.size.toLong()
-        image = AgentImage(
-            mimeType = mimeType,
-            base64Data = Base64.getEncoder().encodeToString(bytes),
-            path = containerPath
-        )
+        val (base64, outMime) = attachmentImageBase64(fileAccess.copyToLocal(containerPath), mimeType)
+        image = AgentImage(mimeType = outMime, base64Data = base64, path = containerPath)
     } else {
         // 普通附件流式落盘：不再整份读进内存，于是文件多大都不会顶爆堆
         sizeBytes = context.contentResolver.openInputStream(uri)?.use { input ->

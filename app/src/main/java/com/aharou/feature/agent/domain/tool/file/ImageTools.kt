@@ -374,7 +374,7 @@ class ViewImageTool @Inject constructor(
             val fileSize = access.fileSize(path)
             if (fileSize <= 0L) return EncodeOutcome.Fail("图片文件为空: $path", "EMPTY_FILE")
 
-            val bounds = decodeBounds(file)
+            val bounds = ImageCompressor.decodeBounds(file)
                 ?: return EncodeOutcome.Fail("无法识别图片格式: $path", "UNSUPPORTED_IMAGE")
             val sourceMime = guessMimeType(file)
             if (!sourceMime.startsWith("image/")) {
@@ -383,11 +383,11 @@ class ViewImageTool @Inject constructor(
 
             val originalOk = sourceMime in ORIGINAL_MIME_TYPES
             val encoded = when (detail) {
-                "low" -> encodePreview(file, bounds, LOW_MAX_EDGE, LOW_TARGET_BYTES, detail)
+                "low" -> encodeJpeg(file, ImageCompressor.LOW_MAX_EDGE, ImageCompressor.LOW_TARGET_BYTES, detail)
                 else -> if (originalOk && fileSize <= MAX_ORIGINAL_BYTES) {
                     originalImage(access, path, bounds, sourceMime, fileSize)
                 } else {
-                    encodePreview(file, bounds, HIGH_MAX_EDGE, HIGH_TARGET_BYTES, detail)
+                    encodeJpeg(file, ImageCompressor.HIGH_MAX_EDGE, ImageCompressor.HIGH_TARGET_BYTES, detail)
                 }
             }
             EncodeOutcome.Ok(
@@ -403,7 +403,19 @@ class ViewImageTool @Inject constructor(
         }
     }
 
-    private fun originalImage(access: FileAccessProvider, path: String, bounds: ImageBounds, mime: String, size: Long): EncodedImage =
+    private fun encodeJpeg(file: File, maxEdge: Int, targetBytes: Int, detail: String): EncodedImage {
+        val encoded = ImageCompressor.encodeToJpeg(file, maxEdge, targetBytes)
+        return EncodedImage(
+            mimeType = "image/jpeg",
+            base64Data = encoded.base64Data,
+            width = encoded.width,
+            height = encoded.height,
+            detail = detail,
+            encodedBytes = encoded.encodedBytes
+        )
+    }
+
+    private fun originalImage(access: FileAccessProvider, path: String, bounds: ImageCompressor.Bounds, mime: String, size: Long): EncodedImage =
         EncodedImage(
             mimeType = mime,
             base64Data = Base64.encodeToString(access.readBytes(path), Base64.NO_WRAP),
@@ -412,72 +424,6 @@ class ViewImageTool @Inject constructor(
             detail = "original",
             encodedBytes = size
         )
-
-    private fun decodeBounds(file: File): ImageBounds? {
-        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, options)
-        val width = options.outWidth
-        val height = options.outHeight
-        return if (width > 0 && height > 0) ImageBounds(width, height) else null
-    }
-
-    private fun encodePreview(file: File, bounds: ImageBounds, maxEdge: Int, targetBytes: Int, detail: String): EncodedImage {
-        val options = BitmapFactory.Options().apply {
-            inSampleSize = calculateInSampleSize(bounds.width, bounds.height, maxEdge)
-        }
-        val decoded = BitmapFactory.decodeFile(file.absolutePath, options)
-            ?: throw IllegalArgumentException("无法解码图片: ${file.name}")
-
-        try {
-            val scaled = scaleToMaxEdge(decoded, maxEdge)
-            try {
-                val encoded = compressJpeg(scaled, targetBytes)
-                return EncodedImage(
-                    mimeType = "image/jpeg",
-                    base64Data = Base64.encodeToString(encoded, Base64.NO_WRAP),
-                    width = scaled.width,
-                    height = scaled.height,
-                    detail = detail,
-                    encodedBytes = encoded.size.toLong()
-                )
-            } finally {
-                if (scaled !== decoded) scaled.recycle()
-            }
-        } finally {
-            decoded.recycle()
-        }
-    }
-
-    private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
-        var sample = 1
-        var halfWidth = width / 2
-        var halfHeight = height / 2
-        while (halfWidth / sample >= maxEdge && halfHeight / sample >= maxEdge) {
-            sample *= 2
-        }
-        return sample.coerceAtLeast(1)
-    }
-
-    private fun scaleToMaxEdge(bitmap: Bitmap, maxEdge: Int): Bitmap {
-        val longest = maxOf(bitmap.width, bitmap.height)
-        if (longest <= maxEdge) return bitmap
-        val scale = maxEdge.toFloat() / longest.toFloat()
-        val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
-        val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(bitmap, width, height, true)
-    }
-
-    private fun compressJpeg(bitmap: Bitmap, targetBytes: Int): ByteArray {
-        var best = ByteArray(0)
-        for (quality in JPEG_QUALITIES) {
-            val out = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
-            val bytes = out.toByteArray()
-            best = bytes
-            if (bytes.size <= targetBytes) break
-        }
-        return best
-    }
 
     private fun guessMimeType(file: File): String {
         val extMime = when (file.extension.lowercase()) {
@@ -496,8 +442,6 @@ class ViewImageTool @Inject constructor(
         data class Fail(val message: String, val code: String) : EncodeOutcome
     }
 
-    private data class ImageBounds(val width: Int, val height: Int)
-
     private data class EncodedImage(
         val mimeType: String,
         val base64Data: String,
@@ -510,12 +454,7 @@ class ViewImageTool @Inject constructor(
     private companion object {
         const val TAG = "ImageTools"
         const val MAX_IMAGES = 5
-        const val LOW_MAX_EDGE = 512
-        const val HIGH_MAX_EDGE = 1536
-        const val LOW_TARGET_BYTES = 96 * 1024
-        const val HIGH_TARGET_BYTES = 512 * 1024
         const val MAX_ORIGINAL_BYTES = 4 * 1024 * 1024
-        val JPEG_QUALITIES = listOf(90, 86, 78, 70, 62)
         val SUPPORTED_DETAILS = setOf("low", "high", "original")
         val ORIGINAL_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
     }

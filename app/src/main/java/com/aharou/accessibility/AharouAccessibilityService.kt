@@ -13,6 +13,7 @@ import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.RequiresApi
 import com.aharou.core.util.FileLogger
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -128,27 +129,50 @@ class AharouAccessibilityService : AccessibilityService() {
 
     fun windowInfos(): List<Map<String, Any?>> {
         val out = ArrayList<Map<String, Any?>>()
-        try {
-            for (w in windows ?: emptyList()) {
-                out.add(
-                    mapOf(
-                        "windowId" to w.id,
-                        "type" to when (w.type) {
-                            android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION -> "application"
-                            android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM -> "system"
-                            android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "input_method"
-                            android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "overlay"
-                            else -> "other"
-                        },
-                        "title" to (w.title?.toString() ?: ""),
-                        "focused" to w.isFocused,
-                        "active" to w.isActive,
+        for ((displayId, list) in windowsByDisplay()) {
+            for (w in list) {
+                try {
+                    val root = w.root
+                    out.add(
+                        mapOf(
+                            "displayId" to displayId,
+                            "windowId" to w.id,
+                            "type" to when (w.type) {
+                                android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION -> "application"
+                                android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM -> "system"
+                                android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "input_method"
+                                android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY -> "overlay"
+                                else -> "other"
+                            },
+                            "title" to (w.title?.toString() ?: ""),
+                            "focused" to w.isFocused,
+                            "active" to w.isActive,
+                            "rootPackage" to (root?.packageName?.toString() ?: ""),
+                            "rootChildren" to (root?.childCount ?: -1),
+                        )
                     )
-                )
+                } catch (_: Throwable) {
+                }
             }
-        } catch (_: Throwable) {
         }
         return out
+    }
+
+    /**
+     * 所有显示上的窗口（虚拟屏/影子屏在 displayId != 0 上）。
+     * `windows` 只给当前显示，所以这里优先用 `windowsOnAllDisplays`（API 30+），拿不到再退回当前显示。
+     */
+    private fun windowsByDisplay(): List<Pair<Int, List<AccessibilityWindowInfo>>> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val all = windowsOnAllDisplays
+                val out = ArrayList<Pair<Int, List<AccessibilityWindowInfo>>>(all.size())
+                for (i in 0 until all.size()) out.add(all.keyAt(i) to all.valueAt(i))
+                if (out.isNotEmpty()) return out
+            } catch (_: Throwable) {
+            }
+        }
+        return listOf(Display.DEFAULT_DISPLAY to (windows ?: emptyList()))
     }
 
     fun foregroundPackage(): Pair<String?, String?> {

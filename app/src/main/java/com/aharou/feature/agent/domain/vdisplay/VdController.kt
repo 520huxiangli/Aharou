@@ -66,8 +66,11 @@ class VdController @Inject constructor(
      * runner 出图的落点：App 私有外部目录。runner 以 shell/root 身份可写，App 又能直接读，
      * 二进制不经 shell 文本通道（那是给命令输出用的）。
      */
+    /** 文件名带实例后缀：正式包与调试包各自开影子屏时，画面不会互相覆盖。 */
+    private val shotFileName = "vd/frame-${java.util.UUID.randomUUID().toString().take(8)}.png"
+
     private val shotOutFile: File
-        get() = File(context.getExternalFilesDir(null), "vd/frame.png")
+        get() = File(context.getExternalFilesDir(null), shotFileName)
 
     private val hostReady: Boolean
         get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
