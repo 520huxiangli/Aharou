@@ -145,7 +145,6 @@
 
     <!-- 存储空间页 -->
     <string name="settings_storage">存储空间</string>
-    <string name="settings_performance">性能分析</string>
     <string name="performance_collecting">正在采集…</string>
     <string name="performance_app_cpu">本应用 CPU</string>
     <string name="performance_cores">共 %1$d 核，已按核心数归一</string>
@@ -314,11 +313,10 @@
     <string name="settings_permission_storage_denied_desc">存储权限已被拒绝且无法再次申请，请在系统设置中手动开启</string>
     <!-- Settings category titles -->
     <string name="settings_category_ai">AI 配置</string>
-    <string name="settings_category_environment">运行环境</string>
     <string name="settings_category_permissions">权限与后台</string>
     <string name="settings_category_general">通用设置</string>
-    <string name="settings_category_data">数据与诊断</string>
     <string name="settings_category_help">帮助与关于</string>
+    <string name="settings_category_more">更多</string>
     <string name="settings_category_background">后台运行</string>
     <string name="settings_category_system_permissions">系统权限</string>
     <string name="settings_user_guide">使用手册</string>
@@ -1736,7 +1734,6 @@
     <string name="provider_proxy_enable_desc">开启后该供应商的请求走专属代理；关闭则跟随全局代理</string>
 
     <!-- 首次启动引导 -->
-    <string name="settings_rerun_onboarding">重新运行新手引导</string>
     <string name="onboarding_skip">跳过</string>
     <string name="onboarding_next">下一步</string>
     <string name="onboarding_done">完成</string>
@@ -2011,31 +2008,7 @@
     <string name="envvars_error_format">名称需为字母 / 数字 / 下划线（不能以数字开头）</string>
     <string name="envvars_error_reserved">「%1$s」是容器关键变量名，不允许使用</string>
     <string name="envvars_error_duplicate">已存在同名变量</string>
-    <!-- ── 模型组 + 无障碍 ── -->
-    <string name="modelgroups_title">模型组</string>
-    <string name="modelgroups_intro">把多个模型收进一个组：需要选模型的地方可以整组选择，执行时按成员顺序取用（首成员优先，后续成员留作故障转移）。</string>
-    <string name="modelgroups_list_header">已有模型组</string>
-    <string name="modelgroups_empty">还没有模型组</string>
-    <string name="modelgroups_create">新建模型组</string>
-    <string name="modelgroups_name">名称</string>
-    <string name="modelgroups_save">保存</string>
-    <string name="modelgroups_back_to_list">返回模型组列表</string>
-    <string name="modelgroups_rename">重命名</string>
-    <string name="modelgroups_delete">删除</string>
-    <string name="modelgroups_delete_title">删除「%1$s」？</string>
-    <string name="modelgroups_delete_body">删除后，选了该组的地方需要重新选择模型。</string>
-    <string name="modelgroups_members_header">成员（按顺序取用）</string>
-    <string name="modelgroups_members_hint">执行时取第一个可用成员；顺序可以调整。</string>
-    <string name="modelgroups_no_members">还没有成员——点下面「添加成员」从供应商里挑模型。</string>
-    <string name="modelgroups_add_member">添加成员</string>
-    <string name="modelgroups_remove_member">移除</string>
-    <string name="modelgroups_move_up">上移</string>
-    <string name="modelgroups_move_down">下移</string>
-    <string name="modelgroups_member_count">共 %1$d 个成员</string>
-    <string name="modelgroups_member_count_with_first">共 %1$d 个成员 · 首选 %2$s / %3$s</string>
-    <string name="modelgroups_no_provider_models">没有可用的供应商模型（先去「AI 供应商」添加模型）。</string>
-    <string name="modelgroups_group_prefix_label">组：%1$s</string>
-
+    <!-- ── 无障碍 ── -->
     <string name="a11y_service_label">Aharou 无障碍</string>
     <string name="a11y_service_description">让 Aharou 的 AI 助手读屏与操作界面：读取界面元素、截图、点击与滑动。</string>
     <string name="a11y_service_summary">允许 Aharou 读取屏幕内容并执行手势</string>
@@ -2096,8 +2069,6 @@
     <string name="pet_menu_pass">摆件模式</string>
     <string name="pet_menu_shot">截屏</string>
     <string name="pet_menu_easter">彩蛋</string>
-    <string name="pet_island">灵动岛</string>
-    <string name="pet_island_desc">屏幕顶部的胶囊：显示时间，点一下显示/隐藏桌宠，可拖动、松手吸顶</string>
     <string name="pet_shot_sent">截好了，发进会话了</string>
     <string name="pet_shot_failed">刚那下没截上，等会儿再点我</string>
     <string name="pet_shot_no_a11y">截屏得先开无障碍：设置 → 权限与后台 → 无障碍</string>

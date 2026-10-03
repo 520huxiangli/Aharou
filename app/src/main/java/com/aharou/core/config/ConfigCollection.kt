@@ -2,7 +2,7 @@ package com.aharou.core.config
 
 /**
  * A dynamically-keyed group of fields, e.g. one ProviderInstance per id,
- * one ModelEntry per uuid, one ModelGroup per id. Mirrors iOS
+ * one ModelEntry per uuid, one EnvVar per name. Mirrors iOS
  * `ConfigCollection` (Shared/Config/Fields/ConfigCollection.swift).
  *
  * Static fields go through the registry's flat field map. A collection

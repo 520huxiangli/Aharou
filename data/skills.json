@@ -7,17 +7,17 @@
       "branch": "master",
       "path": "skills"
     },
-    "anthropics": {
-      "name": { "zh": "Anthropic 官方", "en": "Anthropic" },
+    "claude_skills": {
+      "name": { "zh": "Claude 技能大全", "en": "Claude Skills" },
       "kind": "directory",
-      "repo": "anthropics/skills",
+      "repo": "alirezarezvani/claude-skills",
       "branch": "main",
-      "path": "skills"
+      "path": ""
     },
-    "trae": {
-      "name": { "zh": "Trae 社区", "en": "Trae Community" },
+    "scientific_skills": {
+      "name": { "zh": "科学技能集", "en": "Scientific Skills" },
       "kind": "directory",
-      "repo": "trae-community/trae-skills",
+      "repo": "K-Dense-AI/scientific-agent-skills",
       "branch": "main",
       "path": "skills"
     },

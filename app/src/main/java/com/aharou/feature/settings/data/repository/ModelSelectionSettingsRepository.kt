@@ -45,11 +45,9 @@ abstract class ModelSelectionSettingsRepository(
         }
     }
 
-    /** 读取一次当前专用 providerId（冷读用；「模型组」选择在此解析为组内首个成员）。 */
-    protected suspend fun readProviderId(): String =
-        ModelGroupResolver.resolveSelection(providerIdFlow.first(), modelFlow.first()).first
+    /** 读取一次当前专用 providerId（冷读用）。 */
+    protected suspend fun readProviderId(): String = providerIdFlow.first()
 
-    /** 读取一次当前专用 model（冷读用；「模型组」选择在此解析为组内首个成员）。 */
-    protected suspend fun readModel(): String =
-        ModelGroupResolver.resolveSelection(providerIdFlow.first(), modelFlow.first()).second
+    /** 读取一次当前专用 model（冷读用）。 */
+    protected suspend fun readModel(): String = modelFlow.first()
 }

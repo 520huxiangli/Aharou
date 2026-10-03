@@ -137,10 +137,6 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var mcpManager: McpManager
 
-    /** 模型组解析器兜底：App 启动即构造仓库并安装解析器（角色冷读选择组时不至于解析失败）。 */
-    @Inject
-    lateinit var modelGroupRepository: com.aharou.feature.settings.data.repository.ModelGroupRepository
-
     /** 应用设置字段注册（语言等）：Agent 经配置通道即可改动，无需任何系统权限。 */
     @Inject
     lateinit var configAppFields: com.aharou.feature.settings.data.ConfigAppFields
@@ -164,10 +160,6 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 远程连接与挂载集合注册。 */
     @Inject
     lateinit var configRemoteFields: com.aharou.feature.workspace.data.ConfigRemoteFields
-
-    /** 模型组集合注册。 */
-    @Inject
-    lateinit var configModelGroupFields: com.aharou.feature.settings.data.ConfigModelGroupFields
 
     /** 各角色模型选择字段注册。 */
     @Inject
@@ -292,7 +284,6 @@ class AIEditorApp : Application(), Configuration.Provider {
         configContainerFields.registerInto(configRegistry)
         configProviderFields.registerInto(configRegistry)
         configRemoteFields.registerInto(configRegistry)
-        configModelGroupFields.registerInto(configRegistry)
         configModelRoleFields.registerInto(configRegistry)
         configEnvFields.registerInto(configRegistry)
         configMcpFields.registerInto(configRegistry)

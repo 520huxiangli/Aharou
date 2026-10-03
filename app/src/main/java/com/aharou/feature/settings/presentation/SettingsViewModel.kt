@@ -1723,6 +1723,8 @@ class SettingsViewModel @Inject constructor(
             _marketAlert.value = null
             _marketSearching.value = false
             val listing = withContext(Dispatchers.IO) {
+                // 先对账：清掉已不存在的安装记录，否则列表会把删掉的技能显示成「已安装」
+                skillMarketRepository.pruneOrphanInstalls()
                 skillMarketRepository.listSkills(
                     sourceId = sourceId,
                     onUpdate = { partial ->

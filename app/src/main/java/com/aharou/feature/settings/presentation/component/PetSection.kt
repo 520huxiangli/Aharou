@@ -42,7 +42,6 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.pet.PetDailyBrief
-import com.aharou.feature.pet.PetIsland
 import com.aharou.feature.pet.PetMood
 import com.aharou.feature.pet.PetMoodStore
 import com.aharou.feature.pet.PetOverlay
@@ -86,7 +85,6 @@ internal fun PetSection() {
     var locked by remember { mutableStateOf(PetOverlay.readLocked(context)) }
     var petMood by remember { mutableStateOf(PetMoodStore.read(context)) }
     var passThrough by remember { mutableStateOf(PetOverlay.readPassThrough(context)) }
-    var islandEnabled by remember { mutableStateOf(PetIsland.isEnabled(context)) }
     var brief by remember { mutableStateOf(PetDailyBrief.readEnabled(context)) }
     var locationGranted by remember { mutableStateOf(PetDailyBrief.hasLocation(context)) }
     var calendarGranted by remember { mutableStateOf(PetDailyBrief.hasCalendar(context)) }
@@ -211,6 +209,8 @@ internal fun PetSection() {
                             if (turnOn) {
                                 if (petOverlayPermission(context)) {
                                     PetOverlayService.setEnabled(context, true)
+                                    // 打开总开关＝明确要看到她，顺手清掉「隐藏」状态，否则她会一直不露头
+                                    PetOverlayService.applyHidden(context, false)
                                     PetOverlayService.start(context)
                                     enabled = true
                                 } else {
@@ -238,22 +238,6 @@ internal fun PetSection() {
                         onCheckedChange = { value ->
                             PetOverlayService.applyAlways(context, value)
                             always = value
-                        },
-                    )
-                },
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Smartphone,
-                title = stringResource(R.string.pet_island),
-                subtitle = stringResource(R.string.pet_island_desc),
-                trailing = {
-                    AppSwitch(
-                        checked = islandEnabled,
-                        enabled = enabled,
-                        onCheckedChange = { value ->
-                            PetOverlayService.applyIsland(context, value)
-                            islandEnabled = value
                         },
                     )
                 },

@@ -847,16 +847,6 @@ fun AppNavigation(
                         if (!expanded) scope.launch { drawerState.open() }
                     },
                     onStopAllAndCloseTerminal = { agentViewModel.stopAllAndCloseTerminal() },
-                    onRerunOnboarding = {
-                        // 从设置页「重新运行引导」：清状态回 in_progress、激活引导并回聊天页。
-                        scope.launch {
-                            onboardingRepository.resetToInProgress()
-                            onboardingCoordinator.resetAndStart()
-                            navController.navigate("chat") {
-                                popUpTo("chat") { inclusive = false }
-                            }
-                        }
-                    },
                     onboardingStep = onboardingUiState.step.takeIf { onboardingUiState.active },
                     onOnboardingModelAdded = {
                         if (onboardingUiState.active && onboardingUiState.step == OnboardingStep.SIMULATE_FETCH_DIALOG) {

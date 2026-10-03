@@ -347,6 +347,17 @@ class SkillMarketRepository @Inject constructor(
      */
     fun forgetInstall(name: String) = installRepository.remove(name)
 
+    /**
+     * 清掉安装记录里当前环境已不存在的技能。技能被删掉但没走到清理、装在别的工作区、
+     * 或旧版本留下的孤儿记录，都会让市场误显示「已安装」——市场加载前对一次账。
+     */
+    fun pruneOrphanInstalls() {
+        val present = skillRepository.listAllSkills().mapTo(HashSet()) { it.skill.name.lowercase() }
+        installRepository.all().keys
+            .filterNot { it in present }
+            .forEach { installRepository.remove(it) }
+    }
+
     // ── 列表 ──
 
     private suspend fun listFrom(
@@ -382,6 +393,7 @@ class SkillMarketRepository @Inject constructor(
                     archivePath = entry.path
                 )
             }
+            .distinctBy { it.name.lowercase() }
     }
 
     private suspend fun listFromDirectory(
@@ -403,6 +415,10 @@ class SkillMarketRepository @Inject constructor(
             // 跳过 `_template` 这类以短横线/下划线开头的脚手架目录
             .filterNot { it.substringAfterLast('/').startsWith("_") }
             .distinct()
+            // 同一技能可能在多个镜像目录里各存一份（如整批复制到 .gemini/skills 下）：
+            // 按目录名去重，优先保留不在隐藏目录里的那份
+            .sortedBy { d -> d.split('/').count { it.startsWith(".") } }
+            .distinctBy { it.substringAfterLast('/').lowercase() }
         if (dirs.isEmpty()) return@coroutineScope emptyList()
 
         // 第一步：只用目录名把列表铺出来，不用等任何 SKILL.md

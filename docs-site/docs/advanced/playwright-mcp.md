@@ -46,7 +46,7 @@ https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux-arm
 
 ## 3. 注册 MCP 服务器
 
-进入「设置 → MCP 服务器 → +」，传输类型选择本地 stdio，按下表填写后保存，App 会自动连接。
+进入「设置 → AI 配置 → MCP → +」，传输类型选择本地 stdio，按下表填写后保存，App 会自动连接。
 
 | 字段 | 值 |
 | --- | --- |
@@ -96,7 +96,7 @@ Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/15
 
 ## 4. 验证
 
-进入「设置 → MCP 服务器」，`playwright` 一行应显示为已连接并标注工具数量；连接失败时点击右上角的日志按钮排查。
+进入「设置 → AI 配置 → MCP」，`playwright` 一行应显示为已连接并标注工具数量；连接失败时点击右上角的日志按钮排查。
 
 随后新建会话（工具列表在会话开始时确定），令 AI 打开网页并截图，返回图片即表示链路正常。首次连接需等待 `npx` 下载 `@playwright/mcp`，实测 3 至 4 分钟。
 

@@ -56,7 +56,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,9 +68,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aharou.core.theme.AppThemePreset
 import com.aharou.core.theme.Spacing
-import com.aharou.core.theme.isDynamicColorSupported
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.pageEnter
 import com.aharou.core.ui.pageExit
@@ -85,8 +82,6 @@ import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
 import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.agent.presentation.component.MarkdownRenderCache
 import com.aharou.feature.backup.presentation.BackupSection
-import com.aharou.feature.settings.data.repository.AppThemeMode
-import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.presentation.PromptsViewModel
@@ -101,44 +96,21 @@ import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
-import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Smile
-import compose.icons.feathericons.BarChart2
-import compose.icons.feathericons.Book
-import compose.icons.feathericons.BookOpen
 import compose.icons.feathericons.Box
-import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
 import compose.icons.feathericons.Download
-import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
-import compose.icons.feathericons.HardDrive
-import compose.icons.feathericons.Image
 import compose.icons.feathericons.Info
-import compose.icons.feathericons.Key
-import compose.icons.feathericons.Layers
-import compose.icons.feathericons.Lock
-import compose.icons.feathericons.MessageSquare
-import compose.icons.feathericons.Monitor
-import compose.icons.feathericons.Moon
 import compose.icons.feathericons.Edit2
-import compose.icons.feathericons.Eye
-import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.RefreshCw
-import compose.icons.feathericons.Save
-import compose.icons.feathericons.Server
 import compose.icons.feathericons.Shield
-import compose.icons.feathericons.Smartphone
 import compose.icons.feathericons.Sliders
-import compose.icons.feathericons.Terminal
 import compose.icons.feathericons.Trash2
-import compose.icons.feathericons.Users
-import compose.icons.feathericons.Zap
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.settings.data.local.ProviderPreset
-import com.aharou.feature.terminal.data.repository.TerminalSettings
 import com.aharou.feature.terminal.presentation.component.TerminalSettingsSheet
 
 /** 使用手册在线文档站地址。 */
@@ -162,7 +134,6 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ConfigAudit(R.string.config_audit_title),
     ShadowScreen(R.string.vd_settings_title),
     EnvVars(R.string.envvars_title),
-    ModelGroups(R.string.modelgroups_title),
     Accessibility(R.string.a11y_settings_title),
     Pet(R.string.pet_title),
     Memory(R.string.memory_settings_title),
@@ -192,10 +163,15 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     BackgroundRun(R.string.settings_category_background),
     RemoteServers(R.string.settings_remote_servers),
     Storage(R.string.settings_storage),
-    Performance(R.string.settings_performance),
     TokenStats(R.string.settings_token_stats_title),
     Backup(R.string.settings_backup),
-    About(R.string.settings_about)
+    About(R.string.settings_about),
+    AharouGroup(R.string.settings_category_aharou),
+    GeneralGroup(R.string.settings_category_general),
+    AiGroup(R.string.settings_category_ai),
+    PermissionsGroup(R.string.settings_category_permissions),
+    MoreGroup(R.string.settings_category_more),
+    HelpGroup(R.string.settings_category_help)
 }
 
 /**
@@ -227,7 +203,6 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit,
     onStopAllAndCloseTerminal: () -> Unit = {},
-    onRerunOnboarding: () -> Unit = {},
     onboardingStep: OnboardingStep? = null,
     onOnboardingModelAdded: (() -> Unit)? = null,
     onOnboardingDismissFetchDialog: (() -> Unit)? = null
@@ -523,6 +498,18 @@ fun SettingsScreen(
         }
     }
 
+    val openManual: () -> Unit = {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(USER_GUIDE_DOCS_URL)))
+    }
+    // 分区入口：进日志页前刷新一次，并把返回目标指回菜单
+    val openSection: (SettingsSection) -> Unit = { target ->
+        if (target == SettingsSection.Log) {
+            logReturnSection = SettingsSection.Menu
+            viewModel.refreshLogs(filterServerName = null)
+        }
+        section = target
+    }
+
     // 菜单内容：窄窗当首页用，大屏当常驻左栏用，共用同一份。
     // 滚动位置必须提到 AnimatedContent 之外持有：菜单页作为分区分支被切走时会被 dispose，
     // 内部 rememberScrollState 一并丢弃，从二级页返回就跳回顶部。
@@ -530,30 +517,7 @@ fun SettingsScreen(
     val menuBody: @Composable () -> Unit = {
         SettingsMenu(
             scrollState = menuScrollState,
-            themeMode = themeMode,
-            themePresetId = themePresetId,
-            dynamicColorEnabled = dynamicColorEnabled,
-            terminalSettings = terminalSettings,
-            currentLanguageDisplayName = currentLanguageDisplayName,
-            backgroundImagePath = backgroundImagePath,
-            backgroundAlpha = backgroundAlpha,
-            onOpenThemeSheet = { showThemeSheet = true },
-            onOpenTerminalSettingsSheet = { showTerminalSettingsSheet = true },
-            onOpenBackgroundSheet = { showBackgroundSheet = true },
-            onOpenLanguageSheet = { showLanguageSheet = true },
-            onOpenManual = {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(USER_GUIDE_DOCS_URL))
-                )
-            },
-            onRerunOnboarding = onRerunOnboarding,
-            onOpen = {
-                if (it == SettingsSection.Log) {
-                    logReturnSection = SettingsSection.Menu
-                    viewModel.refreshLogs(filterServerName = null)
-                }
-                section = it
-            }
+            onOpen = openSection
         )
     }
 
@@ -928,11 +892,29 @@ fun SettingsScreen(
             when (current) {
                 // 大屏菜单已常驻左栏，右栏在没选中分区时给个占位提示
                 SettingsSection.Menu -> if (expanded) SettingsDetailPlaceholder() else menuBody()
+                SettingsSection.AiGroup -> SettingsAiGroupScreen(onOpen = openSection)
+                SettingsSection.AharouGroup -> SettingsAharouGroupScreen(onOpen = openSection)
+                SettingsSection.GeneralGroup -> SettingsGeneralGroupScreen(
+                    themeMode = themeMode,
+                    themePresetId = themePresetId,
+                    dynamicColorEnabled = dynamicColorEnabled,
+                    terminalSettings = terminalSettings,
+                    currentLanguageDisplayName = currentLanguageDisplayName,
+                    backgroundImagePath = backgroundImagePath,
+                    backgroundAlpha = backgroundAlpha,
+                    onOpenThemeSheet = { showThemeSheet = true },
+                    onOpenTerminalSettingsSheet = { showTerminalSettingsSheet = true },
+                    onOpenBackgroundSheet = { showBackgroundSheet = true },
+                    onOpenLanguageSheet = { showLanguageSheet = true },
+                    onOpen = openSection
+                )
+                SettingsSection.PermissionsGroup -> SettingsPermissionsGroupScreen(onOpen = openSection)
+                SettingsSection.MoreGroup -> SettingsMoreGroupScreen(onOpen = openSection)
+                SettingsSection.HelpGroup -> SettingsHelpGroupScreen(onOpen = openSection, onOpenManual = openManual)
                 SettingsSection.Soul -> SoulSettingsSection()
                 SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.ShadowScreen -> ShadowScreenSection()
                 SettingsSection.EnvVars -> EnvVarsSection()
-                SettingsSection.ModelGroups -> ModelGroupsSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
@@ -1285,7 +1267,6 @@ fun SettingsScreen(
                     onClearFilters = { viewModel.clearTokenStatsFilters() }
                 )
                 SettingsSection.Storage -> storageViewModel?.let { StorageSectionHost(viewModel = it) }
-                SettingsSection.Performance -> PerformanceSection()
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SkillEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SubAgentEditor -> {} // 已在上方 early return 处理
@@ -1602,26 +1583,8 @@ private fun SettingsDetailPlaceholder() {
 @Composable
 internal fun SettingsMenu(
     scrollState: ScrollState,
-    themeMode: AppThemeMode,
-    themePresetId: String?,
-    dynamicColorEnabled: Boolean,
-    terminalSettings: TerminalSettings,
-    currentLanguageDisplayName: String,
-    backgroundImagePath: String?,
-    backgroundAlpha: Float,
-    onOpenThemeSheet: () -> Unit,
-    onOpenTerminalSettingsSheet: () -> Unit,
-    onOpenBackgroundSheet: () -> Unit,
-    onOpenLanguageSheet: () -> Unit,
-    onOpenManual: () -> Unit,
-    onRerunOnboarding: () -> Unit,
     onOpen: (SettingsSection) -> Unit
 ) {
-    // 低频三组默认收起：首屏不至拉成一条长单（点标题展开，状态在本次设置会话里保留）
-    var envExpanded by rememberSaveable { mutableStateOf(false) }
-    var dataExpanded by rememberSaveable { mutableStateOf(false) }
-    var helpExpanded by rememberSaveable { mutableStateOf(false) }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1630,278 +1593,44 @@ internal fun SettingsMenu(
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
-        // ── Aharou ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_aharou))
         SettingsGroup {
-            SettingsRow(
-                icon = FeatherIcons.Smile,
-                title = stringResource(SettingsSection.Soul.titleRes),
-                onClick = { onOpen(SettingsSection.Soul) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Clock,
-                title = stringResource(SettingsSection.ConfigAudit.titleRes),
-                onClick = { onOpen(SettingsSection.ConfigAudit) }
-            )
-        }
-
-        // ── 通用设置 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_general))
-        SettingsGroup {
-            SettingsRow(
-                icon = FeatherIcons.Sliders,
-                title = stringResource(SettingsSection.General.titleRes),
-                onClick = { onOpen(SettingsSection.General) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Moon,
-                title = stringResource(R.string.settings_theme_title),
-                onClick = onOpenThemeSheet,
-                trailing = {
-                    val colorLabel = if (dynamicColorEnabled && isDynamicColorSupported) {
-                        stringResource(R.string.theme_dynamic_color)
-                    } else {
-                        stringResource(AppThemePreset.findById(themePresetId).nameRes)
-                    }
-                    Text(
-                        text = "${stringResource(themeMode.labelRes)} · $colorLabel",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Terminal,
-                title = stringResource(R.string.terminal_settings_title),
-                onClick = onOpenTerminalSettingsSheet,
-                trailing = {
-                    Text(
-                        text = stringResource(terminalSettings.theme.nameRes),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Image,
-                title = stringResource(R.string.settings_background_image),
-                onClick = onOpenBackgroundSheet,
-                trailing = {
-                    Text(
-                        text = if (backgroundImagePath != null) "${BackgroundSettingsRepository.alphaToSlider(backgroundAlpha).toInt()}%"
-                        else stringResource(R.string.settings_background_image_none),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Globe,
-                title = stringResource(R.string.settings_language),
-                onClick = onOpenLanguageSheet,
-                trailing = {
-                    Text(
-                        text = currentLanguageDisplayName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-        }
-
-        // ── AI 配置 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_ai))
-        SettingsGroup {
-            SettingsRow(
-                icon = FeatherIcons.Cloud,
-                title = stringResource(SettingsSection.Providers.titleRes),
-                onClick = { onOpen(SettingsSection.Providers) },
-                modifier = Modifier.onboardingTarget(OnboardingStep.CONFIG_PROVIDER)
-            )
-            SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Cpu,
-                title = stringResource(SettingsSection.DefaultModels.titleRes),
-                onClick = { onOpen(SettingsSection.DefaultModels) }
+                title = stringResource(SettingsSection.AiGroup.titleRes),
+                onClick = { onOpen(SettingsSection.AiGroup) }
             )
             SettingsDivider()
             SettingsRow(
-                icon = FeatherIcons.Layers,
-                title = stringResource(SettingsSection.ModelGroups.titleRes),
-                onClick = { onOpen(SettingsSection.ModelGroups) }
+                icon = FeatherIcons.Smile,
+                title = stringResource(SettingsSection.AharouGroup.titleRes),
+                onClick = { onOpen(SettingsSection.AharouGroup) }
             )
             SettingsDivider()
             SettingsRow(
-                icon = FeatherIcons.Box,
-                title = stringResource(SettingsSection.Mcp.titleRes),
-                onClick = { onOpen(SettingsSection.Mcp) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Book,
-                title = stringResource(SettingsSection.Skills.titleRes),
-                onClick = { onOpen(SettingsSection.Skills) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Users,
-                title = stringResource(SettingsSection.SubAgents.titleRes),
-                onClick = { onOpen(SettingsSection.SubAgents) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.MessageSquare,
-                title = stringResource(SettingsSection.Prompts.titleRes),
-                onClick = { onOpen(SettingsSection.Prompts) }
-            )
-        }
-
-        // ── 运行环境 ──
-        SettingsGroupHeader(
-            text = stringResource(R.string.settings_category_environment),
-            expanded = envExpanded,
-            onToggle = { envExpanded = !envExpanded }
-        )
-        SettingsGroup(visible = envExpanded) {
-            SettingsRow(
-                icon = FeatherIcons.HardDrive,
-                title = stringResource(SettingsSection.Container.titleRes),
-                onClick = { onOpen(SettingsSection.Container) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Globe,
-                title = stringResource(SettingsSection.Proxy.titleRes),
-                onClick = { onOpen(SettingsSection.Proxy) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Server,
-                title = stringResource(SettingsSection.RemoteServers.titleRes),
-                onClick = { onOpen(SettingsSection.RemoteServers) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Monitor,
-                title = stringResource(SettingsSection.ShadowScreen.titleRes),
-                onClick = { onOpen(SettingsSection.ShadowScreen) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Key,
-                title = stringResource(SettingsSection.EnvVars.titleRes),
-                onClick = { onOpen(SettingsSection.EnvVars) }
-            )
-        }
-
-        // ── 权限与后台 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_category_permissions))
-        SettingsGroup {
-            SettingsRow(
-                icon = FeatherIcons.Lock,
-                title = stringResource(SettingsSection.Permissions.titleRes),
-                onClick = { onOpen(SettingsSection.Permissions) }
+                icon = FeatherIcons.Sliders,
+                title = stringResource(SettingsSection.GeneralGroup.titleRes),
+                onClick = { onOpen(SettingsSection.GeneralGroup) }
             )
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Shield,
-                title = stringResource(SettingsSection.AppPermissions.titleRes),
-                onClick = { onOpen(SettingsSection.AppPermissions) }
+                title = stringResource(SettingsSection.PermissionsGroup.titleRes),
+                onClick = { onOpen(SettingsSection.PermissionsGroup) }
             )
             SettingsDivider()
             SettingsRow(
-                icon = FeatherIcons.Eye,
-                title = stringResource(SettingsSection.Accessibility.titleRes),
-                onClick = { onOpen(SettingsSection.Accessibility) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Smile,
-                title = stringResource(SettingsSection.Pet.titleRes),
-                onClick = { onOpen(SettingsSection.Pet) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.RefreshCw,
-                title = stringResource(SettingsSection.BackgroundRun.titleRes),
-                onClick = { onOpen(SettingsSection.BackgroundRun) }
-            )
-        }
-
-        // ── 数据与诊断 ──
-        SettingsGroupHeader(
-            text = stringResource(R.string.settings_category_data),
-            expanded = dataExpanded,
-            onToggle = { dataExpanded = !dataExpanded }
-        )
-        SettingsGroup(visible = dataExpanded) {
-            SettingsRow(
-                icon = FeatherIcons.BarChart2,
-                title = stringResource(SettingsSection.TokenStats.titleRes),
-                onClick = { onOpen(SettingsSection.TokenStats) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.PieChart,
-                title = stringResource(SettingsSection.Storage.titleRes),
-                onClick = { onOpen(SettingsSection.Storage) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.BookOpen,
-                title = stringResource(SettingsSection.Memory.titleRes),
-                onClick = { onOpen(SettingsSection.Memory) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Cpu,
-                title = stringResource(SettingsSection.Performance.titleRes),
-                onClick = { onOpen(SettingsSection.Performance) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Save,
-                title = stringResource(SettingsSection.Backup.titleRes),
-                onClick = { onOpen(SettingsSection.Backup) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.FileText,
-                title = stringResource(SettingsSection.Log.titleRes),
-                onClick = { onOpen(SettingsSection.Log) }
-            )
-        }
-
-        // ── 帮助与关于 ──
-        SettingsGroupHeader(
-            text = stringResource(R.string.settings_category_help),
-            expanded = helpExpanded,
-            onToggle = { helpExpanded = !helpExpanded }
-        )
-        SettingsGroup(visible = helpExpanded) {
-            SettingsRow(
-                icon = FeatherIcons.BookOpen,
-                title = stringResource(R.string.settings_user_guide),
-                onClick = onOpenManual
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Zap,
-                title = stringResource(R.string.settings_rerun_onboarding),
-                onClick = onRerunOnboarding
+                icon = FeatherIcons.Box,
+                title = stringResource(SettingsSection.MoreGroup.titleRes),
+                onClick = { onOpen(SettingsSection.MoreGroup) }
             )
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Info,
-                title = stringResource(SettingsSection.About.titleRes),
-                onClick = { onOpen(SettingsSection.About) }
+                title = stringResource(SettingsSection.HelpGroup.titleRes),
+                onClick = { onOpen(SettingsSection.HelpGroup) }
             )
         }
+
     }
 
 }
