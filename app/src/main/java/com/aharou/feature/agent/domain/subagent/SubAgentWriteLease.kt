@@ -80,7 +80,16 @@ internal object WriteLease {
         val a = normalize(allowed)
         // `"."` / `"/"` 归一化后为空串：表示工作区根，覆盖除越界以外的全部路径。
         if (a.isEmpty()) return true
-        return p == a || p.startsWith("$a/")
+        // `~/workspace/x` 与工作区相对路径 `x` 指同一处：两侧都试「去掉顶层 workspace/」的形态，
+        // 否则模型按容器路径写法落盘会被租约误判成越界。
+        val allowedForms = workspaceRelativeForms(a)
+        return workspaceRelativeForms(p).any { pf -> allowedForms.any { af -> pf == af || pf.startsWith("$af/") } }
+    }
+
+    /** 同一路径的两种写法：原样，以及去掉容器家目录带来的顶层 `workspace/`。 */
+    private fun workspaceRelativeForms(normalized: String): List<String> {
+        val stripped = normalized.removePrefix("workspace/")
+        return if (stripped == normalized) listOf(normalized) else listOf(normalized, stripped)
     }
 
     /**

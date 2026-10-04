@@ -11,6 +11,7 @@ import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
 import com.aharou.feature.agent.domain.subagent.InjectPart
+import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -89,7 +90,8 @@ class SystemPromptProvider @Inject constructor(
     }
 
     /**
-     * 可用子代理清单（仅注入主代理）：让 AI 知道有哪些自定义 agent 可派发。
+     * 可用子代理部门索引（仅注入主代理）：只注入按部门汇总的恒定大小索引（部门 / 角色数 / 代表角色），
+     * 不再逐条列出全部角色；主代理用 `task(department=..., agentQuery=...)` 由 [SubAgentProfileMatcher] 选角。
      * 会话级缓存，避免每轮扫盘导致 system prompt 抖动打断 KV 缓存。
      */
     private inner class SubAgentListSource : PromptSource {
@@ -110,11 +112,11 @@ class SystemPromptProvider @Inject constructor(
                 return null
             }
 
-            val list = entries.joinToString("\n") { entry ->
-                "- ${entry.definition.name}: ${entry.definition.description.ifBlank { "（无描述）" }}"
+            val content = SubAgentProfileMatcher.renderIndex(entries.map { it.definition })
+            if (content.isEmpty()) {
+                cachedByKey[key] = ""
+                return null
             }
-            val content = "可用子代理 (subagents)（格式为 名称: 何时派发；用 `task(action=\"create\", agent=\"名称\", ...)` 派发）：\n" +
-                "这些子代理有各自专属的提示词、模型与工具集，任务与某个 agent 对口时优先按名派发，而不是用默认通用子代理。\n$list"
             cachedByKey[key] = content
             trimIfNeeded()
             return content
@@ -414,7 +416,7 @@ class SystemPromptProvider @Inject constructor(
 
     /**
      * 按子代理定义组装提示词：只注入 [AgentDefinition.inject] 列出的片段，再接 agent 自己的提示词。
-     * 不注入可用子代理清单（子代理不能嵌套派发）。定义正文里的 `{{AICODE_*}}` 变量同样会展开。
+     * 不注入可用子代理部门索引（子代理不能嵌套派发）。定义正文里的 `{{AICODE_*}}` 变量同样会展开。
      */
     private fun buildForSubAgent(
         definition: AgentDefinition,

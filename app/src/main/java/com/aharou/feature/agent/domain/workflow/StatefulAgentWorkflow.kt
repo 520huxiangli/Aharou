@@ -20,6 +20,7 @@ import com.aharou.feature.agent.domain.notification.PendingNotification
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aharou.feature.agent.domain.subagent.SubAgentBudget
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.PermissionScope
@@ -524,6 +525,12 @@ class StatefulAgentWorkflow @Inject constructor(
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
+        // 兜底预算只对子代理会话生效（见 SubAgentBudget）：默认子代理没有定义，靠 isSubAgent 识别；
+        // 命名子代理另外还能走 agentDefinition，声明了写租约（含只读空集）的走 writePaths。
+        // 主会话三者都不成立，不受限制。
+        val budgetApplies = context.isSubAgent || context.agentDefinition != null || context.writePaths != null
+        val budgetStartedAt = SystemClock.elapsedRealtime()
+        var toolRounds = 0
         val actionQueue = ArrayDeque<AgentAction>()
         // 模式提醒仅在模式变化时随最新用户消息注入一次（不进 system，避免切换时 system 前缀变化打断缓存）。
         val modeReminder = takeModeReminderIfChanged(currentContext.sessionId, currentContext.mode)
@@ -573,6 +580,17 @@ class StatefulAgentWorkflow @Inject constructor(
                         }
                     }
                     is AgentSideEffect.CallLlm -> {
+                        if (budgetApplies) {
+                            val elapsed = SystemClock.elapsedRealtime() - budgetStartedAt
+                            val limit = SubAgentBudget.exceeded(toolRounds, elapsed)
+                            if (limit != null) {
+                                // 到量就不再起新一轮：交代原因后按正常收尾路径结束（此前各轮的工具结果都已按序落库）。
+                                val reason = SubAgentBudget.stopReason(limit, toolRounds, elapsed)
+                                send(AgentEvent.AssistantText(reason, messageId = UUID.randomUUID().toString()))
+                                state = state.copy(isFinished = true, error = reason, errorCode = SubAgentBudget.STOP_CODE)
+                                break
+                            }
+                        }
                         val providerInUse = aiProvider
                         // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
                         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
@@ -877,6 +895,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
                         // 再并行执行；mode 切换检查在结果收集后于主协程串行处理（planApproval 单例）。
                         val toolCalls = effect.toolCalls
+                        toolRounds++
                         toolCalls.forEach { toolCall ->
                             if (toolCall.name == "editFile" || toolCall.name == "writeFile") {
                                 (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
@@ -1067,68 +1086,8 @@ class StatefulAgentWorkflow @Inject constructor(
      * - 不支持：剥离所有图片（仅影响本次发送，不动持久化数据），历史/输入中的图片不会原样发给
      *   非多模态模型导致请求失败；切回多模态模型后图片上下文仍可正常使用。
      */
-    /**
-     * 采样循环检测的候选单元长度：先是短单元（同一句话反复），再是长单元（整段思考重来）。
-     */
-    private val LOOP_UNIT_CANDIDATES = (2..16) + listOf(32, 64, 128, 256, 512)
-
-    /** 长单元判为循环所需的「重复总量」下限（字符）：正常输出不会把上千字符原文重来一遍。 */
-    private val LOOP_MIN_REPEATED_CHARS = 1024
-
     /** 思考跑飞兜底：正文一直为空、思考却堆到这个量，判为退化，直接中断本轮。 */
     private val REASONING_RUNAWAY_CHARS = 40_000
-
-    /**
-     * 采样循环检测：模型偶尔会连续吐出同一片段（思考里尤其常见，一句话重复几十遍）。
-     * 命中时返回重复起点的下标，调用方截断到该处只保留第一次；未命中返回 -1。
-     * 单元长度下限 2、连续重复下限 20 次，避免把 `---` 分隔符或少量重复误判成循环。
-     */
-    private fun samplingLoopStart(text: CharSequence, minRepeat: Int = 20, maxUnit: Int = 16): Int {
-        val len = text.length
-        for (unit in LOOP_UNIT_CANDIDATES) {
-            // 短单元沿用「连续重复 ≥ minRepeat 次」；长单元改用「重复总量」定门槛——上下文过长时
-            // 模型会把整段思考重来（单元几十上百字符），只查到 maxUnit 就永远判不出来，界面上表现
-            // 为「一直在思考」。长单元要重复到相当体量才算循环，免得误伤正常的结构化输出。
-            val repeats = if (unit <= maxUnit) minRepeat else maxOf(3, LOOP_MIN_REPEATED_CHARS / unit)
-            val need = unit * repeats
-            if (len < need) continue
-            val end = len
-            // 单元内全是同一个字符时不算重复：`--------`、`====` 这类分隔线和表格线
-            // 满足任意 unit 的周期条件，不排除会被误判成循环。
-            if ((1 until unit).none { text[end - unit] != text[end - unit + it] }) continue
-            var repeated = true
-            var i = 1
-            while (repeated && i < repeats) {
-                var j = 0
-                while (j < unit) {
-                    if (text[end - unit + j] != text[end - unit * (i + 1) + j]) {
-                        repeated = false
-                        break
-                    }
-                    j++
-                }
-                i++
-            }
-            if (repeated) {
-                // 尾部窗口只够证明「重复了 repeats 次」，前面往往还连着更多次；
-                // 向前回溯到周期真正的起点，只留第一次。
-                var start = end - unit
-                while (start - unit >= 0) {
-                    var same = true
-                    for (k in 0 until unit) {
-                        if (text[start - unit + k] != text[start + k]) {
-                            same = false
-                            break
-                        }
-                    }
-                    if (!same) break
-                    start -= unit
-                }
-                return start + unit
-            }
-        }
-        return -1
-    }
 
     /**
      * 发送前按模型能力处理图片：能看图就原样发；不能看时改用本地 OCR 把图转成文字塞回去。

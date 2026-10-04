@@ -1510,12 +1510,12 @@ class AIAgentViewModel @Inject constructor(
                 parentSessionId = event.parentSessionId,
                 subSessionId = event.subSessionId,
                 title = title,
-                outcome = if (event.type == SubAgentEventType.FAILED) {
+                outcome = if (event.type == SubAgentEventType.FAILED || event.accepted == false) {
                     NotificationOutcome.FAILED
                 } else {
                     NotificationOutcome.COMPLETED
                 },
-                detail = event.detail.takeIf { it.isNotBlank() && event.type == SubAgentEventType.FAILED }
+                detail = event.detail.takeIf { it.isNotBlank() }
             )
         }
     }

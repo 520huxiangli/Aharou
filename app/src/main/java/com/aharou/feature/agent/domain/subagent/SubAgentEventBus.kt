@@ -28,14 +28,20 @@ enum class SubAgentEventType {
  * @property subSessionId 子代理会话 id。
  * @property parentSessionId 父会话 id（子会话记录里 parentId）。
  * @property type 事件类型。
- * @property detail 附加说明：SPAWNED 为任务指令；COMPLETED/FAILED 为子代理最终输出/错误信息；
+ * @property detail 附加说明：SPAWNED 为任务指令；COMPLETED/FAILED 为子代理收尾的终态判定（终止状态 + 交付判定 + claim 裁定 + token 用量），FAILED 另带错误信息；
  *   MESSAGE_FROM_PARENT / MESSAGE_FROM_SUB 为消息正文。
  */
 data class SubAgentEvent(
     val subSessionId: String,
     val parentSessionId: String,
     val type: SubAgentEventType,
-    val detail: String = ""
+    val detail: String = "",
+
+    /**
+     * 子代理收尾时是否被交付判定接受（与 `task` 读取路径同一份结论）；
+     * null 表示未判定（例如消息读取失败），消费方按事件类型处理。
+     */
+    val accepted: Boolean? = null
 )
 
 /**

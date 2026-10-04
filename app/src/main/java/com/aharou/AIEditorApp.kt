@@ -196,6 +196,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var permissionRulesRepository: com.aharou.feature.agent.domain.permission.PermissionRulesRepository
 
+    /** 子代理任务状态机：把子代理生命周期事件落成持久化任务记录，并在启动时收尾上次进程遗留的任务。 */
+    @Inject
+    lateinit var subAgentTaskTracker: com.aharou.feature.agent.data.local.task.SubAgentTaskTracker
+
     /** 技能配置仓库：启动即监听技能目录与 skills.json 外部变更，改动数秒内刷新技能列表。 */
     @Inject
     lateinit var skillConfigRepository: com.aharou.feature.agent.domain.skill.SkillConfigRepository
@@ -409,6 +413,9 @@ class AIEditorApp : Application(), Configuration.Provider {
         }
         // 连接已配置的 MCP server，把其工具注册进 ToolRegistry（内部自有 scope，失败不影响启动）。
         mcpManager.start()
+        // 子代理任务状态机：启动即收尾上次进程遗留的「运行中」任务（标为中断并通知父会话），
+        // 随后常驻订阅子代理事件写状态。走 IO 作用域，失败只记日志，不阻塞启动。
+        subAgentTaskTracker.start(appScope)
         // 权限规则由 App 启动即常驻订阅（AI 评估随时要读到最新规则）；MCP 配置与技能列表
         // 改由各自消费方（McpManager / 设置页）按需订阅，无需在这里拉起。
         appScope.launch { permissionRulesRepository.startWatching() }

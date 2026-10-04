@@ -93,7 +93,7 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 | --- | --- |
 | `{{AICODE_SKILLS}}` | 可用技能清单（名称 + 描述） |
 | `{{AICODE_MEMORY}}` | 记忆摘要清单（全局 + 项目） |
-| `{{AICODE_SUBAGENTS}}` | 可用子代理清单 |
+| `{{AICODE_SUBAGENTS}}` | 可用子代理部门索引（部门 + 角色数 + 代表角色，选角走部门 + 关键词） |
 | `{{AICODE_PROJECT_RULES}}` | 项目规则（`AGENTS.md` / `CLAUDE.md`） |
 | `{{AICODE_WORKSPACE}}` | 工作区上下文（当前项目根目录） |
 | `{{AICODE_DATE}}` | 当前日期（`yyyy-MM-dd`） |

@@ -3,7 +3,6 @@ package com.aharou.feature.agent.domain.tool.subagent
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
-import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ReasoningEffort
@@ -11,25 +10,21 @@ import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
 import com.aharou.feature.agent.domain.subagent.SubAgentClaimVerifier
-import com.aharou.feature.agent.domain.subagent.SubAgentConclusionJudge
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
-import com.aharou.feature.agent.domain.subagent.SubAgentEvidence
+import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
+import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
-import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
-import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.first
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -92,7 +87,7 @@ class TaskTool @Inject constructor(
         }
     }
 
-    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 可用 agent 指定自定义子代理。"
+    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词）让系统选一个最对口的角色，确知角色名时才用 agent 点名。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
@@ -122,7 +117,19 @@ class TaskTool @Inject constructor(
         "agent" to ToolParameter(
             name = "agent",
             type = ParameterType.STRING,
-            description = "自定义子代理名（create 可选）：取系统提示词「可用子代理」清单中的名称，按其专属提示词、模型与工具集运行；省略则用继承本会话模型的默认通用子代理",
+            description = "自定义子代理名（create 可选）：仅在确知系统提示词「可用子代理」索引里的确切名称时使用，一般改用 department + agentQuery 让系统选角。省略则用继承本会话模型的默认通用子代理",
+            required = false
+        ),
+        "department" to ToolParameter(
+            name = "department",
+            type = ParameterType.STRING,
+            description = "子代理部门（create 可选）：取系统提示词「可用子代理」部门索引里的部门名，如 engineering / security / testing / design / product / project-management / specialized / game-development / unity / unreal / godot / roblox / xr / explore。与 agentQuery 配合在该部门内选角",
+            required = false
+        ),
+        "agentQuery" to ToolParameter(
+            name = "agentQuery",
+            type = ParameterType.STRING,
+            description = "选角关键词（create 可选，2~5 个词）：描述任务的功能或领域，如 \"code review\"、\"database migration\"、\"ui design\"。与 department 配合在该部门内按名称与用途描述打分选一个角色，比记角色名更可靠",
             required = false
         ),
         "writePaths" to ToolParameter(
@@ -184,16 +191,32 @@ class TaskTool @Inject constructor(
             ?.take(TASK_DESCRIPTION_MAX)
             ?: "子代理任务"
 
-        // 指定 agent 时必须能找到定义：写错名字就报错并列出可用名，不静默回退成通用子代理，
+        // 选角顺序：agent 精确名（兼容旧用法）→ department + agentQuery 关键词匹配 → 默认通用子代理。
+        // 前两条找不到定义时直接报错并给出可用部门，不静默回退成通用子代理——
         // 否则会拿着错的工具集与提示词跑完整个任务。
         val agentName = (args["agent"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val department = (args["department"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val agentQuery = (args["agentQuery"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
         var definition: AgentDefinition? = null
-        if (agentName != null) {
-            definition = agentDefinitionRepository.find(agentName)
-            if (definition == null) {
-                val available = agentDefinitionRepository.listEnabled().map { it.definition.name }
-                val hint = if (available.isEmpty()) "当前未定义任何自定义子代理" else "可用：${available.joinToString(", ")}"
-                return ToolResult.Error("子代理定义不存在: $agentName（$hint）", "AGENT_NOT_FOUND")
+        if (agentName != null || department != null || agentQuery != null) {
+            val enabled: List<AgentDefinition> = try {
+                agentDefinitionRepository.listEnabled().map { it.definition }
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "读取子代理定义失败", e)
+                return ToolResult.Error("读取子代理定义失败：${e.message ?: "未知错误"}", "AGENT_LIST_FAILED")
+            }
+            definition = if (agentName != null) {
+                enabled.firstOrNull { it.name.equals(agentName, ignoreCase = true) }
+                    ?: return ToolResult.Error(
+                        "子代理定义不存在: $agentName。可用部门：${SubAgentProfileMatcher.departmentHint(enabled)}；" +
+                            "也可改用 department + agentQuery 让系统选角。",
+                        "AGENT_NOT_FOUND"
+                    )
+            } else {
+                when (val outcome = SubAgentProfileMatcher.match(enabled, department, agentQuery)) {
+                    is SubAgentProfileMatcher.MatchOutcome.Matched -> outcome.definition
+                    is SubAgentProfileMatcher.MatchOutcome.Unmatched -> return ToolResult.Error(outcome.reason, "AGENT_NOT_FOUND")
+                }
             }
         }
 
@@ -323,22 +346,11 @@ class TaskTool @Inject constructor(
         }
         val last = runCatching { messages.lastOrNull()?.timestamp ?: 0L }.getOrDefault(0L)
 
-        // 自报的 claim 必须过核验：子代理只会写它「真跑过的命令」和「真写过的文件」，
-        // 这里拿子会话里工具调用与结果的真实记录对一遍，对不上就降级。
-        val report = lastAssistant?.let { msg ->
-            SubAgentClaimVerifier.parse(msg.content)?.let { claim ->
-                SubAgentClaimVerifier.verify(claim, collectEvidence(messages))
-            }
-        }
-        // 结论正文：剥掉 claim 协议块（原始 JSON 不进父上下文）；只剩协议块时保留原文不丢内容。
-        val conclusionText = lastAssistant?.let { SubAgentClaimVerifier.stripClaimBlock(it.content) }.orEmpty()
-        // 「子代理说完成」不等于完成：断言前置条件（空结论 / 被拦截的写 / 最终失败的写 / 自述未完成）。
-        val verdict = SubAgentConclusionJudge.judge(
-            conclusion = conclusionText,
-            evidence = collectConclusionEvidence(messages),
-            claimDowngraded = report?.downgraded == true
-        )
-        val outputText = if (lastAssistant != null) conclusionText.ifBlank { lastAssistant.content } else content
+        // 判定与收尾通知共用同一份检查（见 SubAgentResultInspector），避免两条路径各写一套而分叉。
+        val inspection = SubAgentResultInspector.inspect(subSessionId, messages)
+        val report = inspection.report
+        val verdict = inspection.verdict
+        val outputText = if (lastAssistant != null) inspection.conclusion.ifBlank { lastAssistant.content } else content
 
         return ToolResult.Success(
             buildJsonObject {
@@ -351,8 +363,8 @@ class TaskTool @Inject constructor(
                 put(
                     "tokenUsage",
                     buildJsonObject {
-                        put("inputTokens", sub.totalInputTokens)
-                        put("outputTokens", sub.totalOutputTokens)
+                        put("inputTokens", inspection.inputTokens)
+                        put("outputTokens", inspection.outputTokens)
                     }
                 )
                 report?.let { r ->
@@ -381,69 +393,6 @@ class TaskTool @Inject constructor(
                     put("adjudication", SubAgentClaimVerifier.renderAdjudication(r))
                 }
             }
-        )
-    }
-
-    /**
-     * 从子会话消息里收集核验证据：把 ASSISTANT 的 tool_calls 与对应 TOOL 行的成败配对，
-     * 只采信执行成功的调用——命令取 `command` 原文，落盘取 `path`。
-     */
-    private fun collectEvidence(messages: List<AgentMessageEntity>): SubAgentClaimVerifier.Evidence {
-        val callSucceeded = mutableMapOf<String, Boolean>()
-        messages.filter { it.role == MessageRole.TOOL.name }.forEach { m ->
-            m.toolCallId?.let { callSucceeded[it] = !m.isError }
-        }
-
-        val commands = mutableSetOf<String>()
-        val paths = mutableSetOf<String>()
-        messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
-            val calls = m.toolCallsJson?.let {
-                runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(it) }.getOrNull()
-            }.orEmpty()
-            calls.forEach { call ->
-                if (callSucceeded[call.id] != true) return@forEach
-                when (call.name) {
-                    "Bash" -> (call.arguments["command"] as? JsonPrimitive)?.contentOrNull
-                        ?.let { commands += it.trim() }
-                    "writeFile", "editFile" -> (call.arguments["path"] as? JsonPrimitive)?.contentOrNull
-                        ?.let { paths += it.trim() }
-                }
-            }
-        }
-        return SubAgentClaimVerifier.Evidence(commands, paths)
-    }
-
-    /**
-     * 结算证据：被写租约拦截的写入，以及「写过但最后一次失败」的落盘目标。
-     * 只认结构化写工具（writeFile / editFile）——shell 写不在闸门范围，也无从判定。
-     */
-    private fun collectConclusionEvidence(messages: List<AgentMessageEntity>): SubAgentEvidence {
-        val calls = mutableMapOf<String, Pair<String, String?>>()
-        messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
-            val json = m.toolCallsJson ?: return@forEach
-            runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(json) }.getOrNull()
-                ?.forEach { call ->
-                    val path = (call.arguments["path"] as? JsonPrimitive)?.contentOrNull?.trim()
-                    calls[call.id] = call.name to path
-                }
-        }
-
-        val blocked = mutableListOf<String>()
-        val lastSucceeded = mutableMapOf<String, Boolean>()
-        messages.filter { it.role == MessageRole.TOOL.name }.forEach { m ->
-            val callId = m.toolCallId ?: return@forEach
-            val (name, path) = calls[callId] ?: return@forEach
-            if (name != "writeFile" && name != "editFile") return@forEach
-            val target = path?.takeIf { it.isNotBlank() } ?: return@forEach
-            if (m.isError && m.content.contains(WriteLease.DENIAL_PREFIX)) {
-                if (target !in blocked) blocked += target
-                return@forEach
-            }
-            lastSucceeded[target] = !m.isError
-        }
-        return SubAgentEvidence(
-            blockedWrites = blocked,
-            unresolvedWriteFailures = lastSucceeded.filterValues { !it }.keys.toList()
         )
     }
 

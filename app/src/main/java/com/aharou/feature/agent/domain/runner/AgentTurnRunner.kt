@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.runner
 
 import android.content.Context
 import com.aharou.R
+import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
@@ -17,6 +18,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
@@ -75,6 +77,7 @@ class AgentTurnRunner @Inject constructor(
     private val agentWorkflow: AgentWorkflow,
     private val toolRegistry: ToolRegistry,
     private val chatSessionDao: ChatSessionDao,
+    private val agentMessageDao: AgentMessageDao,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
     private val modelReasoningEffortRepository: ModelReasoningEffortRepository,
     private val sessionUseCase: SessionUseCase,
@@ -197,6 +200,7 @@ class AgentTurnRunner @Inject constructor(
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
+            isSubAgent = isSub,
         )
 
         val allTools = toolRegistry.getAvailableTools()
@@ -294,36 +298,40 @@ class AgentTurnRunner @Inject constructor(
                     event.persisted?.complete(Unit)
                 }
 
-                is AgentEvent.Failed -> if (isSub) {
-                    sessionUseCase.getSessionById(sessionId)?.parentId?.let { parentId ->
-                        subAgentEventBus.emit(
-                            SubAgentEvent(
-                                subSessionId = sessionId,
-                                parentSessionId = parentId,
-                                type = SubAgentEventType.FAILED,
-                                detail = event.error,
-                            )
-                        )
-                    }
-                }
+                is AgentEvent.Failed -> if (isSub) emitSubAgentFinished(sessionId, SubAgentEventType.FAILED, event.error)
 
-                AgentEvent.Completed -> if (isSub) {
-                    sessionUseCase.getSessionById(sessionId)?.parentId?.let { parentId ->
-                        subAgentEventBus.emit(
-                            SubAgentEvent(
-                                subSessionId = sessionId,
-                                parentSessionId = parentId,
-                                type = SubAgentEventType.COMPLETED,
-                            )
-                        )
-                    }
-                }
+                AgentEvent.Completed -> if (isSub) emitSubAgentFinished(sessionId, SubAgentEventType.COMPLETED, null)
 
                 else -> Unit
             }
         }
 
         sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
+    }
+
+    /**
+     * 子代理收尾：一次检查同时拿到终态文本与“是否被交付判定接受”，
+     * 随事件发给父代理——免得父代理不主动 `task(read)` 就看不到「说完成、实则没落盘」。
+     * 失败路径把错误信息并在终态文本前面。
+     */
+    private suspend fun emitSubAgentFinished(sessionId: String, type: SubAgentEventType, error: String?) {
+        val parentId = sessionUseCase.getSessionById(sessionId)?.parentId ?: return
+        val result = runCatching {
+            SubAgentResultInspector.inspect(sessionId, agentMessageDao.getMessagesBySessionOnce(sessionId))
+        }.getOrNull()
+        val detail = buildString {
+            error?.takeIf { it.isNotBlank() }?.let { append(it).append('\n') }
+            append(result?.renderDetail().orEmpty())
+        }
+        subAgentEventBus.emit(
+            SubAgentEvent(
+                subSessionId = sessionId,
+                parentSessionId = parentId,
+                type = type,
+                detail = detail,
+                accepted = result?.verdict?.accepted,
+            )
+        )
     }
 
     private fun detectLanguage(filePath: String): String =
