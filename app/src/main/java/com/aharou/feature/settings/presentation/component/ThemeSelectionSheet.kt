@@ -59,9 +59,14 @@ internal fun ThemeSelectionSheet(
     selected: AppThemeMode,
     selectedPresetId: String?,
     dynamicColorEnabled: Boolean,
+    backgroundImagePath: String?,
+    backgroundAlpha: Float,
     onSelected: (AppThemeMode) -> Unit,
     onPresetSelected: (String) -> Unit,
     onDynamicColorChanged: (Boolean) -> Unit,
+    onPickBackgroundImage: (android.net.Uri) -> Unit,
+    onBackgroundAlphaChange: (Float) -> Unit,
+    onRemoveBackgroundImage: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState()
@@ -170,6 +175,18 @@ internal fun ThemeSelectionSheet(
                     enabled = isDynamicColorSupported
                 )
             }
+
+            Spacer(Modifier.height(Spacing.sm))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            Spacer(Modifier.height(Spacing.md))
+            SectionLabel(stringResource(R.string.settings_background_image))
+            BackgroundImageControls(
+                imagePath = backgroundImagePath,
+                alpha = backgroundAlpha,
+                onPickImage = onPickBackgroundImage,
+                onAlphaChange = onBackgroundAlphaChange,
+                onRemove = onRemoveBackgroundImage
+            )
         }
     }
 }

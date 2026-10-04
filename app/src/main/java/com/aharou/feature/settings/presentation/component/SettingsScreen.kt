@@ -395,7 +395,6 @@ fun SettingsScreen(
     var showContainerAnnouncement by remember { mutableStateOf(false) }
     var showImageSourceSheet by remember { mutableStateOf(false) }
     var showThemeSheet by remember { mutableStateOf(false) }
-    var showBackgroundSheet by remember { mutableStateOf(false) }
     var showLanguageSheet by remember { mutableStateOf(false) }
     var showResetTokenStats by remember { mutableStateOf(false) }
 
@@ -407,6 +406,36 @@ fun SettingsScreen(
     // 返回键与顶栏返回箭头共用这一份判定，不再各写一套（之前两处不一致，镜像下载页返回会直接跳回菜单）。
     val parentSection: SettingsSection? = when (section) {
         SettingsSection.Menu -> null
+        SettingsSection.AharouGroup,
+        SettingsSection.AiGroup,
+        SettingsSection.GeneralGroup,
+        SettingsSection.PermissionsGroup,
+        SettingsSection.MoreGroup,
+        SettingsSection.HelpGroup -> SettingsSection.Menu
+        SettingsSection.Soul,
+        SettingsSection.ConfigAudit,
+        SettingsSection.Memory,
+        SettingsSection.Pet -> SettingsSection.AharouGroup
+        SettingsSection.Providers,
+        SettingsSection.DefaultModels,
+        SettingsSection.Mcp,
+        SettingsSection.Skills -> SettingsSection.AiGroup
+        SettingsSection.General -> SettingsSection.GeneralGroup
+        SettingsSection.Permissions,
+        SettingsSection.AppPermissions,
+        SettingsSection.Accessibility,
+        SettingsSection.BackgroundRun -> SettingsSection.PermissionsGroup
+        SettingsSection.Container,
+        SettingsSection.Proxy,
+        SettingsSection.ShadowScreen,
+        SettingsSection.SubAgents,
+        SettingsSection.RemoteServers,
+        SettingsSection.EnvVars,
+        SettingsSection.Storage,
+        SettingsSection.TokenStats,
+        SettingsSection.Backup -> SettingsSection.MoreGroup
+        SettingsSection.About -> SettingsSection.HelpGroup
+        SettingsSection.Prompts -> SettingsSection.AharouGroup
         SettingsSection.ProviderEditor -> SettingsSection.Providers
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail -> SettingsSection.Skills
@@ -501,10 +530,10 @@ fun SettingsScreen(
     val openManual: () -> Unit = {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(USER_GUIDE_DOCS_URL)))
     }
-    // 分区入口：进日志页前刷新一次，并把返回目标指回菜单
+    // 分区入口：进日志页前刷新一次，并把返回目标指回「更多」分组
     val openSection: (SettingsSection) -> Unit = { target ->
         if (target == SettingsSection.Log) {
-            logReturnSection = SettingsSection.Menu
+            logReturnSection = SettingsSection.MoreGroup
             viewModel.refreshLogs(filterServerName = null)
         }
         section = target
@@ -648,7 +677,7 @@ fun SettingsScreen(
 
             current == SettingsSection.RemoteServers ->
                 com.aharou.feature.workspace.presentation.remote.RemoteServerScreen(
-                    onNavigateBack = { section = SettingsSection.Menu }
+                    onNavigateBack = { section = SettingsSection.MoreGroup }
                 )
 
             else -> {
@@ -900,11 +929,8 @@ fun SettingsScreen(
                     dynamicColorEnabled = dynamicColorEnabled,
                     terminalSettings = terminalSettings,
                     currentLanguageDisplayName = currentLanguageDisplayName,
-                    backgroundImagePath = backgroundImagePath,
-                    backgroundAlpha = backgroundAlpha,
                     onOpenThemeSheet = { showThemeSheet = true },
                     onOpenTerminalSettingsSheet = { showTerminalSettingsSheet = true },
-                    onOpenBackgroundSheet = { showBackgroundSheet = true },
                     onOpenLanguageSheet = { showLanguageSheet = true },
                     onOpen = openSection
                 )
@@ -1369,9 +1395,14 @@ fun SettingsScreen(
             selected = themeMode,
             selectedPresetId = themePresetId,
             dynamicColorEnabled = dynamicColorEnabled,
+            backgroundImagePath = backgroundImagePath,
+            backgroundAlpha = backgroundAlpha,
             onSelected = { viewModel.setThemeMode(it) },
             onPresetSelected = { viewModel.setThemePreset(it) },
             onDynamicColorChanged = { viewModel.setDynamicColorEnabled(it) },
+            onPickBackgroundImage = { viewModel.setBackgroundImage(it) },
+            onBackgroundAlphaChange = { viewModel.setBackgroundAlpha(it) },
+            onRemoveBackgroundImage = { viewModel.clearBackgroundImage() },
             onDismiss = { showThemeSheet = false }
         )
     }
@@ -1384,17 +1415,6 @@ fun SettingsScreen(
             onChangeFontSize = { viewModel.setTerminalFontSize(it) },
             onChangeCursorStyle = { viewModel.setTerminalCursorStyle(it) },
             onChangeFontPath = { viewModel.setTerminalFontPath(it) }
-        )
-    }
-
-    if (showBackgroundSheet) {
-        BackgroundImageSheet(
-            imagePath = backgroundImagePath,
-            alpha = backgroundAlpha,
-            onPickImage = { viewModel.setBackgroundImage(it) },
-            onAlphaChange = { viewModel.setBackgroundAlpha(it) },
-            onRemove = { viewModel.clearBackgroundImage() },
-            onDismiss = { showBackgroundSheet = false }
         )
     }
 

@@ -19,7 +19,6 @@ import com.aharou.core.theme.semanticColors
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.settings.data.repository.AppThemeMode
-import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.terminal.data.repository.TerminalSettings
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.BarChart2
@@ -34,7 +33,6 @@ import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Heart
-import compose.icons.feathericons.Image
 import compose.icons.feathericons.Info
 import compose.icons.feathericons.Key
 import compose.icons.feathericons.Lock
@@ -148,11 +146,8 @@ internal fun SettingsGeneralGroupScreen(
     dynamicColorEnabled: Boolean,
     terminalSettings: TerminalSettings,
     currentLanguageDisplayName: String,
-    backgroundImagePath: String?,
-    backgroundAlpha: Float,
     onOpenThemeSheet: () -> Unit,
     onOpenTerminalSettingsSheet: () -> Unit,
-    onOpenBackgroundSheet: () -> Unit,
     onOpenLanguageSheet: () -> Unit,
     onOpen: (SettingsSection) -> Unit
 ) {
@@ -196,20 +191,6 @@ internal fun SettingsGeneralGroupScreen(
                 trailing = {
                     Text(
                         text = stringResource(terminalSettings.theme.nameRes),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Image,
-                title = stringResource(R.string.settings_background_image),
-                onClick = onOpenBackgroundSheet,
-                trailing = {
-                    Text(
-                        text = if (backgroundImagePath != null) "${BackgroundSettingsRepository.alphaToSlider(backgroundAlpha).toInt()}%"
-                        else stringResource(R.string.settings_background_image_none),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.semanticColors.subtleText
                     )
