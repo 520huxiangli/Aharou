@@ -2570,6 +2570,20 @@ class AIAgentViewModel @Inject constructor(
     private val _targetRewindMessageId = MutableStateFlow<String?>(null)
     val targetRewindMessageId: StateFlow<String?> = _targetRewindMessageId.asStateFlow()
 
+    // 回退时因「被检查点之外的操作改过」而跳过的文件；非空时界面提示
+    private val _rewindConflicts = MutableStateFlow<List<String>>(emptyList())
+    val rewindConflicts: StateFlow<List<String>> = _rewindConflicts.asStateFlow()
+
+    fun dismissRewindConflicts() {
+        _rewindConflicts.value = emptyList()
+    }
+
+    /** 撤销最近一次代码恢复（把当时的现场写回去）。 */
+    fun undoLastRewind() = viewModelScope.launch {
+        val sessionId = _currentSessionId.value ?: return@launch
+        checkpointManager.undoLastRestore(sessionId)
+    }
+
     fun openRewindMenu(messageId: String) {
         _targetRewindMessageId.value = messageId
     }
@@ -2608,10 +2622,11 @@ class AIAgentViewModel @Inject constructor(
         val targetMsgEntity = agentMessageDao.getMessageById(messageId) ?: return@launch
         val attachments = targetMsgEntity.toUIMessage().attachments
 
+        var conflicts: List<String> = emptyList()
         when (option) {
             RewindOption.RESTORE_CODE_AND_CONVERSATION -> {
                 if (checkpoint != null) {
-                    checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id)
+                    conflicts = checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id).conflicts
                 }
                 agentMessageDao.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
                 withContext(Dispatchers.Main) { onFillPrompt(targetMsgEntity.content, attachments) }
@@ -2622,10 +2637,14 @@ class AIAgentViewModel @Inject constructor(
             }
             RewindOption.RESTORE_CODE -> {
                 if (checkpoint != null) {
-                    checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id)
+                    conflicts = checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id).conflicts
                 }
             }
+            RewindOption.UNDO_LAST_RESTORE -> {
+                checkpointManager.undoLastRestore(sessionId)
+            }
         }
+        _rewindConflicts.value = conflicts
     }
 
     /** 重命名会话标题。仅更新 title，不改 updatedAt，列表顺序保持不变。 */

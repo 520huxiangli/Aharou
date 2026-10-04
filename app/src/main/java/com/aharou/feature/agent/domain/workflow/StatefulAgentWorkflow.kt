@@ -933,6 +933,12 @@ class StatefulAgentWorkflow @Inject constructor(
                                 ?: ToolRunResult(ToolResult.Error("工具未执行", "TOOL_NOT_EXECUTED").toTransportString(), true)
                             var rawResult = runResult.raw
                             var isError = runResult.isError
+                            // 写入成功后记录内容摘要，供回退时判断文件是否被检查点之外的操作改过
+                            if (!isError && (toolCall.name == "editFile" || toolCall.name == "writeFile")) {
+                                (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
+                                    currentContext.sessionId?.let { sid -> checkpointManager.afterFileModified(sid, path) }
+                                }
+                            }
                             val (newCtx, updated) = checkAndUpdateMode(toolCall, isError, currentContext)
                             if (updated) {
                                 val reason = (toolCall.arguments["reason"] as? JsonPrimitive)?.content?.trim()

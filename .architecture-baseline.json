@@ -1,0 +1,37 @@
+{
+  "//": "棘轮基线：登记既有违规，只许缩减不许新增或上涨。修好一处就从这里删掉对应条目，脚本会在 [WARN] 里提示可清理项。",
+  "fileLines": {
+    "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3281,
+    "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3264,
+    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 2721,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2155,
+    "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1913,
+    "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1739,
+    "app/src/main/java/com/aharou/feature/pet/PetOverlay.kt": 1712,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatDrawer.kt": 1605,
+    "app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt": 1574,
+    "app/src/main/java/com/aharou/feature/sandbox/FilePreviewScreen.kt": 1357,
+    "app/src/main/java/com/aharou/MainActivity.kt": 1300,
+    "app/src/main/java/com/aharou/feature/git/presentation/component/GitStatusTab.kt": 1272,
+    "app/src/main/java/com/aharou/feature/browser/BrowserTabPool.kt": 1269,
+    "app/src/main/java/com/aharou/feature/settings/presentation/component/ContainerSettingsSection.kt": 1259,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1231,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/AdaptiveCardRenderer.kt": 1194,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 1070,
+    "app/src/main/java/com/aharou/feature/editor/presentation/CodeEditorScreen.kt": 1013
+  },
+  "bannedImports": {
+    "androidx.compose.material3.ModalBottomSheet": [
+      "app/src/main/java/com/aharou/feature/agent/presentation/component/AharouComputerSheet.kt",
+      "app/src/main/java/com/aharou/feature/browser/presentation/BrowserDownloadsSheet.kt",
+      "app/src/main/java/com/aharou/feature/browser/presentation/BrowserHistorySheet.kt",
+      "app/src/main/java/com/aharou/feature/browser/presentation/BrowserSettingsSheet.kt",
+      "app/src/main/java/com/aharou/feature/browser/presentation/StandardChatSheet.kt",
+      "app/src/main/java/com/aharou/feature/settings/presentation/component/SoulSettingsSection.kt"
+    ],
+    "androidx.compose.material3.TextField": [
+      "app/src/main/java/com/aharou/feature/agent/presentation/component/AskUserQuestionPanel.kt",
+      "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt"
+    ]
+  }
+}

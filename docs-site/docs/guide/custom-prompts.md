@@ -105,6 +105,14 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 
 其它占位符（如压缩提示词用的 <span v-pre>`{{INSTRUCTION}}`</span>）不受影响。
 
+## 按需规则（rules）
+
+低频、专门的规则不必常驻系统提示词。把它们放进 `~/.aharou/rules/<名称>.md`，App 只在系统提示里注入「名称 + 摘要」清单，AI 判断某条规则与当前任务对口时用 `loadRule` 取完整正文再照做。
+
+- 文件首行的 `<!-- ... -->` 注释就是清单里显示的摘要，正文写规则内容；
+- 文件名（不含 `.md`）就是规则名称；
+- 同名文件覆盖内置版本（内置规则随 App 打包，位于 `assets/rules/`）；删掉自定义文件即恢复内置版本。
+
 ## 升级时的行为
 
 - `prompts/` 目录每次启动都会被内置版本全量覆盖，所以默认提示词会随 App 升级自动更新。
@@ -134,6 +142,9 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 | `agent/title-generator.md` | 会话标题生成的提示词 |
 | `agent/commit-generator.md` | Git 页「AI 生成」提交信息用的提示词 |
 | `agent/init.md` | `/init` 命令的指令正文（分析代码库并生成/改进 `AGENTS.md`），可在对话输入框用 `/init` 触发 |
+| `agent/workspace-android.md` | Android 工程规约（工作区识别为 Gradle 工程时自动注入） |
+| `agent/workspace-flutter.md` | Flutter 工程规约（识别到 `pubspec.yaml` 时注入） |
+| `agent/workspace-node.md` | Node / 前端工程规约（识别到 `package.json` 时注入） |
 
 ## 恢复默认
 

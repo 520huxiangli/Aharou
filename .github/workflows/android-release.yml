@@ -109,6 +109,10 @@ jobs:
       - name: Check official skills
         run: python3 scripts/check_skills.py
 
+      # 架构门禁：禁用组件 import、文件行数棘轮、双语 strings 一致性。
+      - name: Check architecture rules
+        run: python3 scripts/check_architecture.py
+
       # 发版质量门禁：跑单元测试，失败即中止，避免发出回归包。
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关，跑全 flavor 6 变体是重复编译。
       - name: Run unit tests

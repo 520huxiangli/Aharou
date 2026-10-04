@@ -28,3 +28,7 @@
 - 配置分全局（`~/.aharou/mcp.json`）与项目级（`<projectRoot>/.aharou/mcp.json`），项目级优先。
 - 用 `manageMcp` 安装、移除或列出（`scope` 指定 global 或 project）；不要手动编辑 mcp.json。
 - 支持远程 HTTP（`url`，可选 `headers` 鉴权）与本地 stdio（`command`，可选 `args`）。新增或移除后下一次会话生效。
+
+## 按需规则
+- 低频、专门的规则不占系统提示词的常驻部分，只在系统提示里给出「名称 + 摘要」清单；判断某条与当前任务对口时，用 `loadRule` 取完整正文再照做。
+- 规则块内置随 App 打包，也可放 `~/.aharou/rules/*.md`（同名覆盖内置）；文件首行的 `<!-- 摘要 -->` 就是清单里显示的说明，只能加载清单中存在的名称，不臆造。

@@ -31,7 +31,10 @@ import compose.icons.feathericons.RotateCcw
 enum class RewindOption {
     RESTORE_CODE_AND_CONVERSATION,
     RESTORE_CONVERSATION,
-    RESTORE_CODE
+    RESTORE_CODE,
+
+    /** 撤销最近一次代码恢复，把当时的现场写回去。 */
+    UNDO_LAST_RESTORE
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,6 +100,16 @@ fun RewindOptionsBottomSheet(
                 description = stringResource(R.string.checkpoint_restore_code_desc),
                 onClick = {
                     onOptionSelected(RewindOption.RESTORE_CODE)
+                    onDismissRequest()
+                }
+            )
+
+            OptionRow(
+                icon = FeatherIcons.RotateCcw,
+                title = stringResource(R.string.checkpoint_undo_last_restore),
+                description = stringResource(R.string.checkpoint_undo_last_restore_desc),
+                onClick = {
+                    onOptionSelected(RewindOption.UNDO_LAST_RESTORE)
                     onDismissRequest()
                 }
             )

@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.file
 
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -194,6 +195,11 @@ class WriteFileTool @Inject constructor(
                 FileLogger.w(TAG, "write_file 缺少 path 参数")
                 return ToolResult.Error("路径参数缺失", "MISSING_PATH")
             }
+            WriteLease.denialReason(context.writePaths, path)?.let { reason ->
+                FileLogger.w(TAG, "write_file 被写路径租约拒绝: $path ($reason)")
+                return ToolResult.Error("写路径租约拒绝：$reason", "WRITE_LEASE_DENIED")
+            }
+
             val content = args["content"]?.jsonPrimitive?.contentOrNull ?: ""
             val overwrite = args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: true
 

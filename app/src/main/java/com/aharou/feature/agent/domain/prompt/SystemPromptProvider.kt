@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.rule.RuleRepository
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -36,7 +37,8 @@ class SystemPromptProvider @Inject constructor(
     private val promptFileResolver: PromptFileResolver,
     private val containerInstaller: ContainerInstaller,
     private val agentDefinitionRepository: AgentDefinitionRepository,
-    private val promptFragmentCatalog: PromptFragmentCatalog
+    private val promptFragmentCatalog: PromptFragmentCatalog,
+    private val ruleRepository: RuleRepository
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -123,6 +125,41 @@ class SystemPromptProvider @Inject constructor(
         }
     }
 
+    /**
+     * 按需规则块清单（仅注入主代理）：低频规则不进常驻片段，只给名称 + 摘要，
+     * AI 需要时用 `loadRule` 取正文。会话级缓存，避免每轮扫盘抖动 system prompt。
+     */
+    private inner class AvailableRulesSource : PromptSource {
+        private val cachedByKey = ConcurrentHashMap<SourceCacheKey, String>()
+
+        override fun build(ctx: AgentContext): String? {
+            val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
+            val cached = cachedByKey[key]
+            if (cached != null) return cached.ifEmpty { null }
+            val rules = try {
+                ruleRepository.listRules()
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "扫描按需规则失败: ${e.message}", e)
+                return null
+            }
+            if (rules.isEmpty()) {
+                cachedByKey[key] = ""
+                return null
+            }
+
+            val list = rules.joinToString("\n") { "- ${it.name}: ${it.description.ifBlank { "（无摘要）" }}" }
+            val content = "按需规则 (rules)（格式为 名称: 何时使用；相关时用 `loadRule` 传入名称取完整正文）：\n" +
+                "当清单里有与当前任务对口的规则时，先 `loadRule` 加载它，再按其正文行事。\n$list"
+            cachedByKey[key] = content
+            trimIfNeeded()
+            return content
+        }
+
+        private fun trimIfNeeded() {
+            if (cachedByKey.size > SOURCE_CACHE_LIMIT) cachedByKey.clear()
+        }
+    }
+
     private inner class ProjectRuleSource : PromptSource {
         @Volatile private var cached: String? = null
         private var lastModified: Long = 0
@@ -156,6 +193,33 @@ class SystemPromptProvider @Inject constructor(
             lastModified = currentMod
             lastProjectRoot = ctx.projectRoot
             return cached
+        }
+    }
+
+    /**
+     * 按工作区类型注入工程规约（Android / Flutter / Node）：识别特征文件后读取
+     * `prompts/agent/workspace-<type>.md`；未识别出类型时不注入。
+     */
+    private inner class WorkspaceTypeSource : PromptSource {
+        private val cachedByType = ConcurrentHashMap<String, String>()
+
+        override fun build(ctx: AgentContext): String? {
+            if (ctx.projectRoot.isBlank()) return null
+            val type = detectType(ctx.projectRoot) ?: return null
+            cachedByType[type]?.let { return it.ifEmpty { null } }
+            val body = resolvePrompt("agent/workspace-$type.md").replace(LEADING_COMMENT, "").trim()
+            cachedByType[type] = body
+            return body.ifEmpty { null }
+        }
+
+        private fun detectType(projectRoot: String): String? {
+            val dir = File(projectRoot)
+            return when {
+                File(dir, "settings.gradle.kts").isFile || File(dir, "settings.gradle").isFile -> "android"
+                File(dir, "pubspec.yaml").isFile -> "flutter"
+                File(dir, "package.json").isFile -> "node"
+                else -> null
+            }
         }
     }
 
@@ -229,9 +293,11 @@ class SystemPromptProvider @Inject constructor(
     private val staticRuleSource = StaticRuleSource()
     private val subAgentBaseSource = SubAgentBaseSource()
     private val subAgentListSource = SubAgentListSource()
+    private val availableRulesSource = AvailableRulesSource()
     private val memoryListSource = MemoryListSource()
     private val activeSkillsSource = ActiveSkillsSource()
     private val projectRuleSource = ProjectRuleSource()
+    private val workspaceTypeSource = WorkspaceTypeSource()
     private val workspaceSource = WorkspaceSource()
     private val currentTimeSource = CurrentTimeSource()
 
@@ -276,6 +342,8 @@ class SystemPromptProvider @Inject constructor(
         val subAgentsContent = subAgentListSource.build(agentContext)
         val memoriesContent = memoryListSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
+        val rulesContent = availableRulesSource.build(agentContext)
+        val workspaceTypeContent = workspaceTypeSource.build(agentContext)
 
         // 2. Workspace 上下文固定输出（内容已精简，无需快照占位）
         val effectiveWorkspaceContent = workspaceSource.build(agentContext)
@@ -311,6 +379,8 @@ class SystemPromptProvider @Inject constructor(
                 append("\n\n")
                 append(effectiveWorkspaceContent)
             }
+            rulesContent?.let { append("\n\n"); append(it) }
+            workspaceTypeContent?.let { append("\n\n"); append(it) }
             if (DATE_VAR !in rawStatic) {
                 append("\n\n")
                 append(timeContent)

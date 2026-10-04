@@ -78,6 +78,17 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
+      # beta 包同样过三道门禁（完整历史已拉，迁移对账的 git tag 判定可用）：
+      # 迁移编号对账、官方技能自检、架构门禁。
+      - name: Check migration versions
+        run: python3 scripts/check_migrations.py
+
+      - name: Check official skills
+        run: python3 scripts/check_skills.py
+
+      - name: Check architecture rules
+        run: python3 scripts/check_architecture.py
+
       # 构建 universal beta（arm64-v8a + x86_64，含两套容器镜像的通用包）。
       # --stacktrace：失败时输出完整调用栈，便于定位 OOM/内存类根因。
       # 离线语音模型不进 git，构建前拉下来，跟正式包保持一致（拿测试包验语音才验得准）

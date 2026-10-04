@@ -81,5 +81,10 @@ data class AgentContext(
      * 本会话绑定的自定义子代理定义；非空表示这是一个按定义运行的子代理会话，
      * 系统提示词与工具集都按其配置组装（见 [com.aharou.feature.agent.domain.prompt.SystemPromptProvider]）。
      */
-    val agentDefinition: AgentDefinition? = null
+    val agentDefinition: AgentDefinition? = null,
+    /**
+     * 子代理写路径租约：null 表示不受限（主会话，或派发时未声明）；
+     * 空集表示只读；非空时写文件类工具只允许命中其中的路径。
+     */
+    val writePaths: Set<String>? = null
 )

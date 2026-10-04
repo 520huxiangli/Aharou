@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.compose.runtime.collectAsState
@@ -1973,6 +1974,25 @@ fun AIChatPanel(
                         }
                     },
                     onDismissRequest = { viewModel.dismissRewindMenu() }
+                )
+            }
+
+            val rewindConflicts by viewModel.rewindConflicts.collectAsStateWithLifecycle()
+            if (rewindConflicts.isNotEmpty()) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.dismissRewindConflicts() },
+                    title = { Text(stringResource(R.string.checkpoint_conflict_title)) },
+                    text = {
+                        Text(
+                            stringResource(R.string.checkpoint_conflict_message, rewindConflicts.size) +
+                                "\n" + rewindConflicts.joinToString("\n")
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.dismissRewindConflicts() }) {
+                            Text(stringResource(R.string.common_ok))
+                        }
+                    }
                 )
             }
 

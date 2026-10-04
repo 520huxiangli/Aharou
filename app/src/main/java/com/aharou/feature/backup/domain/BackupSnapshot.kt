@@ -124,7 +124,7 @@ fun BackupSnapshot.toMetadata() = BackupMetadata(
     visionModel = visionModel,
     compactionProviderId = compactionProviderId,
     compactionModel = compactionModel,
-    syncSettings = syncSettings
+    syncSettings = syncSettings,
 )
 
 @Serializable
@@ -240,3 +240,5 @@ data class TodoItemDto(
     val createdAt: Long,
     val updatedAt: Long
 )
+
+

@@ -51,7 +51,7 @@ class CheckpointManagerSessionIsolationTest {
 
         val restored = manager.restoreCodeToCheckpoint("sessionB", cpB.id)
 
-        assertEquals(0, restored)
+        assertEquals(0, restored.restoredCount)
         assertEquals("A 的新内容", File(path).readText())
     }
 
@@ -86,7 +86,7 @@ class CheckpointManagerSessionIsolationTest {
 
         val restored = manager.restoreCodeToCheckpoint("sessionA", cpA.id)
 
-        assertEquals(2, restored)
+        assertEquals(2, restored.restoredCount)
         assertEquals("original", File(modified).readText())
         assertFalse(File(created).exists())
     }
@@ -150,6 +150,13 @@ class CheckpointManagerSessionIsolationTest {
 
         override suspend fun countSnapshot(checkpointId: String, filePath: String): Int =
             snapshots.count { it.checkpointId == checkpointId && it.filePath == filePath }
+
+        override suspend fun updateWrittenHash(checkpointId: String, filePath: String, hash: String) {
+            val index = snapshots.indexOfFirst { it.checkpointId == checkpointId && it.filePath == filePath }
+            if (index >= 0) {
+                snapshots[index] = snapshots[index].copy(writtenHash = hash)
+            }
+        }
 
         override suspend fun deleteCheckpointsForSession(sessionId: String) {
             checkpoints.removeAll { it.sessionId == sessionId }

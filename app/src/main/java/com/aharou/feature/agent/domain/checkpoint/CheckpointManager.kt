@@ -7,13 +7,16 @@ import com.aharou.feature.agent.data.local.entity.CheckpointEntity
 import com.aharou.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 @Singleton
 class CheckpointManager @Inject constructor(
@@ -21,6 +24,15 @@ class CheckpointManager @Inject constructor(
     private val checkpointDao: CheckpointDao,
     private val fileAccess: FileAccessProvider
 ) {
+    /** 回退结果：实际还原的文件数，以及因「被检查点之外的操作改过」而跳过的文件。 */
+    data class RestoreResult(val restoredCount: Int, val conflicts: List<String>) {
+        val hasConflict: Boolean get() = conflicts.isNotEmpty()
+    }
+
+    /** 撤销恢复所需的现场记录。 */
+    @Serializable
+    private data class UndoEntry(val filePath: String, val content: String?, val existed: Boolean)
+
     // 检查点备份根路径: <filesDir>/checkpoints/<sessionId>/<checkpointId>/
     private val baseCheckpointDir: File
         get() = File(context.filesDir, "checkpoints")
@@ -104,19 +116,36 @@ class CheckpointManager @Inject constructor(
     }
 
     /**
-     * 将代码回滚到指定 Checkpoint 节点的初始状态
+     * 文件被 AI **成功写入后**调用：记下写入后的内容摘要。
+     * 回退时用它区分「文件仍是 AI 写下的样子」与「已被检查点之外的操作改过」。
+     */
+    suspend fun afterFileModified(sessionId: String, filePath: String) = withContext(Dispatchers.IO) {
+        val checkpointId = activeCheckpointIds[sessionId] ?: return@withContext
+        val content = runCatching { fileAccess.readFile(filePath) }.getOrNull() ?: return@withContext
+        runCatching { checkpointDao.updateWrittenHash(checkpointId, filePath, sha256(content)) }
+            .onFailure { FileLogger.w(TAG, "记录写入摘要失败: $filePath", it) }
+    }
+
+    /**
+     * 将代码回滚到指定 Checkpoint 节点的初始状态。
+     *
+     * 每个文件在还原前比对当前内容摘要与快照记录的写入摘要：不一致说明它被检查点之外的操作改过，
+     * 这时**不覆盖**它，而是记进 [RestoreResult.conflicts] 交由上层提示用户（避免把人家的改动冲掉）。
+     * 还原前的现场会另存一份，供 [undoLastRestore] 反悔。
      */
     suspend fun restoreCodeToCheckpoint(
         sessionId: String,
         targetCheckpointId: String
-    ): Int = withContext(Dispatchers.IO) {
+    ): RestoreResult = withContext(Dispatchers.IO) {
         val allCheckpoints = checkpointDao.getCheckpointsForSession(sessionId)
         val targetIndex = allCheckpoints.indexOfFirst { it.id == targetCheckpointId }
-        if (targetIndex == -1) return@withContext 0
+        if (targetIndex == -1) return@withContext RestoreResult(0, emptyList())
 
         // 收集 targetCheckpointId 及其之后所有 Checkpoint 的快照，倒序还原
         val checkpointsToRollback = allCheckpoints.subList(targetIndex, allCheckpoints.size).reversed()
         var restoredFileCount = 0
+        val conflicts = mutableListOf<String>()
+        val undoEntries = mutableListOf<UndoEntry>()
         FileLogger.i(
             TAG,
             "还原开始: session=$sessionId target=$targetCheckpointId 涉及 ${checkpointsToRollback.size} 个检查点"
@@ -125,28 +154,69 @@ class CheckpointManager @Inject constructor(
         for (cp in checkpointsToRollback) {
             val snapshots = checkpointDao.getFileSnapshotsForCheckpoint(cp.id)
             for (snapshot in snapshots) {
-                val snapshotFile = File(baseCheckpointDir, snapshot.snapshotRelativePath)
-
                 if (snapshot.changeType == "MODIFY") {
-                    if (snapshotFile.exists()) {
-                        val content = snapshotFile.readText()
-                        fileAccess.writeFile(snapshot.filePath, content, overwrite = true)
-                        restoredFileCount++
-                        FileLogger.i(TAG, "还原覆盖: cp=${cp.id} path=${snapshot.filePath}")
+                    val snapshotFile = File(baseCheckpointDir, snapshot.snapshotRelativePath)
+                    if (!snapshotFile.exists()) continue
+                    val original = snapshotFile.readText()
+                    val current = runCatching { fileAccess.readFile(snapshot.filePath) }.getOrNull()
+
+                    // 冲突：AI 写过这个文件，但当前内容既不是它写下的样子、也不是原始内容
+                    if (snapshot.writtenHash != null && current != null &&
+                        sha256(current) != snapshot.writtenHash && current != original
+                    ) {
+                        conflicts.add(snapshot.filePath)
+                        FileLogger.w(TAG, "跳过被外部改动的文件: ${snapshot.filePath}")
+                        continue
                     }
+
+                    undoEntries.add(UndoEntry(snapshot.filePath, current, existed = current != null))
+                    fileAccess.writeFile(snapshot.filePath, original, overwrite = true)
+                    restoredFileCount++
                 } else if (snapshot.changeType == "CREATE") {
                     // 若是原先新建的文件，回滚时安全删除
                     if (fileAccess.exists(snapshot.filePath)) {
+                        val current = runCatching { fileAccess.readFile(snapshot.filePath) }.getOrNull()
+                        undoEntries.add(UndoEntry(snapshot.filePath, current, existed = true))
                         fileAccess.delete(snapshot.filePath)
                         restoredFileCount++
-                        FileLogger.i(TAG, "还原删除: cp=${cp.id} path=${snapshot.filePath}")
                     }
                 }
             }
         }
-        FileLogger.i(TAG, "还原结束: session=$sessionId 共处理 $restoredFileCount 个文件")
-        restoredFileCount
+        saveUndo(sessionId, undoEntries)
+        FileLogger.i(TAG, "还原结束: session=$sessionId 共处理 $restoredFileCount 个文件，冲突 ${conflicts.size} 个")
+        RestoreResult(restoredFileCount, conflicts)
     }
+
+    /** 撤销最近一次恢复：把当时的现场写回去。返回还原的文件数；没有可撤销的现场时返回 0。 */
+    suspend fun undoLastRestore(sessionId: String): Int = withContext(Dispatchers.IO) {
+        val file = undoFile(sessionId)
+        if (!file.isFile) return@withContext 0
+        val entries = runCatching {
+            Json.decodeFromString<List<UndoEntry>>(file.readText())
+        }.getOrElse {
+            FileLogger.w(TAG, "撤销记录解析失败: ${it.message}", it)
+            return@withContext 0
+        }
+
+        var count = 0
+        entries.forEach { entry ->
+            runCatching {
+                if (entry.existed && entry.content != null) {
+                    fileAccess.writeFile(entry.filePath, entry.content, overwrite = true)
+                } else {
+                    fileAccess.delete(entry.filePath)
+                }
+            }.onSuccess { count++ }
+                .onFailure { FileLogger.w(TAG, "撤销恢复失败: ${entry.filePath}", it) }
+        }
+        file.delete()
+        FileLogger.i(TAG, "已撤销最近一次恢复: session=$sessionId 处理 $count 个文件")
+        count
+    }
+
+    /** 是否还有可撤销的恢复现场。 */
+    fun hasUndoRecord(sessionId: String): Boolean = undoFile(sessionId).isFile
 
     /**
      * 删除 Session 关联的所有 Checkpoint 快照与记录
@@ -159,6 +229,25 @@ class CheckpointManager @Inject constructor(
         if (sessionDir.exists()) {
             sessionDir.deleteRecursively()
         }
+    }
+
+    private fun saveUndo(sessionId: String, entries: List<UndoEntry>) {
+        val file = undoFile(sessionId)
+        runCatching {
+            if (entries.isEmpty()) {
+                file.delete()
+            } else {
+                file.parentFile?.mkdirs()
+                file.writeText(Json.encodeToString(entries))
+            }
+        }.onFailure { FileLogger.w(TAG, "写入撤销记录失败", it) }
+    }
+
+    private fun undoFile(sessionId: String): File = File(baseCheckpointDir, "$sessionId/.undo.json")
+
+    private fun sha256(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     private companion object {

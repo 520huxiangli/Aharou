@@ -15,6 +15,7 @@ import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
+import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.workflow.AgentEvent
@@ -81,6 +82,7 @@ class AgentTurnRunner @Inject constructor(
     private val checkpointManager: CheckpointManager,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val subAgentEventBus: SubAgentEventBus,
+    private val subAgentWriteLease: SubAgentWriteLease,
     private val workspaceRepository: WorkspaceRepository,
     @param:ApplicationContext private val context: Context,
 ) {
@@ -194,6 +196,7 @@ class AgentTurnRunner @Inject constructor(
             modeBeforePlan = sessionDomain?.modeBeforePlan,
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
+            writePaths = subAgentWriteLease.pathsFor(sessionId),
         )
 
         val allTools = toolRegistry.getAvailableTools()

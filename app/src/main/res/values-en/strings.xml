@@ -164,6 +164,7 @@
     <string name="storage_scanning">Calculating…</string>
     <string name="storage_device_free">%1$s free of %2$s</string>
     <string name="storage_section_breakdown">Breakdown</string>
+    <string name="storage_section_reclaimable">Reclaimable space</string>
     <string name="storage_breakdown_note">Tap a category with an arrow to expand details. Delete sessions to shrink chat history; reset or remove containers and workspaces from their own pages. External folder workspaces live on device storage and are not counted.</string>
     <string name="storage_freed">Freed %1$s</string>
     <string name="storage_clean">Clean</string>
@@ -2294,4 +2295,11 @@
     <string name="prompts_add_prompt_hint">Insert a new fragment with a free number</string>
     <string name="prompts_disable_builtin">Disable all built-in prompts</string>
     <string name="prompts_disable_builtin_hint">Keep only your own fragments; you must supply every rule yourself</string>
+    <!-- Checkpoint: conflict detection and undo -->
+    <string name="checkpoint_conflict_title">Some files were not restored</string>
+    <string name="checkpoint_conflict_message">%1$d file(s) were changed outside the checkpoint and were skipped to avoid overwriting your edits:</string>
+    <string name="checkpoint_undo_last_restore">Undo last restore</string>
+    <string name="checkpoint_undo_last_restore_desc">Roll back the most recent code restore</string>
+
+    <!-- Workflow -->
 </resources>

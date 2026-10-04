@@ -11,6 +11,7 @@ import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -20,6 +21,7 @@ import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
@@ -54,7 +56,8 @@ class TaskTool @Inject constructor(
     private val agentMessageDao: AgentMessageDao,
     private val eventBus: SubAgentEventBus,
     private val agentDefinitionRepository: AgentDefinitionRepository,
-    private val aiProviderRepository: AIProviderRepository
+    private val aiProviderRepository: AIProviderRepository,
+    private val subAgentWriteLease: SubAgentWriteLease
 ) : AbstractContextualTool() {
 
     private companion object {
@@ -109,6 +112,13 @@ class TaskTool @Inject constructor(
             description = "自定义子代理名（create 可选）：取系统提示词「可用子代理」清单中的名称，按其专属提示词、模型与工具集运行；省略则用继承本会话模型的默认通用子代理",
             required = false
         ),
+        "writePaths" to ToolParameter(
+            name = "writePaths",
+            type = ParameterType.ARRAY,
+            description = "该子代理允许写入的文件路径（create 可选）。纯调研/分析传 [] 表示只读（写文件类工具会被直接拒绝）；需要落盘时传精确文件或目录；确需独占整个工作区才传 [\"*\"]。省略表示不限制。注意：闸门只约束 writeFile/editFile，shell 重定向不受限。",
+            required = false,
+            itemsSchema = mapOf("type" to "string")
+        ),
         "message" to ToolParameter(
             name = "message",
             type = ParameterType.STRING,
@@ -128,6 +138,14 @@ class TaskTool @Inject constructor(
             "list" -> listSubagents(context)
             else -> ToolResult.Error("未知 action: $action，支持：create / send / read / stop / del / list", "INVALID_ARGS")
         }
+    }
+
+    /** 解析 writePaths 参数；未提供返回 null（不登记租约 = 不限制）。 */
+    private fun parseWritePaths(args: Map<String, JsonElement>): Set<String>? {
+        val raw = args["writePaths"] as? JsonArray ?: return null
+        return raw.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
     }
 
     /** 创建子代理并启动执行。 */
@@ -181,6 +199,9 @@ class TaskTool @Inject constructor(
         )
         sessionUseCase.upsertSession(subSession)
         val subSessionId = subSession.id
+
+        // 写路径租约：派发时声明了才登记；未声明则不限制（保持旧行为）。
+        parseWritePaths(args)?.let { subAgentWriteLease.register(subSessionId, it) }
 
         // 通知 ViewModel 在子会话上启动 AI 工作流
         eventBus.emit(
@@ -306,6 +327,7 @@ class TaskTool @Inject constructor(
                 type = SubAgentEventType.STOPPED
             )
         )
+        subAgentWriteLease.release(subSessionId)
         return ToolResult.Success(
             buildJsonObject {
                 put("id", subSessionId)
@@ -335,6 +357,7 @@ class TaskTool @Inject constructor(
                 )
             )
         }
+        subAgentWriteLease.release(subSessionId)
         sessionUseCase.deleteSession(subSessionId)
         FileLogger.i(TAG, "子代理已删除: session=$subSessionId parent=${context.sessionId}")
         return ToolResult.Success(

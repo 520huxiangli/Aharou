@@ -140,3 +140,15 @@ accordance with the respective license terms.
    project and redistributed under the MIT license, which is compatible
    with this product's GPL-3.0 license. The full MIT text is bundled in
    the APK at assets/licenses/dsh-pet-MIT.txt.
+
+========================================================================
+11. Agency Agents（子代理预设库）
+------------------------------------------------------------------------
+   Project:  https://github.com/msitarzewski/agency-agents
+   Revision: 3c9588880b7cafaec325a104899fd8bbe27e7d72
+   Copyright (c) 2025 AgentLand Contributors
+   License:  MIT
+
+   app/src/main/assets/agents/ 下内置其中 136 个子代理角色定义，随 APK
+   分发；正文未作改动，仅修正一处 frontmatter 的 YAML 引号。完整 MIT
+   文本随 APK 置于 assets/licenses/agency-agents-MIT.txt。

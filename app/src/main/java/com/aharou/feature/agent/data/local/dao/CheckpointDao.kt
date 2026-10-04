@@ -33,6 +33,9 @@ interface CheckpointDao {
     @Query("SELECT COUNT(*) FROM checkpoint_file_snapshots WHERE checkpointId = :checkpointId AND filePath = :filePath")
     suspend fun countSnapshot(checkpointId: String, filePath: String): Int
 
+    @Query("UPDATE checkpoint_file_snapshots SET writtenHash = :hash WHERE checkpointId = :checkpointId AND filePath = :filePath")
+    suspend fun updateWrittenHash(checkpointId: String, filePath: String, hash: String)
+
     @Query("DELETE FROM session_checkpoints WHERE sessionId = :sessionId")
     suspend fun deleteCheckpointsForSession(sessionId: String)
 

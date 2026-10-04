@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.editor
 
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -113,6 +114,11 @@ class EditFileTool @Inject constructor(
         return try {
             val path = args["path"]?.jsonPrimitive?.contentOrNull
                 ?: return ToolResult.Error("路径参数缺失", "MISSING_PATH")
+
+            WriteLease.denialReason(context.writePaths, path)?.let { reason ->
+                FileLogger.w(TAG, "edit_file 被写路径租约拒绝: $path ($reason)")
+                return ToolResult.Error("写路径租约拒绝：$reason", "WRITE_LEASE_DENIED")
+            }
 
             val edits = parseEdits(args)
                 ?: return ToolResult.Error("edits 参数缺失或为空：请在 edits 数组里给出至少一个 {old_string,new_string} 编辑", "MISSING_EDITS")

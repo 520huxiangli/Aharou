@@ -440,5 +440,12 @@ tasks.register<Exec>("checkMigrations") {
     workingDir(rootProject.projectDir)
 }
 
+// 架构门禁：禁用组件 import、单文件行数棘轮、双语 strings 一致性（详见 scripts/check_architecture.py）。
+// 挂在 preBuild 上，破线直接编不过；本地临时绕开用 `-x checkArchitecture`。
+val checkArchitecture = tasks.register<Exec>("checkArchitecture") {
+    commandLine("python3", "scripts/check_architecture.py")
+    workingDir(rootProject.projectDir)
+}
+
 // assets 合并前必须先生成文档，否则首次构建（或 clean 后）APK 里会没有 docs/。
-tasks.named("preBuild") { dependsOn(syncAiDocs) }
+tasks.named("preBuild") { dependsOn(syncAiDocs, checkArchitecture) }

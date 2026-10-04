@@ -1,0 +1,33 @@
+{
+  "//": "架构门禁规则，由 scripts/check_architecture.py 读取（挂在 Gradle preBuild 与 CI）。调整规则或新增源码根目录时必须同步本文件。",
+  "sourceRoots": [
+    "app/src/main/java/com/aharou"
+  ],
+  "//maxFileLines": "单文件行数上限，超限文件登记在 .architecture-baseline.json 且只许缩减。",
+  "maxFileLines": 1000,
+  "bannedImports": [
+    {
+      "import": "androidx.compose.material3.Switch",
+      "allow": [],
+      "message": "禁止使用原生 M3 Switch，一律改用 core/ui/AppSwitch.kt"
+    },
+    {
+      "import": "androidx.compose.material3.ModalBottomSheet",
+      "allow": [
+        "app/src/main/java/com/aharou/core/ui/AdaptiveModalBottomSheet.kt"
+      ],
+      "message": "禁止直接调用原生 ModalBottomSheet，一律改用 core/ui/AdaptiveModalBottomSheet.kt"
+    },
+    {
+      "import": "androidx.compose.material3.TextField",
+      "allow": [
+        "app/src/main/java/com/aharou/core/ui/AppTextField.kt"
+      ],
+      "message": "禁止裸写带下划线的原生 TextField，优先使用 core/ui/AppTextField.kt"
+    }
+  ],
+  "stringsParity": {
+    "zh": "app/src/main/res/values/strings.xml",
+    "en": "app/src/main/res/values-en/strings.xml"
+  }
+}
