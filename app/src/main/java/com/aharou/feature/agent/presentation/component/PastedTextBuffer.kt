@@ -111,8 +111,17 @@ fun expandPastePlaceholders(
     return out.toString() to consumed
 }
 
-/** 超过这个字符数就不再折成标记，改为落成真的 `.txt` 附件。 */
+/**
+ * 超过这个字符数就不再折成标记，改为落成真的 `.txt` 附件。
+ *
+ * 折叠本身没问题（输入框清爽、原文也不丢），问题在发送：标记会被展开回正文，正文一旦超过落库
+ * 上限（`MessagePersistenceUseCase.MAX_CONTENT_BYTES = 150_000` 字节）就被截成「…[内容过长，已截断]」，
+ * 粘进来的东西白丢。所以超大粘贴改走附件，正文只留一行路径。
+ */
 const val PASTE_AS_FILE_THRESHOLD = 15_000
+
+/** 这次粘贴该不该落成文件，而不是折成 `[Pasted#N]` 标记。 */
+fun shouldPasteAsFile(text: String): Boolean = text.length > PASTE_AS_FILE_THRESHOLD
 
 /**
  * 文本里引用到的粘贴块 id。

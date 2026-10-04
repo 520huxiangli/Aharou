@@ -17,15 +17,36 @@
 
 ### 记忆文件
 
-每条记忆是一个 Markdown 文件，由 YAML frontmatter（`name`、`description`）与正文组成：
+每条记忆是一个 Markdown 文件，由 YAML frontmatter 与正文组成：
 
 ```markdown
 ---
 name: conventions
 description: 项目代码规范与命名约定
+type: workflow
+keywords: [命名, 代码规范, 提交规范]
 ---
 （正文）
 ```
+
+| frontmatter 字段 | 说明 |
+| --- | --- |
+| `name` | 记忆名称，同时用作文件名 |
+| `description` | 一句话摘要，注入到每次会话的提示词清单中 |
+| `type` | 分类，决定是否常驻提示词清单，见下表 |
+| `keywords` | 检索关键词列表，仅供 `action=search` 匹配，不进清单 |
+
+**`type` 取值：**
+
+| 类型 | 说明 | 是否注入清单 |
+| --- | --- | --- |
+| `identity` | 身份与长期约定（CORE / GLOBAL 类） | 是，永远保留 |
+| `preference` | 用户偏好 | 是 |
+| `workflow` | 做事方式与流程约定 | 是 |
+| `fact` | 一般事实（默认值） | 是 |
+| `event` | 一次性事件（某次测试结果、某天的排查记录） | 否，只留档 |
+
+`event` 类记忆不进提示词清单，需要时通过 `action=search` 或 `action=read` 取回。超过 180 天未修改的普通记忆也会从清单中淡出（文件仍保留，仍可读取）。
 
 ### 生效方式
 
@@ -35,14 +56,17 @@ description: 项目代码规范与命名约定
 
 | 参数 | 说明 |
 | --- | --- |
-| `action` | `read` / `save` / `edit` / `delete` / `list` / `log` / `fact` / `mindstream` / `core` |
-| `name` | 记忆名称（即文件名） |
+| `action` | `read` / `save` / `edit` / `delete` / `list` / `search` / `log` / `fact` / `mindstream` / `core` |
+| `name` | 记忆名称（即文件名）；`search` 时作为 `query` 的备用参数 |
 | `description` | 摘要，`save` 时必填 |
 | `content` | 正文（Markdown），`save` 时必填 |
 | `edits` | 局部编辑列表，语义与编辑文件一致 |
 | `scope` | `project`（默认）或 `global` |
+| `query` | 搜索关键词，`search` 时使用 |
 
-除通用的读写改删，还有四个「持续记录」用的动作：
+`action=search` 按关键词检索记忆，依次在 `keywords`（权重最高）、名称与描述、正文中打分，返回最多 8 条匹配结果的摘要行。找到目标后再用 `action=read` 取完整正文，避免把上下文撑满。
+
+除通用的读写改删与检索，还有四个「持续记录」用的动作：
 
 | 动作 | 用途 |
 | --- | --- |
@@ -52,6 +76,14 @@ description: 项目代码规范与命名约定
 | `core` | 读 / 写核心档案（一事一条，每次对话都会自动携带） |
 
 同名记忆项目级优先于全局。更新既有记忆时建议使用 `edit` 局部编辑；涉及踩坑经验的内容，应在验证根因后记录。
+
+### 立即蒸馏
+
+蒸馏是把近期每日日志提炼成长期要点并追加到 `GLOBAL.md` 的过程，默认每 7 天自动执行一次。
+
+在**设置 → 记忆**页面可以找到「立即蒸馏」按钮，点击后忽略 7 天间隔立即执行一次。完成后界面会提示「蒸馏完成，已写入 GLOBAL.md」；如果近期日志没有可提炼的新内容，或当前会话未配置 AI 供应商，则提示「没有新的可提炼内容」。
+
+蒸馏需要调用 AI 模型，请确保已在设置中配置好供应商与模型。
 
 ## 项目规则
 

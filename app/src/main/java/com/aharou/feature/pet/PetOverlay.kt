@@ -21,6 +21,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import com.aharou.R
 import java.util.Calendar
@@ -239,6 +240,9 @@ class PetOverlay(private val context: Context) {
     private var noMirrorNames: Set<String> = emptySet()
     private var bubble: TextView? = null
 
+    /** 气泡左侧的进行中指示（不确定态转圈），只在后台任务运行期间显示。 */
+    private var bubbleSpinner: ProgressBar? = null
+
     /** 气泡容器：文字气泡与图片气泡叠在里面，同时只显示一个。 */
     private var bubbleBox: FrameLayout? = null
     private var bubbleImage: ImageView? = null
@@ -446,6 +450,7 @@ class PetOverlay(private val context: Context) {
             videoKey = null
             videoOverride = null
             bubble = null
+            bubbleSpinner = null
             menu = null
             params = null
             spriteKey = null
@@ -536,38 +541,46 @@ class PetOverlay(private val context: Context) {
         }
     }
 
-    /** 常显气泡：任务状态 / 通话字幕，传空串等于清掉。 */
-    fun showStatus(text: String) {
+    /** 常显气泡：任务状态 / 通话字幕，传空串等于清掉。[busy] 为真时在左侧挂一个进行中指示。 */
+    fun showStatus(text: String, busy: Boolean = false) {
         mainHandler.post {
             if (text.isBlank()) {
                 // 「Zzz…」是她自己的气泡，状态流空着的时候别把它擦掉
                 if (sleepingBubble) return@post
             } else {
-                // 有进度说明有人在替她干活了，得醒着、也得从屏幕边出来（不然字幕看不见）
-                sleepingBubble = false
-                untuck()
-                markInteraction()
+                // 已经挂着常显气泡时只换字：后台任务那行每秒都要刷新，不能每秒把她从屏幕边
+                // 拉出来一次（那样她再也收不起来），也不能每秒重记一次互动。
+                val alreadyShowing = bubblePersistent && bubble?.visibility == View.VISIBLE
+                if (!alreadyShowing) {
+                    // 有进度说明有人在替她干活了，得醒着、也得从屏幕边出来（不然字幕看不见）
+                    sleepingBubble = false
+                    untuck()
+                    markInteraction()
+                }
             }
-            applyBubble(text, persistent = text.isNotBlank())
+            applyBubble(text, persistent = text.isNotBlank(), busy = busy)
         }
     }
 
-    private fun applyBubble(text: String, persistent: Boolean, holdMs: Long = BUBBLE_MS) {
+    private fun applyBubble(text: String, persistent: Boolean, holdMs: Long = BUBBLE_MS, busy: Boolean = false) {
         mainHandler.post {
             val view = bubble ?: return@post
             val img = bubbleImage
+            val spinner = bubbleSpinner
             bubblePersistent = persistent
             mainHandler.removeCallbacks(hideBubble)
             if (text.isBlank()) {
-                if (view.visibility == View.VISIBLE || img?.visibility == View.VISIBLE) {
+                if (view.visibility == View.VISIBLE || img?.visibility == View.VISIBLE || spinner?.visibility == View.VISIBLE) {
                     view.visibility = View.GONE
                     img?.visibility = View.GONE
+                    spinner?.visibility = View.GONE
                     bubbleHeightPx = 0
                     applyLayout()
                 }
                 return@post
             }
             img?.visibility = View.GONE
+            spinner?.visibility = if (persistent && busy) View.VISIBLE else View.GONE
             view.text = text
             view.visibility = View.VISIBLE
             bubbleHeightPx = measureBubbleHeight()
@@ -638,8 +651,21 @@ class PetOverlay(private val context: Context) {
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.CENTER,
         )
+        // 后台任务跑着时挂个小转圈：这套系统量不出完成度，所以只做不确定态，不画假进度条。
+        val spinnerView = ProgressBar(context, null, android.R.attr.progressBarStyleSmall).apply {
+            visibility = View.GONE
+            isIndeterminate = true
+        }
+        val bubbleRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(spinnerView, LinearLayout.LayoutParams(dpToPx(13), dpToPx(13)).apply {
+                rightMargin = dpToPx(3)
+            })
+            addView(bubbleView)
+        }
         val bubbleFrame = FrameLayout(context).apply {
-            addView(bubbleView, bubbleParams)
+            addView(bubbleRow, bubbleParams)
             addView(bubbleImageView, bubbleParams)
         }
 
@@ -680,6 +706,7 @@ class PetOverlay(private val context: Context) {
         sprite = image
         videoView = video
         bubble = bubbleView
+        bubbleSpinner = spinnerView
         bubbleBox = bubbleFrame
         bubbleImage = bubbleImageView
         menu = menuView
@@ -1634,6 +1661,7 @@ class PetOverlay(private val context: Context) {
             mainHandler.removeCallbacks(hideBubble)
             bubblePersistent = false
             text.visibility = View.GONE
+            bubbleSpinner?.visibility = View.GONE
             img.setImageBitmap(image)
             img.visibility = View.VISIBLE
             bubbleHeightPx = measureBubbleHeight()

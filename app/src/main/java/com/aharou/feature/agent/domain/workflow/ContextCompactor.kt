@@ -49,6 +49,12 @@ class ContextCompactor @Inject constructor(
         const val TAG = "ContextCompactor"
         const val MAX_SUMMARY_BLOCKS = 32
 
+        /**
+         * 摘要输出上限的兜底。首次上限被模型思考吃光时翻倍重试一次，但不越过这个值：
+         * 它远小于任何输入预算，翻倍不至于把请求推爆窗口。
+         */
+        const val SUMMARY_RETRY_MAX_OUTPUT_TOKENS = 16_384
+
         /** 一次完整压缩的总时长上限：超出即放弃本轮（保留原历史），避免长时间「一直在压缩」。 */
         const val SUMMARY_DEADLINE_MS = 120_000L
 
@@ -122,17 +128,18 @@ class ContextCompactor @Inject constructor(
         }
         if (!force && !reachedHard) return unchanged
 
+        var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
+        if (force && splitIndex <= 0) splitIndex = messages.lastIndex
+        splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
+        if (splitIndex <= 0) return unchanged
+        val head = messages.take(splitIndex)
+        val tail = messages.drop(splitIndex)
+        val material = removeCompactionPairs(head)
+        if (material.isEmpty()) return unchanged
+
         onEvent(AgentEvent.CompactionStarted(currentTokens))
         val originalOutputLimit = aiProvider.maxOutputTokens
         try {
-            var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
-            if (force && splitIndex <= 0) splitIndex = messages.lastIndex
-            splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
-            check(splitIndex > 0) { "No compressible history before the retained tool unit" }
-            val head = messages.take(splitIndex)
-            val tail = messages.drop(splitIndex)
-            val material = removeCompactionPairs(head)
-            check(material.isNotEmpty()) { "No new history to summarize" }
 
             val headIds = head.map { it.id }.filter { it.isNotBlank() }.distinct()
             val anchorTs = if (sessionId != null) {
@@ -173,7 +180,7 @@ class ContextCompactor @Inject constructor(
                 val chunk = cursor.next(available)
                 val request = listOf(AgentMessage.UserMessage(content = instruction + "\n\n<history-material block=\"${++block}\">\n" + chunk + "\n</history-material>"))
                 check(CompactionText.estimateRequest(SUMMARY_SYSTEM, emptyList(), request) <= summaryBudget) { "Summary block exceeds the input budget" }
-                summary = summarize(aiProvider, sessionId, request)
+                summary = summarize(aiProvider, sessionId, request, summaryContext, outputLimit)
             }
             check(!summary.isNullOrBlank()) { "Summary is empty" }
             val markerId = UUID.randomUUID().toString()
@@ -214,7 +221,61 @@ class ContextCompactor @Inject constructor(
         }
     }
 
-    private suspend fun summarize(provider: AIProvider, sessionId: String?, messages: List<AgentMessage>): String {
+    /**
+     * 摘要补全：失败可按「输出预算不够」重试一次。
+     *
+     * 压缩调用不带 reasoningEffort（OpenAI 系也传不动 "none"，会被归一成不发该字段），
+     * 所以会思考的模型拿默认思考档，推理 token 与正文抢同一个输出上限；上限被吃光时
+     * 正文会空或截断。这类失败加预算重试一次就能过，与拒答/工具应答区分开。
+     * [contextLimit] 是摘要模型声明的窗口，用来把重试后的上限夹在已用输入之外。
+     */
+    private suspend fun summarize(
+        provider: AIProvider,
+        sessionId: String?,
+        messages: List<AgentMessage>,
+        contextLimit: Int,
+        outputLimit: Int
+    ): String {
+        val first = requestSummary(provider, sessionId, messages)
+        val firstFailure = summarizeFailure(first)
+        if (firstFailure == null) return first.content
+        if (!looksOutputStarved(first)) throw IllegalStateException(firstFailure)
+
+        // 上限由调用方明确传下来（它刚设过），不去回读 provider 的属性：回读在多轮里可能已被别人改过。
+        val room = (contextLimit - first.inputTokens).coerceAtLeast(outputLimit)
+        val retryLimit = minOf(outputLimit * 2, SUMMARY_RETRY_MAX_OUTPUT_TOKENS, room)
+        if (retryLimit <= outputLimit) throw IllegalStateException(firstFailure)
+        FileLogger.w(
+            TAG,
+            "摘要响应不可用（$firstFailure，reasoning=" +
+                (if (first.reasoning.isNullOrBlank()) "无" else "${first.reasoning.length} 字") +
+                "），输出上限 $outputLimit → $retryLimit 重试一次"
+        )
+        provider.maxOutputTokens = retryLimit
+        val second = requestSummary(provider, sessionId, messages)
+        summarizeFailure(second)?.let { throw IllegalStateException(it) }
+        return second.content
+    }
+
+    /** 不可用的摘要响应给出原因，可用时返回 null。 */
+    private fun summarizeFailure(response: AIResponse): String? =
+        if (response.content.isNotBlank() && !response.isAborted && !response.isTruncated &&
+            response.toolCalls.isEmpty()
+        ) null else "Incomplete summary response: ${response.stopReason ?: "empty or tool response"}"
+
+    /**
+     * 是否属于「输出预算被吃光」：被截断是，正文空但拿得到思考内容也是（token 花在推理上了）。
+     * 拒答、工具应答这类重试也没用，直接判失败。
+     */
+    private fun looksOutputStarved(response: AIResponse): Boolean =
+        response.isTruncated || (response.content.isBlank() && !response.reasoning.isNullOrBlank())
+
+    /** 发一次摘要补全并落调用统计；响应不可用时不抛异常，交给调用方决定是否重试。 */
+    private suspend fun requestSummary(
+        provider: AIProvider,
+        sessionId: String?,
+        messages: List<AgentMessage>
+    ): AIResponse {
         val startElapsed = SystemClock.elapsedRealtime()
         val startWall = System.currentTimeMillis()
         var response: AIResponse? = null
@@ -222,10 +283,8 @@ class ContextCompactor @Inject constructor(
         try {
             val result = provider.complete(systemPrompt = SUMMARY_SYSTEM, messages = messages, tools = emptyList())
             response = result
-            check(result.content.isNotBlank() && !result.isAborted && !result.isTruncated && result.toolCalls.isEmpty()) {
-                "Incomplete summary response: ${result.stopReason ?: "empty or tool response"}"
-            }
-            return result.content
+            error = summarizeFailure(result)
+            return result
         } catch (e: Exception) {
             error = e.message ?: e.javaClass.simpleName
             throw e

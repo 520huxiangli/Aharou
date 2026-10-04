@@ -46,6 +46,10 @@ class ConfigTool @Inject constructor(
 
     private companion object {
         const val TAG = "ConfigTool"
+
+        /** `logs` 动作默认返回多少行；日志文件可达 5MB，不夹上限会直接冲爆上下文。 */
+        const val DEFAULT_LOG_LINES = 200
+        const val MAX_LOG_LINES = 2_000
     }
 
     override val name = "config"
@@ -54,18 +58,22 @@ class ConfigTool @Inject constructor(
         "读写 Aharou 自身设置（配置通道）。action=list 列出可配字段；action=get 读字段（path）；" +
             "action=set 修改字段（path + value，value 为 JSON 编码，如 \"🦊\"、\"zh\"、true）；" +
             "action=add 在集合下新增一项（path=集合名、value=新项 JSON）；action=remove 删除集合下的一项（path=集合名、id）。" +
+            "action=logs 读应用日志（只读）；date=yyyy-MM-dd（缺省今天，只保留最近 7 天）、query=关键词过滤、limit=最多返回行数（默认 $DEFAULT_LOG_LINES）均可选。" +
             "set/add/remove 都会弹出确认面板，用户同意后生效，并写审计、可回滚。"
 
     override val capabilities = setOf(ToolCapability.MODIFY_AGENT_CONFIG)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
-            "action", ParameterType.STRING, "操作类型：list / get / set / add / remove", true,
-            enum = listOf("list", "get", "set", "add", "remove"),
+            "action", ParameterType.STRING, "操作类型：list / get / set / add / remove / logs", true,
+            enum = listOf("list", "get", "set", "add", "remove", "logs"),
         ),
         "path" to ToolParameter("path", ParameterType.STRING, "字段路径，如 soul.name；add/remove 时为集合名，如 providers", false),
         "value" to ToolParameter("value", ParameterType.STRING, "set 的目标值 / add 的新项（JSON 编码）", false),
         "id" to ToolParameter("id", ParameterType.STRING, "remove 时集合内要删除的子项 id", false),
+        "date" to ToolParameter("date", ParameterType.STRING, "logs：要读的日期，yyyy-MM-dd，缺省今天", false),
+        "query" to ToolParameter("query", ParameterType.STRING, "logs：关键词过滤，大小写不敏感；空则不过滤", false),
+        "limit" to ToolParameter("limit", ParameterType.STRING, "logs：最多返回多少行，默认 $DEFAULT_LOG_LINES，上限 $MAX_LOG_LINES（尾部优先）", false),
     )
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
@@ -90,12 +98,44 @@ class ConfigTool @Inject constructor(
                     val id = (args["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
                     removeChild(registry, path, id)
                 }
+                "logs" -> readLogs(
+                    date = (args["date"] as? JsonPrimitive)?.contentOrNull,
+                    query = (args["query"] as? JsonPrimitive)?.contentOrNull,
+                    limit = (args["limit"] as? JsonPrimitive)?.contentOrNull?.trim()?.toIntOrNull()
+                        ?: DEFAULT_LOG_LINES,
+                )
                 else -> ToolResult.Error("不支持的 action：$action", "INVALID_ACTION")
             }
         } catch (e: Exception) {
             FileLogger.e(TAG, "config tool failed: ${e.message}", e)
             ToolResult.Error("配置操作失败：${e.message}")
         }
+    }
+
+    /**
+     * 读应用日志。只读动作，不弹确认也不写审计——跟 list / get 同待遇。
+     *
+     * 为什么要走通道而不是让 AI 自己读文件：日志落在应用的外私目录，容器里根本看不见；
+     * 而读文件的就是 App 自己，不需要 root / Shizuku。
+     */
+    private fun readLogs(date: String?, query: String?, limit: Int): ToolResult {
+        val take = limit.coerceIn(1, MAX_LOG_LINES)
+        val read = FileLogger.readLogTail(date, query, take)
+            ?: return ToolResult.Error(
+                "没有这份日志（日期用 yyyy-MM-dd，只保留最近 7 天）",
+                "LOG_NOT_FOUND",
+            )
+        val header = buildString {
+            append(read.fileName).append("：共 ").append(read.totalLines).append(" 行")
+            if (read.matchedLines != read.totalLines) {
+                append("，命中 ").append(read.matchedLines).append(" 行")
+            }
+            append("，返回尾部 ").append(read.returnedLines).append(" 行")
+            if (read.returnedLines < read.matchedLines) {
+                append("（更早的没返回：加 query 缩小范围，或调大 limit）")
+            }
+        }
+        return ToolResult.Success(buildJsonObject { put("result", "$header\n\n${read.text}") })
     }
 
     private fun listFields(registry: ConfigRegistry): ToolResult {

@@ -14,12 +14,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -200,6 +204,7 @@ class TerminalSessionManager @Inject constructor(
                 session = session,
                 isBackground = true,
                 command = command,
+                startedAt = System.currentTimeMillis(),
                 notifyOnExit = notify,
                 sourceSessionId = sourceSessionId,
                 workspacePath = workspace,
@@ -269,16 +274,10 @@ class TerminalSessionManager @Inject constructor(
     }
 
     /** 列出全部标签的摘要（id/标题/是否后台/运行状态/命令），供 AI 选目标。 */
-    override fun listTabs(): List<TabInfo> = _tabs.value.map {
-        TabInfo(
-            id = it.id,
-            title = it.title,
-            isBackground = it.isBackground,
-            running = it.runState is RunState.Running,
-            command = it.command,
-            workspacePath = it.workspacePath
-        )
-    }
+    override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
+
+    override val runningBackgroundTabs: Flow<List<TabInfo>> =
+        combine(_tabs, revision) { tabs, _ -> tabs.runningBackgroundTabInfos() }.distinctUntilChanged()
 
     /** 切换当前标签。 */
     fun activate(id: String) {
@@ -372,6 +371,7 @@ class TerminalSessionManager @Inject constructor(
                             _tabFinishedEvents.tryEmit(
                                 TabFinishedEvent(
                                     current.id, current.title, current.command, exitCode, current.sourceSessionId,
+                                    startedAt = current.startedAt,
                                     tailOutput = getTabOutput(current.id)?.takeTailLines(TAIL_LINES)
                                 )
                             )
@@ -431,6 +431,7 @@ class TerminalSessionManager @Inject constructor(
                         _tabFinishedEvents.tryEmit(
                             TabFinishedEvent(
                                 target.id, target.title, target.command, finished.exitStatus, target.sourceSessionId,
+                                startedAt = target.startedAt,
                                 tailOutput = getTabOutput(target.id)?.takeTailLines(TAIL_LINES)
                             )
                         )

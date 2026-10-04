@@ -2105,6 +2105,14 @@
     <string name="pet_missed_you">...You\'re finally back. I thought you\'d forgotten me.</string>
     <string name="pet_agent_done">All done — take a look?</string>
     <string name="pet_agent_waiting">I\'m stuck waiting for your approval... glance at the screen?</string>
+    <string name="pet_bg_named">%1$s · %2$s</string>
+    <string name="pet_bg_subagents">%1$d subagents · %2$s</string>
+    <string name="pet_bg_count">%1$d background tasks · %2$s</string>
+    <string name="pet_bg_task">The background task</string>
+    <string name="pet_bg_done">%1$s is done.</string>
+    <string name="pet_bg_failed">%1$s failed.</string>
+    <string name="pet_bg_failed_with_code">%1$s failed with exit code %2$d.</string>
+    <string name="pet_notification_background">Watching your background tasks</string>
     <string name="pet_brief">Weather &amp; festival brief</string>
     <string name="pet_brief_hint">Once a day, on her first appearance, she reports a festival greeting plus today\'s weather and what to watch out for. Weather comes from Open-Meteo, and location is read once only while this is on</string>
     <string name="pet_brief_location">Location permission</string>

@@ -5,6 +5,7 @@ import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
+import com.aharou.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
@@ -133,26 +134,61 @@ class ContextCompactorTest {
     @Test
     fun currentUsageTriggersBeforeSending() = runTest {
         prepare()
-        val original = history(100)
-        assertFalse(compactor.compactIfNeeded(original, provider).compacted)
+        val small = history(100)
+        assertFalse(compactor.compactIfNeeded(small, provider).compacted)
         coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
         val events = mutableListOf<AgentEvent>()
-        compactor.compactIfNeeded(original, provider, currentInputTokens = 99_999, onEvent = { events.add(it) })
+        // 历史必须真的含有可压缩内容：无可压缩历史时直接静默返回，不发 CompactionStarted
+        compactor.compactIfNeeded(history(20_000), provider, currentInputTokens = 99_999, onEvent = { events.add(it) })
         assertTrue(events.any { it is AgentEvent.CompactionStarted })
+    }
+
+    @Test
+    fun forcedCompactionWithoutMaterialStaysSilent() = runTest {
+        prepare()
+        val onlySummaryPair = listOf(
+            AgentMessage.UserMessage(id = "marker", content = CONTEXT_COMPACTION_MARKER),
+            AgentMessage.AssistantMessage(id = "summary", content = "previous handoff")
+        )
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(onlySummaryPair, provider, force = true, onEvent = { events.add(it) })
+        assertFalse(result.compacted)
+        assertSame(onlySummaryPair, result.messages)
+        assertTrue(events.isEmpty())
+        coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
     }
 
     @Test
     fun invalidResponsesDoNotCommitAndCountFailedCalls() = runTest {
         prepare()
-        for (response in listOf(AIResponse(""), AIResponse("partial", stopReason = "length"), AIResponse("blocked", stopReason = "refusal"))) {
+        // 空正文与拒答都不属于「输出预算不够」，不重试：每种只记一次失败调用
+        for (response in listOf(AIResponse(""), AIResponse("blocked", stopReason = "refusal"))) {
             coEvery { provider.complete(any(), any(), any(), any()) } returns response
             val original = history()
             val result = compactor.compactIfNeeded(original, provider, force = true)
             assertFalse(result.compacted)
             assertSame(original, result.messages)
         }
-        coVerify(exactly = 3) { records.insert(match { it.status == "error" }) }
+        coVerify(exactly = 2) { records.insert(match { it.status == "error" }) }
         coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun truncatedSummaryRetriesOnceWithLargerBudget() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returnsMany listOf(
+            AIResponse("partial", stopReason = "length"),
+            AIResponse("Concise handoff", stopReason = "stop"),
+        )
+        // 历史要小到一次摘要就装得完（单块）：这样「首次被截断 + 重试一次」正好两次模型调用，
+        // 调用次数才是这个用例能稳定断言的东西（历史一大就会被分块，次数随块数漂）。
+        val result = compactor.compactIfNeeded(history(2_000), provider, force = true)
+        assertTrue(result.compacted)
+        coVerify(exactly = 2) { provider.complete(any(), any(), any(), any()) }
+        // 两次模型调用各落一条统计
+        coVerify(exactly = 2) { records.insert(any()) }
+        // 首次上限 1600（16000 窗口的回复预留），被截断后翻倍重试
+        coVerify { provider.maxOutputTokens = 3_200 }
     }
 
     @Test
@@ -192,15 +228,17 @@ class ContextCompactorTest {
     }
 
     @Test
-    fun adjustedEmptyHeadFailsWithoutCallingModel() = runTest {
+    fun adjustedEmptyHeadSkipsSilentlyWithoutCallingModel() = runTest {
         prepare()
         val original = listOf(
             AgentMessage.AssistantMessage(id = "assistant", content = "", toolCalls = listOf(ToolCall("call", "read", emptyMap()))),
             AgentMessage.ToolResultMessage(id = "call", toolName = "read", result = "result")
         )
-        val result = compactor.compactIfNeeded(original, provider, force = true)
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(original, provider, force = true, onEvent = { events.add(it) })
         assertFalse(result.compacted)
         assertSame(original, result.messages)
+        assertTrue(events.isEmpty())
         coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
     }
 

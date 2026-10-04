@@ -46,6 +46,8 @@ object FileLogger {
         Thread(r, "file-logger").apply { isDaemon = true }
     }
     private val fileNameFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(java.time.ZoneId.systemDefault())
+    /** 日期参数参与拼文件名，必须严格校验，否则模型传 `../../x` 就成了路径穿越。 */
+    private val logDateRegex = Regex("""\d{4}-\d{2}-\d{2}""")
     private val timestampFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault())
 
     @Volatile
@@ -125,6 +127,41 @@ object FileLogger {
         return dir.listFiles { f -> f.isFile && f.name.startsWith("log-") }
             ?.sortedBy { it.name }
             ?: emptyList()
+    }
+
+    /** 一份日志的读取结果：文件、总行数、命中行数、实际返回行数与正文（尾部优先）。 */
+    data class LogRead(
+        val fileName: String,
+        val totalLines: Int,
+        val matchedLines: Int,
+        val returnedLines: Int,
+        val text: String,
+    )
+
+    /**
+     * 读一份日志的尾部，供 config 通道的 `logs` 动作取用。
+     *
+     * 读之前先 [flushSync]：写入端是合并 500ms 才落盘的，不冲一下会漏掉刚发生的那些行——
+     * 排查现场时缺的往往正是最后几行。单个文件超过 [MAX_FILE_BYTES] 会被重置，所以这里读到的
+     * 就是当前这一份。
+     *
+     * @param date `yyyy-MM-dd`，缺省今天。只认这一种格式（它要拼进文件名）。
+     * @param query 关键词过滤，大小写不敏感；空或空白则不过滤。
+     * @param limit 最多返回多少行，从尾部取；调用方负责夹上限。
+     * @return 日期非法、未初始化或文件不存在时返回 null。
+     */
+    fun readLogTail(date: String?, query: String?, limit: Int): LogRead? {
+        val dir = logDir ?: return null
+        val day = date?.trim()?.takeIf { it.isNotEmpty() } ?: java.time.LocalDate.now().toString()
+        if (!logDateRegex.matches(day)) return null
+        val file = File(dir, "log-$day.txt")
+        if (!file.isFile) return null
+        flushSync()
+        val lines = runCatching { file.readLines() }.getOrNull() ?: return null
+        val needle = query?.trim()?.takeIf { it.isNotEmpty() }
+        val matched = if (needle == null) lines else lines.filter { it.contains(needle, ignoreCase = true) }
+        val taken = if (matched.size > limit) matched.takeLast(limit) else matched
+        return LogRead("log-$day.txt", lines.size, matched.size, taken.size, taken.joinToString("\n"))
     }
 
     /**

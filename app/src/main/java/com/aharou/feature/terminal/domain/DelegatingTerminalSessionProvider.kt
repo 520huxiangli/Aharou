@@ -2,7 +2,10 @@ package com.aharou.feature.terminal.domain
 
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,6 +28,15 @@ class DelegatingTerminalSessionProvider @Inject constructor(
 
     override val tabFinishedEvents: SharedFlow<TabFinishedEvent>
         get() = delegate().tabFinishedEvents
+
+    /**
+     * 本地与远程两侧都算上：后台命令不该因为用户切了执行模式就从桌宠上消失。
+     * 本流是冷的，组合本身不启动任何协程，由订阅方驱动。
+     */
+    override val runningBackgroundTabs: Flow<List<TabInfo>> =
+        combine(local.runningBackgroundTabs, remote.runningBackgroundTabs) { localTabs, remoteTabs ->
+            localTabs + remoteTabs
+        }.distinctUntilChanged()
 
     override suspend fun startBackgroundCommand(
         command: String,

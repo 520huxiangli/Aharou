@@ -28,6 +28,8 @@ data class TabFinishedEvent(
     val exitCode: Int,
     /** 发起该后台命令的会话 id；回调据此路由回原会话，而非用户当前所在会话。 */
     val sourceSessionId: String?,
+    /** 标签启动时刻（epoch 毫秒）。事件是在标签已改为 Finished 之后才发的，调用方不能再去查「当前是否在跑」，故把时长依据随身带着。 */
+    val startedAt: Long = 0L,
     /** 结束时终端 transcript 的最后 [TAIL_LINES] 行快照。事件可能被缓存到会话空闲才合并发送，期间标签可能已关闭，故在 emit 处提前截取。 */
     val tailOutput: String? = null
 )
@@ -47,6 +49,8 @@ class TerminalTab(
     val session: TerminalSession,
     val isBackground: Boolean,
     val command: String?,
+    /** 标签创建时刻（epoch 毫秒）；0 表示未知。桌宠等 UI 用它算「已跑多久」。 */
+    val startedAt: Long = 0L,
     val notifyOnExit: Boolean = false,
     /** 发起该后台命令的会话 id；交互标签为 null。回调据此路由回原会话。 */
     val sourceSessionId: String? = null,
@@ -84,5 +88,21 @@ data class TabInfo(
     val isBackground: Boolean,
     val running: Boolean,
     val command: String?,
-    val workspacePath: String? = null
+    val workspacePath: String? = null,
+    val startedAt: Long = 0L
 )
+
+/** 终端标签 → 摘要（不携带 session/view 等运行时对象）。 */
+fun TerminalTab.toTabInfo(): TabInfo = TabInfo(
+    id = id,
+    title = title,
+    isBackground = isBackground,
+    running = runState is RunState.Running,
+    command = command,
+    workspacePath = workspacePath,
+    startedAt = startedAt
+)
+
+/** 正在运行的后台标签摘要；桌宠等系统级 UI 用它展示「后台任务」。 */
+fun List<TerminalTab>.runningBackgroundTabInfos(): List<TabInfo> =
+    filter { it.isBackground && it.runState is RunState.Running }.map { it.toTabInfo() }

@@ -8,12 +8,16 @@ import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -135,6 +139,7 @@ class RemoteTerminalSessionManager @Inject constructor(
             session = termSession,
             isBackground = isBackground,
             command = command,
+            startedAt = System.currentTimeMillis(),
             notifyOnExit = notify,
             sourceSessionId = sourceSessionId,
             workspacePath = wsPath,
@@ -177,16 +182,10 @@ class RemoteTerminalSessionManager @Inject constructor(
         }.getOrNull() ?: ""
     }
 
-    override fun listTabs(): List<TabInfo> = _tabs.value.map {
-        TabInfo(
-            id = it.id,
-            title = it.title,
-            isBackground = it.isBackground,
-            running = it.runState is RunState.Running,
-            command = it.command,
-            workspacePath = it.workspacePath
-        )
-    }
+    override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
+
+    override val runningBackgroundTabs: Flow<List<TabInfo>> =
+        combine(_tabs, revision) { tabs, _ -> tabs.runningBackgroundTabInfos() }.distinctUntilChanged()
 
     override fun closeTab(id: String): Boolean {
         val tab = tab(id) ?: return false
@@ -256,6 +255,7 @@ class RemoteTerminalSessionManager @Inject constructor(
                     _tabFinishedEvents.tryEmit(
                         TabFinishedEvent(
                             target.id, target.title, target.command, 0, target.sourceSessionId,
+                            startedAt = target.startedAt,
                             tailOutput = getTabOutput(target.id)?.takeTailLines(TAIL_LINES)
                         )
                     )

@@ -2106,6 +2106,14 @@
     <string name="pet_missed_you">……你终于回来了。我还以为你把我忘了。</string>
     <string name="pet_agent_done">干完了，你去看看？</string>
     <string name="pet_agent_waiting">我卡在等你点确认……看一眼屏幕嘛。</string>
+    <string name="pet_bg_named">%1$s · %2$s</string>
+    <string name="pet_bg_subagents">子代理 %1$d 个 · %2$s</string>
+    <string name="pet_bg_count">后台 %1$d 个任务 · %2$s</string>
+    <string name="pet_bg_task">后台任务</string>
+    <string name="pet_bg_done">%1$s 干完了。</string>
+    <string name="pet_bg_failed">%1$s 挂了。</string>
+    <string name="pet_bg_failed_with_code">%1$s 挂了，退出码 %2$d。</string>
+    <string name="pet_notification_background">在替你盯着后台任务</string>
     <string name="pet_brief">天气与节日提醒</string>
     <string name="pet_brief_hint">每天第一次出现时她会报一句：节日祝福 + 今天天气要不要带伞。天气走 Open-Meteo，开了才取一次定位</string>
     <string name="pet_brief_location">定位权限</string>

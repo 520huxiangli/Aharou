@@ -195,6 +195,14 @@ public final class TerminalSession extends TerminalOutput {
         }
     }
 
+    /** 子进程退出时 PTY 读到 EIO 属于正常结束（对应 EOF 那条路径），其他异常才是真故障。 */
+    private static boolean isNormalEnd(Exception e) {
+        String message = e.getMessage();
+        if (message == null) return false;
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("eio") || lower.contains("input/output error");
+    }
+
     private void startPumpThreads(String label) {
         final InputStream termIn = mBackend.getInputStream();
         final OutputStream termOut = mBackend.getOutputStream();
@@ -216,7 +224,13 @@ public final class TerminalSession extends TerminalOutput {
                         mMainThreadHandler.sendEmptyMessage(MSG_NEW_INPUT);
                     }
                 } catch (Exception e) {
-                    mClient.logWarn(LOG_TAG, "PTY 读取异常(pid=" + mShellPid + "): " + e);
+                    // Linux 上子进程退出时，读 PTY 主设备拿到的是 EIO 而不是 EOF，
+                    // 那是正常的收尾信号，当成故障报出来只会误导排查。
+                    if (isNormalEnd(e)) {
+                        mClient.logInfo(LOG_TAG, "PTY 输入流结束(EIO)，子进程已退出 pid=" + mShellPid);
+                    } else {
+                        mClient.logWarn(LOG_TAG, "PTY 读取异常(pid=" + mShellPid + "): " + e);
+                    }
                 }
             }
         }.start();

@@ -30,12 +30,15 @@ import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.runtime.AgentRuntimeStatus
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
+import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
+import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.presentation.component.PendingUploadAttachment
 import com.aharou.feature.agent.presentation.component.appendAttachmentsToRequest
 import com.aharou.feature.agent.presentation.component.toAgentAttachments
 import com.aharou.feature.agent.presentation.component.toAgentImages
+import com.aharou.feature.terminal.domain.TerminalSessionProvider
 import com.aharou.feature.voice.call.VoiceCallService
 import com.aharou.feature.voice.call.VoiceCallSession
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -102,6 +105,14 @@ class PetOverlayService : Service() {
 
         /** 任务至少跑了这么久才值得播报「干完了」，免得短问答也叮一下。 */
         private const val DONE_MIN_MS = 20_000L
+
+        /** 后台任务的最短时长门槛与播报冷却：跟 [DONE_MIN_MS] 同口径，外加合并连珠炮的窗口。 */
+        private const val BG_TASK_DONE_MIN_MS = 20_000L
+        private const val BG_TICK_MS = 1_000L
+        private const val BG_ANNOUNCE_COOLDOWN_MS = 6_000L
+
+        /** 子代理「首次看见」记录的保留时限。事件到达晚于状态更新，清早了会把待播报的记录抹掉。 */
+        private const val BG_ANNOUNCE_STALE_MS = 3_600_000L
 
         /** 挂在那儿等你确认多久后响一声。 */
         private const val WAIT_REMIND_MS = 20_000L
@@ -243,6 +254,29 @@ class PetOverlayService : Service() {
     @Inject
     internal lateinit var agentTurnRunner: AgentTurnRunner
 
+    /** 后台终端命令的来源（只读它的运行中标签流）。 */
+    @Inject
+    internal lateinit var terminalSessionProvider: TerminalSessionProvider
+
+    /** 运行中的子代理来源。 */
+    @Inject
+    internal lateinit var subAgentEventBus: SubAgentEventBus
+
+    /** 当前在跑的后台任务，供气泡与走秒心跳用。 */
+    private val backgroundTasks = MutableStateFlow<List<PetTaskRef>>(emptyList())
+
+    /** 走秒心跳：值本身不重要，变一下只为让 combine 重跑一次 render。 */
+    private val bgTick = MutableStateFlow(0L)
+
+    /** 任务的「首次看见在跑」时刻，用于推算已跑时长与是否值得播报。子代理拿不到开始时间，靠它兜底。 */
+    private val firstSeenAt = mutableMapOf<String, Long>()
+
+    /** 上次播报后台任务结束的时间，用于合并几乎同时结束的多条。 */
+    private var lastBackgroundAnnounceAt = 0L
+
+    /** 上次写进常驻通知的正文，用来跳掉重复的 notify。 */
+    private var lastNotificationText: String? = null
+
     private var remindJob: Job? = null
     private var tone: ToneGenerator? = null
 
@@ -307,7 +341,9 @@ class PetOverlayService : Service() {
                 },
                 always,
                 hidden,
-            ) { core, alwaysNow, hiddenNow ->
+                backgroundTasks,
+                bgTick,
+            ) { core, alwaysNow, hiddenNow, backgroundNow, _ ->
                 Snapshot(
                     status = core.status,
                     foreground = core.foreground,
@@ -316,11 +352,15 @@ class PetOverlayService : Service() {
                     displayText = core.displayText,
                     always = alwaysNow,
                     hidden = hiddenNow,
+                    bgTasks = backgroundNow,
                 )
             }.collect { snap -> render(snap) }
         }
         watchAgent()
         watchApproval()
+        watchBackgroundTasks()
+        watchBackgroundCompletions()
+        tickBackgroundTasks()
     }
 
     /** 任务跑完（且跑了足够久）就报一句。 */
@@ -367,6 +407,124 @@ class PetOverlayService : Service() {
                 }
         }
     }
+
+    /**
+     * 把「正在跑的后台任务」汇成一份给悬浮窗看。
+     *
+     * 子代理只给了 id，既没名字也没开始时间：名字要读会话库、代价大且第一版不需要；
+     * 开始时间退化成「悬浮窗第一次看见它还在跑」的时刻，够算已跑多久。
+     */
+    private fun watchBackgroundTasks() {
+        scope.launch {
+            combine(
+                terminalSessionProvider.runningBackgroundTabs,
+                subAgentEventBus.activeSubSessionIds,
+            ) { tabs, subagentIds ->
+                val now = System.currentTimeMillis()
+                val refs = buildList {
+                    tabs.forEach { tab ->
+                        add(
+                            PetTaskRef(
+                                id = "term:${tab.id}",
+                                kind = PetTaskKind.TERMINAL,
+                                label = tab.command ?: tab.title,
+                                startedAt = tab.startedAt.takeIf { it > 0 } ?: now,
+                            )
+                        )
+                    }
+                    subagentIds.forEach { subId ->
+                        val id = "sub:$subId"
+                        add(PetTaskRef(id = id, kind = PetTaskKind.SUBAGENT, label = "", startedAt = firstSeen(id, now)))
+                    }
+                }
+                // 子代理只有 id，没有开始时间，靠 firstSeen 兜底。事件到达晚于状态更新，
+                // 所以只清「早就没在跑」的记录，别把还没播报的那条抹掉。
+                val liveIds = subagentIds.mapTo(mutableSetOf()) { "sub:$it" }
+                val staleBefore = now - BG_ANNOUNCE_STALE_MS
+                firstSeenAt.keys.toList().forEach { id ->
+                    if (id !in liveIds && firstSeenAt.getValue(id) < staleBefore) firstSeenAt.remove(id)
+                }
+                refs
+            }.collect { refs -> backgroundTasks.value = refs }
+        }
+    }
+
+    private fun firstSeen(id: String, now: Long): Long = firstSeenAt.getOrPut(id) { now }
+
+    /** 走秒心跳：只有真的有后台任务跑着时才推进 [bgTick]，闲着的时候这个循环只是睡。 */
+    private fun tickBackgroundTasks() {
+        scope.launch {
+            while (true) {
+                delay(BG_TICK_MS)
+                if (backgroundTasks.value.isNotEmpty()) bgTick.value = System.currentTimeMillis()
+            }
+        }
+    }
+
+    /**
+     * 后台任务结束就报一句。
+     *
+     * 跑得不够久的（`ls` 之类）不报；多条几乎同时结束时用冷却合并成一句，不连珠炮。
+     * 被用户手动停掉的不当失败报——与 terminal 工具对 STOPPED / FAILED 的区分保持一致。
+     */
+    private fun watchBackgroundCompletions() {
+        scope.launch {
+            terminalSessionProvider.tabFinishedEvents.collect { event ->
+                announceBackgroundDone(
+                    taskId = "term:${event.tabId}",
+                    label = event.command?.takeIf { it.isNotBlank() } ?: event.title,
+                    failed = event.exitCode != 0,
+                    startedAt = event.startedAt,
+                    exitCode = event.exitCode,
+                )
+            }
+        }
+        scope.launch {
+            subAgentEventBus.events.collect { event ->
+                when (event.type) {
+                    SubAgentEventType.COMPLETED -> announceBackgroundDone(
+                        taskId = "sub:${event.subSessionId}",
+                        label = "",
+                        failed = false,
+                    )
+                    SubAgentEventType.FAILED -> announceBackgroundDone(
+                        taskId = "sub:${event.subSessionId}",
+                        label = "",
+                        failed = true,
+                    )
+                    else -> Unit
+                }
+            }
+        }
+    }
+
+    private fun announceBackgroundDone(
+        taskId: String,
+        label: String,
+        failed: Boolean,
+        startedAt: Long = 0L,
+        exitCode: Int? = null,
+    ) {
+        val now = System.currentTimeMillis()
+        // 终端由事件自带的 startedAt 给时长；子代理没有时间戳，退化成「首次看见它还在跑」的时刻，
+        // 取不到就说明它压根没以运行态出现过（服务刚起），不报。
+        val since = startedAt.takeIf { it > 0 } ?: firstSeenAt.remove(taskId) ?: return
+        if (now - since < BG_TASK_DONE_MIN_MS) return
+        if (now - lastBackgroundAnnounceAt < BG_ANNOUNCE_COOLDOWN_MS) return
+        lastBackgroundAnnounceAt = now
+        val name = label.ifBlank { getString(R.string.pet_bg_task) }
+        val line = when {
+            !failed -> getString(R.string.pet_bg_done, name)
+            exitCode != null -> getString(R.string.pet_bg_failed_with_code, name, exitCode)
+            else -> getString(R.string.pet_bg_failed, name)
+        }
+        overlay.say(line)
+        ringBell()
+    }
+
+    /** 把后台任务那一行并到已有状态下面；没有后台任务就不加空行。 */
+    private fun withBackground(line: String, background: String?): String =
+        if (background.isNullOrBlank()) line else "$line\n$background"
 
     /**
      * 每天第一次现身时报一句：节日祝福 / 今日天气与注意事项。
@@ -440,25 +598,37 @@ class PetOverlayService : Service() {
             wasShown = true
             announceBrief()
         }
+        val bgLine = backgroundTaskLine(
+            snap.bgTasks,
+            System.currentTimeMillis(),
+            getString(R.string.pet_bg_named),
+            getString(R.string.pet_bg_subagents),
+            getString(R.string.pet_bg_count),
+        )
         val persistent = when {
             snap.callRunning && snap.displayText.isNotBlank() -> snap.displayText
             snap.callRunning -> getString(callStateLabel(snap.callState))
-            working && snap.status.statusText.isNotBlank() -> snap.status.statusText
-            working -> getString(R.string.floating_thinking)
+            working && snap.status.statusText.isNotBlank() -> withBackground(snap.status.statusText, bgLine)
+            working -> withBackground(getString(R.string.floating_thinking), bgLine)
+            bgLine != null -> bgLine
             else -> ""
         }
-        overlay.showStatus(persistent)
+        overlay.showStatus(persistent, busy = bgLine != null && !snap.callRunning)
         overlay.setCallState(snap.callRunning)
 
         val notificationText = when {
             snap.callRunning -> getString(R.string.pet_notification_call)
             working -> getString(R.string.pet_notification_working)
+            bgLine != null -> getString(R.string.pet_notification_background)
             else -> getString(R.string.pet_notification_text)
         }
         notify(notificationText)
     }
 
     private fun notify(text: String) {
+        // render 现在会被后台任务的走秒心跳每秒叫一次，内容没变就别再往系统丢一次通知。
+        if (text == lastNotificationText) return
+        lastNotificationText = text
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         runCatching { manager.notify(NOTIFICATION_ID, buildNotification(text)) }
     }
@@ -625,6 +795,7 @@ class PetOverlayService : Service() {
         val displayText: String,
         val always: Boolean,
         val hidden: Boolean,
+        val bgTasks: List<PetTaskRef> = emptyList(),
     )
 
     /** 前五个源头先合成一段，否则七路类型不同没法一次 combine（Flow 是不变的）。 */

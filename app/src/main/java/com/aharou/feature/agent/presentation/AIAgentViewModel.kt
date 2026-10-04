@@ -92,6 +92,7 @@ import com.aharou.feature.agent.presentation.component.PastedText
 import com.aharou.feature.agent.presentation.component.RewindOption
 import com.aharou.feature.agent.presentation.component.expandPastePlaceholders
 import com.aharou.feature.agent.presentation.component.formatTokenCount
+import com.aharou.feature.agent.presentation.component.shouldPasteAsFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -438,13 +439,19 @@ class AIAgentViewModel @Inject constructor(
         }.getOrNull()
     }
 
-    private fun selectionAttachment(text: String): PendingUploadAttachment? {
+    private fun selectionAttachment(text: String): PendingUploadAttachment? = textAttachment(text, "")
+
+    /**
+     * 把一段文本落成 `.txt` 附件。[prefix] 只影响文件名（如 `pasted-20.22.txt`），
+     * 好让人在附件卡片上一眼看出它从哪来。
+     */
+    private fun textAttachment(text: String, prefix: String): PendingUploadAttachment? {
         val stamp = java.time.LocalTime.now().format(SELECTION_STAMP_FORMAT)
         return runCatching {
-            var fileName = "$stamp.txt"
+            var fileName = "$prefix$stamp.txt"
             var index = 1
             while (fileAccess.exists("$ATTACHMENTS_DIR/$fileName")) {
-                fileName = "$stamp-$index.txt"
+                fileName = "$prefix$stamp-$index.txt"
                 index += 1
             }
             val containerPath = "$ATTACHMENTS_DIR/$fileName"
@@ -470,12 +477,40 @@ class AIAgentViewModel @Inject constructor(
 
     /** 缓冲 [text]，返回顶替它的 `[Pasted#N]` 标记。 */
     fun stashPastedText(text: String): String {
+        val sessionId = _currentSessionId.value ?: return PastedText.placeholderFor(nextPasteId++)
+        // 一次粘贴会被 IME / Compose 送来两遍（第二遍带的是原文而非增量），照单全收就会折两块、
+        // 落两份文件。同内容直接复用已有的块与标记。
+        _pastedTexts.value[sessionId].orEmpty().firstOrNull { it.text == text }
+            ?.let { return it.placeholder }
         val id = nextPasteId++
-        val sessionId = _currentSessionId.value ?: return PastedText.placeholderFor(id)
         val entries = _pastedTexts.value[sessionId].orEmpty() + PastedText(id, text)
         _pastedTexts.value = _pastedTexts.value + (sessionId to entries)
         savePastedTexts(_pastedTexts.value)
+        // 超大粘贴额外落一份 .txt：写成功就把标记抹了，内容由附件带走；写失败则什么都不做，
+        // 标记留着，发送时照旧展开回原文——不丢东西。
+        if (shouldPasteAsFile(text)) stashPastedFile(sessionId, id, text)
         return PastedText.placeholderFor(id)
+    }
+
+    private fun stashPastedFile(sessionId: String, id: Int, text: String) {
+        viewModelScope.launch {
+            val attachment = withContext(Dispatchers.IO) {
+                textAttachment(text, PASTE_FILE_PREFIX)
+            } ?: return@launch
+            // 期间切了会话就什么都不做：标记留在草稿里，发送时展开回原文
+            if (_currentSessionId.value != sessionId) return@launch
+            // 附件与抹标记必须在同一次主线程续体里落地，中间一旦让出，用户恰好发送就会变成
+            // 「文件 + 展开的原文」两份内容。
+            addPendingAttachments(listOf(attachment))
+            val marker = PastedText.placeholderFor(id)
+            val draft = _inputDrafts.value[sessionId].orEmpty()
+            if (marker in draft) updateInputDraft(draft.replace(marker, ""))
+            val remaining = _pastedTexts.value[sessionId].orEmpty().filterNot { it.id == id }
+            _pastedTexts.value =
+                if (remaining.isEmpty()) _pastedTexts.value - sessionId
+                else _pastedTexts.value + (sessionId to remaining)
+            savePastedTexts(_pastedTexts.value)
+        }
     }
 
     fun removePastedText(id: Int) {
@@ -1330,6 +1365,9 @@ class AIAgentViewModel @Inject constructor(
         /** 选中片段落盘的文件名格式（`20.22.txt`，当前时分）；同一分钟内的重名由序号兜底。 */
         val SELECTION_STAMP_FORMAT: java.time.format.DateTimeFormatter =
             java.time.format.DateTimeFormatter.ofPattern("HH.mm")
+
+        /** 粘贴超长文本落盘时的文件名前缀，与选中片段区分开。 */
+        const val PASTE_FILE_PREFIX = "pasted-"
 
         /** 附件预览的字节上限：超过就不预览，免得把大文件拉进内存。 */
         const val PREVIEW_MAX_BYTES = 256L * 1024

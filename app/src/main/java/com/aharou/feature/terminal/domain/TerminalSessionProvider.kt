@@ -1,5 +1,6 @@
 package com.aharou.feature.terminal.domain
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 
 /**
@@ -14,6 +15,12 @@ interface TerminalSessionProvider {
 
     /** 后台命令结束时 emit 的事件，供 ViewModel 订阅后通知 AI。 */
     val tabFinishedEvents: SharedFlow<TabFinishedEvent>
+
+    /**
+     * 正在运行的后台标签。桌宠等系统级 UI 订阅它展示「后台任务」；
+     * 只在标签增删或运行状态变化时推送（内容不变不会重复下发）。
+     */
+    val runningBackgroundTabs: Flow<List<TabInfo>>
 
     /** 把一条命令挂后台跑（如 `npm run dev`），返回唯一 tabId。 */
     suspend fun startBackgroundCommand(
