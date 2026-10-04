@@ -89,13 +89,6 @@ internal fun BackgroundImageControls(
             .padding(horizontal = Spacing.lg)
             .padding(bottom = Spacing.xl)
     ) {
-        Text(
-            text = stringResource(R.string.settings_background_image),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = Spacing.md)
-        )
-
         if (previewBitmap != null) {
             Image(
                 bitmap = previewBitmap!!,

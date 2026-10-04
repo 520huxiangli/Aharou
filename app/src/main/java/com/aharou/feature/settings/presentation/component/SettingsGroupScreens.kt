@@ -146,7 +146,7 @@ internal fun SettingsGeneralGroupScreen(
     dynamicColorEnabled: Boolean,
     terminalSettings: TerminalSettings,
     currentLanguageDisplayName: String,
-    onOpenThemeSheet: () -> Unit,
+    onOpenTheme: () -> Unit,
     onOpenTerminalSettingsSheet: () -> Unit,
     onOpenLanguageSheet: () -> Unit,
     onOpen: (SettingsSection) -> Unit
@@ -169,7 +169,7 @@ internal fun SettingsGeneralGroupScreen(
             SettingsRow(
                 icon = FeatherIcons.Moon,
                 title = stringResource(R.string.settings_theme_title),
-                onClick = onOpenThemeSheet,
+                onClick = onOpenTheme,
                 trailing = {
                     val colorLabel = if (dynamicColorEnabled && isDynamicColorSupported) {
                         stringResource(R.string.theme_dynamic_color)

@@ -257,8 +257,11 @@
     <string name="share_intake_preview">预览</string>
     <string name="share_intake_insert">插入输入框</string>
     <string name="provider_dashboard_import_script">从手机导入脚本</string>
+    <string name="provider_dashboard_share_script">分享面板脚本</string>
+    <string name="provider_dashboard_share_failed">导出失败：找不到脚本文件</string>
+    <string name="provider_dashboard_package_imported">已导入面板脚本：%1$s（含参数）</string>
     <string name="provider_dashboard_select_title">选择面板脚本</string>
-    <string name="provider_dashboard_select_hint">执行并预览面板；左滑脚本可删除</string>
+    <string name="provider_dashboard_select_hint">执行并预览面板；左滑删除，长按分享</string>
     <string name="provider_dashboard_script_delete_title">删除面板脚本</string>
     <string name="provider_dashboard_script_delete_message">将删除「%1$s」的脚本文件，此操作不可恢复。确定删除？</string>
     <string name="provider_dashboard_clear_script">不使用面板脚本 (清空)</string>

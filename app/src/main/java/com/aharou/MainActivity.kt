@@ -239,11 +239,27 @@ class MainActivity : ComponentActivity() {
         )
         if (uris.isEmpty()) return
         lifecycleScope.launch {
-            // 脚本类文件导入 ~/.aharou/scripts/（面板脚本目录），其余当普通附件。
-            val (scripts, others) = uris.partition {
-                PanelScriptImporter.isPanelScript(PanelScriptImporter.queryDisplayName(this@MainActivity, it))
+            // 脚本类文件导入 ~/.aharou/scripts/（面板脚本目录），其余当普通附件；
+            // 面板分享包（.json）连同 DIY 参数一起还原。
+            val importedScripts = mutableListOf<String>()
+            val others = mutableListOf<Uri>()
+            uris.forEach { uri ->
+                val name = PanelScriptImporter.queryDisplayName(this@MainActivity, uri)
+                val pkg = if (PanelScriptImporter.maybePanelPackage(name)) {
+                    PanelScriptImporter.parsePackage(this@MainActivity, uri)
+                } else {
+                    null
+                }
+                when {
+                    pkg != null -> PanelScriptImporter.writePackageScript(this@MainActivity, pkg)
+                        ?.let { importedScripts += it }
+
+                    PanelScriptImporter.isPanelScript(name) -> PanelScriptImporter.import(this@MainActivity, uri)
+                        ?.let { importedScripts += it }
+
+                    else -> others += uri
+                }
             }
-            val importedScripts = scripts.mapNotNull { PanelScriptImporter.import(this@MainActivity, it) }
             if (importedScripts.isNotEmpty()) {
                 FileLogger.i("MainActivity", "已导入面板脚本：${importedScripts.joinToString()}")
                 Toast.makeText(

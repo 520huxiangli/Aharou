@@ -256,8 +256,11 @@
     <string name="share_intake_preview">Preview</string>
     <string name="share_intake_insert">Insert into input</string>
     <string name="provider_dashboard_import_script">Import script from device</string>
+    <string name="provider_dashboard_share_script">Share panel script</string>
+    <string name="provider_dashboard_share_failed">Export failed: script file not found</string>
+    <string name="provider_dashboard_package_imported">Imported panel script: %1$s (with params)</string>
     <string name="provider_dashboard_select_title">Select Dashboard Script</string>
-    <string name="provider_dashboard_select_hint">Execute and preview the panel; swipe a script left to delete it</string>
+    <string name="provider_dashboard_select_hint">Execute and preview the panel; swipe left to delete, long-press to share</string>
     <string name="provider_dashboard_script_delete_title">Delete panel script</string>
     <string name="provider_dashboard_script_delete_message">This deletes the script file \"%1$s\" and cannot be undone. Delete it?</string>
     <string name="provider_dashboard_clear_script">None (Clear script)</string>

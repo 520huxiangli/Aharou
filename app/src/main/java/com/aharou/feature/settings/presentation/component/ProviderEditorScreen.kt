@@ -150,6 +150,7 @@ import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.ChevronUp
+import android.content.Intent
 import android.widget.Toast
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Terminal
@@ -253,10 +254,30 @@ fun ProviderEditorScreen(
     var showAddModelSheet by remember { mutableStateOf(false) }
     var showFetchDialog by remember { mutableStateOf(false) }
     var showScriptPickerSheet by remember { mutableStateOf(false) }
-    // 从手机选一个脚本导入 ~/.aharou/scripts/（与分享导入同一套逻辑）。
+    // 从手机导入脚本：面板分享包（.json）会自动带上参数，普通脚本文件照旧拷进 ~/.aharou/scripts/。
     val scriptImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
+                val displayName = PanelScriptImporter.queryDisplayName(context, uri)
+                if (PanelScriptImporter.maybePanelPackage(displayName)) {
+                    val pkg = PanelScriptImporter.parsePackage(context, uri)
+                    if (pkg != null) {
+                        PanelScriptImporter.writePackageScript(context, pkg)?.let { saved ->
+                            if (pkg.params.isNotEmpty()) {
+                                scriptParams.clear()
+                                scriptParams.addAll(pkg.params.toList())
+                            }
+                            dashboardScriptPath = saved
+                            viewModel.loadDashboardScripts()
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.provider_dashboard_package_imported, saved),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return@launch
+                    }
+                }
                 val name = PanelScriptImporter.import(context, uri)
                 if (name != null) {
                     Toast.makeText(
@@ -1087,6 +1108,28 @@ fun ProviderEditorScreen(
             onDelete = { scriptName ->
                 viewModel.deleteDashboardScript(scriptName)
                 viewModel.loadDashboardScripts()
+            },
+            onShare = { scriptName ->
+                scope.launch {
+                    val params = scriptParams.filter { it.first.isNotBlank() }.toMap()
+                    val uri = PanelScriptImporter.exportPackage(context, scriptName, params)
+                    if (uri == null) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.provider_dashboard_share_failed),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            setType("application/json")
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(
+                            Intent.createChooser(send, context.getString(R.string.provider_dashboard_share_script))
+                        )
+                    }
+                }
             },
             onDismiss = { showScriptPickerSheet = false }
         )
@@ -2421,6 +2464,7 @@ private fun ScriptPickerBottomSheet(
     onImportFromFile: () -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String) -> Unit,
+    onShare: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var pendingDelete by remember { mutableStateOf<String?>(null) }
@@ -2492,7 +2536,8 @@ private fun ScriptPickerBottomSheet(
                 scripts.forEach { scriptName ->
                     SwipeToDeleteRow(
                         onDelete = { pendingDelete = scriptName },
-                        onClick = { onSelect(scriptName) }
+                        onClick = { onSelect(scriptName) },
+                        onLongClick = { onShare(scriptName) }
                     ) {
                         Row(
                             modifier = Modifier

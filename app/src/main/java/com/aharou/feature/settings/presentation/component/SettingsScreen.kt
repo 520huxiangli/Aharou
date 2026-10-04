@@ -138,6 +138,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Pet(R.string.pet_title),
     Memory(R.string.memory_settings_title),
     General(R.string.settings_general),
+    Theme(R.string.settings_theme_title),
     Providers(R.string.settings_providers),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
@@ -394,7 +395,6 @@ fun SettingsScreen(
     var showContainerAddSheet by remember { mutableStateOf(false) }
     var showContainerAnnouncement by remember { mutableStateOf(false) }
     var showImageSourceSheet by remember { mutableStateOf(false) }
-    var showThemeSheet by remember { mutableStateOf(false) }
     var showLanguageSheet by remember { mutableStateOf(false) }
     var showResetTokenStats by remember { mutableStateOf(false) }
 
@@ -421,6 +421,7 @@ fun SettingsScreen(
         SettingsSection.Mcp,
         SettingsSection.Skills -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
+        SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
         SettingsSection.AppPermissions,
         SettingsSection.Accessibility,
@@ -929,7 +930,7 @@ fun SettingsScreen(
                     dynamicColorEnabled = dynamicColorEnabled,
                     terminalSettings = terminalSettings,
                     currentLanguageDisplayName = currentLanguageDisplayName,
-                    onOpenThemeSheet = { showThemeSheet = true },
+                    onOpenTheme = { openSection(SettingsSection.Theme) },
                     onOpenTerminalSettingsSheet = { showTerminalSettingsSheet = true },
                     onOpenLanguageSheet = { showLanguageSheet = true },
                     onOpen = openSection
@@ -944,6 +945,19 @@ fun SettingsScreen(
                 SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
+                SettingsSection.Theme -> ThemeSettingsSection(
+                    selected = themeMode,
+                    selectedPresetId = themePresetId,
+                    dynamicColorEnabled = dynamicColorEnabled,
+                    backgroundImagePath = backgroundImagePath,
+                    backgroundAlpha = backgroundAlpha,
+                    onSelected = { viewModel.setThemeMode(it) },
+                    onPresetSelected = { viewModel.setThemePreset(it) },
+                    onDynamicColorChanged = { viewModel.setDynamicColorEnabled(it) },
+                    onPickBackgroundImage = { viewModel.setBackgroundImage(it) },
+                    onBackgroundAlphaChange = { viewModel.setBackgroundAlpha(it) },
+                    onRemoveBackgroundImage = { viewModel.clearBackgroundImage() }
+                )
                 SettingsSection.General -> GeneralSettingsSection(
                     autoRemoveStaleModels = autoRemoveStaleModels,
                     onToggleAutoRemoveStaleModels = { viewModel.setAutoRemoveStaleModels(it) },
@@ -1387,23 +1401,6 @@ fun SettingsScreen(
                 section = SettingsSection.SkillMarket
             },
             onDismiss = { showSkillAddSheet = false }
-        )
-    }
-
-    if (showThemeSheet) {
-        ThemeSelectionSheet(
-            selected = themeMode,
-            selectedPresetId = themePresetId,
-            dynamicColorEnabled = dynamicColorEnabled,
-            backgroundImagePath = backgroundImagePath,
-            backgroundAlpha = backgroundAlpha,
-            onSelected = { viewModel.setThemeMode(it) },
-            onPresetSelected = { viewModel.setThemePreset(it) },
-            onDynamicColorChanged = { viewModel.setDynamicColorEnabled(it) },
-            onPickBackgroundImage = { viewModel.setBackgroundImage(it) },
-            onBackgroundAlphaChange = { viewModel.setBackgroundAlpha(it) },
-            onRemoveBackgroundImage = { viewModel.clearBackgroundImage() },
-            onDismiss = { showThemeSheet = false }
         )
     }
 
