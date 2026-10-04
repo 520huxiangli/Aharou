@@ -117,7 +117,7 @@ class EditFileTool @Inject constructor(
 
             WriteLease.denialReason(context.writePaths, path)?.let { reason ->
                 FileLogger.w(TAG, "edit_file 被写路径租约拒绝: $path ($reason)")
-                return ToolResult.Error("写路径租约拒绝：$reason", "WRITE_LEASE_DENIED")
+                return ToolResult.Error("${WriteLease.DENIAL_PREFIX}：$reason", "WRITE_LEASE_DENIED")
             }
 
             val edits = parseEdits(args)

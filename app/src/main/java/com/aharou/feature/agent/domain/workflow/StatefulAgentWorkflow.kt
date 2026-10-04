@@ -1543,7 +1543,7 @@ class StatefulAgentWorkflow @Inject constructor(
             return PermissionCheckResult(false, reason, code)
         }
 
-        if (tool.permissionPolicy == ToolPermissionPolicy.AUTO_APPROVE) {
+        if (tool.effectivePermissionPolicy(mode) == ToolPermissionPolicy.AUTO_APPROVE) {
             return PermissionCheckResult(true)
         }
 

@@ -3,24 +3,33 @@ package com.aharou.feature.agent.domain.tool.subagent
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
+import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
+import com.aharou.feature.agent.domain.subagent.SubAgentClaimVerifier
+import com.aharou.feature.agent.domain.subagent.SubAgentConclusionJudge
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.subagent.SubAgentEvidence
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
+import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
+import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -69,6 +78,10 @@ class TaskTool @Inject constructor(
 
     override val name = "task"
     override val permissionPolicy = ToolPermissionPolicy.ASK
+
+    /** 非 PLAN 模式直接放行（派子代理是默认行为）；PLAN 下仍逐次确认。 */
+    override fun effectivePermissionPolicy(mode: AgentMode): ToolPermissionPolicy =
+        if (mode == AgentMode.PLAN) permissionPolicy else ToolPermissionPolicy.AUTO_APPROVE
     override val capabilities = setOf(ToolCapability.MODIFY_SESSION_STATE)
 
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
@@ -79,7 +92,7 @@ class TaskTool @Inject constructor(
         }
     }
 
-    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 可用 agent 指定自定义子代理。"
+    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 可用 agent 指定自定义子代理。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
@@ -184,6 +197,17 @@ class TaskTool @Inject constructor(
             }
         }
 
+        // 并行写隔离：同一时刻两个子代理写同一处会互相踩，冲突的直接拒绝，由主代理串行派发。
+        val writePaths = parseWritePaths(args)
+        if (writePaths != null && writePaths.isNotEmpty()) {
+            subAgentWriteLease.conflictingSession(writePaths, eventBus.activeSubSessionIds.value)?.let { conflictId ->
+                return ToolResult.Error(
+                    "与在跑的子代理 $conflictId 的可写路径冲突：等它结束后再派发，或改成只读（writePaths=[]）并行。",
+                    "WRITE_CONFLICT"
+                )
+            }
+        }
+
         // 创建子代理会话
         val subSession = sessionUseCase.newSubSessionEntity(
             title = description,
@@ -201,7 +225,7 @@ class TaskTool @Inject constructor(
         val subSessionId = subSession.id
 
         // 写路径租约：派发时声明了才登记；未声明则不限制（保持旧行为）。
-        parseWritePaths(args)?.let { subAgentWriteLease.register(subSessionId, it) }
+        writePaths?.let { subAgentWriteLease.register(subSessionId, it) }
 
         // 通知 ViewModel 在子会话上启动 AI 工作流
         eventBus.emit(
@@ -298,13 +322,128 @@ class TaskTool @Inject constructor(
             else -> "（子代理会话为空）"
         }
         val last = runCatching { messages.lastOrNull()?.timestamp ?: 0L }.getOrDefault(0L)
+
+        // 自报的 claim 必须过核验：子代理只会写它「真跑过的命令」和「真写过的文件」，
+        // 这里拿子会话里工具调用与结果的真实记录对一遍，对不上就降级。
+        val report = lastAssistant?.let { msg ->
+            SubAgentClaimVerifier.parse(msg.content)?.let { claim ->
+                SubAgentClaimVerifier.verify(claim, collectEvidence(messages))
+            }
+        }
+        // 结论正文：剥掉 claim 协议块（原始 JSON 不进父上下文）；只剩协议块时保留原文不丢内容。
+        val conclusionText = lastAssistant?.let { SubAgentClaimVerifier.stripClaimBlock(it.content) }.orEmpty()
+        // 「子代理说完成」不等于完成：断言前置条件（空结论 / 被拦截的写 / 最终失败的写 / 自述未完成）。
+        val verdict = SubAgentConclusionJudge.judge(
+            conclusion = conclusionText,
+            evidence = collectConclusionEvidence(messages),
+            claimDowngraded = report?.downgraded == true
+        )
+        val outputText = if (lastAssistant != null) conclusionText.ifBlank { lastAssistant.content } else content
+
         return ToolResult.Success(
             buildJsonObject {
                 put("id", subSessionId)
                 put("title", sub.title)
                 put("updatedAt", last)
-                put("lastOutput", content)
+                put("lastOutput", outputText)
+                put("termination", verdict.termination.name)
+                if (verdict.reason.isNotBlank()) put("terminationReason", verdict.reason)
+                put(
+                    "tokenUsage",
+                    buildJsonObject {
+                        put("inputTokens", sub.totalInputTokens)
+                        put("outputTokens", sub.totalOutputTokens)
+                    }
+                )
+                report?.let { r ->
+                    put("claimedStatus", r.declaredStatus)
+                    put("effectiveStatus", r.effectiveStatus)
+                    if (r.summary.isNotBlank()) put("claimSummary", r.summary)
+                    if (r.downgraded) {
+                        put(
+                            "notice",
+                            "子代理自报 ${r.declaredStatus}，但有验收项核验不上，按 ${r.effectiveStatus} 处理。"
+                        )
+                    }
+                    put(
+                        "verification",
+                        buildJsonArray {
+                            r.items.forEach { item ->
+                                addJsonObject {
+                                    put("claim", item.claim)
+                                    put("type", item.type)
+                                    put("passed", item.passed)
+                                    put("note", item.note)
+                                }
+                            }
+                        }
+                    )
+                    put("adjudication", SubAgentClaimVerifier.renderAdjudication(r))
+                }
             }
+        )
+    }
+
+    /**
+     * 从子会话消息里收集核验证据：把 ASSISTANT 的 tool_calls 与对应 TOOL 行的成败配对，
+     * 只采信执行成功的调用——命令取 `command` 原文，落盘取 `path`。
+     */
+    private fun collectEvidence(messages: List<AgentMessageEntity>): SubAgentClaimVerifier.Evidence {
+        val callSucceeded = mutableMapOf<String, Boolean>()
+        messages.filter { it.role == MessageRole.TOOL.name }.forEach { m ->
+            m.toolCallId?.let { callSucceeded[it] = !m.isError }
+        }
+
+        val commands = mutableSetOf<String>()
+        val paths = mutableSetOf<String>()
+        messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
+            val calls = m.toolCallsJson?.let {
+                runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(it) }.getOrNull()
+            }.orEmpty()
+            calls.forEach { call ->
+                if (callSucceeded[call.id] != true) return@forEach
+                when (call.name) {
+                    "Bash" -> (call.arguments["command"] as? JsonPrimitive)?.contentOrNull
+                        ?.let { commands += it.trim() }
+                    "writeFile", "editFile" -> (call.arguments["path"] as? JsonPrimitive)?.contentOrNull
+                        ?.let { paths += it.trim() }
+                }
+            }
+        }
+        return SubAgentClaimVerifier.Evidence(commands, paths)
+    }
+
+    /**
+     * 结算证据：被写租约拦截的写入，以及「写过但最后一次失败」的落盘目标。
+     * 只认结构化写工具（writeFile / editFile）——shell 写不在闸门范围，也无从判定。
+     */
+    private fun collectConclusionEvidence(messages: List<AgentMessageEntity>): SubAgentEvidence {
+        val calls = mutableMapOf<String, Pair<String, String?>>()
+        messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
+            val json = m.toolCallsJson ?: return@forEach
+            runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(json) }.getOrNull()
+                ?.forEach { call ->
+                    val path = (call.arguments["path"] as? JsonPrimitive)?.contentOrNull?.trim()
+                    calls[call.id] = call.name to path
+                }
+        }
+
+        val blocked = mutableListOf<String>()
+        val lastSucceeded = mutableMapOf<String, Boolean>()
+        messages.filter { it.role == MessageRole.TOOL.name }.forEach { m ->
+            val callId = m.toolCallId ?: return@forEach
+            val (name, path) = calls[callId] ?: return@forEach
+            if (name != "writeFile" && name != "editFile") return@forEach
+            val target = path?.takeIf { it.isNotBlank() } ?: return@forEach
+            if (m.isError && m.content.contains(WriteLease.DENIAL_PREFIX)) {
+                if (target !in blocked) blocked += target
+                return@forEach
+            }
+            lastSucceeded[target] = !m.isError
+        }
+        return SubAgentEvidence(
+            blockedWrites = blocked,
+            unresolvedWriteFailures = lastSucceeded.filterValues { !it }.keys.toList()
         )
     }
 

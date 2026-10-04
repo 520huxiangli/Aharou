@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool
 
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.model.AgentMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -97,6 +98,12 @@ abstract class AgentTool {
     abstract val parameters: Map<String, ToolParameter>
     open val permissionPolicy: ToolPermissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
     open val capabilities: Set<ToolCapability> = emptySet()
+
+    /**
+     * 按运行模式解析实际权限策略；默认取 [permissionPolicy]，工具可覆盖。
+     * 例：子代理派发（task）在非 PLAN 模式下免确认，PLAN 下仍弹窗。
+     */
+    open fun effectivePermissionPolicy(mode: AgentMode): ToolPermissionPolicy = permissionPolicy
 
     /**
      * 延迟加载：为 true 的工具不直接进每轮 tools 数组，先由 `tool_search` 按需发现后才展开 schema。
