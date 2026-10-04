@@ -218,6 +218,10 @@ fun isRetriableNetworkError(t: Throwable): Boolean {
         return !NON_RETRYABLE_STREAM_CODES.contains(t.code)
     }
 
+    // 证书类的 TLS 失败重试没有意义（证书不会因为重试就变得可信），要一次说清而不是盲试三次。
+    // 必须排在下面通用的 SSLException / IOException 之前，否则会被它们兜住。
+    if (t is javax.net.ssl.SSLHandshakeException || t is java.security.cert.CertificateException) return false
+
     // 兼容原生网络异常
     if (t is SocketTimeoutException || t is InterruptedIOException ||
         t is java.net.UnknownHostException || t is java.net.ConnectException ||

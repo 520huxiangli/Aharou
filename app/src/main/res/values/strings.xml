@@ -709,6 +709,10 @@
     <string name="chat_compressing_context">正在压缩上下文</string>
     <string name="chat_retrying">正在重试 %1$s/%2$s</string>
     <string name="chat_key_switched">已切换到第 %1$d/%2$d 个 Key</string>
+    <string name="chat_retry_badge">%1$d/%2$d</string>
+    <string name="chat_retry_badge_desc">自动重试第 %1$d 次，共 %2$d 次</string>
+    <string name="chat_retry_records_title">本次重试记录</string>
+    <string name="chat_retry_record_line">第 %1$d 次 · %2$s · %3$s</string>
     <string name="chat_error_title">请求失败</string>
     <string name="slash_command_compress_desc">手动触发当前会话的上下文压缩</string>
     <string name="slash_command_init_desc">分析当前工作区代码库，生成或改进项目规则 AGENTS.md</string>
@@ -1211,6 +1215,40 @@
     <string name="skills_import_error_invalid_archive">压缩包无法读取，请确认是有效的 .zip</string>
     <string name="skills_import_error_unsupported_file">文件类型不支持</string>
     <string name="skills_import_error_io">写入技能文件失败</string>
+
+    <!-- Scheduled Tasks -->
+    <string name="settings_scheduled_tasks">定时任务</string>
+    <string name="scheduled_tasks_intro">让 AI 按固定周期自动执行一条指令。周期下限 %1$d 分钟，实际触发时间取决于系统后台调度。</string>
+    <string name="scheduled_tasks_list_header">任务列表</string>
+    <string name="scheduled_tasks_empty">还没有定时任务</string>
+    <string name="scheduled_tasks_add">新建定时任务</string>
+    <string name="scheduled_tasks_cycle">每 %1$d 分钟 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_limit">上限 %1$d 次</string>
+    <string name="scheduled_tasks_limit_unlimited">不限</string>
+    <string name="scheduled_tasks_next_at">下次 %1$s（约 %2$d 分钟后）</string>
+    <string name="scheduled_tasks_disabled">已停用</string>
+    <string name="scheduled_tasks_due">等待执行</string>
+    <string name="scheduled_tasks_pill_countdown">%1$d 分钟后</string>
+    <string name="scheduled_tasks_missed">上次错过未补跑</string>
+    <string name="scheduled_tasks_editor_new">新建定时任务</string>
+    <string name="scheduled_tasks_editor_edit">编辑定时任务</string>
+    <string name="scheduled_tasks_name">名称</string>
+    <string name="scheduled_tasks_prompt">指令</string>
+    <string name="scheduled_tasks_interval">周期（分钟）</string>
+    <string name="scheduled_tasks_interval_hint">低于 %1$d 分钟将按 %1$d 分钟执行</string>
+    <string name="scheduled_tasks_target">运行位置</string>
+    <string name="scheduled_tasks_target_new">每次新建会话</string>
+    <string name="scheduled_tasks_target_existing">指定会话</string>
+    <string name="scheduled_tasks_sessions_header">选择会话</string>
+    <string name="scheduled_tasks_sessions_empty">暂无可选会话</string>
+    <string name="scheduled_tasks_unnamed">未命名会话</string>
+    <string name="scheduled_tasks_workspace">工作区路径</string>
+    <string name="scheduled_tasks_workspace_hint">留空则使用默认工作区</string>
+    <string name="scheduled_tasks_max_runs">运行上限</string>
+    <string name="scheduled_tasks_max_runs_hint">0 表示不限次数</string>
+    <string name="scheduled_tasks_enabled">启用</string>
+    <string name="scheduled_tasks_delete_title">删除定时任务</string>
+    <string name="scheduled_tasks_delete_message">将删除「%1$s」，此操作不可恢复。确定删除？</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">子代理</string>
@@ -2014,6 +2052,7 @@
     <string name="envvars_delete_title">删除「%1$s」？</string>
     <string name="envvars_delete_body">删除后，容器内新启动的命令将不再包含这个变量。</string>
     <string name="envvars_empty">还没有自定义环境变量</string>
+    <string name="envvars_disabled">已停用</string>
     <string name="envvars_error_empty">名称不能为空</string>
     <string name="envvars_error_format">名称需为字母 / 数字 / 下划线（不能以数字开头）</string>
     <string name="envvars_error_reserved">「%1$s」是容器关键变量名，不允许使用</string>

@@ -29,13 +29,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -53,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -62,14 +66,17 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Brand
+import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.theme.semanticColors
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.agent.domain.provider.RetryErrorKind
+import com.aharou.feature.agent.presentation.RetryState
 import compose.icons.FeatherIcons
-import compose.icons.feathericons.AlertCircle
 import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Key
+import compose.icons.feathericons.RefreshCw
 import kotlinx.coroutines.delay
 
 /** 涟漪高光一个来回的周期（ms）。 */
@@ -200,14 +207,34 @@ internal fun AgentBusyIndicator(
  * 说「正在编辑文件」），见 [toolRunningLabelRes]。
  */
 @Composable
-internal fun ThinkingBubble(label: String) {
-    AgentBusyIndicator(
-        label = label,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = ChatStyle.toolRowMinHeight),
-        showDots = true
-    )
+internal fun ThinkingBubble(label: String, retry: RetryBadgeUi? = null) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = ChatStyle.toolRowMinHeight),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AgentBusyIndicator(
+                label = label,
+                modifier = Modifier.weight(1f),
+                showDots = true
+            )
+            if (retry != null) {
+                Spacer(Modifier.width(Spacing.sm))
+                RetryBadge(
+                    attempt = retry.current.attempt,
+                    maxRetries = retry.current.maxRetries,
+                    expanded = expanded,
+                    onToggle = { expanded = !expanded }
+                )
+            }
+        }
+        if (retry != null && expanded) {
+            RetryRecordList(retry.records)
+        }
+    }
 }
 
 /** 上下文压缩期间的临时状态行，不落库。 */
@@ -222,43 +249,112 @@ internal fun CompactionProgressBubble() {
     )
 }
 
-/** 网络重试期间的临时状态行，不落库。首行展示触发重试的具体错误（如 429/500/网络断开），次行展示重试进度。 */
+/** 一次自动重试的记录，供「正在思考」旁的重试标记展开后逐条展示。 */
+@Immutable
+internal data class RetryAttemptRecord(
+    val attempt: Int,
+    val maxRetries: Int,
+    val error: RetryErrorInfo?,
+    val timestamp: Long
+)
+
+/** 「正在思考」旁重试标记的数据：当前重试进度 + 本次已累计的重试记录。 */
+@Immutable
+internal data class RetryBadgeUi(
+    val current: RetryState,
+    val records: List<RetryAttemptRecord>
+)
+
+/**
+ * 网络重试期间的临时状态行，不落库：沿用「正在思考」气泡，右侧挂一个可点的重试标记
+ * （形如「↻ 1/3」），点开查看本次重试的记录。
+ *
+ * 参数取自现有的重试状态（[com.aharou.feature.agent.presentation.RetryState]），不新增状态源：
+ * 标记展示当前第几次 / 上限；每条重试记录随 [attempt] 变化追加，一次重试序列结束后随气泡离场而清空。
+ */
 @Composable
 internal fun RetryingBubble(attempt: Int, maxRetries: Int, error: RetryErrorInfo?) {
+    val records = remember { mutableStateListOf<RetryAttemptRecord>() }
+    LaunchedEffect(attempt, maxRetries, error) {
+        records.add(RetryAttemptRecord(attempt, maxRetries, error, System.currentTimeMillis()))
+    }
+    ThinkingBubble(
+        label = stringResource(R.string.chat_status_thinking),
+        retry = RetryBadgeUi(RetryState(attempt, maxRetries, error), records.toList())
+    )
+}
+
+/** 自动重试标记：形如「↻ 1/3」，点按展开/收起本次任务的重试记录。 */
+@Composable
+private fun RetryBadge(
+    attempt: Int,
+    maxRetries: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    // semantics 的 lambda 不是 composable，字符串要先取出来。
+    val retryDesc = stringResource(R.string.chat_retry_badge_desc, attempt, maxRetries)
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(Radius.mdLarge))
+            .background(MaterialTheme.semanticColors.capsuleSurface)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+            .semantics {
+                contentDescription = retryDesc
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    ) {
+        Icon(
+            FeatherIcons.RefreshCw,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(12.dp)
+        )
+        Text(
+            text = stringResource(R.string.chat_retry_badge, attempt, maxRetries),
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelSmall
+        )
+        ExpandableChevronIcon(
+            expanded = expanded,
+            contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
+            tint = MaterialTheme.colorScheme.primary,
+            size = 14.dp
+        )
+    }
+}
+
+/** 展开后的重试记录列表：每条为「第 N 次 · 原因 · 时间」。 */
+@Composable
+private fun RetryRecordList(records: List<RetryAttemptRecord>) {
+    val context = LocalContext.current
+    val timeFormat = remember { android.text.format.DateFormat.getTimeFormat(context) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = Spacing.xs),
+            .padding(top = Spacing.sm, start = Spacing.xs),
         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
-        if (error != null) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-            ) {
-                Icon(
-                    FeatherIcons.AlertCircle,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(14.dp)
-                )
-                Text(
-                    text = retryErrorLabel(error),
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelMedium
-                )
-            }
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
+        Text(
+            text = stringResource(R.string.chat_retry_records_title),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall
+        )
+        records.forEach { record ->
+            val errorText = record.error?.let { retryErrorLabel(it) }
+                ?: stringResource(R.string.retry_error_unknown)
             Text(
-                text = stringResource(R.string.chat_retrying, attempt, maxRetries),
+                text = stringResource(
+                    R.string.chat_retry_record_line,
+                    record.attempt,
+                    errorText,
+                    timeFormat.format(java.util.Date(record.timestamp))
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
-            TypingDots(color = MaterialTheme.colorScheme.primary)
         }
     }
 }

@@ -25,6 +25,8 @@ import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -63,6 +65,12 @@ class TaskTool @Inject constructor(
     private val aiProviderRepository: AIProviderRepository,
     private val subAgentWriteLease: SubAgentWriteLease
 ) : AbstractContextualTool() {
+
+    /**
+     * 派发临界区：「查写路径冲突 → 建会话 → 登记租约」必须串行。
+     * 同一轮并发 create 时若不互斥，几个子代理会同时通过冲突检查（线上踩过：两个都改同一个 strings.xml 都没被拦）。
+     */
+    private val createMutex = Mutex()
 
     private companion object {
         const val TAG = "TaskTool"
@@ -222,33 +230,33 @@ class TaskTool @Inject constructor(
 
         // 并行写隔离：同一时刻两个子代理写同一处会互相踩，冲突的直接拒绝，由主代理串行派发。
         val writePaths = parseWritePaths(args)
-        if (writePaths != null && writePaths.isNotEmpty()) {
-            subAgentWriteLease.conflictingSession(writePaths, eventBus.activeSubSessionIds.value)?.let { conflictId ->
-                return ToolResult.Error(
-                    "与在跑的子代理 $conflictId 的可写路径冲突：等它结束后再派发，或改成只读（writePaths=[]）并行。",
-                    "WRITE_CONFLICT"
-                )
+        val subSession = createMutex.withLock {
+            if (writePaths != null && writePaths.isNotEmpty()) {
+                subAgentWriteLease.conflictingSession(writePaths, eventBus.activeSubSessionIds.value)?.let { conflictId ->
+                    return ToolResult.Error(
+                        "与在跑的子代理 $conflictId 的可写路径冲突：等它结束后再派发，或改成只读（writePaths=[]）并行。",
+                        "WRITE_CONFLICT"
+                    )
+                }
+            }
+            sessionUseCase.newSubSessionEntity(
+                title = description,
+                parentId = parentSessionId,
+                parent = parentSession,
+                subagentType = definition?.name ?: DEFAULT_SUBAGENT_TYPE,
+                providerId = definition?.providerId?.let { resolveProviderId(it) },
+                model = definition?.model,
+                reasoningEffort = definition?.reasoningEffort?.let { effort ->
+                    ReasoningEffort.entries.firstOrNull { it.apiValue == effort }?.name
+                },
+                mode = definition?.mode
+            ).also { created ->
+                sessionUseCase.upsertSession(created)
+                // 写路径租约：派发时声明了才登记；未声明则不限制（保持旧行为）。锁内登记，后续并发派发才看得见。
+                writePaths?.let { subAgentWriteLease.register(created.id, it) }
             }
         }
-
-        // 创建子代理会话
-        val subSession = sessionUseCase.newSubSessionEntity(
-            title = description,
-            parentId = parentSessionId,
-            parent = parentSession,
-            subagentType = definition?.name ?: DEFAULT_SUBAGENT_TYPE,
-            providerId = definition?.providerId?.let { resolveProviderId(it) },
-            model = definition?.model,
-            reasoningEffort = definition?.reasoningEffort?.let { effort ->
-                ReasoningEffort.entries.firstOrNull { it.apiValue == effort }?.name
-            },
-            mode = definition?.mode
-        )
-        sessionUseCase.upsertSession(subSession)
         val subSessionId = subSession.id
-
-        // 写路径租约：派发时声明了才登记；未声明则不限制（保持旧行为）。
-        writePaths?.let { subAgentWriteLease.register(subSessionId, it) }
 
         // 通知 ViewModel 在子会话上启动 AI 工作流
         eventBus.emit(

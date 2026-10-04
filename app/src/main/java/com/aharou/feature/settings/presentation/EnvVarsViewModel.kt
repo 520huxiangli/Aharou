@@ -16,5 +16,7 @@ class EnvVarsViewModel @Inject constructor(
 
     fun upsert(name: String, value: String, secret: Boolean) = repository.upsert(name, value, secret)
 
+    fun setEnabled(name: String, enabled: Boolean) = repository.setEnabled(name, enabled)
+
     fun remove(name: String) = repository.remove(name)
 }

@@ -709,6 +709,10 @@
     <string name="chat_compressing_context">Compressing context</string>
     <string name="chat_retrying">Retrying %1$s/%2$s</string>
     <string name="chat_key_switched">Switched to key %1$d of %2$d</string>
+    <string name="chat_retry_badge">%1$d/%2$d</string>
+    <string name="chat_retry_badge_desc">Auto retry %1$d of %2$d</string>
+    <string name="chat_retry_records_title">Retry attempts</string>
+    <string name="chat_retry_record_line">Attempt %1$d · %2$s · %3$s</string>
     <string name="chat_error_title">Request failed</string>
     <string name="slash_command_compress_desc">Manually compact this session context</string>
     <string name="slash_command_init_desc">Analyze the workspace codebase and generate or improve the AGENTS.md project rules</string>
@@ -1211,6 +1215,40 @@
     <string name="skills_import_error_invalid_archive">cannot read the archive; make sure it is a valid .zip</string>
     <string name="skills_import_error_unsupported_file">unsupported file type</string>
     <string name="skills_import_error_io">failed to write the skill file</string>
+
+    <!-- Scheduled Tasks -->
+    <string name="settings_scheduled_tasks">Scheduled tasks</string>
+    <string name="scheduled_tasks_intro">Run a prompt with AI automatically on a fixed interval. The shortest interval is %1$d minutes; exact timing depends on system background scheduling.</string>
+    <string name="scheduled_tasks_list_header">Tasks</string>
+    <string name="scheduled_tasks_empty">No scheduled tasks yet</string>
+    <string name="scheduled_tasks_add">New scheduled task</string>
+    <string name="scheduled_tasks_cycle">Every %1$d min · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_limit">limit %1$d</string>
+    <string name="scheduled_tasks_limit_unlimited">unlimited</string>
+    <string name="scheduled_tasks_next_at">Next %1$s (in ~%2$d min)</string>
+    <string name="scheduled_tasks_disabled">Disabled</string>
+    <string name="scheduled_tasks_due">Due now</string>
+    <string name="scheduled_tasks_pill_countdown">in %1$d min</string>
+    <string name="scheduled_tasks_missed">Missed last run</string>
+    <string name="scheduled_tasks_editor_new">New scheduled task</string>
+    <string name="scheduled_tasks_editor_edit">Edit scheduled task</string>
+    <string name="scheduled_tasks_name">Name</string>
+    <string name="scheduled_tasks_prompt">Prompt</string>
+    <string name="scheduled_tasks_interval">Interval (minutes)</string>
+    <string name="scheduled_tasks_interval_hint">Intervals below %1$d minutes are treated as %1$d</string>
+    <string name="scheduled_tasks_target">Run in</string>
+    <string name="scheduled_tasks_target_new">New session each run</string>
+    <string name="scheduled_tasks_target_existing">Existing session</string>
+    <string name="scheduled_tasks_sessions_header">Choose a session</string>
+    <string name="scheduled_tasks_sessions_empty">No sessions available</string>
+    <string name="scheduled_tasks_unnamed">Untitled session</string>
+    <string name="scheduled_tasks_workspace">Workspace path</string>
+    <string name="scheduled_tasks_workspace_hint">Leave empty to use the default workspace</string>
+    <string name="scheduled_tasks_max_runs">Run limit</string>
+    <string name="scheduled_tasks_max_runs_hint">0 means unlimited</string>
+    <string name="scheduled_tasks_enabled">Enabled</string>
+    <string name="scheduled_tasks_delete_title">Delete scheduled task</string>
+    <string name="scheduled_tasks_delete_message">This deletes \"%1$s\" and cannot be undone. Delete it?</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
@@ -2014,6 +2052,7 @@
     <string name="envvars_delete_title">Delete \"%1$s\"?</string>
     <string name="envvars_delete_body">New commands inside the container will no longer see this variable.</string>
     <string name="envvars_empty">No custom environment variables yet</string>
+    <string name="envvars_disabled">Disabled</string>
     <string name="envvars_error_empty">Name cannot be empty</string>
     <string name="envvars_error_format">Name must be letters / digits / underscore (cannot start with a digit)</string>
     <string name="envvars_error_reserved">\"%1$s\" is a reserved container variable</string>

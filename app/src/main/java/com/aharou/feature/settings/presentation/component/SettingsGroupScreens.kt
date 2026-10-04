@@ -135,6 +135,12 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 title = stringResource(SettingsSection.Skills.titleRes),
                 onClick = { onOpen(SettingsSection.Skills) }
             )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Clock,
+                title = stringResource(SettingsSection.ScheduledTasks.titleRes),
+                onClick = { onOpen(SettingsSection.ScheduledTasks) }
+            )
         }
     }
 }

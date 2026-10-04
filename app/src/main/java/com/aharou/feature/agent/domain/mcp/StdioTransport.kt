@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonObject
 import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -72,6 +73,9 @@ class StdioTransport(
     @Volatile private var writer: BufferedWriter? = null
     @Volatile private var closed = false
 
+    /** 本实例是否占用了 [runningServers] 的一个名额；关闭 / 进程退出时归还，保证只归还一次。 */
+    private val slotHeld = AtomicBoolean(false)
+
     override suspend fun request(method: String, params: JsonObject?): JsonRpcResponse {
         ensureStarted()
         val id = idCounter.incrementAndGet()
@@ -112,9 +116,10 @@ class StdioTransport(
         FileLogger.i(TAG, "[$serverName] 关闭 stdio 传输")
         scope.cancel()
         runCatching { writer?.close() }
-        runCatching { process?.destroy() }
+        process?.let { McpStdioChannel.killProcessTree(serverName, it) }
         writer = null
         process = null
+        releaseSlot()
         failAllPending("transport 已关闭")
     }
 
@@ -123,10 +128,13 @@ class StdioTransport(
         if (process != null) return@withLock
         if (closed) throw McpException(message = "[$serverName] transport 已关闭")
 
+        // 先占并发名额再拉进程：名额已满时直接给明确错误，不排队、不静默堆积。
+        acquireSlot()
         FileLogger.i(TAG, "[$serverName] 启动 stdio server: $program ${programArgs.joinToString(" ")}")
         val p = try {
             engine.startStdioProcess(program, programArgs, projectPath, extraEnv, runtimeProfile)
         } catch (e: Exception) {
+            releaseSlot()
             throw McpException(message = "[$serverName] 启动子进程失败: ${e.message}", cause = e)
         }
         process = p
@@ -184,6 +192,8 @@ class StdioTransport(
             FileLogger.i(TAG, "[$serverName] stdout 已结束（进程可能已退出）")
             logExitCode(p)
             failAllPending("server stdout 已关闭")
+            // 进程已退出，归还并发名额：否则启动即失败 / 自行退出的 server 会永久占着名额。
+            releaseSlot()
         }
     }
 
@@ -218,5 +228,16 @@ class StdioTransport(
         pending.keys.toList().forEach { id ->
             pending.remove(id)?.completeExceptionally(McpException(message = "[$serverName] $reason"))
         }
+    }
+
+    /** 占用一个 stdio 运行名额；已满由 [McpStdioChannel] 抛明确错误（不排队、不静默堆积）。 */
+    private fun acquireSlot() {
+        McpStdioChannel.acquireSlot(serverName)
+        slotHeld.set(true)
+    }
+
+    /** 归还名额；[slotHeld] 保证同一实例只归还一次（关闭与进程退出都会走到这里）。 */
+    private fun releaseSlot() {
+        if (slotHeld.compareAndSet(true, false)) McpStdioChannel.releaseSlot()
     }
 }

@@ -13,7 +13,8 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LineDiff
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -25,6 +26,51 @@ import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 private const val TAG = "FileTools"
+
+/**
+ * 单个文件工具（writeFile / editFile）单次能处理的文件字节上限。
+ * 取 8MB：编辑要整篇载入内存做匹配、写入也要整篇进内存，再大在移动端就有 OOM 风险；
+ * 8MB 已覆盖绝大多数源码与配置文本，更大的文件应交给 Bash 侧工具流式处理。
+ */
+internal const val MAX_FILE_TOOL_BYTES = 8L * 1024 * 1024
+
+/**
+ * 文件工具单次读/写/编辑操作的超时上限。
+ * 取 120 秒：文件工具与 Bash 命令执行是两条独立的超时路径，这里只兜住文件自身的阻塞/死锁
+ * （尤其远程 SFTP 断流），既要挡住永久挂起，又要容忍慢链路写满上面的 8MB 上限。
+ */
+internal const val FILE_TOOL_TIMEOUT_MS = 120_000L
+
+/**
+ * 在 [FILE_TOOL_TIMEOUT_MS] 内执行一次阻塞文件操作；超时返回 null。
+ * 用 runInterruptible 把超时转成线程中断，尽量让卡在阻塞 IO 上的实现（SFTP 等）能被打断；
+ * 实现不响应中断时调用方仍能按时拿到 null 并返回可读的超时错误，不会永久挂起。
+ */
+internal suspend fun <T> runFileOpWithTimeout(block: () -> T): T? = try {
+    withTimeoutOrNull(FILE_TOOL_TIMEOUT_MS) {
+        runInterruptible(Dispatchers.IO) { block() }
+    }
+} catch (ignored: InterruptedException) {
+    null
+}
+
+/**
+ * UTF-8 字节长度，避免为「量一下大小」而 toByteArray 复制整篇内容（超大内容上等于内存翻倍）。
+ * 代理对按 4 字节计：高位代理不计、低位代理计 4。
+ */
+private fun String.utf8ByteLength(): Long {
+    var bytes = 0L
+    for (ch in this) {
+        bytes += when {
+            ch.code < 0x80 -> 1
+            ch.code < 0x800 -> 2
+            Character.isHighSurrogate(ch) -> 0
+            Character.isLowSurrogate(ch) -> 4
+            else -> 3
+        }
+    }
+    return bytes
+}
 
 class ReadFileTool @Inject constructor(
     private val fileAccess: FileAccessProvider
@@ -72,15 +118,21 @@ class ReadFileTool @Inject constructor(
             var truncatedByBytes = false
             var firstLineClipped = false
             var lineNo = 0
-            withContext(Dispatchers.IO) {
-                access.readLines(path).forEach { line ->
+            // 除 runFileOpWithTimeout 的硬超时外，再按行检查截止时间：本地大文件逐行读不响应线程中断，
+            // 靠这个截止时间让循环在读完当前行后主动收手，不至于把整文件读完才返回。
+            val deadline = System.currentTimeMillis() + FILE_TOOL_TIMEOUT_MS
+            var timedOut = false
+            val readFinished = runFileOpWithTimeout {
+                for (line in access.readLines(path)) {
+                    if (System.currentTimeMillis() > deadline) {
+                        timedOut = true
+                        break
+                    }
                     lineNo++
                     totalLines = lineNo
-                    if (lineNo < startLine) return@forEach
-                    if (lineNo > endCap) {
-                        // 已越过窗口，但仍需继续计数以得到准确 total_lines。
-                        return@forEach
-                    }
+                    if (lineNo < startLine) continue
+                    // 已越过窗口，但仍需继续计数以得到准确 total_lines。
+                    if (lineNo > endCap) continue
                     if (!truncatedByBytes) {
                         val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1
                         if (byteCount + lineBytes > MAX_BYTES) {
@@ -101,6 +153,13 @@ class ReadFileTool @Inject constructor(
                         }
                     }
                 }
+            }
+            if (readFinished == null || timedOut) {
+                FileLogger.w(TAG, "read_file 超时（>${FILE_TOOL_TIMEOUT_MS}ms）: $path")
+                return ToolResult.Error(
+                    "读取文件超时（超过 ${FILE_TOOL_TIMEOUT_MS / 1000} 秒仍未返回），请缩小读取范围或改用 Bash 工具",
+                    "TIMEOUT"
+                )
             }
 
             val lastEmittedLine = startLine + emittedLines - 1
@@ -203,6 +262,16 @@ class WriteFileTool @Inject constructor(
             val content = args["content"]?.jsonPrimitive?.contentOrNull ?: ""
             val overwrite = args["overwrite"]?.jsonPrimitive?.booleanOrNull ?: true
 
+            val contentBytes = content.utf8ByteLength()
+            if (contentBytes > MAX_FILE_TOOL_BYTES) {
+                FileLogger.w(TAG, "write_file 内容过大: $path ($contentBytes 字节)")
+                return ToolResult.Error(
+                    "写入内容 $contentBytes 字节，超过 writeFile 的 ${MAX_FILE_TOOL_BYTES / 1024 / 1024}MB 上限；" +
+                        "请拆分为多个文件，或用 Bash 工具分块写入",
+                    "FILE_TOO_LARGE"
+                )
+            }
+
             FileLogger.d(TAG, "write_file path=$path (${content.length} 字符, overwrite=$overwrite)")
             val existed = access.exists(path)
             if (existed && !overwrite) {
@@ -217,12 +286,20 @@ class WriteFileTool @Inject constructor(
                 existed &&
                 runCatching { access.fileSize(path) }.getOrDefault(0L) <= MAX_DIFF_SOURCE_BYTES
             ) {
-                runCatching { access.readFile(path) }.getOrDefault("")
+                // 旧内容只用于生成差异：读取失败或超时就放弃差异（退化为「整体新增」），不让辅助步骤挡住主写入。
+                runCatching { runFileOpWithTimeout { access.readFile(path) } }.getOrNull().orEmpty()
             } else {
                 ""
             }
 
-            access.writeFile(path, content, overwrite = true)
+            val writeFinished = runFileOpWithTimeout { access.writeFile(path, content, overwrite = true) }
+            if (writeFinished == null) {
+                FileLogger.w(TAG, "write_file 超时（>${FILE_TOOL_TIMEOUT_MS}ms）: $path")
+                return ToolResult.Error(
+                    "写入文件超时（超过 ${FILE_TOOL_TIMEOUT_MS / 1000} 秒仍未返回）：$path",
+                    "TIMEOUT"
+                )
+            }
 
             // 生成统一差异文本：新建文件按「整体新增」呈现（旧内容视为空，避免一行伪删除）；
             // 覆盖写则计算旧→新的行级增删。LineDiff 为 O(n·m) 内存，超大文件重写时跳过 LCS、

@@ -56,6 +56,8 @@ import compose.icons.feathericons.Terminal
 internal fun ChatHeader(
     inputTokens: Int,
     outputTokens: Int,
+    /** 当前会话 id：定时任务胶囊据此判断本会话是不是某个任务的目标。 */
+    sessionId: String? = null,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
     onNavigateToTerminal: () -> Unit,
@@ -154,6 +156,8 @@ internal fun ChatHeader(
                     )
                 }
             }
+            // 本地容器会话没有连接状态，胶囊不能挂在上面那个远程分支里。
+            ScheduledTaskPill(sessionId = sessionId)
         }
     }
 }

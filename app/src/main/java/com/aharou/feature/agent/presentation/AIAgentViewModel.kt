@@ -58,6 +58,8 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.asDirtySignal
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.schedule.ScheduledRunBus
+import com.aharou.feature.agent.domain.schedule.ScheduledRunRequest
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.terminal.domain.TabFinishedEvent
 import com.aharou.feature.terminal.domain.TerminalKeepaliveService
@@ -165,6 +167,7 @@ class AIAgentViewModel @Inject constructor(
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val keepaliveSettings: KeepaliveSettingsRepository,
     private val subAgentEventBus: SubAgentEventBus,
+    private val scheduledRunBus: ScheduledRunBus,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
@@ -1469,6 +1472,38 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
         }
+
+        // 定时任务到点：Worker 经总线派发，这里负责真正跑起来（复用普通会话链路）。
+        viewModelScope.launch {
+            scheduledRunBus.requests.collect { request -> runScheduledTask(request) }
+        }
+    }
+
+    /**
+     * 跑一轮定时任务：目标会话存在就在它里面跑；没有目标会话就按任务记的工作区新建一个。
+     * 标题用任务名，并跳过首条消息的标题推导，免得被指令内容覆盖。
+     */
+    private suspend fun runScheduledTask(request: ScheduledRunRequest) {
+        val existing = request.targetSessionId?.let { sessionUseCase.getSessionById(it) }
+        val sessionId = existing?.id ?: run {
+            val root = request.workspacePath?.takeIf { it.isNotBlank() }
+            if (root == null) {
+                FileLogger.w(TAG, "定时任务缺少工作区且无目标会话，跳过: ${request.taskName}")
+                return
+            }
+            val created = sessionUseCase.newSessionEntity(workspacePath = root).copy(title = request.taskName)
+            sessionUseCase.upsertSession(created)
+            created.id
+        }
+        val workspacePath = sessionUseCase.getSessionById(sessionId)?.workspacePath.orEmpty()
+        FileLogger.i(TAG, "定时任务开始运行: ${request.taskName} -> session=$sessionId")
+        executeAgentRequestStream(
+            request = request.prompt,
+            projectRoot = workspacePath,
+            targetSessionId = sessionId,
+            isAutoTrigger = true,
+            skipTitleUpdate = true
+        )
     }
 
     /**

@@ -31,6 +31,8 @@ class EnvVarRepository @Inject constructor(
         val value: String,
         /** true = 列表里打码显示（默认）。 */
         val secret: Boolean = true,
+        /** false = 仅保留名称/值/备注，不再注入容器；旧数据缺该字段时按启用处理。 */
+        val enabled: Boolean = true,
         val createdAt: Long = 0L,
     )
 
@@ -54,8 +56,9 @@ class EnvVarRepository @Inject constructor(
     private val _entries = MutableStateFlow(loadAll())
     val entries: StateFlow<List<EnvVar>> = _entries.asStateFlow()
 
-    /** 注入用：名称 → 值（解密后）。 */
-    fun asMap(): Map<String, String> = _entries.value.associate { it.name to it.value }
+    /** 注入用：名称 → 值（解密后）；已停用的变量直接不出现，不注入空值。 */
+    fun asMap(): Map<String, String> =
+        _entries.value.filter { it.enabled }.associate { it.name to it.value }
 
     fun upsert(name: String, value: String, secret: Boolean) {
         val list = _entries.value.toMutableList()
@@ -64,9 +67,21 @@ class EnvVarRepository @Inject constructor(
             name = name,
             value = value,
             secret = secret,
+            // 编辑既有变量时保留启用状态，避免改值就把停用态顺手打开。
+            enabled = if (index >= 0) list[index].enabled else true,
             createdAt = if (index >= 0) list[index].createdAt else System.currentTimeMillis(),
         )
         if (index >= 0) list[index] = entry else list.add(entry)
+        _entries.value = list
+        persist(list)
+    }
+
+    /** 启用/停用：停用后保留名称、值与敏感标记，只是不再注入容器。 */
+    fun setEnabled(name: String, enabled: Boolean) {
+        val list = _entries.value.toMutableList()
+        val index = list.indexOfFirst { it.name == name }
+        if (index < 0) return
+        list[index] = list[index].copy(enabled = enabled)
         _entries.value = list
         persist(list)
     }
@@ -86,6 +101,7 @@ class EnvVarRepository @Inject constructor(
                         .put("n", entry.name)
                         .put("v", KeystoreCipher.encryptString(entry.value))
                         .put("s", entry.secret)
+                        .put("e", entry.enabled)
                         .put("t", entry.createdAt)
                 )
             }
@@ -105,6 +121,8 @@ class EnvVarRepository @Inject constructor(
                     name = name,
                     value = runCatching { KeystoreCipher.decryptString(obj.optString("v")) }.getOrDefault(""),
                     secret = obj.optBoolean("s", true),
+                    // 旧记录没有 "e" 字段：optBoolean 默认 true，等于保持启用。
+                    enabled = obj.optBoolean("e", true),
                     createdAt = obj.optLong("t", 0L),
                 )
             }

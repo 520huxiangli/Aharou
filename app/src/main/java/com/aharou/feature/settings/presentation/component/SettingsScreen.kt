@@ -149,7 +149,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SkillMarket(R.string.skills_market),
     // 详情页与市场页共用一个标题：层级靠返回箭头体现
     SkillMarketDetail(R.string.skills_market),
-    SubAgents(R.string.settings_subagents),
+    SubAgents(R.string.settings_subagents), ScheduledTasks(R.string.settings_scheduled_tasks),
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
     Prompts(R.string.prompts_title),
@@ -416,10 +416,8 @@ fun SettingsScreen(
         SettingsSection.ConfigAudit,
         SettingsSection.Memory,
         SettingsSection.Pet -> SettingsSection.AharouGroup
-        SettingsSection.Providers,
-        SettingsSection.DefaultModels,
-        SettingsSection.Mcp,
-        SettingsSection.Skills -> SettingsSection.AiGroup
+        SettingsSection.Providers, SettingsSection.DefaultModels,
+        SettingsSection.Mcp, SettingsSection.Skills, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
         SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
@@ -1151,6 +1149,7 @@ fun SettingsScreen(
                         exporting = skillExportState is SkillExportState.Running
                     )
                 }
+                SettingsSection.ScheduledTasks -> ScheduledTasksSection()
                 SettingsSection.SubAgents -> SubAgentsSection(
                     projectName = currentProjectName,
                     entries = subAgents,

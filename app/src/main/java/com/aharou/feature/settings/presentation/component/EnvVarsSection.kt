@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -25,6 +27,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +38,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.settings.data.repository.EnvVarRepository
 import com.aharou.feature.settings.presentation.EnvVarsViewModel
 import compose.icons.FeatherIcons
@@ -87,6 +91,7 @@ internal fun EnvVarsSection(viewModel: EnvVarsViewModel = hiltViewModel()) {
                         entry = entry,
                         onClick = { editing = entry },
                         onDelete = { deleting = entry },
+                        onToggleEnabled = { enabled -> viewModel.setEnabled(entry.name, enabled) },
                     )
                 }
             }
@@ -153,6 +158,7 @@ private fun EnvVarRow(
     entry: EnvVarRepository.EnvVar,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onToggleEnabled: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -161,7 +167,12 @@ private fun EnvVarRow(
             .padding(horizontal = Spacing.lg, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                // 停用态置灰，一眼能看出该变量不再注入容器。
+                .alpha(if (entry.enabled) 1f else 0.45f),
+        ) {
             Text(
                 text = entry.name,
                 fontFamily = FontFamily.Monospace,
@@ -178,6 +189,19 @@ private fun EnvVarRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (!entry.enabled) {
+            Text(
+                text = stringResource(R.string.envvars_disabled),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(Spacing.sm))
+        }
+        AppSwitch(
+            checked = entry.enabled,
+            onCheckedChange = onToggleEnabled,
+        )
+        Spacer(Modifier.width(Spacing.xs))
         IconButton(onClick = onDelete) {
             Icon(
                 imageVector = FeatherIcons.Trash2,

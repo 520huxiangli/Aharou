@@ -200,7 +200,6 @@ class AgentTurnRunner @Inject constructor(
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
-            isSubAgent = isSub,
         )
 
         val allTools = toolRegistry.getAvailableTools()
@@ -216,6 +215,9 @@ class AgentTurnRunner @Inject constructor(
         // 工具参数预览：结束时只有部分事件带 argsPreview，缺失时回退到开始时记下的那份
         val toolArgsByMsgId = mutableMapOf<String, String>()
 
+        // 预算用尽这类路径会先发 Failed 再发 Completed：只认第一个终态，
+        // 否则父代理会收到两条同因通知（2026-10-05 实测）。
+        var terminalEmitted = false
         agentWorkflow.executeEvents(
             userRequest = turn.modelRequest,
             context = agentContext,
@@ -298,9 +300,15 @@ class AgentTurnRunner @Inject constructor(
                     event.persisted?.complete(Unit)
                 }
 
-                is AgentEvent.Failed -> if (isSub) emitSubAgentFinished(sessionId, SubAgentEventType.FAILED, event.error)
+                is AgentEvent.Failed -> if (isSub && !terminalEmitted) {
+                    terminalEmitted = true
+                    emitSubAgentFinished(sessionId, SubAgentEventType.FAILED, event.error)
+                }
 
-                AgentEvent.Completed -> if (isSub) emitSubAgentFinished(sessionId, SubAgentEventType.COMPLETED, null)
+                AgentEvent.Completed -> if (isSub && !terminalEmitted) {
+                    terminalEmitted = true
+                    emitSubAgentFinished(sessionId, SubAgentEventType.COMPLETED, null)
+                }
 
                 else -> Unit
             }
@@ -319,8 +327,12 @@ class AgentTurnRunner @Inject constructor(
         val result = runCatching {
             SubAgentResultInspector.inspect(sessionId, agentMessageDao.getMessagesBySessionOnce(sessionId))
         }.getOrNull()
+        val runFailed = !error.isNullOrBlank()
         val detail = buildString {
             error?.takeIf { it.isNotBlank() }?.let { append(it).append('\n') }
+            // 运行本身失败（模型打转被中断、请求报错）时不能只凭已有消息内容判「已交付」：
+            // 实测出现过「本轮运行未正常结束」却报 DELIVERED 的矛盾输出。
+            if (runFailed) append("终止状态：RUN_FAILED（本轮运行未正常结束，产出不完整）\n")
             append(result?.renderDetail().orEmpty())
         }
         subAgentEventBus.emit(
@@ -329,7 +341,7 @@ class AgentTurnRunner @Inject constructor(
                 parentSessionId = parentId,
                 type = type,
                 detail = detail,
-                accepted = result?.verdict?.accepted,
+                accepted = if (runFailed) false else result?.verdict?.accepted,
             )
         )
     }

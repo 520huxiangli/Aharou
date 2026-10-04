@@ -168,6 +168,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 环境变量集合注册。 */
     @Inject
     lateinit var configEnvFields: com.aharou.feature.settings.data.ConfigEnvFields
+
+    /** 定时任务 → 配置通道。 */
+    @Inject
+    lateinit var configScheduledTaskFields: com.aharou.feature.agent.data.ConfigScheduledTaskFields
     /** 语音合成（TTS）字段注册。 */
     @Inject
     lateinit var configVoiceFields: com.aharou.feature.settings.data.ConfigVoiceFields
@@ -203,6 +207,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 技能配置仓库：启动即监听技能目录与 skills.json 外部变更，改动数秒内刷新技能列表。 */
     @Inject
     lateinit var skillConfigRepository: com.aharou.feature.agent.domain.skill.SkillConfigRepository
+
+    /** 定时任务调度：启动时按「有无启用任务」决定排周期检查还是取消，避免空转唤醒进程。 */
+    @Inject
+    lateinit var scheduledTaskScheduler: com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 
     /** 旧 Room git 凭据一次性迁移器：启动即把旧表数据写入 git-credentials 文件后删表（真源已迁到文件）。 */
     @Inject
@@ -290,6 +298,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configRemoteFields.registerInto(configRegistry)
         configModelRoleFields.registerInto(configRegistry)
         configEnvFields.registerInto(configRegistry)
+        configScheduledTaskFields.registerInto(configRegistry)
         configMcpFields.registerInto(configRegistry)
         configSkillFields.registerInto(configRegistry)
         configSkillMarketFields.registerInto(configRegistry)
@@ -416,6 +425,11 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 子代理任务状态机：启动即收尾上次进程遗留的「运行中」任务（标为中断并通知父会话），
         // 随后常驻订阅子代理事件写状态。走 IO 作用域，失败只记日志，不阻塞启动。
         subAgentTaskTracker.start(appScope)
+        // 定时任务：启动时按已有任务排好周期检查（无启用任务则取消），失败只记日志。
+        appScope.launch {
+            runCatching { scheduledTaskScheduler.ensureScheduled(this@AIEditorApp) }
+                .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
+        }
         // 权限规则由 App 启动即常驻订阅（AI 评估随时要读到最新规则）；MCP 配置与技能列表
         // 改由各自消费方（McpManager / 设置页）按需订阅，无需在这里拉起。
         appScope.launch { permissionRulesRepository.startWatching() }

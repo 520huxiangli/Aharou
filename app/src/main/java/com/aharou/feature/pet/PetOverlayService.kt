@@ -303,13 +303,24 @@ class PetOverlayService : Service() {
         running = true
         ensureChannel()
         // targetSdk 34 起 startForeground 必须带类型（与 manifest 一致），否则抛
-        // MissingForegroundServiceTypeException。
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(getString(R.string.pet_notification_text)),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-        )
+        // MissingForegroundServiceTypeException；系统也可能直接拒（后台启动限制，
+        // ForegroundServiceStartNotAllowedException）。这段跑在 onCreate 里，未捕获异常会崩进程，
+        // 所以兜住：前台化起不来就收摊，不把整个 App 带走。
+        val foregrounded = runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(getString(R.string.pet_notification_text)),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        }.onFailure { e ->
+            FileLogger.w(TAG, "小染悬浮服务前台化失败，停止该服务", e)
+        }.isSuccess
+        if (!foregrounded) {
+            running = false
+            stopSelf()
+            return
+        }
         overlay = PetOverlay(this).also { pet ->
             pet.onMenuAction = { id ->
                 when (id) {

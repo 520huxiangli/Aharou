@@ -20,7 +20,6 @@ import com.aharou.feature.agent.domain.notification.PendingNotification
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
-import com.aharou.feature.agent.domain.subagent.SubAgentBudget
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.PermissionScope
@@ -128,6 +127,9 @@ class StatefulAgentWorkflow @Inject constructor(
         const val PERSIST_WAIT_MS = 15_000L
         const val PROGRESS_INTERVAL_MS = 250L
         const val USER_REJECTED_CODE = "USER_REJECTED"
+
+        /** 模型调用了不在本次运行允许清单里的工具：不执行，直接回错误结果。 */
+        const val TOOL_NOT_ALLOWED_CODE = "TOOL_NOT_ALLOWED"
         const val TITLE_GENERATOR_FILE = "agent/title-generator.md"
         const val TITLE_MAX_CHARS = 50
         const val COMMIT_GENERATOR_FILE = "agent/commit-generator.md"
@@ -525,12 +527,10 @@ class StatefulAgentWorkflow @Inject constructor(
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
-        // 兜底预算只对子代理会话生效（见 SubAgentBudget）：默认子代理没有定义，靠 isSubAgent 识别；
-        // 命名子代理另外还能走 agentDefinition，声明了写租约（含只读空集）的走 writePaths。
-        // 主会话三者都不成立，不受限制。
-        val budgetApplies = context.isSubAgent || context.agentDefinition != null || context.writePaths != null
-        val budgetStartedAt = SystemClock.elapsedRealtime()
-        var toolRounds = 0
+        // 执行期只认「本次运行允许的工具集」：toolRegistry 是全量的，回落过去等于把所有黑白名单
+        // （子代理禁 task、messageParent 方向限制、定义里的 allowedTools/disallowedTools）全部作废——
+        // 模型只要发出一个不在清单里的调用就能绕过（2026-10-05 实测：子代理真的派出了子代理）。
+        val toolsByName = tools.associateBy { it.name }
         val actionQueue = ArrayDeque<AgentAction>()
         // 模式提醒仅在模式变化时随最新用户消息注入一次（不进 system，避免切换时 system 前缀变化打断缓存）。
         val modeReminder = takeModeReminderIfChanged(currentContext.sessionId, currentContext.mode)
@@ -580,17 +580,6 @@ class StatefulAgentWorkflow @Inject constructor(
                         }
                     }
                     is AgentSideEffect.CallLlm -> {
-                        if (budgetApplies) {
-                            val elapsed = SystemClock.elapsedRealtime() - budgetStartedAt
-                            val limit = SubAgentBudget.exceeded(toolRounds, elapsed)
-                            if (limit != null) {
-                                // 到量就不再起新一轮：交代原因后按正常收尾路径结束（此前各轮的工具结果都已按序落库）。
-                                val reason = SubAgentBudget.stopReason(limit, toolRounds, elapsed)
-                                send(AgentEvent.AssistantText(reason, messageId = UUID.randomUUID().toString()))
-                                state = state.copy(isFinished = true, error = reason, errorCode = SubAgentBudget.STOP_CODE)
-                                break
-                            }
-                        }
                         val providerInUse = aiProvider
                         // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
                         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
@@ -862,17 +851,34 @@ class StatefulAgentWorkflow @Inject constructor(
                         }
                     }
                     is AgentSideEffect.RequestPermission -> {
-                        val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
-
-                        if (!checkResult.approved) {
-                            val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toTransportString()
-                            send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
+                        val tool = toolsByName[effect.toolCall.name]
+                        if (tool == null) {
+                            // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
+                            val reason = "工具「${effect.toolCall.name}」在当前会话不可用（不在允许的工具清单内）。"
+                            send(
+                                AgentEvent.ToolCallFinished(
+                                    effect.toolCall.id,
+                                    effect.toolCall.name,
+                                    ToolResult.Error(reason, TOOL_NOT_ALLOWED_CODE).toTransportString(),
+                                    true,
+                                    argsPreview
+                                )
+                            )
+                            actionQueue.addLast(
+                                AgentAction.PermissionEvaluated(effect.toolCall, false, argsPreview, reason, TOOL_NOT_ALLOWED_CODE)
+                            )
                         } else {
-                            send(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
+                            val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
+
+                            if (!checkResult.approved) {
+                                val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toTransportString()
+                                send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
+                            } else {
+                                send(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
+                            }
+                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved, argsPreview, checkResult.denyReason, checkResult.errorCode))
                         }
-                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved, argsPreview, checkResult.denyReason, checkResult.errorCode))
                     }
                     is AgentSideEffect.CancelToolBatch -> {
                         // 整批取消：已批准未执行的工具补发完成事件（内容为未执行），
@@ -895,7 +901,6 @@ class StatefulAgentWorkflow @Inject constructor(
                         // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
                         // 再并行执行；mode 切换检查在结果收集后于主协程串行处理（planApproval 单例）。
                         val toolCalls = effect.toolCalls
-                        toolRounds++
                         toolCalls.forEach { toolCall ->
                             if (toolCall.name == "editFile" || toolCall.name == "writeFile") {
                                 (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
@@ -933,11 +938,17 @@ class StatefulAgentWorkflow @Inject constructor(
                                                 true
                                             )
                                         } else {
-                                            val tool = toolRegistry.getTool(toolCall.name)
-                                            if (tool is StreamingAgentTool) {
-                                                runToolStream(tool, toolCall, currentContext) { send(it) }
-                                            } else {
-                                                runToolSync(tool, toolCall, currentContext)
+                                            val tool = toolsByName[toolCall.name]
+                                            when {
+                                                tool == null -> ToolRunResult(
+                                                    ToolResult.Error(
+                                                        "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。",
+                                                        TOOL_NOT_ALLOWED_CODE
+                                                    ).toTransportString(),
+                                                    true
+                                                )
+                                                tool is StreamingAgentTool -> runToolStream(tool, toolCall, currentContext) { send(it) }
+                                                else -> runToolSync(tool, toolCall, currentContext)
                                             }
                                         }
                                     }

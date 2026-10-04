@@ -9,6 +9,9 @@ import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.tool.file.FILE_TOOL_TIMEOUT_MS
+import com.aharou.feature.agent.domain.tool.file.MAX_FILE_TOOL_BYTES
+import com.aharou.feature.agent.domain.tool.file.runFileOpWithTimeout
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LineDiff
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -139,17 +142,21 @@ class EditFileTool @Inject constructor(
                 return ToolResult.Error("文件不存在: $path", "FILE_NOT_FOUND")
             }
             val fileSize = runCatching { access.fileSize(path) }.getOrDefault(0L)
-            if (fileSize > MAX_EDIT_BYTES) {
+            if (fileSize > MAX_FILE_TOOL_BYTES) {
                 FileLogger.w(TAG, "edit_file 文件过大: $path ($fileSize 字节)")
                 return ToolResult.Error(
-                    "文件 $fileSize 字节，超过 editFile 的 ${MAX_EDIT_BYTES / 1024 / 1024}MB 上限" +
+                    "文件 $fileSize 字节，超过 editFile 的 ${MAX_FILE_TOOL_BYTES / 1024 / 1024}MB 上限" +
                         "（精确匹配需整篇载入内存，超大文件会拖垓设备）。请改用 Bash 里的 sed 等工具处理。",
                     "FILE_TOO_LARGE"
                 )
             }
 
             // 先在内存里顺序应用所有编辑；任一失败立刻返回、绝不写盘（全有或全无）。
-            var content = access.readFile(path)
+            var content = runFileOpWithTimeout { access.readFile(path) }
+                ?: return ToolResult.Error(
+                    "读取文件超时（超过 ${FILE_TOOL_TIMEOUT_MS / 1000} 秒仍未返回）：$path",
+                    "TIMEOUT"
+                )
             val hunks = ArrayList<Hunk>(edits.size)
             var totalReplacements = 0
 
@@ -185,7 +192,14 @@ class EditFileTool @Inject constructor(
                 totalReplacements += if (e.replaceAll) occurrences else 1
             }
 
-            access.writeFile(path, content, overwrite = true)
+            val writeFinished = runFileOpWithTimeout { access.writeFile(path, content, overwrite = true) }
+            if (writeFinished == null) {
+                FileLogger.w(TAG, "edit_file 写入超时（>${FILE_TOOL_TIMEOUT_MS}ms）: $path")
+                return ToolResult.Error(
+                    "写入文件超时（超过 ${FILE_TOOL_TIMEOUT_MS / 1000} 秒仍未返回）：$path",
+                    "TIMEOUT"
+                )
+            }
 
             val addedTotal = hunks.sumOf { it.added }
             val removedTotal = hunks.sumOf { it.removed }
@@ -232,11 +246,4 @@ class EditFileTool @Inject constructor(
         }.takeIf { it.isNotEmpty() }
     }
 
-    private companion object {
-        /**
-         * 可编辑的文件大小上限。编辑要整篇载入内存做匹配，每处替换还会再复制一份内容，
-         * 超大文件在手机上会直接 OOM——提前拒绝，把这类文件交给 shell 工具处理。
-         */
-        const val MAX_EDIT_BYTES = 8L * 1024 * 1024
-    }
 }

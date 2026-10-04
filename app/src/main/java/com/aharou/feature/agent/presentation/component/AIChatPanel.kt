@@ -1532,6 +1532,7 @@ fun AIChatPanel(
             ChatHeader(
                 inputTokens = sessionInputTokens,
                 outputTokens = sessionOutputTokens,
+                sessionId = currentSessionId,
                 onOpenDrawer = {
                     keyboardController?.hide()
                     onOpenDrawer()

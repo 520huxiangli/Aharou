@@ -22,6 +22,9 @@ object SubAgentResultInspector {
 
     private const val TAG = "SubAgentResultInspector"
 
+    /** 复用同一份 Json 实例：每次新建都要重初始化格式配置，编译器也会提示。 */
+    private val jsonCodec = Json { ignoreUnknownKeys = true }
+
     /** 一次收尾检查的结果。 */
     data class Result(
         /** 结论文本，已剥离 claim 协议块——原始 JSON 不进父上下文。 */
@@ -100,7 +103,7 @@ object SubAgentResultInspector {
         val paths = mutableSetOf<String>()
         messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
             val calls = m.toolCallsJson?.let {
-                runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(it) }.getOrNull()
+                runCatching { jsonCodec.decodeFromString<List<ToolCall>>(it) }.getOrNull()
             }.orEmpty()
             calls.forEach { call ->
                 if (callSucceeded[call.id] != true) return@forEach
@@ -123,7 +126,7 @@ object SubAgentResultInspector {
         val calls = mutableMapOf<String, Pair<String, String?>>()
         messages.filter { it.role == MessageRole.ASSISTANT.name }.forEach { m ->
             val json = m.toolCallsJson ?: return@forEach
-            runCatching { Json { ignoreUnknownKeys = true }.decodeFromString<List<ToolCall>>(json) }.getOrNull()
+            runCatching { jsonCodec.decodeFromString<List<ToolCall>>(json) }.getOrNull()
                 ?.forEach { call ->
                     val path = (call.arguments["path"] as? JsonPrimitive)?.contentOrNull?.trim()
                     calls[call.id] = call.name to path

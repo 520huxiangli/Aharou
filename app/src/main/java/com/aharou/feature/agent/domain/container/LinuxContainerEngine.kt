@@ -855,7 +855,7 @@ class LinuxContainerEngine @Inject constructor(
             "TZ" to containerTimeZone(profile)
             // 全局 HTTP 代理：开启时注入 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY，
             // 容器内 curl/git/npm/pip 等一律走代理；关闭或配置不完整时为空 map 不影响直连。
-        ) + com.aharou.core.net.AppProxy.proxyEnv(context) + envVarRepository.asMap()
+        ) + com.aharou.core.net.AppProxy.proxyEnv(context) + envVarRepository.asMap() // asMap 只含已启用的变量：停用的保留在设置里但不注入
     }
 
     /**

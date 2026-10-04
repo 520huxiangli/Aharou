@@ -179,6 +179,7 @@ export default defineConfig({
             { text: 'MCP 服务器', link: '/guide/mcp' },
             { text: '技能', link: '/guide/skills' },
             { text: '子代理', link: '/guide/subagent' },
+            { text: '定时任务', link: '/guide/scheduled-tasks' },
             { text: '自定义提示词', link: '/guide/custom-prompts' },
             { text: '记忆与项目规则', link: '/guide/memory' },
             { text: '人格（Soul）', link: '/guide/soul' }

@@ -191,8 +191,13 @@ class PetVideoView @JvmOverloads constructor(
             val h = Handler(thread.looper)
             handler = h
             h.post {
-                setupEgl()
-                setupGl()
+                // GL 初始化可能失败（SurfaceTexture 失效、窗口重建等），而它跑在 GL 线程上，
+                // 未捕获异常会直接杀掉进程——失败就记日志并停用视频渲染。
+                val ready = runCatching {
+                    setupEgl()
+                    setupGl()
+                }.onFailure { e -> FileLogger.w(TAG, "桌宠视频 GL 初始化失败，已停用视频渲染", e) }.isSuccess
+                if (!ready) return@post
                 // 输入纹理建好后再交给播放器（MediaPlayer 要有 surface 才能起播）
                 inputTexture = SurfaceTexture(textureId).apply {
                     setOnFrameAvailableListener {
@@ -363,7 +368,8 @@ class PetVideoView @JvmOverloads constructor(
                 }
             }
             // 没有新帧也要把上一帧交出去，否则 TextureView 上是空的
-            EGL14.eglSwapBuffers(display, surface)
+            runCatching { EGL14.eglSwapBuffers(display, surface) }
+                .onFailure { e -> FileLogger.w(TAG, "桌宠视频交换缓冲失败", e) }
         }
     }
 

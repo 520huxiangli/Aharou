@@ -86,10 +86,5 @@ data class AgentContext(
      * 子代理写路径租约：null 表示不受限（主会话，或派发时未声明）；
      * 空集表示只读；非空时写文件类工具只允许命中其中的路径。
      */
-    val writePaths: Set<String>? = null,
-    /**
-     * 是否派生的子代理会话。不依赖 [agentDefinition]（默认通用子代理没有定义），
-     * 供兜底预算等“只对子代理生效”的机制判定；主会话恒为 false。
-     */
-    val isSubAgent: Boolean = false
+    val writePaths: Set<String>? = null
 )
