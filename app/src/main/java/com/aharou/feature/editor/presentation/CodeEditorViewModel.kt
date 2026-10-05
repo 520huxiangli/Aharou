@@ -6,11 +6,14 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.data.EditorSettingsRepository
+import com.aharou.feature.editor.lsp.EditorLspManager
 import com.aharou.feature.editor.domain.TextMateSetup
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.rosemoe.sora.lang.Language
 import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
+import io.github.rosemoe.sora.widget.CodeEditor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +44,8 @@ sealed interface SaveResult {
 class CodeEditorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val fileAccess: FileAccessProvider,
-    private val editorSettings: EditorSettingsRepository
+    private val editorSettings: EditorSettingsRepository,
+    private val editorLspManager: EditorLspManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<EditorUiState>(EditorUiState.Loading)
@@ -61,6 +65,15 @@ class CodeEditorViewModel @Inject constructor(
 
     /** 每个路径只读一次盘，结果缓存下来供标签页来回切换复用。 */
     private val loadedStates = mutableMapOf<String, EditorUiState>()
+
+    /**
+     * 把当前文件挂到语言服务器上（成功返回 true）。[wrapper] 是原本的 TextMate 语言，继续负责着色；
+     * 没装服务器 / 非收录语言 / 容器未就绪都返回 false，调用方据此退回轻量语法检查。
+     */
+    suspend fun attachLsp(editor: CodeEditor, wrapper: Language): Boolean {
+        val path = currentPath ?: return false
+        return editorLspManager.attach(editor, path, wrapper)
+    }
 
     /** 重复调用同一路径不会重复读盘，供 Compose 重组时安全调用。 */
     fun load(path: String) {
@@ -114,7 +127,10 @@ class CodeEditorViewModel @Inject constructor(
             try {
                 val result = runCatching { fileAccess.writeFile(path, content) }
                     .fold(
-                        onSuccess = { SaveResult.Success(path) },
+                        onSuccess = {
+                            markSaved(path, content)
+                            SaveResult.Success(path)
+                        },
                         onFailure = { e ->
                             FileLogger.w(TAG, "保存文件失败: $path", e)
                             SaveResult.Error(path, e.message)
@@ -124,6 +140,24 @@ class CodeEditorViewModel @Inject constructor(
             } finally {
                 _saving.value = false
             }
+        }
+    }
+
+    /**
+     * 保存成功后把缓存与当前 UI 状态同步成落盘内容。
+     *
+     * 不同步的话，uiState 会滞在「打开时读到的那份内容」，编辑器页的
+     * `LaunchedEffect(state.content)` 会拿这份旧内容去覆盖它自己的 baselineText；
+     * 新建文件（打开时内容是空串）编辑后保存就会因此被判成「仍有未保存修改」——
+     * 标题一直挂 `*`、返回时反复弹「未保存的修改」。2026-10-05 实机踩到。
+     */
+    private fun markSaved(path: String, content: String) {
+        val scope = (loadedStates[path] as? EditorUiState.Success)?.scopeName
+            ?: (_uiState.value as? EditorUiState.Success)?.scopeName
+        val saved = EditorUiState.Success(content = content, scopeName = scope)
+        loadedStates[path] = saved
+        if (currentPath == path) {
+            _uiState.value = saved
         }
     }
 

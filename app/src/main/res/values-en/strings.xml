@@ -640,6 +640,14 @@
     <string name="editor_show_indent_guide">Show indent guides</string>
     <string name="editor_show_wrap_arrow">Show word-wrap arrows</string>
     <string name="editor_show_whitespace">Show whitespace</string>
+    <string name="editor_language_extensions">Language extensions</string>
+    <string name="editor_language_extensions_desc">Language servers are usually installed together with the container (Alpine image); use this page to check status or install one manually. Once installed, opening a matching file shows its diagnostics (red/yellow squiggles). If the container is not running yet, start it from the Terminal page first.</string>
+    <string name="editor_extension_installed">Installed %1$s</string>
+    <string name="editor_extension_installed_no_version">Installed</string>
+    <string name="editor_extension_not_installed">Not installed</string>
+    <string name="editor_extension_unavailable">Container not ready</string>
+    <string name="editor_extension_unknown">Unknown</string>
+    <string name="editor_extension_install">Install</string>
     <string name="editor_font_size_value">%1$d sp</string>
     <string name="editor_file_too_large">File too large (%1$d MB) to open</string>
     <string name="editor_load_failed">Failed to open file</string>

@@ -635,6 +635,14 @@
     <string name="editor_show_indent_guide">显示缩进参考线</string>
     <string name="editor_show_wrap_arrow">显示自动换行箭头</string>
     <string name="editor_show_whitespace">显示空白符号</string>
+    <string name="editor_language_extensions">语言扩展</string>
+    <string name="editor_language_extensions_desc">语言服务器一般已跟容器一起装好（Alpine 镜像），这里可以查看状态或补装。装上后打开对应文件会由它给出诊断（红/黄波浪线）。容器还没初始化时，先去终端页把容器跑起来。</string>
+    <string name="editor_extension_installed">已安装 %1$s</string>
+    <string name="editor_extension_installed_no_version">已安装</string>
+    <string name="editor_extension_not_installed">未安装</string>
+    <string name="editor_extension_unavailable">容器未就绪</string>
+    <string name="editor_extension_unknown">状态未知</string>
+    <string name="editor_extension_install">安装</string>
     <string name="editor_font_size_value">%1$d sp</string>
     <string name="editor_file_too_large">文件过大（%1$d MB），暂不支持打开</string>
     <string name="editor_load_failed">文件打开失败</string>

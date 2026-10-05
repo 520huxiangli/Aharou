@@ -399,6 +399,8 @@ dependencies {
     implementation(platform("io.github.rosemoe:editor-bom:0.24.6"))
     implementation("io.github.rosemoe:editor")
     implementation("io.github.rosemoe:language-textmate")
+    // LSP 客户端（官方模块，lsp4j 纯 JVM）：语言服务器跑在容器里，诊断/悬停等交给它。
+    implementation("io.github.rosemoe:editor-lsp")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     // WorkManager — 保活兜底：周期检查 TerminalKeepaliveService 存活并拉起（KeepaliveWorker）

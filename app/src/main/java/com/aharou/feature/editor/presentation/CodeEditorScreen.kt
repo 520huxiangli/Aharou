@@ -72,6 +72,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.domain.EditorSessionManager
 import com.aharou.feature.editor.domain.TextMateSetup
+import com.aharou.feature.editor.domain.diagnostics.EditorDiagnostics
 import com.aharou.feature.editor.presentation.component.MarkdownPreviewWebView
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
@@ -371,6 +372,22 @@ fun CodeEditorScreen(
                         dirty = changed
                     }
                 )
+                }
+
+                // 有语言服务器（Lua 等）时换上挂着 LSP 的编辑器语言，TextMate 继续负责着色；
+                // 没装服务器 / 非收录语言则不上，保持原语言。
+                val lspEditor = editorRef.value
+                var lspAttached by remember(activePath) { mutableStateOf(false) }
+                LaunchedEffect(lspEditor, activePath, surfaceState.scopeName) {
+                    val editor = lspEditor ?: return@LaunchedEffect
+                    val scope = surfaceState.scopeName ?: return@LaunchedEffect
+                    lspAttached = viewModel.attachLsp(editor, TextMateLanguage.create(scope, false))
+                }
+                // 没有语言服务器时（如 Python）退回容器内的轻量语法检查，同样画波浪线；
+                // 两种都不影响正常编辑：容器未就绪、检查器未装、文件过大都安静跳过。
+                LaunchedEffect(lspEditor, activePath, baselineText.value, lspAttached) {
+                    if (lspAttached) return@LaunchedEffect
+                    EditorDiagnostics.refresh(context, lspEditor, activePath, baselineText.value.length)
                 }
                 if (previewMode) {
                     // 预览覆盖在编辑器上方（编辑器保留在组合中不销毁，切回源码不丢状态）。
@@ -836,50 +853,6 @@ private fun HintText(text: String) {
     )
 }
 
-/**
- * 给编辑器底色掺入当前主题的表面色。
- *
- * TextMate 主题的背景（Dark+ 的 #1E1E1E、Light+ 的纯白）是照 VSCode 的中性色调的，
- * 原样使用会让编辑器在带色温的主题下明显脱离其余界面。保留一成原色以维持编辑区的基调。
- */
-private fun applyThemedBackground(editor: CodeEditor, themeSurface: Color) {
-    val scheme = editor.colorScheme
-    val base = Color(scheme.getColor(EditorColorScheme.WHOLE_BACKGROUND))
-    scheme.setColor(
-        EditorColorScheme.WHOLE_BACKGROUND,
-        lerp(base, themeSurface, EDITOR_THEME_TINT).toArgb()
-    )
-}
-
-private fun applyLineNumberBackground(editor: CodeEditor, dark: Boolean) {
-    val scheme = editor.colorScheme
-    val base = Color(scheme.getColor(EditorColorScheme.WHOLE_BACKGROUND))
-    val target = if (dark) Color.White else Color.Black
-    scheme.setColor(EditorColorScheme.LINE_NUMBER_BACKGROUND, lerp(base, target, 0.08f).toArgb())
-}
-
-/** 行号 gutter 背景与编辑区拉开一点亮度差便于区分。基于编辑器背景色自适应，随主题走。 */
-
-/** 把 sp 换算为像素，用于行号左边距等需 px 的 sora API。 */
-private fun spToPx(context: android.content.Context, sp: Float): Float =
-    TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, context.resources.displayMetrics)
-
-/** 根据“显示空白符号”与“显示自动换行箭头”开关合成 sora 的非打印字符绘制标志。 */
-private fun nonPrintableFlags(showWhitespace: Boolean, showWrapArrow: Boolean): Int {
-    var flags = 0
-    if (showWhitespace) {
-        flags = flags or CodeEditor.FLAG_DRAW_WHITESPACE_LEADING or
-            CodeEditor.FLAG_DRAW_WHITESPACE_INNER or
-            CodeEditor.FLAG_DRAW_WHITESPACE_TRAILING or
-            CodeEditor.FLAG_DRAW_WHITESPACE_FOR_EMPTY_LINE or
-            CodeEditor.FLAG_DRAW_LINE_SEPARATOR
-    }
-    if (showWrapArrow) {
-        flags = flags or CodeEditor.FLAG_DRAW_SOFT_WRAP
-    }
-    return flags
-}
-
 /** 符号栏方向键：把光标水平移动一个字符，跨越行首/行尾时换到相邻行。 */
 private fun moveCursorHorizontally(editor: CodeEditor, forward: Boolean) {
     val cursor = editor.cursor
@@ -981,9 +954,6 @@ private const val FILE_ENCODING = "UTF-8"
 
 /** 垂直额外视口空间系数（占编辑器高度的比例，取值 [0,1]），用于底部过度滚动。 */
 private const val VERTICAL_EXTRA_SPACE_FACTOR = 0.5f
-
-/** 编辑器底色向主题表面色靠拢的比例。 */
-private const val EDITOR_THEME_TINT = 0.9f
 
 /** 带行号打开时等编辑器完成首次布局的最多帧数，避免宽高迟迟不就绪时死等。 */
 private const val LINE_JUMP_LAYOUT_WAIT_FRAMES = 30
