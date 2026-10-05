@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +48,12 @@ class McpManager @Inject constructor(
 ) {
     private companion object {
         const val TAG = "McpManager"
+
+        /** 断线自动重连的退避序列（毫秒）：第 1/2/3 次分别为 5s / 15s / 60s。 */
+        val RECONNECT_DELAYS_MS = longArrayOf(5_000L, 15_000L, 60_000L)
+
+        /** 连续重连多少次仍失败就停止自动重连（不无限热循环）。 */
+        const val MAX_RECONNECT_ATTEMPTS = 3
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -54,6 +61,9 @@ class McpManager @Inject constructor(
 
     private val activeClients = mutableMapOf<String, McpClient>()
     private val registeredToolNames = mutableSetOf<String>()
+
+    /** 各 server 连续重连失败次数：用于退避与上限，连上即清零。 */
+    private val reconnectAttempts = mutableMapOf<String, Int>()
 
     private val _statuses = MutableStateFlow<List<McpServerStatus>>(emptyList())
     val statuses: StateFlow<List<McpServerStatus>> = _statuses.asStateFlow()
@@ -127,6 +137,7 @@ class McpManager @Inject constructor(
         val t0 = System.currentTimeMillis()
         return try {
             FileLogger.i(TAG, "[${cfg.name}] 开始连接（${if (cfg.isStdio) "stdio" else "HTTP"}）")
+            var created: McpClient? = null
             val transport = if (cfg.isStdio) {
                 // stdio server 跑在「运行时容器」上：本地模式用当前容器，远程 SSH 模式用默认容器。
                 // 容器未就绪不自动初始化，直接失败并引导去终端页完成初始化。
@@ -141,7 +152,9 @@ class McpManager @Inject constructor(
                     programArgs = cfg.args,
                     projectPath = workspaceRepository.currentPath(),
                     extraEnv = cfg.env,
-                    runtimeProfile = runtimeProfile
+                    runtimeProfile = runtimeProfile,
+                    // stdio 进程死亡 / 管道断开：自报死亡，由 onTransportClosed 摘除死连接并按退避重连。
+                    onClosed = { onTransportClosed(cfg.name, created) }
                 )
             } else {
                 StreamableHttpTransport(
@@ -150,7 +163,7 @@ class McpManager @Inject constructor(
                     extraHeaders = cfg.headers
                 )
             }
-            val client = McpClient(serverName = cfg.name, transport = transport)
+            val client = McpClient(serverName = cfg.name, transport = transport).also { created = it }
             client.connect()
 
             val tools = client.tools.map { McpTool(client, it) }
@@ -202,8 +215,11 @@ class McpManager @Inject constructor(
     suspend fun reconnectUnconnected() = reloadMutex.withLock {
         val servers = configRepository.getEffectiveServers().filter { it.enabled }
         for (cfg in servers) {
-            val connected = synchronized(activeClients) { activeClients.containsKey(cfg.name) }
-            if (connected) continue
+            // 按「连接是否还活着」判断，而不是只看表里有没有条目：
+            // stdio 进程死后旧实现拿不到死亡信号，条目一直在，于是死连接永远不被重连。
+            val alive = synchronized(activeClients) { activeClients[cfg.name]?.isAlive == true }
+            if (alive) continue
+            teardownServer(cfg.name)
             reconnectOne(cfg)
         }
     }
@@ -275,6 +291,72 @@ class McpManager @Inject constructor(
             client.tools.forEach { tool ->
                 toolRegistry.unregister(tool.name)
                 registeredToolNames.remove(tool.name)
+            }
+        }
+    }
+
+    /**
+     * stdio 进程死亡 / 管道断开：把这条连接从 [activeClients] 摘掉、反注册它的工具、状态置 FAILED，
+     * 再按退避重连。
+     *
+     * 只在「死的正是当前登记的那条连接」时动手：显式 reload / removeServer 已经把条目清掉的情形
+     * 直接跳过，不与它们抢；连接尚在建立中就死亡（client 还是 null）也跳过，那条路径由
+     * [connectOne] 自己的失败处理员承担。
+     */
+    private fun onTransportClosed(serverName: String, client: McpClient?) {
+        val takenOver = synchronized(activeClients) {
+            if (client != null && activeClients[serverName] === client) {
+                activeClients.remove(serverName)
+                client.tools.forEach { tool ->
+                    toolRegistry.unregister(tool.name)
+                    registeredToolNames.remove(tool.name)
+                }
+                true
+            } else {
+                false
+            }
+        }
+        if (!takenOver) return
+        FileLogger.w(TAG, "[$serverName] 连接已断开（stdio 进程退出或管道断开），准备重连")
+        _statuses.value = _statuses.value.map {
+            if (it.name == serverName) {
+                McpServerStatus(serverName, McpServerStatus.State.FAILED, error = "连接已断开")
+            } else it
+        }
+        scheduleReconnect(serverName)
+    }
+
+    /** 断线重连：按 [RECONNECT_DELAYS_MS] 退避，最多 [MAX_RECONNECT_ATTEMPTS] 次；连上即清零计数并停止。 */
+    private fun scheduleReconnect(serverName: String) {
+        val attempt = (reconnectAttempts[serverName] ?: 0) + 1
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            FileLogger.w(
+                TAG,
+                "[$serverName] 已连续重连 $MAX_RECONNECT_ATTEMPTS 次仍未成功，停止自动重连" +
+                    "（下次新会话或设置里手动重载会再试）"
+            )
+            reconnectAttempts.remove(serverName)
+            return
+        }
+        reconnectAttempts[serverName] = attempt
+        val delayMs = RECONNECT_DELAYS_MS[(attempt - 1).coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)]
+        scope.launch {
+            delay(delayMs)
+            val cfg = configRepository.getEffectiveServers().firstOrNull { it.name == serverName } ?: return@launch
+            if (!cfg.enabled) return@launch
+            reloadMutex.withLock {
+                // 等待期间可能已被显式 reload 连上（或已删除）：别重复连。
+                val alive = synchronized(activeClients) { activeClients[serverName]?.isAlive == true }
+                if (alive) return@withLock
+                FileLogger.i(TAG, "[$serverName] 断线重连第 $attempt 次")
+                teardownServer(serverName)
+                reconnectOne(cfg)
+            }
+            val connected = _statuses.value.firstOrNull { it.name == serverName }?.state == McpServerStatus.State.CONNECTED
+            if (connected) {
+                reconnectAttempts.remove(serverName)
+            } else {
+                scheduleReconnect(serverName)
             }
         }
     }

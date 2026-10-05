@@ -20,4 +20,10 @@ interface McpTransport {
 
     /** 释放底层资源（连接、会话等）。可重复调用。 */
     fun close()
+
+    /**
+     * 这条传输是否仍然可用。默认 true（HTTP 传输不做廉价存活判定）；
+     * stdio 实现按子进程存活返回 false，供管理层在进程死亡后摘除死连接。
+     */
+    val isAlive: Boolean get() = true
 }

@@ -108,6 +108,9 @@ class McpClient(
     }
 
     fun close() = transport.close()
+
+    /** 底层连接是否还活着（stdio 看子进程）；false 说明这条 client 已死，需重建。 */
+    val isAlive: Boolean get() = transport.isAlive
 }
 
 /** 一次 `tools/call` 的结果：扁平化文本 + 是否报错（源自 MCP 结果的 `isError` 字段）。 */

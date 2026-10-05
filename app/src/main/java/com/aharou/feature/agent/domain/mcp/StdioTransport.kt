@@ -41,6 +41,11 @@ class StdioTransport(
     private val projectPath: String?,
     private val extraEnv: Map<String, String> = emptyMap(),
     private val runtimeProfile: ContainerProfile = ContainerProfile.BUILTIN_ALPINE,
+    /**
+     * stdio 结束（子进程退出 / 管道断开）时回调一次。供管理层摘除死连接并重连——
+     * 主动 [close] 不回调（那由调用方自己负责）。
+     */
+    private val onClosed: (() -> Unit)? = null,
     private val json: Json = DEFAULT_JSON
 ) : McpTransport {
 
@@ -72,6 +77,9 @@ class StdioTransport(
     @Volatile private var process: Process? = null
     @Volatile private var writer: BufferedWriter? = null
     @Volatile private var closed = false
+
+    /** [onClosed] 只回调一次：读循环结束与 [close] 都可能走到同一收尾路径。 */
+    private val closedNotified = AtomicBoolean(false)
 
     /** 本实例是否占用了 [runningServers] 的一个名额；关闭 / 进程退出时归还，保证只归还一次。 */
     private val slotHeld = AtomicBoolean(false)
@@ -108,6 +116,21 @@ class StdioTransport(
         FileLogger.d(TAG, "→ notify [$serverName] $method")
         runCatching { writeLine(json.encodeToString(JsonRpcNotification.serializer(), payload)) }
             .onFailure { FileLogger.w(TAG, "[$serverName] 发送通知 $method 失败: ${it.message}") }
+    }
+
+    /** 传输是否仍然可用：未主动关闭且子进程还活着。管理层据此摘除死连接。 */
+    override val isAlive: Boolean
+        get() = !closed && process?.isAlive == true
+
+    /**
+     * 通知上层「这条 stdio 已经结束」（子进程退出 / 管道断开）。
+     * 主动 [close] 不回调——那种情况由调用方自己清理，重复上报反而会和显式重载抢。
+     */
+    private fun notifyClosed() {
+        if (closed) return
+        if (!closedNotified.compareAndSet(false, true)) return
+        runCatching { onClosed?.invoke() }
+            .onFailure { FileLogger.w(TAG, "[$serverName] onClosed 回调异常: ${it.message}") }
     }
 
     override fun close() {
@@ -194,6 +217,8 @@ class StdioTransport(
             failAllPending("server stdout 已关闭")
             // 进程已退出，归还并发名额：否则启动即失败 / 自行退出的 server 会永久占着名额。
             releaseSlot()
+            // 上报死亡：管理层据此摘除死连接并重连（不再需要重启 App）。
+            notifyClosed()
         }
     }
 
