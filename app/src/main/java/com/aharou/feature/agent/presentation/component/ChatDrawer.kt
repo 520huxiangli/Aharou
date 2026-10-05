@@ -51,6 +51,7 @@ import com.aharou.core.ui.dialogTextFieldColors
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -75,12 +76,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.SegmentedTabs
 import com.aharou.core.ui.rememberImeBottomInset
-import com.aharou.feature.settings.presentation.component.ModelSearchField
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.SettingsGroupHeader
@@ -92,6 +93,8 @@ import com.aharou.feature.agent.presentation.ChatSearchHit
 import com.aharou.feature.agent.presentation.ChatSearchState
 import com.aharou.feature.agent.presentation.BrowseClipboard
 import com.aharou.feature.agent.presentation.FileBrowseState
+import com.aharou.feature.agent.presentation.FileSearchState
+import com.aharou.feature.agent.presentation.FileSearchViewModel
 import com.aharou.feature.agent.presentation.FileTreeNode
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.workspace.domain.model.Workspace
@@ -171,6 +174,10 @@ fun ChatDrawerContent(
     onOpenSearchHit: (ChatSearchHit) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val fileSearchViewModel: FileSearchViewModel = hiltViewModel()
+    val fileSearchQuery by fileSearchViewModel.query.collectAsState()
+    val fileSearchState by fileSearchViewModel.state.collectAsState()
+
     // tab 与展开状态进 saveable：大屏下侧栏收起后整棵子树会离开组合（见 MainActivity 的
     // SaveableStateProvider），用 remember 存会让每次回到聊天页都重置回「会话」页。
     var selectedTab by rememberSaveable { mutableStateOf(0) }
@@ -291,10 +298,18 @@ fun ChatDrawerContent(
                 }
             }
         } else if (selectedTab == 0) {
-            ChatSearchField(
+            DrawerSearchField(
                 query = searchQuery,
+                placeholder = stringResource(R.string.chat_search_hint),
                 onQueryChange = onSearchQueryChange,
                 onClear = onClearSearch
+            )
+        } else if (selectedTab == 1) {
+            DrawerSearchField(
+                query = fileSearchQuery,
+                placeholder = stringResource(R.string.drawer_file_search_hint),
+                onQueryChange = fileSearchViewModel::updateQuery,
+                onClear = fileSearchViewModel::clear
             )
         }
 
@@ -324,7 +339,16 @@ fun ChatDrawerContent(
                     onLongClick = { menuSession = it },
                     onOpenSearchHit = onOpenSearchHit
                 )
-                1 -> FileBrowserTab(
+                1 -> if (fileSearchQuery.isNotBlank()) {
+                    // 命中行点击：先把要定位的行号交给打开动作，再走与文件树同一条打开链路。
+                    FileSearchResults(
+                        state = fileSearchState,
+                        onOpenHit = { hit ->
+                            DrawerSearchOpenRequest.request(hit.path, hit.line)
+                            onOpenFile(hit.path)
+                        }
+                    )
+                } else FileBrowserTab(
                     state = browseState,
                     expandedPaths = expandedPaths,
                     expandingPath = expandingPath,
@@ -715,33 +739,6 @@ private fun SessionListContent(
     }
 }
 
-/** Tab0 底部搜索框：复用设置页的胶囊搜索框，非空时带清除按钮。 */
-@Composable
-private fun ChatSearchField(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClear: () -> Unit
-) {
-    ModelSearchField(
-        query = query,
-        onQueryChange = onQueryChange,
-        placeholder = stringResource(R.string.chat_search_hint),
-        modifier = Modifier.fillMaxWidth(),
-        trailing = if (query.isEmpty()) null else {
-            {
-                IconButton(onClick = onClear, modifier = Modifier.size(24.dp)) {
-                    Icon(
-                        imageVector = FeatherIcons.X,
-                        contentDescription = stringResource(R.string.chat_search_clear),
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    )
-}
-
 /** 搜索结果区：加载中 / 无结果 / 命中列表三态。 */
 @Composable
 private fun ChatSearchResults(
@@ -821,20 +818,6 @@ private fun ChatSearchResultRow(
         )
     }
 }
-
-/** 把片段中所有命中词标为高亮样式。 */
-private fun highlightSnippet(snippet: String, query: String, highlight: SpanStyle): AnnotatedString =
-    buildAnnotatedString {
-        append(snippet)
-        if (query.isBlank()) return@buildAnnotatedString
-        var start = 0
-        while (true) {
-            val index = snippet.indexOf(query, start, ignoreCase = true)
-            if (index < 0) break
-            addStyle(highlight, index, index + query.length)
-            start = index + query.length
-        }
-    }
 
 /** 会话行尾的子代理展开开关：显示数量与箭头，自己消费点击，不触发整行选中。 */
 @Composable

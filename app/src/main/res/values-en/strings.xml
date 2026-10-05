@@ -565,6 +565,10 @@
     <string name="chat_search_hint">Search chats</string>
     <string name="chat_search_no_result">No matching messages</string>
     <string name="chat_search_clear">Clear</string>
+    <string name="drawer_file_search_hint">Search file names or content</string>
+    <string name="drawer_file_search_no_result">No matching files or content</string>
+    <string name="drawer_file_search_summary">%1$d files · %2$d matches</string>
+    <string name="drawer_file_search_truncated">Too many results, showing the first %1$d</string>
     <string name="session_group_today">Today</string>
     <string name="session_group_yesterday">Yesterday</string>
     <string name="session_group_last_7_days">Last 7 Days</string>

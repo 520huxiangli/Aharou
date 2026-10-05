@@ -565,6 +565,10 @@
     <string name="chat_search_hint">搜索聊天记录</string>
     <string name="chat_search_no_result">未找到匹配的聊天记录</string>
     <string name="chat_search_clear">清除</string>
+    <string name="drawer_file_search_hint">搜索文件名或内容</string>
+    <string name="drawer_file_search_no_result">没有匹配的文件或内容</string>
+    <string name="drawer_file_search_summary">%1$d 个文件 · %2$d 处命中</string>
+    <string name="drawer_file_search_truncated">结果过多，仅显示前 %1$d 条</string>
     <string name="session_group_today">今天</string>
     <string name="session_group_yesterday">昨天</string>
     <string name="session_group_last_7_days">7天内</string>

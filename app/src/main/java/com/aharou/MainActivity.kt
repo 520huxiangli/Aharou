@@ -90,6 +90,7 @@ import com.aharou.feature.agent.presentation.AIAgentViewModel
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.component.AIChatPanel
 import com.aharou.feature.agent.presentation.component.ChatDrawerContent
+import com.aharou.feature.agent.presentation.component.DrawerSearchOpenRequest
 import com.aharou.feature.agent.presentation.component.chatImageLoader
 import com.aharou.feature.agent.presentation.component.openSentAttachment
 import com.aharou.feature.editor.presentation.CodeEditorScreen
@@ -112,7 +113,6 @@ import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.settings.data.repository.ScreenOnSettingsRepository
 import com.aharou.feature.settings.data.repository.ThemeSettingsRepository
 import com.aharou.feature.settings.presentation.SettingsViewModel
-import com.aharou.feature.settings.presentation.FetchState
 import com.aharou.feature.settings.presentation.UpdateCheckUiState
 import com.aharou.feature.settings.presentation.component.githubReleaseUrl
 import com.aharou.feature.settings.presentation.component.installDownloadedApk
@@ -636,7 +636,7 @@ fun AppNavigation(
                     agentViewModel.fileAccess
                 )
             }
-            else -> openFile(path, 0, true)
+            else -> openFile(path, DrawerSearchOpenRequest.lineFor(path), true)
         }
     }
 

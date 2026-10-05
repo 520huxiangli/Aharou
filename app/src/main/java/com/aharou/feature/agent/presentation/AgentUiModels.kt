@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.workspace.domain.FileEntry
+import com.aharou.feature.workspace.domain.WorkspaceSearchHit
 import kotlinx.serialization.Serializable
 
 /**
@@ -75,6 +76,19 @@ data class ChatSearchState(
     val query: String = "",
     val loading: Boolean = false,
     val hits: List<ChatSearchHit> = emptyList()
+)
+
+/**
+ * 侧边栏「文件」Tab 的工作区搜索状态。
+ * [hits] 里文件名命中在前、内容命中在后（引擎序），UI 按文件分组展示。
+ */
+@Immutable
+data class FileSearchState(
+    val query: String = "",
+    val loading: Boolean = false,
+    val hits: List<WorkspaceSearchHit> = emptyList(),
+    /** 命中数或候选文件数触到上限，结果不完整。 */
+    val truncated: Boolean = false
 )
 
 /**
