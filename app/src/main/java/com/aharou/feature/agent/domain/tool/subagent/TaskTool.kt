@@ -75,6 +75,14 @@ class TaskTool @Inject constructor(
     private companion object {
         const val TAG = "TaskTool"
         const val TASK_DESCRIPTION_MAX = 30
+        /** `roles` 动作一次最多列多少个角色（避免把 140 个角色全塞进上下文）。 */
+        const val ROLE_LIST_LIMIT = 30
+        /** `roles` 里每条描述的截断长度。 */
+        const val ROLE_DESCRIPTION_MAX = 160
+        /** 能改文件/落盘的工具：出现在角色白名单里就说明它不是只读角色。 */
+        val WRITE_TOOLS = setOf("writeFile", "editFile", "generateImage")
+        /** 能跑命令或操作设备的工具：用在「能不能执行命令」的提示上。 */
+        val EXEC_TOOLS = setOf("Bash", "terminal", "Shizuku", "vscreen", "a11y")
         /** 未指定 agent 时子会话记录的类型标识。 */
         const val DEFAULT_SUBAGENT_TYPE = "subagent"
     }
@@ -90,18 +98,18 @@ class TaskTool @Inject constructor(
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
         return when (action) {
-            "read", "list", "send" -> emptySet()
+            "read", "list", "send", "roles" -> emptySet()
             else -> setOf(ToolCapability.MODIFY_SESSION_STATE)
         }
     }
 
-    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词）让系统选一个最对口的角色，确知角色名时才用 agent 点名。"
+    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）",
+            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）",
             required = false
         ),
         "id" to ToolParameter(
@@ -164,7 +172,8 @@ class TaskTool @Inject constructor(
             "stop" -> stopSubagent(args, context)
             "del" -> deleteSubagent(args, context)
             "list" -> listSubagents(context)
-            else -> ToolResult.Error("未知 action: $action，支持：create / send / read / stop / del / list", "INVALID_ARGS")
+            "roles" -> listRoles(args)
+            else -> ToolResult.Error("未知 action: $action，支持：create / send / read / stop / del / list / roles", "INVALID_ARGS")
         }
     }
 
@@ -466,8 +475,7 @@ class TaskTool @Inject constructor(
     }
 
     /** 列出当前会话的全部子代理。 */
-    private suspend fun listSubagents(context: AgentContext): ToolResult {
-        val parentSessionId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
+    private suspend fun listSubagents(context: AgentContext): ToolResult {        val parentSessionId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
         val subs = chatSessionDao.getSubSessionsByParentOnce(parentSessionId)
         val activeIds = eventBus.activeSubSessionIds.value
 
@@ -489,6 +497,77 @@ class TaskTool @Inject constructor(
                 put("count", subs.size)
                 put("runningCount", activeIds.size)
                 put("maxRunning", SubAgentEventBus.MAX_RUNNING)
+            }
+        )
+    }
+
+    /**
+     * 角色能力摘要：直接列出该角色的可用工具，并点明「只读」「不能执行命令」这两个最常踩的边界——
+     * 常驻索引里只有角色名与一句用途，主代理无从知道 Explore 这类角色不能改文件、不能跑命令。
+     */
+    private fun roleToolSummary(definition: AgentDefinition): String {
+        val allowed = definition.allowedTools
+        val disallowed = definition.disallowedTools
+        val tools = when {
+            allowed.isNotEmpty() -> allowed.joinToString("、")
+            disallowed.isNotEmpty() -> "默认全量（禁用 ${disallowed.joinToString("、")}）"
+            else -> "默认全量"
+        }
+        if (allowed.isEmpty()) return tools
+        val notes = buildList {
+            if (allowed.none { it in WRITE_TOOLS }) add("只读")
+            if (allowed.none { it in EXEC_TOOLS }) add("不能执行命令")
+        }
+        return if (notes.isEmpty()) tools else "$tools ｜ ${notes.joinToString("、")}"
+    }
+
+    /**
+     * 列出可用子代理角色（不创建）：[department] 收窄部门，[agentQuery] 走与 create 同一套选角打分排序。
+     * 常驻索引里每个部门只展示 2 个代表角色，主代理想点名时先用这里把名字与用途查出来。
+     */
+    private suspend fun listRoles(args: Map<String, JsonElement>): ToolResult {
+        val department = (args["department"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val agentQuery = (args["agentQuery"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val enabled: List<AgentDefinition> = try {
+            agentDefinitionRepository.listEnabled().map { it.definition }
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "读取子代理定义失败", e)
+            return ToolResult.Error("读取子代理定义失败：${e.message ?: "未知错误"}", "AGENT_LIST_FAILED")
+        }
+        if (enabled.isEmpty()) {
+            return ToolResult.Error("当前没有可用的子代理定义", "AGENT_LIST_EMPTY")
+        }
+        if (department != null && SubAgentProfileMatcher.canonicalDepartment(department) == null) {
+            return ToolResult.Error(
+                "未知部门：$department。可用部门：${SubAgentProfileMatcher.departmentHint(enabled)}",
+                "INVALID_ARGS"
+            )
+        }
+
+        val ranked = SubAgentProfileMatcher.candidates(enabled, department, agentQuery, ROLE_LIST_LIMIT)
+        if (ranked.isEmpty()) {
+            return ToolResult.Error(
+                "没有匹配的角色（department=${department ?: "-"}, agentQuery=${agentQuery ?: "-"}）。" +
+                    "可用部门：${SubAgentProfileMatcher.departmentHint(enabled)}",
+                "AGENT_NOT_FOUND"
+            )
+        }
+        val content = buildString {
+            append("可用子代理角色")
+            if (department != null) append("（department=").append(department).append("）")
+            if (agentQuery != null) append("（agentQuery=\"").append(agentQuery).append("\" 排序）")
+            append("，共 ").append(ranked.size).append(" 个：\n")
+            ranked.forEach { (definition, _) ->
+                val summary = definition.description.lineSequence().first().trim().take(ROLE_DESCRIPTION_MAX)
+                append("- ").append(definition.name).append("：").append(summary)
+                    .append("（工具：").append(roleToolSummary(definition)).append("）\n")
+            }
+            append("派发：task(action=\"create\", agent=\"<名称>\", prompt=\"…\")；不确定就用 department + agentQuery 让系统选角。")
+        }
+        return ToolResult.Success(
+            buildJsonObject {
+                put("content", content)
+                put("count", ranked.size)
             }
         )
     }
