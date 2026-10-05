@@ -460,9 +460,51 @@ install_optional_tools() {
             fi
             ;;
         *)
-            echo "  当前镜像（$PMGR）仓库里没有 Lua 语言服务器，已跳过（可在编辑器设置 → 语言扩展里联网安装）"
+            # 其它镜像（Debian/Ubuntu/Fedora/Arch…）的仓库里没有 lua-language-server 包
+            # （Debian 系实测确认没有），改下官方静态二进制：glibc 系通用，按架构选包。
+            install_lua_ls_release
+            # python3：编辑器对 .py 的轻量语法检查靠它；apt 系基础镜像一般自带，缺了就补。
+            if ! command -v python3 >/dev/null 2>&1; then
+                pkg_add python3 >/dev/null 2>&1 && echo "  已安装 python3（编辑器 Python 诊断与脚本运行用）"
+            fi
             ;;
     esac
+}
+
+# ── 非 apk 系的 Lua 语言服务器：官方静态二进制（glibc 通用；musl 用不了，那类走 apk）──
+# 版本与镜像前缀要和 App 侧 LanguageServerInstaller 保持一致，改一处得同步另一处。
+LUA_LS_VERSION="3.19.1"
+LUA_LS_MIRROR="https://v6.gh-proxy.org/"
+install_lua_ls_release() {
+    if command -v lua-language-server >/dev/null 2>&1; then
+        echo "  Lua 语言服务器已存在，跳过"
+        return 0
+    fi
+    case "$(uname -m)" in
+        aarch64|arm64) asset_arch=linux-arm64 ;;
+        x86_64|amd64)  asset_arch=linux-x64 ;;
+        armv7l|armhf)  asset_arch=linux-armhf ;;
+        *)
+            echo "  ${C_YELLOW}容器架构 $(uname -m) 没有对应的 Lua 语言服务器，跳过${C_RESET}"
+            return 1
+            ;;
+    esac
+    asset="lua-language-server-${LUA_LS_VERSION}-${asset_arch}.tar.gz"
+    origin="https://github.com/LuaLS/lua-language-server/releases/download/${LUA_LS_VERSION}/${asset}"
+    echo "  正在下载 Lua 语言服务器（${asset}）..."
+    if curl -fsSL -o /tmp/aharou-lsp.tgz "${LUA_LS_MIRROR}${origin}" 2>/dev/null \
+        || curl -fsSL -o /tmp/aharou-lsp.tgz "${origin}" 2>/dev/null; then
+        mkdir -p "$HOME/.aharou/lsp/lua-language-server"
+        rm -rf "$HOME/.aharou/lsp/lua-language-server"/*
+        tar -xzf /tmp/aharou-lsp.tgz -C "$HOME/.aharou/lsp/lua-language-server" 2>/dev/null
+        mkdir -p "$HOME/.aharou/bin"
+        printf '#!/bin/sh\nexec %s/.aharou/lsp/lua-language-server/bin/lua-language-server "$@"\n' "$HOME" > "$HOME/.aharou/bin/lua-language-server"
+        chmod +x "$HOME/.aharou/bin/lua-language-server"
+        rm -f /tmp/aharou-lsp.tgz
+        echo "  已安装 Lua 语言服务器 ${LUA_LS_VERSION}"
+    else
+        echo "  ${C_YELLOW}Lua 语言服务器没装上；可在编辑器设置 → 语言扩展里重试${C_RESET}"
+    fi
 }
 
 # ── 探测单个 URL 的 http 状态码（curl 优先，wget 兑底，无法探测返回 000）──

@@ -105,6 +105,14 @@ class LanguageServerInstaller @Inject constructor(
         /** 版本号解析失败时的占位。 */
         const val UNKNOWN_VERSION = "unknown"
 
+        /**
+         * 非包管理器路线（Debian/Ubuntu 等源里没有这个包）改用官方 release 的静态二进制，
+         * 这里固定版本与镜像。官方包只有 glibc 构建，musl 系（Alpine）用不了，必须走包管理器。
+         */
+        private const val RELEASE_VERSION = "3.19.1"
+        private const val RELEASE_MIRROR = "https://v6.gh-proxy.org/"
+        private const val RELEASE_REPO = "LuaLS/lua-language-server"
+
         private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
         private val PRETTY_JSON = Json { prettyPrint = true }
         private val VERSION_REGEX = Regex("""\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.\-]+)?""")
@@ -144,11 +152,11 @@ class LanguageServerInstaller @Inject constructor(
     }
 
     /**
-     * 安装：`apk add --no-cache <包名>`。容器未就绪时返回失败 + [ExtensionStatus.Unavailable]。
-     * 成功后再探活一次，回读真实版本并落盘。
+     * 安装：容器自带的包管理器能装就装，装不到（如 Debian/Ubuntu 源里没这个包）就下官方静态二进制。
+     * 容器未就绪时返回失败 + [ExtensionStatus.Unavailable]。成功后再探活一次，回读真实版本并落盘。
      */
     suspend fun install(extension: LanguageExtension): InstallResult = withContext(Dispatchers.IO) {
-        val result = runIfReady("apk add --no-cache ${extension.apkPackage}", INSTALL_TIMEOUT_MS)
+        val result = installCommand(extension)
             ?: return@withContext InstallResult(
                 success = false,
                 exitCode = null,
@@ -189,6 +197,71 @@ class LanguageServerInstaller @Inject constructor(
     }
 
     // ── 内部实现 ──
+
+    /**
+     * 选安装路径，不按发行版枚举、只按容器实际有什么来判断：
+     * 先试包管理器（apk / pacman / dnf / yum / zypper 的源里都有这个包），没装成再落官方二进制。
+     *
+     * Alpine（musl）没有可用的官方二进制，所以包管理器失败就直接返回，不再白跑一轮。
+     * apt 系故意不试：Ubuntu/Debian 源里没有 lua-language-server 这个包，试了只是白等。
+     */
+    private suspend fun installCommand(extension: LanguageExtension) = run {
+        val pmCommand = packageManagerCommand(extension)
+        if (pmCommand != null) {
+            val pmResult = runIfReady(pmCommand, INSTALL_TIMEOUT_MS)
+            if (pmResult != null && pmResult.exitCode == 0) return@run pmResult
+            if (hasCommand("apk")) return@run pmResult
+            FileLogger.w(TAG, "包管理器安装失败（exit=${pmResult?.exitCode}），改用官方二进制")
+        }
+        runIfReady(buildReleaseTarballScript(extension), INSTALL_TIMEOUT_MS)
+    }
+
+    /** 容器里认识的包管理器给出的安装命令；都不认识返回 null（交给二进制路线）。 */
+    private suspend fun packageManagerCommand(extension: LanguageExtension): String? {
+        val pkg = extension.apkPackage
+        return when {
+            hasCommand("apk") -> "apk add --no-cache $pkg"
+            hasCommand("pacman") -> "pacman -Sy --noconfirm $pkg"
+            hasCommand("dnf") -> "dnf install -y $pkg"
+            hasCommand("yum") -> "yum install -y $pkg"
+            hasCommand("zypper") -> "zypper -n install $pkg"
+            else -> null
+        }
+    }
+
+    /** 命令是否存在（容器未就绪返回 false）。 */
+    private suspend fun hasCommand(name: String): Boolean {
+        val result = runIfReady("command -v $name") ?: return false
+        return result.exitCode == 0 && result.output.isNotBlank()
+    }
+
+    /**
+     * 官方静态二进制的安装脚本：按容器架构挑包 → 下载（GitHub 直连在国内很慢，先走反代镜像、
+     * 失败回退原链）→ 解压到 `~/.aharou/lsp/<名字>`，再在已在 PATH 里的 `~/.aharou/bin` 放个同名入口。
+     */
+    private fun buildReleaseTarballScript(extension: LanguageExtension): String {
+        val pkg = extension.command
+        val ver = RELEASE_VERSION
+        return """
+            set -e
+            case "$(uname -m)" in
+              aarch64|arm64) asset_arch=linux-arm64 ;;
+              x86_64|amd64)  asset_arch=linux-x64 ;;
+              armv7l|armhf)  asset_arch=linux-armhf ;;
+              *) echo "不支持的容器架构：$(uname -m)"; exit 1 ;;
+            esac
+            asset="$pkg-$ver-${'$'}asset_arch.tar.gz"
+            origin="https://github.com/$RELEASE_REPO/releases/download/$ver/${'$'}asset"
+            curl -fsSL -o /tmp/aharou-lsp.tgz "$RELEASE_MIRROR${'$'}origin" || curl -fsSL -o /tmp/aharou-lsp.tgz "${'$'}origin"
+            mkdir -p ~/.aharou/lsp/$pkg
+            tar -xzf /tmp/aharou-lsp.tgz -C ~/.aharou/lsp/$pkg
+            mkdir -p ~/.aharou/bin
+            printf '#!/bin/sh\nexec ~/.aharou/lsp/$pkg/bin/$pkg "${'$'}@"\n' > ~/.aharou/bin/$pkg
+            chmod +x ~/.aharou/bin/$pkg
+            rm -f /tmp/aharou-lsp.tgz
+            echo "已安装 $pkg $ver（${'$'}asset_arch）"
+        """.trimIndent()
+    }
 
     /** 仅在后端就绪时执行；未就绪返回 null（不触发容器初始化）。 */
     private suspend fun runIfReady(
