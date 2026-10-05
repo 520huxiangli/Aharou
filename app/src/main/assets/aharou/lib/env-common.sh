@@ -71,7 +71,7 @@ detect_pmgr() {
 pkg_add() {
     case "$PMGR" in
         apk)
-            apk update
+            apk_update
             apk add --no-cache "$@"
             ;;
         apt)
@@ -200,10 +200,42 @@ runtime_ver() {
     pkg_versions "$(runtime_candidates "$1" | head -1)" | head -1 | sed 's/-r[0-9]*$//'
 }
 
+# ── apk 数据库锁：安装中被中断会留下陈旧锁，之后每个 apk 操作都报 ──
+# "Unable to lock database: temporary error (try again later)"。以前这会误报成网络问题。
+# 清锁前必须确认没有 apk 在跑（否则会拆掉真正在用的锁，把数据库搞坏）。
+apk_process_running() {
+    for p in /proc/[0-9]*; do
+        [ -r "$p/comm" ] || continue
+        [ "$(cat "$p/comm" 2>/dev/null)" = "apk" ] && return 0
+    done
+    return 1
+}
+
+apk_clear_stale_lock() {
+    [ -e /lib/apk/db/lock ] || return 1
+    apk_process_running && return 1
+    rm -f /lib/apk/db/lock
+    echo "  ${C_YELLOW}检测到陈旧的 apk 锁（上次安装被中断留下），已清理。${C_RESET}"
+    return 0
+}
+
+# apk update 的封装：先清陈旧锁（无锁或有活进程时不动），失败后再试一次清锁重试。
+apk_update() {
+    apk_clear_stale_lock
+    if apk update; then
+        return 0
+    fi
+    if apk_clear_stale_lock; then
+        apk update
+        return $?
+    fi
+    return 1
+}
+
 # ── 更新软件包索引（版本探测与安装的前置步骤）──
 pkg_update() {
     case "$PMGR" in
-        apk) apk update ;;
+        apk) apk_update ;;
         apt) apt-get update -y ;;
         dnf) dnf makecache -y ;;
         yum) yum makecache -y ;;
@@ -350,7 +382,7 @@ install_custom() {
     echo ""
     ask_mirror
     echo "正在更新软件包列表..."
-    pkg_update || { echo "${C_RED}更新软件包列表失败，请检查网络后重试。${C_RESET}"; return 1; }
+    pkg_update || { echo "${C_RED}更新软件包列表失败：可能是网络不通，或上次安装被中断留下的锁没清掉。请重试一次；仍失败可让 AI 读取终端内容诊断。${C_RESET}"; return 1; }
     echo ""
     echo "请选择需要安装的依赖"
     runtimes=""
@@ -402,7 +434,35 @@ install_custom() {
         pkgs="$pkgs $(runtime_install "$r")"
     done
     pkg_add $pkgs || return 1
+    install_optional_tools
     return 0
+}
+
+# ── 可选增强工具：语言服务器这类「有更好、没有也能用」的东西 ──
+# 单独一步、失败只提示不中断：不同镜像的仓库里不一定有这些包（Debian/Ubuntu 就没有
+# lua-language-server），混进基础清单会让整条安装失败（2026-09-27 装 bind-tools 踩过同类坑）。
+install_optional_tools() {
+    case "$PMGR" in
+        apk)
+            if apk add --no-cache lua-language-server >/dev/null 2>&1; then
+                echo "  已安装 Lua 语言服务器（编辑器代码诊断用）"
+            else
+                echo "  ${C_YELLOW}Lua 语言服务器没装上；可在编辑器设置 → 语言扩展里重试${C_RESET}"
+            fi
+            # python3：编辑器对 .py 的轻量语法检查靠 `python3 -m py_compile`，AI 侧的技能/脚本
+            # 也默认容器里有它；缺了就是「保存了但没反应」（检查器找不到，静默跳过）。
+            if command -v python3 >/dev/null 2>&1; then
+                :
+            elif apk add --no-cache python3 >/dev/null 2>&1; then
+                echo "  已安装 python3（编辑器 Python 诊断与脚本运行用）"
+            else
+                echo "  ${C_YELLOW}python3 没装上；编辑器对 .py 的诊断会跳过${C_RESET}"
+            fi
+            ;;
+        *)
+            echo "  当前镜像（$PMGR）仓库里没有 Lua 语言服务器，已跳过（可在编辑器设置 → 语言扩展里联网安装）"
+            ;;
+    esac
 }
 
 # ── 探测单个 URL 的 http 状态码（curl 优先，wget 兑底，无法探测返回 000）──
@@ -663,7 +723,7 @@ install_light_runtimes() {
     ask_mirror
     echo ""
     echo "正在更新软件包列表..."
-    pkg_update || { echo "${C_RED}更新软件包列表失败，请检查网络后重试。${C_RESET}"; return 1; }
+    pkg_update || { echo "${C_RED}更新软件包列表失败：可能是网络不通，或上次安装被中断留下的锁没清掉。请重试一次；仍失败可让 AI 读取终端内容诊断。${C_RESET}"; return 1; }
     echo ""
     show_plan "$runtimes" || return 2
     echo ""
@@ -673,5 +733,6 @@ install_light_runtimes() {
         pkgs="$pkgs $(runtime_install "$r")"
     done
     pkg_add $pkgs || return 1
+    install_optional_tools
     return 0
 }
