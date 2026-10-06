@@ -708,7 +708,10 @@ internal fun StreamingBubble(
             modifier = Modifier.fillMaxWidth(),
             cache = cache,
             cacheEnabled = false,
-            retainState = false
+            // 必须 retainState：解析未完成的那几帧要沿用上一次解析好的排版，否则会回落到
+            // 纯文本兜底——纯文本与 Markdown 的行高、段落间距不同，而列表是贴底钉住的，
+            // 两态每帧交替就把整块内容顶上去又落下来（流式期间的上下抖动）。
+            retainState = true
         )
         Spacer(Modifier.height(Spacing.xs))
         TypingDots(color = MaterialTheme.colorScheme.primary, dotSize = 5.dp)
