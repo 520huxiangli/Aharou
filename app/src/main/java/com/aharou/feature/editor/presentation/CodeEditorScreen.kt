@@ -80,6 +80,7 @@ import compose.icons.feathericons.ChevronLeft
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Code
 import compose.icons.feathericons.Eye
+import compose.icons.feathericons.Search
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.X
@@ -132,6 +133,7 @@ fun CodeEditorScreen(
     var showCloseTabDialog by remember { mutableStateOf(false) }
     var pendingCloseTab by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
+    val editorFind = remember { EditorFindState() }
     var previewMode by remember { mutableStateOf(false) }
     var cursorLine by remember { mutableStateOf(1) }
     var cursorColumn by remember { mutableStateOf(1) }
@@ -150,6 +152,7 @@ fun CodeEditorScreen(
         pendingExit = false
         cursorLine = snapshots[activePath]?.cursorLine ?: 1
         cursorColumn = snapshots[activePath]?.cursorColumn ?: 1
+        editorFind.close()
         previewMode = false
     }
 
@@ -191,7 +194,13 @@ fun CodeEditorScreen(
     }
 
     fun handleBack() {
-        if (dirty) showUnsavedDialog = true else onBack()
+        if (editorFind.visible) {
+            editorFind.close()
+        } else if (dirty) {
+            showUnsavedDialog = true
+        } else {
+            onBack()
+        }
     }
 
     /** 把当前编辑器的内容/光标/滚动存进会话，供切走后再切回来恢复。 */
@@ -212,6 +221,7 @@ fun CodeEditorScreen(
     fun switchTab(target: String) {
         if (target == activePath) return
         persistCurrentTab()
+        editorFind.close()
         EditorSessionManager.activate(target)
     }
 
@@ -256,59 +266,73 @@ fun CodeEditorScreen(
                     },
                     actions = {
                         val editable = state is EditorUiState.Success
-                        if (isMarkdown && editable) {
-                            IconButton(onClick = { previewMode = !previewMode }) {
-                                Icon(
-                                    if (previewMode) FeatherIcons.Code else FeatherIcons.Eye,
-                                    contentDescription = stringResource(
-                                        if (previewMode) R.string.editor_md_show_source
-                                        else R.string.editor_md_preview
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = editorFind::open, enabled = editable && !previewMode) {
+                                Icon(FeatherIcons.Search, contentDescription = stringResource(R.string.editor_find))
+                            }
+                            if (isMarkdown && editable) {
+                                IconButton(onClick = {
+                                    editorFind.close()
+                                    previewMode = !previewMode
+                                }) {
+                                    Icon(
+                                        if (previewMode) FeatherIcons.Code else FeatherIcons.Eye,
+                                        contentDescription = stringResource(
+                                            if (previewMode) R.string.editor_md_show_source
+                                            else R.string.editor_md_preview
+                                        )
                                     )
-                                )
+                                }
                             }
-                        }
-                        IconButton(
-                            onClick = { editorRef.value?.undo() },
-                            enabled = editable && canUndo
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Undo,
-                                contentDescription = stringResource(R.string.editor_undo)
-                            )
-                        }
-                        IconButton(
-                            onClick = { editorRef.value?.redo() },
-                            enabled = editable && canRedo
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Redo,
-                                contentDescription = stringResource(R.string.editor_redo)
-                            )
-                        }
-                        IconButton(
-                            onClick = { requestSave() },
-                            enabled = editable && dirty && !saving
-                        ) {
-                            if (saving) {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                            } else {
+                            IconButton(
+                                onClick = { editorRef.value?.undo() },
+                                enabled = editable && canUndo
+                            ) {
                                 Icon(
-                                    FeatherIcons.Save,
-                                    contentDescription = stringResource(R.string.common_save)
+                                    Icons.AutoMirrored.Filled.Undo,
+                                    contentDescription = stringResource(R.string.editor_undo)
                                 )
                             }
-                        }
-                        IconButton(
-                            onClick = { showSettings = true },
-                            enabled = editable
-                        ) {
-                            Icon(
-                                FeatherIcons.Settings,
-                                contentDescription = stringResource(R.string.editor_settings)
-                            )
+                            IconButton(
+                                onClick = { editorRef.value?.redo() },
+                                enabled = editable && canRedo
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Redo,
+                                    contentDescription = stringResource(R.string.editor_redo)
+                                )
+                            }
+                            IconButton(
+                                onClick = { requestSave() },
+                                enabled = editable && dirty && !saving
+                            ) {
+                                if (saving) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(
+                                        FeatherIcons.Save,
+                                        contentDescription = stringResource(R.string.common_save)
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { showSettings = true },
+                                enabled = editable
+                            ) {
+                                Icon(
+                                    FeatherIcons.Settings,
+                                    contentDescription = stringResource(R.string.editor_settings)
+                                )
+                            }
                         }
                     }
                 )
+                if (editorFind.visible && state is EditorUiState.Success && !previewMode) {
+                    EditorFindBar(editorFind)
+                }
                 HorizontalDivider(thickness = 0.5.dp)
                 FileTitleBar(
                     fileName = activePath.substringAfterLast('/'),
@@ -370,7 +394,8 @@ fun CodeEditorScreen(
                         canUndo = undo
                         canRedo = redo
                         dirty = changed
-                    }
+                    },
+                    editorFind = editorFind
                 )
                 }
 
@@ -601,7 +626,8 @@ private fun EditorSurface(
     onAddSelectionToInput: (String) -> Unit,
     onBackgroundResolved: (Color) -> Unit,
     onCursorChanged: (line: Int, column: Int) -> Unit,
-    onContentChanged: (canUndo: Boolean, canRedo: Boolean, dirty: Boolean) -> Unit
+    onContentChanged: (canUndo: Boolean, canRedo: Boolean, dirty: Boolean) -> Unit,
+    editorFind: EditorFindState
 ) {
     // 与实际渲染出的 Compose 主题保持一致，而非跟随系统设置——应用内可单独切换主题。
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -685,10 +711,12 @@ private fun EditorSurface(
                     }
                 }
                 editorRef.value = this
+                editorFind.attach(this)
                 installAddToInputAction(this, ctx.getString(R.string.common_add_to_input), onAddSelectionToInput)
             }
         },
         onRelease = {
+            editorFind.release(it)
             editorRef.value = null
             it.release()
         }

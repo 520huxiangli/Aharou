@@ -4,7 +4,6 @@ import android.content.Context
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.memory.MemoryRepository
-import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.rule.RuleRepository
 import com.aharou.feature.agent.domain.skill.SkillRepository
@@ -246,26 +245,7 @@ class SystemPromptProvider @Inject constructor(
             val cached = cachedByKey[key]
             if (cached != null) return cached.ifEmpty { null }
             val memories = try { memoryRepository.listMemoriesForPrompt(ctx.projectRoot) } catch (e: Exception) { return null }
-            if (memories.isEmpty()) {
-                cachedByKey[key] = ""
-                // 空清单也要注入纪律：首次会话正是建立记忆的起点。
-                return memoryDiscipline()
-            }
-
-            val globalMemories = memories.filter { it.scope == MemoryScope.GLOBAL }
-            val projectMemories = memories.filter { it.scope == MemoryScope.PROJECT }
-
-            val content = buildString {
-                if (globalMemories.isNotEmpty()) {
-                    append("全局记忆 (跨项目个人偏好，需要详情时用 memory(action=read, name=xxx, scope=global))：\n")
-                    globalMemories.forEach { append("- ${it.name}: ${it.description.ifBlank { "无" }}\n") }
-                }
-                if (projectMemories.isNotEmpty()) {
-                    if (isNotEmpty()) append("\n")
-                    append("项目记忆 (当前项目专属，需要详情时用 memory(action=read, name=xxx, scope=project))：\n")
-                    projectMemories.forEach { append("- ${it.name}: ${it.description.ifBlank { "无" }}\n") }
-                }
-            }.trimEnd()
+            val content = MemoryPromptRenderer.render(memories).ifEmpty { null }
 
             // 记忆纪律紧跟清单注入：清单告诉模型「有什么」，纪律告诉它「何时必须写」。
             val full = listOf(content, memoryDiscipline()).mapNotNull { it }.joinToString("\n\n")
@@ -328,6 +308,9 @@ class SystemPromptProvider @Inject constructor(
     private val customFragmentsByNumber: Map<Int, File> by lazy {
         PromptFragmentResolver.numberedFragments(customDir).toMap()
     }
+
+    fun findAgentDefinitionIncludingDisabled(name: String): AgentDefinition? =
+        agentDefinitionRepository.findIncludingDisabled(name)
 
     fun build(agentContext: AgentContext): String {
         agentContext.agentDefinition?.let { return buildForSubAgent(it, agentContext) }
@@ -421,53 +404,63 @@ class SystemPromptProvider @Inject constructor(
     private fun buildForSubAgent(
         definition: AgentDefinition,
         agentContext: AgentContext
-    ): String = buildString {
-        if (InjectPart.MAIN_RULES in definition.inject) {
-            append(staticRuleSource.build(agentContext))
-            append("\n\n")
-        }
-        if (InjectPart.BASE in definition.inject) {
-            append(subAgentBaseSource.build(agentContext))
-            append("\n\n")
-        }
+    ): String {
+        val raw = buildString {
+            if (InjectPart.MAIN_RULES in definition.inject) {
+                append(staticRuleSource.build(agentContext))
+                append("\n\n")
+            }
+            if (InjectPart.BASE in definition.inject) {
+                append(subAgentBaseSource.build(agentContext))
+                append("\n\n")
+            }
 
-        append("当前角色 (subagent: ${definition.name})：你是一个由主代理派发的子代理，拥有独立上下文，看不到主对话历史。")
-        append("专注完成本会话交给你的任务，并在最后一条回复里给出完整结论——主代理只能读到你的最后一条回复，中间过程与工具结果它看不到。\n\n")
-        append(
-            renderVariables(
-                definition.prompt,
-                activeSkillsSource.build(agentContext),
-                memoryListSource.build(agentContext),
-                subAgentListSource.build(agentContext),
-                projectRuleSource.build(agentContext),
-                workspaceSource.build(agentContext),
-                currentDate()
+            append("当前角色 (subagent: ${definition.name})：你是一个由主代理派发的子代理，拥有独立上下文，看不到主对话历史。")
+            append("专注完成本会话交给你的任务，并在最后一条回复里给出完整结论——主代理只能读到你的最后一条回复，中间过程与工具结果它看不到。\n\n")
+            append(definition.prompt)
+        }
+        val memories = memoryListSource.build(agentContext)
+        return buildString {
+            append(
+                renderVariables(
+                    raw,
+                    activeSkillsSource.build(agentContext),
+                    memories,
+                    subAgentListSource.build(agentContext),
+                    projectRuleSource.build(agentContext),
+                    workspaceSource.build(agentContext),
+                    currentDate()
+                )
             )
-        )
 
-        if (InjectPart.SKILLS in definition.inject) {
-            activeSkillsSource.build(agentContext)?.let {
-                append("\n\n")
-                append(it)
+            if (InjectPart.SKILLS in definition.inject && SKILLS_VAR !in raw) {
+                activeSkillsSource.build(agentContext)?.let {
+                    append("\n\n")
+                    append(it)
+                }
             }
-        }
-        if (InjectPart.MEMORY in definition.inject) {
-            memoryListSource.build(agentContext)?.let {
-                append("\n\n")
-                append(it)
+            if (InjectPart.MEMORY in definition.inject && MEMORY_VAR !in raw) {
+                memories?.let {
+                    append("\n\n")
+                    append(it)
+                }
             }
-        }
-        if (InjectPart.PROJECT_RULES in definition.inject) {
-            projectRuleSource.build(agentContext)?.let {
-                append("\n\n")
-                append(it)
+            if (InjectPart.PROJECT_RULES in definition.inject && PROJECT_RULES_VAR !in raw) {
+                projectRuleSource.build(agentContext)?.let {
+                    append("\n\n")
+                    append(it)
+                }
             }
-        }
 
-        append("\n\n")
-        append(workspaceSource.build(agentContext))
-        append("\n\n")
-        append(currentTimeSource.build(agentContext))
+            if (WORKSPACE_VAR !in raw) {
+                append("\n\n")
+                append(workspaceSource.build(agentContext))
+            }
+            if (DATE_VAR !in raw) {
+                append("\n\n")
+                append(currentTimeSource.build(agentContext))
+            }
+        }
     }
 
     /** 把片段里的 `{{AICODE_*}}` 占位符替换为真实内容；未出现的占位符保持原样，不影响 `{{INSTRUCTION}}` 等其它占位符。 */
@@ -482,7 +475,7 @@ class SystemPromptProvider @Inject constructor(
     ): String {
         var out = text
         out = out.replace(SKILLS_VAR, skills.orEmpty())
-        out = out.replace(MEMORY_VAR, memories.orEmpty())
+        out = MemoryPromptRenderer.expandOnce(out, MEMORY_VAR, memories)
         out = out.replace(SUBAGENTS_VAR, subAgents.orEmpty())
         out = out.replace(PROJECT_RULES_VAR, projectRules.orEmpty())
         out = out.replace(WORKSPACE_VAR, workspace)

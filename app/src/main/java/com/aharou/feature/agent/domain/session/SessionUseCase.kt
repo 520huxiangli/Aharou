@@ -14,7 +14,8 @@ import javax.inject.Singleton
 @Singleton
 class SessionUseCase @Inject constructor(
     private val chatSessionDao: ChatSessionDao,
-    private val agentMessageDao: AgentMessageDao
+    private val agentMessageDao: AgentMessageDao,
+    private val messageArchiveStore: MessageArchiveStore
 ) {
     companion object {
         private const val TAG = "SessionUseCase"
@@ -77,10 +78,12 @@ class SessionUseCase @Inject constructor(
         chatSessionDao.getSubSessionsByParentOnce(id).forEach { child ->
             agentMessageDao.deleteBySession(child.id)
             chatSessionDao.delete(child.id)
+            messageArchiveStore.deleteSession(child.id)
             deleted.add(child.id)
         }
         agentMessageDao.deleteBySession(id)
         chatSessionDao.delete(id)
+        messageArchiveStore.deleteSession(id)
         return deleted
     }
 
@@ -90,6 +93,7 @@ class SessionUseCase @Inject constructor(
         if (sessions.isEmpty()) return 0
         sessions.forEach { session -> agentMessageDao.deleteBySession(session.id) }
         chatSessionDao.deleteByWorkspace(workspacePath)
+        sessions.forEach { session -> messageArchiveStore.deleteSession(session.id) }
         return sessions.size
     }
 

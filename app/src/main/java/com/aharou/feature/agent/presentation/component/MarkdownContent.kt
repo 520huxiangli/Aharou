@@ -67,33 +67,62 @@ import kotlinx.coroutines.withContext
 // 内置 JetBrains Mono NL 经资源加载可走系统 fallback，能显示 ₀-₉ 等下标/上标字符。
 private val CodeFontFamily = FontFamily(Font(R.font.jetbrains_mono_nl))
 
-internal class MarkdownRenderCache(
-    private val maxEntries: Int = 80
+internal class WeightedLruCache<K, V>(
+    private val maxEntries: Int,
+    private val maxWeight: Int,
+    private val maxItemWeight: Int,
+    private val itemWeight: (K, V) -> Int,
 ) {
-    private val parsedStates = object : LinkedHashMap<String, MarkdownParseState.Success>(
-        maxEntries,
-        0.75f,
-        true
-    ) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MarkdownParseState.Success>?): Boolean {
-            return size > maxEntries
+    private val entries = LinkedHashMap<K, V>(maxEntries, 0.75f, true)
+    private var weight = 0
+
+    @Synchronized
+    fun get(key: K): V? = entries[key]
+
+    @Synchronized
+    fun put(key: K, value: V) {
+        val entryWeight = itemWeight(key, value)
+        if (entryWeight > maxItemWeight || entryWeight > maxWeight) return
+        entries.remove(key)?.let { weight -= itemWeight(key, it) }
+        entries[key] = value
+        weight += entryWeight
+        while (entries.size > maxEntries || weight > maxWeight) {
+            val eldest = entries.entries.iterator().next()
+            weight -= itemWeight(eldest.key, eldest.value)
+            entries.remove(eldest.key)
         }
     }
 
-    fun get(text: String): MarkdownParseState.Success? =
-        parsedStates[text] ?: parsedStates[text.trim()]
+    @Synchronized
+    fun snapshot(): List<Pair<K, V>> = entries.map { it.key to it.value }
 
-    /**
-     * 在缓存中寻找是 [text] 前缀的最长解析态。
-     * 流式转落库交接瞬间，全文可能比上一帧打字机内容多出尾部字符，直接拿最长前缀 AST 兜底，
-     * 确保首帧以排版好的 Markdown 呈现，彻底消灭裸纯文本（- **xxx**）闪现。
-     */
+    @Synchronized
+    fun size(): Int = entries.size
+}
+
+internal const val MARKDOWN_CACHE_MAX_ENTRIES = 80
+internal const val MARKDOWN_CACHE_MAX_WEIGHT = 1_000_000
+internal const val MARKDOWN_CACHE_MAX_ITEM_WEIGHT = 100_000
+
+internal class MarkdownRenderCache(
+    maxEntries: Int = MARKDOWN_CACHE_MAX_ENTRIES
+) {
+    private val parsedStates = WeightedLruCache<String, MarkdownParseState.Success>(
+        maxEntries = maxEntries,
+        maxWeight = MARKDOWN_CACHE_MAX_WEIGHT,
+        maxItemWeight = MARKDOWN_CACHE_MAX_ITEM_WEIGHT,
+        itemWeight = { key, value -> key.length + value.content.length },
+    )
+
+    fun get(text: String): MarkdownParseState.Success? =
+        parsedStates.get(text) ?: parsedStates.get(text.trim())
+
     fun getBestPrefix(text: String): MarkdownParseState.Success? {
         val exact = get(text)
         if (exact != null) return exact
         var bestMatch: MarkdownParseState.Success? = null
         var bestLength = 0
-        for ((key, value) in parsedStates) {
+        for ((key, value) in parsedStates.snapshot()) {
             if (key.length in (bestLength + 1)..text.length && text.startsWith(key)) {
                 bestMatch = value
                 bestLength = key.length
@@ -103,10 +132,11 @@ internal class MarkdownRenderCache(
     }
 
     fun put(state: MarkdownParseState.Success) {
-        parsedStates[state.content] = state
+        if (state.content.length > MARKDOWN_CACHE_MAX_ITEM_WEIGHT / 2) return
+        parsedStates.put(state.content, state)
         val trimmed = state.content.trim()
         if (trimmed != state.content) {
-            parsedStates[trimmed] = state
+            parsedStates.put(trimmed, state)
         }
     }
 }
@@ -129,7 +159,9 @@ internal fun MarkdownContent(
     loading: (@Composable () -> Unit)? = null,
     /** 长文本虚拟化渲染：正文改用 LazyColumn 逐块渲染（调用方需配合 heightIn 等有限高度约束
      *  才能触发懒加载），避免超大 md 一次性全量组合/测量造成的卡顿。 */
-    lazyScroll: Boolean = false
+    lazyScroll: Boolean = false,
+    cacheEnabled: Boolean = true,
+    retainState: Boolean = true
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val semantic = MaterialTheme.semanticColors
@@ -183,7 +215,7 @@ internal fun MarkdownContent(
         Highlights.Builder().theme(SyntaxThemes.atom(darkMode = isDark))
     }
 
-    val processed = remember(text) { MarkdownPreprocessor.process(text) }
+    val processed = remember(text, cacheEnabled) { MarkdownPreprocessor.process(text, cacheEnabled) }
     val baseTransformer = LocalMarkdownImageTransformer.current
     val mathTransformer = remember(baseTransformer, body.fontSize.value) {
         MathImageTransformer(baseTransformer, body.fontSize.value)
@@ -205,40 +237,34 @@ internal fun MarkdownContent(
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.material3.LocalContentColor provides color
     ) {
-        // rememberMarkdownState 必须无条件参与组合：若缓存命中就走 if 分支跳过它，其内部
-        // remember 状态会被 dispose；下一帧文本变化（流式增长/停顿后恢复）缓存 miss 重建时
-        // 初始状态是 Loading，会闪现原始 md 文本（解析/未解析反复横跳的根因）。
-        // 缓存只作为渲染加速：解析结果与当前文本一致时直接用；不一致但缓存命中当前文本时
-        // 用缓存；否则进入 Loading。注意：本库 rememberMarkdownState 在文本变化时会把
-        // state 无条件置为 Loading（retainState 参数在此版本不生效），Loading 分支若回退
-        // 显示原文纯文本，流式场景下每次文本变化都会闪现「最新文本的裸文本」（底部字在闪）。
-        // 因此 Loading 期间优先渲染最近一次成功解析的结果（旧文本的完整 md 排版），解析
-        // 完成后再平滑切到新文本，内容只增不跳。
-        val mdState = rememberMarkdownState(content = processed, retainState = true)
+        val mdState = androidx.compose.runtime.key(if (retainState) null else processed) {
+            rememberMarkdownState(content = processed, retainState = retainState)
+        }
         val parseState by mdState.state.collectAsState()
-        val cachedState = cache?.get(processed)
-        val prefixFallback = cache?.getBestPrefix(processed)
+        val cachedState = if (cacheEnabled) cache?.get(processed) else null
+        val prefixFallback = if (cacheEnabled) cache?.getBestPrefix(processed) else null
         // 委托属性不能智能转换，先取局部快照再判断
         val currentState = parseState
-        val parsedState: MarkdownParseState = when {
+        val parsedState: MarkdownParseState? = when {
             currentState is MarkdownParseState.Success && currentState.content == processed -> currentState
             cachedState != null -> cachedState
+            currentState is MarkdownParseState.Success -> null
             else -> currentState
         }
 
-        // 最近一次成功解析的结果：Loading 期间的渲染兜底（初始首帧即用前缀缓存，杜绝纯文本裸奔）
-        var lastSuccessState by remember { mutableStateOf<MarkdownParseState.Success?>(prefixFallback) }
+        var lastSuccessState by remember(cacheEnabled, retainState) {
+            mutableStateOf<MarkdownParseState.Success?>(if (retainState) prefixFallback else null)
+        }
         if (parsedState is MarkdownParseState.Success) {
-            lastSuccessState = parsedState
-            // 同步写入缓存：让同轮次接力的落库消息首帧即可命中，避免 LaunchedEffect 异步延迟导致的裸纯文本闪烁
-            cache?.put(parsedState)
+            if (retainState) lastSuccessState = parsedState
+            if (cacheEnabled) cache?.put(parsedState)
         }
 
-        // Success 渲染当前结果；Loading 优先渲染本组件或前缀缓存的成功结果（杜绝裸纯文本闪现）；Error 回退原文
         val renderState: MarkdownParseState.Success? = when (parsedState) {
             is MarkdownParseState.Success -> parsedState
-            is MarkdownParseState.Loading -> lastSuccessState ?: prefixFallback
+            is MarkdownParseState.Loading -> if (retainState) lastSuccessState ?: prefixFallback else null
             is MarkdownParseState.Error -> null
+            null -> if (retainState) lastSuccessState ?: prefixFallback else null
         }
 
         if (renderState != null) {
@@ -270,7 +296,7 @@ internal fun MarkdownContent(
                         content = it.content,
                         node = it.node,
                     ) { code, language, style ->
-                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true)
+                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
                     }
                 },
                 codeBlock = {
@@ -278,7 +304,7 @@ internal fun MarkdownContent(
                         content = it.content,
                         node = it.node,
                     ) { code, language, style ->
-                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true)
+                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
                     }
                 },
                 // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
@@ -373,19 +399,21 @@ private fun SafeMarkdownHighlightedCode(
     style: TextStyle,
     highlightsBuilder: Highlights.Builder,
     showHeader: Boolean,
+    cacheEnabled: Boolean,
 ) {
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val cached = CodeHighlightCache.get(code, language, isDark)
+    val cached = if (cacheEnabled) CodeHighlightCache.get(code, language, isDark) else null
     val highlighted: AnnotatedString by produceState(
         initialValue = cached ?: AnnotatedString(code),
         code,
         language,
         isDark,
+        cacheEnabled,
     ) {
-        if (CodeHighlightCache.get(code, language, isDark) != null) return@produceState
+        if (cached != null) return@produceState
         value = withContext(Dispatchers.Default) {
             buildHighlightedText(code, language, highlightsBuilder)
-        }.also { CodeHighlightCache.put(code, language, isDark, it) }
+        }.also { if (cacheEnabled) CodeHighlightCache.put(code, language, isDark, it) }
     }
 
     MarkdownCodeBackground(

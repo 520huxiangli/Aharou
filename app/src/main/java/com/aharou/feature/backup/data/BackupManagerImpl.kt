@@ -15,6 +15,7 @@ import com.aharou.feature.agent.data.local.entity.TodoItemEntity
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.permission.PermissionRulesRepository
+import com.aharou.feature.agent.domain.session.MessageArchiveStore
 import com.aharou.feature.backup.domain.AgentMessageDto
 import com.aharou.feature.backup.domain.BackupCrypto
 import com.aharou.feature.backup.domain.BackupDecryptionException
@@ -80,6 +81,7 @@ class BackupManagerImpl @Inject constructor(
     private val remoteConnectionDao: RemoteConnectionDao,
     private val chatSessionDao: ChatSessionDao,
     private val agentMessageDao: AgentMessageDao,
+    private val messageArchiveStore: MessageArchiveStore,
     private val todoItemDao: TodoItemDao,
     private val mcpConfigRepository: McpConfigRepository,
     private val mcpManager: McpManager,
@@ -150,7 +152,7 @@ class BackupManagerImpl @Inject constructor(
                                 while (true) {
                                     val batch = agentMessageDao.getPageBySessionAfter(sessionId, lastTs, lastId, PAGE_SIZE)
                                     if (batch.isEmpty()) break
-                                    batch.forEach { writer.writeLine(json.encodeToString(AgentMessageDto.serializer(), it.toDto())) }
+                                    messageArchiveStore.restoreAll(batch).forEach { writer.writeLine(json.encodeToString(AgentMessageDto.serializer(), it.toDto())) }
                                     lastTs = batch.last().timestamp
                                     lastId = batch.last().id
                                 }
@@ -302,7 +304,7 @@ class BackupManagerImpl @Inject constructor(
                             while (true) {
                                 val batch = agentMessageDao.getPageAfter(lastTs, lastId, PAGE_SIZE)
                                 if (batch.isEmpty()) break
-                                batch.forEach { writer.writeLine(json.encodeToString(AgentMessageDto.serializer(), it.toDto())) }
+                                messageArchiveStore.restoreAll(batch).forEach { writer.writeLine(json.encodeToString(AgentMessageDto.serializer(), it.toDto())) }
                                 lastTs = batch.last().timestamp
                                 lastId = batch.last().id
                             }
@@ -532,7 +534,7 @@ class BackupManagerImpl @Inject constructor(
                 }
                 FILE_MESSAGES -> {
                     val count = restoreJsonl(tar, AgentMessageDto.serializer()) { dtos ->
-                        agentMessageDao.insertAll(dtos.map { it.toEntity() })
+                        agentMessageDao.insertAll(dtos.map { messageArchiveStore.prepareForStorage(it.toEntity()) })
                     }
                     FileLogger.i(TAG, "恢复消息 $count 条")
                     stats += RestoreStats(agentMessages = count)
@@ -620,7 +622,7 @@ class BackupManagerImpl @Inject constructor(
             )
         }
         if (snapshot.agentMessages.isNotEmpty()) {
-            agentMessageDao.insertAll(snapshot.agentMessages.map { it.toEntity() })
+            agentMessageDao.insertAll(snapshot.agentMessages.map { messageArchiveStore.prepareForStorage(it.toEntity()) })
         }
         if (snapshot.todoItems.isNotEmpty()) {
             todoItemDao.upsertAll(snapshot.todoItems.map { it.toEntity() })

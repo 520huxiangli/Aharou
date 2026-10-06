@@ -2352,5 +2352,15 @@
     <string name="checkpoint_undo_last_restore">Undo last restore</string>
     <string name="checkpoint_undo_last_restore_desc">Roll back the most recent code restore</string>
 
+    <string name="editor_find">Find</string>
+    <string name="editor_find_hint">Find in current file</string>
+    <string name="editor_find_no_results">No matches</string>
+    <string name="editor_find_match_count">%1$d / %2$d</string>
+    <string name="editor_find_previous">Previous match</string>
+    <string name="editor_find_next">Next match</string>
+    <string name="editor_find_close">Close find</string>
+    <string name="drawer_file_search_show_more">Show %1$d more</string>
+    <string name="agent_streaming_preview_notice">Only the most recent part is shown while generating</string>
+
     <!-- Workflow -->
 </resources>

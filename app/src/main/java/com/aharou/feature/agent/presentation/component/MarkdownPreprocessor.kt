@@ -15,20 +15,26 @@ import java.util.Base64
  */
 internal object MarkdownPreprocessor {
 
-    // 进程级结果缓存：process 会在 item 每次滚入视口时被调（上层只有 remember(text)，滚出
-    // 被 dispose 后 remember 归零）。含数学定界符的文本要跑正则，快速 fling 时反复重跑拖慢主线程。
-    // 这里按原文做进程级 LRU，同一段只处理一次。
-    private const val CACHE_MAX = 256
-    private val cache = object : LinkedHashMap<String, String>(CACHE_MAX, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > CACHE_MAX
-    }
+    internal const val CACHE_MAX = 256
+    internal const val CACHE_MAX_WEIGHT = 1_000_000
+    internal const val CACHE_MAX_ITEM_WEIGHT = 100_000
+    private val cache = WeightedLruCache<String, String>(
+        maxEntries = CACHE_MAX,
+        maxWeight = CACHE_MAX_WEIGHT,
+        maxItemWeight = CACHE_MAX_ITEM_WEIGHT,
+        itemWeight = { key, value -> key.length + value.length },
+    )
 
-    fun process(raw: String): String {
+    internal fun cachedEntryCount(): Int = cache.size()
+
+    fun process(raw: String, cacheEnabled: Boolean = true): String {
         if (raw.isEmpty()) return raw
         // 无需处理的快速路径：既没有 HTML 标签、没有 $ 或 \( / \[ 数学定界符，也没有 & 实体
         if (!raw.contains('<') && !raw.contains('$') && !raw.contains('\\') && !raw.contains('&')) return raw
 
-        synchronized(cache) { cache[raw] }?.let { return it }
+        if (cacheEnabled && raw.length <= CACHE_MAX_ITEM_WEIGHT) {
+            cache.get(raw)?.let { return it }
+        }
 
         val sb = StringBuilder(raw.length + 32)
         for (seg in splitPreservingCode(raw)) {
@@ -41,7 +47,9 @@ internal object MarkdownPreprocessor {
             }
         }
         val result = sb.toString()
-        synchronized(cache) { cache[raw] = result }
+        if (cacheEnabled && raw.length <= CACHE_MAX_ITEM_WEIGHT && result.length <= CACHE_MAX_ITEM_WEIGHT) {
+            cache.put(raw, result)
+        }
         return result
     }
 

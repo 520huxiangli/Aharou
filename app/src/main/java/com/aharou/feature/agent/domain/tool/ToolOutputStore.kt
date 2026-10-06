@@ -4,8 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -32,14 +31,10 @@ class ToolOutputStore @Inject constructor(
     private companion object {
         const val TAG = "ToolOutputStore"
         const val OUTPUT_DIR = "tool-output"
-        const val HEAD_CHARS = 20_000
-        const val TAIL_CHARS = 20_000
-        const val MAX_INLINE_CHARS = HEAD_CHARS + TAIL_CHARS
-        val LARGE_TEXT_FIELDS = listOf("output", "content", "text", "stdout", "stderr", "body", "result")
+        const val MAX_INLINE_CHARS = 40_000
+        const val MAX_STORAGE_ERROR_CHARS = 512
         val TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS")
     }
-
-    private val json = Json { encodeDefaults = true }
 
     /**
      * 设备本地存档目录（宿主路径），仅供本机存储占用统计与清理。
@@ -49,101 +44,147 @@ class ToolOutputStore @Inject constructor(
     val outputDir: File get() = File(containerInstaller.aharouDir, OUTPUT_DIR)
 
     fun process(toolName: String, callId: String, result: ToolResult): ToolResult {
-        return when (result) {
-            is ToolResult.Success -> ToolResult.Success(processElement(toolName, callId, result.data))
-            is ToolResult.Partial -> ToolResult.Partial(processElement(toolName, callId, result.data), result.message)
-            is ToolResult.Error -> result
-        }
+        if (textTransportString(result).length <= MAX_INLINE_CHARS) return result
+
+        val fullText = result.toTransportString()
+        val stored = writeFullOutput(toolName, callId, fullText).toStoredOutput(fullText.length)
+        val structured = fitResult { chars -> previewResult(result, stored, chars, structured = true) }
+        return structured ?: fitResult { chars -> previewResult(result, stored, chars, structured = false) }
+            ?: metadataFallback(result, stored)
     }
 
     fun boundText(toolName: String, callId: String, text: String): StoredToolOutput {
-        if (text.length <= MAX_INLINE_CHARS) {
-            return StoredToolOutput(
-                preview = text,
-                truncated = false,
-                totalChars = text.length.toLong()
-            )
+        if (ToolResult.Success(JsonPrimitive(text)).toTransportString().length <= MAX_INLINE_CHARS) {
+            return StoredToolOutput(text, false, text.length.toLong())
         }
+        val stored = writeFullOutput(toolName, callId, text).toStoredOutput(text.length)
+        val result = requireNotNull(fitResult { chars ->
+            ToolResult.Success(stored.copy(preview = buildPreview(text, chars)).toJsonObject("output"))
+        }) { "Tool output storage metadata exceeds the text transport budget" } as ToolResult.Success
+        val preview = (result.data as JsonObject).getValue("output") as JsonPrimitive
+        return stored.copy(preview = preview.content)
+    }
 
-        val writeResult = writeFullOutput(toolName, callId, text)
-        val preview = buildPreview(text, writeResult.outputPath)
-        return StoredToolOutput(
-            preview = preview,
-            truncated = true,
-            totalChars = text.length.toLong(),
-            outputPath = writeResult.outputPath,
-            storageError = writeResult.storageError
+    private fun metadataFallback(result: ToolResult, stored: StoredToolOutput): ToolResult {
+        val metadata = stored.toJsonObject().toMutableMap().apply {
+            put("output_metadata_truncated", JsonPrimitive(true))
+        }
+        return when (result) {
+            is ToolResult.Success -> ToolResult.Success(JsonObject(metadata))
+            is ToolResult.Partial -> ToolResult.Partial(JsonObject(metadata), "Original metadata exceeds the inline budget")
+            is ToolResult.Error -> ToolResult.Error(JsonObject(metadata).toString(), "OUTPUT_METADATA_TOO_LARGE")
+        }
+    }
+
+    private fun textTransportString(result: ToolResult): String {
+        val textResult = if (result is ToolResult.Success && result.images.isNotEmpty()) {
+            result.copy(images = result.images.map { it.copy(base64Data = "") })
+        } else {
+            result
+        }
+        return textResult.toTransportString()
+    }
+
+    private fun fitResult(candidate: (Int) -> ToolResult): ToolResult? {
+        var best = candidate(0)
+        if (textTransportString(best).length > MAX_INLINE_CHARS) return null
+        var low = 1
+        var high = MAX_INLINE_CHARS
+        while (low <= high) {
+            val chars = low + (high - low) / 2
+            val result = candidate(chars)
+            if (textTransportString(result).length <= MAX_INLINE_CHARS) {
+                best = result
+                low = chars + 1
+            } else {
+                high = chars - 1
+            }
+        }
+        return best
+    }
+
+    private fun previewResult(
+        result: ToolResult,
+        stored: StoredToolOutput,
+        chars: Int,
+        structured: Boolean
+    ): ToolResult = when (result) {
+        is ToolResult.Success -> result.copy(data = previewData(result.data, stored, chars, structured))
+        is ToolResult.Partial -> result.copy(
+            data = previewData(result.data, stored, chars, structured),
+            message = buildPreview(result.message, chars)
+        )
+        is ToolResult.Error -> result.copy(
+            message = buildPreview(result.message, chars) + "\n" + stored.toJsonObject()
         )
     }
 
-    private fun processElement(toolName: String, callId: String, element: JsonElement): JsonElement {
-        val primitive = element as? JsonPrimitive
-        if (primitive?.isString == true) {
-            val stored = boundText(toolName, callId, primitive.content)
-            return if (stored.truncated) stored.toJsonObject("output") else element
+    private fun previewData(
+        data: JsonElement,
+        stored: StoredToolOutput,
+        chars: Int,
+        structured: Boolean
+    ): JsonObject {
+        if (!structured) {
+            return stored.copy(preview = buildPreview(data.toString(), chars)).toJsonObject("content")
         }
-
-        val obj = element as? JsonObject
-        if (obj != null) {
-            val largeField = LARGE_TEXT_FIELDS
-                .mapNotNull { key ->
-                    val field = obj[key] as? JsonPrimitive
-                    val value = if (field?.isString == true) field.content else null
-                    if (value != null && value.length > MAX_INLINE_CHARS) key to value else null
-                }
-                .maxByOrNull { it.second.length }
-
-            if (largeField != null) {
-                val stored = boundText(toolName, callId, largeField.second)
-                val updated = obj.toMutableMap()
-                updated[largeField.first] = JsonPrimitive(stored.preview)
-                addMetadata(updated, stored)
-                return JsonObject(updated)
-            }
+        if (data is JsonPrimitive && data.isString) {
+            return stored.copy(preview = buildPreview(data.content, chars)).toJsonObject("output")
         }
+        val preview = previewElement(data, chars)
+        val fields = if (preview is JsonObject) preview.toMutableMap() else mutableMapOf("content" to preview)
+        addMetadata(fields, stored)
+        return JsonObject(fields)
+    }
 
-        val serialized = json.encodeToString(element)
-        if (serialized.length <= MAX_INLINE_CHARS) return element
-
-        val stored = boundText(toolName, callId, serialized)
-        return stored.toJsonObject("content")
+    private fun previewElement(element: JsonElement, chars: Int): JsonElement = when (element) {
+        is JsonObject -> JsonObject(element.mapValues { previewElement(it.value, chars) })
+        is JsonArray -> JsonArray(element.map { previewElement(it, chars) })
+        is JsonPrimitive -> if (element.isString) JsonPrimitive(buildPreview(element.content, chars)) else element
     }
 
     private fun addMetadata(target: MutableMap<String, JsonElement>, stored: StoredToolOutput) {
         target["output_truncated"] = JsonPrimitive(stored.truncated)
         target["output_total_chars"] = JsonPrimitive(stored.totalChars)
+        target.remove("output_path")
+        target.remove("output_storage_error")
         stored.outputPath?.let { target["output_path"] = JsonPrimitive(it) }
         stored.storageError?.let { target["output_storage_error"] = JsonPrimitive(it) }
     }
 
-    private fun StoredToolOutput.toJsonObject(primaryField: String): JsonObject {
-        val data = mutableMapOf<String, JsonElement>(
-            primaryField to JsonPrimitive(preview),
-            "output_truncated" to JsonPrimitive(truncated),
-            "output_total_chars" to JsonPrimitive(totalChars)
-        )
-        outputPath?.let { data["output_path"] = JsonPrimitive(it) }
-        storageError?.let { data["output_storage_error"] = JsonPrimitive(it) }
+    private fun StoredToolOutput.toJsonObject(primaryField: String? = null): JsonObject {
+        val data = mutableMapOf<String, JsonElement>()
+        primaryField?.let { data[it] = JsonPrimitive(preview) }
+        addMetadata(data, this)
         return JsonObject(data)
     }
 
-    private fun buildPreview(text: String, outputPath: String?): String {
-        val omitted = text.length - HEAD_CHARS - TAIL_CHARS
-        val storageHint = if (outputPath != null) {
-            "完整内容已保存到 $outputPath"
-        } else {
-            "完整内容保存失败"
-        }
+    private fun buildPreview(text: String, chars: Int): String {
+        if (text.length <= chars) return text
+        var headEnd = (chars + 1) / 2
+        var tailStart = text.length - chars / 2
+        if (headEnd > 0 && headEnd < text.length &&
+            text[headEnd - 1].isHighSurrogate() && text[headEnd].isLowSurrogate()
+        ) headEnd--
+        if (tailStart > 0 && tailStart < text.length &&
+            text[tailStart - 1].isHighSurrogate() && text[tailStart].isLowSurrogate()
+        ) tailStart++
         return buildString {
-            append(text.take(HEAD_CHARS))
-            append("\n\n...[输出过长，已省略中间 ")
-            append(omitted)
-            append(" 个字符；")
-            append(storageHint)
-            append("]...\n\n")
-            append(text.takeLast(TAIL_CHARS))
+            append(text, 0, headEnd)
+            append("\n\n...[output truncated; omitted ")
+            append(tailStart - headEnd)
+            append(" characters]...\n\n")
+            append(text, tailStart, text.length)
         }
     }
+
+    private fun StoredPathResult.toStoredOutput(totalChars: Int) = StoredToolOutput(
+        preview = "",
+        truncated = true,
+        totalChars = totalChars.toLong(),
+        outputPath = outputPath,
+        storageError = storageError
+    )
 
     private fun writeFullOutput(toolName: String, callId: String, text: String): StoredPathResult {
         return try {
@@ -151,11 +192,14 @@ class ToolOutputStore @Inject constructor(
             fileAccess.mkdirs(dir)
             val path = uniqueOutputPath(dir, toolName, callId)
             fileAccess.writeFile(path, text, overwrite = false)
-            FileLogger.i(TAG, "工具输出已保存: $path (${text.length} chars)")
+            runCatching { FileLogger.i(TAG, "工具输出已保存: $path (${text.length} chars)") }
             StoredPathResult(outputPath = path)
         } catch (e: Exception) {
-            FileLogger.w(TAG, "保存工具输出失败: ${e.message}", e)
-            StoredPathResult(storageError = e.message ?: "保存工具输出失败")
+            runCatching { FileLogger.w(TAG, "保存工具输出失败: ${e.message}", e) }
+            StoredPathResult(storageError = buildPreview(
+                "Full output could not be saved: ${e.message ?: e.javaClass.simpleName}. Check storage access and retry.",
+                MAX_STORAGE_ERROR_CHARS
+            ))
         }
     }
 
@@ -164,7 +208,7 @@ class ToolOutputStore @Inject constructor(
         val baseName = buildString {
             append(timestamp)
             append('-')
-            append(sanitize(toolName).ifBlank { "tool" })
+            append(sanitize(toolName).take(80).ifBlank { "tool" })
             val id = sanitize(callId).take(12)
             if (id.isNotBlank()) {
                 append('-')

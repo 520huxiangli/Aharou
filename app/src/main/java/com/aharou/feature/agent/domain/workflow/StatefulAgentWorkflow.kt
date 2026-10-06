@@ -18,6 +18,7 @@ import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import com.aharou.feature.agent.domain.notification.AgentNotificationKind
 import com.aharou.feature.agent.domain.notification.PendingNotification
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
+import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
@@ -116,14 +117,20 @@ class StatefulAgentWorkflow @Inject constructor(
     private val ocrEngine: TesseractOcrEngine
 ) : AgentWorkflow {
 
-    private companion object {
+    internal companion object {
         const val TAG = "StatefulAgentWorkflow"
-        const val LIVE_TAIL_CHARS = 4_000
+        const val LIVE_TAIL_CHARS = 20_000
 
-        /**
-         * 等 UI 侧把消息落库的上限。落库回调若因故没到（界面销毁、异常被吞掉），
-         * 原来会无限等待、把整轮对话挂死；超时后按「未落库」继续往下走。
-         */
+        private fun livePreview(text: StringBuilder): String {
+            var start = (text.length - LIVE_TAIL_CHARS).coerceAtLeast(0)
+            if (start > 0 && text[start].isLowSurrogate() && text[start - 1].isHighSurrogate()) start++
+            return text.substring(start)
+        }
+        internal fun AgentEvent.AssistantText.hasSnapshotData(): Boolean =
+            content.isNotEmpty() || reasoning.isNotBlank() || toolCalls.isNotEmpty() || signature.isNotBlank() ||
+                thinkingBlocksJson.isNotBlank() || attachments.isNotEmpty() || inputTokens > 0 || outputTokens > 0 || cachedInputTokens > 0
+        internal fun AgentEvent.AssistantText.persistenceConfirmed(): Boolean =
+            persisted?.let { it.isCompleted && !it.isCancelled } == true
         const val PERSIST_WAIT_MS = 15_000L
         const val PROGRESS_INTERVAL_MS = 250L
         const val USER_REJECTED_CODE = "USER_REJECTED"
@@ -187,11 +194,11 @@ class StatefulAgentWorkflow @Inject constructor(
             val approved: Boolean,
             val argsPreview: String,
             val denyReason: String = "用户拒绝执行该工具",
-            val errorCode: String = "USER_REJECTED"
+            val errorCode: String = "USER_REJECTED",
+            val result: String = ""
         ) : AgentAction
-        data class ToolBatchFinished(
-            val results: List<ToolBatchResult>
-        ) : AgentAction
+        data class ToolBatchFinished(val results: List<ToolBatchResult>) : AgentAction
+        data class ToolBatchRejected(val results: List<ToolBatchResult>, val finish: Boolean) : AgentAction
     }
 
     private data class PermissionCheckResult(
@@ -226,8 +233,10 @@ class StatefulAgentWorkflow @Inject constructor(
         data class RequestPermission(val toolCall: ToolCall) : AgentSideEffect
         /** 批量并行执行已批准的工具；传入空列表表示本批无工具可执行，直接进入收尾。 */
         data class ExecuteToolBatch(val toolCalls: List<ToolCall>) : AgentSideEffect
-        /** 整批取消（用户拒绝批次中某个调用）：补发已启动工具的完成事件，清理 UI「执行中」状态。 */
-        data class CancelToolBatch(val toolCalls: List<ToolCall>) : AgentSideEffect
+        data class RejectToolBatch(
+            val toolCalls: List<ToolCall>, val message: String, val code: String, val finish: Boolean,
+            val previousResults: Map<String, ToolBatchResult> = emptyMap()
+        ) : AgentSideEffect
     }
 
     private suspend fun getEffectiveProvider(sessionId: String?): AIProvider {
@@ -276,8 +285,24 @@ class StatefulAgentWorkflow @Inject constructor(
         val provider = createStandaloneProvider(config, sessionId)
         val history = messagePersistenceUseCase.buildHistory(sessionId, "__manual_compress__")
         if (history.size <= 2) return false
+        val session = sessionUseCase.getSessionById(sessionId)
+        val domain = session?.toDomain()
+        val definition = session?.takeIf { it.parentId != null }?.subagentType
+            ?.let { promptProvider.findAgentDefinitionIncludingDisabled(it) }
+        val context = AgentContext(null, null, session?.workspacePath.orEmpty(), null,
+            history = history, sessionId = sessionId, mode = domain?.mode ?: AgentMode.BUILD,
+            modeBeforePlan = domain?.modeBeforePlan, reasoningEffort = domain?.reasoningEffort?.apiValue,
+            lastInputTokens = session?.lastInputTokens ?: 0, agentDefinition = definition)
+        val allTools = toolRegistry.getAvailableTools()
+        val tools = when {
+            definition != null -> definition.filterToolNames(allTools.map { it.name }).toSet()
+                .let { allowed -> allTools.filter { it.name in allowed } }
+            session?.parentId != null -> allTools.filterNot { it.name == AgentDefinition.NESTED_TOOL }
+            else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
+        }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
-        val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true, windowProvider = provider, onEvent = onEvent)
+        val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
+            windowProvider = provider, systemPrompt = promptProvider.build(context), tools = tools, onEvent = onEvent)
         return result.compacted
     }
 
@@ -392,22 +417,10 @@ class StatefulAgentWorkflow @Inject constructor(
                         // 到上限：不再执行，但要按 assistant(toolCalls) 的顺序补齐 tool 响应后收尾。
                         // 第一次触发先回一条提示让模型收口，再触发就直接结束——
                         // 否则提示本身又变成一轮模型调用，循环还是停不下来。
-                        val exhausted = toolCalls.map { call ->
-                            AgentMessage.ToolResultMessage(
-                                id = call.id,
-                                toolName = call.name,
-                                result = ToolResult.Error(
-                                    "本次任务的工具调用已达上限（$MAX_TOTAL_TOOL_CALLS 次），该调用未执行。请基于已有信息给出结论，或向用户说明还差什么。",
-                                    "TOOL_CALL_LIMIT"
-                                ).toTransportString()
-                            )
-                        }
-                        if (newState.toolLimitNotified) {
-                            newState = newState.copy(messages = newState.messages + exhausted, isFinished = true)
-                        } else {
-                            newState = newState.copy(messages = newState.messages + exhausted, toolLimitNotified = true)
-                            effects.add(AgentSideEffect.CallLlm)
-                        }
+                        effects.add(AgentSideEffect.RejectToolBatch(toolCalls,
+                            "本次任务的工具调用已达上限（$MAX_TOTAL_TOOL_CALLS 次），该调用未执行。请基于已有信息给出结论，或向用户说明还差什么。",
+                            "TOOL_CALL_LIMIT", newState.toolLimitNotified))
+                        newState = newState.copy(toolLimitNotified = true)
                     } else {
                         newState = newState.copy(
                             batchToolCalls = toolCalls,
@@ -437,34 +450,13 @@ class StatefulAgentWorkflow @Inject constructor(
                         effects.add(AgentSideEffect.ExecuteToolBatch(approved))
                     }
                 } else {
-                    val rawResult = ToolResult.Error(action.denyReason, action.errorCode).toTransportString()
                     if (action.errorCode == USER_REJECTED_CODE) {
                         // 模型一次可能返回多个 tool_calls。用户拒绝批次中任意一个 → 整批取消：
                         // 按 batchToolCalls 原始顺序为所有调用补上 tool 响应（不重复不遗漏），
                         // 否则 assistant(toolCalls=N) 后只有部分 tool 消息，OpenAI 会报 400
                         // "insufficient tool messages following tool_calls"。
-                        val cancelled = newState.batchToolCalls.map { call ->
-                            AgentMessage.ToolResultMessage(
-                                id = call.id,
-                                toolName = call.name,
-                                result = ToolResult.Error(
-                                    "用户拒绝了本轮工具调用，该调用未执行。",
-                                    USER_REJECTED_CODE
-                                ).toTransportString()
-                            )
-                        }
-                        newState = state.copy(
-                            messages = state.messages + cancelled,
-                            batchToolCalls = emptyList(),
-                            pendingPermissionCalls = emptyList(),
-                            approvedToolCalls = emptyList(),
-                            isFinished = true
-                        )
-                        // 已批准未执行（已收到 ToolCallStarted）的工具需补发完成事件，
-                        // 否则 UI 与落库消息会一直停留在「执行中」。
-                        if (state.approvedToolCalls.isNotEmpty()) {
-                            effects.add(AgentSideEffect.CancelToolBatch(state.approvedToolCalls))
-                        }
+                        effects.add(AgentSideEffect.RejectToolBatch(state.batchToolCalls,
+                            "用户拒绝了本轮工具调用，该调用未执行。", USER_REJECTED_CODE, true, state.rejectedToolResults))
                         return newState to effects
                     }
                     // 策略/系统拒绝（如 PLAN 模式禁止执行）：记录拒绝结果，继续收集后续权限。
@@ -475,7 +467,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             action.toolCall.id to ToolBatchResult(
                                 id = action.toolCall.id,
                                 toolName = action.toolCall.name,
-                                result = rawResult,
+                                result = action.result,
                                 isError = true
                             )
                         )
@@ -486,6 +478,14 @@ class StatefulAgentWorkflow @Inject constructor(
                         effects.add(AgentSideEffect.ExecuteToolBatch(newState.approvedToolCalls))
                     }
                 }
+            }
+            is AgentAction.ToolBatchRejected -> {
+                newState = state.copy(messages = state.messages + action.results.map {
+                    AgentMessage.ToolResultMessage(it.id, it.toolName, it.result,
+                        modelResult = modelToolResultText(it.toolName, it.result))
+                }, batchToolCalls = emptyList(), pendingPermissionCalls = emptyList(),
+                    approvedToolCalls = emptyList(), rejectedToolResults = emptyMap(), isFinished = action.finish)
+                if (!action.finish) effects.add(AgentSideEffect.CallLlm)
             }
             is AgentAction.ToolBatchFinished -> {
                 // 本批工具全部执行完，按 batchToolCalls 原始顺序组装 tool 响应：
@@ -611,6 +611,26 @@ class StatefulAgentWorkflow @Inject constructor(
                         val acc = StringBuilder()
                         val reasoningAcc = StringBuilder()
                         var finalResponse: AIResponse? = null
+                        val responseMessageId = UUID.randomUUID().toString()
+                        var assistantSnapshot: AgentEvent.AssistantText? = null
+                        var snapshotSent = false
+                        var persistedImages = emptyList<AgentImage>()
+                        suspend fun captureSnapshot(): AgentEvent.AssistantText {
+                            assistantSnapshot?.let { return it }
+                            val response = finalResponse ?: AIResponse(acc.toString(), reasoning = reasoningAcc.toString())
+                            val (images, attachments) = if (response.images.isNotEmpty()) persistModelImages(response.images)
+                                else emptyList<AgentImage>() to emptyList<AgentAttachment>()
+                            persistedImages = images
+                            return AgentEvent.AssistantText(response.content, response.toolCalls,
+                                response.reasoning.orEmpty().ifEmpty { reasoningAcc.toString() }, response.signature.orEmpty(), response.inputTokens,
+                                response.outputTokens, response.cachedInputTokens, response.thinkingBlocksJson.orEmpty(),
+                                attachments, responseMessageId, kotlinx.coroutines.CompletableDeferred()).also { assistantSnapshot = it }
+                        }
+                        suspend fun publishSnapshot() {
+                            val snapshot = captureSnapshot()
+                            if (!snapshotSent) { send(snapshot); snapshotSent = true }
+                            withTimeoutOrNull(PERSIST_WAIT_MS) { snapshot.persisted?.await() }
+                        }
 
                         // 调用统计埋点：记录请求发出/首字/结束时刻与 usage，失败与取消同样留痕。
                         val callStartElapsed = SystemClock.elapsedRealtime()
@@ -627,18 +647,18 @@ class StatefulAgentWorkflow @Inject constructor(
                         val DELTA_THROTTLE_MS = 60L
                         var lastTextDeltaSentAt = 0L
                         var lastReasoningDeltaSentAt = 0L
-                        var pendingTextDelta: String? = null
-                        var pendingReasoningDelta: String? = null
+                        var pendingTextDelta = false
+                        var pendingReasoningDelta = false
                         var retryAttempts = 0
                         suspend fun flushPendingTextDelta() {
-                            val text = pendingTextDelta ?: return
-                            pendingTextDelta = null
-                            send(AgentEvent.AssistantDelta(text))
+                            if (!pendingTextDelta) return
+                            pendingTextDelta = false
+                            send(AgentEvent.AssistantDelta(livePreview(acc)))
                         }
                         suspend fun flushPendingReasoningDelta() {
-                            val text = pendingReasoningDelta ?: return
-                            pendingReasoningDelta = null
-                            send(AgentEvent.ReasoningDelta(text))
+                            if (!pendingReasoningDelta) return
+                            pendingReasoningDelta = false
+                            send(AgentEvent.ReasoningDelta(livePreview(reasoningAcc)))
                         }
 
                         try {
@@ -667,7 +687,7 @@ class StatefulAgentWorkflow @Inject constructor(
                                             acc.setLength(loopStart)
                                             samplingLoopCut = true
                                         }
-                                        pendingTextDelta = acc.toString()
+                                        pendingTextDelta = true
                                         val now = SystemClock.elapsedRealtime()
                                         if (now - lastTextDeltaSentAt >= DELTA_THROTTLE_MS) {
                                             flushPendingTextDelta()
@@ -690,7 +710,7 @@ class StatefulAgentWorkflow @Inject constructor(
                                                 "模型思考反复打转、正文始终为空，已中断本轮；上下文可能过长，建议新开会话后重试。"
                                             )
                                         }
-                                        pendingReasoningDelta = reasoningAcc.toString()
+                                        pendingReasoningDelta = true
                                         val now = SystemClock.elapsedRealtime()
                                         if (now - lastReasoningDeltaSentAt >= DELTA_THROTTLE_MS) {
                                             flushPendingReasoningDelta()
@@ -701,8 +721,8 @@ class StatefulAgentWorkflow @Inject constructor(
                                         retryAttempts = maxOf(retryAttempts, chunk.attempt)
                                         acc.setLength(0)
                                         reasoningAcc.setLength(0)
-                                        pendingTextDelta = null
-                                        pendingReasoningDelta = null
+                                        pendingTextDelta = false
+                                        pendingReasoningDelta = false
                                         lastTextDeltaSentAt = 0L
                                         lastReasoningDeltaSentAt = 0L
                                         send(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries, chunk.error))
@@ -710,8 +730,8 @@ class StatefulAgentWorkflow @Inject constructor(
                                     is AIStreamChunk.KeySwitched -> {
                                         acc.setLength(0)
                                         reasoningAcc.setLength(0)
-                                        pendingTextDelta = null
-                                        pendingReasoningDelta = null
+                                        pendingTextDelta = false
+                                        pendingReasoningDelta = false
                                         lastTextDeltaSentAt = 0L
                                         lastReasoningDeltaSentAt = 0L
                                         send(AgentEvent.KeySwitched(chunk.newIndex, chunk.total))
@@ -733,11 +753,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             flushPendingTextDelta()
                             flushPendingReasoningDelta()
                             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
-                            // 模型直出图片（Gemini 图像模型）不随流式增量到达，整块在 Final 里：
-                            // 先把 base64 落盘到 ~/.aharou/generated-images/ 并构造 UI 附件（只存路径不存 base64），
-                            // 再随 LlmResponse 把带 path 的 images 交 reduce 挂上 AssistantMessage 供下一回放。
-                            val (persistedImages, attachments) =
-                                if (aiResponse.images.isNotEmpty()) persistModelImages(aiResponse.images) else emptyList<AgentImage>() to emptyList()
+                            val snapshot = captureSnapshot()
                             callCompleted = true
                             if (aiResponse.stopReason == "model_context_window_exceeded" && !overflowRecoveryAttempted) {
                                 overflowRecoveryAttempted = true
@@ -757,31 +773,10 @@ class StatefulAgentWorkflow @Inject constructor(
                             send(AgentEvent.ContextUsage(
                                 if (baselineUsage > 0) baselineUsage else requestEstimate, inputBudget, baselineUsage <= 0
                             ))
-                            val responseMessageId = UUID.randomUUID().toString()
                             // 将本轮 reasoning 附加到 AIResponse，以便 reduce 时存入 AssistantMessage 并在下一轮回传
-                            val responseWithReasoning = if (reasoningAcc.isNotEmpty()) {
-                                aiResponse.copy(reasoning = reasoningAcc.toString())
-                            } else aiResponse
+                            val responseWithReasoning = aiResponse.copy(reasoning = snapshot.reasoning)
 
-                            if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty() || attachments.isNotEmpty()) {
-                                val persisted = kotlinx.coroutines.CompletableDeferred<Unit>()
-                                send(
-                                    AgentEvent.AssistantText(
-                                        aiResponse.content,
-                                        aiResponse.toolCalls,
-                                        reasoningAcc.toString(),
-                                        aiResponse.signature ?: "",
-                                        aiResponse.inputTokens,
-                                        aiResponse.outputTokens,
-                                        aiResponse.cachedInputTokens,
-                                        aiResponse.thinkingBlocksJson ?: "",
-                                        attachments = attachments,
-                                        messageId = responseMessageId,
-                                        persisted = persisted
-                                    )
-                                )
-                                withTimeoutOrNull(PERSIST_WAIT_MS) { persisted.await() }
-                            }
+                            if (snapshot.hasSnapshotData()) publishSnapshot()
                             actionQueue.addLast(
                                 AgentAction.LlmResponse(
                                     if (persistedImages.isNotEmpty()) responseWithReasoning.copy(images = persistedImages)
@@ -792,7 +787,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
-                            if (!overflowRecoveryAttempted && acc.isEmpty() && reasoningAcc.isEmpty() && isContextOverflow(e)) {
+                            if (finalResponse == null && !overflowRecoveryAttempted && acc.isEmpty() && reasoningAcc.isEmpty() && isContextOverflow(e)) {
                                 overflowRecoveryAttempted = true
                                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
                                     currentContext.sessionId, force = true, windowProvider = aiProvider,
@@ -806,20 +801,30 @@ class StatefulAgentWorkflow @Inject constructor(
                                     continue
                                 }
                             }
-                            val partial = acc.toString()
-                            val reasoning = reasoningAcc.toString()
-                            // 流式被中断时也要落库已收到的思考：否则下方 finally 会清空流式思考气泡，
-                            // 而落库的接力消息又没产生，表现为「思考显示后凭空消失且无报错」。
-                            // 有正文或有思考其一即落库；两者皆空则不写空消息。
-                            if (partial.isNotEmpty() || reasoning.isNotBlank()) {
-                                send(AgentEvent.AssistantText(partial, emptyList(), reasoning, messageId = UUID.randomUUID().toString()))
+                            callError = e.message ?: e.javaClass.simpleName
+                            if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) {
+                                if (captureSnapshot().hasSnapshotData()) publishSnapshot()
                             }
                             // 多 Key 的自动切换与重发已在 adapter 内完成（见 AIProvider.keySwitcher）；
                             // 走到这里说明不是 Key 问题、或候选 Key 已全部失败，直接上报原始错误。
                             val errorText = "LLM 调用失败: ${e.message}"
                             actionQueue.addLast(AgentAction.LlmError(errorText))
-                            callError = e.message ?: e.javaClass.simpleName
                         } finally {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                                currentContext.sessionId?.let { sid ->
+                                    if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
+                                        val snapshot = captureSnapshot()
+                                        if (snapshot.hasSnapshotData() && !snapshot.persistenceConfirmed()) {
+                                            messagePersistenceUseCase.persist(sid, com.aharou.feature.agent.presentation.MessageRole.ASSISTANT,
+                                                snapshot.content, id = responseMessageId, reasoning = snapshot.reasoning, toolCalls = snapshot.toolCalls,
+                                                signature = snapshot.signature, thinkingBlocksJson = snapshot.thinkingBlocksJson,
+                                                attachments = snapshot.attachments, inputTokens = snapshot.inputTokens,
+                                                outputTokens = snapshot.outputTokens, cachedInputTokens = snapshot.cachedInputTokens)
+                                            snapshot.persisted?.complete(Unit)
+                                        }
+                                    }.onFailure { FileLogger.w(TAG, "保存回复快照失败", it) }
+                                }
+                            }
                             val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
                             val usage = finalResponse
                             runCatching {
@@ -856,46 +861,32 @@ class StatefulAgentWorkflow @Inject constructor(
                         if (tool == null) {
                             // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
                             val reason = "工具「${effect.toolCall.name}」在当前会话不可用（不在允许的工具清单内）。"
-                            send(
-                                AgentEvent.ToolCallFinished(
-                                    effect.toolCall.id,
-                                    effect.toolCall.name,
-                                    ToolResult.Error(reason, TOOL_NOT_ALLOWED_CODE).toTransportString(),
-                                    true,
-                                    argsPreview
-                                )
-                            )
-                            actionQueue.addLast(
-                                AgentAction.PermissionEvaluated(effect.toolCall, false, argsPreview, reason, TOOL_NOT_ALLOWED_CODE)
-                            )
+                            val result = toolError(effect.toolCall, reason, TOOL_NOT_ALLOWED_CODE)
+                            send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, result, true, argsPreview))
+                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, false, argsPreview,
+                                reason, TOOL_NOT_ALLOWED_CODE, result))
                         } else {
                             val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
 
-                            if (!checkResult.approved) {
-                                val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toTransportString()
-                                send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
-                            } else {
+                            val result = if (!checkResult.approved && checkResult.errorCode != USER_REJECTED_CODE)
+                                toolError(effect.toolCall, checkResult.denyReason, checkResult.errorCode) else ""
+                            if (result.isNotEmpty()) {
+                                send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, result, true, argsPreview))
+                            } else if (checkResult.approved) {
                                 send(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
                             }
-                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved, argsPreview, checkResult.denyReason, checkResult.errorCode))
+                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved,
+                                argsPreview, checkResult.denyReason, checkResult.errorCode, result))
                         }
                     }
-                    is AgentSideEffect.CancelToolBatch -> {
-                        // 整批取消：已批准未执行的工具补发完成事件（内容为未执行），
-                        // 让 ViewModel 清理 runningTool 并 REPLACE 掉「执行中」占位消息。
-                        effect.toolCalls.forEach { toolCall ->
-                            send(
-                                AgentEvent.ToolCallFinished(
-                                    id = toolCall.id,
-                                    toolName = toolCall.name,
-                                    result = ToolResult.Error(
-                                        "用户拒绝了本轮工具调用，该调用未执行。",
-                                        USER_REJECTED_CODE
-                                    ).toTransportString(),
-                                    isError = true
-                                )
-                            )
+                    is AgentSideEffect.RejectToolBatch -> {
+                        val results = effect.toolCalls.map { call ->
+                            effect.previousResults[call.id]?.let { return@map it }
+                            val result = toolError(call, effect.message, effect.code)
+                            send(AgentEvent.ToolCallFinished(call.id, call.name, result, true))
+                            ToolBatchResult(call.id, call.name, result, true)
                         }
+                        actionQueue.addLast(AgentAction.ToolBatchRejected(results, effect.finish))
                     }
                     is AgentSideEffect.ExecuteToolBatch -> {
                         // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
@@ -931,20 +922,14 @@ class StatefulAgentWorkflow @Inject constructor(
                                     async {
                                         if (isDuplicate) {
                                             ToolRunResult(
-                                                ToolResult.Error(
-                                                    "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。",
-                                                    "DUPLICATE_TOOL_CALL"
-                                                ).toTransportString(),
+                                                toolError(toolCall, "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。", "DUPLICATE_TOOL_CALL"),
                                                 true
                                             )
                                         } else {
                                             val tool = toolsByName[toolCall.name]
                                             when {
                                                 tool == null -> ToolRunResult(
-                                                    ToolResult.Error(
-                                                        "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。",
-                                                        TOOL_NOT_ALLOWED_CODE
-                                                    ).toTransportString(),
+                                                    toolError(toolCall, "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE),
                                                     true
                                                 )
                                                 tool is StreamingAgentTool -> runToolStream(tool, toolCall, currentContext) { send(it) }
@@ -960,7 +945,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         val batchResults = mutableListOf<ToolBatchResult>()
                         toolCalls.forEachIndexed { index, toolCall ->
                             val runResult = runResults.getOrNull(index)
-                                ?: ToolRunResult(ToolResult.Error("工具未执行", "TOOL_NOT_EXECUTED").toTransportString(), true)
+                                ?: ToolRunResult(toolError(toolCall, "工具未执行", "TOOL_NOT_EXECUTED"), true)
                             var rawResult = runResult.raw
                             var isError = runResult.isError
                             // 写入成功后记录内容摘要，供回退时判断文件是否被检查点之外的操作改过
@@ -987,10 +972,7 @@ class StatefulAgentWorkflow @Inject constructor(
                                     } else {
                                         // 用户选择继续反馈，回滚到 PLAN 模式，修正工具结果让 AI 知道切换被取消并等待用户反馈
                                         currentContext = currentContext.copy(mode = AgentMode.PLAN)
-                                        rawResult = ToolResult.Error(
-                                            "用户希望补充说明或调整方案，当前保持在 PLAN 模式。请等待用户输入具体的补充或修改意见，不要自行臆测修改，待用户明确反馈后再继续。",
-                                            "MODE_SWITCH_REJECTED"
-                                        ).toTransportString()
+                                        rawResult = toolError(toolCall, "用户希望补充说明或调整方案，当前保持在 PLAN 模式。请等待用户输入具体的补充或修改意见，不要自行臆测修改，待用户明确反馈后再继续。", "MODE_SWITCH_REJECTED")
                                         isError = true
                                     }
                                 } else {
@@ -1066,10 +1048,18 @@ class StatefulAgentWorkflow @Inject constructor(
     private fun toolCallSignature(toolCall: ToolCall): String =
         toolCall.name + "\u0000" + JsonObject(toolCall.arguments).toString()
 
+    private fun toolError(call: ToolCall, message: String, code: String): String = try {
+        toolOutputStore.process(call.name, call.id, ToolResult.Error(message, code)).toTransportString()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        ToolResult.Error("Tool output processing failed", "TOOL_OUTPUT_PROCESSING_FAILED").toTransportString()
+    }
+
     private suspend fun runToolSync(tool: AgentTool?, toolCall: ToolCall, context: AgentContext): ToolRunResult {
         val name = toolCall.name
         if (tool == null) {
-            return ToolRunResult(ToolResult.Error("工具 $name 不存在", "TOOL_NOT_FOUND").toTransportString(), true)
+            return ToolRunResult(toolError(toolCall, "工具 $name 不存在", "TOOL_NOT_FOUND"), true)
         }
         return try {
             val result = tool.executeWithContext(toolCall.arguments, context)
@@ -1081,7 +1071,7 @@ class StatefulAgentWorkflow @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            ToolRunResult(ToolResult.Error("工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED").toTransportString(), true)
+            ToolRunResult(toolError(toolCall, "工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED"), true)
         }
     }
 
@@ -1331,7 +1321,7 @@ class StatefulAgentWorkflow @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ToolRunResult(ToolResult.Error("工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED").toTransportString(), true)
+            return ToolRunResult(toolError(toolCall, "工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED"), true)
         }
     }
 

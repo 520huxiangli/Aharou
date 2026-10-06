@@ -31,13 +31,16 @@ class SessionUseCaseWorkspaceDeletionTest {
             session("sub", "/ws/a", parentId = "root")
         )
 
-        val useCase = SessionUseCase(chatDao, messageDao)
+        val archives = mockk<MessageArchiveStore>(relaxed = true)
+        val useCase = SessionUseCase(chatDao, messageDao, archives)
         val deleted = useCase.deleteSessionsByWorkspace("/ws/a")
 
         assertEquals(2, deleted)
         coVerify(exactly = 1) { messageDao.deleteBySession("root") }
         coVerify(exactly = 1) { messageDao.deleteBySession("sub") }
         coVerify(exactly = 1) { chatDao.deleteByWorkspace("/ws/a") }
+        coVerify(exactly = 1) { archives.deleteSession("root") }
+        coVerify(exactly = 1) { archives.deleteSession("sub") }
     }
 
     @Test
@@ -46,11 +49,13 @@ class SessionUseCaseWorkspaceDeletionTest {
         val messageDao = mockk<AgentMessageDao>(relaxed = true)
         coEvery { chatDao.getAllSessionsByWorkspaceOnce("/ws/empty") } returns emptyList()
 
-        val useCase = SessionUseCase(chatDao, messageDao)
+        val archives = mockk<MessageArchiveStore>(relaxed = true)
+        val useCase = SessionUseCase(chatDao, messageDao, archives)
         val deleted = useCase.deleteSessionsByWorkspace("/ws/empty")
 
         assertEquals(0, deleted)
         coVerify(exactly = 0) { messageDao.deleteBySession(any()) }
         coVerify(exactly = 0) { chatDao.deleteByWorkspace(any()) }
+        coVerify(exactly = 0) { archives.deleteSession(any()) }
     }
 }

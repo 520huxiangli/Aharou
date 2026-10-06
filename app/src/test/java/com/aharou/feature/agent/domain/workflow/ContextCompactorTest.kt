@@ -11,6 +11,10 @@ import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.tool.ToolCall
+import com.aharou.feature.agent.domain.tool.AgentTool
+import com.aharou.feature.settings.domain.model.ModelContextPolicy
+import com.aharou.feature.workspace.domain.FileAccessProvider
+import com.aharou.feature.workspace.domain.PathHomeResolver
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.domain.model.ModelMetadata
@@ -18,7 +22,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -31,12 +38,15 @@ class ContextCompactorTest {
     private val settings = mockk<GeneralSettingsRepository>()
     private val persistence = mockk<MessagePersistenceUseCase>(relaxed = true)
     private val provider = mockk<AIProvider>(relaxed = true)
-    private val compactor = ContextCompactor(dao, metadata, prompts, records, settings, persistence)
+    private val files = mockk<FileAccessProvider>(relaxed = true)
+    private val paths = mockk<PathHomeResolver>()
+    private val compactor = ContextCompactor(dao, metadata, prompts, records, settings, persistence, files, paths)
 
     private fun prepare(context: Int = 16_000) {
         every { provider.providerId } returns "provider"
         every { provider.model } returns "summary"
         every { provider.maxOutputTokens } returns 8_000
+        every { paths.aharouRoot() } returns "/root/.aharou"
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata(id = "summary", contextTokens = context)
         coEvery { settings.compactionThresholdPercent() } returns 90
         // 设成 100%：这些用例只验证硬摘要路径，软分支不该被意外触发
@@ -162,9 +172,9 @@ class ContextCompactorTest {
     fun invalidResponsesDoNotCommitAndCountFailedCalls() = runTest {
         prepare()
         // 空正文与拒答都不属于「输出预算不够」，不重试：每种只记一次失败调用
-        for (response in listOf(AIResponse(""), AIResponse("blocked", stopReason = "refusal"))) {
+        for ((index, response) in listOf(AIResponse(""), AIResponse("blocked", stopReason = "refusal")).withIndex()) {
             coEvery { provider.complete(any(), any(), any(), any()) } returns response
-            val original = history()
+            val original = history(20_000 + index)
             val result = compactor.compactIfNeeded(original, provider, force = true)
             assertFalse(result.compacted)
             assertSame(original, result.messages)
@@ -182,7 +192,7 @@ class ContextCompactorTest {
         )
         // 历史要小到一次摘要就装得完（单块）：这样「首次被截断 + 重试一次」正好两次模型调用，
         // 调用次数才是这个用例能稳定断言的东西（历史一大就会被分块，次数随块数漂）。
-        val result = compactor.compactIfNeeded(history(2_000), provider, force = true)
+        val result = compactor.compactIfNeeded(history(6_000), provider, force = true)
         assertTrue(result.compacted)
         coVerify(exactly = 2) { provider.complete(any(), any(), any(), any()) }
         // 两次模型调用各落一条统计
@@ -224,7 +234,7 @@ class ContextCompactorTest {
         coVerify(exactly = 1) {
             dao.commitCompaction("session", listOf("old"), match { it.map { row -> row.timestamp } == listOf(98L, 99L) }, any())
         }
-        coVerify(exactly = 1) { persistence.invalidateHistory("session") }
+        verify(exactly = 1) { persistence.invalidateHistory("session") }
     }
 
     @Test
@@ -263,7 +273,7 @@ class ContextCompactorTest {
         val result = compactor.compactIfNeeded(original, provider, sessionId = "session", force = true)
         assertFalse(result.compacted)
         assertSame(original, result.messages)
-        coVerify(exactly = 0) { persistence.invalidateHistory(any()) }
+        verify(exactly = 0) { persistence.invalidateHistory(any()) }
     }
 
     @Test
@@ -277,6 +287,217 @@ class ContextCompactorTest {
             coVerify(exactly = 1) { records.insert(match { it.status == "error" }) }
             coVerify { provider.maxOutputTokens = 8_000 }
         }
+    }
+
+    @Test
+    fun onlyValidatedSummaryIsCommittedAtomicallyAndInvalidatesHistory() = runTest {
+        prepare()
+        coEvery { dao.getMessagesBySessionOnce("session") } returns listOf(
+            AgentMessageEntity(id = "old", sessionId = "session", role = "USER", content = "history", timestamp = 50),
+            AgentMessageEntity(id = "answer", sessionId = "session", role = "ASSISTANT", content = "done", timestamp = 60),
+            AgentMessageEntity(id = "goal", sessionId = "session", role = "USER", content = "goal", timestamp = 100))
+        val result = compactor.compactIfNeeded(history(), provider, "session", force = true)
+        assertTrue(result.compacted)
+        coVerify(exactly = 1) {
+            dao.commitCompaction("session", listOf("old"), match {
+                it.size == 2 && it[0].isCompactionMarker && it[1].isContextSummary &&
+                    it[1].content == "Concise handoff" && it[0].timestamp < it[1].timestamp
+            }, any())
+        }
+        verify(exactly = 1) { persistence.invalidateHistory("session") }
+    }
+
+    @Test
+    fun oversizedTailIsRetainedAndFailsBeforeCallingSummary() = runTest {
+        prepare()
+        val original = history() + AgentMessage.AssistantMessage(content = "",
+            toolCalls = listOf(ToolCall("latest", "readFile", emptyMap()))) +
+            AgentMessage.ToolResultMessage(id = "latest", toolName = "readFile", result = "汉".repeat(12_000))
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(original, provider, force = true, onEvent = { events.add(it) })
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertTrue(events.any { it is AgentEvent.CompactionFailed })
+        coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun hangingSummaryTimesOutAndKeepsHistoryWithoutCommitting() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } coAnswers { awaitCancellation() }
+        val original = history()
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(original, provider, force = true, onEvent = { events.add(it) })
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertEquals(ContextCompactor.SUMMARY_DEADLINE_MS, testScheduler.currentTime)
+        assertEquals(1, events.count { it is AgentEvent.CompactionFailed })
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+        coVerify { provider.maxOutputTokens = 8_000 }
+        coVerify(exactly = 1) { records.insert(match { it.status == "error" }) }
+    }
+
+    @Test
+    fun metadataAndSettingsShareTheSummaryDeadline() = runTest {
+        prepare()
+        coEvery { metadata.resolve(any(), any(), any()) } coAnswers {
+            delay(ContextCompactor.SUMMARY_DEADLINE_MS + 1)
+            ModelMetadata(id = "summary", contextTokens = 16_000)
+        }
+        val original = history()
+        val result = compactor.compactIfNeeded(original, provider, force = true)
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertEquals(ContextCompactor.SUMMARY_DEADLINE_MS, testScheduler.currentTime)
+        coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun metadataAndSettingsCompleteBeforeSummaryAndLeaveOneDeadline() = runTest {
+        prepare()
+        coEvery { metadata.resolve(any(), any(), any()) } coAnswers {
+            delay(20_000)
+            ModelMetadata(id = "summary", contextTokens = 16_000)
+        }
+        coEvery { settings.compactionThresholdPercent() } coAnswers {
+            delay(20_000)
+            90
+        }
+        coEvery { provider.complete(any(), any(), any(), any()) } coAnswers {
+            delay(100_000)
+            AIResponse("handoff", stopReason = "stop")
+        }
+        val original = history()
+        val result = compactor.compactIfNeeded(original, provider, force = true)
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertEquals(ContextCompactor.SUMMARY_DEADLINE_MS, testScheduler.currentTime)
+        coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun outputStarvedRetrySharesTheOriginalDeadline() = runTest {
+        prepare()
+        var calls = 0
+        coEvery { provider.complete(any(), any(), any(), any()) } coAnswers {
+            calls++
+            delay(70_000)
+            if (calls == 1) AIResponse("partial", stopReason = "length") else AIResponse("handoff", stopReason = "stop")
+        }
+        val original = history(6_000)
+        val result = compactor.compactIfNeeded(original, provider, force = true)
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertEquals(2, calls)
+        assertEquals(ContextCompactor.SUMMARY_DEADLINE_MS, testScheduler.currentTime)
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun persistedHistoryPreparationAlsoTimesOut() = runTest {
+        prepare()
+        coEvery { dao.getMessagesBySessionOnce("session") } coAnswers { awaitCancellation() }
+        val original = history()
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(original, provider, "session", force = true, onEvent = { events.add(it) })
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertEquals(ContextCompactor.SUMMARY_DEADLINE_MS, testScheduler.currentTime)
+        assertTrue(events.single { it is AgentEvent.CompactionFailed } is AgentEvent.CompactionFailed)
+        coVerify(exactly = 0) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun failedMaterialIsNotSummarizedAgainEvenWhenNewTailIsAppended() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
+        val original = history()
+        val first = compactor.compactIfNeeded(original, provider, force = true)
+        val continued = original + AgentMessage.AssistantMessage(content = "continue")
+        val second = compactor.compactIfNeeded(continued, provider, force = true)
+        assertFalse(first.compacted)
+        assertFalse(second.compacted)
+        assertSame(continued, second.messages)
+        coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun summaryBelowHardThresholdButAboveTargetDoesNotCommit() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("汉".repeat(10_200), stopReason = "stop")
+        val original = history(12_000)
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(original, provider, force = true, onEvent = { events.add(it) })
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        assertTrue(events.any { it is AgentEvent.CompactionFailed })
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun targetHasTenPointGapBelowConfiguredHardLine() = runTest {
+        prepare()
+        coEvery { settings.compactionThresholdPercent() } returns 75
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("汉".repeat(9_500), stopReason = "stop")
+        val original = history(12_000)
+        val result = compactor.compactIfNeeded(original, provider, force = true)
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun targetCountsSystemToolsSummaryAndTail() = runTest {
+        prepare()
+        val tool = mockk<AgentTool>()
+        every { tool.name } returns "largeTool"
+        every { tool.description } returns "汉".repeat(4_000)
+        every { tool.toJsonSchema() } returns emptyMap()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("汉".repeat(2_200), stopReason = "stop")
+        val original = history(6_000)
+        val result = compactor.compactIfNeeded(original, provider, force = true,
+            systemPrompt = "汉".repeat(4_000), tools = listOf(tool))
+        assertFalse(result.compacted)
+        assertSame(original, result.messages)
+        coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun successfulSummaryFitsTargetAndKeepsLargeLatestBatch() = runTest {
+        prepare()
+        val latest = AgentMessage.AssistantMessage(content = "", toolCalls = listOf(ToolCall("latest", "readFile", emptyMap())))
+        val output = AgentMessage.ToolResultMessage(id = "latest", toolName = "readFile", result = "汉".repeat(6_000))
+        val original = history() + latest + output
+        val result = compactor.compactIfNeeded(original, provider, force = true)
+        assertTrue(result.compacted)
+        assertSame(output, result.messages.last())
+        assertSame(latest, result.messages[result.messages.lastIndex - 1])
+        val budget = ModelContextPolicy.effectiveInputBudget(ModelMetadata(id = "summary", contextTokens = 16_000))
+        assertTrue(CompactionText.estimateRequest("", emptyList(), result.messages) <= budget * 70 / 100)
+    }
+
+    @Test
+    fun tailSelectionNeverDropsUnfinishedOrLatestParallelBatch() {
+        val original = history() + listOf(
+            AgentMessage.AssistantMessage(content = "", toolCalls = listOf(
+                ToolCall("one", "readFile", emptyMap()), ToolCall("missing", "readFile", emptyMap()))),
+            AgentMessage.ToolResultMessage(id = "one", toolName = "readFile", result = "汉".repeat(8_000)),
+            AgentMessage.AssistantMessage(content = "", toolCalls = listOf(ToolCall("latest", "readFile", emptyMap()))),
+            AgentMessage.ToolResultMessage(id = "latest", toolName = "readFile", result = "汉".repeat(8_000)))
+        assertEquals(3, CompactionText.selectTailStartIndex(original, 16_000))
+    }
+
+    @Test
+    fun projectionPreservesMiddleOfLongFileOutput() {
+        val output = "BEGIN" + "x".repeat(4_000) + "CRITICAL-MIDDLE" + "y".repeat(4_000) + "END"
+        val projected = CompactionText.project(AgentMessage.ToolResultMessage(toolName = "readFile", result = output))
+        assertTrue(projected.contains("CRITICAL-MIDDLE"))
+        assertTrue(projected.endsWith("END"))
     }
 
     @Test

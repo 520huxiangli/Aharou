@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.session
 
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
+import com.aharou.feature.agent.data.local.dao.ChatSearchMatch
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -10,6 +11,8 @@ import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.agent.presentation.MessageRole
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -20,7 +23,8 @@ import javax.inject.Singleton
 @Singleton
 class MessagePersistenceUseCase @Inject constructor(
     private val agentMessageDao: AgentMessageDao,
-    private val agentDatabase: AgentDatabase
+    private val agentDatabase: AgentDatabase,
+    private val messageArchiveStore: MessageArchiveStore
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -101,28 +105,74 @@ class MessagePersistenceUseCase @Inject constructor(
         isContextExcluded: Boolean = false
     ) {
         agentMessageDao.insert(
-            AgentMessageEntity(
+            prepareForStorage(AgentMessageEntity(
                 id = id,
                 sessionId = sessionId,
                 role = role.name,
-                content = sanitizeContent(content),
+                content = content,
                 timestamp = nextTimestamp(),
-                toolCallsJson = if (toolCalls.isNotEmpty()) capBytes(json.encodeToString(toolCalls), MAX_SNAPSHOT_BYTES) else null,
+                toolCallsJson = if (toolCalls.isNotEmpty()) json.encodeToString(toolCalls) else null,
                 toolCallId = toolCallId,
                 toolName = toolName,
-                toolArgs = toolArgs?.let { capBytes(it, MAX_TOOL_ARGS_BYTES) },
+                toolArgs = toolArgs,
                 isError = isError,
-                reasoning = reasoning?.let { sanitizeContent(it) },
-                signature = signature?.let { capBytes(it, MAX_SNAPSHOT_BYTES) },
-                thinkingBlocksJson = thinkingBlocksJson?.let { capBytes(it, MAX_SNAPSHOT_BYTES) },
-                attachmentsJson = if (attachments.isNotEmpty()) capBytes(json.encodeToString(attachments), MAX_ATTACHMENTS_BYTES) else null,
+                reasoning = reasoning,
+                signature = signature,
+                thinkingBlocksJson = thinkingBlocksJson,
+                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
                 cachedInputTokens = cachedInputTokens,
                 isCompacted = isCompacted,
                 isContextExcluded = isContextExcluded
-            )
+            ))
         )
+        invalidateHistory(sessionId)
+    }
+
+    suspend fun prepareForStorage(entity: AgentMessageEntity): AgentMessageEntity =
+        messageArchiveStore.prepareForStorage(entity)
+
+    suspend fun restore(entity: AgentMessageEntity): AgentMessageEntity = messageArchiveStore.restore(entity)
+
+    suspend fun restoreAll(entities: List<AgentMessageEntity>): List<AgentMessageEntity> =
+        messageArchiveStore.restoreAll(entities)
+
+    suspend fun searchInWorkspace(workspacePath: String, keyword: String, limit: Int): List<ChatSearchMatch> {
+        if (keyword.isBlank() || limit <= 0) return emptyList()
+        val hits = ArrayList<ChatSearchMatch>()
+        val newestFirst = compareByDescending<ChatSearchMatch> { it.timestamp }.thenByDescending { it.messageId }
+        for (session in agentDatabase.chatSessionDao().getAllSessionsByWorkspaceOnce(workspacePath)) {
+            var timestamp = Long.MIN_VALUE
+            var id = ""
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val page = agentMessageDao.getPageBySessionAfter(session.id, timestamp, id, 16)
+                if (page.isEmpty()) break
+                for (message in page) {
+                    currentCoroutineContext().ensureActive()
+                    if (message.isCompacted || message.isContextSummary || message.isCompactionMarker ||
+                        (message.role != MessageRole.USER.name && message.role != MessageRole.ASSISTANT.name)) continue
+                    val content = messageArchiveStore.restoreContentForSearch(message)
+                    val index = content.indexOf(keyword, ignoreCase = true)
+                    if (index < 0) continue
+                    val start = (index - 40).coerceAtLeast(0)
+                    val end = (index + keyword.length + 40).coerceAtMost(content.length)
+                    val snippet = buildString {
+                        if (start > 0) append('\u2026')
+                        append(content, start, end)
+                        if (end < content.length) append('\u2026')
+                    }
+                    hits += ChatSearchMatch(message.id, session.id, session.title, message.role, snippet, message.timestamp)
+                    hits.sortWith(newestFirst)
+                    if (hits.size > limit) hits.removeAt(hits.lastIndex)
+                }
+                timestamp = page.last().timestamp
+                id = page.last().id
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        return hits
     }
 
     fun invalidateHistory(sessionId: String) {
@@ -133,12 +183,47 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     suspend fun rewindConversation(sessionId: String, cutoff: Long) {
+        val removed = agentMessageDao.getMessagesBySessionOnce(sessionId).filter {
+            it.timestamp >= cutoff || it.isContextSummary || it.isCompactionMarker
+        }
         agentMessageDao.rewindConversation(sessionId, cutoff)
         invalidateHistory(sessionId)
+        removed.forEach { messageArchiveStore.deleteMessage(it.sessionId, it.id) }
+    }
+
+    suspend fun deleteMessagesFromTimestamp(sessionId: String, timestamp: Long) {
+        val removed = agentMessageDao.getMessagesBySessionOnce(sessionId).filter { it.timestamp >= timestamp }
+        agentMessageDao.deleteMessagesFromTimestamp(sessionId, timestamp)
+        invalidateHistory(sessionId)
+        removed.forEach { messageArchiveStore.deleteMessage(it.sessionId, it.id) }
+    }
+
+    suspend fun deleteMessage(messageId: String) {
+        val message = agentMessageDao.getMessageById(messageId) ?: return
+        val removed = if (message.role == MessageRole.USER.name) {
+            agentMessageDao.getMessagesBySessionOnce(message.sessionId).filter { it.timestamp > message.timestamp }
+        } else emptyList()
+        if (message.role == MessageRole.USER.name) {
+            agentMessageDao.deleteMessagesAfterTimestamp(message.sessionId, message.timestamp)
+        }
+        agentMessageDao.deleteMessageById(messageId)
+        invalidateHistory(message.sessionId)
+        (removed + message).forEach { messageArchiveStore.deleteMessage(it.sessionId, it.id) }
     }
 
     suspend fun updateContent(messageId: String, newContent: String) {
-        agentMessageDao.updateMessageContent(messageId, sanitizeContent(newContent))
+        val entity = agentMessageDao.getMessageById(messageId) ?: return
+        val stored = prepareForStorage(entity.copy(
+            content = newContent,
+            reasoning = null,
+            toolCallsJson = null,
+            toolArgs = null,
+            signature = null,
+            thinkingBlocksJson = null,
+            attachmentsJson = null
+        ))
+        agentMessageDao.updateMessageContent(messageId, stored.content)
+        invalidateHistory(entity.sessionId)
     }
 
     companion object {
@@ -185,10 +270,8 @@ class MessagePersistenceUseCase @Inject constructor(
         }
 
         /**
-         * 落库前对 JSON 快照字段（toolCallsJson / thinkingBlocksJson / attachmentsJson）与
-         * 思考签名等非展示文本按 UTF-8 字节截断。截断后 JSON 不再可解析，读取方经 runCatching
-         * 降级为「无工具调用 / 无思考快照 / 无附件」，而非崩溃；不带截断标记，避免给解析方徒增无意义内容。
-         * 截断按码点边界进行，不切出半个代理对。
+         * 构建有界数据库投影时按 UTF-8 码点边界限长，不切出半个代理对。
+         * 完整字段由 MessageArchiveStore 先存档，JSON 与签名仅在数据库中保留短引用。
          */
         internal fun capBytes(raw: String, maxBytes: Int): String {
             if (definitelyFits(raw, maxBytes)) return raw
@@ -237,8 +320,8 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     private suspend fun buildHistoryUncached(sessionId: String, pendingToolMarker: String): List<AgentMessage> {
-        val entities = agentMessageDao.getMessagesBySessionOnce(sessionId)
-            .filter { !it.isCompacted && !it.isContextExcluded }
+        val entities = restoreAll(agentMessageDao.getMessagesBySessionOnce(sessionId)
+            .filter { !it.isCompacted && !it.isContextExcluded })
 
         // 第一遍：求 assistant 声明的 toolCallId 与 tool 结果 toolCallId 的交集。
         val declaredIds = mutableSetOf<String>()

@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -43,8 +44,7 @@ import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.X
 
-/** 单个文件在结果里最多列出的命中行数，超出只显示前几条（总量上限由引擎侧把住）。 */
-private const val HITS_PER_FILE_LIMIT = 10
+private const val HITS_PER_FILE_BATCH_SIZE = 10
 
 /**
  * 侧栏搜索框：「会话」「文件」两个 Tab 共用，复用设置页的胶囊搜索框，有内容时带清除按钮。
@@ -126,6 +126,7 @@ internal fun FileSearchResults(
         else -> {
             val groups = remember(state.hits) { state.hits.groupBy { it.path } }
             val collapsed = remember { mutableStateMapOf<String, Boolean>() }
+            val visibleHits = remember(state.query, state.hits) { mutableStateMapOf<String, Int>() }
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 item(key = "file-search-summary") {
                     Text(
@@ -163,8 +164,9 @@ internal fun FileSearchResults(
                         )
                     }
                     if (!isCollapsed) {
+                        val shownCount = visibleHits[path] ?: HITS_PER_FILE_BATCH_SIZE
                         items(
-                            items = contentHits.take(HITS_PER_FILE_LIMIT),
+                            items = contentHits.take(shownCount),
                             key = { hit -> "hit:$path:${hit.line}:${hit.column}" }
                         ) { hit ->
                             FileSearchHitRow(
@@ -172,6 +174,23 @@ internal fun FileSearchResults(
                                 query = state.query,
                                 onClick = { onOpenHit(hit) }
                             )
+                        }
+                        if (shownCount < contentHits.size) {
+                            item(key = "more:$path") {
+                                TextButton(
+                                    onClick = {
+                                        visibleHits[path] = shownCount + HITS_PER_FILE_BATCH_SIZE
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        stringResource(
+                                            R.string.drawer_file_search_show_more,
+                                            minOf(HITS_PER_FILE_BATCH_SIZE, contentHits.size - shownCount)
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                     item(key = "divider:$path") { SettingsDivider() }

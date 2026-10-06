@@ -1,58 +1,83 @@
 package com.aharou.feature.agent.domain.workflow
 
 import com.aharou.feature.agent.domain.model.AgentMessage
+import com.aharou.feature.agent.domain.tool.ToolCall
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * 软精简（不调模型、不落库）的纯逻辑：只截断喂模型的 `modelResult`，且幂等。
- * 这条路径是「压缩卡死」的第一道减压阀——命中时不该产生任何模型调用或事件。
- */
 class ContextCompactorSoftTrimTest {
+    private fun toolResult(result: String, id: String = "old", modelResult: String? = null) =
+        AgentMessage.ToolResultMessage(id = id, toolName = "readFile", result = result, modelResult = modelResult)
 
-    private fun toolResult(result: String, modelResult: String? = null) =
-        AgentMessage.ToolResultMessage(toolName = "bash", result = result, modelResult = modelResult)
+    private fun batch(id: String) = AgentMessage.AssistantMessage(content = "",
+        toolCalls = listOf(ToolCall(id, "readFile", emptyMap())))
 
     @Test
-    fun softTrim_trimsOversizedResultAndKeepsFullText() {
-        val big = "x".repeat(ContextCompactor.SOFT_TRIM_TOOL_CHARS + 500)
-        val messages = listOf(toolResult(big), toolResult("ok"), AgentMessage.UserMessage(content = "hi"))
-
-        val trimmed = ContextCompactor.softTrimToolOutputs(messages)
-
-        val first = trimmed[0] as AgentMessage.ToolResultMessage
-        assertEquals(
-            ContextCompactor.SOFT_TRIM_TOOL_CHARS + ContextCompactor.SOFT_TRIM_MARKER.length,
-            first.modelResult!!.length
-        )
-        assertTrue(first.modelResult!!.endsWith(ContextCompactor.SOFT_TRIM_MARKER))
-        assertEquals("完整正文必须留在 result 里（UI 与持久化要用）", big, first.result)
-
-        val second = trimmed[1] as AgentMessage.ToolResultMessage
-        assertNull("没超限的结果不该被精简", second.modelResult)
+    fun trimsOlderCompletedOutputWithReadableReferenceAndBothEnds() {
+        val big = "BEGIN" + "x".repeat(5_000) + "END"
+        val messages = listOf(batch("old"), toolResult(big), batch("latest"), toolResult(big, "latest"))
+        val trimmed = ContextCompactor.softTrimToolOutputs(messages) { "/root/.aharou/tool-output/original.txt" }
+        val first = trimmed[1] as AgentMessage.ToolResultMessage
+        assertTrue(first.modelResult!!.startsWith("BEGIN"))
+        assertTrue(first.modelResult!!.contains("/root/.aharou/tool-output/original.txt"))
+        assertTrue(first.modelResult!!.contains("END"))
+        assertEquals(big, first.result)
+        assertSame(messages[3], trimmed[3])
+        assertNull((trimmed[3] as AgentMessage.ToolResultMessage).modelResult)
     }
 
     @Test
-    fun softTrim_leavesExistingModelResultAlone() {
-        val big = "y".repeat(ContextCompactor.SOFT_TRIM_TOOL_CHARS * 2)
-        val messages = listOf(toolResult(big, modelResult = "already compact"))
-        assertSame("已有紧凑投影的工具不该被再截一遍", messages, ContextCompactor.softTrimToolOutputs(messages))
+    fun latestParallelBatchIsNeverTrimmed() {
+        val big = "x".repeat(5_000)
+        val messages = listOf(AgentMessage.AssistantMessage(content = "", toolCalls = listOf(
+            ToolCall("one", "readFile", emptyMap()), ToolCall("two", "readFile", emptyMap()))),
+            toolResult(big, "one"), toolResult(big, "two"))
+        assertSame(messages, ContextCompactor.softTrimToolOutputs(messages) { "saved.txt" })
     }
 
     @Test
-    fun softTrim_isIdempotent() {
-        val big = "z".repeat(ContextCompactor.SOFT_TRIM_TOOL_CHARS + 1)
-        val once = ContextCompactor.softTrimToolOutputs(listOf(toolResult(big)))
-        val twice = ContextCompactor.softTrimToolOutputs(once)
-        assertSame("第二次应原样返回，不重建列表", once, twice)
+    fun unfinishedEarlierBatchProtectsItsResultsEvenAfterANewerBatch() {
+        val big = "x".repeat(5_000)
+        val messages = listOf(AgentMessage.AssistantMessage(content = "", toolCalls = listOf(
+            ToolCall("one", "readFile", emptyMap()), ToolCall("missing", "readFile", emptyMap()))),
+            toolResult(big, "one"), batch("latest"), toolResult(big, "latest"))
+        assertSame(messages, ContextCompactor.softTrimToolOutputs(messages) { "saved.txt" })
     }
 
     @Test
-    fun softTrim_returnsSameListWhenNothingToTrim() {
-        val messages = listOf(toolResult("short"), AgentMessage.UserMessage(content = "hi"))
+    fun archiveFailureKeepsOriginalOutput() {
+        val messages = listOf(batch("old"), toolResult("x".repeat(5_000)), batch("latest"), toolResult("ok", "latest"))
+        assertSame(messages, ContextCompactor.softTrimToolOutputs(messages) { null })
+    }
+
+    @Test
+    fun existingModelProjectionAndRepeatedTrimStayUnchanged() {
+        val big = "y".repeat(5_000)
+        val messages = listOf(batch("old"), toolResult(big, modelResult = "already compact"),
+            batch("latest"), toolResult("ok", "latest"))
+        assertSame(messages, ContextCompactor.softTrimToolOutputs(messages) { "saved.txt" })
+        val once = ContextCompactor.softTrimToolOutputs(listOf(batch("old"), toolResult(big),
+            batch("latest"), toolResult("ok", "latest"))) { "saved.txt" }
+        assertSame(once, ContextCompactor.softTrimToolOutputs(once) { "saved.txt" })
+    }
+
+    @Test
+    fun noReadableReferenceAndShortOutputsAreUnchanged() {
+        val messages = listOf(batch("old"), toolResult("x".repeat(5_000)), batch("latest"), toolResult("ok", "latest"))
         assertSame(messages, ContextCompactor.softTrimToolOutputs(messages))
+        val short = listOf(toolResult("short"), AgentMessage.UserMessage(content = "hi"))
+        assertSame(short, ContextCompactor.softTrimToolOutputs(short))
+    }
+
+    @Test
+    fun existingStoredOutputPathSurvivesProjection() {
+        val raw = "{\"data\":{\"content\":\"" + "x".repeat(5_000) +
+            "\",\"output_path\":\"/root/.aharou/tool-output/old.txt\"}}"
+        val messages = listOf(batch("old"), toolResult(raw), batch("latest"), toolResult("ok", "latest"))
+        val trimmed = ContextCompactor.softTrimToolOutputs(messages)
+        assertTrue((trimmed[1] as AgentMessage.ToolResultMessage).modelResult!!.contains("/root/.aharou/tool-output/old.txt"))
     }
 }

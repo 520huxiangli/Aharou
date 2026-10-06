@@ -98,6 +98,7 @@ import com.aharou.feature.agent.presentation.component.shouldPasteAsFile
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -183,6 +184,7 @@ class AIAgentViewModel @Inject constructor(
 ) : ViewModel(), SlashCommandContext {
 
     private val sessionJobs = mutableMapOf<String, Job>()
+    private val stoppingSessions = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
 
     /** 记忆兑现节流：每个会话上次自动整理的时间戳，10 分钟内不重复跑。 */
     private val lastCurateAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -286,7 +288,6 @@ class AIAgentViewModel @Inject constructor(
     /** 聊天记录搜索：命中条数上限、输入防抖、片段上下文宽度、定位时预留的分页余量。 */
     private val chatSearchLimit = 50
     private val chatSearchDebounceMs = 300L
-    private val snippetContext = 40
     private val messageLimitMargin = 5
 
     /**
@@ -691,16 +692,16 @@ class AIAgentViewModel @Inject constructor(
                     flow {
                         emit(ChatSearchState(query = query, loading = true))
                         val hits = withContext(Dispatchers.IO) {
-                            agentMessageDao.searchInWorkspace(
+                            messagePersistenceUseCase.searchInWorkspace(
                                 workspace,
-                                escapeLike(keyword),
+                                keyword,
                                 chatSearchLimit
                             ).map { m ->
                                 ChatSearchHit(
                                     sessionId = m.sessionId,
                                     sessionTitle = m.sessionTitle,
                                     messageId = m.messageId,
-                                    snippet = buildSnippet(m.content, keyword),
+                                    snippet = m.content,
                                     timestamp = m.timestamp
                                 )
                             }
@@ -747,23 +748,6 @@ class AIAgentViewModel @Inject constructor(
         _pendingScrollMessage.value = null
     }
 
-    /** 转义 LIKE 通配符，配合 SQL 里的 ESCAPE '!'（转义字符本身需最先处理）。 */
-    private fun escapeLike(raw: String): String =
-        raw.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-
-    /** 以命中词为中心截取片段：折叠换行空白，两端按需加省略号；未命中时退回开头一段。 */
-    private fun buildSnippet(content: String, keyword: String): String {
-        val flat = content.replace(Regex("\\s+"), " ").trim()
-        val index = flat.indexOf(keyword, ignoreCase = true)
-        if (index < 0) return flat.take(snippetContext * 2)
-        val start = (index - snippetContext).coerceAtLeast(0)
-        val end = (index + keyword.length + snippetContext).coerceAtMost(flat.length)
-        return buildString {
-            if (start > 0) append('\u2026')
-            append(flat, start, end)
-            if (end < flat.length) append('\u2026')
-        }
-    }
 
     /** 侧边栏「文件」Tab 已展开的目录集合（容器路径）。含工作区根：根也可折叠，默认展开；按工作区持久化。 */
     private val _expandedPaths = MutableStateFlow(setOf(WorkspacePathMapper.CONTAINER_ROOT))
@@ -1081,7 +1065,7 @@ class AIAgentViewModel @Inject constructor(
             else agentMessageDao.getMessagesBySessionPaged(id, limit).map { list ->
                 ChatMessagesState(
                     sessionId = id,
-                    messages = list.asSequence()
+                    messages = messagePersistenceUseCase.restoreAll(list).asSequence()
                         .filterNot {
                             it.role == MessageRole.ASSISTANT.name &&
                                 !it.content.hasVisibleContent() &&
@@ -1669,7 +1653,7 @@ class AIAgentViewModel @Inject constructor(
             ?: _currentWorkspace.value
 
     private fun deliverSystemEvent(sessionId: String, item: PendingNotification) {
-        if (sessionJobs[sessionId]?.isActive == true) {
+        if (sessionId in stoppingSessions || sessionJobs[sessionId]?.isCompleted == false) {
             agentNotificationCenter.enqueue(sessionId, item)
             return
         }
@@ -1722,7 +1706,7 @@ class AIAgentViewModel @Inject constructor(
     ) {
         val sid = targetSessionId ?: _currentSessionId.value
         val isCurrentRunning = sid != null &&
-            (sessionJobs[sid]?.isActive == true || sid in _runningCommandSessions.value)
+            (sid in stoppingSessions || sessionJobs[sid]?.isCompleted == false || sid in _runningCommandSessions.value)
         if (isCurrentRunning) {
             val req = QueuedRequest(
                 id = UUID.randomUUID().toString(),
@@ -1819,7 +1803,7 @@ class AIAgentViewModel @Inject constructor(
     private fun processNextInQueue(sessionId: String) {
         // 已有活跃 job（可能是本次收尾前由通知合并/flush 等入口启动的）时不消费，
         // 避免队列被多个收尾入口重复消费、同一会话并发跑两个 job。
-        if (sessionJobs[sessionId]?.isActive == true) return
+        if (sessionId in stoppingSessions || sessionJobs[sessionId]?.isCompleted == false || sessionId in _runningCommandSessions.value) return
         val queue = _queuedRequests.value[sessionId] ?: return
         val next = queue.firstOrNull() ?: return
         _queuedRequests.value = _queuedRequests.value + (sessionId to queue.drop(1))
@@ -1870,27 +1854,41 @@ class AIAgentViewModel @Inject constructor(
         isAutoTrigger: Boolean = false,
         /** 子代理等场景：已预设会话标题，跳过首条消息的标题推导/生成，保留预设标题。 */
         skipTitleUpdate: Boolean = false
-    ): Job = viewModelScope.launch {
+    ): Job = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
         val sessionId = targetSessionId ?: ensureSession()
         if (sessionId.isBlank()) {
             FileLogger.w(TAG, "工作区未就绪，跳过请求")
             return@launch
         }
-        // 命令分流：命中斜杠命令（内置命令或技能）时，不走 agent workflow，直接执行命令操作
-        // （命令文本已作为用户消息落库，进入对话上下文）。不注册 sessionJobs，
-        // 因此 isRunning 保持 false，/compress 等命令内部的自检可以正常工作。
-        if (request.startsWith("/")) {
-            slashCommandRegistry.resolve(request)?.let { command ->
-                runResolvedCommand(command, request, sessionId)
-                return@launch
-            }
-        }
-        coroutineContext[Job]?.let { sessionJobs[sessionId] = it }
-        FileLogger.d(TAG, "stream start: sid=$sessionId prevState=${_agentStates.value[sessionId]} isAutoTrigger=$isAutoTrigger")
-        setAgentState(sessionId, AgentUIState.Streaming)
-        acquireKeepalive()
-
+        val currentJob = requireNotNull(coroutineContext[Job])
         try {
+            while (true) {
+                stoppingSessions[sessionId]?.await()
+                val previousJob = sessionJobs[sessionId]
+                if (previousJob == null || previousJob === currentJob || previousJob.isCompleted) break
+                previousJob.join()
+            }
+            if (request.startsWith("/")) {
+                slashCommandRegistry.resolve(request)?.let { command ->
+                    runResolvedCommand(command, request, sessionId)
+                    return@launch
+                }
+            }
+            sessionJobs[sessionId] = currentJob
+            currentJob.invokeOnCompletion {
+                viewModelScope.launch {
+                    if (sessionJobs[sessionId] !== currentJob) return@launch
+                    sessionJobs.remove(sessionId)
+                    if (sessionId !in stoppingSessions) {
+                        flushPendingNotifications(sessionId)
+                        processNextInQueue(sessionId)
+                    }
+                    if (sessionJobs.values.none { !it.isCompleted }) releaseKeepalive()
+                }
+            }
+            FileLogger.d(TAG, "stream start: sid=$sessionId prevState=${_agentStates.value[sessionId]} isAutoTrigger=$isAutoTrigger")
+            setAgentState(sessionId, AgentUIState.Streaming)
+            acquireKeepalive()
             var failed = false
 
             // 会话就绪、历史组装、工具装配、落库全在 runner 里；这里只管界面状态。
@@ -1918,6 +1916,7 @@ class AIAgentViewModel @Inject constructor(
                     skipTitleUpdate = skipTitleUpdate
                 )
             ).collect { event ->
+                if (sessionJobs[sessionId] !== currentJob) return@collect
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
                         if (event.accumulated.hasVisibleContent()) finishReasoning()
@@ -2059,9 +2058,9 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
 
+            if (sessionJobs[sessionId] !== currentJob) return@launch
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
-            // 仅当本 job 仍持有忙状态时才置完成态：并发场景下队列/通知可能已启动新的 job
-            // 并把状态改为 Streaming，不能被先结束的 job 误覆盖成 Result（按钮会提前变回发送）。
+            if (sessionJobs[sessionId] !== currentJob) return@launch
             val finishedState = _agentStates.value[sessionId]
             if (!failed && (finishedState is AgentUIState.Loading || finishedState is AgentUIState.Streaming)) {
                 setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
@@ -2083,46 +2082,26 @@ class AIAgentViewModel @Inject constructor(
             throw e
         } catch (e: Exception) {
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
-             setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
-             _completedSessions.value = _completedSessions.value - sessionId
+             if (sessionJobs[sessionId] === currentJob) {
+                 setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
+                 _completedSessions.value = _completedSessions.value - sessionId
+             }
         } finally {
             val isOwnJob = sessionJobs[sessionId] == coroutineContext[Job]
             FileLogger.d(TAG, "stream finally: sid=$sessionId isOwnJob=$isOwnJob state=${_agentStates.value[sessionId]}")
             if (isOwnJob) {
-                sessionJobs.remove(sessionId)
+                _runningTools.value = _runningTools.value - sessionId
+                setStreamingText(sessionId, null)
+                setStreamingReasoning(sessionId, null)
+                setPreparingTool(sessionId, null)
+                setCompacting(sessionId, false)
+                setRetryState(sessionId, null)
+                setKeySwitchState(sessionId, null)
+                val currentState = _agentStates.value[sessionId]
+                if (currentState !is AgentUIState.Error && currentState !is AgentUIState.Loading && currentState !is AgentUIState.Streaming) {
+                    setAgentState(sessionId, AgentUIState.Idle)
+                }
             }
-            _runningTools.value = _runningTools.value - sessionId
-            setStreamingText(sessionId, null)
-            setStreamingReasoning(sessionId, null)
-            setPreparingTool(sessionId, null)
-            setCompacting(sessionId, false)
-            setRetryState(sessionId, null)
-            setKeySwitchState(sessionId, null)
-
-            // 本轮未能搭车送达的后台通知：本轮结束且 job 已移除后，合并成一条发送
-            flushPendingNotifications(sessionId)
-
-            // 正常完成时先回到 Idle，再处理队列；队列若有下一轮会重新设 Streaming
-            val currentState = _agentStates.value[sessionId]
-            if (currentState !is AgentUIState.Error && currentState !is AgentUIState.Loading && currentState !is AgentUIState.Streaming) {
-                setAgentState(sessionId, AgentUIState.Idle)
-            }
-            if (currentState !is AgentUIState.Loading && currentState !is AgentUIState.Streaming) {
-                processNextInQueue(sessionId)
-            }
-            // 放在队列处理之后：flushPendingNotifications / processNextInQueue 会同步注册接替的 job，
-            // 此时 job 状态才能反映真实情况，不会刚释放又立即重新获取。
-            // 用全局 job 判断而非「当前工作区」：切工作区不会打断还在跑的会话，它们仍需保活。
-            if (sessionJobs.values.none { it.isActive }) {
-                releaseKeepalive()
-            }
-        }
-    }.also { job ->
-        // 同步注册 job：launch 内的 sessionJobs 赋值是异步的，finally 中 flushPendingNotifications
-        // 与 processNextInQueue 会在赋值前都看到 isActive=false 而双消费启动两个 job，
-        // 先结束的 job 把状态置 Idle/Result 覆盖仍在跑的 job 的 Streaming。
-        if (targetSessionId != null && slashCommandRegistry.resolve(request) == null) {
-            sessionJobs[targetSessionId] = job
         }
     }
 
@@ -2175,6 +2154,7 @@ class AIAgentViewModel @Inject constructor(
      * 取消 job 并把未完成的流式内容落库为「已停止」；队列下一条照常执行。
      */
     fun stopAgentSession(sessionId: String) {
+        if (sessionId in stoppingSessions) return
         val job = sessionJobs[sessionId] ?: return
         if (!job.isActive) return
         // 用户在界面上手动停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启，
@@ -2196,32 +2176,30 @@ class AIAgentViewModel @Inject constructor(
             }
         }
         val runningTools = _runningTools.value[sessionId]?.values?.toList() ?: emptyList()
-        val streamingText = _streamingTexts.value[sessionId]
-        val streamingReasoning = _streamingReasonings.value[sessionId]
         val pendingPermission = toolPermissionManager.pendingForSession(sessionId)
         val stoppedText = context.getString(R.string.agent_stopped_by_user)
         val pendingNotifs = agentNotificationCenter.pendingCount(sessionId)
         FileLogger.d(TAG, "stopAgent: sid=$sessionId runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id} pendingNotifs=$pendingNotifs state=${_agentStates.value[sessionId]}")
-        // cancel() 在 Dispatchers.Main.immediate 上可能立即恢复挂起协程
-        // （如 awaitApproval 的 CompletableDeferred.await），旧 job 的 finally →
-        // flushPendingNotifications 在 cancel() 调用栈内同步执行并可能启动新 job。
-        // 不预先清除待送通知——它们应由 finally 正常 flush 给新 job 处理。
+        val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
+        stoppingSessions[sessionId] = stopped
         job.cancel()
-        // cancel 可能已同步执行完 finally（flush 启动了新 job 并注册到 sessionJobs），
-        // 此时不能再覆盖新 job 的状态；仅当无新 job 接管时才做清理。
-        if (sessionJobs[sessionId]?.isActive != true) {
-            agentNotificationCenter.clear(sessionId)
-            setAgentState(sessionId, AgentUIState.Idle)
-        }
-        _runningTools.value = _runningTools.value - sessionId
-        setStreamingText(sessionId, null)
-        setStreamingReasoning(sessionId, null)
-        setCompacting(sessionId, false)
-        setRetryState(sessionId, null)
-        viewModelScope.launch {
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+            job.join()
+            if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
+            suspend fun needsStoppedResult(messageId: String): Boolean {
+                val message = agentMessageDao.getMessageById(messageId) ?: return true
+                return message.sessionId == sessionId && message.role == MessageRole.TOOL.name &&
+                    (message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
+                        message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER))
+            }
             if (runningTools.isNotEmpty()) {
                 // 并行执行被中止：所有未完成的工具都落库为「已停止」
                 runningTools.forEach { running ->
+                    if (!needsStoppedResult(running.messageId)) {
+                        toolArgsByMsgId.remove(running.messageId)
+                        return@forEach
+                    }
                     val partial = running.text.trimEnd()
                     val content = if (partial.isNotEmpty()) "$partial\n\n$stoppedText" else stoppedText
                     messagePersistenceUseCase.persist(
@@ -2236,22 +2214,12 @@ class AIAgentViewModel @Inject constructor(
                     )
                     toolArgsByMsgId.remove(running.messageId)
                 }
-            } else if (!streamingText.isNullOrEmpty() || !streamingReasoning.isNullOrEmpty()) {
-                val partial = (streamingText ?: "").trimEnd()
-                val content = if (partial.isNotEmpty()) "$partial\n\n$stoppedText" else stoppedText
-                val reasoning = streamingReasoning?.takeIf { it.hasVisibleContent() }
-                messagePersistenceUseCase.persist(
-                    sessionId = sessionId,
-                    role = MessageRole.ASSISTANT,
-                    content = content,
-                    reasoning = reasoning
-                )
             }
             // 授权弹窗挂起中的工具调用：awaitApproval 挂起期间 _runningTools 为空
             // （ToolCallStarted 在授权通过后才发出），但 AssistantText 已落库了带
             // tool_call 声明的 assistant 消息。不补结果会导致该 tool_call 成为
             // 孤立记录，被 buildHistory 的 validIds 交集过滤掉，AI 不知道自己曾调用过。
-            if (pendingPermission != null) {
+            if (pendingPermission != null && needsStoppedResult("tool_${pendingPermission.id}")) {
                 val msgId = "tool_${pendingPermission.id}"
                 messagePersistenceUseCase.persist(
                     sessionId = sessionId,
@@ -2263,12 +2231,23 @@ class AIAgentViewModel @Inject constructor(
                     isError = true
                 )
             }
-            setStreamingText(sessionId, null)
-            setStreamingReasoning(sessionId, null)
-            setCompacting(sessionId, false)
-            setRetryState(sessionId, null)
-            // 点「停止」= 跳过当前轮，立即执行队列下一条
-            processNextInQueue(sessionId)
+            if (sessionJobs[sessionId]?.let { it !== job } != true) {
+                setStreamingText(sessionId, null)
+                setStreamingReasoning(sessionId, null)
+                setCompacting(sessionId, false)
+                setRetryState(sessionId, null)
+                setAgentState(sessionId, AgentUIState.Idle)
+            }
+            } finally {
+                if (stoppingSessions[sessionId] === stopped) {
+                    stoppingSessions.remove(sessionId)
+                    stopped.complete(Unit)
+                    if (sessionJobs[sessionId]?.let { it !== job } != true) {
+                        flushPendingNotifications(sessionId)
+                        processNextInQueue(sessionId)
+                    }
+                }
+            }
         }
     }
 
@@ -2654,7 +2633,7 @@ class AIAgentViewModel @Inject constructor(
         checkpointManager.setActiveCheckpointId(sessionId, null)
 
         val checkpoint = checkpointDao.getCheckpointBySessionAndMessage(sessionId, messageId)
-        val targetMsgEntity = agentMessageDao.getMessageById(messageId) ?: return@launch
+        val targetMsgEntity = messagePersistenceUseCase.restore(agentMessageDao.getMessageById(messageId) ?: return@launch)
         val attachments = targetMsgEntity.toUIMessage().attachments
 
         var conflicts: List<String> = emptyList()
@@ -2663,11 +2642,11 @@ class AIAgentViewModel @Inject constructor(
                 if (checkpoint != null) {
                     conflicts = checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id).conflicts
                 }
-                agentMessageDao.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
+                messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
                 withContext(Dispatchers.Main) { onFillPrompt(targetMsgEntity.content, attachments) }
             }
             RewindOption.RESTORE_CONVERSATION -> {
-                agentMessageDao.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
+                messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
                 withContext(Dispatchers.Main) { onFillPrompt(targetMsgEntity.content, attachments) }
             }
             RewindOption.RESTORE_CODE -> {
@@ -2743,11 +2722,7 @@ class AIAgentViewModel @Inject constructor(
 
     fun deleteMessage(messageId: String) = viewModelScope.launch {
         try {
-            val msg = agentMessageDao.getMessageById(messageId)
-            if (msg != null && msg.role == MessageRole.USER.name) {
-                agentMessageDao.deleteMessagesAfterTimestamp(msg.sessionId, msg.timestamp)
-            }
-            agentMessageDao.deleteMessageById(messageId)
+            messagePersistenceUseCase.deleteMessage(messageId)
         } catch (e: Exception) {
             FileLogger.e(TAG, "删除消息失败", e)
         }

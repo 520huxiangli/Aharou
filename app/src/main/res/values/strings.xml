@@ -2352,5 +2352,15 @@
     <string name="checkpoint_undo_last_restore">撤销上次恢复</string>
     <string name="checkpoint_undo_last_restore_desc">把最近一次代码恢复回滚回恢复前的状态</string>
 
+    <string name="editor_find">查找</string>
+    <string name="editor_find_hint">查找当前文件</string>
+    <string name="editor_find_no_results">无匹配结果</string>
+    <string name="editor_find_match_count">%1$d / %2$d</string>
+    <string name="editor_find_previous">上一个匹配</string>
+    <string name="editor_find_next">下一个匹配</string>
+    <string name="editor_find_close">关闭查找</string>
+    <string name="drawer_file_search_show_more">再显示 %1$d 条</string>
+    <string name="agent_streaming_preview_notice">生成中仅展示最近一段内容</string>
+
     <!-- 工作流 -->
 </resources>

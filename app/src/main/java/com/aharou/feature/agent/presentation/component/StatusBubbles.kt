@@ -410,8 +410,12 @@ private fun retryErrorLabel(error: RetryErrorInfo): String {
     return if (code != null) stringResource(R.string.retry_error_with_code, base, code) else base
 }
 
-/** 流式渲染节流：文本变化后延迟该时长再更新渲染文本，降低 md 解析频率。 */
+internal const val STREAMING_PREVIEW_CHARS = 20_000
 private const val STREAMING_RENDER_DEBOUNCE_MS = 120L
+
+internal fun shouldRefreshStreamingText(text: String, seenChars: Int, seenHash: Int): Boolean =
+    text.length >= STREAMING_PREVIEW_CHARS || text.length < seenChars ||
+        (seenChars > 0 && text.substring(0, seenChars).hashCode() != seenHash)
 
 /**
  * 对持续增长的流式文本做节流渲染：首帧立即渲染当前文本，之后每次文本变化最多
@@ -424,7 +428,7 @@ private fun rememberThrottledStreamingText(text: String): String {
     var renderText by remember { mutableStateOf(text) }
     LaunchedEffect(text) {
         if (renderText == text) return@LaunchedEffect
-        delay(STREAMING_RENDER_DEBOUNCE_MS)
+        if (text.length < STREAMING_PREVIEW_CHARS && text.startsWith(renderText)) delay(STREAMING_RENDER_DEBOUNCE_MS)
         if (renderText != text) renderText = text
     }
     return renderText
@@ -545,8 +549,7 @@ internal data class TypewriterText(val text: String, val settled: Boolean)
 /**
  * 速率自适应打字机：显示文本滞后于上游累积文本，打字速度跟随模型吐字速度。
  *
- * 上游每个 delta 都携带完整累积文本，到达节奏即模型吐字节奏。此处维护两个进度：
- * 到达进度（[text] 的码点数）与显示进度（已展示的码点数）。显示进度由动画帧驱动，速率见
+ * 此处维护到达进度（[text] 的码点数）与已展示进度。显示进度由动画帧驱动，速率见
  * [typewriterRate]：滞后被压在 [TYPEWRITER_LAG_TARGET] 附近，不会越积越多。
  *
  * 渲染文本每 [TYPEWRITER_RENDER_INTERVAL_MS] 快照一次（throttle 而非 debounce，
@@ -557,10 +560,6 @@ internal data class TypewriterText(val text: String, val settled: Boolean)
  * 打完（约 0.2 秒，硬上限 [TYPEWRITER_DRAIN_HARD_MS] 兜底），期间 [TypewriterText.settled]
  * 保持 false，调用方据此把这段文字的渲染交棒给刚落库的助手消息（见 AIChatPanel），
  * 打完后再让落库消息完全接管——用户看不到「整段突然跳出」，也看不到同一段文字重复两份。
- *
- * 调用方应在 LazyColumn 之外持有本状态，避免尾巴 item 滚出视口被 dispose 后
- * 重新组合导致打字进度丢失。切页（chat 整棵子树离开 NavHost 组合）无法靠持有位置规避，
- * 由内部 saveable 进度承接。
  */
 @Composable
 internal fun rememberTypewriterStreamingText(
@@ -588,7 +587,8 @@ internal fun rememberTypewriterStreamingText(
     // 上游到达事件窗口：(帧时间戳, 累计码点数)，用于估算吐字速率
     val arrivals = remember { ArrayDeque<Pair<Long, Int>>() }
     var lastArrivalNanos by remember { mutableStateOf(0L) }
-    var lastText by remember { mutableStateOf(restored) }
+    var seenChars by remember { mutableStateOf(restored.length) }
+    var seenHash by remember { mutableStateOf(restored.hashCode()) }
     var lastSessionKey by remember { mutableStateOf(sessionKey) }
     // 渲染文本与其 saveable 指纹必须同步更新，否则恢复时会拿指纹去校验另一段文本
     val commitRender: (String) -> Unit = { snapshot ->
@@ -598,20 +598,16 @@ internal fun rememberTypewriterStreamingText(
     }
 
     LaunchedEffect(text, active, sessionKey) {
-        // 文本不是当前进度的延续（换会话 / 新一轮 / 重试）：补全到当前全文，再跟着后续 delta 打字。
-        // 不能归零重打——切到另一个正在输出的会话时，它已产出的几百字会当着用户的面再来一遍。
-        // 换会话必须单独判：currentSessionId 与 streamingText 未必同一帧到达，只靠前缀判定
-        // 会漏掉先到的那一帧（那一帧文本还是旧会话的，看不出突变）。
-        // 新一轮开头也走这条路径，但那时 text 只有第一个 delta 的几个字，补全与重打视觉上无差别。
         val sessionChanged = sessionKey != lastSessionKey
         lastSessionKey = sessionKey
-        if (sessionChanged || (lastText.isNotEmpty() && !text.startsWith(lastText))) {
+        if (sessionChanged || shouldRefreshStreamingText(text, seenChars, seenHash)) {
             shownCodePoints = text.codePointCount(0, text.length).toFloat()
             commitRender(text)
             arrivals.clear()
             lastArrivalNanos = 0L
         }
-        lastText = text
+        seenChars = text.length
+        seenHash = text.hashCode()
 
         // 上游结束进入收尾阶段：不再一帧补全（那正是「结束瞬间抽搐一下」的来源），
         // 剩余那点字按恒定速率匀速打完。此时 text 不会再变，收尾期间本协程不会被打断。
@@ -702,14 +698,17 @@ internal fun StreamingBubble(
     text: String,
     cache: MarkdownRenderCache? = null
 ) {
-    val renderText = text
-    // 与落库助手正文同构：不套容器，直接铺在页面底色上，底部挂「生成中」的点
     Column(modifier = Modifier.fillMaxWidth()) {
+        if (text.length >= STREAMING_PREVIEW_CHARS) {
+            Text(stringResource(R.string.agent_streaming_preview_notice), style = MaterialTheme.typography.bodySmall)
+        }
         MarkdownContent(
-            text = renderText,
+            text = text,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.fillMaxWidth(),
-            cache = cache
+            cache = cache,
+            cacheEnabled = false,
+            retainState = false
         )
         Spacer(Modifier.height(Spacing.xs))
         TypingDots(color = MaterialTheme.colorScheme.primary, dotSize = 5.dp)
@@ -782,9 +781,6 @@ internal fun ReasoningBubble(
     val toggleExpanded: (Boolean) -> Unit = { next ->
         if (onExpandedChange != null) onExpandedChange(next) else localExpanded = next
     }
-    // 存绝对起始时间戳而非累加
-    // 毫秒数，切页返回或气泡滚出视口重挂载后显示的仍是真实时长；起始戳连同已见文本的长度与
-    // 指纹一起进 saveable，恢复时文本若不是同一轮的延续（期间已换轮）则重新计时。
     var timerStartMillis by rememberSaveable { mutableStateOf(0L) }
     var timerSeenChars by rememberSaveable { mutableStateOf(0) }
     var timerSeenHead by rememberSaveable { mutableStateOf(0) }
@@ -804,7 +800,6 @@ internal fun ReasoningBubble(
             delay(100)
         }
     }
-    // 展开渲染用节流文本（流式思考时降低 md 解析频率）；preRendered 时外部已按打字机节奏给出渲染文本。
     val renderText = if (preRendered) text else rememberThrottledStreamingText(text)
     val effectiveDurationMs = durationMs?.takeIf { it > 0 } ?: elapsedMillis.takeIf { it > 0 }
     val formattedDuration = remember(effectiveDurationMs, live) {
@@ -854,6 +849,9 @@ internal fun ReasoningBubble(
         ) {
             Column {
                 Spacer(Modifier.height(Spacing.sm))
+                if ((preRendered || live) && text.length >= STREAMING_PREVIEW_CHARS) {
+                    Text(stringResource(R.string.agent_streaming_preview_notice), style = MaterialTheme.typography.bodySmall)
+                }
                 val scrollState = rememberScrollState()
                 val fadeColor = MaterialTheme.colorScheme.background
                 Box(
@@ -864,6 +862,8 @@ internal fun ReasoningBubble(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         cache = cache,
                         compact = true,
+                        cacheEnabled = !preRendered && !live,
+                        retainState = !preRendered && !live,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = ReasoningWindowMaxHeight)
