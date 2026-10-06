@@ -810,48 +810,55 @@ class StatefulAgentWorkflow @Inject constructor(
                             val errorText = "LLM 调用失败: ${e.message}"
                             actionQueue.addLast(AgentAction.LlmError(errorText))
                         } finally {
-                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
-                                currentContext.sessionId?.let { sid ->
-                                    if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
-                                        val snapshot = captureSnapshot()
-                                        if (snapshot.hasSnapshotData() && !snapshot.persistenceConfirmed()) {
-                                            messagePersistenceUseCase.persist(sid, com.aharou.feature.agent.presentation.MessageRole.ASSISTANT,
-                                                snapshot.content, id = responseMessageId, reasoning = snapshot.reasoning, toolCalls = snapshot.toolCalls,
-                                                signature = snapshot.signature, thinkingBlocksJson = snapshot.thinkingBlocksJson,
-                                                attachments = snapshot.attachments, inputTokens = snapshot.inputTokens,
-                                                outputTokens = snapshot.outputTokens, cachedInputTokens = snapshot.cachedInputTokens)
-                                            snapshot.persisted?.complete(Unit)
-                                        }
-                                    }.onFailure { FileLogger.w(TAG, "保存回复快照失败", it) }
+                            // 取消展开期间绝不允许异常逃出 finally：待传播的取消异常一旦再叠上抛出的异常
+                            //（落库失败、日志格式化、OOM 等），ART 会直接 AssertNoPendingException 终止进程。
+                            try {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                                    currentContext.sessionId?.let { sid ->
+                                        if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
+                                            val snapshot = captureSnapshot()
+                                            if (snapshot.hasSnapshotData() && !snapshot.persistenceConfirmed()) {
+                                                messagePersistenceUseCase.persist(sid, com.aharou.feature.agent.presentation.MessageRole.ASSISTANT,
+                                                    snapshot.content, id = responseMessageId, reasoning = snapshot.reasoning, toolCalls = snapshot.toolCalls,
+                                                    signature = snapshot.signature, thinkingBlocksJson = snapshot.thinkingBlocksJson,
+                                                    attachments = snapshot.attachments, inputTokens = snapshot.inputTokens,
+                                                    outputTokens = snapshot.outputTokens, cachedInputTokens = snapshot.cachedInputTokens)
+                                                snapshot.persisted?.complete(Unit)
+                                            }
+                                        }.onFailure { runCatching { FileLogger.w(TAG, "保存回复快照失败: " + it.javaClass.simpleName) } }
+                                    }
+                                    // 调用记录同样放在 NonCancellable 里：否则取消时这一句会立刻再抛一个取消异常。
+                                    val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
+                                    val usage = finalResponse
+                                    runCatching {
+                                        llmCallRecordDao.insert(
+                                            LlmCallRecordEntity(
+                                                sessionId = currentContext.sessionId,
+                                                providerId = providerInUse.providerId.ifBlank { null },
+                                                model = providerInUse.model,
+                                                reasoningEffort = currentContext.reasoningEffort,
+                                                kind = callKind,
+                                                inputTokens = usage?.inputTokens ?: 0,
+                                                outputTokens = usage?.outputTokens ?: 0,
+                                                cachedInputTokens = usage?.cachedInputTokens ?: 0,
+                                                cacheCreationTokens = usage?.cacheCreationTokens ?: 0,
+                                                ttfbMillis = ttfbElapsed?.toInt(),
+                                                durationMillis = durationMillis,
+                                                status = when {
+                                                    callCompleted -> "success"
+                                                    callError != null -> "error"
+                                                    else -> "cancelled"
+                                                },
+                                                errorMessage = callError,
+                                                stopReason = usage?.stopReason,
+                                                retryCount = retryAttempts,
+                                                createdAt = callStartWall
+                                            )
+                                        )
+                                    }.onFailure { runCatching { FileLogger.w(TAG, "写入调用记录失败: " + it.javaClass.simpleName) } }
                                 }
-                            }
-                            val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
-                            val usage = finalResponse
-                            runCatching {
-                                llmCallRecordDao.insert(
-                                    LlmCallRecordEntity(
-                                        sessionId = currentContext.sessionId,
-                                        providerId = providerInUse.providerId.ifBlank { null },
-                                        model = providerInUse.model,
-                                        reasoningEffort = currentContext.reasoningEffort,
-                                        kind = callKind,
-                                        inputTokens = usage?.inputTokens ?: 0,
-                                        outputTokens = usage?.outputTokens ?: 0,
-                                        cachedInputTokens = usage?.cachedInputTokens ?: 0,
-                                        cacheCreationTokens = usage?.cacheCreationTokens ?: 0,
-                                        ttfbMillis = ttfbElapsed?.toInt(),
-                                        durationMillis = durationMillis,
-                                        status = when {
-                                            callCompleted -> "success"
-                                            callError != null -> "error"
-                                            else -> "cancelled"
-                                        },
-                                        errorMessage = callError,
-                                        stopReason = usage?.stopReason,
-                                        retryCount = retryAttempts,
-                                        createdAt = callStartWall
-                                    )
-                                )
+                            } catch (t: Throwable) {
+                                runCatching { FileLogger.w(TAG, "收尾落库异常: " + t.javaClass.simpleName) }
                             }
                         }
                     }

@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.workflow
 
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.domain.model.AgentContext
@@ -33,8 +34,10 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.spyk
+import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -170,6 +173,32 @@ class StatefulAgentWorkflowTest {
         job.cancelAndJoin()
         assertTrue(job.isCancelled)
         verifySaved(snapshot.messageId)
+    }
+
+    /**
+     * 回归：取消展开时落库与失败日志同时抛异常（实测在堆将满时会触发），异常绝不能逃出 finally。
+     * 逃出就会与待传播的取消异常叠加，ART 直接 AssertNoPendingException 中止进程。
+     */
+    @Test
+    fun persistenceAndLogFailureDuringCancellationNeverEscapeTheUnwind() = runTest {
+        prepare(flow { emit(AIStreamChunk.Final(response)); error("stream failed after final") })
+        coEvery { persistence.persist(any(), any(), any(), any(), any(), any(), any(), any(), any(),
+            any(), any(), any(), any(), any(), any(), any(), any(), any()) } throws OutOfMemoryError("heap exhausted")
+        mockkObject(FileLogger)
+        every { FileLogger.w(any(), any()) } throws OutOfMemoryError("log failed")
+        try {
+            val received = CompletableDeferred<AgentEvent.AssistantText>()
+            val job = launch {
+                workflow.executeEvents("request", context, emptyList()).collect {
+                    if (it is AgentEvent.AssistantText) received.complete(it)
+                }
+            }
+            received.await()
+            job.cancelAndJoin()
+            assertTrue(job.isCancelled)
+        } finally {
+            unmockkObject(FileLogger)
+        }
     }
 
     @Test

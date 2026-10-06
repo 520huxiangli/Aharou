@@ -19,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +54,10 @@ internal class EditorFindState {
     private var editor: CodeEditor? = null
     private var revision = 0L
     private var selectFirstMatch = false
+    private var pendingFocus = false
+
+    /** 供查找框在搜索跳转后把焦点要回来：sora 移光标时会抢焦点，否则后续按键会落进正文。 */
+    val focusRequester = FocusRequester()
     private val subscriptions = mutableListOf<SubscriptionReceipt<*>>()
 
     fun attach(source: CodeEditor) {
@@ -69,6 +75,10 @@ internal class EditorFindState {
                         refresh(event.getSearcher())
                     }
                     selectFirstMatch = false
+                    if (pendingFocus) {
+                        pendingFocus = false
+                        source.post { runCatching { focusRequester.requestFocus() } }
+                    }
                 }
             }
         }
@@ -97,6 +107,7 @@ internal class EditorFindState {
         matchCount = 0
         searching = value.isNotEmpty()
         selectFirstMatch = value.isNotEmpty()
+        pendingFocus = value.isNotEmpty()
         val source = editor ?: return
         if (value.isEmpty()) {
             source.searcher.stopSearch()
@@ -110,8 +121,10 @@ internal class EditorFindState {
         val source = editor ?: return
         val searcher = source.searcher
         if (searching || !isActive(source, searcher) || searcher.matchedPositionCount == 0) return
+        pendingFocus = false
         if (previous) searcher.gotoPrevious() else searcher.gotoNext()
         refresh(searcher)
+        source.post { runCatching { focusRequester.requestFocus() } }
     }
 
     fun close() {
@@ -120,6 +133,7 @@ internal class EditorFindState {
         revision++
         searching = false
         selectFirstMatch = false
+        pendingFocus = false
         matchIndex = 0
         matchCount = 0
         editor?.let {
@@ -157,7 +171,9 @@ internal fun EditorFindBar(state: EditorFindState) {
             AppTextField(
                 value = state.query,
                 onValueChange = state::updateQuery,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(state.focusRequester),
                 placeholder = stringResource(R.string.editor_find_hint),
                 leadingIcon = {
                     Icon(FeatherIcons.Search, contentDescription = stringResource(R.string.editor_find))
