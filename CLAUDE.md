@@ -19,7 +19,7 @@
 
 **改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。** 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
 
-单元测试（`:app:testUniversalDebugUnitTest`）在容器里可能根本跑不动：项目用 Robolectric，首次要下对应 SDK 的 `android-all-instrumented`（约 190 MB，**不走 Gradle 镜像**，流量网络下会永久 hang：worker `wchan=futex_wait`、CPU 近 0、daemon 日志停写）。**跑不动就跳过交给 CI** —— `.github/workflows/android-release.yml` 在构建前会跑同一套单测，失败会拦住发版。
+单元测试（`:app:testUniversalDebugUnitTest` / `:app:testArmsoloDebugUnitTest`——两个 flavor 各一个任务名，**没有** `testDebugUnitTest`）在容器里可能根本跑不动：项目用 Robolectric，首次要下对应 SDK 的 `android-all-instrumented`（约 190 MB，**不走 Gradle 镜像**，流量网络下会永久 hang：worker `wchan=futex_wait`、CPU 近 0、daemon 日志停写）。**跑不动就跳过交给 CI** —— `.github/workflows/android-release.yml` 在构建前会跑同一套单测，失败会拦住发版。
 
 | 用途 | 命令 |
 | --- | --- |
@@ -29,6 +29,8 @@
 | 推送前技能自检 | `python3 scripts/check_skills.py`（frontmatter/命名、description、验收用例齐全、市场配置与文档同步） |
 | 推送前架构门禁 | `python3 scripts/check_architecture.py`（或 `./gradlew checkArchitecture`；已挂 `preBuild`，禁用组件 import、单文件行数棘轮、双语 strings 不一致会直接编不过） |
 | 发版构建 APK / AAB | `./gradlew assembleRelease` / `./gradlew bundleRelease` |
+
+- 只跑单个测试类：`./gradlew :app:testUniversalDebugUnitTest --tests "com.aharou.<包>.<类>Test"`；结果读 `app/build/test-results/testUniversalDebugUnitTest/TEST-*.xml`——**看用例数，别只看 BUILD SUCCESSFUL**（`--tests` 过滤成 0 个也是成功）。
 
 - **别用聚合任务做日常验证**：`assembleDebug` / `assembleRelease` / `test` / `build` 都会跨三个 flavor 全跑，耗时极长。
 - **别用 `--rerun-tasks` 强制全量重编**：它与 dex 增量缓存冲突，会在 `dexBuilderUniversalDebug` 上报 `NoSuchFileException` 并让后续编译停在 `UP-TO-DATE`（日志照样写 SUCCESSFUL，但 APK 不更新）。真要强制重编就删中间产物。
@@ -56,6 +58,8 @@ feature-based 分层 + DDD。入口 `AIEditorApp` 初始化 `FileLogger`、`Term
   - `terminal`：终端与会话。本地模式 Termux 组件 + PRoot（`LinuxContainerEngine`）；远程模式 sshj。
   - `workspace`：工作区与 DocumentsProvider，远程走 `RemoteSftpFileAccess`。
   - `editor`：sora-editor 编辑器。`git`：Git 操作。`settings`：provider、日志、保活等设置。
+  - `browser`：内置 WebView 浏览器与网页自动化（`BrowserUseManager` / `BrowserTool`）；`sandbox`：容器文件浏览与预览（`FileBrowserScreen` / `FilePreviewScreen`）。
+  - `voice`：语音识别、合成、通话、唤醒（`call/` / `assistant/`）；`pet`：桌面伙伴小染（`PetOverlayService`）；`onboarding`：首次启动引导。
   - `backup`：备份恢复与加密。`credentials`：凭据管理与注入容器。
 - **远程 SSH 链路**：`RemoteSshConnection`（共享 sshj client）+ `RemoteSshEngine`（执行命令）+ `RemoteSftpFileAccess`（文件）+ `RemoteTerminalSessionManager`（终端）。
 - **工具系统**：`feature/agent/domain/tool/` 下各工具经 `ToolRegistry` 注册，执行权限由 `ToolPermissionManager` 与 `ToolPermissionPolicyEngine` 管控。
@@ -71,7 +75,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 改 schema 三步：
 
-1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 58）。
+1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 65）。
 2. 文件式：在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**；AutoMigration：加注解，保证 `to == SCHEMA_VERSION` 且 `from` 衔接文件式最大版本。
 3. 写入 DDL/SQL，启动时自动执行并记入 `migration_history` 表。
 
@@ -90,7 +94,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 - **UI 变化（新增页面、改交互、调布局、改文案）→ 必须更新 `docs-site/docs/`**；新增文档页同步加进 `docs-site/.vitepress/config.ts` 侧栏与 `docs-site/docs/guide/overview.md` 索引。
 - **用户可见中文文案 → 必须进双语 strings.xml**：写入 `values/strings.xml`（中文）与 `values-en/strings.xml`（英文），代码用 `stringResource(R.string.xxx)` 引用。**禁止在 `.kt` 中硬编码中文 UI 文案。** 命名用语义化英文小写下划线，跨页面复用的加 `common_` 前缀。
 
-**文档目录约定**：`docs-site/docs/` 是文档唯一事实源，`guide/` 放功能说明、`advanced/` 放环境搭建与进阶教程。构建时由 `syncAiDocs` task 复制到 `assets/docs/`，AI 在容器内看到的是 `~/.aicode/docs/{guide,advanced}/*.md`。**面向用户书写**：讲清怎么做、会看到什么、出错怎么办；变量名、错误码、内部实现路径属于 `prompts/`，别写进用户文档。
+**文档目录约定**：`docs-site/docs/` 是文档唯一事实源，`guide/` 放功能说明、`advanced/` 放环境搭建与进阶教程。构建时由 `syncAiDocs` task（已挂 `preBuild`）生成进 APK 的 `assets/docs/`，AI 在容器内看到的是 `~/.aharou/docs/{guide,advanced}/*.md`（`~/.aicode/docs` 是同一份的兼容旧路径）。**面向用户书写**：讲清怎么做、会看到什么、出错怎么办；变量名、错误码、内部实现路径属于 `prompts/`，别写进用户文档。
 
 ## Git 提交规范
 
@@ -151,10 +155,7 @@ Tag 驱动发版，平时 `master` 上的提交不影响发布包。
 
 ### 发版节奏（本项目实际流程，以此为准）
 
-**测试包（`.debug`）验过没问题 → 直接发正式版，不强制先发 RC。**
-
-> 本节原先照搬上游（AiCode）的分发纪律（「含新功能或行为变化必须先发 RC」等）。那是上游靠 GitHub Release
-> 无灰度分发时的兜底策略，**本项目不采用**，不得据此拦发布。要发 `-rcN` 也可以（`v1.14.0-rc1` 有先例），但属可选。
+**测试包（`.debug`）验过没问题 → 直接发正式版，不强制先发 RC。**（上游那套「含新功能或行为变化必须先发 RC」的分发纪律本项目不采用，不得据此拦发布；要发 `-rcN` 也可以、属可选，`v1.14.0-rc1` 有先例。）
 
 ### 步骤
 
