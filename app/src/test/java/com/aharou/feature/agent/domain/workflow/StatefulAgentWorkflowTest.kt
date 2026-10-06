@@ -319,10 +319,7 @@ class StatefulAgentWorkflowTest {
     fun toolLimitProducesSideEffectWithoutProcessingOutputInReducer() {
         val state = StatefulAgentWorkflow.AgentSessionState(totalToolCalls = 200)
         val action = StatefulAgentWorkflow.AgentAction.LlmResponse(response, "message")
-        val method = StatefulAgentWorkflow::class.java.getDeclaredMethod("reduce",
-            StatefulAgentWorkflow.AgentSessionState::class.java, StatefulAgentWorkflow.AgentAction::class.java)
-        method.isAccessible = true
-        val result = method.invoke(workflow, state, action) as Pair<*, *>
+        val result = workflow.reduce(state, action)
         assertTrue((result.first as StatefulAgentWorkflow.AgentSessionState).toolLimitNotified)
         assertEquals("RejectToolBatch", (result.second as List<*>).single()!!.javaClass.simpleName)
         verify(exactly = 0) { outputStore.process(any(), any(), any()) }
@@ -333,10 +330,7 @@ class StatefulAgentWorkflowTest {
         val state = StatefulAgentWorkflow.AgentSessionState(batchToolCalls = listOf(toolCall),
             pendingPermissionCalls = listOf(toolCall))
         val action = StatefulAgentWorkflow.AgentAction.PermissionEvaluated(toolCall, false, "args")
-        val method = StatefulAgentWorkflow::class.java.getDeclaredMethod("reduce",
-            StatefulAgentWorkflow.AgentSessionState::class.java, StatefulAgentWorkflow.AgentAction::class.java)
-        method.isAccessible = true
-        val result = method.invoke(workflow, state, action) as Pair<*, *>
+        val result = workflow.reduce(state, action)
         assertEquals("RejectToolBatch", (result.second as List<*>).single()!!.javaClass.simpleName)
         verify(exactly = 0) { outputStore.process(any(), any(), any()) }
     }
@@ -348,10 +342,7 @@ class StatefulAgentWorkflowTest {
             pendingPermissionCalls = listOf(toolCall))
         val action = StatefulAgentWorkflow.AgentAction.PermissionEvaluated(toolCall, false, "args",
             "unbounded", "TOOL_NOT_ALLOWED", denied)
-        val method = StatefulAgentWorkflow::class.java.getDeclaredMethod("reduce",
-            StatefulAgentWorkflow.AgentSessionState::class.java, StatefulAgentWorkflow.AgentAction::class.java)
-        method.isAccessible = true
-        val result = method.invoke(workflow, state, action) as Pair<*, *>
+        val result = workflow.reduce(state, action)
         val next = result.first as StatefulAgentWorkflow.AgentSessionState
         assertEquals(denied, next.rejectedToolResults.getValue(toolCall.id).result)
         verify(exactly = 0) { outputStore.process(any(), any(), any()) }

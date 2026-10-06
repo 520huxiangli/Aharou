@@ -364,166 +364,29 @@ class StatefulAgentWorkflow @Inject constructor(
         return provider
     }
 
-    /** 核心 Reducer，接收旧状态与 Action，返回新状态以及触发的副作用列表 (纯函数) */
-    private fun reduce(
-        state: AgentSessionState,
-        action: AgentAction
-    ): Pair<AgentSessionState, List<AgentSideEffect>> {
-        var newState = state
-        val effects = mutableListOf<AgentSideEffect>()
-
-        when (action) {
-            is AgentAction.InitRequest -> {
-                newState = state.copy(messages = action.initialMessages)
-                effects.add(AgentSideEffect.CallLlm)
-            }
-            is AgentAction.LlmResponse -> {
-                val assistantMsg = AgentMessage.AssistantMessage(
-                    id = action.messageId,
-                    content = action.response.content,
-                    toolCalls = action.response.toolCalls,
-                    reasoning = action.response.reasoning ?: "",
-                    signature = action.response.signature ?: "",
-                    thinkingBlocksJson = action.response.thinkingBlocksJson ?: "",
-                    images = action.response.images,
-                    inputTokens = action.response.inputTokens
-                )
-                newState = state.copy(
-                    messages = state.messages + assistantMsg,
-                    iterations = state.iterations + 1
-                )
-                
-                if (action.response.toolCalls.isEmpty()) {
-                    if (action.response.isAborted) {
-                        // 拒答/上下文超限：正文可能为空，静默结束会让用户看到空白气泡以为卡死。
-                        newState = newState.copy(
-                            isFinished = true,
-                            error = action.response.stopDetail ?: "",
-                            errorCode = action.response.stopReason
-                        )
-                    } else if (action.response.isTruncated) {
-                        val continuation = AgentMessage.UserMessage(content = "Your response was truncated. Continue from where it stopped.")
-                        newState = newState.copy(messages = newState.messages + continuation)
-                        effects.add(AgentSideEffect.PersistUser(continuation))
-                        effects.add(AgentSideEffect.CallLlm)
-                    } else {
-                        newState = newState.copy(isFinished = true)
-                    }
-                } else {
-                    // 本批多个 tool_call：全部进入待权限队列，逐个弹窗收集批准；
-                    // 全部批准后才进入并行执行阶段（见 PermissionEvaluated / ToolBatchFinished）。
-                    val toolCalls = action.response.toolCalls.toList()
-                    if (newState.totalToolCalls >= MAX_TOTAL_TOOL_CALLS) {
-                        // 到上限：不再执行，但要按 assistant(toolCalls) 的顺序补齐 tool 响应后收尾。
-                        // 第一次触发先回一条提示让模型收口，再触发就直接结束——
-                        // 否则提示本身又变成一轮模型调用，循环还是停不下来。
-                        effects.add(AgentSideEffect.RejectToolBatch(toolCalls,
-                            "本次任务的工具调用已达上限（$MAX_TOTAL_TOOL_CALLS 次），该调用未执行。请基于已有信息给出结论，或向用户说明还差什么。",
-                            "TOOL_CALL_LIMIT", newState.toolLimitNotified))
-                        newState = newState.copy(toolLimitNotified = true)
-                    } else {
-                        newState = newState.copy(
-                            batchToolCalls = toolCalls,
-                            pendingPermissionCalls = toolCalls,
-                            approvedToolCalls = emptyList(),
-                            rejectedToolResults = emptyMap()
-                        )
-                        effects.add(AgentSideEffect.RequestPermission(toolCalls.first()))
-                    }
-                }
-            }
-            is AgentAction.LlmError -> {
-                newState = state.copy(isFinished = true, error = action.error, errorCode = action.reasonCode)
-            }
-            is AgentAction.PermissionEvaluated -> {
-                if (action.approved) {
-                    // 批准：当前 toolCall 移入已批准集合；若还有待请求权限的则继续弹窗，否则开始并行执行。
-                    val remaining = newState.pendingPermissionCalls.filterNot { it.id == action.toolCall.id }
-                    val approved = newState.approvedToolCalls + action.toolCall
-                    newState = newState.copy(
-                        pendingPermissionCalls = remaining,
-                        approvedToolCalls = approved
-                    )
-                    if (remaining.isNotEmpty()) {
-                        effects.add(AgentSideEffect.RequestPermission(remaining.first()))
-                    } else {
-                        effects.add(AgentSideEffect.ExecuteToolBatch(approved))
-                    }
-                } else {
-                    if (action.errorCode == USER_REJECTED_CODE) {
-                        // 模型一次可能返回多个 tool_calls。用户拒绝批次中任意一个 → 整批取消：
-                        // 按 batchToolCalls 原始顺序为所有调用补上 tool 响应（不重复不遗漏），
-                        // 否则 assistant(toolCalls=N) 后只有部分 tool 消息，OpenAI 会报 400
-                        // "insufficient tool messages following tool_calls"。
-                        effects.add(AgentSideEffect.RejectToolBatch(state.batchToolCalls,
-                            "用户拒绝了本轮工具调用，该调用未执行。", USER_REJECTED_CODE, true, state.rejectedToolResults))
-                        return newState to effects
-                    }
-                    // 策略/系统拒绝（如 PLAN 模式禁止执行）：记录拒绝结果，继续收集后续权限。
-                    val remaining = newState.pendingPermissionCalls.filterNot { it.id == action.toolCall.id }
-                    newState = newState.copy(
-                        pendingPermissionCalls = remaining,
-                        rejectedToolResults = newState.rejectedToolResults + (
-                            action.toolCall.id to ToolBatchResult(
-                                id = action.toolCall.id,
-                                toolName = action.toolCall.name,
-                                result = action.result,
-                                isError = true
-                            )
-                        )
-                    )
-                    if (remaining.isNotEmpty()) {
-                        effects.add(AgentSideEffect.RequestPermission(remaining.first()))
-                    } else {
-                        effects.add(AgentSideEffect.ExecuteToolBatch(newState.approvedToolCalls))
-                    }
-                }
-            }
-            is AgentAction.ToolBatchRejected -> {
-                newState = state.copy(messages = state.messages + action.results.map {
-                    AgentMessage.ToolResultMessage(it.id, it.toolName, it.result,
-                        modelResult = modelToolResultText(it.toolName, it.result))
-                }, batchToolCalls = emptyList(), pendingPermissionCalls = emptyList(),
-                    approvedToolCalls = emptyList(), rejectedToolResults = emptyMap(), isFinished = action.finish)
-                if (!action.finish) effects.add(AgentSideEffect.CallLlm)
-            }
-            is AgentAction.ToolBatchFinished -> {
-                // 本批工具全部执行完，按 batchToolCalls 原始顺序组装 tool 响应：
-                // 优先取策略拒绝结果，其次取并行执行结果，保证与 assistant(toolCalls) 顺序一致。
-                val resultsById = action.results.associateBy { it.id }
-                val appendedMessages = mutableListOf<AgentMessage>()
-                newState.batchToolCalls.forEach { call ->
-                    val batchResult = newState.rejectedToolResults[call.id] ?: resultsById[call.id] ?: return@forEach
-                    appendedMessages.add(
-                        AgentMessage.ToolResultMessage(
-                            id = batchResult.id,
-                            toolName = batchResult.toolName,
-                            result = batchResult.result,
-                            images = batchResult.images,
-                            modelResult = modelToolResultText(batchResult.toolName, batchResult.result)
-                        )
-                    )
-                }
-                newState = state.copy(
-                    messages = state.messages + appendedMessages,
-                    batchToolCalls = emptyList(),
-                    pendingPermissionCalls = emptyList(),
-                    approvedToolCalls = emptyList(),
-                    rejectedToolResults = emptyMap(),
-                    totalToolCalls = state.totalToolCalls + newState.batchToolCalls.size
-                )
-                effects.add(AgentSideEffect.CallLlm)
-            }
-        }
-        
-        return Pair(newState, effects)
-    }
-
     override fun executeEvents(
         userRequest: String,
         context: AgentContext,
         tools: List<AgentTool>
     ): Flow<AgentEvent> = channelFlow {
+        runAgentLoop(userRequest, context, tools) { send(it) }
+    }
+
+    /**
+     * Agent 主循环：初始化运行期上下文，然后反复「取动作 → Reducer → 执行副作用」，
+     * 直到流程结束或动作队列排空。
+     *
+     * 之所以自成一函数：原先整段（含每次 LLM 调用、每批工具执行）都写在 executeEvents 的
+     * channelFlow 闭包里，编译出的协程状态机 invokeSuspend 有十万量级指令；ART 对这么大的
+     * 方法会放弃 JIT、只能解释执行，在「流式中点停止」的取消展开路径上直接 native abort。
+     * 拆开后主循环只保留调度骨架，重活各自落在独立函数里，每个状态机都小到能正常跑。
+     */
+    private suspend fun runAgentLoop(
+        userRequest: String,
+        context: AgentContext,
+        tools: List<AgentTool>,
+        emit: suspend (AgentEvent) -> Unit
+    ) {
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -546,8 +409,6 @@ class StatefulAgentWorkflow @Inject constructor(
 
         val systemPrompt = promptProvider.build(currentContext)
         val aiProvider = getEffectiveProvider(currentContext.sessionId)
-        // 压缩失败后本轮（本次用户请求内）不再重复尝试压缩，避免每次 LLM 调用都白试一次。
-        var compactionAttemptFailed = false
         val metadata = modelMetadataService.resolve(aiProvider.providerId, when (aiProvider) {
             is AnthropicAdapter -> ProviderType.ANTHROPIC
             is GeminiAdapter -> ProviderType.GEMINI
@@ -558,12 +419,15 @@ class StatefulAgentWorkflow @Inject constructor(
             aiProvider.maxOutputTokens = ModelContextPolicy.outputReserveTokens(metadata)
         }
         val lastAssistantIndex = currentContext.history.indexOfLast { it is AgentMessage.AssistantMessage && it.inputTokens > 0 }
-        var baselineEstimate = ContextTokenEstimator.estimate(systemPrompt,
-            currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), currentTools)
-        var baselineUsage = if (currentContext.lastInputTokens > 0 && lastAssistantIndex >= 0) {
-            (currentContext.history[lastAssistantIndex] as AgentMessage.AssistantMessage).inputTokens
-        } else 0
-        var overflowRecoveryAttempted = false
+        // 预算基线与两个「本轮只试一次」的开关都只在 LLM 调用分支用到，收成一个可变对象，
+        // 让该分支抽成独立函数后不必在主循环里再留 4 个跨挂起点局部变量。
+        val llmBudget = LlmCallBudgetState(
+            baselineEstimate = ContextTokenEstimator.estimate(systemPrompt,
+                currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), currentTools),
+            baselineUsage = if (currentContext.lastInputTokens > 0 && lastAssistantIndex >= 0) {
+                (currentContext.history[lastAssistantIndex] as AgentMessage.AssistantMessage).inputTokens
+            } else 0
+        )
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
             val action = actionQueue.removeFirst()
@@ -580,468 +444,547 @@ class StatefulAgentWorkflow @Inject constructor(
                         }
                     }
                     is AgentSideEffect.CallLlm -> {
-                        val providerInUse = aiProvider
-                        // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
-                        val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
-                        var compactedMessages = state.messages
-                        if (!compactionAttemptFailed) {
-                            val estimate = ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools)
-                            val predictedInput = ContextTokenEstimator.calibrated(estimate, baselineEstimate, baselineUsage)
-                            val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
-                                windowProvider = aiProvider, systemPrompt = systemPrompt, tools = currentTools,
-                                currentInputTokens = predictedInput) { event ->
-                                if (event is AgentEvent.CompactionFailed) compactionAttemptFailed = true
-                                send(event)
-                            }
-                            compactedMessages = compaction.messages
-                            if (compaction.compacted) {
-                                state = state.copy(messages = compaction.messages)
-                                baselineUsage = 0
-                                baselineEstimate = 0
-                            }
-                        }
-                        val requestEstimate = ContextTokenEstimator.estimate(systemPrompt, compactedMessages, currentTools)
-                        val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, baselineEstimate, baselineUsage)
-                        send(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
-                        if (predictedInput >= inputBudget) {
-                            actionQueue.addLast(AgentAction.LlmError("", "input_budget_exceeded"))
-                            continue
-                        }
-
-                        val acc = StringBuilder()
-                        val reasoningAcc = StringBuilder()
-                        var finalResponse: AIResponse? = null
-                        val responseMessageId = UUID.randomUUID().toString()
-                        var assistantSnapshot: AgentEvent.AssistantText? = null
-                        var snapshotSent = false
-                        var persistedImages = emptyList<AgentImage>()
-                        suspend fun captureSnapshot(): AgentEvent.AssistantText {
-                            assistantSnapshot?.let { return it }
-                            val response = finalResponse ?: AIResponse(acc.toString(), reasoning = reasoningAcc.toString())
-                            val (images, attachments) = if (response.images.isNotEmpty()) persistModelImages(response.images)
-                                else emptyList<AgentImage>() to emptyList<AgentAttachment>()
-                            persistedImages = images
-                            return AgentEvent.AssistantText(response.content, response.toolCalls,
-                                response.reasoning.orEmpty().ifEmpty { reasoningAcc.toString() }, response.signature.orEmpty(), response.inputTokens,
-                                response.outputTokens, response.cachedInputTokens, response.thinkingBlocksJson.orEmpty(),
-                                attachments, responseMessageId, kotlinx.coroutines.CompletableDeferred()).also { assistantSnapshot = it }
-                        }
-                        suspend fun publishSnapshot() {
-                            val snapshot = captureSnapshot()
-                            if (!snapshotSent) { send(snapshot); snapshotSent = true }
-                            withTimeoutOrNull(PERSIST_WAIT_MS) { snapshot.persisted?.await() }
-                        }
-
-                        // 调用统计埋点：记录请求发出/首字/结束时刻与 usage，失败与取消同样留痕。
-                        val callStartElapsed = SystemClock.elapsedRealtime()
-                        val callStartWall = System.currentTimeMillis()
-                        val callKind = "chat"
-                        var ttfbElapsed: Long? = null
-                        var callError: String? = null
-                        var callCompleted = false
-
-                        // 流式 delta 节流：上游每个 chunk 都携带完整累积文本，逐条 send 会让
-                        // ViewModel 端每秒重建几十次状态、UI 端反复重启打字机协程。按时间窗口合并：
-                        // 窗口内只保留最新累积文本，到窗口边界才发送，把下游事件频率压到 ~16/s。
-                        // 打字机渲染本身有 100ms 节流，少发中间态无感知；collect 结束补发最后 pending。
-                        val DELTA_THROTTLE_MS = 60L
-                        var lastTextDeltaSentAt = 0L
-                        var lastReasoningDeltaSentAt = 0L
-                        var pendingTextDelta = false
-                        var pendingReasoningDelta = false
-                        var retryAttempts = 0
-                        suspend fun flushPendingTextDelta() {
-                            if (!pendingTextDelta) return
-                            pendingTextDelta = false
-                            send(AgentEvent.AssistantDelta(livePreview(acc)))
-                        }
-                        suspend fun flushPendingReasoningDelta() {
-                            if (!pendingReasoningDelta) return
-                            pendingReasoningDelta = false
-                            send(AgentEvent.ReasoningDelta(livePreview(reasoningAcc)))
-                        }
-
-                        try {
-                            // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
-                            val supportsVision = activeModelSupportsVision(currentContext.sessionId)
-                            // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。
-                            val messagesToSend = foldStoredToolResults(
-                                sanitizeImagesForModel(compactedMessages, supportsVision)
-                            )
-                            // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
-                            var samplingLoopCut = false
-                            // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：
-                            // 每轮重新过滤，命中之后下一轮就能直接调用。
-                            val promptTools = currentTools.filter {
-                                !it.deferredLoading || toolRegistry.isActivated(it.name)
-                            }
-                            providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
-                                .takeWhile { !samplingLoopCut }
-                                .collect { chunk ->
-                                when (chunk) {
-                                    is AIStreamChunk.TextDelta -> {
-                                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
-                                        acc.append(chunk.text)
-                                        val loopStart = samplingLoopStart(acc)
-                                        if (loopStart >= 0) {
-                                            acc.setLength(loopStart)
-                                            samplingLoopCut = true
-                                        }
-                                        pendingTextDelta = true
-                                        val now = SystemClock.elapsedRealtime()
-                                        if (now - lastTextDeltaSentAt >= DELTA_THROTTLE_MS) {
-                                            flushPendingTextDelta()
-                                            lastTextDeltaSentAt = now
-                                        }
-                                    }
-                                    is AIStreamChunk.ReasoningDelta -> {
-                                        // 思考内容也算首字（推理模型先吐思考再吐正文）
-                                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
-                                        reasoningAcc.append(chunk.text)
-                                        val loopStart = samplingLoopStart(reasoningAcc)
-                                        if (loopStart >= 0) {
-                                            reasoningAcc.setLength(loopStart)
-                                            samplingLoopCut = true
-                                        } else if (acc.isEmpty() && reasoningAcc.length >= REASONING_RUNAWAY_CHARS) {
-                                            // 正文一直没来、思考却堆到这个量：上下文过长时模型会陷在思考里出不来。
-                                            // 这种打转既没有可截断的重复段（重复单元长度任意，检测不到），也永远
-                                            // 触发不了空闲超时（一直在吐字），只能整体中断，别让界面无限「正在思考」。
-                                            throw IllegalStateException(
-                                                "模型思考反复打转、正文始终为空，已中断本轮；上下文可能过长，建议新开会话后重试。"
-                                            )
-                                        }
-                                        pendingReasoningDelta = true
-                                        val now = SystemClock.elapsedRealtime()
-                                        if (now - lastReasoningDeltaSentAt >= DELTA_THROTTLE_MS) {
-                                            flushPendingReasoningDelta()
-                                            lastReasoningDeltaSentAt = now
-                                        }
-                                    }
-                                    is AIStreamChunk.Retrying -> {
-                                        retryAttempts = maxOf(retryAttempts, chunk.attempt)
-                                        acc.setLength(0)
-                                        reasoningAcc.setLength(0)
-                                        pendingTextDelta = false
-                                        pendingReasoningDelta = false
-                                        lastTextDeltaSentAt = 0L
-                                        lastReasoningDeltaSentAt = 0L
-                                        send(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries, chunk.error))
-                                    }
-                                    is AIStreamChunk.KeySwitched -> {
-                                        acc.setLength(0)
-                                        reasoningAcc.setLength(0)
-                                        pendingTextDelta = false
-                                        pendingReasoningDelta = false
-                                        lastTextDeltaSentAt = 0L
-                                        lastReasoningDeltaSentAt = 0L
-                                        send(AgentEvent.KeySwitched(chunk.newIndex, chunk.total))
-                                    }
-                                    is AIStreamChunk.Final -> {
-                                        // 纯工具调用轮没有文本/思考增量，Final 是首个内容事件，兜底记为 TTFB
-                                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
-                                        finalResponse = chunk.response
-                                    }
-                                    is AIStreamChunk.ToolCallDeclared -> {
-                                        // 工具名先于参数到达：立刻告诉 UI「模型准备调什么」，
-                                        // 免得长参数流式期间一直停在「正在思考」。
-                                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
-                                        send(AgentEvent.ToolCallPreparing(chunk.name))
-                                    }
-                                }
-                            }
-                            // 节流窗口内可能还压着最新累积文本：补发，保证 UI 尾巴拿到完整文本再交接落库。
-                            flushPendingTextDelta()
-                            flushPendingReasoningDelta()
-                            val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
-                            val snapshot = captureSnapshot()
-                            callCompleted = true
-                            if (aiResponse.stopReason == "model_context_window_exceeded" && !overflowRecoveryAttempted) {
-                                overflowRecoveryAttempted = true
-                                val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
-                                    currentContext.sessionId, force = true, windowProvider = aiProvider,
-                                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { send(it) }
-                                if (recovery.compacted) {
-                                    state = state.copy(messages = recovery.messages)
-                                    baselineUsage = 0
-                                    baselineEstimate = 0
-                                    actionQueue.addLast(AgentAction.InitRequest(recovery.messages))
-                                    continue
-                                }
-                            }
-                            baselineEstimate = requestEstimate
-                            baselineUsage = aiResponse.inputTokens
-                            send(AgentEvent.ContextUsage(
-                                if (baselineUsage > 0) baselineUsage else requestEstimate, inputBudget, baselineUsage <= 0
-                            ))
-                            // 将本轮 reasoning 附加到 AIResponse，以便 reduce 时存入 AssistantMessage 并在下一轮回传
-                            val responseWithReasoning = aiResponse.copy(reasoning = snapshot.reasoning)
-
-                            if (snapshot.hasSnapshotData()) publishSnapshot()
-                            actionQueue.addLast(
-                                AgentAction.LlmResponse(
-                                    if (persistedImages.isNotEmpty()) responseWithReasoning.copy(images = persistedImages)
-                                    else responseWithReasoning,
-                                    messageId = responseMessageId
-                                )
-                            )
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            if (finalResponse == null && !overflowRecoveryAttempted && acc.isEmpty() && reasoningAcc.isEmpty() && isContextOverflow(e)) {
-                                overflowRecoveryAttempted = true
-                                val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
-                                    currentContext.sessionId, force = true, windowProvider = aiProvider,
-                                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { send(it) }
-                                if (recovery.compacted) {
-                                    state = state.copy(messages = recovery.messages)
-                                    baselineUsage = 0
-                                    baselineEstimate = 0
-                                    actionQueue.addLast(AgentAction.InitRequest(recovery.messages))
-                                    callError = e.message
-                                    continue
-                                }
-                            }
-                            callError = e.message ?: e.javaClass.simpleName
-                            if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) {
-                                if (captureSnapshot().hasSnapshotData()) publishSnapshot()
-                            }
-                            // 多 Key 的自动切换与重发已在 adapter 内完成（见 AIProvider.keySwitcher）；
-                            // 走到这里说明不是 Key 问题、或候选 Key 已全部失败，直接上报原始错误。
-                            val errorText = "LLM 调用失败: ${e.message}"
-                            actionQueue.addLast(AgentAction.LlmError(errorText))
-                        } finally {
-                            // 取消展开期间绝不允许异常逃出 finally：待传播的取消异常一旦再叠上抛出的异常
-                            //（落库失败、日志格式化、OOM 等），ART 会直接 AssertNoPendingException 终止进程。
-                            try {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
-                                    currentContext.sessionId?.let { sid ->
-                                        if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
-                                            val snapshot = captureSnapshot()
-                                            if (snapshot.hasSnapshotData() && !snapshot.persistenceConfirmed()) {
-                                                messagePersistenceUseCase.persist(sid, com.aharou.feature.agent.presentation.MessageRole.ASSISTANT,
-                                                    snapshot.content, id = responseMessageId, reasoning = snapshot.reasoning, toolCalls = snapshot.toolCalls,
-                                                    signature = snapshot.signature, thinkingBlocksJson = snapshot.thinkingBlocksJson,
-                                                    attachments = snapshot.attachments, inputTokens = snapshot.inputTokens,
-                                                    outputTokens = snapshot.outputTokens, cachedInputTokens = snapshot.cachedInputTokens)
-                                                snapshot.persisted?.complete(Unit)
-                                            }
-                                        }.onFailure { runCatching { FileLogger.w(TAG, "保存回复快照失败: " + it.javaClass.simpleName) } }
-                                    }
-                                    // 调用记录同样放在 NonCancellable 里：否则取消时这一句会立刻再抛一个取消异常。
-                                    val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
-                                    val usage = finalResponse
-                                    runCatching {
-                                        llmCallRecordDao.insert(
-                                            LlmCallRecordEntity(
-                                                sessionId = currentContext.sessionId,
-                                                providerId = providerInUse.providerId.ifBlank { null },
-                                                model = providerInUse.model,
-                                                reasoningEffort = currentContext.reasoningEffort,
-                                                kind = callKind,
-                                                inputTokens = usage?.inputTokens ?: 0,
-                                                outputTokens = usage?.outputTokens ?: 0,
-                                                cachedInputTokens = usage?.cachedInputTokens ?: 0,
-                                                cacheCreationTokens = usage?.cacheCreationTokens ?: 0,
-                                                ttfbMillis = ttfbElapsed?.toInt(),
-                                                durationMillis = durationMillis,
-                                                status = when {
-                                                    callCompleted -> "success"
-                                                    callError != null -> "error"
-                                                    else -> "cancelled"
-                                                },
-                                                errorMessage = callError,
-                                                stopReason = usage?.stopReason,
-                                                retryCount = retryAttempts,
-                                                createdAt = callStartWall
-                                            )
-                                        )
-                                    }.onFailure { runCatching { FileLogger.w(TAG, "写入调用记录失败: " + it.javaClass.simpleName) } }
-                                }
-                            } catch (t: Throwable) {
-                                runCatching { FileLogger.w(TAG, "收尾落库异常: " + t.javaClass.simpleName) }
-                            }
-                        }
+                        state = executeLlmEffect(
+                            initialState = state,
+                            currentContext = currentContext,
+                            currentTools = currentTools,
+                            systemPrompt = systemPrompt,
+                            aiProvider = aiProvider,
+                            inputBudget = inputBudget,
+                            budget = llmBudget,
+                            actionQueue = actionQueue,
+                            emit = emit
+                        )
                     }
                     is AgentSideEffect.RequestPermission -> {
-                        val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val tool = toolsByName[effect.toolCall.name]
-                        if (tool == null) {
-                            // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
-                            val reason = "工具「${effect.toolCall.name}」在当前会话不可用（不在允许的工具清单内）。"
-                            val result = toolError(effect.toolCall, reason, TOOL_NOT_ALLOWED_CODE)
-                            send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, result, true, argsPreview))
-                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, false, argsPreview,
-                                reason, TOOL_NOT_ALLOWED_CODE, result))
-                        } else {
-                            val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
-
-                            val result = if (!checkResult.approved && checkResult.errorCode != USER_REJECTED_CODE)
-                                toolError(effect.toolCall, checkResult.denyReason, checkResult.errorCode) else ""
-                            if (result.isNotEmpty()) {
-                                send(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, result, true, argsPreview))
-                            } else if (checkResult.approved) {
-                                send(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
-                            }
-                            actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved,
-                                argsPreview, checkResult.denyReason, checkResult.errorCode, result))
-                        }
+                        handlePermissionEffect(
+                            toolCall = effect.toolCall,
+                            currentContext = currentContext,
+                            toolsByName = toolsByName,
+                            actionQueue = actionQueue,
+                            emit = emit
+                        )
                     }
                     is AgentSideEffect.RejectToolBatch -> {
                         val results = effect.toolCalls.map { call ->
                             effect.previousResults[call.id]?.let { return@map it }
                             val result = toolError(call, effect.message, effect.code)
-                            send(AgentEvent.ToolCallFinished(call.id, call.name, result, true))
+                            emit(AgentEvent.ToolCallFinished(call.id, call.name, result, true))
                             ToolBatchResult(call.id, call.name, result, true)
                         }
                         actionQueue.addLast(AgentAction.ToolBatchRejected(results, effect.finish))
                     }
                     is AgentSideEffect.ExecuteToolBatch -> {
-                        // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
-                        // 再并行执行；mode 切换检查在结果收集后于主协程串行处理（planApproval 单例）。
-                        val toolCalls = effect.toolCalls
-                        toolCalls.forEach { toolCall ->
-                            if (toolCall.name == "editFile" || toolCall.name == "writeFile") {
-                                (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
-                                    currentContext.sessionId?.let { sid ->
-                                        checkpointManager.beforeFileModified(sid, path)
-                                    }
-                                }
-                            }
-                        }
-
-                        // 批内去重：模型偶尔会在同一次响应里给出完全相同的调用（同名同参），
-                        // 重复执行就是真跑两遍（写文件、执行命令都一样）。重复项不执行，只补一条说明，
-                        // 仍按原顺序返回，保持 tool 消息条数与 assistant(toolCalls) 对齐（否则 API 报 400）ｊ
-                        val seenSignatures = HashSet<String>()
-                        val duplicateSignatures = HashSet<String>()
-                        toolCalls.forEach { toolCall ->
-                            if (!seenSignatures.add(toolCallSignature(toolCall))) {
-                                duplicateSignatures.add(toolCallSignature(toolCall))
-                            }
-                        }
-
-                        val runResults = if (toolCalls.isEmpty()) {
-                            emptyList()
-                        } else {
-                            coroutineScope {
-                                toolCalls.map { toolCall ->
-                                    val isDuplicate = toolCallSignature(toolCall) in duplicateSignatures
-                                    async {
-                                        if (isDuplicate) {
-                                            ToolRunResult(
-                                                toolError(toolCall, "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。", "DUPLICATE_TOOL_CALL"),
-                                                true
-                                            )
-                                        } else {
-                                            val tool = toolsByName[toolCall.name]
-                                            when {
-                                                tool == null -> ToolRunResult(
-                                                    toolError(toolCall, "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE),
-                                                    true
-                                                )
-                                                tool is StreamingAgentTool -> runToolStream(tool, toolCall, currentContext) { send(it) }
-                                                else -> runToolSync(tool, toolCall, currentContext)
-                                            }
-                                        }
-                                    }
-                                }.awaitAll()
-                            }
-                        }
-
-                        // 串行处理 mode 切换并组装批量结果。
-                        val batchResults = mutableListOf<ToolBatchResult>()
-                        toolCalls.forEachIndexed { index, toolCall ->
-                            val runResult = runResults.getOrNull(index)
-                                ?: ToolRunResult(toolError(toolCall, "工具未执行", "TOOL_NOT_EXECUTED"), true)
-                            var rawResult = runResult.raw
-                            var isError = runResult.isError
-                            // 写入成功后记录内容摘要，供回退时判断文件是否被检查点之外的操作改过
-                            if (!isError && (toolCall.name == "editFile" || toolCall.name == "writeFile")) {
-                                (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
-                                    currentContext.sessionId?.let { sid -> checkpointManager.afterFileModified(sid, path) }
-                                }
-                            }
-                            val (newCtx, updated) = checkAndUpdateMode(toolCall, isError, currentContext)
-                            if (updated) {
-                                val reason = (toolCall.arguments["reason"] as? JsonPrimitive)?.content?.trim()
-                                    ?: toolCall.arguments["reason"]?.toString()?.replace("\"", "")?.trim()
-                                    ?: ""
-                                send(AgentEvent.ModeChanged(newCtx.mode, reason))
-
-                                // 退出 PLAN 时挂起 workflow，等待用户在计划审查面板批准后才继续
-                                if (currentContext.mode == AgentMode.PLAN && newCtx.mode != AgentMode.PLAN) {
-                                    val choice = planApprovalManager.awaitApproval(reason, currentContext.sessionId)
-                                    if (choice == PlanApprovalChoice.APPROVE) {
-                                        currentContext = newCtx
-                                        // system 与 mode 已解耦（SystemPromptProvider 不再注入模式提示词），
-                                        // 切换不重建 systemPrompt，避免 system 前缀变化打断缓存；模式状态通过工具结果与下轮消息提醒告知。
-                                        rawResult += buildModeSwitchNotice(newCtx.mode)
-                                    } else {
-                                        // 用户选择继续反馈，回滚到 PLAN 模式，修正工具结果让 AI 知道切换被取消并等待用户反馈
-                                        currentContext = currentContext.copy(mode = AgentMode.PLAN)
-                                        rawResult = toolError(toolCall, "用户希望补充说明或调整方案，当前保持在 PLAN 模式。请等待用户输入具体的补充或修改意见，不要自行臆测修改，待用户明确反馈后再继续。", "MODE_SWITCH_REJECTED")
-                                        isError = true
-                                    }
-                                } else {
-                                    currentContext = newCtx
-                                    rawResult += buildModeSwitchNotice(newCtx.mode)
-                                }
-                            }
-                            batchResults.add(ToolBatchResult(toolCall.id, toolCall.name, rawResult, isError, runResult.attachments, runResult.images))
-                        }
-
-                        // 本轮内到达的后台任务/子代理完成通知：搭在本批最后一条工具结果上立即送达，
-                        // AI 当轮即可感知，不必等本轮结束再起新一轮。ack 放到完成事件发出（结果已落库）之后：
-                        // 中途被取消时通知仍留在队列里，由后续批次或本轮结束的兜底路径送达。
-                        val notifySessionId = currentContext.sessionId
-                        val notifications = if (notifySessionId != null && batchResults.isNotEmpty()) {
-                            agentNotificationCenter.peek(notifySessionId)
-                        } else {
-                            emptyList()
-                        }
-                        if (notifications.isNotEmpty()) {
-                            val modeChange = notifications.lastOrNull { it.kind == AgentNotificationKind.MODE_CHANGE }
-                            val newMode = modeChange?.newMode
-                            if (newMode != null) {
-                                // 用户在工作期间切换模式：本轮后续批次的权限判定立即改用新模式。
-                                // 与 SessionUseCase.updateMode 保持同一套语义：进入 PLAN 记下进入前的模式，其余情况清空。
-                                val prevMode = currentContext.mode
-                                currentContext = if (newMode == AgentMode.PLAN) {
-                                    currentContext.copy(
-                                        mode = AgentMode.PLAN,
-                                        modeBeforePlan = if (prevMode != AgentMode.PLAN) prevMode else currentContext.modeBeforePlan
-                                    )
-                                } else {
-                                    currentContext.copy(mode = newMode, modeBeforePlan = null)
-                                }
-                            }
-                            val last = batchResults.last()
-                            var injected = eventInjector.inject(last.result, notifications)
-                            if (newMode != null) {
-                                // 模式约束提示随工具结果落库，留在历史里供后续轮沿用。
-                                injected += buildExternalModeSwitchNotice(newMode)
-                            }
-                            batchResults[batchResults.lastIndex] = last.copy(result = injected)
-                        }
-
-                        // 逐个推送完成事件（保持与 batchToolCalls 一致顺序），并进入收尾。
-                        batchResults.forEach { br ->
-                            val persisted = kotlinx.coroutines.CompletableDeferred<Unit>()
-                            send(AgentEvent.ToolCallFinished(br.id, br.toolName, br.result, br.isError,
-                                attachments = br.attachments, persisted = persisted))
-                            withTimeoutOrNull(PERSIST_WAIT_MS) { persisted.await() }
-                        }
-                        if (notifySessionId != null && notifications.isNotEmpty()) {
-                            agentNotificationCenter.ack(notifySessionId, notifications.map { it.seq })
-                        }
-                        actionQueue.addLast(AgentAction.ToolBatchFinished(batchResults))
+                        currentContext = executeToolBatchEffect(
+                            toolCalls = effect.toolCalls,
+                            initialContext = currentContext,
+                            toolsByName = toolsByName,
+                            actionQueue = actionQueue,
+                            emit = emit
+                        )
                     }
                 }
             }
         }
         
-        state.error?.let { send(AgentEvent.Failed(it, state.errorCode)) }
-        send(AgentEvent.Completed)
+        state.error?.let { emit(AgentEvent.Failed(it, state.errorCode)) }
+        emit(AgentEvent.Completed)
+    }
+
+    /**
+     * 同一轮任务内跨多次 LLM 调用保持的预算基线与恢复开关（只在 LLM 调用分支使用）。
+     * [compactionAttemptFailed] 与 [overflowRecoveryAttempted] 都是「本轮只试一次」的标记。
+     */
+    private class LlmCallBudgetState(
+        var baselineEstimate: Int,
+        var baselineUsage: Int,
+        var compactionAttemptFailed: Boolean = false,
+        var overflowRecoveryAttempted: Boolean = false
+    )
+
+    /**
+     * 单次 LLM 调用的完整副作用：压缩与预算检查 → 流式收流与节流推送 → 组装回复入队，
+     * 以及取消展开时的收尾落库。抽成独立函数的目的是控制协程状态机体积（见 [runAgentLoop] 注释）。
+     *
+     * @return 可能被压缩改写过的新会话状态。
+     */
+    private suspend fun executeLlmEffect(
+        initialState: AgentSessionState,
+        currentContext: AgentContext,
+        currentTools: List<AgentTool>,
+        systemPrompt: String,
+        aiProvider: AIProvider,
+        inputBudget: Int,
+        budget: LlmCallBudgetState,
+        actionQueue: ArrayDeque<AgentAction>,
+        emit: suspend (AgentEvent) -> Unit
+    ): AgentSessionState {
+        var state = initialState
+        val providerInUse = aiProvider
+        // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
+        val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
+        var compactedMessages = state.messages
+        if (!budget.compactionAttemptFailed) {
+            val estimate = ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools)
+            val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
+            val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
+                windowProvider = aiProvider, systemPrompt = systemPrompt, tools = currentTools,
+                currentInputTokens = predictedInput) { event ->
+                if (event is AgentEvent.CompactionFailed) budget.compactionAttemptFailed = true
+                emit(event)
+            }
+            compactedMessages = compaction.messages
+            if (compaction.compacted) {
+                state = state.copy(messages = compaction.messages)
+                budget.baselineUsage = 0
+                budget.baselineEstimate = 0
+            }
+        }
+        val requestEstimate = ContextTokenEstimator.estimate(systemPrompt, compactedMessages, currentTools)
+        val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
+        emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
+        if (predictedInput >= inputBudget) {
+            actionQueue.addLast(AgentAction.LlmError("", "input_budget_exceeded"))
+            return state
+        }
+
+        val acc = StringBuilder()
+        val reasoningAcc = StringBuilder()
+        var finalResponse: AIResponse? = null
+        val responseMessageId = UUID.randomUUID().toString()
+        var assistantSnapshot: AgentEvent.AssistantText? = null
+        var snapshotSent = false
+        var persistedImages = emptyList<AgentImage>()
+        suspend fun captureSnapshot(): AgentEvent.AssistantText {
+            assistantSnapshot?.let { return it }
+            val response = finalResponse ?: AIResponse(acc.toString(), reasoning = reasoningAcc.toString())
+            val (images, attachments) = if (response.images.isNotEmpty()) persistModelImages(response.images)
+                else emptyList<AgentImage>() to emptyList<AgentAttachment>()
+            persistedImages = images
+            return AgentEvent.AssistantText(response.content, response.toolCalls,
+                response.reasoning.orEmpty().ifEmpty { reasoningAcc.toString() }, response.signature.orEmpty(), response.inputTokens,
+                response.outputTokens, response.cachedInputTokens, response.thinkingBlocksJson.orEmpty(),
+                attachments, responseMessageId, kotlinx.coroutines.CompletableDeferred()).also { assistantSnapshot = it }
+        }
+        suspend fun publishSnapshot() {
+            val snapshot = captureSnapshot()
+            if (!snapshotSent) { emit(snapshot); snapshotSent = true }
+            withTimeoutOrNull(PERSIST_WAIT_MS) { snapshot.persisted?.await() }
+        }
+
+        // 调用统计埋点：记录请求发出/首字/结束时刻与 usage，失败与取消同样留痕。
+        val callStartElapsed = SystemClock.elapsedRealtime()
+        val callStartWall = System.currentTimeMillis()
+        val callKind = "chat"
+        var ttfbElapsed: Long? = null
+        var callError: String? = null
+        var callCompleted = false
+
+        // 流式 delta 节流：上游每个 chunk 都携带完整累积文本，逐条发事件会让
+        // ViewModel 端每秒重建几十次状态、UI 端反复重启打字机协程。按时间窗口合并：
+        // 窗口内只保留最新累积文本，到窗口边界才发送，把下游事件频率压到 ~16/s。
+        // 打字机渲染本身有 100ms 节流，少发中间态无感知；collect 结束补发最后 pending。
+        val DELTA_THROTTLE_MS = 60L
+        var lastTextDeltaSentAt = 0L
+        var lastReasoningDeltaSentAt = 0L
+        var pendingTextDelta = false
+        var pendingReasoningDelta = false
+        var retryAttempts = 0
+        suspend fun flushPendingTextDelta() {
+            if (!pendingTextDelta) return
+            pendingTextDelta = false
+            emit(AgentEvent.AssistantDelta(livePreview(acc)))
+        }
+        suspend fun flushPendingReasoningDelta() {
+            if (!pendingReasoningDelta) return
+            pendingReasoningDelta = false
+            emit(AgentEvent.ReasoningDelta(livePreview(reasoningAcc)))
+        }
+
+        try {
+            // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
+            val supportsVision = activeModelSupportsVision(currentContext.sessionId)
+            // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。
+            val messagesToSend = foldStoredToolResults(
+                sanitizeImagesForModel(compactedMessages, supportsVision)
+            )
+            // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
+            var samplingLoopCut = false
+            // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：
+            // 每轮重新过滤，命中之后下一轮就能直接调用。
+            val promptTools = currentTools.filter {
+                !it.deferredLoading || toolRegistry.isActivated(it.name)
+            }
+            providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
+                .takeWhile { !samplingLoopCut }
+                .collect { chunk ->
+                when (chunk) {
+                    is AIStreamChunk.TextDelta -> {
+                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        acc.append(chunk.text)
+                        val loopStart = samplingLoopStart(acc)
+                        if (loopStart >= 0) {
+                            acc.setLength(loopStart)
+                            samplingLoopCut = true
+                        }
+                        pendingTextDelta = true
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastTextDeltaSentAt >= DELTA_THROTTLE_MS) {
+                            flushPendingTextDelta()
+                            lastTextDeltaSentAt = now
+                        }
+                    }
+                    is AIStreamChunk.ReasoningDelta -> {
+                        // 思考内容也算首字（推理模型先吐思考再吐正文）
+                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        reasoningAcc.append(chunk.text)
+                        val loopStart = samplingLoopStart(reasoningAcc)
+                        if (loopStart >= 0) {
+                            reasoningAcc.setLength(loopStart)
+                            samplingLoopCut = true
+                        }
+                        pendingReasoningDelta = true
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastReasoningDeltaSentAt >= DELTA_THROTTLE_MS) {
+                            flushPendingReasoningDelta()
+                            lastReasoningDeltaSentAt = now
+                        }
+                    }
+                    is AIStreamChunk.Retrying -> {
+                        retryAttempts = maxOf(retryAttempts, chunk.attempt)
+                        acc.setLength(0)
+                        reasoningAcc.setLength(0)
+                        pendingTextDelta = false
+                        pendingReasoningDelta = false
+                        lastTextDeltaSentAt = 0L
+                        lastReasoningDeltaSentAt = 0L
+                        emit(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries, chunk.error))
+                    }
+                    is AIStreamChunk.KeySwitched -> {
+                        acc.setLength(0)
+                        reasoningAcc.setLength(0)
+                        pendingTextDelta = false
+                        pendingReasoningDelta = false
+                        lastTextDeltaSentAt = 0L
+                        lastReasoningDeltaSentAt = 0L
+                        emit(AgentEvent.KeySwitched(chunk.newIndex, chunk.total))
+                    }
+                    is AIStreamChunk.Final -> {
+                        // 纯工具调用轮没有文本/思考增量，Final 是首个内容事件，兜底记为 TTFB
+                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        finalResponse = chunk.response
+                    }
+                    is AIStreamChunk.ToolCallDeclared -> {
+                        // 工具名先于参数到达：立刻告诉 UI「模型准备调什么」，
+                        // 免得长参数流式期间一直停在「正在思考」。
+                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        emit(AgentEvent.ToolCallPreparing(chunk.name))
+                    }
+                }
+            }
+            // 节流窗口内可能还压着最新累积文本：补发，保证 UI 尾巴拿到完整文本再交接落库。
+            flushPendingTextDelta()
+            flushPendingReasoningDelta()
+            val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
+            val snapshot = captureSnapshot()
+            callCompleted = true
+            if (aiResponse.stopReason == "model_context_window_exceeded" && !budget.overflowRecoveryAttempted) {
+                budget.overflowRecoveryAttempted = true
+                val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
+                    currentContext.sessionId, force = true, windowProvider = aiProvider,
+                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { emit(it) }
+                if (recovery.compacted) {
+                    state = state.copy(messages = recovery.messages)
+                    budget.baselineUsage = 0
+                    budget.baselineEstimate = 0
+                    actionQueue.addLast(AgentAction.InitRequest(recovery.messages))
+                    return state
+                }
+            }
+            budget.baselineEstimate = requestEstimate
+            budget.baselineUsage = aiResponse.inputTokens
+            emit(AgentEvent.ContextUsage(
+                if (budget.baselineUsage > 0) budget.baselineUsage else requestEstimate, inputBudget, budget.baselineUsage <= 0
+            ))
+            // 将本轮 reasoning 附加到 AIResponse，以便 reduce 时存入 AssistantMessage 并在下一轮回传
+            val responseWithReasoning = aiResponse.copy(reasoning = snapshot.reasoning)
+
+            if (snapshot.hasSnapshotData()) publishSnapshot()
+            actionQueue.addLast(
+                AgentAction.LlmResponse(
+                    if (persistedImages.isNotEmpty()) responseWithReasoning.copy(images = persistedImages)
+                    else responseWithReasoning,
+                    messageId = responseMessageId
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (finalResponse == null && !budget.overflowRecoveryAttempted && acc.isEmpty() && reasoningAcc.isEmpty() && isContextOverflow(e)) {
+                budget.overflowRecoveryAttempted = true
+                val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
+                    currentContext.sessionId, force = true, windowProvider = aiProvider,
+                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { emit(it) }
+                if (recovery.compacted) {
+                    state = state.copy(messages = recovery.messages)
+                    budget.baselineUsage = 0
+                    budget.baselineEstimate = 0
+                    actionQueue.addLast(AgentAction.InitRequest(recovery.messages))
+                    callError = e.message
+                    return state
+                }
+            }
+            callError = e.message ?: e.javaClass.simpleName
+            if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) {
+                if (captureSnapshot().hasSnapshotData()) publishSnapshot()
+            }
+            // 多 Key 的自动切换与重发已在 adapter 内完成（见 AIProvider.keySwitcher）；
+            // 走到这里说明不是 Key 问题、或候选 Key 已全部失败，直接上报原始错误。
+            val errorText = "LLM 调用失败: ${e.message}"
+            actionQueue.addLast(AgentAction.LlmError(errorText))
+        } finally {
+            // 取消展开期间绝不允许异常逃出 finally：待传播的取消异常一旦再叠上抛出的异常
+            //（落库失败、日志格式化、OOM 等），ART 会直接 AssertNoPendingException 终止进程。
+            try {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                    currentContext.sessionId?.let { sid ->
+                        if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
+                            val snapshot = captureSnapshot()
+                            if (snapshot.hasSnapshotData() && !snapshot.persistenceConfirmed()) {
+                                messagePersistenceUseCase.persist(sid, com.aharou.feature.agent.presentation.MessageRole.ASSISTANT,
+                                    snapshot.content, id = responseMessageId, reasoning = snapshot.reasoning, toolCalls = snapshot.toolCalls,
+                                    signature = snapshot.signature, thinkingBlocksJson = snapshot.thinkingBlocksJson,
+                                    attachments = snapshot.attachments, inputTokens = snapshot.inputTokens,
+                                    outputTokens = snapshot.outputTokens, cachedInputTokens = snapshot.cachedInputTokens)
+                                snapshot.persisted?.complete(Unit)
+                            }
+                        }.onFailure { runCatching { FileLogger.w(TAG, "保存回复快照失败: " + it.javaClass.simpleName) } }
+                    }
+                    // 调用记录同样放在 NonCancellable 里：否则取消时这一句会立刻再抛一个取消异常。
+                    val durationMillis = (SystemClock.elapsedRealtime() - callStartElapsed).toInt()
+                    val usage = finalResponse
+                    runCatching {
+                        llmCallRecordDao.insert(
+                            LlmCallRecordEntity(
+                                sessionId = currentContext.sessionId,
+                                providerId = providerInUse.providerId.ifBlank { null },
+                                model = providerInUse.model,
+                                reasoningEffort = currentContext.reasoningEffort,
+                                kind = callKind,
+                                inputTokens = usage?.inputTokens ?: 0,
+                                outputTokens = usage?.outputTokens ?: 0,
+                                cachedInputTokens = usage?.cachedInputTokens ?: 0,
+                                cacheCreationTokens = usage?.cacheCreationTokens ?: 0,
+                                ttfbMillis = ttfbElapsed?.toInt(),
+                                durationMillis = durationMillis,
+                                status = when {
+                                    callCompleted -> "success"
+                                    callError != null -> "error"
+                                    else -> "cancelled"
+                                },
+                                errorMessage = callError,
+                                stopReason = usage?.stopReason,
+                                retryCount = retryAttempts,
+                                createdAt = callStartWall
+                            )
+                        )
+                    }.onFailure { runCatching { FileLogger.w(TAG, "写入调用记录失败: " + it.javaClass.simpleName) } }
+                }
+            } catch (t: Throwable) {
+                runCatching { FileLogger.w(TAG, "收尾落库异常: " + t.javaClass.simpleName) }
+            }
+        }
+        return state
+    }
+
+    /**
+     * 单个工具调用的权限判定：不在允许清单的调用直接回错误结果，其余走策略引擎与用户弹窗，
+     * 结果作为 [AgentAction.PermissionEvaluated] 回灌主循环。
+     */
+    private suspend fun handlePermissionEffect(
+        toolCall: ToolCall,
+        currentContext: AgentContext,
+        toolsByName: Map<String, AgentTool>,
+        actionQueue: ArrayDeque<AgentAction>,
+        emit: suspend (AgentEvent) -> Unit
+    ) {
+        val argsPreview = JsonObject(toolCall.arguments).toString().take(500)
+        val tool = toolsByName[toolCall.name]
+        if (tool == null) {
+            // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
+            val reason = "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。"
+            val result = toolError(toolCall, reason, TOOL_NOT_ALLOWED_CODE)
+            emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, result, true, argsPreview))
+            actionQueue.addLast(AgentAction.PermissionEvaluated(toolCall, false, argsPreview,
+                reason, TOOL_NOT_ALLOWED_CODE, result))
+        } else {
+            val checkResult = requestPermissionIfNeeded(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
+
+            val result = if (!checkResult.approved && checkResult.errorCode != USER_REJECTED_CODE)
+                toolError(toolCall, checkResult.denyReason, checkResult.errorCode) else ""
+            if (result.isNotEmpty()) {
+                emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, result, true, argsPreview))
+            } else if (checkResult.approved) {
+                emit(AgentEvent.ToolCallStarted(toolCall.id, toolCall.name, argsPreview))
+            }
+            actionQueue.addLast(AgentAction.PermissionEvaluated(toolCall, checkResult.approved,
+                argsPreview, checkResult.denyReason, checkResult.errorCode, result))
+        }
+    }
+
+    /**
+     * 并行执行一批已批准的工具，再串行收口 mode 切换、通知注入与完成事件。
+     * 抽成独立函数的目的是控制协程状态机体积（见 [runAgentLoop] 注释）。
+     *
+     * @return 可能被模式切换等改写的新上下文。
+     */
+    private suspend fun executeToolBatchEffect(
+        toolCalls: List<ToolCall>,
+        initialContext: AgentContext,
+        toolsByName: Map<String, AgentTool>,
+        actionQueue: ArrayDeque<AgentAction>,
+        emit: suspend (AgentEvent) -> Unit
+    ): AgentContext {
+        var currentContext = initialContext
+        // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
+        // 再并行执行；mode 切换检查在结果收集后于主协程串行处理（planApproval 单例）。
+        toolCalls.forEach { toolCall ->
+            if (toolCall.name == "editFile" || toolCall.name == "writeFile") {
+                (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
+                    currentContext.sessionId?.let { sid ->
+                        checkpointManager.beforeFileModified(sid, path)
+                    }
+                }
+            }
+        }
+
+        // 批内去重：模型偶尔会在同一次响应里给出完全相同的调用（同名同参），
+        // 重复执行就是真跑两遍（写文件、执行命令都一样）。重复项不执行，只补一条说明，
+        // 仍按原顺序返回，保持 tool 消息条数与 assistant(toolCalls) 对齐（否则 API 报 400）
+        val seenSignatures = HashSet<String>()
+        val duplicateSignatures = HashSet<String>()
+        toolCalls.forEach { toolCall ->
+            if (!seenSignatures.add(toolCallSignature(toolCall))) {
+                duplicateSignatures.add(toolCallSignature(toolCall))
+            }
+        }
+
+        val runResults = if (toolCalls.isEmpty()) {
+            emptyList()
+        } else {
+            coroutineScope {
+                toolCalls.map { toolCall ->
+                    val isDuplicate = toolCallSignature(toolCall) in duplicateSignatures
+                    async {
+                        if (isDuplicate) {
+                            ToolRunResult(
+                                toolError(toolCall, "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。", "DUPLICATE_TOOL_CALL"),
+                                true
+                            )
+                        } else {
+                            val tool = toolsByName[toolCall.name]
+                            when {
+                                tool == null -> ToolRunResult(
+                                    toolError(toolCall, "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE),
+                                    true
+                                )
+                                tool is StreamingAgentTool -> runToolStream(tool, toolCall, currentContext) { emit(it) }
+                                else -> runToolSync(tool, toolCall, currentContext)
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+        }
+
+        // 串行处理 mode 切换并组装批量结果。
+        val batchResults = mutableListOf<ToolBatchResult>()
+        toolCalls.forEachIndexed { index, toolCall ->
+            val runResult = runResults.getOrNull(index)
+                ?: ToolRunResult(toolError(toolCall, "工具未执行", "TOOL_NOT_EXECUTED"), true)
+            var rawResult = runResult.raw
+            var isError = runResult.isError
+            // 写入成功后记录内容摘要，供回退时判断文件是否被检查点之外的操作改过
+            if (!isError && (toolCall.name == "editFile" || toolCall.name == "writeFile")) {
+                (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { path ->
+                    currentContext.sessionId?.let { sid -> checkpointManager.afterFileModified(sid, path) }
+                }
+            }
+            val (newCtx, updated) = checkAndUpdateMode(toolCall, isError, currentContext)
+            if (updated) {
+                val reason = (toolCall.arguments["reason"] as? JsonPrimitive)?.content?.trim()
+                    ?: toolCall.arguments["reason"]?.toString()?.replace("\"", "")?.trim()
+                    ?: ""
+                emit(AgentEvent.ModeChanged(newCtx.mode, reason))
+
+                // 退出 PLAN 时挂起 workflow，等待用户在计划审查面板批准后才继续
+                if (currentContext.mode == AgentMode.PLAN && newCtx.mode != AgentMode.PLAN) {
+                    val choice = planApprovalManager.awaitApproval(reason, currentContext.sessionId)
+                    if (choice == PlanApprovalChoice.APPROVE) {
+                        currentContext = newCtx
+                        // system 与 mode 已解耦（SystemPromptProvider 不再注入模式提示词），
+                        // 切换不重建 systemPrompt，避免 system 前缀变化打断缓存；模式状态通过工具结果与下轮消息提醒告知。
+                        rawResult += buildModeSwitchNotice(newCtx.mode)
+                    } else {
+                        // 用户选择继续反馈，回滚到 PLAN 模式，修正工具结果让 AI 知道切换被取消并等待用户反馈
+                        currentContext = currentContext.copy(mode = AgentMode.PLAN)
+                        rawResult = toolError(toolCall, "用户希望补充说明或调整方案，当前保持在 PLAN 模式。请等待用户输入具体的补充或修改意见，不要自行臆测修改，待用户明确反馈后再继续。", "MODE_SWITCH_REJECTED")
+                        isError = true
+                    }
+                } else {
+                    currentContext = newCtx
+                    rawResult += buildModeSwitchNotice(newCtx.mode)
+                }
+            }
+            batchResults.add(ToolBatchResult(toolCall.id, toolCall.name, rawResult, isError, runResult.attachments, runResult.images))
+        }
+
+        // 本轮内到达的后台任务/子代理完成通知：搭在本批最后一条工具结果上立即送达，
+        // AI 当轮即可感知，不必等本轮结束再起新一轮。ack 放到完成事件发出（结果已落库）之后：
+        // 中途被取消时通知仍留在队列里，由后续批次或本轮结束的兜底路径送达。
+        val notifySessionId = currentContext.sessionId
+        val notifications = if (notifySessionId != null && batchResults.isNotEmpty()) {
+            agentNotificationCenter.peek(notifySessionId)
+        } else {
+            emptyList()
+        }
+        if (notifications.isNotEmpty()) {
+            val modeChange = notifications.lastOrNull { it.kind == AgentNotificationKind.MODE_CHANGE }
+            val newMode = modeChange?.newMode
+            if (newMode != null) {
+                // 用户在工作期间切换模式：本轮后续批次的权限判定立即改用新模式。
+                // 与 SessionUseCase.updateMode 保持同一套语义：进入 PLAN 记下进入前的模式，其余情况清空。
+                val prevMode = currentContext.mode
+                currentContext = if (newMode == AgentMode.PLAN) {
+                    currentContext.copy(
+                        mode = AgentMode.PLAN,
+                        modeBeforePlan = if (prevMode != AgentMode.PLAN) prevMode else currentContext.modeBeforePlan
+                    )
+                } else {
+                    currentContext.copy(mode = newMode, modeBeforePlan = null)
+                }
+            }
+            val last = batchResults.last()
+            var injected = eventInjector.inject(last.result, notifications)
+            if (newMode != null) {
+                // 模式约束提示随工具结果落库，留在历史里供后续轮沿用。
+                injected += buildExternalModeSwitchNotice(newMode)
+            }
+            batchResults[batchResults.lastIndex] = last.copy(result = injected)
+        }
+
+        // 逐个推送完成事件（保持与 batchToolCalls 一致顺序），并进入收尾。
+        batchResults.forEach { br ->
+            val persisted = kotlinx.coroutines.CompletableDeferred<Unit>()
+            emit(AgentEvent.ToolCallFinished(br.id, br.toolName, br.result, br.isError,
+                attachments = br.attachments, persisted = persisted))
+            withTimeoutOrNull(PERSIST_WAIT_MS) { persisted.await() }
+        }
+        if (notifySessionId != null && notifications.isNotEmpty()) {
+            agentNotificationCenter.ack(notifySessionId, notifications.map { it.seq })
+        }
+        actionQueue.addLast(AgentAction.ToolBatchFinished(batchResults))
+        return currentContext
     }
 
     private fun isContextOverflow(error: Throwable): Boolean {
@@ -1094,9 +1037,6 @@ class StatefulAgentWorkflow @Inject constructor(
      * - 不支持：剥离所有图片（仅影响本次发送，不动持久化数据），历史/输入中的图片不会原样发给
      *   非多模态模型导致请求失败；切回多模态模型后图片上下文仍可正常使用。
      */
-    /** 思考跑飞兜底：正文一直为空、思考却堆到这个量，判为退化，直接中断本轮。 */
-    private val REASONING_RUNAWAY_CHARS = 40_000
-
     /**
      * 发送前按模型能力处理图片：能看图就原样发；不能看时改用本地 OCR 把图转成文字塞回去。
      *
