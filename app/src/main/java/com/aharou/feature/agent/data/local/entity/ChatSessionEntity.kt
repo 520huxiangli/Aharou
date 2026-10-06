@@ -9,7 +9,9 @@ import com.aharou.feature.agent.domain.model.ReasoningEffort
 
 @Entity(
     tableName = "chat_sessions",
-    indices = [Index(value = ["workspacePath"])]
+    // (parentId, isPinned, updatedAt)：parentId 用于子会话查询与 getAllRootSessions 的 parentId IS NULL 过滤，
+    // 后两列让根会话列表（按置顶/更新时间排序）走索引顺序，免去全表扫描 + 临时排序。
+    indices = [Index(value = ["workspacePath"]), Index(value = ["parentId", "isPinned", "updatedAt"])]
 )
 data class ChatSessionEntity(
     @PrimaryKey val id: String,

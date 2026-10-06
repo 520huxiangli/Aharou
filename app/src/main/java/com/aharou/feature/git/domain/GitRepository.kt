@@ -651,6 +651,21 @@ class GitRepository @Inject constructor(
     suspend fun abortMerge(): String = gitChecked("merge", "--abort")
 
     /**
+     * 冲突文件采用我方版本（当前分支）：`git checkout --ours` 用索引第 2 阶段的内容覆盖工作区，
+     * 再 `git add` 标记该文件冲突已解决。会丢掉工作区里那份带冲突标记的文本，故 UI 侧须先二次确认。
+     */
+    suspend fun resolveConflictWithOurs(path: String): String = resolveConflict(path, "ours")
+
+    /** 冲突文件采用对方版本（被合并进来的分支），语义同 [resolveConflictWithOurs]。 */
+    suspend fun resolveConflictWithTheirs(path: String): String = resolveConflict(path, "theirs")
+
+    private suspend fun resolveConflict(path: String, side: String): String {
+        val output = gitChecked("checkout", "--$side", "--", path)
+        gitChecked("add", "--", path)
+        return output
+    }
+
+    /**
      * 列出所有储藏记录。
      */
     suspend fun stashList(): List<GitStash> = withContext(Dispatchers.Default) {

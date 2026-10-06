@@ -77,6 +77,19 @@ class ContextCompactor @Inject constructor(
         /** 软精简后追加在尾部的标记，用于幂等判断。 */
         const val SOFT_TRIM_MARKER = "\n[Tool output trimmed to save context]"
 
+        /**
+         * 校验失败的原因会落库并渲染成失败卡片直接给用户看，所以换成能照做的说法；
+         * 分别对应：不可压缩的开销占满目标、必须保留的内容本身超标、压缩后仍不达标、这段历史刚失败过。
+         */
+        const val OVERHEAD_REASON =
+            "系统提示与工具定义本身就占满了压缩目标，压缩无法达标。关掉不用的工具或插件后重试，或新建会话。"
+        const val RETAINED_REASON =
+            "必须保留的近期内容本身就超过了压缩目标（例如一条超长消息或工具输出）。请新建会话，或删掉那条超长内容后重试。"
+        const val NOT_SMALLER_REASON =
+            "摘要加上必须保留的内容仍装不进压缩目标。请重试，或新建会话。"
+        const val ALREADY_FAILED_REASON =
+            "这段历史刚压缩失败过，本轮不再重复尝试。"
+
         internal fun softTrimToolOutputs(
             messages: List<AgentMessage>,
             outputPath: (AgentMessage.ToolResultMessage) -> String? = { CompactionText.outputPath(it.result) }
@@ -126,6 +139,20 @@ class ContextCompactor @Inject constructor(
         } catch (e: Exception) {
             FileLogger.w(TAG, "Cannot archive tool output for soft trim: ${e.message}")
             null
+        }
+    }
+
+    /**
+     * 校验失败抛的是英文原句，会直接落库渲染成卡片，这里换成用户能看懂并照做的说法。
+     * 未收录的（超时、摘要模型返回异常等）原样保留，日志里始终有完整堆栈。
+     */
+    private fun friendlyReason(error: Throwable): String {
+        val raw = error.message ?: return error.javaClass.simpleName
+        return when {
+            raw.contains("Recent task material and request overhead") -> RETAINED_REASON
+            raw.contains("Summary, recent task material") -> NOT_SMALLER_REASON
+            raw.contains("already failed compaction") -> ALREADY_FAILED_REASON
+            else -> raw
         }
     }
 
@@ -191,6 +218,13 @@ class ContextCompactor @Inject constructor(
                 val tail = messages.drop(splitIndex)
                 val material = removeCompactionPairs(head)
                 if (material.isEmpty()) return@withTimeoutOrNull PreparationResult(null)
+                // 系统提示与工具定义压不掉：它们自己就占满目标时压缩不可能达标，
+                // 直接给可操作原因，不调摘要模型，也不把这份历史记进失败名单（关掉工具后还能重试）。
+                val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
+                if (fixedOverhead >= targetTokens) {
+                    onEvent(AgentEvent.CompactionFailed(OVERHEAD_REASON))
+                    return@withTimeoutOrNull PreparationResult(null)
+                }
                 summaryStarted = true
                 onEvent(AgentEvent.CompactionStarted(currentTokens))
                 materialKey = materialFingerprint(sessionId, aiProvider, head)
@@ -280,7 +314,7 @@ class ContextCompactor @Inject constructor(
                 if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.first())
             } }
             FileLogger.e(TAG, "压缩上下文失败，保留原历史", e)
-            onEvent(AgentEvent.CompactionFailed(e.message ?: e.javaClass.simpleName))
+            onEvent(AgentEvent.CompactionFailed(friendlyReason(e)))
             return unchanged
         } finally {
             aiProvider.maxOutputTokens = originalOutputLimit

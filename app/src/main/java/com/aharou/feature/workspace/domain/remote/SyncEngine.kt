@@ -3,6 +3,7 @@ package com.aharou.feature.workspace.domain.remote
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.GitIgnoreMatcher
 import com.aharou.feature.workspace.domain.model.SyncConnectionState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,6 +162,8 @@ class SyncEngine(
                     try {
                         syncClient.downloadFile(rPath, lFile.absolutePath)
                         delay(FILE_SYNC_DELAY_MS)
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         FileLogger.e(TAG, "Download Error for $rPath: ${e.message}")
                         if (e !is RemoteFileRejectedException) forceReconnect()
@@ -196,6 +199,8 @@ class SyncEngine(
                     try {
                         syncClient.uploadFile(file.absolutePath, rPath)
                         delay(FILE_SYNC_DELAY_MS)
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         FileLogger.e(TAG, "Upload Error for $rPath: ${e.message}")
                         if (e is RemoteFileRejectedException) continue

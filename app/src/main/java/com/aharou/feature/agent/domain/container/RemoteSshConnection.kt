@@ -301,16 +301,12 @@ class RemoteSshConnection @Inject constructor(
                 val subDirs = docs.keys.mapNotNull { key ->
                     key.substringBeforeLast('/', "").takeIf { it.isNotEmpty() }
                 }.distinct()
-                val mkdirArgs = (listOf(destDir) + subDirs.map { "$destDir/$it" }).joinToString(" ") { "'$it'" }
+                val mkdirArgs = (listOf(destDir) + subDirs.map { "$destDir/$it" }).joinToString(" ") { shellQuote(it) }
                 val prepSession = client.startSession()
-                prepSession.exec("mkdir -p $mkdirArgs; find '$destDir' -type f -name '*.md' -delete").join()
+                prepSession.exec("mkdir -p $mkdirArgs; find ${shellQuote(destDir)} -type f -name '*.md' -delete").join()
                 prepSession.close()
                 for ((name, content) in docs) {
-                    val dest = "$destDir/$name"
-                    val escaped = content.replace("\\", "\\\\").replace("'", "'\\\"'\"'")
-                    val session = client.startSession()
-                    session.exec("printf %s '$escaped' > '$dest'").join()
-                    session.close()
+                    writeRemoteFile(client, "$destDir/$name", content)
                 }
                 FileLogger.i(TAG, "已同步 ${docs.size} 个文档到远程 $destDir")
             }.onFailure { FileLogger.w(TAG, "同步文档到远程失败", it) }
@@ -422,20 +418,18 @@ class RemoteSshConnection @Inject constructor(
         }
     }
 
-    /** exec + printf 写一个文本文件到远程（content 为原文，内部转义单引号/反斜杠）。 */
+    /** exec + printf 写一个文本文件到远程，内容与路径都由 [shellQuote] 转义。 */
     private suspend fun writeRemoteFile(client: SSHClient, dest: String, content: String) {
-        if (content.isEmpty()) {
-            // 空内容直接 truncate，避免 printf %s '' 的引号歧义
-            val session = client.startSession()
-            session.exec("printf '' > '$dest'").join()
-            session.close()
-            return
-        }
-        val escaped = content.replace("\\", "\\\\").replace("'", "'\\\"'\"'")
         val session = client.startSession()
-        session.exec("printf %s '$escaped' > '$dest'").join()
+        session.exec("printf %s ${shellQuote(content)} > ${shellQuote(dest)}").join()
         session.close()
     }
+
+    /**
+     * 单引号包裹并转义内部单引号（`'` → `'\''`），保证作为整体交给 shell。
+     * 单引号内的反斜杠是字面量，不能再转义，否则会多写出一份。
+     */
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private fun enc(part: String): String = java.net.URLEncoder.encode(part, "UTF-8")
 

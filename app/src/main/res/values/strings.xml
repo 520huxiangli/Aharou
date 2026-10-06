@@ -1043,6 +1043,10 @@
     <string name="git_conflict_hint">请在编辑器中解决冲突后暂存文件，或中止本次合并。</string>
     <string name="git_action_abort_merge">中止合并</string>
     <string name="git_abort_merge_confirm">确定中止当前合并吗？未解决的冲突改动将被放弃，工作区将还原到合并前的状态。</string>
+    <string name="git_action_use_ours">采用我方</string>
+    <string name="git_action_use_theirs">采用对方</string>
+    <string name="git_use_ours_confirm">用我方（当前分支）的版本覆盖 %1$s？工作区里那份带冲突标记的内容会丢失，无法找回。</string>
+    <string name="git_use_theirs_confirm">用对方（被合并分支）的版本覆盖 %1$s？工作区里那份带冲突标记的内容会丢失，无法找回。</string>
 
     <!-- Git Commit Enhancements -->
     <string name="git_commit_ai_generate">AI 生成</string>
@@ -1734,6 +1738,23 @@
     <!-- Git -->
     <string name="git_create_tag_title">新建标签</string>
 
+    <!-- Git 失败原因友好提示（GitErrorMessage） -->
+    <string name="git_error_delete_checked_out_branch">无法删除当前所在分支，请先切换到其他分支</string>
+    <string name="git_error_branch_not_merged">该分支有未合并的提交，无法安全删除</string>
+    <string name="git_error_invalid_reference">分支或引用不存在</string>
+    <string name="git_error_local_changes_overwritten">本地有未提交的改动会被覆盖，请先提交或暂存后再切换</string>
+    <string name="git_error_remote_unavailable">远程仓库不可用或无访问权限</string>
+    <string name="git_error_clone_dir_not_empty">当前工作区目录非空，无法直接克隆到当前目录</string>
+    <string name="git_error_auth_failed">远程鉴权失败，请检查凭据配置（用户名/密码/Token）</string>
+    <string name="git_error_repo_not_found">远程仓库不存在或无访问权限</string>
+    <string name="git_error_no_tracking_branch">当前分支未关联远程分支，无法拉取</string>
+    <string name="git_error_no_push_destination">未配置远程仓库，无法推送</string>
+    <string name="git_error_push_rejected">推送被拒绝，远程有更新的提交，请先拉取</string>
+    <string name="git_error_identity_missing">尚未配置提交署名，请在设置中填写用户名和邮箱</string>
+    <string name="git_error_merge_conflict">合并产生冲突，请前往状态页查看并解决冲突</string>
+    <string name="git_error_local_changes_merge">本地有未提交的改动，请先提交或储藏（Stash）后再合并</string>
+    <string name="git_error_no_local_changes_stash">当前没有需要储藏的改动</string>
+
     <!-- 远程服务器删除确认 -->
     <string name="remote_delete_connection_confirm">确定删除连接「%1$s」吗？使用该连接的同步配置将不可用。</string>
     <string name="remote_delete_mount_confirm">确定删除工作区映射「%1$s」吗？本地与远程文件不会被删除。</string>
@@ -2359,8 +2380,19 @@
     <string name="editor_find_previous">上一个匹配</string>
     <string name="editor_find_next">下一个匹配</string>
     <string name="editor_find_close">关闭查找</string>
+    <string name="editor_replace_hint">替换为</string>
+    <string name="editor_replace">替换</string>
+    <string name="editor_replace_all">全部替换</string>
+    <string name="editor_goto_definition">跳转到定义</string>
+    <string name="editor_goto_definition_not_found">未找到定义</string>
     <string name="drawer_file_search_show_more">再显示 %1$d 条</string>
     <string name="agent_streaming_preview_notice">生成中仅展示最近一段内容</string>
 
     <!-- 工作流 -->
+
+    <!-- 配置变更确认弹窗（ConfigConfirmDialog） -->
+    <string name="config_confirm_title">配置变更确认</string>
+    <string name="config_confirm_fallback_caption">Aharou 想修改自己的设置</string>
+    <string name="config_confirm_approve">同意</string>
+    <string name="config_confirm_reject">驳回</string>
 </resources>

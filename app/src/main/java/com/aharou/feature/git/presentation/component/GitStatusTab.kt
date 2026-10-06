@@ -1,6 +1,5 @@
 package com.aharou.feature.git.presentation.component
 
-import androidx.annotation.StringRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -47,7 +46,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -70,14 +68,10 @@ import compose.icons.feathericons.Archive
 import compose.icons.feathericons.Check
 import com.aharou.core.ui.ChevronRotationStyle
 import com.aharou.core.ui.ExpandableChevronIcon
-import compose.icons.feathericons.Copy
 import compose.icons.feathericons.DownloadCloud
-import compose.icons.feathericons.EyeOff
-import compose.icons.feathericons.FileText
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Minus
 import compose.icons.feathericons.Plus
-import compose.icons.feathericons.RotateCcw
 import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.UploadCloud
 
@@ -113,6 +107,8 @@ internal fun StatusTab(
     onStashDrop: (String) -> Unit = {},
     onStashClear: () -> Unit = {},
     onAbortMerge: () -> Unit = {},
+    onUseOurs: (String) -> Unit = {},
+    onUseTheirs: (String) -> Unit = {},
     onAddToGitignore: (String) -> Unit = {},
     onNavigateToCredentials: () -> Unit = {}
 ) {
@@ -130,11 +126,15 @@ internal fun StatusTab(
     // 回退与删除都会丢数据，先经确认弹窗再执行。
     var pendingRevert by remember { mutableStateOf<RevertTarget?>(null) }
     var pendingDelete by remember { mutableStateOf<String?>(null) }
+    // 采用某一侧会用该版本覆盖工作区文件，先经确认弹窗再执行。
+    var pendingConflict by remember { mutableStateOf<ConflictTarget?>(null) }
 
     fun conflictedMenu(file: GitFileChange) = FileMenu(
         path = file.path,
         actions = listOf(
             FileAction.ViewDiff { onFileDiff(file.path) },
+            FileAction.UseOurs { pendingConflict = ConflictTarget(file.path, useOurs = true) },
+            FileAction.UseTheirs { pendingConflict = ConflictTarget(file.path, useOurs = false) },
             FileAction.Stage { onStage(file.path) },
             FileAction.CopyPath { onCopyPath(file.path) }
         )
@@ -593,6 +593,34 @@ internal fun StatusTab(
         )
     }
 
+    pendingConflict?.let { target ->
+        val actionRes =
+            if (target.useOurs) R.string.git_action_use_ours else R.string.git_action_use_theirs
+        AlertDialog(
+            onDismissRequest = { pendingConflict = null },
+            title = { Text(stringResource(actionRes)) },
+            text = {
+                Text(
+                    stringResource(
+                        if (target.useOurs) R.string.git_use_ours_confirm else R.string.git_use_theirs_confirm,
+                        target.path
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingConflict = null
+                    if (target.useOurs) onUseOurs(target.path) else onUseTheirs(target.path)
+                }) {
+                    Text(stringResource(actionRes))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingConflict = null }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
     if (showRevertAllConfirm) {
         AlertDialog(
             onDismissRequest = { showRevertAllConfirm = false },
@@ -967,92 +995,6 @@ private sealed interface UntrackedItem {
     data class Child(override val path: String, val indent: Boolean) : UntrackedItem
 }
 
-/** 长按文件行弹出的菜单：标题路径 + 可执行的操作项。 */
-private data class FileMenu(val path: String, val actions: List<FileAction>)
-
-/**
- * 待确认的回退目标。[staged] 为 true 表示连已暂存内容一起还原到上次提交；
- * [deleted] 只影响文案——文件已被删时这个操作实际是把它取回而非丢改动。
- */
-private data class RevertTarget(val path: String, val staged: Boolean, val deleted: Boolean)
-
-/** 文件行可执行的操作项，用于长按弹出的操作菜单。 */
-private sealed class FileAction(
-    @param:StringRes val labelRes: Int,
-    val icon: ImageVector,
-    val isDestructive: Boolean,
-    val onClick: () -> Unit
-) {
-    class Stage(onClick: () -> Unit) : FileAction(R.string.git_stage, FeatherIcons.Plus, false, onClick)
-    class ViewDiff(onClick: () -> Unit) : FileAction(R.string.git_action_view_diff, FeatherIcons.FileText, false, onClick)
-    class Revert(onClick: () -> Unit) : FileAction(R.string.git_action_revert, FeatherIcons.RotateCcw, true, onClick)
-    class RestoreFile(onClick: () -> Unit) : FileAction(R.string.git_action_restore_file, FeatherIcons.RotateCcw, false, onClick)
-    class DeleteFile(onClick: () -> Unit) : FileAction(R.string.git_action_delete_file, FeatherIcons.Trash2, true, onClick)
-    class DeleteDir(onClick: () -> Unit) : FileAction(R.string.git_action_delete_dir, FeatherIcons.Trash2, true, onClick)
-    class CopyPath(onClick: () -> Unit) : FileAction(R.string.git_action_copy_path, FeatherIcons.Copy, false, onClick)
-    class Ignore(val customLabel: String, onClick: () -> Unit) : FileAction(R.string.git_add_to_gitignore, FeatherIcons.EyeOff, false, onClick)
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FileActionSheet(menu: FileMenu, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState()
-    AdaptiveModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = Spacing.xl)
-        ) {
-            Text(
-                text = menu.path,
-                style = MaterialTheme.typography.titleSmall,
-                fontFamily = FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .padding(horizontal = Spacing.lg)
-                    .padding(bottom = Spacing.md)
-            )
-            menu.actions.forEach { action ->
-                val tint = if (action.isDestructive) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurface
-                Surface(
-                    onClick = {
-                        onDismiss()
-                        action.onClick()
-                    },
-                    color = Color.Transparent
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = Spacing.lg, vertical = Spacing.md),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = action.icon,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp),
-                            tint = tint
-                        )
-                        Spacer(Modifier.width(Spacing.lg))
-                        Text(
-                            text = if (action is FileAction.Ignore) action.customLabel else stringResource(action.labelRes),
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = tint
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun StashBottomSheet(
@@ -1270,3 +1212,12 @@ private fun StashItemRow(
         }
     }
 }
+
+/**
+ * 待确认的回退目标。[staged] 为 true 表示连已暂存内容一起还原到上次提交；
+ * [deleted] 只影响文案——文件已被删时这个操作实际是把它取回而非丢改动。
+ */
+private data class RevertTarget(val path: String, val staged: Boolean, val deleted: Boolean)
+
+/** 待确认的冲突解决目标：[useOurs] 为 true 表示用当前分支版本覆盖，否则采用对方版本。 */
+private data class ConflictTarget(val path: String, val useOurs: Boolean)

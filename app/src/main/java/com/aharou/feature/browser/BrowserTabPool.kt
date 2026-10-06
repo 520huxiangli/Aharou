@@ -3,6 +3,7 @@ package com.aharou.feature.browser
 import android.content.Context
 import android.os.Message
 import android.util.Log
+import android.view.ViewGroup
 import android.webkit.WebView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -837,6 +838,22 @@ class BrowserTabPool(private val context: Context) {
         return tab
     }
 
+    /**
+     * Release a tab that just left the pool (agent close, window.close, UI chip,
+     * idle eviction). Main thread only — every caller already runs there. Order
+     * matters: stop a pending load, detach from the host container (destroy()
+     * requires the view to be out of any hierarchy), then destroy() to free the
+     * renderer and the native peer; without this each closed tab kept a WebView
+     * alive for the rest of the app's lifetime.
+     */
+    private fun destroyTab(tab: Tab) {
+        tab.inUseGraceJob?.cancel()
+        val webView = tab.manager.webView
+        webView.stopLoading()
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
+    }
+
     // -- Tab Management Actions --
 
     private suspend fun newTab(url: String?): BrowserActionResult = withContext(Dispatchers.Main) {
@@ -869,8 +886,9 @@ class BrowserTabPool(private val context: Context) {
         val idx = currentTabs.indexOfFirst { it.id == id }
         if (idx < 0) return@withContext BrowserActionResult.error("Tab $id not found")
 
-        currentTabs.removeAt(idx)
+        val closed = currentTabs.removeAt(idx)
         _tabs.value = currentTabs
+        destroyTab(closed)
 
         // Select next tab
         if (currentTabs.isNotEmpty() && _selectedTabId.value == id) {
@@ -936,13 +954,13 @@ class BrowserTabPool(private val context: Context) {
         val currentTabs = _tabs.value.toMutableList()
         val idx = currentTabs.indexOfFirst { it.manager === manager }
         if (idx >= 0) {
-            val closedId = currentTabs[idx].id
-            currentTabs.removeAt(idx)
+            val closed = currentTabs.removeAt(idx)
             _tabs.value = currentTabs
-            if (_selectedTabId.value == closedId && currentTabs.isNotEmpty()) {
+            if (_selectedTabId.value == closed.id && currentTabs.isNotEmpty()) {
                 _selectedTabId.value = currentTabs.first().id
             }
-            Log.i(TAG, "window.close → removed tab $closedId")
+            Log.i(TAG, "window.close → removed tab ${closed.id}")
+            destroyTab(closed)
         }
     }
 
@@ -974,9 +992,10 @@ class BrowserTabPool(private val context: Context) {
         val currentTabs = _tabs.value.toMutableList()
         val idx = currentTabs.indexOfFirst { it.id == tabId }
         if (idx < 0) return@withContext
-        currentTabs.removeAt(idx)
+        val closed = currentTabs.removeAt(idx)
         _tabs.value = currentTabs
-        if (_selectedTabId.value == tabId && currentTabs.isNotEmpty()) {
+        destroyTab(closed)
+        if (_selectedTabId.value == closed.id && currentTabs.isNotEmpty()) {
             _selectedTabId.value = currentTabs.first().id
         }
         saveState()
@@ -1081,6 +1100,7 @@ class BrowserTabPool(private val context: Context) {
             val url = tab.manager.currentURL.value
             if (url.isNotEmpty()) savedURLs[tab.id] = url
             currentTabs.remove(tab)
+            destroyTab(tab)
             Log.i(TAG, "Evicted idle tab ${tab.id}")
         }
         if (toRemove.isNotEmpty()) {

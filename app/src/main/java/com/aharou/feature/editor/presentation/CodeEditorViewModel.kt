@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.data.EditorSettingsRepository
+import com.aharou.feature.editor.lsp.DefinitionTarget
 import com.aharou.feature.editor.lsp.EditorLspManager
 import com.aharou.feature.editor.domain.TextMateSetup
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -74,6 +75,16 @@ class CodeEditorViewModel @Inject constructor(
         val path = currentPath ?: return false
         return editorLspManager.attach(editor, path, wrapper)
     }
+
+    /** 光标处符号的定义位置；未挂语言服务器、没找到定义、服务器未响应都返回 null。 */
+    suspend fun findDefinition(editor: CodeEditor): DefinitionTarget? {
+        val path = currentPath ?: return null
+        val cursor = editor.cursor
+        return editorLspManager.findDefinition(path, cursor.leftLine, cursor.leftColumn)
+    }
+
+    /** 编辑器路径的统一写法（工作区内为 `~/workspace/…`），用于判断定义目标是不是当前文件。 */
+    fun displayPath(path: String): String = editorLspManager.displayPath(path)
 
     /** 重复调用同一路径不会重复读盘，供 Compose 重组时安全调用。 */
     fun load(path: String) {

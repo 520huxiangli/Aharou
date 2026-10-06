@@ -219,7 +219,7 @@ private fun ComputerActionButton(message: AgentUIMessage?) {
             }) {
                 Icon(
                     if (copyDone) FeatherIcons.Check else FeatherIcons.Copy,
-                    contentDescription = "复制结果",
+                    contentDescription = stringResource(R.string.common_copy),
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -435,18 +435,35 @@ private fun BrowserCard(
     )
 }
 
-/** 浏览器实况：轮询浏览器池的活动 WebView 抓快照（对齐 原版 的 3s 轮询机制）。 */
+/** 预览帧抓取上限（物理像素）：卡片只需预览量级的画面，全尺寸帧纯属浪费。 */
+private const val PREVIEW_FRAME_MAX_W = 800
+private const val PREVIEW_FRAME_MAX_H = 800
+
+/** 浏览器实况：轮询浏览器池的活动 WebView 抓缩略帧（对齐 原版 的 3s 轮询机制）。 */
 @Composable
 private fun BrowserLivePreview(pool: BrowserTabPool?, running: Boolean) {
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(pool, running) {
-        while (true) {
-            val active = pool?.activeManager
-            if (active != null) {
-                val shot = runCatching { active.captureLiveSnapshot() }.getOrNull()
-                if (shot != null) frame = shot
+        var pendingRecycle: Bitmap? = null
+        try {
+            // running 为 false 直接不进循环；composable 离开时本 effect 取消，同样停在 delay 上
+            while (running) {
+                val active = pool?.activeManager
+                if (active != null) {
+                    val shot = runCatching {
+                        active.captureLiveSnapshot(PREVIEW_FRAME_MAX_W, PREVIEW_FRAME_MAX_H)
+                    }.getOrNull()
+                    if (shot != null) {
+                        // 上一帧已被顶下去（delay 期间完成重组），此时回收不会碰到在绘制的那张
+                        pendingRecycle?.recycle()
+                        pendingRecycle = frame
+                        frame = shot
+                    }
+                }
+                delay(2500)
             }
-            delay(2500)
+        } finally {
+            pendingRecycle?.recycle()
         }
     }
     val bmp = frame

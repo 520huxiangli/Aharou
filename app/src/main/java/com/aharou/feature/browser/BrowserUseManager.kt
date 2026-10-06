@@ -947,14 +947,14 @@ class BrowserUseManager(
 
     /**
      * Public live-preview snapshot — mirrors iOS `webView.takeSnapshot()`.
-     * Called by the UI on a timer (e.g. every 3s while a tool is streaming) so
-     * the Aharou Computer sheet and FloatingToolStatusBar can show the browser
-     * state even for actions that don't save an imageFilePath (get_readable,
-     * get_text, execute_js, fetch, etc.).
+     * Called by the UI on a timer while a tool is streaming so the Aharou Computer
+     * sheet and FloatingToolStatusBar can show the browser state even for actions
+     * that don't save an imageFilePath (get_readable, get_text, execute_js, etc.).
+     * [maxW]/[maxH] 是预览帧的物理像素上限，超过则等比缩放后绘制；0 = 原尺寸。
      */
-    suspend fun captureLiveSnapshot(): Bitmap? = captureWebViewBitmap()
+    suspend fun captureLiveSnapshot(maxW: Int, maxH: Int): Bitmap? = captureWebViewBitmap(maxW, maxH)
 
-    private suspend fun captureWebViewBitmap(): Bitmap? = withContext(Dispatchers.Main) {
+    private suspend fun captureWebViewBitmap(maxW: Int = 0, maxH: Int = 0): Bitmap? = withContext(Dispatchers.Main) {
         try {
             // WebView may be detached (pool-owned, never added to a window), so
             // width/height can be 0. Ensure it has a layout box matching the
@@ -983,10 +983,10 @@ class BrowserUseManager(
                 Log.w(TAG, "captureWebViewBitmap 尺寸过大 ${w}x$h（${pixels / 1_000_000}MP），拒绝生成位图")
                 null
             } else {
-                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(bitmap)
-                webView.draw(canvas)
-                Log.d(TAG, "captureWebViewBitmap ${w}x$h")
+                val scale = if (maxW > 0 && maxH > 0) minOf(maxW.toFloat() / w, maxH.toFloat() / h, 1f) else 1f
+                val bitmap = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                webView.draw(Canvas(bitmap).apply { scale(scale, scale) })
+                Log.d(TAG, "captureWebViewBitmap ${w}x$h scale=$scale")
                 bitmap
             }
         } catch (e: Exception) {

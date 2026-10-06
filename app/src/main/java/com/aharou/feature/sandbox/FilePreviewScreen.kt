@@ -10,9 +10,13 @@ import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.CancellationSignal
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.print.PageRange
 import android.print.PrintAttributes
+import android.print.PrintDocumentAdapter
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
@@ -1213,32 +1217,40 @@ private fun shareFile(context: Context, item: FileItem) {
  * path covers every case. Mirrors iOS where every preview surface funnels
  * through one print controller.
  *
- * The off-screen WebView must outlive this function: print is async (we kick it
- * off only after `onPageFinished`), so we hold the instance in a captured var
- * and clear it once the adapter is handed to PrintManager.
+ * The off-screen WebView is built on the application context — it has to outlive
+ * the Activity that started the print — and is destroyed by
+ * [ReleasingPrintAdapter] once the print job ends; a failure before the job is
+ * dispatched destroys it directly.
  */
 private fun printFile(context: Context, item: FileItem) {
-    try {
-        val webView = WebView(context).apply {
-            settings.javaScriptEnabled = false
-            settings.allowFileAccess = true
-        }
-        // Keep a reference alive until the print job is dispatched.
-        var holder: WebView? = webView
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView, url: String) {
+    val appContext = context.applicationContext
+    val webView = WebView(appContext).apply {
+        settings.javaScriptEnabled = false
+        settings.allowFileAccess = true
+    }
+    webView.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String) {
+            try {
                 val printManager =
-                    context.getSystemService(Context.PRINT_SERVICE) as PrintManager
-                val jobName = "${context.getString(R.string.app_name)} - ${item.name}"
-                val adapter = view.createPrintDocumentAdapter(jobName)
+                    appContext.getSystemService(Context.PRINT_SERVICE) as PrintManager
+                val jobName = "${appContext.getString(R.string.app_name)} - ${item.name}"
+                val adapter = ReleasingPrintAdapter(
+                    view.createPrintDocumentAdapter(jobName),
+                    webView,
+                )
                 printManager.print(
                     jobName,
                     adapter,
                     PrintAttributes.Builder().build(),
                 )
-                holder = null
+            } catch (e: Exception) {
+                FileLogger.w("FilePreview", "print failed for ${item.name}: ${e.message}")
+                Toast.makeText(appContext, appContext.getString(R.string.file_print_failed_toast, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                webView.destroy()
             }
         }
+    }
+    try {
         if (item.isHtmlFile) {
             webView.loadUrl("file://${item.file.absolutePath}")
         } else {
@@ -1255,13 +1267,44 @@ private fun printFile(context: Context, item: FileItem) {
             }
             webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
         }
-        // Silence the unused-assignment warning while documenting intent: the
-        // holder keeps `webView` reachable across the async page load.
-        @Suppress("UNUSED_VALUE")
-        holder = webView
     } catch (e: Exception) {
         FileLogger.w("FilePreview", "print failed for ${item.name}: ${e.message}")
-        Toast.makeText(context, context.getString(R.string.file_print_failed_toast, e.message ?: ""), Toast.LENGTH_SHORT).show()
+        Toast.makeText(appContext, appContext.getString(R.string.file_print_failed_toast, e.message ?: ""), Toast.LENGTH_SHORT).show()
+        webView.destroy()
+    }
+}
+
+/**
+ * Forwards onLayout/onWrite to the WebView's own adapter and destroys the
+ * off-screen WebView in [PrintDocumentAdapter.onFinish] — the job's guaranteed
+ * last call, fired for printed, cancelled and failed jobs alike. Mirrors the
+ * platform sample (development/samples/ApiDemos PrintHtmlOffScreen), which
+ * releases its WebView the same way: the print framework drives the adapter, and
+ * the view is expensive to keep around.
+ */
+private class ReleasingPrintAdapter(
+    private val delegate: PrintDocumentAdapter,
+    private val webView: WebView,
+) : PrintDocumentAdapter() {
+
+    override fun onLayout(
+        oldAttributes: PrintAttributes?,
+        newAttributes: PrintAttributes,
+        cancellationSignal: CancellationSignal?,
+        callback: PrintDocumentAdapter.LayoutResultCallback,
+        extras: Bundle?,
+    ) = delegate.onLayout(oldAttributes, newAttributes, cancellationSignal, callback, extras)
+
+    override fun onWrite(
+        pages: Array<out PageRange>?,
+        destination: ParcelFileDescriptor,
+        cancellationSignal: CancellationSignal?,
+        callback: PrintDocumentAdapter.WriteResultCallback,
+    ) = delegate.onWrite(pages, destination, cancellationSignal, callback)
+
+    override fun onFinish() {
+        delegate.onFinish()
+        webView.destroy()
     }
 }
 

@@ -1043,6 +1043,10 @@
     <string name="git_conflict_hint">Resolve conflicts in editor then stage the files, or abort the merge.</string>
     <string name="git_action_abort_merge">Abort Merge</string>
     <string name="git_abort_merge_confirm">Abort the current merge? Unresolved changes will be discarded and the working tree will be restored.</string>
+    <string name="git_action_use_ours">Use Ours</string>
+    <string name="git_action_use_theirs">Use Theirs</string>
+    <string name="git_use_ours_confirm">Overwrite %1$s with our version (the current branch)? The content with conflict markers in your working tree will be lost and cannot be recovered.</string>
+    <string name="git_use_theirs_confirm">Overwrite %1$s with their version (the branch being merged)? The content with conflict markers in your working tree will be lost and cannot be recovered.</string>
 
     <!-- Git Commit Enhancements -->
     <string name="git_commit_ai_generate">AI Generate</string>
@@ -1734,6 +1738,23 @@
     <!-- Git -->
     <string name="git_create_tag_title">New Tag</string>
 
+    <!-- Friendly git failure messages (GitErrorMessage) -->
+    <string name="git_error_delete_checked_out_branch">Cannot delete the branch you are on. Switch to another branch first</string>
+    <string name="git_error_branch_not_merged">This branch has unmerged commits and cannot be deleted safely</string>
+    <string name="git_error_invalid_reference">The branch or reference does not exist</string>
+    <string name="git_error_local_changes_overwritten">Local uncommitted changes would be overwritten. Commit or stash them before switching</string>
+    <string name="git_error_remote_unavailable">The remote repository is unavailable or access is denied</string>
+    <string name="git_error_clone_dir_not_empty">The current workspace directory is not empty, so it cannot be cloned into</string>
+    <string name="git_error_auth_failed">Remote authentication failed. Check your credentials (username / password / token)</string>
+    <string name="git_error_repo_not_found">The remote repository does not exist or access is denied</string>
+    <string name="git_error_no_tracking_branch">The current branch has no upstream branch, so it cannot be pulled</string>
+    <string name="git_error_no_push_destination">No remote repository is configured, so it cannot be pushed</string>
+    <string name="git_error_push_rejected">Push rejected because the remote has newer commits. Pull first</string>
+    <string name="git_error_identity_missing">No commit identity is configured. Set your username and email in settings</string>
+    <string name="git_error_merge_conflict">The merge produced conflicts. Review and resolve them on the status page</string>
+    <string name="git_error_local_changes_merge">You have uncommitted local changes. Commit or stash them before merging</string>
+    <string name="git_error_no_local_changes_stash">There are no local changes to stash</string>
+
     <!-- Remote server delete confirmation -->
     <string name="remote_delete_connection_confirm">Delete connection “%1$s”? Sync configurations using it will become unavailable.</string>
     <string name="remote_delete_mount_confirm">Delete workspace mapping “%1$s”? Local and remote files will not be deleted.</string>
@@ -2359,8 +2380,19 @@
     <string name="editor_find_previous">Previous match</string>
     <string name="editor_find_next">Next match</string>
     <string name="editor_find_close">Close find</string>
+    <string name="editor_replace_hint">Replace with</string>
+    <string name="editor_replace">Replace</string>
+    <string name="editor_replace_all">Replace all</string>
+    <string name="editor_goto_definition">Go to definition</string>
+    <string name="editor_goto_definition_not_found">No definition found</string>
     <string name="drawer_file_search_show_more">Show %1$d more</string>
     <string name="agent_streaming_preview_notice">Only the most recent part is shown while generating</string>
 
     <!-- Workflow -->
+
+    <!-- Config change confirmation dialog (ConfigConfirmDialog) -->
+    <string name="config_confirm_title">Confirm configuration change</string>
+    <string name="config_confirm_fallback_caption">Aharou wants to change its own settings</string>
+    <string name="config_confirm_approve">Approve</string>
+    <string name="config_confirm_reject">Reject</string>
 </resources>

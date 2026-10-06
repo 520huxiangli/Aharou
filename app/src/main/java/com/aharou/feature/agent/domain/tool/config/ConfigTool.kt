@@ -50,23 +50,27 @@ class ConfigTool @Inject constructor(
         /** `logs` 动作默认返回多少行；日志文件可达 5MB，不夹上限会直接冲爆上下文。 */
         const val DEFAULT_LOG_LINES = 200
         const val MAX_LOG_LINES = 2_000
+
+        /** 审计行标记：这条记录来自「读取明文」而不是「修改」，值一律留打码。 */
+        const val CAPTION_REVEAL = "reveal"
     }
 
     override val name = "config"
 
     override val description =
         "读写 Aharou 自身设置（配置通道）。action=list 列出可配字段；action=get 读字段（path）；" +
+            "action=reveal 读取字段明文（path）：敏感字段（如 API Key）平时只回打码值，读真值必须弹确认面板、用户同意后才返回，并写审计；非敏感字段与 get 相同；" +
             "action=set 修改字段（path + value，value 为 JSON 编码，如 \"🦊\"、\"zh\"、true）；" +
             "action=add 在集合下新增一项（path=集合名、value=新项 JSON）；action=remove 删除集合下的一项（path=集合名、id）。" +
             "action=logs 读应用日志（只读）；date=yyyy-MM-dd（缺省今天，只保留最近 7 天）、query=关键词过滤、limit=最多返回行数（默认 $DEFAULT_LOG_LINES）均可选。" +
-            "set/add/remove 都会弹出确认面板，用户同意后生效，并写审计、可回滚。"
+            "set/add/remove/reveal 都会弹出确认面板，用户同意后生效，并写审计、可回滚。"
 
     override val capabilities = setOf(ToolCapability.MODIFY_AGENT_CONFIG)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
-            "action", ParameterType.STRING, "操作类型：list / get / set / add / remove / logs", true,
-            enum = listOf("list", "get", "set", "add", "remove", "logs"),
+            "action", ParameterType.STRING, "操作类型：list / get / reveal / set / add / remove / logs", true,
+            enum = listOf("list", "get", "reveal", "set", "add", "remove", "logs"),
         ),
         "path" to ToolParameter("path", ParameterType.STRING, "字段路径，如 soul.name；add/remove 时为集合名，如 providers", false),
         "value" to ToolParameter("value", ParameterType.STRING, "set 的目标值 / add 的新项（JSON 编码）", false),
@@ -85,6 +89,7 @@ class ConfigTool @Inject constructor(
             when (action) {
                 "list" -> listFields(registry)
                 "get" -> getField(registry, path)
+                "reveal" -> revealField(registry, path)
                 "set" -> {
                     val raw = (args["value"] as? JsonPrimitive)?.contentOrNull
                         ?: return ToolResult.Error("set 需要 value（JSON 编码）", "MISSING_VALUE")
@@ -235,6 +240,60 @@ class ConfigTool @Inject constructor(
         })
     }
 
+    /**
+     * 读字段明文。敏感字段必须过确认门：返回值会进模型上下文、随对话发给模型服务商，
+     * 所以真值回传前要让用户看见「要给谁、拿去干什么」并点头。非敏感字段直接返回，不必多问一次。
+     *
+     * 审计只记打码值 + 行为标记（不落明文）：审计库本身不该成为第二处明文副本。
+     */
+    private suspend fun revealField(registry: ConfigRegistry, path: String): ToolResult {
+        if (path.isBlank()) return ToolResult.Error("需要 path", "MISSING_PATH")
+        val field = registry.resolveField(path)
+            ?: return ToolResult.Error("未知字段：$path（reveal 只支持具体字段，集合请先用 get）", "UNKNOWN_PATH")
+        if (field.access == ConfigAccess.HIDDEN) {
+            return ToolResult.Error("该字段不可读：$path", "HIDDEN_FIELD")
+        }
+        val value = field.read()
+        if (field.risk != ConfigRisk.SENSITIVE) {
+            return ToolResult.Success(buildJsonObject {
+                put("path", field.path)
+                put("value", value.jsonString())
+                put("sensitive", false)
+            })
+        }
+        val masked = value.maskedForDisplay(true)
+        val item = PendingConfigChangeItem(
+            displayName = field.displayName,
+            path = field.path,
+            oldDisplay = preview(masked),
+            newDisplay = "（明文将返回给 AI，并随这次对话发给模型服务商）",
+            verb = "读取",
+            risk = field.risk,
+        )
+        val change = PendingConfigChange(
+            items = listOf(item),
+            caption = "Aharou 想读取这项设置的明文",
+        )
+        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change)) {
+            is ConfirmOutcome.Approved -> {
+                appendAudit(field, masked, masked, ConfigAuditStatus.APPLIED, System.currentTimeMillis(), CAPTION_REVEAL)
+                ToolResult.Success(buildJsonObject {
+                    put("path", field.path)
+                    put("value", value.jsonString())
+                    put("sensitive", true)
+                })
+            }
+            ConfirmOutcome.Rejected -> {
+                appendAudit(field, masked, masked, ConfigAuditStatus.REJECTED, null, CAPTION_REVEAL)
+                ToolResult.Error("用户驳回了这次读取：${field.path}", "USER_REJECTED")
+            }
+            ConfirmOutcome.TimedOut -> {
+                appendAudit(field, masked, masked, ConfigAuditStatus.TIMEOUT, null, CAPTION_REVEAL)
+                ToolResult.Error("确认超时（120 秒），未读取：${field.path}", "CONFIRM_TIMEOUT")
+            }
+        }
+    }
+
     private suspend fun setField(registry: ConfigRegistry, path: String, rawValue: String): ToolResult {
         if (path.isBlank()) return ToolResult.Error("需要 path", "MISSING_PATH")
         val field = registry.resolveField(path)
@@ -371,6 +430,7 @@ class ConfigTool @Inject constructor(
         new: ConfigValue,
         status: ConfigAuditStatus,
         confirmedAt: Long?,
+        caption: String? = null,
     ) {
         runCatching {
             ConfigAuditLog.get().append(
@@ -386,7 +446,7 @@ class ConfigTool @Inject constructor(
                     confirmedAt = confirmedAt,
                     status = status,
                     revertOf = null,
-                    caption = null,
+                    caption = caption,
                 ),
             )
         }

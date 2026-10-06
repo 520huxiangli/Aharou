@@ -16,11 +16,9 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -33,7 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -48,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -76,10 +74,9 @@ import com.aharou.feature.editor.domain.diagnostics.EditorDiagnostics
 import com.aharou.feature.editor.presentation.component.MarkdownPreviewWebView
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
-import compose.icons.feathericons.ChevronLeft
-import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Code
 import compose.icons.feathericons.Eye
+import compose.icons.feathericons.Navigation
 import compose.icons.feathericons.Search
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Settings
@@ -96,6 +93,7 @@ import io.github.rosemoe.sora.widget.CodeEditor
 import io.github.rosemoe.sora.widget.component.EditorTextActionWindow
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlin.math.abs
+import kotlinx.coroutines.launch
 
 /**
  * 独立全屏代码编辑页。支持语法高亮、撤销/重做、底部符号快捷栏与保存。
@@ -118,6 +116,9 @@ fun CodeEditorScreen(
     val snapshots by EditorSessionManager.snapshots.collectAsStateWithLifecycle()
     LaunchedEffect(path) { EditorSessionManager.open(path) }
     val activePath = sessionActivePath.ifBlank { path }
+    // 定义跳转用「工作区内为 ~/workspace/…」的统一写法，当前路径也归一化后比对，
+    // 免得同一个文件因为写法不同被当成两个路径、在标签栏里开出两份。
+    val normalizedActivePath = viewModel.displayPath(activePath)
     LaunchedEffect(activePath) { viewModel.load(activePath) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -134,6 +135,10 @@ fun CodeEditorScreen(
     var pendingCloseTab by remember { mutableStateOf<String?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     val editorFind = remember { EditorFindState() }
+    // 语言服务器挂载状态：只有挂上之后才提供「跳转到定义」（没装服务器 / 非收录语言的入口不该露出来）。
+    var lspAttached by remember(activePath) { mutableStateOf(false) }
+    // 跳定义拿到的目标（路径到行号，行号 1 基，供 [EditorSurface] 定位）；跨文件时先等目标文件加载完。
+    var jumpTarget by remember { mutableStateOf<Pair<String, Int>?>(null) }
     var previewMode by remember { mutableStateOf(false) }
     var cursorLine by remember { mutableStateOf(1) }
     var cursorColumn by remember { mutableStateOf(1) }
@@ -157,8 +162,10 @@ fun CodeEditorScreen(
     }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val savedText = stringResource(R.string.editor_save_success)
     val saveFailedText = stringResource(R.string.editor_save_failed)
+    val noDefinitionText = stringResource(R.string.editor_goto_definition_not_found)
     LaunchedEffect(Unit) {
         viewModel.saveEvents.collect { result ->
             when (result) {
@@ -243,6 +250,25 @@ fun CodeEditorScreen(
     BackHandler(enabled = !showSettings && !previewMode) { handleBack() }
     BackHandler(enabled = showSettings) { showSettings = false }
 
+    /**
+     * 跳转到光标处符号的定义：同一个文件直接定位，跨文件先经 [EditorSessionManager] 打开目标文件再定位。
+     * 没挂语言服务器、服务器超时、或没找到定义都只提示一句，不动编辑器内容。
+     */
+    fun jumpToDefinition() {
+        val editor = editorRef.value ?: return
+        scope.launch {
+            val target = viewModel.findDefinition(editor)
+            if (target == null) {
+                Toast.makeText(context, noDefinitionText, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (target.path != normalizedActivePath) {
+                EditorSessionManager.open(target.path)
+            }
+            jumpTarget = target.path to (target.line + 1)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -272,6 +298,17 @@ fun CodeEditorScreen(
                         ) {
                             IconButton(onClick = editorFind::open, enabled = editable && !previewMode) {
                                 Icon(FeatherIcons.Search, contentDescription = stringResource(R.string.editor_find))
+                            }
+                            if (lspAttached) {
+                                IconButton(
+                                    onClick = { jumpToDefinition() },
+                                    enabled = editable && !previewMode
+                                ) {
+                                    Icon(
+                                        FeatherIcons.Navigation,
+                                        contentDescription = stringResource(R.string.editor_goto_definition)
+                                    )
+                                }
                             }
                             if (isMarkdown && editable) {
                                 IconButton(onClick = {
@@ -383,7 +420,7 @@ fun CodeEditorScreen(
                     editorRef = editorRef,
                     settings = settings,
                     baselineText = baselineText,
-                    initialLine = initialLine,
+                    initialLine = jumpTarget?.takeIf { it.first == normalizedActivePath }?.second ?: initialLine,
                     onAddSelectionToInput = onAddSelectionToInput,
                     onBackgroundResolved = { editorBackground = it },
                     onCursorChanged = { l, c ->
@@ -402,7 +439,6 @@ fun CodeEditorScreen(
                 // 有语言服务器（Lua 等）时换上挂着 LSP 的编辑器语言，TextMate 继续负责着色；
                 // 没装服务器 / 非收录语言则不上，保持原语言。
                 val lspEditor = editorRef.value
-                var lspAttached by remember(activePath) { mutableStateOf(false) }
                 LaunchedEffect(lspEditor, activePath, surfaceState.scopeName) {
                     val editor = lspEditor ?: return@LaunchedEffect
                     val scope = surfaceState.scopeName ?: return@LaunchedEffect
@@ -800,72 +836,6 @@ private fun EditorSurface(
 }
 
 @Composable
-private fun EditorSymbolBar(
-    backgroundColor: Color,
-    onInsert: (String) -> Unit,
-    onIndent: () -> Unit,
-    onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit
-) {
-    Surface(
-        color = backgroundColor,
-        modifier = Modifier
-            .fillMaxWidth()
-            .imePadding()
-    ) {
-        Row(
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SymbolKey(onClick = onMoveLeft) {
-                Icon(
-                    FeatherIcons.ChevronLeft,
-                    contentDescription = stringResource(R.string.editor_cursor_left)
-                )
-            }
-            SymbolKey(onClick = onMoveRight) {
-                Icon(
-                    FeatherIcons.ChevronRight,
-                    contentDescription = stringResource(R.string.editor_cursor_right)
-                )
-            }
-            SymbolKey(onClick = onIndent) {
-                Text(
-                    text = stringResource(R.string.editor_indent),
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-            EDITOR_SYMBOLS.forEach { symbol ->
-                SymbolKey(onClick = { onInsert(symbol) }) {
-                    Text(
-                        text = symbol,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SymbolKey(onClick: () -> Unit, content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .padding(horizontal = 2.dp)
-            .clip(RoundedCornerShape(Spacing.sm))
-            .clickable(onClick = onClick)
-            .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
-            .padding(horizontal = Spacing.sm),
-        contentAlignment = Alignment.Center
-    ) {
-        content()
-    }
-}
-
-@Composable
 private fun CenterBox(modifier: Modifier, content: @Composable () -> Unit) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) { content() }
 }
@@ -952,13 +922,6 @@ private fun installAddToInputAction(editor: CodeEditor, label: String, onAdd: (S
     )
 }
 
-/** 底部快捷栏的常用符号，点击在光标处插入。 */
-private val EDITOR_SYMBOLS = listOf(
-    "{", "}", "(", ")", "[", "]", "<", ">",
-    "=", "+", "-", "*", "/", "\\",
-    ";", ":", ",", ".", "_", "\"", "'", "`",
-    "|", "&", "!", "?", "@", "#", "\$", "%"
-)
 
 /** 内容渐显时长：给后台语法分析留出窗口，同时不致于让用户觉得打开变慢。 */
 private const val HIGHLIGHT_REVEAL_MS = 200

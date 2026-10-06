@@ -252,6 +252,10 @@ class GitViewModel @Inject constructor(
         }
     }
 
+    /** git 失败原文 → 友好文案；无匹配场景回退原文。文案资源在 presentation 层解析。 */
+    private fun friendlyGitMessage(raw: String): String =
+        GitErrorMessage.friendlyRes(raw)?.let(context::getString) ?: raw
+
     /** 执行一个写操作：置 busy → 跑命令 → 刷新 → 反馈。操作间互斥。 */
     private fun runAction(
         @StringRes nameRes: Int,
@@ -277,7 +281,7 @@ class GitViewModel @Inject constructor(
                     GitErrorMessage.isAuthFailure(raw) -> GitSetupGuide.CREDENTIALS
                     else -> null
                 }
-                context.getString(R.string.git_toast_action_failed, name, GitErrorMessage.friendly(raw))
+                context.getString(R.string.git_toast_action_failed, name, friendlyGitMessage(raw))
             }
             // 刷新以反映新状态；失败也刷新，让 UI 与仓库一致。
             try {
@@ -511,7 +515,7 @@ class GitViewModel @Inject constructor(
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "切换分支失败", e)
                 val reason = (e as? GitCommandFailureException)?.output ?: e.message
-                context.getString(R.string.git_toast_checkout_failed, GitErrorMessage.friendly(reason ?: ""))
+                context.getString(R.string.git_toast_checkout_failed, friendlyGitMessage(reason ?: ""))
             }
             try {
                 if (repository.isRepo()) {
@@ -609,6 +613,16 @@ class GitViewModel @Inject constructor(
     fun abortMerge() {
         runAction(R.string.git_action_abort_merge, { repository.abortMerge() })
     }
+
+    /**
+     * 冲突文件采用我方 / 对方版本：用对应版本覆盖工作区内容并暂存（冲突随之标记为已解决）。
+     * 工作区那侧的内容会被覆盖且无法找回，故 UI 侧须先二次确认。
+     */
+    fun useOurs(path: String) =
+        runAction(R.string.git_action_use_ours, { repository.resolveConflictWithOurs(path) })
+
+    fun useTheirs(path: String) =
+        runAction(R.string.git_action_use_theirs, { repository.resolveConflictWithTheirs(path) })
 
     /**
      * 加载储藏列表。

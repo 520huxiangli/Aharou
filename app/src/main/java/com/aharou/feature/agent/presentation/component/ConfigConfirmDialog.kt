@@ -7,10 +7,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.aharou.R
 import com.aharou.core.config.confirm.PendingConfigChange
 
 /**
@@ -25,11 +27,11 @@ internal fun ConfigConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onReject,
-        title = { Text("配置变更确认") },
+        title = { Text(stringResource(R.string.config_confirm_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    change.caption ?: "Aharou 想修改自己的设置",
+                    change.caption ?: stringResource(R.string.config_confirm_fallback_caption),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -46,7 +48,7 @@ internal fun ConfigConfirmDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onApprove) { Text("同意") } },
-        dismissButton = { TextButton(onClick = onReject) { Text("驳回") } },
+        confirmButton = { TextButton(onClick = onApprove) { Text(stringResource(R.string.config_confirm_approve)) } },
+        dismissButton = { TextButton(onClick = onReject) { Text(stringResource(R.string.config_confirm_reject)) } },
     )
 }

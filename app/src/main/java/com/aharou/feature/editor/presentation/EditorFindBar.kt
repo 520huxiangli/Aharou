@@ -2,6 +2,7 @@ package com.aharou.feature.editor.presentation
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -13,6 +14,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +46,8 @@ internal class EditorFindState {
     var visible by mutableStateOf(false)
         private set
     var query by mutableStateOf("")
+        private set
+    var replacement by mutableStateOf("")
         private set
     var matchIndex by mutableStateOf(0)
         private set
@@ -127,9 +131,42 @@ internal class EditorFindState {
         source.post { runCatching { focusRequester.requestFocus() } }
     }
 
+    fun updateReplacement(value: String) {
+        replacement = value
+    }
+
+    /**
+     * 替换当前匹配。结果还没出来、编辑器不可写、或一个匹配都没有时不动——避免在半成品状态上改文本。
+     * 命中位置没被选中时先 `gotoNext` 选中它（库自带的 replaceCurrentMatch 也是这个兜底行为，
+     * 但这里先跳一次，让「替换」始终真的替换到一个匹配）。
+     */
+    fun replaceCurrent() {
+        val source = editor ?: return
+        val searcher = source.searcher
+        if (searching || !source.isEditable || !isActive(source, searcher)) return
+        if (searcher.matchedPositionCount == 0) return
+        if (!searcher.isMatchedPositionSelected()) searcher.gotoNext()
+        searcher.replaceCurrentMatch(replacement)
+        refresh(searcher)
+        source.post { runCatching { focusRequester.requestFocus() } }
+    }
+
+    /**
+     * 全部替换。库内部弹进度框并在后台线程批量改写，改完会重新搜索，计数经事件回调自然更新。
+     */
+    fun replaceAll() {
+        val source = editor ?: return
+        val searcher = source.searcher
+        if (searching || !source.isEditable || !isActive(source, searcher)) return
+        if (searcher.matchedPositionCount == 0) return
+        searcher.replaceAll(replacement)
+        source.post { runCatching { focusRequester.requestFocus() } }
+    }
+
     fun close() {
         visible = false
         query = ""
+        replacement = ""
         revision++
         searching = false
         selectFirstMatch = false
@@ -184,6 +221,39 @@ internal fun EditorFindBar(state: EditorFindState) {
             )
             IconButton(onClick = state::close) {
                 Icon(FeatherIcons.X, contentDescription = stringResource(R.string.editor_find_close))
+            }
+        }
+        if (state.query.isNotEmpty()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppTextField(
+                    value = state.replacement,
+                    onValueChange = state::updateReplacement,
+                    modifier = Modifier.weight(1f),
+                    placeholder = stringResource(R.string.editor_replace_hint),
+                    singleLine = true
+                )
+                TextButton(
+                    onClick = state::replaceCurrent,
+                    enabled = !state.searching && state.matchCount > 0,
+                    contentPadding = PaddingValues(horizontal = Spacing.sm)
+                ) {
+                    Text(
+                        text = stringResource(R.string.editor_replace),
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1
+                    )
+                }
+                TextButton(
+                    onClick = state::replaceAll,
+                    enabled = !state.searching && state.matchCount > 0,
+                    contentPadding = PaddingValues(horizontal = Spacing.sm)
+                ) {
+                    Text(
+                        text = stringResource(R.string.editor_replace_all),
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1
+                    )
+                }
             }
         }
         if (state.query.isNotEmpty()) {

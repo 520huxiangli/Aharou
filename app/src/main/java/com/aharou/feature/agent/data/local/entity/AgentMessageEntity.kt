@@ -14,7 +14,8 @@ import kotlinx.serialization.json.Json
 
 @Entity(
     tableName = "agent_messages",
-    indices = [Index(value = ["sessionId"])]
+    // (sessionId, timestamp) 覆盖 DAO 里「按会话过滤 + 按时间排序/分页」的全部查询，避免长会话下的全表扫描 + 临时排序。
+    indices = [Index(value = ["sessionId"]), Index(value = ["sessionId", "timestamp"])]
 )
 data class AgentMessageEntity(
     @PrimaryKey val id: String,

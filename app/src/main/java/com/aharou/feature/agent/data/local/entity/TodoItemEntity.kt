@@ -1,11 +1,16 @@
 package com.aharou.feature.agent.data.local.entity
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.domain.model.TodoStatus
 
-@Entity(tableName = "todo_items")
+@Entity(
+    tableName = "todo_items",
+    // (sessionId, order) 覆盖 DAO 里「按会话过滤 + 按 order/priority 排序」的查询。
+    indices = [Index(value = ["sessionId", "order"])]
+)
 data class TodoItemEntity(
     @PrimaryKey val id: String,
     val sessionId: String,

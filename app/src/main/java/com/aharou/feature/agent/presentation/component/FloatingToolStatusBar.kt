@@ -264,6 +264,10 @@ private fun ToolMiniScreenThumbnail(
     }
 }
 
+/** 缩略图抓取上限（物理像素）：小屏幕只有 100×65dp，全尺寸帧纯属浪费。 */
+private const val MINI_FRAME_MAX_W = 480
+private const val MINI_FRAME_MAX_H = 480
+
 /**
  * 浏览器小屏幕：实时抓浏览器池活动标签的页面画面（每 2s 一帧，
  * 对齐 原版 的 browser_use 缩略图机制）。无画面时显示占位文案。
@@ -275,13 +279,26 @@ private fun BrowserMiniScreen(
 ) {
     var frame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(pool, running) {
-        while (true) {
-            val active = pool?.activeManager
-            if (active != null) {
-                val shot = runCatching { active.captureLiveSnapshot() }.getOrNull()
-                if (shot != null) frame = shot
+        var pendingRecycle: android.graphics.Bitmap? = null
+        try {
+            // running 为 false 直接不进循环；composable 离开时本 effect 取消，同样停在 delay 上
+            while (running) {
+                val active = pool?.activeManager
+                if (active != null) {
+                    val shot = runCatching {
+                        active.captureLiveSnapshot(MINI_FRAME_MAX_W, MINI_FRAME_MAX_H)
+                    }.getOrNull()
+                    if (shot != null) {
+                        // 上一帧已被顶下去（delay 期间完成重组），此时回收不会碰到在绘制的那张
+                        pendingRecycle?.recycle()
+                        pendingRecycle = frame
+                        frame = shot
+                    }
+                }
+                delay(2000)
             }
-            delay(2000)
+        } finally {
+            pendingRecycle?.recycle()
         }
     }
     val bmp = frame

@@ -401,6 +401,9 @@ dependencies {
     implementation("io.github.rosemoe:language-textmate")
     // LSP 客户端（官方模块，lsp4j 纯 JVM）：语言服务器跑在容器里，诊断/悬停等交给它。
     implementation("io.github.rosemoe:editor-lsp")
+    // editor-lsp 的公开签名直接暴露 lsp4j 类型（DefinitionParams / Location 等），
+    // app 侧实现跳转定义要能解析它们；版本与 editor-lsp 传递依赖的那个保持一致。
+    implementation("org.eclipse.lsp4j:org.eclipse.lsp4j:1.0.0")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     // WorkManager — 保活兜底：周期检查 TerminalKeepaliveService 存活并拉起（KeepaliveWorker）

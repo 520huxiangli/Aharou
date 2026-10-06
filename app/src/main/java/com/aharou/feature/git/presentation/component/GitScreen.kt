@@ -233,6 +233,8 @@ fun GitScreen(
                             onStashDrop = viewModel::stashDrop,
                             onStashClear = viewModel::stashClear,
                             onAbortMerge = viewModel::abortMerge,
+                            onUseOurs = viewModel::useOurs,
+                            onUseTheirs = viewModel::useTheirs,
                             onAddToGitignore = viewModel::addToGitignore,
                             onNavigateToCredentials = onNavigateToCredentials
                         )
