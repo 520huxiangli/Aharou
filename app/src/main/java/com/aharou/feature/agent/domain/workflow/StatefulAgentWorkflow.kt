@@ -430,6 +430,12 @@ class StatefulAgentWorkflow @Inject constructor(
         )
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
+            // 用户按了停止：不再往下走。正在跑的命令/请求留在后台跑完（见 stopAgentSession 的软打断）。
+            if (consumeUserInterrupt(currentContext.sessionId)) {
+                FileLogger.i(TAG, "收到用户打断，本轮到此为止")
+                actionQueue.clear()
+                break
+            }
             val action = actionQueue.removeFirst()
             val (newState, effects) = reduce(state, action)
             state = newState
@@ -508,6 +514,19 @@ class StatefulAgentWorkflow @Inject constructor(
      *
      * @return 可能被压缩改写过的新会话状态。
      */
+    /**
+     * 会话是否收到了「用户打断」：peek 到就打勾并 ack 掉（一次性消费），
+     * 供主循环与流式收集两处判断「用户按了停止」。
+     */
+    private fun consumeUserInterrupt(sessionId: String?): Boolean {
+        if (sessionId == null) return false
+        val hits = agentNotificationCenter.peek(sessionId)
+            .filter { it.kind == AgentNotificationKind.USER_INTERRUPT }
+        if (hits.isEmpty()) return false
+        agentNotificationCenter.ack(sessionId, hits.map { it.seq })
+        return true
+    }
+
     private suspend fun executeLlmEffect(
         initialState: AgentSessionState,
         currentContext: AgentContext,
@@ -610,14 +629,19 @@ class StatefulAgentWorkflow @Inject constructor(
             )
             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
             var samplingLoopCut = false
+            // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。
+            var userInterruptCut = false
             // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：
             // 每轮重新过滤，命中之后下一轮就能直接调用。
             val promptTools = currentTools.filter {
                 !it.deferredLoading || toolRegistry.isActivated(it.name)
             }
             providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
-                .takeWhile { !samplingLoopCut }
+                .takeWhile { !samplingLoopCut && !userInterruptCut }
                 .collect { chunk ->
+                    if (!userInterruptCut && consumeUserInterrupt(currentContext.sessionId)) {
+                        userInterruptCut = true
+                    }
                 when (chunk) {
                     is AIStreamChunk.TextDelta -> {
                         if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
@@ -944,7 +968,9 @@ class StatefulAgentWorkflow @Inject constructor(
         // 中途被取消时通知仍留在队列里，由后续批次或本轮结束的兜底路径送达。
         val notifySessionId = currentContext.sessionId
         val notifications = if (notifySessionId != null && batchResults.isNotEmpty()) {
+            // 用户打断是给循环看的开关，不是要给模型读的提示，别当通知注入进去。
             agentNotificationCenter.peek(notifySessionId)
+                .filter { it.kind != AgentNotificationKind.USER_INTERRUPT }
         } else {
             emptyList()
         }

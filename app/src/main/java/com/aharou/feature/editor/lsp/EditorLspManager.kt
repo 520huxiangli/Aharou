@@ -9,6 +9,8 @@ import io.github.rosemoe.sora.lsp.editor.LspEditor
 import io.github.rosemoe.sora.lsp.editor.LspProject
 import io.github.rosemoe.sora.widget.CodeEditor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.eclipse.lsp4j.DefinitionParams
 import org.eclipse.lsp4j.Location
@@ -56,6 +58,12 @@ class EditorLspManager @Inject constructor(
 
     private val projects = ConcurrentHashMap<String, LspProject>()
 
+    /**
+     * 串行化挂载：同一编辑器被组合两次时会连着触发两回，而 stdio 名额是全局的，
+     * 第二次再抢必然失败并把第一次的成功结果覆盖成 false（2026-10-07 实测：顶栏箭头不出现）。
+     */
+    private val attachLock = Mutex()
+
     /** 已挂到语言服务器上的文件：容器内绝对路径 → 编辑器实例，供主动请求（如查定义）复用同一条连接。 */
     private val editors = ConcurrentHashMap<String, LspEditor>()
 
@@ -77,18 +85,25 @@ class EditorLspManager @Inject constructor(
             return false
         }
         val absolutePath = pathHomeResolver.expandHome(containerFilePath)
-        return runCatching {
-            val lspEditor = withContext(Dispatchers.Main) {
-                project().getOrCreateEditor(absolutePath).also { lspEditor ->
-                    lspEditor.wrapperLanguage = wrapper
-                    lspEditor.editor = editor
-                    editors[absolutePath] = lspEditor
+        return attachLock.withLock {
+            // 已经挂上就直接算成功：重复触发不能再抢名额，也不能把已有连接推翻。
+            editors[absolutePath]?.takeIf { it.isConnected }?.let { return@withLock true }
+            runCatching {
+                val lspEditor = withContext(Dispatchers.Main) {
+                    project().getOrCreateEditor(absolutePath).also { lspEditor ->
+                        lspEditor.wrapperLanguage = wrapper
+                        lspEditor.editor = editor
+                        editors[absolutePath] = lspEditor
+                    }
                 }
+                lspEditor.connect(throwException = false).also { ok ->
+                    // connect 失败是静默的（不抛异常也不返回原因），这里补上，否则挂不上时无从查起。
+                    if (!ok) FileLogger.w(TAG, "挂载 LSP 未成功（connect 返回 false）: $containerFilePath")
+                }
+            }.getOrElse { e ->
+                FileLogger.w(TAG, "挂载 LSP 失败: $containerFilePath", e)
+                false
             }
-            lspEditor.connect(throwException = false)
-        }.getOrElse { e ->
-            FileLogger.w(TAG, "挂载 LSP 失败: $containerFilePath", e)
-            false
         }
     }
 

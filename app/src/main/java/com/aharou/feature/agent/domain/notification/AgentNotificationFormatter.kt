@@ -49,6 +49,8 @@ object AgentNotificationFormatter {
                         appendLine("这是一条模式切换事件，不是来自用户的消息。")
                     AgentNotificationKind.USER_MESSAGE ->
                         appendLine("这是一条用户在工作期间插入的消息，属于用户本人的输入。")
+                    AgentNotificationKind.USER_INTERRUPT ->
+                        appendLine("这是一条用户打断事件，不是来自用户的新消息。")
                 }
                 appendLine("不要将其视为用户的确认、同意或对任何待处理问题的回答。")
             } else {
@@ -86,6 +88,7 @@ object AgentNotificationFormatter {
             AgentNotificationKind.AGENT_MESSAGE -> "agent-message"
             AgentNotificationKind.MODE_CHANGE -> "mode-change"
             AgentNotificationKind.USER_MESSAGE -> "user-message"
+            AgentNotificationKind.USER_INTERRUPT -> "user-interrupt"
         }
         appendLine("<$tag>")
         when (kind) {
@@ -110,6 +113,8 @@ object AgentNotificationFormatter {
             AgentNotificationKind.USER_MESSAGE -> {
                 message?.takeIf { it.isNotBlank() }?.let { appendLine("  <message>${escapeXml(it)}</message>") }
             }
+            // 用户打断是内部开关，正常不会注入给模型，这里只为穷尽。
+            AgentNotificationKind.USER_INTERRUPT -> {}
         }
         appendLine("  <status>${statusText()}</status>")
         appendLine("  <summary>${summaryText()}</summary>")
@@ -126,6 +131,7 @@ object AgentNotificationFormatter {
             AgentNotificationKind.AGENT_MESSAGE -> "agent_message"
             AgentNotificationKind.MODE_CHANGE -> "mode_change"
             AgentNotificationKind.USER_MESSAGE -> "user_message"
+            AgentNotificationKind.USER_INTERRUPT -> "user_interrupt"
         })
         put("notice", if (kind == AgentNotificationKind.USER_MESSAGE) USER_MESSAGE_NOTICE else NOTICE)
         when (kind) {
@@ -150,6 +156,7 @@ object AgentNotificationFormatter {
             AgentNotificationKind.USER_MESSAGE -> {
                 message?.takeIf { it.isNotBlank() }?.let { put("message", JsonPrimitive(it)) }
             }
+            AgentNotificationKind.USER_INTERRUPT -> {}
         }
         put("status", statusText())
         put("summary", summaryText())
@@ -183,6 +190,8 @@ object AgentNotificationFormatter {
             "用户已将模式切换为 ${newMode?.name ?: "UNKNOWN"}"
         AgentNotificationKind.USER_MESSAGE ->
             "用户在工作期间插入了一条消息"
+        AgentNotificationKind.USER_INTERRUPT ->
+            "用户按了停止，打断了本轮"
     }
 
     private fun PendingNotification.singleHint(): String = when (kind) {
@@ -204,6 +213,8 @@ object AgentNotificationFormatter {
             "请立即按新模式约束继续手头任务，无需回复本条通知。"
         AgentNotificationKind.USER_MESSAGE ->
             "这是用户本人的新输入，请据此调整当前任务。"
+        AgentNotificationKind.USER_INTERRUPT ->
+            "用户按了停止，本轮到此为止。"
     }
 
     private fun buildHint(items: List<PendingNotification>): String {

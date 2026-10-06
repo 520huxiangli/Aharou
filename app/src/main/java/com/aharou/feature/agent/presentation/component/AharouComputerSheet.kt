@@ -444,26 +444,15 @@ private const val PREVIEW_FRAME_MAX_H = 800
 private fun BrowserLivePreview(pool: BrowserTabPool?, running: Boolean) {
     var frame by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(pool, running) {
-        var pendingRecycle: Bitmap? = null
-        try {
-            // running 为 false 直接不进循环；composable 离开时本 effect 取消，同样停在 delay 上
-            while (running) {
-                val active = pool?.activeManager
-                if (active != null) {
-                    val shot = runCatching {
-                        active.captureLiveSnapshot(PREVIEW_FRAME_MAX_W, PREVIEW_FRAME_MAX_H)
-                    }.getOrNull()
-                    if (shot != null) {
-                        // 上一帧已被顶下去（delay 期间完成重组），此时回收不会碰到在绘制的那张
-                        pendingRecycle?.recycle()
-                        pendingRecycle = frame
-                        frame = shot
-                    }
-                }
-                delay(2500)
+        while (true) {
+            val active = pool?.activeManager
+            if (active != null) {
+                val shot = runCatching {
+                    active.captureLiveSnapshot(PREVIEW_FRAME_MAX_W, PREVIEW_FRAME_MAX_H)
+                }.getOrNull()
+                if (shot != null) frame = shot
             }
-        } finally {
-            pendingRecycle?.recycle()
+            delay(2500)
         }
     }
     val bmp = frame

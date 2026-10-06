@@ -6,7 +6,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** 待送通知的来源类型。 */
-enum class AgentNotificationKind { BACKGROUND_TASK, SUBAGENT, AGENT_MESSAGE, MODE_CHANGE, USER_MESSAGE }
+enum class AgentNotificationKind { BACKGROUND_TASK, SUBAGENT, AGENT_MESSAGE, MODE_CHANGE, USER_MESSAGE, USER_INTERRUPT }
 
 /**
  * 异步任务的结束方式。[STOPPED] 与 [FAILED] 必须区分：被用户手动终止不是执行出错，

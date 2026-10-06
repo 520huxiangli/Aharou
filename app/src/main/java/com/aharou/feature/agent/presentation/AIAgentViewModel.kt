@@ -2152,8 +2152,12 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 停止指定会话的 AI 任务（子代理停止/用户手动停止共用）。
-     * 取消 job 并把未完成的流式内容落库为「已停止」；队列下一条照常执行。
+     * 停止指定会话的 AI 任务（子代理停止 / 用户手动停止共用）。
+     *
+     * 走「软打断」：只投递一条 [AgentNotificationKind.USER_INTERRUPT]，agent 在当前这步做完后
+     * 就不再继续（不再调下一个工具、不再起新轮）。**不取消 job**——正在跑的命令与网络请求
+     * 留在后台跑完，这是用户要的语义：「任务放着继续做，你先停下来听我说」（2026-10-07 主人明确）。
+     * 界面立刻放开，不等收尾（旧写法 cancel + 等 join，命令一慢就永久卡住停止按钮）。
      */
     fun stopAgentSession(sessionId: String) {
         if (sessionId in stoppingSessions) return
@@ -2177,80 +2181,32 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
         }
-        val runningTools = _runningTools.value[sessionId]?.values?.toList() ?: emptyList()
-        val pendingPermission = toolPermissionManager.pendingForSession(sessionId)
-        val stoppedText = context.getString(R.string.agent_stopped_by_user)
-        val pendingNotifs = agentNotificationCenter.pendingCount(sessionId)
-        FileLogger.d(TAG, "stopAgent: sid=$sessionId runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id} pendingNotifs=$pendingNotifs state=${_agentStates.value[sessionId]}")
+        agentNotificationCenter.enqueue(
+            sessionId,
+            PendingNotification(
+                kind = AgentNotificationKind.USER_INTERRUPT,
+                sourceId = "user",
+                title = context.getString(R.string.agent_stopped_by_user),
+                outcome = NotificationOutcome.STOPPED
+            )
+        )
+        FileLogger.d(TAG, "stopAgent: 投递用户打断 sid=$sessionId state=${_agentStates.value[sessionId]}")
+        // stoppingSessions 只用于「停止期间不再起新轮」；清理由后台等 job 真正结束时做，不挡界面。
         val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
         stoppingSessions[sessionId] = stopped
-        job.cancel()
-        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
+        viewModelScope.launch {
             job.join()
-            if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
-            suspend fun needsStoppedResult(messageId: String): Boolean {
-                val message = agentMessageDao.getMessageById(messageId) ?: return true
-                return message.sessionId == sessionId && message.role == MessageRole.TOOL.name &&
-                    (message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
-                        message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER))
-            }
-            if (runningTools.isNotEmpty()) {
-                // 并行执行被中止：所有未完成的工具都落库为「已停止」
-                runningTools.forEach { running ->
-                    if (!needsStoppedResult(running.messageId)) {
-                        toolArgsByMsgId.remove(running.messageId)
-                        return@forEach
-                    }
-                    val partial = running.text.trimEnd()
-                    val content = if (partial.isNotEmpty()) "$partial\n\n$stoppedText" else stoppedText
-                    messagePersistenceUseCase.persist(
-                        sessionId = sessionId,
-                        role = MessageRole.TOOL,
-                        content = content,
-                        id = running.messageId,
-                        toolCallId = running.messageId.removePrefix("tool_"),
-                        toolName = running.toolName.ifBlank { null },
-                        toolArgs = running.toolArgs.ifBlank { toolArgsByMsgId[running.messageId] },
-                        isError = true
-                    )
-                    toolArgsByMsgId.remove(running.messageId)
-                }
-            }
-            // 授权弹窗挂起中的工具调用：awaitApproval 挂起期间 _runningTools 为空
-            // （ToolCallStarted 在授权通过后才发出），但 AssistantText 已落库了带
-            // tool_call 声明的 assistant 消息。不补结果会导致该 tool_call 成为
-            // 孤立记录，被 buildHistory 的 validIds 交集过滤掉，AI 不知道自己曾调用过。
-            if (pendingPermission != null && needsStoppedResult("tool_${pendingPermission.id}")) {
-                val msgId = "tool_${pendingPermission.id}"
-                messagePersistenceUseCase.persist(
-                    sessionId = sessionId,
-                    role = MessageRole.TOOL,
-                    content = stoppedText,
-                    id = msgId,
-                    toolCallId = pendingPermission.id,
-                    toolName = pendingPermission.toolName,
-                    isError = true
-                )
-            }
+            if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
+            stopped.complete(Unit)
             if (sessionJobs[sessionId]?.let { it !== job } != true) {
-                setStreamingText(sessionId, null)
-                setStreamingReasoning(sessionId, null)
-                setCompacting(sessionId, false)
-                setRetryState(sessionId, null)
-                setAgentState(sessionId, AgentUIState.Idle)
-            }
-            } finally {
-                if (stoppingSessions[sessionId] === stopped) {
-                    stoppingSessions.remove(sessionId)
-                    stopped.complete(Unit)
-                    if (sessionJobs[sessionId]?.let { it !== job } != true) {
-                        flushPendingNotifications(sessionId)
-                        processNextInQueue(sessionId)
-                    }
-                }
+                flushPendingNotifications(sessionId)
+                processNextInQueue(sessionId)
             }
         }
+        // 界面立刻放开：输入框马上能用，不用等后台那步收尾。
+        setCompacting(sessionId, false)
+        setRetryState(sessionId, null)
+        setAgentState(sessionId, AgentUIState.Idle)
     }
 
     // region 会话管理
