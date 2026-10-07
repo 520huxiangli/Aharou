@@ -4,6 +4,7 @@ import android.text.format.Formatter
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aharou.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -371,16 +372,34 @@ class FileBrowserViewModel(
     fun deleteItem(item: FileItem) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (item.isDirectory) {
-                    item.file.deleteRecursively()
-                } else {
-                    item.file.delete()
+                if (!forceDelete(item.file) && item.file.exists()) {
+                    appContext?.getString(R.string.file_browser_delete_failed)?.let { msg ->
+                        _uiState.value = _uiState.value.copy(errorMessage = msg)
+                    }
                 }
                 loadItems()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(errorMessage = e.message)
             }
         }
+    }
+
+    /**
+     * 递归删除，失败返回 false。
+     *
+     * 不用 `deleteRecursively()`：Android 的 `File.delete()` 会先看写权限，目录里只要混进一个
+     * 只读文件（编辑器保存、git、容器里生成的都是候选），整棵就删不掉，而它只回一个 false、
+     * 连是哪个文件都不说。这里逐层先清只读位再删。
+     */
+    private fun forceDelete(file: File): Boolean {
+        if (!file.exists()) return true
+        var ok = true
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { child -> if (!forceDelete(child)) ok = false }
+        }
+        file.setWritable(true)
+        if (!file.delete()) ok = false
+        return ok
     }
 
     fun dismissError() {
