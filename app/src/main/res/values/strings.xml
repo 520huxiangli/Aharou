@@ -796,6 +796,10 @@
     <string name="container_health_dns_ok">github.com 可解析</string>
     <string name="container_health_dns_fail">github.com 解析失败</string>
     <string name="container_health_dns_fail_detail">容器内 DNS 不通时拉取仓库与安装依赖都会失败，可尝试重启容器</string>
+    <string name="container_health_title_stale">容器残留进程</string>
+    <string name="container_health_stale_none">没有上次遗留的进程</string>
+    <string name="container_health_stale_found">上次遗留 %1$d 个进程，已结束 %2$d 个</string>
+    <string name="container_health_stale_detail">未结束的仍在运行：%1$s</string>
     <string name="container_health_title_network">容器出网</string>
     <string name="container_health_net_ok">api.github.com 可达（HTTP %1$s）</string>
     <string name="container_health_net_fail">api.github.com 不可达</string>

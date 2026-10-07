@@ -94,6 +94,7 @@ data class HealthReport(
 @Singleton
 class ContainerDoctor @Inject constructor(
     private val engine: LinuxContainerEngine,
+    private val runtimeProcessStore: RuntimeProcessStore,
     @ApplicationContext private val context: Context,
 ) {
     suspend fun check(): HealthReport = withContext(Dispatchers.IO) {
@@ -101,6 +102,7 @@ class ContainerDoctor @Inject constructor(
             items = listOf(
                 checkStoragePermission(),
                 checkBasicTools(),
+                checkStaleProcesses(),
                 checkDns(),
                 checkOutboundNetwork(),
             )
@@ -127,7 +129,50 @@ class ContainerDoctor @Inject constructor(
         )
     }
 
-    private suspend fun checkBasicTools(): HealthItem = runProbe(
+    /**
+     * 上次运行遗留下来的容器进程：发现即按强身份核验后结束，并如实报出数量。
+     *
+     * 这里敢自动结束，是因为判定条件足够窄——同一次开机、启动时钟对得上、状态活跃，
+     * 三条同时满足的只可能是本 App 自己起过的进程。
+     */
+    private suspend fun checkStaleProcesses(): HealthItem = withContext(Dispatchers.IO) {
+        val stale = runtimeProcessStore.stale()
+        if (stale.isEmpty()) {
+            return@withContext HealthItem(
+                id = ID_STALE,
+                status = HealthStatus.HEALTHY,
+                titleRes = R.string.container_health_title_stale,
+                summaryRes = R.string.container_health_stale_none,
+            )
+        }
+        val stopped = stale.count { runtimeProcessStore.terminate(it) }
+        HealthItem(
+            id = ID_STALE,
+            status = HealthStatus.WARNING,
+            titleRes = R.string.container_health_title_stale,
+            summaryRes = R.string.container_health_stale_found,
+            summaryArgs = listOf(stale.size, stopped),
+            detailRes = R.string.container_health_stale_detail,
+            detailArgs = listOf(stale.take(3).joinToString("、") { it.command.take(40) }),
+        )
+    }
+
+    private suspend fun checkBasicTools(): HealthItem {
+        // 快路径：原生能证明基础工具全在时直接给结论，省掉一次 PRoot 启动；
+        // 只要有一个判不了或判成缺失，就退回下面的容器探测复核。
+        if (BASIC_TOOLS.all { engine.probeContainerExecutable(it) == true }) {
+            return HealthItem(
+                id = ID_SANDBOX,
+                status = HealthStatus.HEALTHY,
+                titleRes = R.string.container_health_title_tools,
+                summaryRes = R.string.container_health_tools_ready,
+                summaryArgs = listOf(BASIC_TOOLS.size, TOOL_COUNT),
+            )
+        }
+        return probeBasicToolsInContainer()
+    }
+
+    private suspend fun probeBasicToolsInContainer(): HealthItem = runProbe(
         id = ID_SANDBOX,
         titleRes = R.string.container_health_title_tools,
         // 逐项报出存在与否：只数总数的话，用户看到「4/5」也不知道该补哪个。
@@ -191,6 +236,9 @@ class ContainerDoctor @Inject constructor(
     }
 
     private suspend fun detectPackageManager(): PackageManagerKind? {
+        // 快路径：原生说某个包管理器在就直接采信（两个都判不出来才走容器探测复核）
+        if (engine.probeContainerExecutable("apk") == true) return PackageManagerKind.APK
+        if (engine.probeContainerExecutable("apt-get") == true) return PackageManagerKind.APT
         val result = runCatching {
             engine.runCommandSyncIfReady(
                 "command -v apk >/dev/null 2>&1 && echo apk; " +
@@ -322,7 +370,11 @@ class ContainerDoctor @Inject constructor(
         const val ID_SANDBOX = "container_sandbox"
         const val ID_DNS = "container_dns"
         const val ID_NETWORK = "container_network"
+        const val ID_STALE = "container_stale_processes"
         const val TOOL_COUNT = 5
+
+        /** 体检要确认存在的基础工具，与容器探测命令里的清单保持一致。 */
+        val BASIC_TOOLS = listOf("sh", "git", "curl", "tar", "xz")
         const val PROBE_TIMEOUT_MS = 15_000L
 
         /** 装包要刷新索引再下载，宽松些；再久就该让用户看见失败而不是干等。 */

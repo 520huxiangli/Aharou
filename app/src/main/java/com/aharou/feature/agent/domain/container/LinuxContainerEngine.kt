@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.container
 import com.aharou.core.util.BoundedLineReader
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
+import com.aharou.core.util.ProcessIdentity
 import com.aharou.R
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -79,7 +80,8 @@ class LinuxContainerEngine @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val containerOsDetector: ContainerOsDetector,
     private val containerSettingsRepository: com.aharou.feature.settings.data.repository.ContainerSettingsRepository,
-    private val pathHomeResolver: com.aharou.feature.workspace.domain.PathHomeResolver
+    private val pathHomeResolver: com.aharou.feature.workspace.domain.PathHomeResolver,
+    private val runtimeProcessStore: RuntimeProcessStore
 ) : CommandEngine {
     /** 容器初始化的实时进度，供所有入口（终端页/AI/后台终端/MCP）共享同一份状态。 */
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -138,8 +140,34 @@ class LinuxContainerEngine @Inject constructor(
     /** 凭据请求结束途（bridge 写回 cred-resp 时调）。 */
     fun decPromptInFlight() { credentialPromptInFlight.decrementAndGet() }
 
+    /**
+     * 原生判断容器内某个命令是否可用：把容器 PATH 逐项映射回宿主文件（rootfs 目录 + aharou 绑定），
+     * 省掉「为一个探测跑一整趟 PRoot」。
+     *
+     * 返回 null 表示判断不了（容器未就绪），调用方必须回退到容器内探测。判「在」可直接采信；
+     * 判「不在」在没做过真机对照前不要当结论——那正是容易把已装工具报成缺失的方向。
+     */
+    fun probeContainerExecutable(name: String): Boolean? {
+        if (name.isBlank()) return null
+        val profile = currentProfile
+        if (!containerInstaller.isInstalledFor(profile)) return null
+        val rootfs = containerInstaller.rootfsDirFor(profile)
+        val aharouBin = java.io.File(containerInstaller.aharouDir, "bin")
+        return CONTAINER_PATH.split(':').any { dir ->
+            val base = if (dir == AHAROU_BIN_DIR) aharouBin else java.io.File(rootfs, dir.trimStart('/'))
+            val candidate = java.io.File(base, name)
+            candidate.isFile && candidate.canExecute()
+        }
+    }
+
     companion object {
         private const val TAG = "LinuxContainerEngine"
+
+        /** 容器内 PATH，与 [buildContainerEnv] 注入的那份保持同源（改这里一处即可）。 */
+        private const val CONTAINER_PATH = "/root/.aharou/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+        /** PATH 中来自 aharou 目录绑定的那一段，物理上不在 rootfs 下。 */
+        private const val AHAROU_BIN_DIR = "/root/.aharou/bin"
 
         /** 命令里的 URL 与 scp 形式（https://host、git@host:path），用于提前兑底域名解析。 */
         private val HOST_IN_COMMAND = Regex("""(?:https?://|git@)([A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,})""")
@@ -157,9 +185,6 @@ class LinuxContainerEngine @Inject constructor(
 
         /** 命令超时上限（毫秒）：再大的请求也会被钳到此值，防止事实上的“无限等待”。 */
         const val MAX_TIMEOUT_MS = 1_800_000L
-
-        /** 超时后给进程的优雅退出宽限（毫秒），过后强杀。 */
-        private const val TIMEOUT_KILL_GRACE_MS = 200L
 
         /**
          * 基础包配置版本。对应 assets/aharou/provision.sh 的版本：改脚本（包清单/安装逻辑/镜像源）时同步 +1，
@@ -234,12 +259,17 @@ class LinuxContainerEngine @Inject constructor(
     ): Flow<CommandEvent> = flow {
         val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
         FileLogger.d(TAG, "执行命令(流式) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
+        // 先记下当前已有的子进程，启动后取差集：这是不依赖 Process.pid() 的兜底定位手段
+        val childrenBefore = ProcessIdentity.childPids()
         val process = startContainerProcess(command, projectPath)
+        val identity = ProcessIdentity.capture(process)
+            ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
+        identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, command) }
         val timedOut = AtomicBoolean(false)
         // 看门狗跑在独立 scope（独立 Job）上：若放进包裹 emit 的 coroutineScope 里，emit 的
         // Job 与 flow 收集者不一致会触发「Flow invariant is violated」。这里仅用它在超时时杀进程。
         val watchScope = CoroutineScope(Dispatchers.IO + Job())
-        val watchdog = launchKillWatchdog(watchScope, process, effectiveTimeout, timedOut, command)
+        val watchdog = launchKillWatchdog(watchScope, process, identity, effectiveTimeout, timedOut, command)
         // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
         // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
         // 协程不响应取消、job 停在 cancelling 永不完成，钩子便永远不触发、进程也就杀不掉。
@@ -249,8 +279,7 @@ class LinuxContainerEngine @Inject constructor(
             } finally {
                 if (process.isAlive) {
                     FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                    runCatching { process.destroy() }
-                    runCatching { process.destroyForcibly() }
+                    terminateTree(process, identity, command)
                 }
             }
         }
@@ -296,7 +325,7 @@ class LinuxContainerEngine @Inject constructor(
             watchdog.cancel()
             watchScope.cancel()
             runCatching { reader.close() }
-            runCatching { process.destroy() }
+            terminateTree(process, identity, command)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -377,7 +406,11 @@ class LinuxContainerEngine @Inject constructor(
         try {
             val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
             FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
+            val childrenBefore = ProcessIdentity.childPids()
             val process = startContainerProcess(command, projectPath)
+            val identity = ProcessIdentity.capture(process)
+                ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
+            identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, command) }
             val timedOut = AtomicBoolean(false)
             // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
             // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
@@ -388,8 +421,7 @@ class LinuxContainerEngine @Inject constructor(
                 } finally {
                     if (process.isAlive) {
                         FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                        runCatching { process.destroy() }
-                        runCatching { process.destroyForcibly() }
+                        terminateTree(process, identity, command)
                     }
                 }
             }
@@ -402,7 +434,7 @@ class LinuxContainerEngine @Inject constructor(
             var exitCode: Int? = null
             try {
                 coroutineScope {
-                    val watchdog = launchKillWatchdog(this, process, effectiveTimeout, timedOut, command)
+                    val watchdog = launchKillWatchdog(this, process, identity, effectiveTimeout, timedOut, command)
                     val reader = BoundedLineReader(InputStreamReader(process.inputStream))
                     try {
                         while (true) {
@@ -418,7 +450,7 @@ class LinuxContainerEngine @Inject constructor(
                 }
             } finally {
                 processKiller.cancel()
-                runCatching { process.destroy() }
+                terminateTree(process, identity, command)
             }
 
             if (timedOut.get()) {
@@ -451,6 +483,7 @@ class LinuxContainerEngine @Inject constructor(
     private fun launchKillWatchdog(
         scope: CoroutineScope,
         process: Process,
+        identity: ProcessIdentity.Handle?,
         timeoutMs: Long,
         timedOut: AtomicBoolean,
         command: String
@@ -471,10 +504,37 @@ class LinuxContainerEngine @Inject constructor(
             // 不在途，或已达 30min 绝对上限：正常超时终止。
             timedOut.set(true)
             FileLogger.w(TAG, "命令执行超过 ${timeoutMs}ms（累计等待 ${totalWaited}ms，inflight=${inflight}），终止进程: ${sanitizeCommandForLog(command)}")
-            runCatching { process.destroy() }
-            delay(TIMEOUT_KILL_GRACE_MS)
-            if (process.isAlive) runCatching { process.destroyForcibly() }
+            terminateTree(process, identity, command)
             return@launch
+        }
+    }
+
+    /**
+     * 终止命令进程树，返回是否确认根进程已消失。
+     *
+     * 原先只对直接子进程 `destroy/destroyForcibly`：PRoot 忽略 SIGTERM，其 `--kill-on-exit`
+     * 靠 atexit 生效、又被 SIGKILL 绕过，于是只杀 proot 会把容器里的 shell 与任务留成孤儿。
+     * 改为按 [ProcessIdentity] 的代次核验收敛整棵树；拿不到 pid 时退化为原行为。
+     */
+    private fun terminateTree(process: Process, identity: ProcessIdentity.Handle?, command: String) {
+        FileLogger.i(
+            TAG,
+            "终止命令进程树 alive=${process.isAlive} pid=${identity?.pid} 命令=${sanitizeCommandForLog(command)}"
+        )
+        // 不拿 Process.isAlive 做早退：Java 层的判断可能与内核不一致（实测遇到过进程还在而
+        // 信号始终没发出去），一律交给 pid 代次核验决定
+        if (identity == null) {
+            FileLogger.w(TAG, "拿不到命令进程 pid，退化为直接 destroy: ${sanitizeCommandForLog(command)}")
+            if (process.isAlive) {
+                runCatching { process.destroy() }
+                runCatching { process.destroyForcibly() }
+            }
+            return
+        }
+        if (ProcessIdentity.terminateTree(identity)) {
+            runtimeProcessStore.clear(identity.pid)
+        } else {
+            FileLogger.w(TAG, "进程树未确认终止（身份不可用或未观察到退出）: ${sanitizeCommandForLog(command)}")
         }
     }
 
@@ -846,7 +906,7 @@ class LinuxContainerEngine @Inject constructor(
             // **刻意不设 PROOT_NO_SECCOMP**——这正是 Termux 自己用 proot 的方式；强制全量 ptrace
             // (PROOT_NO_SECCOMP=1) 反而在本设备触发过 ptrace(PEEKDATA) I/O error。
             // 前缀 /root/.aharou/bin：容器内环境工具（见 ContainerInstaller.extractEnvTool）。
-            "PATH" to "/root/.aharou/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH" to CONTAINER_PATH,
             "HOME" to "/root",
             // 宿主进程环境的 TMPDIR 指向 App 缓存目录（/data/user/0/<pkg>/cache），容器内 /data 未挂载、
             // 该路径不存在——mktemp/dpkg 等会因找不到临时目录失败，故显式覆盖为容器内 /tmp。

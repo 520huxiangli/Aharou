@@ -796,6 +796,10 @@
     <string name="container_health_dns_ok">github.com resolves</string>
     <string name="container_health_dns_fail">github.com failed to resolve</string>
     <string name="container_health_dns_fail_detail">With broken container DNS, cloning repositories and installing packages fail. Try restarting the container</string>
+    <string name="container_health_title_stale">Stale container processes</string>
+    <string name="container_health_stale_none">Nothing left over from a previous session</string>
+    <string name="container_health_stale_found">%1$d process(es) left from a previous session, %2$d stopped</string>
+    <string name="container_health_stale_detail">Still running: %1$s</string>
     <string name="container_health_title_network">Container network</string>
     <string name="container_health_net_ok">api.github.com reachable (HTTP %1$s)</string>
     <string name="container_health_net_fail">api.github.com unreachable</string>
