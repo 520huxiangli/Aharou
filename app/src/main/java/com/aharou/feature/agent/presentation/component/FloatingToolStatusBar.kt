@@ -196,6 +196,9 @@ internal fun FloatingToolStatusBar(
     }
 }
 
+/** 迷你终端缩略图正文的字符上限：按行截之外再兜一道，挡住「单行几万字符」的输出。 */
+private const val MINI_BODY_MAX_CHARS = 600
+
 /** 迷你终端小屏幕：`$ 命令` + 输出尾部（最多 12 行，实时滚动）。 */
 @Composable
 private fun ToolMiniScreenThumbnail(
@@ -218,7 +221,9 @@ private fun ToolMiniScreenThumbnail(
         } else {
             raw
         }
-        text.lines().takeLast(12).joinToString("\n")
+        // takeLast(12) 只按「行」截：工具输出常整条只有一行（压缩 JSON / 无换行长串），
+        // 那样取到的就是整段几万字符，缩略图的文本排版同样会被拖垮。这里再补一层字符上限。
+        text.lines().takeLast(12).joinToString("\n").takeLast(MINI_BODY_MAX_CHARS)
     }
 
     Box(

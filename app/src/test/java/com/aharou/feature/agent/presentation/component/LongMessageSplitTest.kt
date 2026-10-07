@@ -52,4 +52,17 @@ class LongMessageSplitTest {
         val slices = splitLongContent(hugeParagraph)
         assertTrue("超长段落应被切分为多个 chunks", slices.size > 1)
     }
+
+    @Test
+    fun `single long line without any break is hard-sliced by characters`() {
+        // 工具输出式的压缩 JSON：整条没有换行，按行切不动，必须按字符硬切。
+        val oneLine = "{\"status\":\"success\",\"data\":\"" + "x".repeat(8000) + "\"}"
+        assertEquals("前置条件：整条只有一行", 1, oneLine.lines().size)
+
+        val slices = splitLongContent(oneLine)
+
+        assertTrue("单行超长必须被切开", slices.size > 1)
+        assertTrue("每块长度都必须有界", slices.all { it.length <= 1300 })
+        assertEquals("内容不能丢", oneLine, slices.joinToString("").replace("\n", ""))
+    }
 }

@@ -732,7 +732,7 @@ internal fun ToolSection(label: String, content: String, live: Boolean = false) 
         ) {
             SelectionContainer {
                 Text(
-                    text = if (live) displayedContent else content,
+                    text = if (live) breakableText(displayedContent) else breakableText(content),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace

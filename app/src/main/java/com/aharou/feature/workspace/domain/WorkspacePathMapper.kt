@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -134,13 +135,27 @@ class WorkspacePathMapper @Inject constructor(
         if (allowed.none { resolved.isUnder(it) }) {
             throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
-        FileLogger.v(TAG, "toHostFile '$path' -> ${file.absolutePath}")
+        // 高频热路径（每次文件读写都经过）：降到 DEBUG，正式版默认不落盘；
+        // 曾经用 VERBOSE，日志级别开到 VERBOSE 时一天能刷满 5MB。
+        FileLogger.d(TAG, "toHostFile '$path' -> ${file.absolutePath}")
         return file
     }
 
+    /**
+     * 根目录规范化路径缓存。这几个「根」只在 profile / 工作区切换时变，而 [toHostFile] 每次调用
+     * 都要拿它们做越界校验——不缓存的话单次调用要跑 6 次 canonicalize（自身 1 次 + 5 个根各 1 次），
+     * 叠加在每次文件读写上都成了可观开销。
+     *
+     * key 用 [File.getPath]：根变了 key 就变，不会读到过期值；条目数随工作区/profile 数增长，规模有限。
+     */
+    private val baseCanonicalPaths = ConcurrentHashMap<String, String>()
+
+    private fun File.canonicalPathCached(): String =
+        baseCanonicalPaths.getOrPut(path) { runCatching { canonicalPath }.getOrElse { absolutePath } }
+
     /** [this] 的规范化路径是否位于 [base] 之内（两侧都规范化，避免符号链接导致的误判）。 */
     private fun File.isUnder(base: File): Boolean {
-        val basePath = runCatching { base.canonicalPath }.getOrElse { base.absolutePath }.trimEnd('/')
+        val basePath = base.canonicalPathCached().trimEnd('/')
         val selfPath = runCatching { canonicalPath }.getOrElse { absolutePath }
         return selfPath == basePath || selfPath.startsWith("$basePath/")
     }
