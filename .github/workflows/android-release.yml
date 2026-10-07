@@ -39,6 +39,17 @@ jobs:
           # 复用 Gradle 构建缓存，加速后续构建。
           cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
+      # Robolectric 的 android-all-instrumented 运行时（约 190MB）由它自己的 Maven 拉取器下载到
+      # ~/.m2/repository，不在 setup-gradle 的缓存范围内。发版包必须过单测，不缓存则每次发版
+      # 都要重下一遍，网络抖动会让 MigrationTest 在类初始化就挂、整个 Release 失败。
+      - name: Cache Robolectric runtime
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       # 打印当前 Tag，Tag 驱动直接生成 versionName。
       # 仅打 tag 触发时校验；workflow_dispatch（手动，无 tag）跳过。
       - name: Display release tag info

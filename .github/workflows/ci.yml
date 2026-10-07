@@ -55,6 +55,17 @@ jobs:
           # PR 用只读缓存，仅 master 的 push 写回缓存，避免被 PR 污染。
           cache-read-only: ${{ github.ref != 'refs/heads/master' }}
 
+      # Robolectric 的 android-all-instrumented 运行时（约 190MB）由它自己的 Maven 拉取器下载到
+      # ~/.m2/repository，不在 setup-gradle 的缓存范围内。不缓存则每次跑单测都要重下一遍，
+      # 网络抖动会让 MigrationTest 在类初始化就挂（MavenArtifactFetcher FileNotFoundException）。
+      - name: Cache Robolectric runtime
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
