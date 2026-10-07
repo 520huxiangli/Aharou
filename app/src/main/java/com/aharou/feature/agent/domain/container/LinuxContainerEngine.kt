@@ -11,6 +11,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -239,11 +240,18 @@ class LinuxContainerEngine @Inject constructor(
         // Job 与 flow 收集者不一致会触发「Flow invariant is violated」。这里仅用它在超时时杀进程。
         val watchScope = CoroutineScope(Dispatchers.IO + Job())
         val watchdog = launchKillWatchdog(watchScope, process, effectiveTimeout, timedOut, command)
-        val cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-            if (cause is CancellationException && process.isAlive) {
-                FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                runCatching { process.destroy() }
-                runCatching { process.destroyForcibly() }
+        // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
+        // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
+        // 协程不响应取消、job 停在 cancelling 永不完成，钩子便永远不触发、进程也就杀不掉。
+        val processKiller = CoroutineScope(currentCoroutineContext()).launch {
+            try {
+                awaitCancellation()
+            } finally {
+                if (process.isAlive) {
+                    FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
+                    runCatching { process.destroy() }
+                    runCatching { process.destroyForcibly() }
+                }
             }
         }
         val reader = BoundedLineReader(InputStreamReader(process.inputStream))
@@ -254,6 +262,7 @@ class LinuxContainerEngine @Inject constructor(
             }
             val exitCode = process.waitFor()
             watchdog.cancel()
+            processKiller.cancel()
             if (timedOut.get()) {
                 FileLogger.w(TAG, "命令超时(${effectiveTimeout}ms)已终止: ${sanitizeCommandForLog(command)}")
                 emit(CommandEvent.Line(timeoutNotice(effectiveTimeout)))
@@ -283,7 +292,7 @@ class LinuxContainerEngine @Inject constructor(
             }
         } finally {
             // 协程取消（用户离开页面等）时确保子进程被回收，避免泄漏
-            cancellationHook?.dispose()
+            processKiller.cancel()
             watchdog.cancel()
             watchScope.cancel()
             runCatching { reader.close() }
@@ -370,11 +379,18 @@ class LinuxContainerEngine @Inject constructor(
             FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
             val process = startContainerProcess(command, projectPath)
             val timedOut = AtomicBoolean(false)
-            val cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-                if (cause is CancellationException && process.isAlive) {
-                    FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                    runCatching { process.destroy() }
-                    runCatching { process.destroyForcibly() }
+            // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
+            // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
+            // 协程不响应取消、job 停在 cancelling 永不完成，钩子便永远不触发、进程也就杀不掉。
+            val processKiller = CoroutineScope(currentCoroutineContext()).launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (process.isAlive) {
+                        FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
+                        runCatching { process.destroy() }
+                        runCatching { process.destroyForcibly() }
+                    }
                 }
             }
 
@@ -401,7 +417,7 @@ class LinuxContainerEngine @Inject constructor(
                     }
                 }
             } finally {
-                cancellationHook?.dispose()
+                processKiller.cancel()
                 runCatching { process.destroy() }
             }
 

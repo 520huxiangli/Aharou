@@ -245,6 +245,14 @@ class AIAgentViewModel @Inject constructor(
     val agentStates: StateFlow<Map<String, AgentUIState>> = _agentStates.asStateFlow()
 
     /**
+     * 还有 agent 协程在跑的会话。与 [agentStates] 不同：软打断会把会话状态立刻打回 Idle（界面立刻
+     * 放开），但协程仍在后台跑完当前这一步，长按强打断的入口只能靠这个状态兜住，否则点过一次停止
+     * 之后就再也强打断不了。
+     */
+    private val _activeAgentSessions = MutableStateFlow<Set<String>>(emptySet())
+    val activeAgentSessions: StateFlow<Set<String>> = _activeAgentSessions.asStateFlow()
+
+    /**
      * 各会话「最后一轮是否正常完成」：只有正常收尾（收到完成标记）才在轮末回复下挂「复制 / 更多」
      * 按钮；主动暂停 / 出错 / 未开始都不挂，避免按钮挂在半截输出上。
      */
@@ -1948,10 +1956,12 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
             sessionJobs[sessionId] = currentJob
+            _activeAgentSessions.value = _activeAgentSessions.value + sessionId
             currentJob.invokeOnCompletion {
                 viewModelScope.launch {
                     if (sessionJobs[sessionId] !== currentJob) return@launch
                     sessionJobs.remove(sessionId)
+                    _activeAgentSessions.value = _activeAgentSessions.value - sessionId
                     if (sessionId !in stoppingSessions) {
                         flushPendingNotifications(sessionId)
                         processNextInQueue(sessionId)
@@ -2206,6 +2216,7 @@ class AIAgentViewModel @Inject constructor(
         val jobs = sessionJobs.values.filter { it.isActive }
         jobs.forEach { it.cancel() }
         sessionJobs.clear()
+        _activeAgentSessions.value = emptySet()
         agentNotificationCenter.clearAll()
         _queuedRequests.value = emptyMap()
         _runningCommandSessions.value = emptySet()
@@ -2278,11 +2289,12 @@ class AIAgentViewModel @Inject constructor(
      *
      * 不投 USER_INTERRUPT：那条通知是给主循环看的开关，协程一取消就没人消费它，残留到下一轮
      * 会在主循环顶部把新一轮也一并打断。
+     *
+     * 允许叠加在软打断之上：不因 [stoppingSessions] 已有占位就退出（否则点过一次停止的用户就再也
+     * 强打断不了）；协程已经不在了也补一次收尾，免得界面停在「执行中」而没东西能解开它。
      */
     fun forceStopAgentSession(sessionId: String) {
-        if (sessionId in stoppingSessions) return
-        val job = sessionJobs[sessionId] ?: return
-        if (!job.isActive) return
+        val job = sessionJobs[sessionId]
         releaseStoppedSubAgent(sessionId)
         // 取消前先取快照：协程被取消后 _runningTools 与待授权请求会随之清空，那时就取不到了。
         val runningTools = _runningTools.value[sessionId]?.values?.toList() ?: emptyList()
@@ -2290,13 +2302,16 @@ class AIAgentViewModel @Inject constructor(
         val stoppedText = context.getString(R.string.agent_stopped_by_user)
         FileLogger.d(
             TAG,
-            "forceStopAgent: sid=$sessionId runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id}"
+            "forceStopAgent: sid=$sessionId active=${job?.isActive == true} runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id}"
         )
+        // 软打断留下的占位先放行：可能有协程正挂在它上面等（排队的新消息），只替换引用会让那些
+        // 等待者永远醒不过来。放行后它们会重新读 map，挂到下面这份新占位上。
+        stoppingSessions.remove(sessionId)?.complete(Unit)
         val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
         stoppingSessions[sessionId] = stopped
-        job.cancel()
+        job?.cancel()
         viewModelScope.launch {
-            job.join()
+            job?.join()
             if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
             stopped.complete(Unit)
             if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
@@ -2640,6 +2655,7 @@ class AIAgentViewModel @Inject constructor(
             subAgentEventBus.release(sid)
             sessionJobs[sid]?.cancel()
             sessionJobs.remove(sid)
+            _activeAgentSessions.value = _activeAgentSessions.value - sid
             _agentStates.value = _agentStates.value - sid
             _streamingTexts.value = _streamingTexts.value - sid
             _streamingReasonings.value = _streamingReasonings.value - sid
@@ -2679,6 +2695,7 @@ class AIAgentViewModel @Inject constructor(
             subAgentEventBus.release(sid)
             sessionJobs[sid]?.cancel()
             sessionJobs.remove(sid)
+            _activeAgentSessions.value = _activeAgentSessions.value - sid
             _agentStates.value = _agentStates.value - sid
             _streamingTexts.value = _streamingTexts.value - sid
             _streamingReasonings.value = _streamingReasonings.value - sid
@@ -2757,6 +2774,7 @@ class AIAgentViewModel @Inject constructor(
             runningJob.cancelAndJoin()
         }
         sessionJobs.remove(sessionId)
+        _activeAgentSessions.value = _activeAgentSessions.value - sessionId
 
         // 2. 重置会话运行、流式与检查点状态
         setAgentState(sessionId, AgentUIState.Idle)
@@ -2942,6 +2960,7 @@ class AIAgentViewModel @Inject constructor(
         agentNotificationCenter.clear(sessionId)
         sessionJobs[sessionId]?.takeIf { it.isActive }?.cancelAndJoin()
         sessionJobs.remove(sessionId)
+        _activeAgentSessions.value = _activeAgentSessions.value - sessionId
         _runningTools.value = _runningTools.value - sessionId
         setStreamingText(sessionId, null)
         setStreamingReasoning(sessionId, null)

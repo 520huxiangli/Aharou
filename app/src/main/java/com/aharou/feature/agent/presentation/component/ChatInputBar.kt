@@ -152,6 +152,8 @@ internal fun ChatInputBar(
     /** 长按停止键：强制打断，取消协程并杀掉容器里在跑的命令（区别于 [onStop] 的软打断）。 */
     onForceStop: () -> Unit = {},
     isBusy: Boolean,
+    /** 该会话是否还有 agent 协程在跑：软打断后 [isBusy] 已回到 false，但任务仍在后台跑当前这一步。 */
+    canForceStop: Boolean = false,
     workspaceViewModel: WorkspaceViewModel?,
     onStopCurrentSessions: () -> Unit = {},
     activeProvider: AIProviderConfig?,
@@ -613,7 +615,7 @@ internal fun ChatInputBar(
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )
-                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop, onForceStop = onForceStop)
+                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, canForceStop = canForceStop, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop, onForceStop = onForceStop)
                 }
             }
         }
@@ -772,6 +774,7 @@ internal fun SendButton(
     canSend: Boolean,
     hasContent: Boolean,
     isBusy: Boolean,
+    canForceStop: Boolean,
     tokenProgress: Float,
     tokenEstimated: Boolean,
     onSend: () -> Unit,
@@ -781,7 +784,9 @@ internal fun SendButton(
     val haptic = LocalHapticFeedback.current
     // AI 工作中：输入框为空显示停止按钮；有内容显示橙色发送（消息排队发送）；空闲时按常规发送按钮
     val showStop = isBusy && !hasContent
-    val clickable = showStop || canSend
+    // 强打断入口：AI 正在跑，或软打断之后协程仍在后台跑当前这一步。
+    val forceStopEnabled = isBusy || canForceStop
+    val clickable = showStop || canSend || forceStopEnabled
     val buttonColor = when {
         showStop -> MaterialTheme.colorScheme.error
         isBusy -> Brand.Orange
@@ -834,9 +839,14 @@ internal fun SendButton(
                 .background(buttonColor)
                 .combinedClickable(
                     enabled = clickable,
-                    onClick = if (showStop) onStop else onSend,
+                    // 软打断后没有内容时按钮是“禁用”外观，点击不该发空消息。
+                    onClick = when {
+                        showStop -> onStop
+                        canSend -> onSend
+                        else -> ({})
+                    },
                     // AI 工作中长按一律强制打断：有草稿时按钮显示的是发送，但长按本就不是发送手势。
-                    onLongClick = if (isBusy) {
+                    onLongClick = if (forceStopEnabled) {
                         {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onForceStop()

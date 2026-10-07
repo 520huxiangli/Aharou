@@ -518,6 +518,8 @@ fun AIChatPanel(
     val pendingScroll by viewModel.pendingScrollMessage.collectAsStateWithLifecycle()
 
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
+    // 软打断后 agentState 立即回到 Idle，但协程仍在后台跑当前这一步；长按强打断的入口要靠它保底。
+    val activeAgentSessions by viewModel.activeAgentSessions.collectAsStateWithLifecycle()
     // 工具卡片入场调度：只排本次浏览期间新追加到尾部的 TOOL 消息，逐个错开淡入。
     // 换会话时调度器重建，新会话的存量消息不入场。
     val entryScheduler = remember(currentSessionId) { MessageEntryScheduler() }
@@ -1711,6 +1713,7 @@ fun AIChatPanel(
                 onStop = { viewModel.stopAgent() },
                 onForceStop = { viewModel.forceStopAgent() },
                 isBusy = isBusy,
+                canForceStop = currentSessionId?.let { it in activeAgentSessions } == true,
                 workspaceViewModel = workspaceViewModel,
                 onStopCurrentSessions = { viewModel.stopAllAgents() },
                 onOpenDashboardUrl = { url ->
