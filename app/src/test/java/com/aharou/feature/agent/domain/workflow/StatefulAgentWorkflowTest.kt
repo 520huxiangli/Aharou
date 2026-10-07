@@ -30,6 +30,7 @@ import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderType
+import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -63,6 +64,7 @@ class StatefulAgentWorkflowTest {
     private val compactionSettings = mockk<CompactionModelSettingsRepository>()
     private val outputStore = mockk<ToolOutputStore>()
     private val provider = mockk<AIProvider>(relaxed = true)
+    private val notifications = mockk<AgentNotificationCenter>()
     private val config = AIProviderConfig("provider", "Provider", ProviderType.OPENAI, "test-key",
         baseUrl = "https://example.invalid", defaultModel = "model", models = listOf("model"))
     private val context = AgentContext(null, null, "/workspace", null, sessionId = "session")
@@ -94,7 +96,7 @@ class StatefulAgentWorkflowTest {
         checkpointManager = mockk(),
         llmCallRecordDao = mockk<LlmCallRecordDao>(relaxed = true),
         keyRotator = mockk(),
-        agentNotificationCenter = mockk(),
+        agentNotificationCenter = notifications,
         eventInjector = mockk(),
         memoryCurator = mockk(),
         fileAccess = mockk(),
@@ -116,6 +118,8 @@ class StatefulAgentWorkflowTest {
             CompactionResult(firstArg(), false)
         }
         coEvery { workflow["persistModelImages"](listOf(image)) } returns (listOf(image.copy(path = "/image.png")) to listOf(attachment))
+        // 软打断每收一个流块都会查一次通知中心；严格 mock 不给 stub 会直接抛 MockKException。
+        every { notifications.peek(any()) } returns emptyList()
     }
 
     private fun verifySaved(snapshotId: String? = null) {
