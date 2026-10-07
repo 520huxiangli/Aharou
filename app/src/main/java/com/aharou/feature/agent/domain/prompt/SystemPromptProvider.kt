@@ -28,6 +28,8 @@ import javax.inject.Singleton
  * `prompts.custom/` 存在 [PromptFragmentResolver.DISABLE_BUILTIN_FILE] 时，主代理提示词只由自定义数字片段组成，
  * 不再注入任何内置来源；此时用 `{{AICODE_*}}` 变量按需取回动态内容。
  */
+private data class ProjectRuleSnapshot(val signature: String, val content: String?)
+
 @Singleton
 class SystemPromptProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -162,38 +164,49 @@ class SystemPromptProvider @Inject constructor(
     }
 
     private inner class ProjectRuleSource : PromptSource {
-        @Volatile private var cached: String? = null
-        private var lastModified: Long = 0
-        private var lastProjectRoot: String = ""
+        // 签名 + 内容必须原子可见（本方法会被主线程与 IO 线程并发进入），收进单个 volatile 快照：命中只读一次、无需加锁，文件 IO 只在未命中时发生。
+        // 签名必须把全局与工作区两处文件的路径 + mtime 都算进去：只盯工作区会让改了 ~/.aharou 那份不生效。
+        @Volatile private var snapshot: ProjectRuleSnapshot? = null
 
         override fun build(ctx: AgentContext): String? {
-            if (ctx.projectRoot.isBlank()) return null
-            val agentsFile = File(ctx.projectRoot, AGENTS_FILE)
-            val claudeFile = File(ctx.projectRoot, CLAUDE_FILE)
-            val file = when {
-                agentsFile.isFile && agentsFile.canRead() -> agentsFile to AGENTS_FILE
-                claudeFile.isFile && claudeFile.canRead() -> claudeFile to CLAUDE_FILE
-                else -> return null
+            val global = resolveRuleFile(containerInstaller.aharouDir)
+            val project = ctx.projectRoot.takeIf { it.isNotBlank() }?.let { resolveRuleFile(File(it)) }
+            if (global == null && project == null) return null
+
+            val signature = buildString {
+                append(global?.first?.absolutePath).append(':').append(global?.first?.lastModified() ?: 0)
+                append('|')
+                append(project?.first?.absolutePath).append(':').append(project?.first?.lastModified() ?: 0)
             }
-            
-            val currentMod = file.first.lastModified()
-            // 如果文件未修改且路径一致，直接返回快照基线，避免重复读取与格式化
-            if (ctx.projectRoot == lastProjectRoot && currentMod == lastModified && cached != null) {
-                return cached
-            }
-            
+            snapshot?.takeIf { it.signature == signature }?.let { return it.content }
+
+            // 全局在前、工作区在后：工作区更具体，放后面供模型就近覆盖。
+            val content = listOfNotNull(
+                global?.let { renderRule("~/.aharou", it) },
+                project?.let { renderRule("~/workspace", it) }
+            ).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
+            snapshot = ProjectRuleSnapshot(signature, content)
+            return content
+        }
+
+        /** 目录内 `AGENTS.md` 优先、否则回退 `CLAUDE.md`；全局与工作区各自独立判断，互不影响。 */
+        private fun resolveRuleFile(dir: File): Pair<File, String>? {
+            val agents = File(dir, AGENTS_FILE)
+            if (agents.isFile && agents.canRead()) return agents to AGENTS_FILE
+            val claude = File(dir, CLAUDE_FILE)
+            if (claude.isFile && claude.canRead()) return claude to CLAUDE_FILE
+            return null
+        }
+
+        private fun renderRule(dirLabel: String, file: Pair<File, String>): String? {
             val text = try { file.first.readText() } catch (e: Exception) { return null }
             if (text.isBlank()) return null
-            
             val body = if (text.length > MAX_AGENTS_CHARS) {
                 text.take(MAX_AGENTS_CHARS) + "\n…（${file.second} 过长，已截断）"
             } else {
                 text
             }
-            cached = "项目规则 (来自 ~/workspace/${file.second}，务必遵守):\n${body.trim()}"
-            lastModified = currentMod
-            lastProjectRoot = ctx.projectRoot
-            return cached
+            return "项目规则 (来自 $dirLabel/${file.second}，务必遵守):\n${body.trim()}"
         }
     }
 

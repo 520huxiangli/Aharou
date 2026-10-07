@@ -137,7 +137,16 @@ private val SENSITIVE_COMMAND_VALUE_REGEX = Regex(
     """(?i)(?<![A-Za-z0-9])(api[_-]?key|access[_-]?token|auth[_-]?token|token|password|passwd|secret|authorization|auth[_-]?cookie|cookie)\b\s*([=:])\s*(['"]?)(?:Bearer\s+|Basic\s+)?[^\s'"]+"""
 )
 
-fun sanitizeCommandForLog(command: String): String =
-    SENSITIVE_COMMAND_VALUE_REGEX.replace(command) { m ->
+/** 日志里命令串的长度上限。超长命令（如面板脚本注入的长 env 前缀）保留首尾，中段以省略号代替。 */
+private const val MAX_LOGGED_COMMAND_CHARS = 400
+
+fun sanitizeCommandForLog(command: String): String {
+    val sanitized = SENSITIVE_COMMAND_VALUE_REGEX.replace(command) { m ->
         m.groupValues[1] + m.groupValues[2] + m.groupValues[3] + "***"
     }
+    if (sanitized.length <= MAX_LOGGED_COMMAND_CHARS) return sanitized
+    val half = MAX_LOGGED_COMMAND_CHARS / 2
+    return sanitized.take(half) +
+        "…<省略 ${sanitized.length - 2 * half} 字符>…" +
+        sanitized.takeLast(half)
+}

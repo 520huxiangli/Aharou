@@ -4,6 +4,7 @@ import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.WatchFilter
+import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.SshHostKeyStore
 import com.aharou.feature.agent.domain.container.SshHostKeyVerifier
 import com.aharou.feature.agent.domain.container.SshLoginKeyStore
@@ -19,6 +20,7 @@ import com.aharou.feature.workspace.domain.model.RemoteProtocol
 import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.workspace.domain.remote.SyncEngine
+import com.aharou.feature.workspace.domain.remote.SyncIndexStore
 import com.aharou.feature.workspace.domain.remote.ftp.FtpSyncClient
 import com.aharou.feature.workspace.domain.remote.sftp.SftpSyncClient
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -49,8 +52,12 @@ class RemoteRepository @Inject constructor(
     private val hostKeyVerifier: SshHostKeyVerifier,
     private val privateKeyStore: SshPrivateKeyStore,
     private val loginKeyStore: SshLoginKeyStore,
-    private val fileChangeHub: FileChangeHub
+    private val fileChangeHub: FileChangeHub,
+    private val containerInstaller: ContainerInstaller
 ) {
+    /** 每个挂载的同步指纹索引，用于跳过未变文件；落在 app 私有的 `aharou/sync-index/` 下。 */
+    private val syncIndexStore = SyncIndexStore(File(containerInstaller.aharouDir, "sync-index"))
+
     private val activeEngines = ConcurrentHashMap<String, SyncEngine>()
     private val activeEngineIds = MutableStateFlow<Set<String>>(emptySet())
 
@@ -118,7 +125,7 @@ class RemoteRepository @Inject constructor(
 
     fun getConnections(): Flow<List<RemoteConnection>> = dao.getAllConnections().map { list ->
         list.map { it.toDomainModel() }
-    }
+    }.flowOn(Dispatchers.IO)
     
     fun getMounts(): Flow<List<RemoteMount>> = combine(
         dao.getAllMounts(),
@@ -132,9 +139,9 @@ class RemoteRepository @Inject constructor(
                 connectionState = states[mountEntity.id]
             )
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
-    suspend fun addConnection(conn: RemoteConnection, auth: RemoteAuth) {
+    suspend fun addConnection(conn: RemoteConnection, auth: RemoteAuth) = withContext(Dispatchers.IO) {
         val authType = if (auth is RemoteAuth.Password) "password" else "key"
         val authData = if (auth is RemoteAuth.Password) auth.password else (auth as RemoteAuth.PrivateKey).privateKeyPath
         val passphrase = if (auth is RemoteAuth.PrivateKey) auth.passphrase else null
@@ -186,6 +193,7 @@ class RemoteRepository @Inject constructor(
     }
     
     suspend fun updateMount(mount: RemoteMount) {
+        val old = dao.getMountById(mount.id)
         dao.updateMount(RemoteMountEntity(
             id = mount.id,
             connectionId = mount.connectionId,
@@ -193,6 +201,15 @@ class RemoteRepository @Inject constructor(
             localMountPath = mount.localMountPath,
             autoConnect = mount.autoConnect
         ))
+        // 只有远端身份（连接或远程路径）变了才清索引：此时旧指纹不再代表当前远端内容；
+        // 只改自动连接等不该退化为全量重传。索引 key 是相对路径，改本地挂载点无需清。
+        val remoteIdentityChanged = old == null ||
+            old.connectionId != mount.connectionId ||
+            old.remotePath != mount.remotePath
+        if (remoteIdentityChanged) {
+            syncIndexStore.clear(mount.id)
+            activeEngines[mount.id]?.clearSyncIndex()
+        }
     }
     
     suspend fun deleteMount(mountId: String) {
@@ -233,7 +250,8 @@ class RemoteRepository @Inject constructor(
                 auth = auth,
                 ignoredPatternsStr = syncSettings.ignoredPatterns.value,
                 useGitIgnore = syncSettings.useGitIgnore.value,
-                maxSyncBatchSize = syncSettings.maxSyncBatchSize.value
+                maxSyncBatchSize = syncSettings.maxSyncBatchSize.value,
+                indexStore = syncIndexStore
             )
             // 移除默认的全量下载以免覆盖本地修改，交由用户手动点击同步
 
@@ -310,6 +328,23 @@ class RemoteRepository @Inject constructor(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /** 强制全量上传：忽略本地索引，把全部文件重传一遍（远端被外部清空等恢复场景）。 */
+    suspend fun forceUploadMountFull(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val engine = activeEngines[mountId] ?: return@withContext Result.failure(Exception("请先连接该挂载点"))
+            engine.uploadWorkspace(force = true)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** 清除某挂载的同步指纹索引；下次上传将视为全部未同步（全量）。 */
+    suspend fun clearSyncIndex(mountId: String) = withContext(Dispatchers.IO) {
+        activeEngines[mountId]?.clearSyncIndex()
+        syncIndexStore.clear(mountId)
     }
 
     suspend fun forceDownloadMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {

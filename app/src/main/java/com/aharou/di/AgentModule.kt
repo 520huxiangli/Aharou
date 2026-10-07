@@ -191,27 +191,35 @@ object AgentModule {
                     private val host = call.request().url.host
                     private var callStartNanos = 0L
                     private var connectStartNanos = 0L
+                    private var connectMs: Long? = null
                     private var connectionId = "none"
                     private var protocol = "unknown"
 
-                    private fun logStage(stage: String, details: String = "") {
+                    /** 最近进入的钩子名；失败时与同一条日志落盘，才能看出卡在哪一阶段。 */
+                    private var lastStage = "created"
+
+                    /** 每次请求只在结束/失败时落一条；中间阶段仅记录状态，不落盘。 */
+                    private fun logResult(stage: String, details: String = "") {
                         val totalMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - callStartNanos)
                         FileLogger.i(
                             "OkHttp",
                             "call=$callId host=$host connection=$connectionId protocol=$protocol " +
-                                "stage=$stage totalMs=$totalMs$details"
+                                "stage=$stage lastStage=$lastStage totalMs=$totalMs" +
+                                (connectMs?.let { " connectMs=$it" } ?: "") + details
                         )
                     }
 
                     override fun callStart(call: Call) {
                         callStartNanos = System.nanoTime()
-                        logStage("callStart")
+                        lastStage = "callStart"
                     }
 
                     override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
                         connectStartNanos = System.nanoTime()
+                        connectMs = null
                         connectionId = "none"
                         protocol = "unknown"
+                        lastStage = "connectStart"
                     }
 
                     override fun connectEnd(
@@ -221,8 +229,8 @@ object AgentModule {
                         protocol: Protocol?
                     ) {
                         this.protocol = protocol?.toString() ?: "unknown"
-                        val connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
-                        logStage("connectEnd", " connectMs=$connectMs")
+                        connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
+                        lastStage = "connectEnd"
                     }
 
                     override fun connectFailed(
@@ -233,30 +241,30 @@ object AgentModule {
                         ioe: IOException
                     ) {
                         this.protocol = protocol?.toString() ?: "unknown"
-                        val connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
-                        logStage("connectFailed", " connectMs=$connectMs exception=${ioe.javaClass.name}")
+                        connectMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - connectStartNanos)
+                        lastStage = "connectFailed"
                     }
 
                     override fun connectionAcquired(call: Call, connection: Connection) {
                         connectionId = Integer.toHexString(System.identityHashCode(connection))
                         protocol = connection.protocol().toString()
-                        logStage("connectionAcquired")
+                        lastStage = "connectionAcquired"
                     }
 
                     override fun requestHeadersEnd(call: Call, request: Request) {
-                        logStage("requestHeadersEnd")
+                        lastStage = "requestHeadersEnd"
                     }
 
                     override fun responseHeadersEnd(call: Call, response: Response) {
-                        logStage("responseHeadersEnd")
+                        lastStage = "responseHeadersEnd"
                     }
 
                     override fun callFailed(call: Call, ioe: IOException) {
-                        logStage("callFailed", " exception=${ioe.javaClass.name}")
+                        logResult("callFailed", " exception=${ioe.javaClass.name}")
                     }
 
                     override fun callEnd(call: Call) {
-                        logStage("callEnd")
+                        logResult("callEnd")
                     }
                 }
             })

@@ -582,7 +582,6 @@ fun AIChatPanel(
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
     val slashCommands by viewModel.slashCommands.collectAsStateWithLifecycle()
 
-    var inputText by remember { mutableStateOf("") }
     // 语音输入：按住说话 → 离线识别 → 追加到输入框
     val voiceViewModel: VoiceInputViewModel = hiltViewModel()
     val voiceState by voiceViewModel.state.collectAsStateWithLifecycle()
@@ -597,10 +596,8 @@ fun AIChatPanel(
         if (!text.isNullOrBlank()) readAloudViewModel.feedStream(text)
         else readAloudViewModel.finishStream()
     }
-    val inputDraft by viewModel.inputDraft.collectAsStateWithLifecycle()
-    LaunchedEffect(inputDraft) {
-        if (inputText != inputDraft) inputText = inputDraft
-    }
+    // 输入草稿只认 ViewModel 这一份：本地 remember 活不过切页，双份必然对不上。
+    val inputText by viewModel.inputDraft.collectAsStateWithLifecycle()
     // 输入 "/" 打开命令菜单时重扫技能，反映磁盘上技能的增删改。
     LaunchedEffect(inputText) {
         if (inputText == "/") viewModel.refreshSlashCommands()
@@ -1219,9 +1216,11 @@ fun AIChatPanel(
         }.collect { calibrateToAnchor() }
     }
 
-    val sendMessage: () -> Unit = {
+    // 要发送的文本显式传入：语音回调里先写草稿再发，而草稿经 StateFlow 回灌到组合要等下一帧，
+    // 此处再读 inputText 会拿到写之前的旧值，把刚识别出的语音弄丢。
+    val sendMessage: (String) -> Unit = { rawText ->
         // 粘贴标记在这里还原成原文：模型与落库历史看到的都是完整内容，输入框只显示标记。
-        val text = viewModel.expandPastes(inputText).trim()
+        val text = viewModel.expandPastes(rawText).trim()
         if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
             val attachments = pendingAttachments
             val modelSupportsVision = activeModelMetadata?.supportsVision == true
@@ -1239,7 +1238,6 @@ fun AIChatPanel(
                 inputImages = images,
                 inputAttachments = attachments.toAgentAttachments()
             )
-            inputText = ""
             viewModel.clearInputDraft()
             viewModel.setPendingAttachments(emptyList())
             followBottom = true
@@ -1627,7 +1625,9 @@ fun AIChatPanel(
             val questionForPanel = rememberLastNonNull(pendingQuestion)
             AnimatedVisibility(
                 visible = pendingQuestion != null,
-                modifier = Modifier.graphicsLayer { alpha = floatingPanelAlpha },
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .graphicsLayer { alpha = floatingPanelAlpha },
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically()
             ) {
@@ -1707,8 +1707,8 @@ fun AIChatPanel(
 
             ChatInputBar(
                 value = inputText,
-                onValueChange = { inputText = it; viewModel.updateInputDraft(it) },
-                onSend = sendMessage,
+                onValueChange = viewModel::updateInputDraft,
+                onSend = { text -> sendMessage(text) },
                 enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,
                 onStop = { viewModel.stopAgent() },
                 onForceStop = { viewModel.forceStopAgent() },
@@ -1752,9 +1752,8 @@ fun AIChatPanel(
                         // 语音输入按「说完即发」处理：结果拼进当前草稿后直接走正常发送流程。
                         // 输入框里已有的文字（先打字再补一句语音）会一并带出去。
                         val merged = if (inputText.isBlank()) text else "$inputText $text"
-                        inputText = merged
                         viewModel.updateInputDraft(merged)
-                        sendMessage()
+                        sendMessage(merged)
                     }
                 },
                 onVoiceStop = { voiceViewModel.stop() },
@@ -1891,7 +1890,7 @@ fun AIChatPanel(
                     promptSnippet = targetMsg?.content ?: "",
                     onOptionSelected = { option ->
                         viewModel.executeRewindOption(targetId, option) { text, attachments ->
-                            inputText = text
+                            viewModel.updateInputDraft(text)
                             viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
                         }
                     },

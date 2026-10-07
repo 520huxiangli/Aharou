@@ -104,6 +104,8 @@ class BackupManagerImpl @Inject constructor(
         prettyPrint = false
     }
 
+    private val importStaging = BackupImportStaging(context.cacheDir)
+
     private fun currentSchemaVersion(): Int = AgentDatabase.SCHEMA_VERSION
 
     private fun appVersionName(): String = runCatching {
@@ -112,22 +114,29 @@ class BackupManagerImpl @Inject constructor(
 
     override suspend fun export(password: CharArray?, options: BackupOptions, output: OutputStream) {
         withContext(Dispatchers.IO) {
+            val pw = password?.takeIf { it.isNotEmpty() }
+            if (pw == null) {
+                // 明文备份直连调用方输出流，省掉一次「落临时文件再拷回」的往返。
+                writeTarGz(output, options)
+                return@withContext
+            }
             val temp = createTempFile()
             try {
-                writeTarGz(temp, options)
-                val pw = password?.takeIf { it.isNotEmpty() }
-                FileInputStream(temp).use { input ->
-                    if (pw != null) {
-                        BackupCrypto.encryptStream(input, output, pw)
-                    } else {
-                        input.copyTo(output)
-                    }
+                FileOutputStream(temp).buffered().use { writeTarGz(it, options) }
+                FileInputStream(temp).buffered().use { input ->
+                    BackupCrypto.encryptStream(input, output, pw)
                 }
             } finally {
                 temp.delete()
             }
         }
     }
+
+    override suspend fun prepareImport(input: InputStream, password: CharArray?): File =
+        withContext(Dispatchers.IO) { importStaging.prepare(input, password) }
+
+    override suspend fun cleanupStaleStagingFiles() =
+        withContext(Dispatchers.IO) { importStaging.cleanupStale() }
 
     override suspend fun exportSession(sessionId: String, output: OutputStream) {
         withContext(Dispatchers.IO) {
@@ -182,7 +191,8 @@ class BackupManagerImpl @Inject constructor(
         input: InputStream,
         password: CharArray?,
         selectedWorkspaces: Set<String>?,
-        providerConflict: ProviderConflictStrategy
+        providerConflict: ProviderConflictStrategy,
+        sourceAlreadyDecrypted: Boolean
     ): Result<RestoreStats> {
         val pw = password?.takeIf { it.isNotEmpty() }
         return withContext(Dispatchers.IO) {
@@ -194,11 +204,11 @@ class BackupManagerImpl @Inject constructor(
             }
             .onSuccess { FileLogger.i(TAG, "导入备份完成：$it") }
             .onFailure { FileLogger.e(TAG, "导入备份失败", it) }
-            .recoverCatching { e -> mapImportError(e, pw) }
+            .recoverCatching { e -> mapImportError(e, pw, sourceAlreadyDecrypted) }
         }
     }
 
-    override suspend fun previewImport(input: InputStream, password: CharArray?): Result<ImportPreview> {
+    override suspend fun previewImport(input: InputStream, password: CharArray?, sourceAlreadyDecrypted: Boolean): Result<ImportPreview> {
         val pw = password?.takeIf { it.isNotEmpty() }
         return withContext(Dispatchers.IO) {
             FileLogger.i(TAG, "导入预览开始（${if (pw != null) "加密" else "明文"}）")
@@ -229,20 +239,21 @@ class BackupManagerImpl @Inject constructor(
             }
             .onSuccess { FileLogger.i(TAG, "导入预览完成：${it.workspaces.size} 个工作区，${it.providerConflicts.size} 个供应商冲突") }
             .onFailure { FileLogger.e(TAG, "导入预览失败", it) }
-            .recoverCatching { e -> mapImportError(e, pw) }
+            .recoverCatching { e -> mapImportError(e, pw, sourceAlreadyDecrypted) }
         }
     }
 
     /** 把导入异常映射为用户可读的 IllegalArgumentException（解密异常原样抛出）。 */
-    private fun mapImportError(e: Throwable, pw: CharArray?): Nothing {
+    private fun mapImportError(e: Throwable, pw: CharArray?, sourceAlreadyDecrypted: Boolean): Nothing {
         when (e) {
             is BackupDecryptionException -> throw e
             is IllegalStateException -> throw e
             else -> throw IllegalArgumentException(
-                if (pw != null) {
-                    "备份文件已损坏，或口令与备份文件不匹配"
-                } else {
-                    "不是有效的 Aharou 备份文件；如果这是加密备份，请输入导出口令"
+                when {
+                    // 来源是已解密的加密备份：口令已用过且解密成功，解析失败只可能是内容损坏，不能提示重输口令。
+                    sourceAlreadyDecrypted -> context.getString(R.string.backup_content_corrupted)
+                    pw != null -> "备份文件已损坏，或口令与备份文件不匹配"
+                    else -> "不是有效的 Aharou 备份文件；如果这是加密备份，请输入导出口令"
                 },
                 e
             )
@@ -261,9 +272,9 @@ class BackupManagerImpl @Inject constructor(
         val temp = createTempFile()
         try {
             BufferedInputStream(input).use { src ->
-                FileOutputStream(temp).use { dst -> BackupCrypto.decryptStream(src, dst, pw) }
+                FileOutputStream(temp).buffered().use { dst -> BackupCrypto.decryptStream(src, dst, pw) }
             }
-            val p = FileInputStream(temp)
+            val p = FileInputStream(temp).buffered()
             val gz = GzipCompressorInputStream(p)
             return TarSource(TarArchiveInputStream(gz), temp)
         } catch (e: Throwable) {
@@ -274,8 +285,8 @@ class BackupManagerImpl @Inject constructor(
 
     // ── 导出辅助 ──────────────────────────────────────────────
 
-    private suspend fun writeTarGz(file: File, options: BackupOptions) {
-        FileOutputStream(file).use { fos ->
+    private suspend fun writeTarGz(output: OutputStream, options: BackupOptions) {
+        output.bufferedNonClosing().use { fos ->
             GzipCompressorOutputStream(fos).use { gz ->
                 TarArchiveOutputStream(gz).use { tar ->
                     tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU)
@@ -357,7 +368,8 @@ class BackupManagerImpl @Inject constructor(
         compactionProviderId = if (options.appSettings) compactionModelSettingsRepository.getCompactionProviderId() else "",
         compactionModel = if (options.appSettings) compactionModelSettingsRepository.getCompactionModel() else "",
         syncSettings = if (options.appSettings) syncSettingsRepository.snapshot() else null,
-        workspaces = if (options.workspaceFiles) collectWorkspaceMetas() else emptyList()
+        workspaces = if (options.workspaceFiles) collectWorkspaceMetas() else emptyList(),
+        includesAppSettings = options.appSettings
     )
 
     private fun writeMetadataEntry(tar: TarArchiveOutputStream, metadata: BackupMetadata) {
@@ -573,8 +585,11 @@ class BackupManagerImpl @Inject constructor(
         while (true) {
             val n = tar.read(buffer)
             if (n < 0) break
+            var start = 0
             for (i in 0 until n) {
                 if (buffer[i] == '\n'.code.toByte()) {
+                    line.write(buffer, start, i - start)
+                    start = i + 1
                     if (line.size() > 0) {
                         // 注意：ByteArrayOutputStream.toString(Charset) 是 API 33 才有的方法，
                         // 在 Android 13 以下会抛 NoSuchMethodError，必须用 String(byte[], Charset) 构造器。
@@ -588,10 +603,9 @@ class BackupManagerImpl @Inject constructor(
                     } else {
                         line.reset()
                     }
-                } else {
-                    line.write(buffer[i].toInt())
                 }
             }
+            line.write(buffer, start, n - start)
         }
         if (line.size() > 0) {
             batch.add(json.decodeFromString(serializer, String(line.toByteArray(), Charsets.UTF_8)))
@@ -694,36 +708,39 @@ class BackupManagerImpl @Inject constructor(
         if (meta.globalPermissionRules.isNotEmpty()) {
             permissionRulesRepository.setGlobalRules(meta.globalPermissionRules)
         }
-        meta.themeMode?.let { themeSettingsRepository.restore(it) }
-        themeSettingsRepository.restoreColors(meta.themePresetId, meta.dynamicColorEnabled)
-        keepaliveSettingsRepository.restore(meta.keepaliveEnabled)
-        screenOnSettingsRepository.restore(meta.screenOnEnabled)
-        agentSoundSettingsRepository.restore(meta.agentSoundEnabled)
-        generalSettingsRepository.restoreAutoRemoveStaleModels(meta.autoRemoveStaleModels)
-        generalSettingsRepository.restoreStartupSessionMode(meta.startupSessionMode)
-        generalSettingsRepository.restoreFirstByteTimeoutSec(meta.firstByteTimeoutSec)
-        generalSettingsRepository.restoreStreamIdleTimeoutSec(meta.streamIdleTimeoutSec)
-        generalSettingsRepository.restoreMaxNetworkRetries(meta.maxNetworkRetries)
-        generalSettingsRepository.restoreEnterToSend(meta.enterToSend)
-        generalSettingsRepository.restoreCompactionThresholdPercent(meta.compactionThresholdPercent)
-        generalSettingsRepository.restoreSoftCompactionThresholdPercent(meta.softCompactionThresholdPercent)
-        generalSettingsRepository.restoreSendFileMaxSizeMb(meta.sendFileMaxSizeMb)
-        generalSettingsRepository.restoreDeleteExternalWorkspaceSessions(meta.deleteExternalWorkspaceSessions)
-        logSettingsRepository.restore(meta.logLevel)
-        if (meta.visionProviderId.isNotBlank() || meta.visionModel.isNotBlank()) {
-            visionModelSettingsRepository.setVisionModel(meta.visionProviderId, meta.visionModel)
+        if (meta.includesAppSettings) {
+            meta.themeMode?.let { themeSettingsRepository.restore(it) }
+            themeSettingsRepository.restoreColors(meta.themePresetId, meta.dynamicColorEnabled)
+            keepaliveSettingsRepository.restore(meta.keepaliveEnabled)
+            screenOnSettingsRepository.restore(meta.screenOnEnabled)
+            agentSoundSettingsRepository.restore(meta.agentSoundEnabled)
+            generalSettingsRepository.restoreAutoRemoveStaleModels(meta.autoRemoveStaleModels)
+            generalSettingsRepository.restoreStartupSessionMode(meta.startupSessionMode)
+            generalSettingsRepository.restoreFirstByteTimeoutSec(meta.firstByteTimeoutSec)
+            generalSettingsRepository.restoreStreamIdleTimeoutSec(meta.streamIdleTimeoutSec)
+            generalSettingsRepository.restoreMaxNetworkRetries(meta.maxNetworkRetries)
+            generalSettingsRepository.restoreEnterToSend(meta.enterToSend)
+            generalSettingsRepository.restoreCompactionThresholdPercent(meta.compactionThresholdPercent)
+            generalSettingsRepository.restoreSoftCompactionThresholdPercent(meta.softCompactionThresholdPercent)
+            generalSettingsRepository.restoreSendFileMaxSizeMb(meta.sendFileMaxSizeMb)
+            generalSettingsRepository.restoreDeleteExternalWorkspaceSessions(meta.deleteExternalWorkspaceSessions)
+            logSettingsRepository.restore(meta.logLevel)
+            if (meta.visionProviderId.isNotBlank() || meta.visionModel.isNotBlank()) {
+                visionModelSettingsRepository.setVisionModel(meta.visionProviderId, meta.visionModel)
+            }
+            if (meta.compactionProviderId.isNotBlank() || meta.compactionModel.isNotBlank()) {
+                compactionModelSettingsRepository.setCompactionModel(meta.compactionProviderId, meta.compactionModel)
+            }
+            meta.syncSettings?.let { syncSettingsRepository.restore(it) }
         }
-        if (meta.compactionProviderId.isNotBlank() || meta.compactionModel.isNotBlank()) {
-            compactionModelSettingsRepository.setCompactionModel(meta.compactionProviderId, meta.compactionModel)
-        }
-        meta.syncSettings?.let { syncSettingsRepository.restore(it) }
 
         return RestoreStats(
             providers = meta.providers.size,
             remoteConnections = meta.remoteConnections.size,
             remoteMounts = meta.remoteMounts.size,
             mcpServers = meta.mcpServers.size,
-            globalPermissionRules = meta.globalPermissionRules.size
+            globalPermissionRules = meta.globalPermissionRules.size,
+            appSettingsRestored = meta.includesAppSettings
         )
     }
 
@@ -966,16 +983,5 @@ private class JsonlWriter(private val out: OutputStream) {
     fun flush() {
         buffer.writeTo(out)
         buffer.reset()
-    }
-}
-
-/** 打开的 tar 流封装：加密导入时附带解密用的临时文件，关闭时一并清理。 */
-private class TarSource(
-    val tar: TarArchiveInputStream,
-    private val temp: File?
-) : AutoCloseable {
-    override fun close() {
-        runCatching { tar.close() }
-        temp?.delete()
     }
 }

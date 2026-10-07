@@ -18,6 +18,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -65,6 +66,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -141,11 +143,17 @@ private val INPUT_FIELD_MAX_HEIGHT = 140.dp
  */
 private val INPUT_FIELD_CONTENT_PADDING = 16.dp
 
+/** 斜杠命令列表高度上限：技能也注册为命令，数量多时溢出部分在列表内滚动，不挤走输入框。 */
+private val SLASH_COMMAND_LIST_MAX_HEIGHT = 200.dp
+
+/** 自定义面板展开正文的高度上限系数：占「输入框上方可用高度」的比例，超出部分在面板内滚动。 */
+private const val DASHBOARD_BODY_MAX_HEIGHT_RATIO = 0.4f
+
 @Composable
 internal fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
-    onSend: () -> Unit,
+    onSend: (String) -> Unit,  // 入参是输入框当前文本：须与最后一次输入同步可见，否则发送会丢末字符
     /** 回车键是否直接发送：开启后 IME 回车键变为「发送」，关闭则回车换行（默认）。 */
     enterToSend: Boolean = false,
     onStop: () -> Unit,
@@ -257,9 +265,14 @@ internal fun ChatInputBar(
         // 渐变终点固定在蒙版可视高度内：若跟随整个 Box（含 imeInset 被键盘拉长的部分），
         // 键盘弹起时可见区域只占渐变前段，alpha 被摊薄到几乎透明——看起来像没有蒙版。
         val maskGradientEndY = with(LocalDensity.current) { INPUT_BAR_MASK_HEIGHT.toPx() }
-        Box(
+        BoxWithConstraints(
             modifier = Modifier.fillMaxWidth()
         ) {
+            // 展开内容的高度上限要按「键盘弹起后真正可见的高度」算：本页在 API 30+ 走 SOFT_INPUT_ADJUST_NOTHING，
+            // 窗口不被键盘压缩，maxHeight 仍是整屏高，扣掉 imeInset 这一步不能省。
+            val overlayMaxHeight = (maxHeight - imeInset - Spacing.md).coerceAtLeast(0.dp)
+            val dashboardBodyMaxHeight = overlayMaxHeight * DASHBOARD_BODY_MAX_HEIGHT_RATIO
+
             // 半透明渐变蒙版：盖住输入框区域 + 导航栏（手势小白条）区域，滚动内容滑入时被遮罩
             // （能看见但看不清）；高度含 IME inset 随键盘上移，渐变在 INPUT_BAR_MASK_HEIGHT 内完成，
             // 之下为纯色。注意 IME padding 不能加在外层 Box 上——align(BottomCenter) 的子项
@@ -305,9 +318,13 @@ internal fun ChatInputBar(
                         1.dp, MaterialTheme.colorScheme.outlineVariant
                     )
                 ) {
+                    val slashScrollState = rememberScrollState()
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(max = minOf(SLASH_COMMAND_LIST_MAX_HEIGHT, overlayMaxHeight))
+                            .nestedScroll(rememberBoundNestedScrollConnection(slashScrollState))
+                            .verticalScroll(slashScrollState)
                             .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
                     ) {
                         filteredCommands.forEach { command ->
@@ -381,6 +398,7 @@ internal fun ChatInputBar(
                     onRefreshByButton = onRefreshDashboardByButton,
                     onExpandedChange = onDashboardExpandedChange,
                     onOpenInBrowser = onOpenDashboardUrl,
+                    maxExpandedBodyHeight = dashboardBodyMaxHeight,
                     forceCollapse = forceCollapseDashboard
                 )
             }
@@ -483,7 +501,7 @@ internal fun ChatInputBar(
                             KeyboardOptions(imeAction = ImeAction.Default)
                         },
                         keyboardActions = if (enterToSend) {
-                            KeyboardActions(onSend = { onSend() })
+                            KeyboardActions(onSend = { onSend(inputFieldValue.text) })
                         } else {
                             KeyboardActions.Default
                         },
@@ -615,7 +633,7 @@ internal fun ChatInputBar(
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )
-                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, canForceStop = canForceStop, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop, onForceStop = onForceStop)
+                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, canForceStop = canForceStop, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = { onSend(inputFieldValue.text) }, onStop = onStop, onForceStop = onForceStop)
                 }
             }
         }

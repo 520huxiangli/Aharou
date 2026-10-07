@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.provider
 
+import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -387,6 +388,20 @@ fun retryDelayMillis(retryIndex: Int, error: Throwable): Long {
 private const val MAX_RETRY_AFTER_MILLIS = 60_000L
 
 /**
+ * 供重试日志使用的错误描述：非 HTTP 错误保持 `类名 message`；[HttpException] 额外读出并附上
+ * 上游错误响应体的可读 detail。
+ *
+ * 此函数会消费 errorBody，而重试日志只在本异常**即将被丢弃**（未达上限、确定会重试）时打印，
+ * 故消费无副作用；勿用于仍要向上抛出的异常，否则后续 enrich 将拿不到响应体。
+ */
+private fun Throwable.describeForRetryLog(): String {
+    val base = "${javaClass.simpleName} ${message ?: ""}".trim()
+    if (this !is HttpException) return base
+    val detail = AILogger.redactForLog(extractHttpErrorDetail(extractRawErrorBody()))
+    return if (detail.isBlank()) base else "$base: $detail"
+}
+
+/**
  * 在指数退避下重试 [block]（保持原方法名），用于非流式请求。
  *
  * @param onKeyFailure 多 Key 切换回调：在判定为「不可重试」的失败时先调用，入参为
@@ -421,7 +436,7 @@ suspend fun <T> retryStaircase(
             }
             if (attempt >= maxRetries) throw e
             val wait = retryDelayMillis(attempt, e)
-            FileLogger.w(TAG, "网络请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
+            FileLogger.w(TAG, "网络请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.describeForRetryLog()}")
             onRetry?.invoke(attempt + 1, maxRetries, e.toRetryErrorInfo())
             attempt++
             if (wait > 0) delay(wait)
@@ -467,7 +482,7 @@ suspend fun streamWithStaircaseRetry(
             }
             if (attempt >= maxRetries) throw e
             val wait = retryDelayMillis(attempt, e)
-            FileLogger.w(TAG, "流式请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
+            FileLogger.w(TAG, "流式请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.describeForRetryLog()}")
             onRetry?.invoke(attempt + 1, maxRetries, e.toRetryErrorInfo())
             attempt++
             if (wait > 0) delay(wait)

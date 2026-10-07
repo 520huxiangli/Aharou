@@ -55,6 +55,7 @@ import com.aharou.feature.agent.domain.provider.AnthropicAdapter
 import com.aharou.feature.agent.domain.provider.fixedTemperature
 import com.aharou.feature.agent.domain.provider.GeminiAdapter
 import com.aharou.feature.agent.domain.provider.AllKeysFailedException
+import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.KeySwitchOutcome
 import com.aharou.feature.agent.domain.provider.isKeySwitchFailure
 import com.aharou.feature.agent.domain.provider.OpenAIAdapter
@@ -64,9 +65,11 @@ import com.aharou.feature.agent.domain.provider.StreamApiException
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.takeWhile
@@ -302,7 +305,7 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
         val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
-            windowProvider = provider, systemPrompt = promptProvider.build(context), tools = tools, onEvent = onEvent)
+            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context) }, tools = tools, onEvent = onEvent)
         return result.compacted
     }
 
@@ -334,10 +337,9 @@ class StatefulAgentWorkflow @Inject constructor(
                     } else {
                         val switched = keyRotator.reportFailure(config.id, sessionId, failedKey, triedKeys)
                         if (switched == null) {
+                            val e = error.enrichWithHttpErrorBody()  // 原始异常此处确定被丢弃，读走 errorBody 无副作用；enrich 后 message 才带上游响应体 detail
                             throw AllKeysFailedException(
-                                "「${config.name}」的 ${activeKeys.size} 个 Key 均失败：${error.message ?: error.javaClass.simpleName}",
-                                error
-                            )
+                                "「${config.name}」的 ${activeKeys.size} 个 Key 均失败：${e.message ?: e.javaClass.simpleName}", e)
                         }
                         KeySwitchOutcome(switched.newKey, switched.newIndex, switched.total)
                     }
@@ -408,7 +410,13 @@ class StatefulAgentWorkflow @Inject constructor(
             )
         )
 
-        val systemPrompt = promptProvider.build(currentContext)
+        // 提示词构建会读取技能/子代理/记忆等文件（远程经 SFTP），须离开收集本工作流的线程（主线程）。
+        val promptStartedNs = System.nanoTime()
+        FileLogger.memoryCheckpoint(TAG, "prompt.start", details = "operation=$promptStartedNs")
+        val systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(currentContext) }
+        FileLogger.memoryCheckpoint(TAG, "prompt.ready",
+            elapsedMs = (System.nanoTime() - promptStartedNs) / 1_000_000,
+            details = "operation=$promptStartedNs promptChars=${systemPrompt.length}")
         val aiProvider = getEffectiveProvider(currentContext.sessionId)
         val metadata = modelMetadataService.resolve(aiProvider.providerId, when (aiProvider) {
             is AnthropicAdapter -> ProviderType.ANTHROPIC
@@ -419,17 +427,22 @@ class StatefulAgentWorkflow @Inject constructor(
         if (aiProvider is AnthropicAdapter) {
             aiProvider.maxOutputTokens = ModelContextPolicy.outputReserveTokens(metadata)
         }
+        val historyStartedNs = System.nanoTime()
+        FileLogger.memoryCheckpoint(TAG, "history.start", details = "operation=$historyStartedNs")
         val lastAssistantIndex = currentContext.history.indexOfLast { it is AgentMessage.AssistantMessage && it.inputTokens > 0 }
         // 预算基线与两个「本轮只试一次」的开关都只在 LLM 调用分支用到，收成一个可变对象，
         // 让该分支抽成独立函数后不必在主循环里再留 4 个跨挂起点局部变量。
         val llmBudget = LlmCallBudgetState(
-            baselineEstimate = ContextTokenEstimator.estimate(systemPrompt,
-                currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), currentTools),
+            baselineEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt,
+                currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), currentTools) },
             baselineUsage = if (currentContext.lastInputTokens > 0 && lastAssistantIndex >= 0) {
                 (currentContext.history[lastAssistantIndex] as AgentMessage.AssistantMessage).inputTokens
             } else 0
         )
         telemetry.historyReady(systemPrompt.length, currentTools.size, currentContext.history.size)
+        FileLogger.memoryCheckpoint(TAG, "history.ready",
+            elapsedMs = (System.nanoTime() - historyStartedNs) / 1_000_000,
+            details = "operation=$historyStartedNs messages=${currentContext.history.size} tools=${currentTools.size}")
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
             // 用户按了停止：不再往下走。正在跑的命令/请求留在后台跑完（见 stopAgentSession 的软打断）。
@@ -554,7 +567,7 @@ class StatefulAgentWorkflow @Inject constructor(
         var compactedMessages = state.messages
         if (!budget.compactionAttemptFailed) {
             telemetry.compactionStart()
-            val estimate = ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools)
+            val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools) }
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
                 windowProvider = aiProvider, systemPrompt = systemPrompt, tools = currentTools,
@@ -570,7 +583,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.baselineEstimate = 0
             }
         }
-        val requestEstimate = ContextTokenEstimator.estimate(systemPrompt, compactedMessages, currentTools)
+        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, compactedMessages, currentTools) }
         val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
         emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
         if (predictedInput >= inputBudget) {
@@ -1057,12 +1070,14 @@ class StatefulAgentWorkflow @Inject constructor(
             return ToolRunResult(toolError(toolCall, "工具 $name 不存在", "TOOL_NOT_FOUND"), true)
         }
         return try {
-            val result = tool.executeWithContext(toolCall.arguments, context)
-            val attachments = if (name == "sendFile" || name == "generateImage") extractAttachments(result) else emptyList()
-            val images = if (result is ToolResult.Success) result.images else emptyList()
-            val transportResult = if (attachments.isNotEmpty()) stripAttachments(result) else result
-            val processed = toolOutputStore.process(name, toolCall.id, transportResult)
-            ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, attachments, images)
+            withContext(Dispatchers.IO) {
+                val result = tool.executeWithContext(toolCall.arguments, context)
+                val attachments = if (name == "sendFile" || name == "generateImage") extractAttachments(result) else emptyList()
+                val images = if (result is ToolResult.Success) result.images else emptyList()
+                val transportResult = if (attachments.isNotEmpty()) stripAttachments(result) else result
+                val processed = toolOutputStore.process(name, toolCall.id, transportResult)
+                ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, attachments, images)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1286,34 +1301,36 @@ class StatefulAgentWorkflow @Inject constructor(
         context: AgentContext,
         onEvent: suspend (AgentEvent) -> Unit
     ): ToolRunResult {
-        val live = StringBuilder()
-        var lastEmitMs = 0L
-        var finalResult: ToolResult? = null
-        try {
-            tool.executeStream(toolCall.arguments, context).collect { ev ->
-                when (ev) {
-                    is ToolStreamEvent.Progress -> {
-                        live.append(ev.chunk).append('\n')
-                        if (live.length > LIVE_TAIL_CHARS) {
-                            live.delete(0, live.length - LIVE_TAIL_CHARS)
+        return try {
+            withContext(Dispatchers.IO) {
+                val live = StringBuilder()
+                var lastEmitMs = 0L
+                var finalResult: ToolResult? = null
+                tool.executeStream(toolCall.arguments, context).collect { ev ->
+                    when (ev) {
+                        is ToolStreamEvent.Progress -> {
+                            live.append(ev.chunk).append('\n')
+                            if (live.length > LIVE_TAIL_CHARS) {
+                                live.delete(0, live.length - LIVE_TAIL_CHARS)
+                            }
+                            val now = System.currentTimeMillis()
+                            if (now - lastEmitMs >= PROGRESS_INTERVAL_MS) {
+                                lastEmitMs = now
+                                onEvent(AgentEvent.ToolCallProgress(toolCall.id, toolCall.name, live.toString()))
+                            }
                         }
-                        val now = System.currentTimeMillis()
-                        if (now - lastEmitMs >= PROGRESS_INTERVAL_MS) {
-                            lastEmitMs = now
-                            onEvent(AgentEvent.ToolCallProgress(toolCall.id, toolCall.name, live.toString()))
-                        }
+                        is ToolStreamEvent.Completed -> finalResult = ev.result
                     }
-                    is ToolStreamEvent.Completed -> finalResult = ev.result
                 }
+                val result = finalResult ?: ToolResult.Error("流式工具未返回结果", "MISSING_STREAM_RESULT")
+                val processed = toolOutputStore.process(toolCall.name, toolCall.id, result)
+                val images = if (result is ToolResult.Success) result.images else emptyList()
+                ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, images = images)
             }
-            val result = finalResult ?: ToolResult.Error("流式工具未返回结果", "MISSING_STREAM_RESULT")
-            val processed = toolOutputStore.process(toolCall.name, toolCall.id, result)
-            val images = if (result is ToolResult.Success) result.images else emptyList()
-            return ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, images = images)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            return ToolRunResult(toolError(toolCall, "工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED"), true)
+            ToolRunResult(toolError(toolCall, "工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED"), true)
         }
     }
 

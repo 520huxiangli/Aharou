@@ -4,6 +4,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -12,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -33,11 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
 import com.aharou.core.theme.semanticColors
-import com.mikepenz.markdown.compose.LazyMarkdownSuccess
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.LocalMarkdownPadding
 import com.mikepenz.markdown.compose.Markdown
+import com.mikepenz.markdown.compose.MarkdownElement
 import com.mikepenz.markdown.compose.MarkdownSuccess
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
@@ -278,7 +281,19 @@ internal fun MarkdownContent(
             ) -> Unit = remember(lazyScroll) {
                 if (lazyScroll) {
                     { state, components, m ->
-                        LazyMarkdownSuccess(state = state, components = components, modifier = m)
+                        // 不用库的 LazyMarkdownSuccess：它只按 startOffset 作 item key，内容原地变化时
+                        // 同一位置会复用别的节点的内部渲染状态；这里补 key(node) 做节点级隔离。
+                        LazyColumn(modifier = m) {
+                            items(
+                                items = state.node.children,
+                                key = { node -> node.startOffset },
+                                contentType = { node -> node.type }
+                            ) { node ->
+                                key(node) {
+                                    MarkdownElement(node, components, state.content)
+                                }
+                            }
+                        }
                     }
                 } else {
                     { state, components, m ->

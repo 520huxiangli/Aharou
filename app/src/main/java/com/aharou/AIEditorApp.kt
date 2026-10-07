@@ -180,6 +180,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var memoryDistiller: com.aharou.feature.agent.domain.memory.MemoryDistiller
 
+    /** 备份恢复：启动时清掉上次进程被杀时残留的解密暂存文件。 */
+    @Inject
+    lateinit var backupManager: com.aharou.feature.backup.domain.BackupManager
+
     /** MCP 服务器集合注册。 */
     @Inject
     lateinit var configMcpFields: com.aharou.feature.agent.data.ConfigMcpFields
@@ -336,6 +340,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 启动即释放内置子代理定义（Explore）到 ~/.aharou/agents/；已存在不覆盖，用户改过或删掉都不会被升级拉回。
         appScope.launch {
             ContainerInstaller.extractAgents(this@AIEditorApp)
+        }
+        // 备份导入的解密暂存落在 cacheDir，进程在勾选弹窗期间被杀会留下明文（含凭据与聊天全文），启动即清。
+        appScope.launch {
+            runCatching { backupManager.cleanupStaleStagingFiles() }
         }
         // 启动即把旧 Room git 凭据一次性迁移到 git-credentials 文件（真源已迁到文件，删表由迁移器完成）。
         appScope.launch {

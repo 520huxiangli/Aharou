@@ -236,7 +236,25 @@ internal fun ChatMonoPanel(
 
 /**
  * 手指拖动允许在边界接力外层；松手后的惯性不得越过内层窗口。
+ * 内层为 LazyColumn（如思考展开窗口）时用无参重载——该行为不依赖具体滚动状态。
  */
+@Composable
+internal fun rememberBoundNestedScrollConnection(): NestedScrollConnection {
+    return remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset = if (source == NestedScrollSource.SideEffect) Offset(0f, available.y) else Offset.Zero
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+                Velocity(0f, available.y)
+        }
+    }
+}
+
+/** 内层为 ScrollState（如工具结果窗口）时以滚动状态作记忆键。 */
 @Composable
 internal fun rememberBoundNestedScrollConnection(scrollState: ScrollState): NestedScrollConnection {
     return remember(scrollState) {

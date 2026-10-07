@@ -566,13 +566,21 @@ internal object CompactionText {
 
         fun next(budget: Int): String {
             val result = StringBuilder()
+            // tokens(整串) = ceil(ascii/4) + other，只依赖两个字符计数；累加各片段的计数即等价于对拼接结果整体估算，
+            // 故每次只需统计新增片段，避免对已累积内容重复整体估算（原实现为 O(n²)）。
+            var ascii = 0
+            var other = 0
             while (!finished) {
                 val unit = units[index]
                 val label = "[history-unit ${index + 1}, character-offset $offset]\n"
                 val remaining = unit.substring(offset)
-                val candidate = result.toString() + label + remaining + "\n\n"
-                if (tokens(candidate) <= budget) {
-                    result.append(label).append(remaining).append("\n\n")
+                val fragment = label + remaining + "\n\n"
+                val fragmentAscii = fragment.count { it.code < 128 }
+                val fragmentOther = fragment.length - fragmentAscii
+                if (ModelContextPolicy.estimateTokens(ascii + fragmentAscii) + other + fragmentOther <= budget) {
+                    result.append(fragment)
+                    ascii += fragmentAscii
+                    other += fragmentOther
                     index++
                     offset = 0
                 } else {

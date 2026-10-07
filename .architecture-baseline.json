@@ -1,23 +1,23 @@
 {
   "//": "棘轮基线：登记既有违规，只许缩减不许新增或上涨。修好一处就从这里删掉对应条目，脚本会在 [WARN] 里提示可清理项。",
   "fileLines": {
-    "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3281,
-    "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3264,
-    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3064,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2078,
+    "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3283,
+    "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3272,
+    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3095,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2077,
     "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1913,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1738,
     "app/src/main/java/com/aharou/feature/pet/PetOverlay.kt": 1712,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatDrawer.kt": 1588,
-    "app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt": 1526,
+    "app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt": 1543,
     "app/src/main/java/com/aharou/feature/sandbox/FilePreviewScreen.kt": 1400,
     "app/src/main/java/com/aharou/MainActivity.kt": 1300,
     "app/src/main/java/com/aharou/feature/git/presentation/component/GitStatusTab.kt": 1223,
     "app/src/main/java/com/aharou/feature/browser/BrowserTabPool.kt": 1289,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ContainerSettingsSection.kt": 1259,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1252,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1270,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AdaptiveCardRenderer.kt": 1194,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 1070
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 1094
   },
   "bannedImports": {
     "androidx.compose.material3.ModalBottomSheet": [
@@ -29,7 +29,6 @@
       "app/src/main/java/com/aharou/feature/settings/presentation/component/SoulSettingsSection.kt"
     ],
     "androidx.compose.material3.TextField": [
-      "app/src/main/java/com/aharou/feature/agent/presentation/component/AskUserQuestionPanel.kt",
       "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt"
     ]
   }

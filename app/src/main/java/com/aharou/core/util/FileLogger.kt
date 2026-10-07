@@ -109,6 +109,31 @@ object FileLogger {
         write("INFO", tag, message, null)
     }
 
+    /**
+     * 阶段内存检查点：排查偶发 OOM 时记录某阶段「开始/就绪」时的堆占用与耗时，事后可把 OOM 归因到具体阶段。
+     *
+     * 默认开销极小：先过 [shouldLog]，等级不够时连 Runtime 查询与字符串拼接都不做；通过时只读
+     * [Runtime] 的 total/free/maxMemory（常量级、不触发 GC），绝不主动 GC 或遍历堆。
+     * 调用方只能传阶段名与量级，禁止把提示词/消息正文等用户数据拼进 [details]。
+     */
+    internal fun memoryCheckpoint(
+        tag: String,
+        stage: String,
+        elapsedMs: Long? = null,
+        details: String = ""
+    ) {
+        if (!shouldLog(LogLevel.INFO)) return
+        val runtime = Runtime.getRuntime()
+        val usedMb = (runtime.totalMemory() - runtime.freeMemory()) / 1024 / 1024
+        val maxMb = runtime.maxMemory() / 1024 / 1024
+        i(tag, buildString {
+            append("[memory] stage=").append(stage)
+            append(" heap=").append(usedMb).append('/').append(maxMb).append("MB")
+            if (elapsedMs != null) append(" elapsedMs=").append(elapsedMs)
+            if (details.isNotEmpty()) append(' ').append(details)
+        })
+    }
+
     fun w(tag: String, message: String, throwable: Throwable? = null) {
         if (!shouldLog(LogLevel.WARN)) return
         Log.w(tag, message, throwable)

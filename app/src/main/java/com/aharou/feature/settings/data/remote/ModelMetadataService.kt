@@ -9,6 +9,8 @@ import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.mergeModelMetadata
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -28,12 +30,16 @@ class ModelMetadataService @Inject constructor(
     private val customModelMetadataStore: CustomModelMetadataStore
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private val activeCatalogParses = java.util.concurrent.atomic.AtomicInteger(0)
 
     /** 统一拉取器；模型元数据每日由 CI 发到独立的 data 分支，main 上不再存机器产物。 */
     private val repoFetcher = RepoDataFetcher(context, branch = "data")
 
     @Volatile
     private var cached: Catalog? = null
+
+    /** 串行化目录加载：并发的 resolve 会同时穿透 [cached] 未命中的空窗，各自把目录读盘并解析一遍。 */
+    private val catalogLock = Mutex()
 
     @Volatile
     private var refreshAttemptedThisProcess = false
@@ -66,43 +72,105 @@ class ModelMetadataService @Inject constructor(
         if (refreshAttemptedThisProcess) return
         refreshAttemptedThisProcess = true
         withContext(Dispatchers.IO) {
+            val fetchStartedNs = System.nanoTime()
+            FileLogger.memoryCheckpoint(TAG, "catalog.fetch.start", details = "operation=$fetchStartedNs")
             // maxAgeMs = 0：跳过默认 12 小时保鲜期，每次启动条件请求对账，让清单改动立即生效。
             val result = runCatching { repoFetcher.fetch(MODELS_REPO_PATH, maxAgeMs = 0L) }.getOrNull()
+            FileLogger.memoryCheckpoint(
+                TAG,
+                "catalog.fetch.finished",
+                elapsedMs = (System.nanoTime() - fetchStartedNs) / 1_000_000,
+                details = "operation=$fetchStartedNs hasContent=" +
+                    (result is RepoDataFetcher.FetchResult.Success ||
+                        result is RepoDataFetcher.FetchResult.FallbackDiskCache)
+            )
             val body = when (result) {
                 is RepoDataFetcher.FetchResult.Success -> result.content
                 is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content
                 else -> null
             } ?: return@withContext
             if (body.isBlank()) return@withContext
-            runCatching { parseCatalog(json.parseToJsonElement(body)) }
-                .onSuccess { cached = it }
+            val parsed = runCatching { parseCatalogWithDiagnostics(body, "refresh") }
                 .onFailure { FileLogger.w(TAG, "解析模型元数据失败", it) }
+                .getOrNull() ?: return@withContext
+            catalogLock.withLock { cached = parsed }
         }
     }
 
     /** 纯只读链路：内存 → 本仓库磁盘缓存 → 内置 assets → 空目录（由调用方回退默认值），绝不发网络请求。 */
-    private fun loadCatalog(): Catalog {
+    private suspend fun loadCatalog(): Catalog {
         cached?.let { return it }
+        return catalogLock.withLock {
+            cached?.let { return it }
 
-        repoFetcher.readLocalCache(MODELS_REPO_PATH)?.let { body ->
-            runCatching { parseCatalog(json.parseToJsonElement(body)) }.getOrNull()?.let {
+            val readStartedNs = System.nanoTime()
+            FileLogger.memoryCheckpoint(TAG, "catalog.disk.start", details = "operation=$readStartedNs")
+            val diskBody = repoFetcher.readLocalCache(MODELS_REPO_PATH)
+            FileLogger.memoryCheckpoint(
+                TAG,
+                "catalog.disk.finished",
+                elapsedMs = (System.nanoTime() - readStartedNs) / 1_000_000,
+                details = "operation=$readStartedNs chars=${diskBody?.length ?: 0} present=${diskBody != null}"
+            )
+            diskBody?.let { body ->
+                runCatching { parseCatalogWithDiagnostics(body, "disk") }.getOrNull()?.let {
+                    cached = it
+                    return it
+                }
+            }
+
+            loadCatalogFromAssets()?.let {
                 cached = it
                 return it
             }
-        }
 
-        loadCatalogFromAssets()?.let {
-            cached = it
-            return it
+            Catalog(emptyMap(), emptyMap())
         }
-
-        return Catalog(emptyMap(), emptyMap())
     }
 
     private fun loadCatalogFromAssets(): Catalog? = runCatching {
+        val readStartedNs = System.nanoTime()
+        FileLogger.memoryCheckpoint(TAG, "catalog.assets.start", details = "operation=$readStartedNs")
         val body = context.assets.open(ASSET_FILE_NAME).bufferedReader().use { it.readText() }
-        parseCatalog(json.parseToJsonElement(body))
+        FileLogger.memoryCheckpoint(
+            TAG,
+            "catalog.assets.ready",
+            elapsedMs = (System.nanoTime() - readStartedNs) / 1_000_000,
+            details = "operation=$readStartedNs chars=${body.length}"
+        )
+        parseCatalogWithDiagnostics(body, "assets")
     }.getOrNull()
+
+    /** 解析同时记录阶段与并发解析数：并发穿透 [cached] 空窗时能看出重复解析。 */
+    private fun parseCatalogWithDiagnostics(body: String, source: String): Catalog {
+        val startedNs = System.nanoTime()
+        val concurrent = activeCatalogParses.incrementAndGet()
+        try {
+            FileLogger.memoryCheckpoint(
+                TAG,
+                "catalog.parse.start",
+                details = "operation=$startedNs source=$source chars=${body.length} activeParses=$concurrent"
+            )
+            val root = json.parseToJsonElement(body)
+            FileLogger.memoryCheckpoint(
+                TAG,
+                "catalog.json.ready",
+                elapsedMs = (System.nanoTime() - startedNs) / 1_000_000,
+                details = "operation=$startedNs source=$source activeParses=${activeCatalogParses.get()}"
+            )
+            val catalog = parseCatalog(root)
+            FileLogger.memoryCheckpoint(
+                TAG,
+                "catalog.parse.ready",
+                elapsedMs = (System.nanoTime() - startedNs) / 1_000_000,
+                details = "operation=$startedNs source=$source providers=${catalog.byProvider.size} " +
+                    "models=${catalog.byProvider.values.sumOf { it.size }} activeParses=${activeCatalogParses.get()}"
+            )
+            return catalog
+        } finally {
+            activeCatalogParses.decrementAndGet()
+        }
+    }
 
     /** 目录中匹配不到模型时的兜底：统一视为文本模型，128k 输入 / 64k 输出。 */
     private fun default(type: ProviderType, modelId: String): ModelMetadata = ModelMetadata(

@@ -1,6 +1,5 @@
 package com.aharou.feature.workspace.domain
 
-import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
@@ -49,7 +48,6 @@ class WorkspacePathMapper @Inject constructor(
         const val AHAROU_MEMORY_ROOT = "/root/.aharou/memory"
         /** 跨工作区共享区在容器内的路径（宿主 filesDir/shared）：所有工作区共用同一份。 */
         const val SHARED_ROOT = "/root/shared"
-        private const val TAG = "WorkspacePathMapper"
     }
 
     /**
@@ -135,9 +133,6 @@ class WorkspacePathMapper @Inject constructor(
         if (allowed.none { resolved.isUnder(it) }) {
             throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
-        // 高频热路径（每次文件读写都经过）：降到 DEBUG，正式版默认不落盘；
-        // 曾经用 VERBOSE，日志级别开到 VERBOSE 时一天能刷满 5MB。
-        FileLogger.d(TAG, "toHostFile '$path' -> ${file.absolutePath}")
         return file
     }
 

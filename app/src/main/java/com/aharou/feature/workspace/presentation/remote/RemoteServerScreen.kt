@@ -189,6 +189,8 @@ fun RemoteServerScreen(
                                     },
                                     onDelete = { pendingDeleteMount = it },
                                     onUpload = { viewModel.forceUploadMount(it.id) },
+                                    onUploadFull = { viewModel.uploadMountFull(it.id) },
+                                    onClearIndex = { viewModel.clearSyncIndex(it.id) },
                                     onDownload = { viewModel.forceDownloadMount(it.id) },
                                     onConnect = { viewModel.connectMount(it.id) },
                                     onDisconnect = { viewModel.disconnectMount(it.id) }

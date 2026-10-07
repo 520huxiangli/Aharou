@@ -126,6 +126,66 @@ class ContextCompactorTest {
     }
 
     @Test
+    fun incrementalCursorMatchesWholeTextRecomputation() {
+        val units = List(48) { index ->
+            if (index % 3 == 0) "ascii-$index-" + "x".repeat(index) else "混合内容[$index]-" + "汉".repeat(index)
+        }
+        listOf(40, 240).forEach { budget ->
+            val incremental = mutableListOf<String>()
+            val cursor = CompactionText.Cursor(units)
+            while (!cursor.finished) incremental.add(cursor.next(budget))
+            assertEquals(wholeTextChunks(units, budget), incremental)
+            assertTrue(incremental.all { CompactionText.tokens(it) <= budget })
+        }
+    }
+
+    @Test
+    fun cursorChunksRespectBudgetAndCoverEveryUnit() {
+        val units = List(120) { index -> if (index % 2 == 0) "ascii-$index" else "混合-$index" }
+        val cursor = CompactionText.Cursor(units)
+        val chunks = mutableListOf<String>()
+        while (!cursor.finished) chunks.add(cursor.next(160))
+        assertTrue(chunks.all { CompactionText.tokens(it) <= 160 })
+        assertEquals(units.size, chunks.sumOf { chunk -> Regex("\\[history-unit ").findAll(chunk).count() })
+        units.forEach { unit -> assertTrue(chunks.any { it.contains("\n$unit\n") }) }
+    }
+
+    // 参照实现：保留改动前的「拼整串再整体估算」逻辑，用于比对增量版选出的分块边界是否逐块一致。
+    private fun wholeTextChunks(units: List<String>, budget: Int): List<String> {
+        val chunks = mutableListOf<String>()
+        var index = 0
+        var offset = 0
+        while (index < units.size) {
+            val result = StringBuilder()
+            while (index < units.size) {
+                val unit = units[index]
+                val label = "[history-unit ${index + 1}, character-offset $offset]\n"
+                val remaining = unit.substring(offset)
+                if (CompactionText.tokens(result.toString() + label + remaining + "\n\n") <= budget) {
+                    result.append(label).append(remaining).append("\n\n")
+                    index++
+                    offset = 0
+                } else {
+                    if (result.isNotEmpty()) break
+                    var low = 0
+                    var high = remaining.length
+                    while (low < high) {
+                        val mid = low + (high - low + 1) / 2
+                        if (CompactionText.tokens(label + remaining.substring(0, mid) + "\n[unit continues]\n") <= budget) low = mid else high = mid - 1
+                    }
+                    if (low > 0 && low < remaining.length && remaining[low - 1].isHighSurrogate() && remaining[low].isLowSurrogate()) low--
+                    check(low > 0) { "budget too small for reference chunking" }
+                    result.append(label).append(remaining.substring(0, low)).append("\n[unit continues]\n")
+                    offset += low
+                    break
+                }
+            }
+            chunks.add(result.toString())
+        }
+        return chunks
+    }
+
+    @Test
     fun multipleBlocksFusePreviousSummaryAndRetainLatestGoal() = runTest {
         prepare()
         val requests = mutableListOf<List<AgentMessage>>()

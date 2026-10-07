@@ -336,6 +336,7 @@
     <string name="common_allow">Allow</string>
     <string name="common_close">Close</string>
     <string name="common_clear">Clear</string>
+    <string name="common_more">More</string>
     <string name="workbench_split_handle">Drag to resize panes</string>
     <string name="common_other">Other</string>
     <string name="common_switch">Switch</string>
@@ -558,6 +559,7 @@
     <string name="backup_export_failed">Export failed</string>
     <string name="backup_wrong_password">Wrong backup password, or the encrypted backup file is corrupted</string>
     <string name="backup_import_failed">Import failed</string>
+    <string name="backup_content_corrupted">Backup content is corrupted and cannot be read</string>
 
     <!-- Chat Drawer -->
     <string name="chat_history">History</string>
@@ -1520,8 +1522,11 @@
     <string name="remote_go_add">Go Add</string>
 
     <!-- Remote Server ViewModel -->
-    <string name="remote_upload_all_failed">Full upload failed: %1$s</string>
-    <string name="remote_upload_all_success">Full upload complete</string>
+    <string name="remote_upload_failed">Upload failed: %1$s</string>
+    <string name="remote_upload_success">Upload complete</string>
+    <string name="remote_upload_full_failed">Full upload failed: %1$s</string>
+    <string name="remote_upload_full_success">Full upload complete</string>
+    <string name="remote_clear_index_done">Sync record cleared</string>
     <string name="remote_download_all_failed">Full download failed: %1$s</string>
     <string name="remote_download_all_success">Full download complete</string>
     <string name="remote_connect_success">Connected</string>
@@ -1574,7 +1579,9 @@
     <string name="status_connected">Connected</string>
     <string name="status_disconnected">Disconnected</string>
     <string name="status_connection_failed">Connection Failed</string>    <string name="sync_disconnect">Disconnect</string>
-    <string name="sync_upload_all">Upload All</string>
+    <string name="sync_upload_changes">Upload Changes</string>
+    <string name="sync_upload_full">Force Full Upload</string>
+    <string name="sync_clear_index">Clear Sync Record</string>
     <string name="sync_download_all">Download All</string>
     <string name="sync_connect_and_sync">Connect and Sync</string>
 

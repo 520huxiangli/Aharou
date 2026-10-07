@@ -17,6 +17,15 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
+ * 失败异常可实现的接口：携带上游返回的**原始错误响应体**，供会话日志完整记录。
+ * 定义在 core 层，[AILogger] 只按此接口取原文，不反向依赖 feature 层的具体异常类型。
+ */
+interface UpstreamErrorBodyCarrier {
+    /** 上游错误响应体原文；为空表示无响应体可记。 */
+    val upstreamErrorBody: String?
+}
+
+/**
  * AI 提供商「完整请求 / 响应」日志：**每个会话(sessionId)一个文件**，逐次详细落盘每一次
  * 调用的 URL、请求体(body) 与响应(response)，便于在没有抓包工具时离线诊断模型交互问题。
  *
@@ -44,6 +53,12 @@ object AILogger {
     private const val BASE64_MIN_CHARS = 256
     /** 兜底：任意位置连续 base64 字符超过该长度即视为媒体数据（不管字段叫什么）。 */
     private const val BASE64_RUN_CHARS = 1024
+    /**
+     * 错误响应体原文的软上限（字符）。上游错误体可能是反代返回的整页 HTML 502 或超长网关 JSON，
+     * 而文件大小检查发生在写入之前（见 [appendToSession]），单条即可把会话日志顶到远超
+     * [MAX_FILE_BYTES]，故超限即截断并标注省略字数。
+     */
+    private const val MAX_ERROR_BODY_CHARS = 256 * 1024
 
     /** 承载 base64 的常见字段名（Anthropic `source.data`、附件 `base64Data`、OpenAI `image_url.url` 等）。 */
     private val BASE64_FIELD_NAMES = setOf("data", "base64Data", "image_data", "url")
@@ -105,13 +120,33 @@ object AILogger {
         }
     }
 
-    /** 记录一次请求失败（取消不算失败，不应走到这里）。[seq] 必须来自对应 [logRequest] 的返回值。 */
+    /**
+     * 记录一次请求失败（取消不算失败，不应走到这里）。[seq] 必须来自对应 [logRequest] 的返回值。
+     *
+     * 若 [throwable] 实现 [UpstreamErrorBodyCarrier] 且带原始错误响应体，会在异常信息之后
+     * 追加 `--- error response body ---` 段落记录原文（走同一套脱敏；超过 [MAX_ERROR_BODY_CHARS]
+     * 则截断并标注省略字数）。
+     */
     fun logError(sessionId: String?, provider: String, throwable: Throwable, seq: Int) {
         appendToSession(sessionId) { w ->
             w.write("${now()}  ERROR #$seq   [$provider]\n")
             w.write("${throwable.javaClass.name}: ${throwable.message ?: ""}\n")
+            val rawBody = (throwable as? UpstreamErrorBodyCarrier)?.upstreamErrorBody
+            if (!rawBody.isNullOrBlank()) {
+                w.write("--- error response body ---\n")
+                w.write(truncateErrorBody(redactString(rawBody, null)))
+                w.write("\n")
+            }
         }
     }
+
+    /** 把已脱敏的错误体原文按 [MAX_ERROR_BODY_CHARS] 截断并标注省略字数，避免单条顶爆会话日志。 */
+    private fun truncateErrorBody(text: String): String =
+        if (text.length <= MAX_ERROR_BODY_CHARS) text
+        else text.take(MAX_ERROR_BODY_CHARS) + "\n[…已省略 ${text.length - MAX_ERROR_BODY_CHARS} 字符]"
+
+    /** 其它日志调用方要落盘响应体/请求体原文时，复用同一条脱敏链路，别自建一套。 */
+    internal fun redactForLog(text: String): String = redactString(text, null)
 
     /**
      * 开启一次流式响应的原始 SSE 日志句柄：调用方每收到一行就 [RawSseLog.append]，本轮结束

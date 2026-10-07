@@ -27,10 +27,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -748,9 +746,6 @@ private val REASONING_PREVIEW_MARKERS = charArrayOf(' ', '\t', '#', '*', '-', '>
 /** 思考展开窗口的最大高度：超出后在窗口内滚动，不再无限撑高、拖走整页滚动。 */
 private val ReasoningWindowMaxHeight = 300.dp
 
-/** 思考窗口底部渐隐遮罩的高度（仅当内容还可继续下滚时显示）。 */
-private val ReasoningWindowFadeHeight = 28.dp
-
 /**
  * 思考过程折叠行：左对齐、浅色弱化，与正式回复区分。**默认收起**，点这一行随时展开/收起。
  *
@@ -855,40 +850,26 @@ internal fun ReasoningBubble(
                 if ((preRendered || live) && text.length >= STREAMING_PREVIEW_CHARS) {
                     Text(stringResource(R.string.agent_streaming_preview_notice), style = MaterialTheme.typography.bodySmall)
                 }
-                val scrollState = rememberScrollState()
-                val fadeColor = MaterialTheme.colorScheme.background
-                Box(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    MarkdownContent(
-                        text = renderText,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        cache = cache,
-                        compact = true,
-                        cacheEnabled = !preRendered && !live,
-                        retainState = !preRendered && !live,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = ReasoningWindowMaxHeight)
-                            .nestedScroll(rememberBoundNestedScrollConnection(scrollState))
-                            .verticalScroll(scrollState)
-                            .pointerInput(text) {
-                                detectTapGestures(
-                                    onDoubleTap = { toggleExpanded(false) }
-                                )
-                            }
-                    )
-                    // 底部渐隐：只有还能继续往下滚时才盖一层，提示“下面还有内容”
-                    if (scrollState.canScrollForward) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .fillMaxWidth()
-                                .height(ReasoningWindowFadeHeight)
-                                .background(Brush.verticalGradient(listOf(Color.Transparent, fadeColor)))
-                        )
-                    }
-                }
+                // 展开态必须走懒渲染：超长思考若一次性组合全部 Markdown 节点，Compose ChangeList
+                // 随节点数线性膨胀，扩容时 OOM 闪退。高度上限交给内层 LazyColumn 自行滚动。
+                MarkdownContent(
+                    text = renderText,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    cache = cache,
+                    compact = true,
+                    cacheEnabled = !preRendered && !live,
+                    retainState = !preRendered && !live,
+                    lazyScroll = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = ReasoningWindowMaxHeight)
+                        .nestedScroll(rememberBoundNestedScrollConnection())
+                        .pointerInput(text) {
+                            detectTapGestures(
+                                onDoubleTap = { toggleExpanded(false) }
+                            )
+                        }
+                )
             }
         }
     }

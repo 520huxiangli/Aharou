@@ -297,6 +297,8 @@ class AIAgentViewModel @Inject constructor(
 
     private val _messageLimit = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val defaultLimit = 30
+    // 已真正加载过的分页上限（key = 会话 id）；写入发生在 Default 调度器（见 messagesState），故用并发映射。
+    private val loadedMessageLimits = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     /** 聊天记录搜索：命中条数上限、输入防抖、片段上下文宽度、定位时预留的分页余量。 */
     private val chatSearchLimit = 50
@@ -316,13 +318,11 @@ class AIAgentViewModel @Inject constructor(
         }.toMap()
     )
     val inputDraft: StateFlow<String> = _currentSessionId
-        .flatMapLatest { id ->
-            if (id == null) flowOf("") else _inputDrafts.map { it[id].orEmpty() }
-        }
+        .flatMapLatest { id -> _inputDrafts.map { it[id ?: PENDING_DRAFT_KEY].orEmpty() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     fun updateInputDraft(text: String) {
-        val id = _currentSessionId.value ?: return
+        val id = _currentSessionId.value ?: PENDING_DRAFT_KEY
         val editor = draftPrefs.edit()
         if (text.isEmpty()) {
             _inputDrafts.value = _inputDrafts.value - id
@@ -335,9 +335,28 @@ class AIAgentViewModel @Inject constructor(
     }
 
     fun clearInputDraft() {
-        val id = _currentSessionId.value ?: return
-        _inputDrafts.value = _inputDrafts.value - id
-        draftPrefs.edit().remove(id).apply()
+        val id = _currentSessionId.value ?: PENDING_DRAFT_KEY
+        // 哨兵键一并清：发送后再有会话落定，不能把刚发出去的正文又当未归属草稿迁回来。
+        _inputDrafts.value = _inputDrafts.value - id - PENDING_DRAFT_KEY
+        draftPrefs.edit().remove(id).remove(PENDING_DRAFT_KEY).apply()
+    }
+
+    /**
+     * 会话就绪前打的字先挂在 [PENDING_DRAFT_KEY] 下（冷启动 / 未选工作区时 _currentSessionId 为 null），
+     * 会话一出现就并入它。不能直接丢弃：单一事实源改造后输入框只认 VM 草稿，丢掉就表现为「打字没反应」。
+     */
+    private fun adoptPendingDraft(sessionId: String) {
+        val pending = _inputDrafts.value[PENDING_DRAFT_KEY]?.takeIf { it.isNotEmpty() } ?: return
+        // 目标会话已有非空草稿时不覆盖（哨兵这份丢弃）；哨兵键两条分支都要清，否则下次会话落定会重复灌入。
+        val keepTarget = !_inputDrafts.value[sessionId].isNullOrEmpty()
+        _inputDrafts.value = if (keepTarget) {
+            _inputDrafts.value - PENDING_DRAFT_KEY
+        } else {
+            _inputDrafts.value - PENDING_DRAFT_KEY + (sessionId to pending)
+        }
+        val editor = draftPrefs.edit().remove(PENDING_DRAFT_KEY)
+        if (!keepTarget) editor.putString(sessionId, pending)
+        editor.apply()
     }
 
     /**
@@ -619,7 +638,11 @@ class AIAgentViewModel @Inject constructor(
 
     fun loadMoreMessages() {
         val sid = _currentSessionId.value ?: return
+        val state = messagesState.value
+        if (state.sessionId != sid || !state.loaded || !state.hasMore) return
         val currentLimit = _messageLimit.value[sid] ?: defaultLimit
+        // 上次抬升的上限还没查完（loadedMessageLimits 未跟上）时直接返回，拦住快速滚动连发的重复全表查询。
+        if (loadedMessageLimits[sid] != currentLimit) return
         _messageLimit.value = _messageLimit.value + (sid to (currentLimit + 30))
     }
 
@@ -1094,7 +1117,7 @@ class AIAgentViewModel @Inject constructor(
                     hasMore = list.size >= limit,
                     isLoadingMore = false
                 )
-            }
+            }.onEach { loadedMessageLimits[id] = limit }
         }
         // restoreAll 内部已逐条切 Dispatchers.IO，这里用 Default 承接附件 JSON 解析等 CPU 工作，避免嵌套线程切换。
         .flowOn(Dispatchers.Default)
@@ -1407,6 +1430,9 @@ class AIAgentViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "AIAgentViewModel"
+
+        /** 尚无当前会话时的草稿哨兵键：用 UUID 不可能产出的控制字符开头，避免撞上真实会话 id。 */
+        const val PENDING_DRAFT_KEY = "\u0000pending"
         /** 「加入输入栏」投递的文件落点：当前工作区里的附件目录，与分享进来的文件同处一地。 */
         val ATTACHMENTS_DIR = "${WorkspacePathMapper.CONTAINER_ROOT}/.aharou/attachments"
         const val FALLBACK_MIME_TYPE = "application/octet-stream"
@@ -1450,6 +1476,11 @@ class AIAgentViewModel @Inject constructor(
         // 面板被销毁时清不掉，且分享投递与面板组合时序耦合，这里提到 VM 统一处理。
         viewModelScope.launch {
             _sessionSwitchEvents.collect { _pendingAttachments.value = emptyList() }
+        }
+
+        // 会话就绪后接管「无会话期间」打的草稿（见 adoptPendingDraft）。
+        viewModelScope.launch {
+            _currentSessionId.filterNotNull().collect { adoptPendingDraft(it) }
         }
 
         // 错误横幅持久化：会话末条消息带着错误文本时恢复 Error 状态，重开 App / 切会话后
@@ -2795,11 +2826,11 @@ class AIAgentViewModel @Inject constructor(
                 if (checkpoint != null) {
                     conflicts = checkpointManager.restoreCodeToCheckpoint(sessionId, checkpoint.id).conflicts
                 }
-                messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
+                messagePersistenceUseCase.rewindConversation(sessionId, targetMsgEntity.timestamp)
                 withContext(Dispatchers.Main) { onFillPrompt(targetMsgEntity.content, attachments) }
             }
             RewindOption.RESTORE_CONVERSATION -> {
-                messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, targetMsgEntity.timestamp)
+                messagePersistenceUseCase.rewindConversation(sessionId, targetMsgEntity.timestamp)
                 withContext(Dispatchers.Main) { onFillPrompt(targetMsgEntity.content, attachments) }
             }
             RewindOption.RESTORE_CODE -> {

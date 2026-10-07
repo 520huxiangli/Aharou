@@ -389,9 +389,17 @@ fun ProviderEditorScreen(
             customHeaders.any { it.first.isNotBlank() } ||
             models.isNotEmpty()
 
+    // 与上次提交内容完全相同则跳过保存（改了又改回原值、或原样返回都不应触发 DB 写入）；编辑场景以进入时配置为基线，新建场景为 null 保证首次填写必存。
+    var lastSubmittedConfig by remember {
+        mutableStateOf(if (initialProvider != null) currentConfig() else null)
+    }
+
     fun saveCurrent() {
         if (!hasSubstantiveInput()) return
-        onSave(currentConfig())
+        val config = currentConfig()
+        if (config == lastSubmittedConfig) return
+        onSave(config)
+        lastSubmittedConfig = config
     }
 
     // 拉取成功后自动对齐：远端已不存在的本地模型直接移除（可在「偏好设置」关掉）。拉取失败或返回空列表时不动列表。

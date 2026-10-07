@@ -522,5 +522,5 @@ private fun buildImportSummary(context: android.content.Context, stats: com.ahar
     if (stats.globalPermissionRules > 0) appendLine(context.getString(R.string.backup_stat_permission_rules, stats.globalPermissionRules))
     if (stats.workspaceFiles > 0) appendLine(context.getString(R.string.backup_stat_workspace_files, stats.workspaceFiles))
     if (stats.memoryFiles > 0) appendLine(context.getString(R.string.backup_stat_memory_files, stats.memoryFiles))
-    append(context.getString(R.string.backup_settings_covered))
+    if (stats.appSettingsRestored) append(context.getString(R.string.backup_settings_covered))
 }

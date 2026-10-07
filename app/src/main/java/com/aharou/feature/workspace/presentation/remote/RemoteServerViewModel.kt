@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
@@ -46,10 +48,13 @@ class RemoteServerViewModel @Inject constructor(
     val ftpServerManager: FtpServerManager
 ) : ViewModel() {
 
+    // 密钥库的解密与增删改都要落 IO，且状态回写必须串行化，避免加载与增删改交错写坏 loginKeys
+    private val loginKeyMutex = Mutex()
+
     private val _uiState = MutableStateFlow(
         RemoteServerUiState(
             hostKeys = remoteSshConnection.savedHostKeys(),
-            loginKeys = loginKeyStore.entries()
+            loginKeys = emptyList()
         )
     )
     val uiState: StateFlow<RemoteServerUiState> = _uiState.asStateFlow()
@@ -63,6 +68,14 @@ class RemoteServerViewModel @Inject constructor(
 
     private fun loadData() {
         viewModelScope.launch {
+            launch {
+                loginKeyMutex.withLock {
+                    val loginKeys = withContext(Dispatchers.IO) {
+                        loginKeyStore.entries()
+                    }
+                    _uiState.value = _uiState.value.copy(loginKeys = loginKeys)
+                }
+            }
             launch {
                 repository.getConnections()
                     .catch { e -> _uiState.value = _uiState.value.copy(error = e.message) }
@@ -110,10 +123,32 @@ class RemoteServerViewModel @Inject constructor(
             val result = repository.forceUploadMount(id)
             _uiState.value = _uiState.value.copy(isLoading = false)
             if (result.isFailure) {
-                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_all_failed, result.exceptionOrNull()?.message))
+                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_failed, result.exceptionOrNull()?.message))
             } else {
-                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_all_success))
+                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_success))
             }
+        }
+    }
+
+    /** 强制全量上传：忽略本地同步记录，把全部文件重传一遍。 */
+    fun uploadMountFull(id: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            val result = repository.forceUploadMountFull(id)
+            _uiState.value = _uiState.value.copy(isLoading = false)
+            if (result.isFailure) {
+                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_full_failed, result.exceptionOrNull()?.message))
+            } else {
+                _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_upload_full_success))
+            }
+        }
+    }
+
+    /** 清除该挂载的同步记录；下次上传将视为全部未同步。 */
+    fun clearSyncIndex(id: String) {
+        viewModelScope.launch {
+            repository.clearSyncIndex(id)
+            _uiState.value = _uiState.value.copy(error = context.getString(R.string.remote_clear_index_done))
         }
     }
 
@@ -205,38 +240,48 @@ class RemoteServerViewModel @Inject constructor(
 
     /** 解析私钥指纹并写入登录密钥库，随后刷新列表。 */
     private suspend fun registerLoginKey(file: File, passphrase: String? = null) {
-        val fingerprint = withContext(Dispatchers.IO) {
-            privateKeyStore.fingerprint(privateKeyStore.readPem(file.absolutePath))
+        loginKeyMutex.withLock {
+            val loginKeys = withContext(Dispatchers.IO) {
+                val fingerprint = privateKeyStore.fingerprint(privateKeyStore.readPem(file.absolutePath))
+                loginKeyStore.add(
+                    SshLoginKey(
+                        id = UUID.randomUUID().toString(),
+                        name = file.name,
+                        path = file.absolutePath,
+                        fingerprint = fingerprint,
+                        passphrase = passphrase
+                    )
+                )
+                loginKeyStore.entries()
+            }
+            _uiState.value = _uiState.value.copy(loginKeys = loginKeys)
         }
-        loginKeyStore.add(
-            SshLoginKey(
-                id = UUID.randomUUID().toString(),
-                name = file.name,
-                path = file.absolutePath,
-                fingerprint = fingerprint,
-                passphrase = passphrase
-            )
-        )
-        _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
     }
 
     /** 编辑登录密钥：更新显示名与口令（私钥内容不可改）。 */
     fun updateLoginKey(id: String, name: String, passphrase: String) {
-        val existing = loginKeyStore.entries().firstOrNull { it.id == id } ?: return
-        loginKeyStore.add(
-            existing.copy(
-                name = name.trim().ifBlank { existing.name },
-                passphrase = passphrase.ifBlank { null }
-            )
-        )
-        _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
+        viewModelScope.launch {
+            loginKeyMutex.withLock {
+                val loginKeys = withContext(Dispatchers.IO) {
+                    val existing = loginKeyStore.entries().firstOrNull { it.id == id } ?: return@withContext null
+                    loginKeyStore.add(
+                        existing.copy(
+                            name = name.trim().ifBlank { existing.name },
+                            passphrase = passphrase.ifBlank { null }
+                        )
+                    )
+                    loginKeyStore.entries()
+                } ?: return@withLock
+                _uiState.value = _uiState.value.copy(loginKeys = loginKeys)
+            }
+        }
     }
 
     /** 读取登录密钥的私钥明文 PEM（供编辑页只读查看）；失败返回 null。 */
     fun readLoginKeyPem(id: String, onResult: (String?) -> Unit) {
-        val key = loginKeyStore.entries().firstOrNull { it.id == id } ?: return onResult(null)
         viewModelScope.launch {
             val pem = withContext(Dispatchers.IO) {
+                val key = loginKeyStore.entries().firstOrNull { it.id == id } ?: return@withContext null
                 runCatching { privateKeyStore.readPem(key.path) }.getOrNull()
             }
             onResult(pem)
@@ -244,8 +289,15 @@ class RemoteServerViewModel @Inject constructor(
     }
 
     fun removeLoginKey(id: String) {
-        loginKeyStore.remove(id)
-        _uiState.value = _uiState.value.copy(loginKeys = loginKeyStore.entries())
+        viewModelScope.launch {
+            loginKeyMutex.withLock {
+                val loginKeys = withContext(Dispatchers.IO) {
+                    loginKeyStore.remove(id)
+                    loginKeyStore.entries()
+                }
+                _uiState.value = _uiState.value.copy(loginKeys = loginKeys)
+            }
+        }
     }
 
     fun addConnection(

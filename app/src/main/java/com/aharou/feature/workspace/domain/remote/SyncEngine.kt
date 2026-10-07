@@ -26,7 +26,9 @@ class SyncEngine(
     private val auth: RemoteAuth,
     private val ignoredPatternsStr: String,
     private val useGitIgnore: Boolean,
-    private val maxSyncBatchSize: Int
+    private val maxSyncBatchSize: Int,
+    /** 同步指纹索引：未变文件据此跳过重传（见 [SyncDecision]）。为 null 时不持久化、退化为全量上传。 */
+    private val indexStore: SyncIndexStore? = null
 ) {
     companion object {
         private const val TAG = "SyncEngine"
@@ -37,6 +39,8 @@ class SyncEngine(
 
         /** 待同步路径队列上限；超出时丢弃最旧项，防止大量改动时内存无界增长。 */
         private const val MAX_PENDING_SYNC = 4096
+
+        private val HEX = "0123456789abcdef".toCharArray()
     }
 
     private val customIgnores = ignoredPatternsStr.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
@@ -64,8 +68,65 @@ class SyncEngine(
         return false
     }
 
+    /** 相对挂载根的路径，作为索引 key（挂载本地路径改动后仍可复用）。 */
+    private fun relativeKey(absolutePath: String): String =
+        absolutePath.removePrefix(mount.localMountPath).removePrefix("/")
+
+    /** 计算文件内容 SHA-256（十六进制小写）；读盘失败返回 null（调用方据此保守上传）。 */
+    private fun sha256Of(file: File): String? = runCatching {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                if (n > 0) digest.update(buf, 0, n)
+            }
+        }
+        val hex = StringBuilder(64)
+        for (b in digest.digest()) hex.append(HEX[(b.toInt() ushr 4) and 0xF]).append(HEX[b.toInt() and 0xF])
+        hex.toString()
+    }.getOrNull()
+
+    /** 判定某文件是否需要上传；命中跳过时顺带刷新 mtime，避免下次重复算哈希。 */
+    private fun shouldUpload(rel: String, file: File): Boolean {
+        val action = SyncDecision.decide(fingerprints[rel], file.length(), file.lastModified()) { sha256Of(file) }
+        if (action == SyncDecision.Action.SKIP_UNCHANGED) {
+            fingerprints[rel]?.let { stored ->
+                if (stored.mtimeMs != file.lastModified()) {
+                    fingerprints[rel] = stored.copy(mtimeMs = file.lastModified())
+                }
+            }
+            return false
+        }
+        return true
+    }
+
+    /** 上传成功后记录指纹；仅当与旧记录同尺寸（原地改写）才补算哈希，避免典型上传都全量读盘。 */
+    private fun recordUploaded(rel: String, file: File) {
+        val size = file.length()
+        val stored = fingerprints[rel]
+        val sha = if (stored != null && stored.size == size) sha256Of(file) else null
+        fingerprints[rel] = FileFingerprint(size, file.lastModified(), sha)
+    }
+
+    private fun saveIndex() {
+        val store = indexStore ?: return
+        if (fingerprints.isNotEmpty()) store.save(mount.id, remoteIdentity, HashMap(fingerprints))
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val retryCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /** 相对挂载根路径 → 上次成功同步的指纹；用于跳过未变文件。 */
+    private val fingerprints = java.util.concurrent.ConcurrentHashMap<String, FileFingerprint>()
+
+    /** 本次连接对应的远端身份；与索引内记录不一致时索引整体作废（全量上传）。 */
+    private val remoteIdentity = SyncIndexIdentity(
+        connectionId = connection.id,
+        host = connection.host,
+        remotePath = mount.remotePath
+    )
 
     private val _connectionState = MutableStateFlow(SyncConnectionState.CONNECTED)
     /** 连接健康度：探活失败进 RECONNECTING，重连成功回 CONNECTED，供 UI 展示。 */
@@ -78,6 +139,7 @@ class SyncEngine(
     )
 
     init {
+        indexStore?.load(mount.id, remoteIdentity)?.let { fingerprints.putAll(it) }
         if (useGitIgnore) {
             val gitignore = File(mount.localMountPath, ".gitignore")
             if (gitignore.exists()) {
@@ -103,6 +165,7 @@ class SyncEngine(
                 for (localPath in batch) {
                     handleLocalChange(localPath)
                 }
+                saveIndex()
 
                 // 如果达到批次上限，说明可能正处于大量修改阶段，短暂延迟让服务器缓冲一下
                 if (batch.size >= maxSyncBatchSize) {
@@ -161,6 +224,8 @@ class SyncEngine(
                 } else {
                     try {
                         syncClient.downloadFile(rPath, lFile.absolutePath)
+                        fingerprints[relativeKey(lFile.absolutePath)] =
+                            FileFingerprint(lFile.length(), lFile.lastModified(), null)
                         delay(FILE_SYNC_DELAY_MS)
                     } catch (e: CancellationException) {
                         throw e
@@ -172,12 +237,13 @@ class SyncEngine(
             }
         }
         pull(mount.remotePath, localRoot)
+        saveIndex()
     }
 
     /**
-     * 全量推送本地工作区到远程
+     * 推送本地工作区到远程。[force] 为 true 时忽略索引、全部重传；默认走增量、跳过未变文件。
      */
-    suspend fun uploadWorkspace() = withContext(Dispatchers.IO) {
+    suspend fun uploadWorkspace(force: Boolean = false) = withContext(Dispatchers.IO) {
         if (!syncClient.isConnected()) {
             throw IllegalStateException("Client not connected")
         }
@@ -196,8 +262,14 @@ class SyncEngine(
                     }
                     push(file, rPath)
                 } else {
+                    val rel = relativeKey(file.absolutePath)
+                    if (!force && !shouldUpload(rel, file)) {
+                        FileLogger.d(TAG, "Sync: 未变化，跳过上传 $rPath")
+                        continue
+                    }
                     try {
                         syncClient.uploadFile(file.absolutePath, rPath)
+                        recordUploaded(rel, file)
                         delay(FILE_SYNC_DELAY_MS)
                     } catch (e: CancellationException) {
                         throw e
@@ -215,6 +287,13 @@ class SyncEngine(
             }
         }
         push(localRoot, mount.remotePath)
+        saveIndex()
+    }
+
+    /** 清除本挂载的同步指纹：内存与持久化都清空，后续上传视为全部未同步。 */
+    fun clearSyncIndex() {
+        fingerprints.clear()
+        indexStore?.clear(mount.id)
     }
 
     /**
@@ -238,13 +317,17 @@ class SyncEngine(
                 if (file.isDirectory) {
                     syncClient.createDirectory(remotePath)
                     FileLogger.i(TAG, "Sync: Created remote directory $remotePath")
+                } else if (!shouldUpload(relativePath, file)) {
+                    FileLogger.d(TAG, "Sync: 未变化，跳过上传 $remotePath")
                 } else {
                     syncClient.uploadFile(localPath, remotePath)
+                    recordUploaded(relativePath, file)
                     FileLogger.i(TAG, "Sync: Uploaded to $remotePath")
                     delay(FILE_SYNC_DELAY_MS)
                 }
             } else {
                 syncClient.delete(remotePath)
+                fingerprints.remove(relativePath)
                 FileLogger.i(TAG, "Sync: Deleted $remotePath")
                 delay(FILE_SYNC_DELAY_MS)
             }

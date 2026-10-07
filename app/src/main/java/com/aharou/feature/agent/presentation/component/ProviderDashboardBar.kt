@@ -20,10 +20,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,10 +41,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.core.theme.Radius
@@ -63,6 +68,8 @@ fun ProviderDashboardBar(
     provider: AIProviderConfig,
     state: ProviderDashboardState,
     onRefresh: () -> Unit,
+    /** 展开正文的高度上限（由宿主按可用高度与键盘内边距算出），超出部分在面板内滚动。 */
+    maxExpandedBodyHeight: Dp,
     modifier: Modifier = Modifier,
     forceCollapse: Boolean = false,
     onRefreshByButton: () -> Unit = {},
@@ -249,9 +256,13 @@ fun ProviderDashboardBar(
                         enter = fadeIn(tween(180)) + expandVertically(tween(220)),
                         exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
                     ) {
+                        val bodyScrollState = rememberScrollState()
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(max = maxExpandedBodyHeight)
+                                .nestedScroll(rememberBoundNestedScrollConnection(bodyScrollState))
+                                .verticalScroll(bodyScrollState)
                                 .padding(top = Spacing.sm),
                             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                         ) {

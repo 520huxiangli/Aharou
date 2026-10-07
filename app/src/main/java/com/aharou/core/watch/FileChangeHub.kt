@@ -2,6 +2,7 @@ package com.aharou.core.watch
 
 import android.os.FileObserver
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.LogLevel
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
@@ -87,6 +88,16 @@ class FileChangeHub @Inject constructor(
         const val AHAROU_ROOT = WorkspacePathMapper.AHAROU_ROOT
 
         private const val IN_IGNORED = 0x00008000
+
+        /**
+         * 目录监听链路的逐目录 / 逐事件诊断打点。量很大，默认关闭；不随日志等级自动打开——
+         * debug 构建默认 VERBOSE，若跟随则会默认刷屏。需要排查挂载竞态 / inotify 失效时，把日志
+         * 等级切到 DEBUG（设置页「日志等级」/ 配置项 `app.log_level`，持久化、免改源码重编）即打开；
+         * 其他等级（含默认的 VERBOSE / INFO）一律关闭。
+         */
+        private fun diag(message: String) {
+            if (FileLogger.minLevel == LogLevel.DEBUG) FileLogger.d(TAG, "[diag] $message")
+        }
 
         private val MASK = FileObserver.CREATE or FileObserver.DELETE or FileObserver.MOVED_TO or
             FileObserver.MOVED_FROM or FileObserver.CLOSE_WRITE
@@ -282,7 +293,7 @@ class FileChangeHub @Inject constructor(
         private fun register(dir: File, reportNew: Boolean) {
             val path = dir.absolutePath
             if (!myDirs.add(path)) {
-                FileLogger.d(TAG, "[diag] 目录监听已登记，跳过重复注册: $path")
+                diag("目录监听已登记，跳过重复注册: $path")
                 return
             }
             if (dirWatches.size >= MAX_WATCHED_DIRS && !dirWatches.containsKey(path)) {
@@ -296,14 +307,14 @@ class FileChangeHub @Inject constructor(
             val onReady: (() -> Unit)? = if (reportNew) {
                 { ioScope.launch { reportExistingChildren(dir) } }
             } else null
-            FileLogger.d(TAG, "[diag] 注册目录监听: $path reportNew=$reportNew")
+            diag("注册目录监听: $path reportNew=$reportNew")
             dirWatches.computeIfAbsent(path) { DirWatch(dir) }.subscribe(this, onReady)
         }
 
         /** 挂载监听后补扫子项，覆盖首次扫描与 startWatching 之间新建的目录。 */
         private fun reportExistingChildren(dir: File) {
             val children = dir.listFiles() ?: return
-            FileLogger.d(TAG, "[diag] 补报新目录子项: ${dir.absolutePath} 数量=${children.size}")
+            diag("补报新目录子项: ${dir.absolutePath} 数量=${children.size}")
             for (child in children) {
                 events.trySend(RawEvent(child.absolutePath, ChangeKind.CREATED))
                 if (recursive && child.isDirectory) registerTree(child, reportNew = true)
@@ -467,7 +478,7 @@ class FileChangeHub @Inject constructor(
                 @Suppress("DEPRECATION")
                 val created = object : FileObserver(path, MASK) {
                     override fun onEvent(event: Int, child: String?) {
-                        FileLogger.d(TAG, "[diag] FileObserver.onEvent path=$path event=0x${Integer.toHexString(event)} child=$child")
+                        diag("FileObserver.onEvent path=$path event=0x${Integer.toHexString(event)} child=$child")
                         if (event and IN_IGNORED != 0) {
                             invalidate(this)
                             return
@@ -479,7 +490,7 @@ class FileChangeHub @Inject constructor(
                 }
                 created.startWatching()
                 observer = created
-                FileLogger.d(TAG, "[diag] startWatching path=$path")
+                diag("startWatching path=$path")
                 // 必须在 startWatching 之后：此刻起 inotify 能捕获新增，补报只负责更早的存量，二者无缝衔接。
                 onReady?.invoke()
             }
@@ -504,7 +515,7 @@ class FileChangeHub @Inject constructor(
 
         private fun dispatch(name: String, kind: ChangeKind) {
             val hostPath = File(dir, name).absolutePath
-            FileLogger.d(TAG, "[diag] dispatch hostPath=$hostPath kind=$kind subscribers=${subscribers.size}")
+            diag("dispatch hostPath=$hostPath kind=$kind subscribers=${subscribers.size}")
             for (sub in subscribers) sub.onEvent(this, hostPath, kind)
         }
 

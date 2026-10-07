@@ -43,7 +43,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -87,6 +89,8 @@ import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Search
 import compose.icons.feathericons.Terminal
 import compose.icons.feathericons.Tool
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -152,47 +156,58 @@ internal fun ToolMessageBody(
     // 逐次重组都拿整串做一次 O(n) 相等比较，本身就是可观的浪费。
     // 工具结果只会追加增长，长度相同即视为同一份内容。
     val contentKey = message.content.length
-    val edit = if (!running && !message.isError &&
-        (message.toolName == "editFile" || message.toolName == "writeFile")
-    ) {
-        remember(message.id, contentKey) { parseEditDiff(message.content) }
-    } else null
-
-    val resultText = if (!running) {
-        remember(message.id, contentKey) { formatToolResult(message.content) }
-    } else null
-    val argHint = remember(message.toolArgs) { toolArgHint(message.toolArgs) }
-    val argsFull = remember(message.toolArgs) { formatToolArgs(message.toolArgs) }
-
-    val todoData = if (message.toolName == "todo" && !running && !message.isError) {
-        remember(message.id, contentKey) { parseTodoResult(message.content) }
-    } else null
-    val webSearchData = if (message.toolName == "websearch" && !running && !message.isError) {
-        remember(message.id, contentKey) { parseWebSearchResult(message.content) }
-    } else null
+    // 解析（diff/todo/搜索/通知/路径等）从组合期移到 Default：工具结果可达数十万字符，主线程解析会掉帧。
+    // 外层 key(...) 让 key 变化时整体重建（重新解析、丢弃旧输入的结果）；初值 null 表示尚未解析完成，
+    // 各处按空值渲染，避免先画出空卡片或错内容。
+    val derived by key(message.id, contentKey, message.toolName, message.isError, running, message.toolArgs) {
+        produceState<ToolMessageDerived?>(initialValue = null) {
+            value = withContext(Dispatchers.Default) {
+                ToolMessageDerived(
+                    edit = if (!running && !message.isError &&
+                        (message.toolName == "editFile" || message.toolName == "writeFile")
+                    ) parseEditDiff(message.content) else null,
+                    resultText = if (!running) formatToolResult(message.content) else null,
+                    argHint = toolArgHint(message.toolArgs),
+                    argsFull = formatToolArgs(message.toolArgs),
+                    todo = if (message.toolName == "todo" && !running && !message.isError) {
+                        parseTodoResult(message.content)
+                    } else null,
+                    webSearch = if (message.toolName == "websearch" && !running && !message.isError) {
+                        parseWebSearchResult(message.content)
+                    } else null,
+                    notifications = if (!running) parseToolNotifications(message.content) else emptyList(),
+                    filePath = extractFilePathArg(message.toolArgs),
+                    browserUrl = if (message.toolName == "browser") {
+                        extractBrowserUrl(message.toolArgs, message.content)
+                    } else null,
+                    shellCommand = if (message.toolName == "Bash" || message.toolName == "terminal") {
+                        extractShellCommand(message.toolArgs)
+                    } else null,
+                )
+            }
+        }
+    }
+    val edit = derived?.edit
+    val resultText = derived?.resultText
+    val argHint = derived?.argHint
+    val argsFull = derived?.argsFull
+    val todoData = derived?.todo
+    val webSearchData = derived?.webSearch
+    val notifications = derived?.notifications.orEmpty()
 
     // [Aharou] 工具消息互联入口：browser → 地球（围观该 URL）；Bash/terminal → 在终端中运行。
     val browserOpener = com.aharou.feature.browser.presentation.LocalBrowserOpener.current
     val terminalOpener = com.aharou.feature.terminal.presentation.component.LocalTerminalOpener.current
     // 工具详情页入口（导航层提供；长输出在卡片里只能滚动看，全屏更舒服）
     val previewOpener = LocalToolPreviewOpener.current
-    val browserUrl = if (message.toolName == "browser") {
-        remember(message.id, message.toolArgs, contentKey) {
-            extractBrowserUrl(message.toolArgs, message.content)
-        }
-    } else null
-    val shellCommand = if (message.toolName == "Bash" || message.toolName == "terminal") {
-        remember(message.id, message.toolArgs) { extractShellCommand(message.toolArgs) }
-    } else null
-    // 后台任务/子代理完成通知：搭车在本次工具结果里送给 AI 的，同时常显给用户看。
-    val notifications = if (!running) {
-        remember(message.id, contentKey) { parseToolNotifications(message.content) }
-    } else emptyList()
+    val browserUrl = derived?.browserUrl
+    val shellCommand = derived?.shellCommand
 
     // 执行中也可折叠/展开（如 bash 刷屏时可收起只看标题行），无论当前是否有输出；无输出时折叠态无内容，但保持可点击与箭头一致
     val hasLiveOutput = !liveOutput.isNullOrBlank()
-    val expandable = streaming || (!running && (edit != null || !resultText.isNullOrBlank() || !argsFull.isNullOrBlank()
-            || (todoData != null && todoData.items.isNotEmpty()) || webSearchData != null))
+    // derived == null（解析中）时保持可展开，避免箭头先缺失后补上。
+    val expandable = streaming || (!running && (derived == null || edit != null || !resultText.isNullOrBlank()
+            || !argsFull.isNullOrBlank() || (todoData != null && todoData.items.isNotEmpty()) || webSearchData != null))
     // 工具调用一律默认收起（差异卡、待办卡也不例外）：要不要看细节由用户点开，
     // 手动开关过（expandedOverride 非 null）就以用户的选择为准。展开态由宿主保管，
     // 因此滚出视口、切页返回都不会再丢。
@@ -200,11 +215,7 @@ internal fun ToolMessageBody(
 
     val toolLabel = message.toolName ?: stringResource(R.string.common_tool)
     // 文件相关工具：从结构化 diff 或工具参数里取路径，统一按「工具名 + 路径 + 文件名」展示
-    val filePath = if (edit != null) {
-        edit.path
-    } else {
-        remember(message.toolArgs) { extractFilePathArg(message.toolArgs) }
-    }
+    val filePath = if (edit != null) edit.path else derived?.filePath
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -444,6 +455,19 @@ internal fun ToolMessageBody(
         }
     }
 }
+
+private data class ToolMessageDerived(
+    val edit: EditDiff?,
+    val resultText: String?,
+    val argHint: String?,
+    val argsFull: String?,
+    val todo: ParsedTodoResult?,
+    val webSearch: ParsedWebSearchResult?,
+    val notifications: List<ToolNotificationInfo>,
+    val filePath: String?,
+    val browserUrl: String?,
+    val shellCommand: String?
+)
 
 internal data class ToolNotificationInfo(val summary: String, val succeeded: Boolean, val isMessage: Boolean = false)
 

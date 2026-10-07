@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -60,6 +62,7 @@ import com.aharou.R
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Folder
+import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.Play
 import compose.icons.feathericons.Server
 
@@ -269,10 +272,13 @@ fun RemoteMountCard(
     onEdit: (RemoteMount) -> Unit,
     onDelete: (RemoteMount) -> Unit,
     onUpload: (RemoteMount) -> Unit,
+    onUploadFull: (RemoteMount) -> Unit,
+    onClearIndex: (RemoteMount) -> Unit,
     onDownload: (RemoteMount) -> Unit,
     onConnect: (RemoteMount) -> Unit,
     onDisconnect: (RemoteMount) -> Unit
 ) {
+    var actionsExpanded by remember { mutableStateOf(false) }
     SwipeToDeleteRow(onDelete = { onDelete(mount) }) {
         Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -352,8 +358,9 @@ fun RemoteMountCard(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            stringResource(R.string.sync_upload_all),
-                            style = MaterialTheme.typography.labelLarge
+                            stringResource(R.string.sync_upload_changes),
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1
                         )
                     }
                     OutlinedButton(
@@ -363,7 +370,43 @@ fun RemoteMountCard(
                             .height(32.dp),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Text(stringResource(R.string.sync_download_all), style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            stringResource(R.string.sync_download_all),
+                            style = MaterialTheme.typography.labelLarge,
+                            maxLines = 1
+                        )
+                    }
+                    Box {
+                        IconButton(
+                            onClick = { actionsExpanded = true },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = FeatherIcons.MoreHorizontal,
+                                contentDescription = stringResource(R.string.common_more),
+                                tint = MaterialTheme.semanticColors.subtleText,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = actionsExpanded,
+                            onDismissRequest = { actionsExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sync_upload_full)) },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onUploadFull(mount)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.sync_clear_index)) },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onClearIndex(mount)
+                                }
+                            )
+                        }
                     }
                 } else {
                     Button(
