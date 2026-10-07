@@ -894,7 +894,8 @@ class BackupManagerImpl @Inject constructor(
     private fun AgentMessageEntity.toDto() = AgentMessageDto(
         id, sessionId, role, content, timestamp, toolCallsJson, toolCallId, toolName, toolArgs,
         isError, reasoning, signature, attachmentsJson, isCompacted, isContextSummary, isCompactionMarker,
-        thinkingBlocksJson, isContextExcluded, compactedBySummaryId
+        thinkingBlocksJson, isContextExcluded, compactedBySummaryId,
+        error, variantGroupId, variantIndex
     )
 
     private fun AgentMessageDto.toEntity(): AgentMessageEntity {
@@ -910,7 +911,10 @@ class BackupManagerImpl @Inject constructor(
             isError, reasoning, signature, attachmentsJson, isCompacted && !excluded, summary, isCompactionMarker,
             thinkingBlocksJson = thinkingBlocksJson,
             isContextExcluded = excluded,
-            compactedBySummaryId = if (excluded) null else compactedBySummaryId
+            compactedBySummaryId = if (excluded) null else compactedBySummaryId,
+            error = error,
+            variantGroupId = variantGroupId,
+            variantIndex = variantIndex
         )
     }
 

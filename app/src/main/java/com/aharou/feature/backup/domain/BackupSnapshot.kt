@@ -225,7 +225,12 @@ data class AgentMessageDto(
     /** Anthropic thinking / redacted_thinking 内容块的原样快照（JSON 数组文本）。 */
     val thinkingBlocksJson: String? = null,
     val isContextExcluded: Boolean = false,
-    val compactedBySummaryId: String? = null
+    val compactedBySummaryId: String? = null,
+    /** 仅 ASSISTANT 行：本轮失败的错误文本（重载后恢复错误横幅与重试）。 */
+    val error: String? = null,
+    /** 消息变体分组 id 与组内版本序号（见 [com.aharou.feature.agent.data.local.entity.AgentMessageEntity]）。 */
+    val variantGroupId: String? = null,
+    val variantIndex: Int = 0
 )
 
 @Serializable

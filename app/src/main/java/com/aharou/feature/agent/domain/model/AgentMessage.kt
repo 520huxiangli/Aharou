@@ -67,6 +67,11 @@ data class AgentContext(
     val projectRoot: String,
     val language: String?,
     val history: List<AgentMessage> = emptyList(),
+    /**
+     * 本轮用户请求的原始文本。提示词源据此按任务关键词挑选内容（如记忆清单的相关性排序）。
+     * 不能从 [history] 取——取历史发生在插入本轮用户消息之前，那里拿到的只是上一轮，首轮还是空。
+     */
+    val currentUserText: String = "",
     val inputImages: List<AgentImage> = emptyList(),
     /** 当前会话 id：用于把本轮所有 AI 请求/响应落到该会话的日志文件（[com.aharou.core.util.AILogger]）。 */
     val sessionId: String? = null,

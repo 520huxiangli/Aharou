@@ -25,6 +25,7 @@ import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.TodoItemDao
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
+import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.container.ContainerInitState
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.settings.domain.model.ProviderType
@@ -70,6 +71,7 @@ import com.aharou.feature.workspace.domain.FileEntry
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.agent.domain.workflow.AgentEvent
+import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
@@ -79,6 +81,7 @@ import com.aharou.feature.agent.domain.tool.question.AskUserQuestionManager
 import com.aharou.feature.agent.domain.tool.question.UserQuestionAnswer
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aharou.feature.agent.domain.session.MessageArchiveStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -118,6 +121,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -157,6 +161,7 @@ class AIAgentViewModel @Inject constructor(
     private val containerEngine: LinuxContainerEngine,
     private val sessionUseCase: SessionUseCase,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
+    private val messageArchiveStore: MessageArchiveStore,
     private val planApprovalManager: PlanApprovalManager,
     private val terminalSessionManager: TerminalSessionManager,
     private val slashCommandRegistry: SlashCommandRegistry,
@@ -1051,6 +1056,9 @@ class AIAgentViewModel @Inject constructor(
         currentSessionState.map { s -> (s?.providerId ?: "") to (s?.model ?: "") }
             .stateIn(viewModelScope, SharingStarted.Eagerly, Pair(null, null))
 
+    /** 消息变体：每个变体组当前展示的版本在组内排序后的下标（见 [applyVariantSelection]）。 */
+    private val _variantSelections = MutableStateFlow<Map<String, Int>>(emptyMap())
+
     /**
      * 当前会话的消息状态：会话切换时自动切换到对应历史，并携带所属会话 id 与 loaded 标志，
      * 使 UI 能区分「切换/冷启动加载中」与「空会话」——避免先闪 Welcome 或上一个会话的消息再突然刷新。
@@ -1058,21 +1066,22 @@ class AIAgentViewModel @Inject constructor(
      */
     val messagesState: StateFlow<ChatMessagesState> = combine(
         _currentSessionId,
-        _messageLimit
-    ) { id, limitMap -> id to (limitMap[id] ?: defaultLimit) }
-        .flatMapLatest { (id, limit) ->
+        _messageLimit,
+        _variantSelections
+    ) { id, limitMap, selections -> Triple(id, limitMap[id] ?: defaultLimit, selections) }
+        .flatMapLatest { (id, limit, selections) ->
             if (id == null) flowOf(ChatMessagesState(null, emptyList(), loaded = false))
             else agentMessageDao.getMessagesBySessionPaged(id, limit).map { list ->
                 ChatMessagesState(
                     sessionId = id,
-                    messages = messagePersistenceUseCase.restoreAll(list).asSequence()
-                        .filterNot {
+                    messages = applyVariantSelection(
+                        messagePersistenceUseCase.restoreAll(list).filterNot {
                             it.role == MessageRole.ASSISTANT.name &&
                                 !it.content.hasVisibleContent() &&
                                 it.reasoning.isNullOrEmpty()
-                        }
-                        .map { entity -> entity.toUIMessage() }
-                        .toList(),
+                        },
+                        selections
+                    ),
                     loaded = true,
                     hasMore = list.size >= limit,
                     isLoadingMore = false
@@ -1082,6 +1091,49 @@ class AIAgentViewModel @Inject constructor(
         // restoreAll 内部已逐条切 Dispatchers.IO，这里用 Default 承接附件 JSON 解析等 CPU 工作，避免嵌套线程切换。
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatMessagesState(null, emptyList(), loaded = false))
+
+    /**
+     * 变体选择：同一 [AgentMessageEntity.variantGroupId] 的多个版本只渲染选中的那一个，
+     * 其余整组留在库里（供 ‹ n/N › 左右切换）不占时间线。
+     *
+     * 渲染位置取该组在时间线上的**最后一条**：重新生成后新版本追加在末尾，故选中任一版本都落在
+     * 同一条用户消息之后——否则切回旧版本会把它渲染到用户消息前面。
+     */
+    private fun applyVariantSelection(
+        entities: List<AgentMessageEntity>,
+        selections: Map<String, Int>
+    ): List<AgentUIMessage> {
+        if (entities.none { it.variantGroupId != null }) return entities.map { it.toUIMessage() }
+        val groupIndices = HashMap<String, List<Int>>()
+        val groupLastPosition = HashMap<String, Int>()
+        entities.forEachIndexed { index, entity ->
+            val group = entity.variantGroupId ?: return@forEachIndexed
+            groupLastPosition[group] = index
+            val indices = groupIndices[group]
+            groupIndices[group] = when {
+                indices == null -> listOf(entity.variantIndex)
+                entity.variantIndex in indices -> indices
+                else -> (indices + entity.variantIndex).sorted()
+            }
+        }
+        val result = ArrayList<AgentUIMessage>(entities.size)
+        val emitted = HashSet<String>()
+        entities.forEachIndexed { index, entity ->
+            val group = entity.variantGroupId
+            if (group == null) {
+                result += entity.toUIMessage()
+                return@forEachIndexed
+            }
+            if (group in emitted || groupLastPosition[group] != index) return@forEachIndexed
+            emitted += group
+            val indices = groupIndices[group].orEmpty().ifEmpty { listOf(0) }
+            val position = (selections[group] ?: (indices.size - 1)).coerceIn(0, indices.size - 1)
+            entities.asSequence()
+                .filter { it.variantGroupId == group && it.variantIndex == indices[position] }
+                .forEach { result += it.toUIMessage().copy(variantIndex = position, variantCount = indices.size) }
+        }
+        return result
+    }
 
 
     private val _runningTools = MutableStateFlow<Map<String, Map<String, RunningToolOutput>>>(emptyMap())
@@ -1390,6 +1442,25 @@ class AIAgentViewModel @Inject constructor(
         // 面板被销毁时清不掉，且分享投递与面板组合时序耦合，这里提到 VM 统一处理。
         viewModelScope.launch {
             _sessionSwitchEvents.collect { _pendingAttachments.value = emptyList() }
+        }
+
+        // 错误横幅持久化：会话末条消息带着错误文本时恢复 Error 状态，重开 App / 切会话后
+        // 横幅与一键重试仍在；末条不再是错误行（已重试或继续对话）时清除该会话的错误态。
+        viewModelScope.launch {
+            _currentSessionId.filterNotNull().flatMapLatest { id ->
+                agentMessageDao.getMessagesBySessionPaged(id, 1)
+            }.collect { list ->
+                val sessionId = _currentSessionId.value ?: return@collect
+                if (sessionJobs[sessionId]?.isCompleted == false || sessionId in stoppingSessions) return@collect
+                val state = _agentStates.value[sessionId]
+                if (state is AgentUIState.Loading || state is AgentUIState.Streaming) return@collect
+                val error = list.lastOrNull()?.error
+                if (error.isNullOrBlank()) {
+                    if (state is AgentUIState.Error) setAgentState(sessionId, AgentUIState.Idle)
+                } else {
+                    setAgentState(sessionId, AgentUIState.Error(error))
+                }
+            }
         }
 
         // 启动与工作区切换时重新扫描技能（项目级技能随工作区变化），刷新 `/` 命令菜单。
@@ -2020,7 +2091,10 @@ class AIAgentViewModel @Inject constructor(
                     is AgentEvent.Failed -> {
                         failed = true
                         setCompacting(sessionId, false)
-                        setAgentState(sessionId, AgentUIState.Error(describeFailure(event)))
+                        val failureMessage = describeFailure(event)
+                        setAgentState(sessionId, AgentUIState.Error(failureMessage))
+                        // 落库：重开 App / 切会话后错误横幅与一键重试仍在。
+                        persistFailureMessage(sessionId, failureMessage)
                         // 子代理失败时通知父会话的事在 runner 里做
                     }
                     AgentEvent.Completed -> {
@@ -2085,7 +2159,9 @@ class AIAgentViewModel @Inject constructor(
         } catch (e: Exception) {
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
              if (sessionJobs[sessionId] === currentJob) {
-                 setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
+                 val failureMessage = e.toUserMessage()
+                 setAgentState(sessionId, AgentUIState.Error(failureMessage))
+                 persistFailureMessage(sessionId, failureMessage)
                  _completedSessions.value = _completedSessions.value - sessionId
              }
         } finally {
@@ -2142,13 +2218,16 @@ class AIAgentViewModel @Inject constructor(
         releaseKeepalive()
     }
 
-    /**
-     * 主动打断当前会话正在运行的 agent：取消协程（会一并取消挂起的网络请求与容器命令进程），
-     * 并把「执行中」的工具占位行收尾为「已停止」，避免悬挂的 spinner 与孤儿记录。
-     */
+    /** 软打断当前会话正在运行的 agent：不取消协程，只投一条 USER_INTERRUPT，见 [stopAgentSession]。 */
     fun stopAgent() {
         val sessionId = _currentSessionId.value ?: return
         stopAgentSession(sessionId)
+    }
+
+    /** 长按停止键：强制打断当前会话正在运行的 agent，见 [forceStopAgentSession]。 */
+    fun forceStopAgent() {
+        val sessionId = _currentSessionId.value ?: return
+        forceStopAgentSession(sessionId)
     }
 
     /**
@@ -2163,24 +2242,7 @@ class AIAgentViewModel @Inject constructor(
         if (sessionId in stoppingSessions) return
         val job = sessionJobs[sessionId] ?: return
         if (!job.isActive) return
-        // 用户在界面上手动停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启，
-        // 且父代理会一直等一条永不到达的完成通知。TaskTool 的 stop/del 已在 emit(STOPPED) 时释放过，
-        // 那条路径下 release 返回 false，不会重复通知。
-        if (subAgentEventBus.release(sessionId)) {
-            viewModelScope.launch {
-                val sub = sessionUseCase.getSessionById(sessionId)
-                val parentId = sub?.parentId
-                if (parentId != null) {
-                    notifyParentSubAgentFinished(
-                        parentSessionId = parentId,
-                        subSessionId = sessionId,
-                        title = sub.title,
-                        outcome = NotificationOutcome.STOPPED,
-                        detail = "用户在界面上手动停止了这个子代理，任务未完成。"
-                    )
-                }
-            }
-        }
+        releaseStoppedSubAgent(sessionId)
         agentNotificationCenter.enqueue(
             sessionId,
             PendingNotification(
@@ -2207,6 +2269,121 @@ class AIAgentViewModel @Inject constructor(
         setCompacting(sessionId, false)
         setRetryState(sessionId, null)
         setAgentState(sessionId, AgentUIState.Idle)
+    }
+
+    /**
+     * 强制打断指定会话（用户长按停止键）。与 [stopAgentSession] 的软打断相对：软打断只投一条
+     * USER_INTERRUPT，在跑的命令留着跑完；这里直接取消协程，[LinuxContainerEngine] 的取消钩子会把
+     * 容器内进程 destroy 掉，挂起的网络请求同时断开。
+     *
+     * 不投 USER_INTERRUPT：那条通知是给主循环看的开关，协程一取消就没人消费它，残留到下一轮
+     * 会在主循环顶部把新一轮也一并打断。
+     */
+    fun forceStopAgentSession(sessionId: String) {
+        if (sessionId in stoppingSessions) return
+        val job = sessionJobs[sessionId] ?: return
+        if (!job.isActive) return
+        releaseStoppedSubAgent(sessionId)
+        // 取消前先取快照：协程被取消后 _runningTools 与待授权请求会随之清空，那时就取不到了。
+        val runningTools = _runningTools.value[sessionId]?.values?.toList() ?: emptyList()
+        val pendingPermission = toolPermissionManager.pendingForSession(sessionId)
+        val stoppedText = context.getString(R.string.agent_stopped_by_user)
+        FileLogger.d(
+            TAG,
+            "forceStopAgent: sid=$sessionId runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id}"
+        )
+        val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
+        stoppingSessions[sessionId] = stopped
+        job.cancel()
+        viewModelScope.launch {
+            job.join()
+            if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
+            stopped.complete(Unit)
+            if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
+            settleStoppedTools(sessionId, runningTools, pendingPermission, stoppedText)
+            setStreamingText(sessionId, null)
+            setStreamingReasoning(sessionId, null)
+            setCompacting(sessionId, false)
+            setRetryState(sessionId, null)
+            setAgentState(sessionId, AgentUIState.Idle)
+            flushPendingNotifications(sessionId)
+            processNextInQueue(sessionId)
+        }
+        // 界面立刻放开：与软打断一致，不等后台那份收尾。
+        setCompacting(sessionId, false)
+        setRetryState(sessionId, null)
+        setAgentState(sessionId, AgentUIState.Idle)
+    }
+
+    /**
+     * 强制打断后的收尾：把还挂在「执行中」的工具占位行落库为「已停止」，否则会留下悬挂的 spinner。
+     *
+     * 授权弹窗挂起中的调用同样要补：awaitApproval 挂起期间 [_runningTools] 为空（ToolCallStarted 在
+     * 授权通过后才发出），但 assistant 消息里已经落了带 tool_call 的声明。不补结果，这条 tool_call
+     * 就成了孤儿记录，被 buildHistory 的 validIds 交集滤掉，AI 不知道自己曾调用过。
+     */
+    private suspend fun settleStoppedTools(
+        sessionId: String,
+        runningTools: List<RunningToolOutput>,
+        pendingPermission: PendingToolPermission?,
+        stoppedText: String
+    ) {
+        suspend fun needsStoppedResult(messageId: String): Boolean {
+            val message = agentMessageDao.getMessageById(messageId) ?: return true
+            return message.sessionId == sessionId && message.role == MessageRole.TOOL.name &&
+                (message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
+                    message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER))
+        }
+        runningTools.forEach { running ->
+            if (!needsStoppedResult(running.messageId)) {
+                toolArgsByMsgId.remove(running.messageId)
+                return@forEach
+            }
+            val partial = running.text.trimEnd()
+            val content = if (partial.isNotEmpty()) "$partial\n\n$stoppedText" else stoppedText
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.TOOL,
+                content = content,
+                id = running.messageId,
+                toolCallId = running.messageId.removePrefix("tool_"),
+                toolName = running.toolName.ifBlank { null },
+                toolArgs = running.toolArgs.ifBlank { toolArgsByMsgId[running.messageId] },
+                isError = true
+            )
+            toolArgsByMsgId.remove(running.messageId)
+        }
+        if (pendingPermission != null && needsStoppedResult("tool_${pendingPermission.id}")) {
+            val msgId = "tool_${pendingPermission.id}"
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.TOOL,
+                content = stoppedText,
+                id = msgId,
+                toolCallId = pendingPermission.id,
+                toolName = pendingPermission.toolName,
+                isError = true
+            )
+        }
+    }
+
+    /** 停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启。 */
+    private fun releaseStoppedSubAgent(sessionId: String) {
+        // TaskTool 的 stop/del 已在 emit(STOPPED) 时释放过，那条路径下 release 返回 false，不会重复通知。
+        if (!subAgentEventBus.release(sessionId)) return
+        viewModelScope.launch {
+            val sub = sessionUseCase.getSessionById(sessionId)
+            val parentId = sub?.parentId
+            if (parentId != null) {
+                notifyParentSubAgentFinished(
+                    parentSessionId = parentId,
+                    subSessionId = sessionId,
+                    title = sub.title,
+                    outcome = NotificationOutcome.STOPPED,
+                    detail = "用户在界面上手动停止了这个子代理，任务未完成。"
+                )
+            }
+        }
     }
 
     // region 会话管理
@@ -2616,7 +2793,186 @@ class AIAgentViewModel @Inject constructor(
                 checkpointManager.undoLastRestore(sessionId)
             }
         }
+        // 回退可能删掉变体组里除一条以外的所有版本，只剩一条时必须恢复它的上下文参与权。
+        agentMessageDao.repairSingletonVariantGroups(sessionId)
         _rewindConflicts.value = conflicts
+    }
+
+    /**
+     * 错误横幅的一键重试：取当前会话最后一条用户输入，连同其后所有消息（半截回答、工具结果、
+     * 错误行）一并删掉，再用它原本的文本与附件重跑一轮——不回填输入框。
+     *
+     * 注意删除从用户消息自身开始：重跑时 runner 会重新落一条同样的用户消息，只删「其后」会多出气泡。
+     */
+    fun retryLastFailedRequest() = viewModelScope.launch {
+        val sessionId = _currentSessionId.value ?: return@launch
+        val userMessage = lastUserInputMessage(sessionId) ?: return@launch
+        cancelRunningTurn(sessionId)
+        messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, userMessage.timestamp)
+        agentMessageDao.repairSingletonVariantGroups(sessionId)
+        setAgentState(sessionId, AgentUIState.Idle)
+        executeAgentRequestStream(
+            request = userMessage.content,
+            projectRoot = workspaceOf(sessionId),
+            inputAttachments = decodeAttachments(userMessage.attachmentsJson),
+            targetSessionId = sessionId
+        )
+    }
+
+    /**
+     * 「重新生成」：旧回答不删，而是连同本轮的工具过程一起标记为变体组的一版（退出上下文回放），
+     * 删掉本轮的用户消息后原样重跑，把新产出标成下一版；气泡下方据此左右切换。
+     */
+    fun regenerateMessage(messageId: String) = viewModelScope.launch {
+        val sessionId = _currentSessionId.value ?: return@launch
+        val target = agentMessageDao.getMessageById(messageId) ?: return@launch
+        if (target.role != MessageRole.ASSISTANT.name) return@launch
+        val all = agentMessageDao.getMessagesBySessionOnce(sessionId)
+        val userMessage = all.lastOrNull {
+            it.role == MessageRole.USER.name && !it.isCompactionMarker && !it.isContextSummary &&
+                it.timestamp < target.timestamp
+        } ?: return@launch
+        // 只对最后一轮生效：重跑中间轮次会把它挪到会话末尾，时序就乱了。
+        val hasLaterTurn = all.any {
+            it.timestamp > userMessage.timestamp && it.role == MessageRole.USER.name &&
+                !it.isCompactionMarker && !it.isContextSummary
+        }
+        if (hasLaterTurn) return@launch
+
+        cancelRunningTurn(sessionId)
+
+        val groupId = target.variantGroupId ?: target.id
+        val turnIds = all.filter { it.timestamp > userMessage.timestamp }.map { it.id }
+        val existingIndices = all.filter { it.variantGroupId == groupId }
+            .map { it.variantIndex }.distinct().sorted()
+        val nextIndex = (existingIndices.lastOrNull() ?: -1) + 1
+        if (turnIds.isNotEmpty()) {
+            if (existingIndices.isEmpty()) {
+                // 首次重新生成：本轮产出整体成为版本 0。
+                agentMessageDao.assignVariant(turnIds, groupId, 0, excluded = true)
+            } else {
+                agentMessageDao.updateContextExcluded(turnIds, excluded = true)
+            }
+        }
+        // 只删用户消息行：本轮旧回答要留在库里供切换，不能按时间戳批量删。
+        agentMessageDao.deleteMessageById(userMessage.id)
+        runCatching { messageArchiveStore.deleteMessage(sessionId, userMessage.id) }
+        messagePersistenceUseCase.invalidateHistory(sessionId)
+        setAgentState(sessionId, AgentUIState.Idle)
+
+        val startedAt = System.currentTimeMillis()
+        executeAgentRequestStream(
+            request = userMessage.content,
+            projectRoot = workspaceOf(sessionId),
+            inputAttachments = decodeAttachments(userMessage.attachmentsJson),
+            targetSessionId = sessionId
+        ).join()
+
+        // 本轮新产出的消息（用户消息之后新落库的）归入同一变体组的下一版。
+        val newIds = agentMessageDao.getMessagesBySessionOnce(sessionId).filter {
+            it.timestamp >= startedAt && it.variantGroupId == null && it.role != MessageRole.USER.name
+        }.map { it.id }
+        if (newIds.isNotEmpty()) {
+            agentMessageDao.assignVariant(newIds, groupId, nextIndex, excluded = false)
+        } else {
+            // 新一轮没产出任何消息（如立刻报错）：组里只剩旧版本，得把它的上下文参与权还回去。
+            agentMessageDao.repairSingletonVariantGroups(sessionId)
+        }
+        _variantSelections.value = _variantSelections.value + (groupId to nextIndex)
+    }
+
+    /** 切换变体组展示的版本（[position] 为组内排序后的下标）：被选中的参与上下文回放，其余退出。 */
+    fun selectMessageVariant(groupId: String, position: Int) {
+        viewModelScope.launch {
+            val sessionId = _currentSessionId.value ?: return@launch
+            val members = agentMessageDao.getMessagesBySessionOnce(sessionId)
+                .filter { it.variantGroupId == groupId }
+            val indices = members.map { it.variantIndex }.distinct().sorted()
+            if (indices.isEmpty()) return@launch
+            val clamped = position.coerceIn(0, indices.size - 1)
+            val selected = indices[clamped]
+            val selectedIds = members.filter { it.variantIndex == selected }.map { it.id }
+            val otherIds = members.filter { it.variantIndex != selected }.map { it.id }
+            if (otherIds.isNotEmpty()) agentMessageDao.updateContextExcluded(otherIds, excluded = true)
+            if (selectedIds.isNotEmpty()) agentMessageDao.updateContextExcluded(selectedIds, excluded = false)
+            messagePersistenceUseCase.invalidateHistory(sessionId)
+            _variantSelections.value = _variantSelections.value + (groupId to clamped)
+        }
+    }
+
+    /** 删掉变体组的一个版本（只剩一个版本时不动，UI 也不给入口）；选不中已删的下标时回退到前一个。 */
+    fun deleteMessageVariant(groupId: String, position: Int) {
+        viewModelScope.launch {
+            val sessionId = _currentSessionId.value ?: return@launch
+            val members = agentMessageDao.getMessagesBySessionOnce(sessionId)
+                .filter { it.variantGroupId == groupId }
+            val indices = members.map { it.variantIndex }.distinct().sorted()
+            if (indices.size <= 1) return@launch
+            val removed = indices[position.coerceIn(0, indices.size - 1)]
+            val removedMessages = members.filter { it.variantIndex == removed }
+            removedMessages.forEach {
+                agentMessageDao.deleteMessageById(it.id)
+                runCatching { messageArchiveStore.deleteMessage(sessionId, it.id) }
+            }
+            val remaining = indices.filter { it != removed }
+            val next = (position - 1).coerceIn(0, remaining.size - 1)
+            val selected = remaining[next]
+            val selectedIds = members.filter { it.variantIndex == selected }.map { it.id }
+            if (selectedIds.isNotEmpty()) agentMessageDao.updateContextExcluded(selectedIds, excluded = false)
+            messagePersistenceUseCase.invalidateHistory(sessionId)
+            _variantSelections.value = _variantSelections.value + (groupId to next)
+        }
+    }
+
+    /** 会话里最后一条真正的用户输入（排除压缩锚点/摘要与后台通知）。 */
+    private suspend fun lastUserInputMessage(sessionId: String): AgentMessageEntity? =
+        agentMessageDao.getMessagesBySessionOnce(sessionId).lastOrNull {
+            it.role == MessageRole.USER.name && !it.isCompactionMarker && !it.isContextSummary &&
+                !it.content.startsWith(BACKGROUND_NOTIFICATION_PREFIX)
+        }
+
+    private fun decodeAttachments(raw: String?): List<AgentAttachment> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching { json.decodeFromString<List<AgentAttachment>>(raw) }.getOrDefault(emptyList())
+    }
+
+    /** 中断当前轮并清掉运行态（重试 / 重新生成前调用），与回退流程同款收尾。 */
+    private suspend fun cancelRunningTurn(sessionId: String) {
+        _queuedRequests.value = _queuedRequests.value + (sessionId to emptyList())
+        agentNotificationCenter.clear(sessionId)
+        sessionJobs[sessionId]?.takeIf { it.isActive }?.cancelAndJoin()
+        sessionJobs.remove(sessionId)
+        _runningTools.value = _runningTools.value - sessionId
+        setStreamingText(sessionId, null)
+        setStreamingReasoning(sessionId, null)
+        setCompacting(sessionId, false)
+        setRetryState(sessionId, null)
+        setKeySwitchState(sessionId, null)
+    }
+
+    /**
+     * 错误文本落库：写进末条助手行；本轮还没产出助手行（如首次调用就报错）时补插一条 content 为空的
+     * 助手行专门承载它——它不渲染气泡、也不参与上下文回放，只用于重载后恢复错误横幅与重试入口。
+     */
+    private suspend fun persistFailureMessage(sessionId: String, error: String) {
+        if (error.isBlank()) return
+        runCatching {
+            val last = agentMessageDao.getMessagesBySessionOnce(sessionId).lastOrNull()
+            if (last != null && last.role == MessageRole.ASSISTANT.name) {
+                agentMessageDao.updateMessageError(last.id, error)
+            } else {
+                agentMessageDao.insert(
+                    AgentMessageEntity(
+                        id = UUID.randomUUID().toString(),
+                        sessionId = sessionId,
+                        role = MessageRole.ASSISTANT.name,
+                        content = "",
+                        timestamp = messagePersistenceUseCase.nextTimestamp(),
+                        error = error
+                    )
+                )
+            }
+        }.onFailure { FileLogger.e(TAG, "持久化失败信息出错", it) }
     }
 
     /** 重命名会话标题。仅更新 title，不改 updatedAt，列表顺序保持不变。 */

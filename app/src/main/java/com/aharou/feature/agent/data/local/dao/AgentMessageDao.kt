@@ -92,6 +92,38 @@ interface AgentMessageDao {
     @Query("DELETE FROM agent_messages WHERE sessionId = :sessionId AND timestamp > :cutoffTimestamp")
     suspend fun deleteMessagesAfterTimestamp(sessionId: String, cutoffTimestamp: Long)
 
+    /** 错误持久化：把本轮失败的错误文本写进指定消息行（见 [AgentMessageEntity.error]）。 */
+    @Query("UPDATE agent_messages SET error = :error WHERE id = :id")
+    suspend fun updateMessageError(id: String, error: String?)
+
+    /**
+     * 变体分组：把一组消息标记为同一 [AgentMessageEntity.variantGroupId] 的某个版本，
+     * 并同步 [AgentMessageEntity.isContextExcluded]——只有当前展示的版本参与上下文回放。
+     */
+    @Query("UPDATE agent_messages SET variantGroupId = :groupId, variantIndex = :variantIndex, isContextExcluded = :excluded WHERE id IN (:ids)")
+    suspend fun assignVariant(ids: List<String>, groupId: String, variantIndex: Int, excluded: Boolean)
+
+    /** 只同步一批消息是否参与上下文回放（切换变体版本时用）。 */
+    @Query("UPDATE agent_messages SET isContextExcluded = :excluded WHERE id IN (:ids)")
+    suspend fun updateContextExcluded(ids: List<String>, excluded: Boolean)
+
+    /**
+     * 修复回退 / 重试删掉其它版本后遗留的「退出上下文」标记：变体组只剩一个版本时它必须参与回放，
+     * 否则这条仅存的回答会被永久排除在模型上下文之外。
+     */
+    @Query(
+        """
+        UPDATE agent_messages SET isContextExcluded = 0
+        WHERE isContextExcluded = 1 AND sessionId = :sessionId AND variantGroupId IS NOT NULL
+          AND variantGroupId IN (
+              SELECT variantGroupId FROM agent_messages
+              WHERE sessionId = :sessionId AND variantGroupId IS NOT NULL
+              GROUP BY variantGroupId HAVING COUNT(DISTINCT variantIndex) = 1
+          )
+        """
+    )
+    suspend fun repairSingletonVariantGroups(sessionId: String)
+
     /**
      * 把残留的「执行中」工具行（content 以占位标记开头）批量收尾为「已中断」。
      * 用于冷启动：上次进程被杀时正在执行的工具不可能仍在跑，否则其占位行会永久显示转圈。

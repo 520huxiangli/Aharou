@@ -669,6 +669,7 @@
     <string name="chat_upload_image">上传图片</string>
     <string name="chat_remove_attachment">移除附件</string>    <string name="chat_no_models_hint">暂无可用模型，请在「AI 供应商」中添加</string>
     <string name="chat_stop">停止</string>
+    <string name="chat_stop_long_press_hint">停止（长按强制打断）</string>
     <string name="chat_send">发送</string>
     <string name="chat_perm_single_use_desc">含命令替换/管道/重定向，无法记住，仅可单次放行</string>
     <string name="chat_perm_always_tool_desc">「始终允许」将在本项目记住：该工具的全部调用</string>
@@ -1681,6 +1682,12 @@
     <string name="chat_action_edit">编辑消息</string>
     <string name="chat_action_copy">复制文本</string>
     <string name="chat_action_delete">删除消息</string>
+    <string name="chat_action_regenerate">重新生成</string>
+    <string name="chat_retry_action">重试</string>
+    <string name="chat_variant_previous">上一个版本</string>
+    <string name="chat_variant_next">下一个版本</string>
+    <string name="chat_variant_counter">%1$d/%2$d</string>
+    <string name="chat_variant_delete">删除当前版本</string>
     <string name="chat_edit_dialog_title">编辑消息</string>
     <string name="chat_edit_dialog_hint">请输入消息内容</string>
 

@@ -27,10 +27,12 @@ import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.presentation.AgentUIMessage
+import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Edit2
+import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Trash2
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,7 +42,9 @@ internal fun MessageActionsBottomSheet(
     onDismiss: () -> Unit,
     onEditClick: () -> Unit,
     onCopyClick: () -> Unit,
-    onDeleteClick: () -> Unit
+    onDeleteClick: () -> Unit,
+    /** 重新生成：仅助手回答（有正文）提供，生成新版本而不覆盖当前回答。 */
+    onRegenerateClick: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -82,6 +86,20 @@ internal fun MessageActionsBottomSheet(
                     onClick = {
                         onDismiss()
                         onCopyClick()
+                    }
+                )
+            }
+
+            // 重新生成：旧回答保留成变体，气泡下方用 ‹ n/N › 切换
+            if (onRegenerateClick != null && message.role == MessageRole.ASSISTANT &&
+                message.content.hasVisibleContent()
+            ) {
+                MessageActionItem(
+                    icon = FeatherIcons.RefreshCw,
+                    title = stringResource(R.string.chat_action_regenerate),
+                    onClick = {
+                        onDismiss()
+                        onRegenerateClick()
                     }
                 )
             }

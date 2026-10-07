@@ -238,13 +238,17 @@ class SystemPromptProvider @Inject constructor(
     private inner class MemoryListSource : PromptSource {
         // 会话级缓存：同一 (sessionId, projectRoot) 内只读一次盘，保持 system prompt 稳定以命中 KV 缓存；
         // 新开会话 / 切换工作区 / 重启 App 时缓存自然失效重建。空内容用 "" 占位以区分"未缓存"。
+        // 相关性排序只在本会话首次 build 时按当时的用户文本算一次：每轮重排会让提示词前缀跟着变、
+        // 打断 KV 缓存，代价大于收益；会话通常围绕一个任务，首轮文本已能代表它。
         private val cachedByKey = ConcurrentHashMap<SourceCacheKey, String>()
 
         override fun build(ctx: AgentContext): String? {
             val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
             val cached = cachedByKey[key]
             if (cached != null) return cached.ifEmpty { null }
-            val memories = try { memoryRepository.listMemoriesForPrompt(ctx.projectRoot) } catch (e: Exception) { return null }
+            val memories = try {
+                memoryRepository.listMemoriesForPrompt(ctx.projectRoot, ctx.currentUserText)
+            } catch (e: Exception) { return null }
             val content = MemoryPromptRenderer.render(memories).ifEmpty { null }
 
             // 记忆纪律紧跟清单注入：清单告诉模型「有什么」，纪律告诉它「何时必须写」。

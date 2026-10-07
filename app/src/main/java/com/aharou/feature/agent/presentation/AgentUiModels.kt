@@ -143,7 +143,14 @@ data class AgentUIMessage(
     val inputTokens: Int = 0,
     val outputTokens: Int = 0,
     // 仅 ASSISTANT 消息：本次调用输入中命中服务端缓存的 token 数，气泡下方据此算缓存命中率。
-    val cachedInputTokens: Int = 0
+    val cachedInputTokens: Int = 0,
+    // 仅 ASSISTANT 消息：本条回答失败时的错误文本，重载后据此恢复错误横幅与重试入口。
+    val error: String? = null,
+    // 消息变体：「重新生成」产生的同组多版本；variantCount 为版本总数（1 表示无变体），
+    // variantIndex 为当前展示版本在组内的序号（0 起）。
+    val variantGroupId: String? = null,
+    val variantIndex: Int = 0,
+    val variantCount: Int = 1
 )
 
 @Immutable

@@ -10,9 +10,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,10 +64,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalView
@@ -114,10 +118,9 @@ import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import com.aharou.feature.workspace.presentation.component.WorkspaceIconButton
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
+import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.ArrowUp
-import compose.icons.feathericons.Check
 import com.aharou.core.ui.ExpandableChevronIcon
-import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Maximize
 import compose.icons.feathericons.Minimize
 import compose.icons.feathericons.Plus
@@ -146,6 +149,8 @@ internal fun ChatInputBar(
     /** 回车键是否直接发送：开启后 IME 回车键变为「发送」，关闭则回车换行（默认）。 */
     enterToSend: Boolean = false,
     onStop: () -> Unit,
+    /** 长按停止键：强制打断，取消协程并杀掉容器里在跑的命令（区别于 [onStop] 的软打断）。 */
+    onForceStop: () -> Unit = {},
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
     onStopCurrentSessions: () -> Unit = {},
@@ -608,7 +613,7 @@ internal fun ChatInputBar(
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )
-                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop)
+                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = onSend, onStop = onStop, onForceStop = onForceStop)
                 }
             }
         }
@@ -762,6 +767,7 @@ internal fun UploadIconButton(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun SendButton(
     canSend: Boolean,
     hasContent: Boolean,
@@ -769,8 +775,10 @@ internal fun SendButton(
     tokenProgress: Float,
     tokenEstimated: Boolean,
     onSend: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onForceStop: () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     // AI 工作中：输入框为空显示停止按钮；有内容显示橙色发送（消息排队发送）；空闲时按常规发送按钮
     val showStop = isBusy && !hasContent
     val clickable = showStop || canSend
@@ -824,13 +832,23 @@ internal fun SendButton(
                 .size(36.dp)
                 .clip(CircleShape)
                 .background(buttonColor)
-                .clickable(enabled = clickable, onClick = if (showStop) onStop else onSend),
+                .combinedClickable(
+                    enabled = clickable,
+                    onClick = if (showStop) onStop else onSend,
+                    // AI 工作中长按一律强制打断：有草稿时按钮显示的是发送，但长按本就不是发送手势。
+                    onLongClick = if (isBusy) {
+                        {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onForceStop()
+                        }
+                    } else null
+                ),
             contentAlignment = Alignment.Center
         ) {
             if (showStop) {
                 Icon(
                     FeatherIcons.Square,
-                    contentDescription = stringResource(R.string.chat_stop),
+                    contentDescription = stringResource(R.string.chat_stop_long_press_hint),
                     tint = iconTint,
                     modifier = Modifier.size(18.dp)
                 )
@@ -1036,7 +1054,7 @@ internal fun ToolPermissionPanel(
 }
 
 @Composable
-internal fun StatusBanner(state: AgentUIState) {
+internal fun StatusBanner(state: AgentUIState, onRetry: () -> Unit = {}) {
     // 退出动画期间 state 已不是 Error，when 会走 else 渲染空内容，横幅的淡出就变成了瞬间消失；
     // 拿最后一次的错误文本兜住整段退场。
     val lastError = rememberLastNonNull((state as? AgentUIState.Error)?.message)
@@ -1045,90 +1063,83 @@ internal fun StatusBanner(state: AgentUIState) {
         enter = fadeIn() + expandVertically(),
         exit = fadeOut() + shrinkVertically()
     ) {
-        lastError?.let { ErrorBubble(message = it) }
+        lastError?.let { ErrorBubble(message = it, onRetry = onRetry) }
     }
 }
 
 /**
- * 失败错误气泡：风格对齐 ToolPermissionPanel / AskUserQuestionPanel（内联面板，与输入框同宽且两侧留距）。
- * 默认折叠为一行标题（请求失败），点击展开完整错误详情；右上角可一键复制。
+ * 失败错误气泡：红色底（error 12% alpha）横条 + 错误图标 + 最多三行的错误文本（超出省略），
+ * 右侧胶囊形「重试」按钮（刷新图标 + 文案）。长按文本复制完整错误。
+ * 本组件只在 [AgentUIState.Error] 下渲染，因此重试入口只会在真正的错误状态下出现。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ErrorBubble(message: String) {
-    var expanded by remember(message) { mutableStateOf(false) }
-    var copied by remember(message) { mutableStateOf(false) }
+private fun ErrorBubble(message: String, onRetry: () -> Unit) {
     val clipboard = LocalClipboard.current
     val copyScope = rememberCoroutineScope()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(Radius.md),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+        shape = RoundedCornerShape(Radius.mdLarge)
     ) {
-        Column(modifier = Modifier.padding(Spacing.md)) {
-            Row(
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                FeatherIcons.AlertCircle,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f)
                     .clip(RoundedCornerShape(Radius.sm))
-                    .clickable { expanded = !expanded },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    FeatherIcons.AlertCircle,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(Spacing.sm))
-                Text(
-                    text = stringResource(R.string.chat_error_title),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = {
-                    copyScope.launch {
-                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("error", message)))
-                        copied = true
-                    }
-                }) {
-                    Icon(
-                        if (copied) FeatherIcons.Check else FeatherIcons.Copy,
-                        contentDescription = if (copied) stringResource(R.string.chat_copied) else stringResource(R.string.chat_copy),
-                        tint = if (copied) MaterialTheme.colorScheme.primary else Brand.IconGray,
-                        modifier = Modifier.size(16.dp)
+                    .combinedClickable(
+                        onLongClickLabel = stringResource(R.string.chat_copy),
+                        onLongClick = {
+                            copyScope.launch {
+                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("error", message)))
+                            }
+                        },
+                        onClick = {}
                     )
-                }
-                ExpandableChevronIcon(
-                    expanded = expanded,
-                    contentDescription = if (expanded) stringResource(R.string.common_collapse) else stringResource(R.string.common_expand),
-                    tint = Brand.IconGray,
-                    size = 18.dp
-                )
-            }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
-                exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            // 重试：删掉失败的那一轮重新跑，不回填输入框。
+            val retryShape = RoundedCornerShape(percent = 50)
+            Surface(
+                modifier = Modifier
+                    .clip(retryShape)
+                    .clickable(onClick = onRetry),
+                shape = retryShape,
+                color = MaterialTheme.colorScheme.error,
+                contentColor = MaterialTheme.colorScheme.onError
             ) {
-                Column {
-                    Spacer(Modifier.height(Spacing.sm))
-                    SelectionContainer {
-                        Column(
-                            modifier = Modifier
-                                .heightIn(max = 160.dp)
-                                .verticalScroll(rememberScrollState())
-                        ) {
-                            Text(
-                                text = message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                Row(
+                    modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        FeatherIcons.RefreshCw,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text(
+                        text = stringResource(R.string.chat_retry_action),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }

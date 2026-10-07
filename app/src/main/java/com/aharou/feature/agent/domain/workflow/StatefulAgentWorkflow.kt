@@ -387,6 +387,7 @@ class StatefulAgentWorkflow @Inject constructor(
         tools: List<AgentTool>,
         emit: suspend (AgentEvent) -> Unit
     ) {
+        val telemetry = AgentTurnTelemetry.begin(context.sessionId, context.mode.name, tools.size, context.history.size)
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -428,6 +429,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 (currentContext.history[lastAssistantIndex] as AgentMessage.AssistantMessage).inputTokens
             } else 0
         )
+        telemetry.historyReady(systemPrompt.length, currentTools.size, currentContext.history.size)
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
             // 用户按了停止：不再往下走。正在跑的命令/请求留在后台跑完（见 stopAgentSession 的软打断）。
@@ -459,7 +461,8 @@ class StatefulAgentWorkflow @Inject constructor(
                             inputBudget = inputBudget,
                             budget = llmBudget,
                             actionQueue = actionQueue,
-                            emit = emit
+                            emit = emit,
+                            telemetry = telemetry
                         )
                     }
                     is AgentSideEffect.RequestPermission -> {
@@ -486,14 +489,19 @@ class StatefulAgentWorkflow @Inject constructor(
                             initialContext = currentContext,
                             toolsByName = toolsByName,
                             actionQueue = actionQueue,
-                            emit = emit
+                            emit = emit,
+                            telemetry = telemetry
                         )
                     }
                 }
             }
         }
         
-        state.error?.let { emit(AgentEvent.Failed(it, state.errorCode)) }
+        state.error?.let {
+            telemetry.fail(it, state.errorCode, state.iterations)
+            emit(AgentEvent.Failed(it, state.errorCode))
+        }
+        if (state.error == null) telemetry.end(state.iterations, state.totalToolCalls)
         emit(AgentEvent.Completed)
     }
 
@@ -536,7 +544,8 @@ class StatefulAgentWorkflow @Inject constructor(
         inputBudget: Int,
         budget: LlmCallBudgetState,
         actionQueue: ArrayDeque<AgentAction>,
-        emit: suspend (AgentEvent) -> Unit
+        emit: suspend (AgentEvent) -> Unit,
+        telemetry: AgentTurnTelemetry
     ): AgentSessionState {
         var state = initialState
         val providerInUse = aiProvider
@@ -544,6 +553,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
         var compactedMessages = state.messages
         if (!budget.compactionAttemptFailed) {
+            telemetry.compactionStart()
             val estimate = ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools)
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
@@ -553,6 +563,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 emit(event)
             }
             compactedMessages = compaction.messages
+            telemetry.compactionEnd(compaction.compacted, compactedMessages.size)
             if (compaction.compacted) {
                 state = state.copy(messages = compaction.messages)
                 budget.baselineUsage = 0
@@ -619,6 +630,8 @@ class StatefulAgentWorkflow @Inject constructor(
             pendingReasoningDelta = false
             emit(AgentEvent.ReasoningDelta(livePreview(reasoningAcc)))
         }
+        // 遥测的调用序号在 try 内产生，但 catch 分支也要用它标记这一次流失败，故声明在 try 之外。
+        var callId = -1
 
         try {
             // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
@@ -636,6 +649,7 @@ class StatefulAgentWorkflow @Inject constructor(
             val promptTools = currentTools.filter {
                 !it.deferredLoading || toolRegistry.isActivated(it.name)
             }
+            callId = telemetry.llmRequest(providerInUse.providerId, providerInUse.model, messagesToSend.size, promptTools.size, predictedInput)
             providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
                 .takeWhile { !samplingLoopCut && !userInterruptCut }
                 .collect { chunk ->
@@ -644,7 +658,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                 when (chunk) {
                     is AIStreamChunk.TextDelta -> {
-                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         acc.append(chunk.text)
                         val loopStart = samplingLoopStart(acc)
                         if (loopStart >= 0) {
@@ -660,7 +674,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                     is AIStreamChunk.ReasoningDelta -> {
                         // 思考内容也算首字（推理模型先吐思考再吐正文）
-                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         reasoningAcc.append(chunk.text)
                         val loopStart = samplingLoopStart(reasoningAcc)
                         if (loopStart >= 0) {
@@ -695,13 +709,13 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                     is AIStreamChunk.Final -> {
                         // 纯工具调用轮没有文本/思考增量，Final 是首个内容事件，兜底记为 TTFB
-                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         finalResponse = chunk.response
                     }
                     is AIStreamChunk.ToolCallDeclared -> {
                         // 工具名先于参数到达：立刻告诉 UI「模型准备调什么」，
                         // 免得长参数流式期间一直停在「正在思考」。
-                        if (ttfbElapsed == null) ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed
+                        if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         emit(AgentEvent.ToolCallPreparing(chunk.name))
                     }
                 }
@@ -711,6 +725,7 @@ class StatefulAgentWorkflow @Inject constructor(
             flushPendingReasoningDelta()
             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
             val snapshot = captureSnapshot()
+            telemetry.llmStreamEnd(callId, acc.length, reasoningAcc.length, snapshot.toolCalls.size, aiResponse.stopReason, aiResponse.inputTokens, aiResponse.outputTokens, retryAttempts)
             callCompleted = true
             if (aiResponse.stopReason == "model_context_window_exceeded" && !budget.overflowRecoveryAttempted) {
                 budget.overflowRecoveryAttempted = true
@@ -759,6 +774,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 }
             }
             callError = e.message ?: e.javaClass.simpleName
+            telemetry.llmStreamFailed(callId, callError ?: "unknown", acc.length)
             if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) {
                 if (captureSnapshot().hasSnapshotData()) publishSnapshot()
             }
@@ -867,8 +883,10 @@ class StatefulAgentWorkflow @Inject constructor(
         initialContext: AgentContext,
         toolsByName: Map<String, AgentTool>,
         actionQueue: ArrayDeque<AgentAction>,
-        emit: suspend (AgentEvent) -> Unit
+        emit: suspend (AgentEvent) -> Unit,
+        telemetry: AgentTurnTelemetry
     ): AgentContext {
+        val batchId = telemetry.toolBatchStart(toolCalls)
         var currentContext = initialContext
         // 并行执行本批已批准的工具。先统一记录 checkpoint（editFile/writeFile 修改前快照），
         // 再并行执行；mode 切换检查在结果收集后于主协程串行处理（planApproval 单例）。
@@ -1009,6 +1027,7 @@ class StatefulAgentWorkflow @Inject constructor(
         if (notifySessionId != null && notifications.isNotEmpty()) {
             agentNotificationCenter.ack(notifySessionId, notifications.map { it.seq })
         }
+        telemetry.toolBatchEnd(batchId, batchResults.size, batchResults.count { it.isError })
         actionQueue.addLast(AgentAction.ToolBatchFinished(batchResults))
         return currentContext
     }

@@ -191,6 +191,7 @@ class AgentTurnRunner @Inject constructor(
             projectRoot = turn.projectRoot,
             language = turn.currentFile?.let { detectLanguage(it) },
             history = history,
+            currentUserText = turn.text,
             inputImages = turn.inputImages,
             sessionId = sessionId,
             inputMessageId = userMsgId,

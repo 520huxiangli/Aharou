@@ -55,7 +55,21 @@ data class AgentMessageEntity(
     val cachedInputTokens: Int = 0,
     @ColumnInfo(defaultValue = "0")
     val isContextExcluded: Boolean = false,
-    val compactedBySummaryId: String? = null
+    val compactedBySummaryId: String? = null,
+    /**
+     * 仅 ASSISTANT 行：本轮运行失败时写入的错误文本。重载/切会话后据此恢复错误横幅与一键重试。
+     * 失败时若本轮还没产出助手行，会补插一条 content 为空的助手行专门承载它（空助手行不渲染气泡、
+     * 也不参与上下文回放）。只能追加在末尾（备份 DTO 按位置映射）。
+     */
+    val error: String? = null,
+    /**
+     * 消息变体：「重新生成」产生的同一轮多个回答共用一个分组 id（取首个版本的助手消息 id），
+     * 组内按 [variantIndex] 从 0 递增区分版本。未参与变体的消息为 null。
+     */
+    val variantGroupId: String? = null,
+    /** 变体组内的版本序号（0 起）。只能追加在末尾（备份 DTO 按位置映射）。 */
+    @ColumnInfo(defaultValue = "0")
+    val variantIndex: Int = 0
 ) {
     fun toUIMessage(): AgentUIMessage {
         val roleEnum = MessageRole.valueOf(role)
@@ -76,7 +90,10 @@ data class AgentMessageEntity(
                 content.startsWith(BACKGROUND_NOTIFICATION_PREFIX),
             inputTokens = inputTokens,
             outputTokens = outputTokens,
-            cachedInputTokens = cachedInputTokens
+            cachedInputTokens = cachedInputTokens,
+            error = error,
+            variantGroupId = variantGroupId,
+            variantIndex = variantIndex
         )
     }
 

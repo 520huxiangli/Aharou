@@ -1494,6 +1494,13 @@ fun AIChatPanel(
             else -> {
                 val message = item.message
                 val live = runningTool.firstOrNull { it.messageId == message.id }?.text
+                val variantGroup = message.variantGroupId
+                val onVariantSelect: ((Int) -> Unit)? = variantGroup?.let { group ->
+                    { position -> viewModel.selectMessageVariant(group, position) }
+                }
+                val onVariantDelete: (() -> Unit)? = variantGroup?.let { group ->
+                    { viewModel.deleteMessageVariant(group, message.variantIndex) }
+                }
                 AgentMessageItem(
                     message = message,
                     showActions = message.id in actionableMessageIds,
@@ -1502,6 +1509,10 @@ fun AIChatPanel(
                     contentSlice = item.slice,
                     isChunkHeader = item.isChunkHeader,
                     isChunkFooter = item.isChunkFooter,
+                    variantPosition = message.variantIndex,
+                    variantCount = message.variantCount,
+                    onVariantSelect = onVariantSelect,
+                    onVariantDelete = onVariantDelete,
                     onReadAloud = { readAloudViewModel.toggle(it.content) },
                     isReadingAloud = readingText == message.content,
                     showSoulHeader = item.showSoulHeader,
@@ -1690,7 +1701,7 @@ fun AIChatPanel(
                     .onGloballyPositioned { if (it.size.height > 0) floatingLayerHeightPx = it.size.height }
             ) {
             Box(modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = floatingPanelAlpha }) {
-                StatusBanner(state = agentState)
+                StatusBanner(state = agentState, onRetry = { viewModel.retryLastFailedRequest() })
             }
 
             // 退场动画期间 uploadingCount 已归零，直接读会淡出一个「正在上传 0 个文件」，
@@ -1792,6 +1803,7 @@ fun AIChatPanel(
                 onSend = sendMessage,
                 enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,
                 onStop = { viewModel.stopAgent() },
+                onForceStop = { viewModel.forceStopAgent() },
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
                 onStopCurrentSessions = { viewModel.stopAllAgents() },
@@ -2004,6 +2016,7 @@ fun AIChatPanel(
                     message = message,
                     onDismiss = { messageForMenu = null },
                     onEditClick = { editingMessage = message },
+                    onRegenerateClick = { viewModel.regenerateMessage(message.id) },
                     onCopyClick = {
                         copyScope.launch {
                             clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", message.content)))

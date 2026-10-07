@@ -64,6 +64,8 @@ import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.agent.presentation.MessageRole
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
+import compose.icons.feathericons.ChevronLeft
+import compose.icons.feathericons.ChevronRight
 import com.aharou.core.ui.ChevronRotationStyle
 import com.aharou.core.ui.ExpandableChevronIcon
 import compose.icons.feathericons.Clock
@@ -71,6 +73,7 @@ import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Database
 import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.RotateCcw
+import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Volume2
 import compose.icons.feathericons.VolumeX
 import kotlinx.coroutines.delay
@@ -235,6 +238,13 @@ internal fun AgentMessageItem(
     onReadAloud: ((AgentUIMessage) -> Unit)? = null,
     /** 本条是否正在朗读中（按钮变停止图标）。 */
     isReadingAloud: Boolean = false,
+    /** 消息变体：本条在当前变体组中的展示位次（0 起）与版本总数；总数 > 1 时气泡下方显示 ‹ n/N ›。 */
+    variantPosition: Int = 0,
+    variantCount: Int = 1,
+    /** 切换到同组的指定位次；null 时不显示切换器。 */
+    onVariantSelect: ((Int) -> Unit)? = null,
+    /** 删除当前展示的版本；null 时不显示删除入口。 */
+    onVariantDelete: (() -> Unit)? = null,
 ) {
     if (message.isCompactionMarker) {
         // 压缩内部锚点不再渲染分隔线：摘要卡片已提供压缩反馈，避免与卡片重复。
@@ -523,7 +533,54 @@ internal fun AgentMessageItem(
                         }
                     }
                 }
+                // 变体切换器：重新生成后的多个回答在气泡下方左右切换，与操作行同处一个右/左对齐列
+                if (isChunkFooter && variantCount > 1 && onVariantSelect != null) {
+                    MessageVariantSwitcher(
+                        position = variantPosition,
+                        count = variantCount,
+                        onSelect = onVariantSelect,
+                        onDelete = onVariantDelete
+                    )
+                }
             }
+        }
+    }
+}
+
+/**
+ * 变体切换器：「‹ n/N ›」+ 删除当前版本，只在该组有多个版本时渲染。
+ * 样式对齐消息操作行的小图标按钮，信息用小号弱化字。
+ */
+@Composable
+private fun MessageVariantSwitcher(
+    position: Int,
+    count: Int,
+    onSelect: (Int) -> Unit,
+    onDelete: (() -> Unit)?
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        MessageActionIconButton(
+            icon = FeatherIcons.ChevronLeft,
+            contentDescription = stringResource(R.string.chat_variant_previous),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            enabled = position > 0,
+            onClick = { onSelect(position - 1) }
+        )
+        ChatMetaText(text = stringResource(R.string.chat_variant_counter, position + 1, count))
+        MessageActionIconButton(
+            icon = FeatherIcons.ChevronRight,
+            contentDescription = stringResource(R.string.chat_variant_next),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            enabled = position < count - 1,
+            onClick = { onSelect(position + 1) }
+        )
+        if (onDelete != null) {
+            MessageActionIconButton(
+                icon = FeatherIcons.Trash2,
+                contentDescription = stringResource(R.string.chat_variant_delete),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = onDelete
+            )
         }
     }
 }
@@ -583,10 +640,12 @@ private fun MessageActionIconButton(
     icon: ImageVector,
     contentDescription: String,
     tint: Color,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     IconButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.size(24.dp),
         colors = IconButtonDefaults.iconButtonColors(contentColor = tint),
     ) {

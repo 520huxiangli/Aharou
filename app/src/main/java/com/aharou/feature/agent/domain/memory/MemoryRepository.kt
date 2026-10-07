@@ -39,30 +39,48 @@ class MemoryRepository @Inject constructor(
     }
 
     /**
-     * 专供系统提示词注入的清单：在 [listMemories] 基础上做「降级遗忘 + 有界截断」。
+     * 专供系统提示词注入的清单：在 [listMemories] 基础上做「相关度排序 + 降级遗忘 + 有界截断」。
      *
      * 与 [listMemories] 分开，是因为后者还供 `memory(action=list)` 用——那里必须给出**完整**视图，
      * 否则截掉的条目模型连名字都看不到，也就无从 `read` 取回，等于真丢了。
      * 注入这条路则相反：只增不减的记忆每轮都挤占上下文，必须会忘。
      *
      * 遗忘只降级不删除：文件原样留着，模型需要时仍能 read/edit/delete。
-     * 排序完全由文件 mtime + name 决定，与目录扫描顺序无关，保证同一状态每次注入的集合一致。
+     *
+     * 排序（[query] 非空时）按与当前任务的相关度降序，权重这么定的理由：
+     * - 对记忆的 keywords / name / description 做纯字符串命中计数，不引入分词或向量库；
+     * - keywords 是专为检索抽取的短词，噪音最低，命中权重最高（3）；name 是人工起的稳定
+     *   标识，次之（2）；description 是散文，越长的描述越容易碰巧命中，故权重最低（1）且
+     *   单条命中数封顶，避免长描述凭字数压过精心填写的 keywords；
+     * - 中文没有空格分词，一段 CJK 短语整串几乎不可能原样出现在用户句子里，故对 CJK 词额外
+     *   拆成字符二元组（bigram）参与命中，让「代码调研」这类词在「帮我做代码调研」里也能命中；
+     * - 相关度全为 0（含 [query] 为空）时退化为按文件 mtime 倒序，与旧行为一致。
+     *
+     * 排序稳定：相关度 → mtime 倒序 → name 升序，三层都确定，保证同一 (projectRoot, query)
+     * 每次渲染顺序一致，不因目录扫描顺序抖动，避免无谓地打断 KV Cache。
      */
-    fun listMemoriesForPrompt(projectRoot: String?): List<Memory> = listMemories(projectRoot)
-        // 事件类（某次测试结果、某天的排查记录）只留档：它们不是跨会话仍成立的知识，
-        // 留在清单里只会把真正该被记住的东西挤淡。需要时靠 memory(action=search/read) 取回。
-        .filter { it.type.injected }
-        // 没有一句话摘要的条目不算「摘要式记忆」：注入它的名字等于白占一行，
-        // 使用者看到名字也无从判断要不要读。
-        // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
-        // frontmatter，若一并滤掉等于把全局约定和身份直接从提示词里除名。
-        .filter { it.description.isNotBlank() || isCoreArchive(it.name) }
-        .filterNot { isStale(it) }
-        .sortedWith(
-            compareByDescending<Memory> { it.file?.lastModified() ?: 0L }
-                .thenBy { it.name.lowercase() }
-        )
-        .take(MAX_INJECTED_MEMORIES)
+    fun listMemoriesForPrompt(projectRoot: String?, query: String? = null): List<Memory> {
+        val normalizedQuery = query?.trim()?.lowercase().orEmpty()
+        return listMemories(projectRoot)
+            // 事件类（某次测试结果、某天的排查记录）只留档：它们不是跨会话仍成立的知识，
+            // 留在清单里只会把真正该被记住的东西挤淡。需要时靠 memory(action=search/read) 取回。
+            .filter { it.type.injected }
+            // 没有一句话摘要的条目不算「摘要式记忆」：注入它的名字等于白占一行，
+            // 使用者看到名字也无从判断要不要读。
+            // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
+            // frontmatter，若一并滤掉等于把全局约定和身份直接从提示词里除名。
+            .filter { it.description.isNotBlank() || isCoreArchive(it.name) }
+            .filterNot { isStale(it) }
+            // 先算一次分再排序：写在 comparator 里会随比较次数反复重算、反复切词。
+            .map { memory -> memory to relevanceScore(memory, normalizedQuery) }
+            .sortedWith(
+                compareByDescending<Pair<Memory, Int>> { it.second }
+                    .thenByDescending { it.first.file?.lastModified() ?: 0L }
+                    .thenBy { it.first.name.lowercase() }
+            )
+            .take(MAX_INJECTED_MEMORIES)
+            .map { it.first }
+    }
 
     /**
      * 判定一条记忆是否已「遗忘」（长期未改动）。
@@ -89,6 +107,53 @@ class MemoryRepository @Inject constructor(
         return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 
+    /**
+     * 记忆与当前任务的相关度：对 keywords / name / description 做命中计数后加权求和。
+     * [query] 已 trim + lowercase；为空直接返回 0，调用方据此退化到 mtime 排序。
+     */
+    private fun relevanceScore(memory: Memory, query: String): Int {
+        if (query.isEmpty()) return 0
+        var score = hitCount(memory.keywords.flatMap { termsOf(it) }, query) * KEYWORD_HIT_WEIGHT
+        score += hitCount(termsOf(memory.name), query) * NAME_HIT_WEIGHT
+        // description 命中数封顶：散文越长越容易碰巧命中，不封顶会让它压过 keywords。
+        val descriptionHits = hitCount(termsOf(memory.description), query)
+            .coerceAtMost(MAX_DESCRIPTION_HITS)
+        return score + descriptionHits * DESCRIPTION_HIT_WEIGHT
+    }
+
+    /** [terms] 去重后，统计有多少个作为子串出现在 [query] 里。 */
+    private fun hitCount(terms: List<String>, query: String): Int {
+        var hits = 0
+        for (term in terms.toHashSet()) {
+            if (term in query) hits++
+        }
+        return hits
+    }
+
+    /**
+     * 把一段文本切成可命中的短词：按「非字母数字」切分并小写；纯 CJK 的词额外展开成字符
+     * 二元组（bigram），弥补中文无空格分词——整串 CJK 词几乎不会原样出现在用户输入里，
+     * bigram 才是能对上的最小单位。单字与停用词噪音太大，直接丢弃。
+     */
+    private fun termsOf(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val terms = ArrayList<String>()
+        for (raw in TERM_SPLIT.split(text)) {
+            val token = raw.lowercase()
+            if (token.length < MIN_TERM_LENGTH || token in STOP_WORDS) continue
+            terms += token
+            if (token.length >= CJK_BIGRAM_MIN_LENGTH && token.all { isCjk(it) }) {
+                for (i in 0 until token.length - 1) {
+                    terms += token.substring(i, i + 2)
+                }
+            }
+        }
+        return terms
+    }
+
+    /** 是否 CJK 汉字（Unicode 基本区）：只有纯汉字的词才需要展开 bigram。 */
+    private fun isCjk(ch: Char): Boolean = ch.code in 0x4E00..0x9FFF
+
     private companion object {
         /** 注入清单的条数上限。超出的条目只是不进提示词，文件仍在，模型仍可 read / edit / delete。 */
         const val MAX_INJECTED_MEMORIES = 60
@@ -97,6 +162,30 @@ class MemoryRepository @Inject constructor(
         const val STALE_MEMORY_DAYS = 180L
 
         const val STALE_MEMORY_MILLIS = STALE_MEMORY_DAYS * 24L * 60L * 60L * 1000L
+
+        /** 关键词 / 名称 / 描述命中一次的权重：keywords 最准，description 最噪。 */
+        const val KEYWORD_HIT_WEIGHT = 3
+        const val NAME_HIT_WEIGHT = 2
+        const val DESCRIPTION_HIT_WEIGHT = 1
+
+        /** description 命中数封顶，防止长篇描述凭字数压过 keywords。 */
+        const val MAX_DESCRIPTION_HITS = 4
+
+        /** 参与命中的最短词长：单字噪音太大，不值得计入。 */
+        const val MIN_TERM_LENGTH = 2
+
+        /** CJK 词至少这么长才展开 bigram（两字词本身就是它的大二元组，无需重复展开）。 */
+        const val CJK_BIGRAM_MIN_LENGTH = 3
+
+        /** 按「非字母数字」切词：CJK 汉字属 \p{L}，会与相邻汉字连成一整串。 */
+        val TERM_SPLIT = Regex("[^\\p{L}\\p{N}]+")
+
+        /** 常见虚词 / 停用词：命中它们不说明相关，直接不计。 */
+        val STOP_WORDS = setOf(
+            "the", "and", "for", "with", "from", "this", "that", "is", "are", "was", "were",
+            "一个", "这个", "那个", "就是", "可以", "已经", "还有", "如果", "所以", "但是", "因为",
+            "全部", "需要", "注意", "表示", "使用", "进行", "没有", "不是", "以及", "或者"
+        )
     }
 
     /** 读取指定 memory 的完整指令正文；不存在 / 解析失败返回 null。 */

@@ -669,6 +669,7 @@
     <string name="chat_upload_image">Upload Image</string>
     <string name="chat_remove_attachment">Remove attachment</string>    <string name="chat_no_models_hint">No models available, add one in "AI Vendors"</string>
     <string name="chat_stop">Stop</string>
+    <string name="chat_stop_long_press_hint">Stop (long press to force interrupt)</string>
     <string name="chat_send">Send</string>
     <string name="chat_perm_single_use_desc">Contains command substitution/pipes/redirects, cannot be remembered, single-use only</string>
     <string name="chat_perm_always_tool_desc">"Always allow" will remember all calls of this tool for this project</string>
@@ -1681,6 +1682,12 @@
     <string name="chat_action_edit">Edit Message</string>
     <string name="chat_action_copy">Copy Text</string>
     <string name="chat_action_delete">Delete Message</string>
+    <string name="chat_action_regenerate">Regenerate</string>
+    <string name="chat_retry_action">Retry</string>
+    <string name="chat_variant_previous">Previous version</string>
+    <string name="chat_variant_next">Next version</string>
+    <string name="chat_variant_counter">%1$d/%2$d</string>
+    <string name="chat_variant_delete">Delete this version</string>
     <string name="chat_edit_dialog_title">Edit Message</string>
     <string name="chat_edit_dialog_hint">Enter message content</string>
 
