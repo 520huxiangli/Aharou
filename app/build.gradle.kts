@@ -452,5 +452,11 @@ val checkArchitecture = tasks.register<Exec>("checkArchitecture") {
     workingDir(rootProject.projectDir)
 }
 
+// proot 资产校验：换了 .so 却没同步 assets/proot-runtime.json 时拦下（详见 scripts/check_proot_assets.py）。
+val checkProotAssets = tasks.register<Exec>("checkProotAssets") {
+    commandLine("python3", "scripts/check_proot_assets.py")
+    workingDir(rootProject.projectDir)
+}
+
 // assets 合并前必须先生成文档，否则首次构建（或 clean 后）APK 里会没有 docs/。
-tasks.named("preBuild") { dependsOn(syncAiDocs, checkArchitecture) }
+tasks.named("preBuild") { dependsOn(syncAiDocs, checkArchitecture, checkProotAssets) }

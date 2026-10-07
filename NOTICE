@@ -152,3 +152,16 @@ accordance with the respective license terms.
    app/src/main/assets/agents/ 下内置其中 136 个子代理角色定义，随 APK
    分发；正文未作改动，仅修正一处 frontmatter 的 YAML 引号。完整 MIT
    文本随 APK 置于 assets/licenses/agency-agents-MIT.txt。
+
+========================================================================
+12. PRoot（内置容器运行时）
+------------------------------------------------------------------------
+   Project:  https://github.com/termux/proot
+             （上游：https://github.com/proot-me/proot）
+   License:  GNU General Public License v2.0 or later (GPL-2.0-or-later)
+
+   APK 的 native 库中随包分发的容器运行时（libproot.so、libproot-loader.so、
+   libproot-loader32.so，取自 Termux 的 proot 打包），沿用 PRoot 的
+   GPL-2.0-or-later 条款；该条款允许按 GPL-3.0 使用，与本产品的 GPL-3.0
+   许可兼容。随行的共享库（libtalloc.so、libandroid-shmem.so）各自遵循其
+   上游许可。源码可从上述项目地址获取。

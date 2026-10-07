@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "note": "PRoot 容器运行时的资产身份。改动任何一个 .so（换版本、重新打包、打补丁）都必须同步更新本文件的 sizeBytes/sha256，否则 scripts/check_proot_assets.py 会拦下。",
+  "origin": {
+    "project": "https://github.com/termux/proot",
+    "upstream": "https://github.com/proot-me/proot",
+    "packaging": "取自 Termux apt 仓库的 .deb（ar 封装 data.tar.xz）解包后提取文件",
+    "embeddedVersionString": "5.1.0",
+    "packageVersions": {
+      "arm64-v8a": "未记录",
+      "x86_64": "proot 5.1.107.81 / libtalloc 2.4.3 / libandroid-shmem 0.7"
+    },
+    "license": "GPL-2.0-or-later"
+  },
+  "patches": [
+    "libtalloc.so：由 libtalloc.so.2 改名而来，并就地等长改写自身 DT_SONAME",
+    "libproot.so：就地等长改写 DT_NEEDED（libtalloc.so.2 → libtalloc.so）"
+  ],
+  "buildNotes": {
+    "jniLibsSourceSets": "universal 同时收 _armJniLibs 与 _x86JniLibs；armsolo/x86solo 各收一套（app/build.gradle.kts 的 sourceSets）",
+    "useLegacyPackaging": true,
+    "keepDebugSymbols": "对 5 个文件显式声明，作用是禁止构建再动这些字节；实际上游产物本身就是 stripped"
+  },
+  "files": [
+    {
+      "abi": "arm64-v8a",
+      "role": "proot-executable",
+      "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot.so",
+      "sizeBytes": 234000,
+      "sha256": "f4bb92d741d69b06c39210e1cd5daacf6093f10691a4582fd7409c85cb807b36"
+    },
+    {
+      "abi": "arm64-v8a",
+      "role": "loader-64",
+      "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot-loader.so",
+      "sizeBytes": 18136,
+      "sha256": "44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04"
+    },
+    {
+      "abi": "arm64-v8a",
+      "role": "loader-32",
+      "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot-loader32.so",
+      "sizeBytes": 6244,
+      "sha256": "25f6bd90bc5a3d3088026289a0d3eaf3e502bd2b00e5cb74fadd9791132efa34"
+    },
+    {
+      "abi": "arm64-v8a",
+      "role": "talloc",
+      "repoPath": "app/src/_armJniLibs/arm64-v8a/libtalloc.so",
+      "sizeBytes": 31440,
+      "sha256": "34c92182bdbda07e009eaa09afa852c575c566691786ca456b28778222ba0afc"
+    },
+    {
+      "abi": "arm64-v8a",
+      "role": "shmem",
+      "repoPath": "app/src/_armJniLibs/arm64-v8a/libandroid-shmem.so",
+      "sizeBytes": 14432,
+      "sha256": "84475798e07c8174dbbfaec70a827fdb02f19ffa69a589380c13e7507fd0e731"
+    },
+    {
+      "abi": "x86_64",
+      "role": "proot-executable",
+      "repoPath": "app/src/_x86JniLibs/x86_64/libproot.so",
+      "sizeBytes": 250752,
+      "sha256": "9c2c572f6c66887129ff291780155d836b4fef7d18977174bde0133776a49673"
+    },
+    {
+      "abi": "x86_64",
+      "role": "loader-64",
+      "repoPath": "app/src/_x86JniLibs/x86_64/libproot-loader.so",
+      "sizeBytes": 18352,
+      "sha256": "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3"
+    },
+    {
+      "abi": "x86_64",
+      "role": "loader-32",
+      "repoPath": "app/src/_x86JniLibs/x86_64/libproot-loader32.so",
+      "sizeBytes": 6036,
+      "sha256": "7fb73fa7f1879f7d210db70a0e3961161d0439e892c38bb834e6e17f162fae30"
+    },
+    {
+      "abi": "x86_64",
+      "role": "talloc",
+      "repoPath": "app/src/_x86JniLibs/x86_64/libtalloc.so",
+      "sizeBytes": 30096,
+      "sha256": "6446ba83f6ac6c9d226177feaa819ce97861a1ebf186febd1d166d21f4df75de"
+    },
+    {
+      "abi": "x86_64",
+      "role": "shmem",
+      "repoPath": "app/src/_x86JniLibs/x86_64/libandroid-shmem.so",
+      "sizeBytes": 14368,
+      "sha256": "092926060298acd3778e6239033d7aef1280dcb59aebe021a3719612e6a3465f"
+    }
+  ]
+}
