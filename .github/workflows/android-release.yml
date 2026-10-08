@@ -250,27 +250,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 发版后立刻同步资产到 GitCode（国内源）。
-      # 日常有 sync-gitcode.yml 定时跑（每天一次），这里补上「发版即同步」，
-      # 用户不用等一天。同步失败不该让发版本身标红——资产已在 GitHub 上，
-      # GitCode 那边下一次定时同步会补上。
-      - name: Sync release assets to GitCode
-        continue-on-error: true
-        # 卡住就早点放弃：GitCode 那边有每日定时同步兜底，没必要占着 runner 几小时。
-        # 底下的单次上传超时也要相应小于这个值。
-        timeout-minutes: 20
-        env:
-          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
-          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
-          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
-          GH_REPO: ${{ github.repository }}
-          # 国内 runner 直连 GitHub 下资产只有 ~0.03MB/s，走镜像快两个数量级
-          GH_MIRROR: https://gh-proxy.com/
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/sync-gitcode-releases.py
-
-      # 同一批资产再同步一份到 cnb 发布仓（App 的第二个国内下载源，见 UpdateDownloadSource）。
-      # 策略与 GitCode 一致：发版即同步，失败不拦发版（GitHub 上资产还在，重跑脚本即可补齐）。
+      # 发版后同步资产到 cnb 发布仓（国内下载源；GitCode 已于 2026-10-08 按主人要求停用）。
+      # 发版即同步，失败不拦发版（GitHub 上资产还在，重跑脚本即可补齐）。
       # 只传 universal：App 挑包优先 universal（含两套 ABI 镜像），三个 ABI 全传要 4GB+ 没必要。
       - name: Sync release assets to cnb
         continue-on-error: true
