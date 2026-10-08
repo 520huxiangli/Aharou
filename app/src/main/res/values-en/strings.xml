@@ -191,6 +191,8 @@
     <string name="storage_clean_tool_output_desc">Saved copies of oversized tool output; output paths in older messages stop resolving</string>
     <string name="storage_clean_vision">Vision session cache</string>
     <string name="storage_clean_vision_desc">History for image follow-up questions; old sessions can no longer be continued</string>
+    <string name="storage_clean_voice_models">Offline voice models</string>
+    <string name="storage_clean_voice_models_desc">Voice recognition and wake-word models downloaded to this device; they are downloaded again (about 400 MB) the next time you use voice</string>
     <string name="storage_untitled_session">Untitled session</string>
     <string name="storage_chat_messages">%1$d messages</string>
     <string name="storage_workspace_attachments">incl. attachments %1$s</string>
@@ -486,7 +488,6 @@
     <string name="about_later">Later</string>
     <string name="about_check_failed">Check failed</string>
     <string name="about_ok">OK</string>
-    <string name="about_parse_version_failed">Cannot parse the latest version number</string>
     <string name="about_network_error">Network error</string>
     <string name="about_auto_check_update">Auto check for updates</string>
     <string name="about_auto_check_update_desc">Check for new versions when the app opens</string>
@@ -2303,7 +2304,6 @@
     <string name="voice_input_recording">Release to transcribe</string>
     <string name="voice_model_downloading">Downloading voice model…</string>
     <string name="voice_model_extracting">Extracting voice model…</string>
-    <string name="voice_model_preparing">Preparing voice model…</string>
     <string name="voice_model_failed">Failed to prepare voice model</string>
     <string name="voice_record_failed">Could not start recording</string>
     <string name="voice_permission_required">Microphone permission needed, enable it in Settings</string>
@@ -2338,7 +2338,7 @@
     <string name="voice_wake_off">Off</string>
     <string name="voice_wake_mic_hint">Wake word is on — tap to speak</string>
     <string name="voice_err_mic_permission">I don\'t have microphone permission. Please allow recording for me in system settings.</string>
-    <string name="voice_err_model">The voice models aren\'t ready. Go to Settings → Default models → Offline voice model and tap \"Re-release\".</string>
+    <string name="voice_err_model">The voice models aren\'t downloaded yet. Go to Settings → Default models → Offline voice model and tap \"Download\".</string>
     <string name="voice_err_audio">Something else seems to be using the microphone.</string>
     <string name="voice_err_no_workspace">No workspace is open yet. Open one and I can start working.</string>
     <string name="voice_err_no_session">I couldn\'t start a session. Call me again in a moment.</string>
@@ -2351,11 +2351,13 @@
     <string name="voice_assistant_set_ok">Aharou is now the system voice assistant</string>
     <string name="settings_voice_model_title">Offline voice model</string>
     <string name="settings_voice_model_ready">Ready</string>
+    <string name="settings_voice_model_not_downloaded">Not downloaded — tap Download</string>
+    <string name="settings_voice_model_download">Download</string>
+    <string name="settings_voice_model_downloading">Downloading %1$d%%</string>
+    <string name="settings_voice_model_downloading_short">Downloading</string>
+    <string name="settings_voice_model_download_failed">Download failed — check your network and try again</string>
     <string name="settings_voice_model_missing">Missing</string>
     <string name="settings_voice_model_size_mismatch">Size mismatch</string>
-    <string name="settings_voice_model_rerelease">Re-extract</string>
-    <string name="settings_voice_model_rereleased">Re-extracted</string>
-    <string name="settings_voice_model_rerelease_failed">Extraction failed — the model inside the APK may be incomplete</string>
     <string name="chat_long_session_hint">This session is about %1$d0k tokens; it gets slower the longer it runs — consider starting a new one</string>
     <string name="chat_long_session_new">New session</string>
     <string name="memory_distill_title">Distill now</string>

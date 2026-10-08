@@ -57,7 +57,8 @@ enum class CleanupKind(
     Caches(R.string.storage_clean_caches, R.string.storage_clean_caches_desc),
     Logs(R.string.storage_clean_logs, R.string.storage_clean_logs_desc),
     ToolOutput(R.string.storage_clean_tool_output, R.string.storage_clean_tool_output_desc),
-    VisionSessions(R.string.storage_clean_vision, R.string.storage_clean_vision_desc)
+    VisionSessions(R.string.storage_clean_vision, R.string.storage_clean_vision_desc),
+    VoiceModels(R.string.storage_clean_voice_models, R.string.storage_clean_voice_models_desc)
 }
 
 /** 所在存储卷的容量信息（App 私有目录所在卷）。 */

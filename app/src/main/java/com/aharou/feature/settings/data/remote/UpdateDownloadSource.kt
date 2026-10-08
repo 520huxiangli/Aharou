@@ -3,7 +3,7 @@ package com.aharou.feature.settings.data.remote
 /**
  * 更新包下载源解析：把 tag + 资产名展开成**有序候选 URL**。
  *
- * 优先国内可达的来源（GitCode 镜像 → GitHub 文件反代），最后回退 GitHub 原链；
+ * 优先国内可达的来源（GitCode 镜像 → cnb 发布仓 → GitHub 文件反代），最后回退 GitHub 原链；
  * 调用方逐个探测，第一个可达的即用于下载——任一来源失效都会自动降级，
  * 不需要联网失败重试逻辑。
  *
@@ -25,6 +25,15 @@ object UpdateDownloadSource {
      */
     private const val GITCODE_OWNER = "Aharou"
     private const val GITCODE_BASE = "https://gitcode.com/$GITCODE_OWNER/$GITHUB_REPO"
+
+    /**
+     * cnb 发布仓（`huxiangli/aharou-releases`，2026-10-08 建）。
+     *
+     * 只放发布包、不放代码，附件由发版流水线同步（scripts/sync-cnb-releases.py）。
+     * 它的附件路由是 `/-/releases/download/<tag>/<file>`（多一截 `-`），与 GitHub/GitCode 不同；
+     * 实测公开仓库的附件匿名可直接下载，因此文件名与 GitHub 保持一致，URL 用同一套 tag + 资产名拼。
+     */
+    private const val CNB_BASE = "https://cnb.cool/huxiangli/aharou-releases"
 
     /**
      * GitHub 文件反代，用法是「前缀 + 完整 GitHub URL」。
@@ -56,6 +65,7 @@ object UpdateDownloadSource {
         val github = "$GITHUB_BASE/releases/download/$tag/$assetName"
         return buildList {
             add("$GITCODE_BASE/releases/download/$tag/$assetName")
+            add("$CNB_BASE/-/releases/download/$tag/$assetName")
             PROXIES.forEach { add(it + github) }
             add(github)
         }

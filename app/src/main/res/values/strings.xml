@@ -191,6 +191,8 @@
     <string name="storage_clean_tool_output_desc">AI 超长工具输出保存到磁盘的副本，删除后旧消息里的输出路径不再可读</string>
     <string name="storage_clean_vision">识图会话缓存</string>
     <string name="storage_clean_vision_desc">识图追问的历史，删除后无法继续追问旧图片</string>
+    <string name="storage_clean_voice_models">离线语音模型</string>
+    <string name="storage_clean_voice_models_desc">本机已下载的语音识别与唤醒模型，删除后下次用语音会自动重新下载（约 400MB）</string>
     <string name="storage_untitled_session">未命名会话</string>
     <string name="storage_chat_messages">%1$d 条消息</string>
     <string name="storage_workspace_attachments">含附件 %1$s</string>
@@ -486,7 +488,6 @@
     <string name="about_later">稍后</string>
     <string name="about_check_failed">检查失败</string>
     <string name="about_ok">确定</string>
-    <string name="about_parse_version_failed">无法解析最新版本号</string>
     <string name="about_network_error">网络错误</string>
     <string name="about_auto_check_update">自动检查更新</string>
     <string name="about_auto_check_update_desc">打开 App 时自动检测新版本</string>
@@ -2303,7 +2304,6 @@
     <string name="voice_input_recording">松手识别</string>
     <string name="voice_model_downloading">下载语音模型…</string>
     <string name="voice_model_extracting">解压语音模型…</string>
-    <string name="voice_model_preparing">准备语音模型…</string>
     <string name="voice_model_failed">语音模型准备失败</string>
     <string name="voice_record_failed">无法启动录音</string>
     <string name="voice_permission_required">需要录音权限，去设置里开启</string>
@@ -2338,7 +2338,7 @@
     <string name="voice_wake_off">已关闭</string>
     <string name="voice_wake_mic_hint">唤醒常驻中，点一下直接说话</string>
     <string name="voice_err_mic_permission">我拿不到麦克风权限，去系统设置里允许我录音好不好？</string>
-    <string name="voice_err_model">语音模型还没准备好，去「设置 → 默认模型 → 离线语音模型」点一下「重新释放」。</string>
+    <string name="voice_err_model">语音模型还没下载好，去「设置 → 默认模型 → 离线语音模型」点一下「下载」。</string>
     <string name="voice_err_audio">麦克风好像被别的应用占着，我张不开嘴。</string>
     <string name="voice_err_no_workspace">还没有选工作区，先打开一个工作区我才能干活。</string>
     <string name="voice_err_no_session">会话没建起来，稍后再叫我一次。</string>
@@ -2351,11 +2351,13 @@
     <string name="voice_assistant_set_ok">已把 Aharou 设为系统语音助手</string>
     <string name="settings_voice_model_title">离线语音模型</string>
     <string name="settings_voice_model_ready">已就绪</string>
+    <string name="settings_voice_model_not_downloaded">未下载，点右侧下载</string>
+    <string name="settings_voice_model_download">下载</string>
+    <string name="settings_voice_model_downloading">下载中 %1$d%%</string>
+    <string name="settings_voice_model_downloading_short">下载中</string>
+    <string name="settings_voice_model_download_failed">下载失败，检查网络后重试</string>
     <string name="settings_voice_model_missing">缺失</string>
     <string name="settings_voice_model_size_mismatch">大小不符</string>
-    <string name="settings_voice_model_rerelease">重新释放</string>
-    <string name="settings_voice_model_rereleased">已重新释放</string>
-    <string name="settings_voice_model_rerelease_failed">释放失败，安装包里的模型可能不完整</string>
     <string name="chat_long_session_hint">本会话上下文已约 %1$d 万 token，越往后越慢，建议开新会话</string>
     <string name="chat_long_session_new">新开会话</string>
     <string name="memory_distill_title">立即蒸馏</string>

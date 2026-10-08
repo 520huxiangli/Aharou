@@ -91,10 +91,6 @@ jobs:
 
       # 构建 universal beta（arm64-v8a + x86_64，含两套容器镜像的通用包）。
       # --stacktrace：失败时输出完整调用栈，便于定位 OOM/内存类根因。
-      # 离线语音模型不进 git，构建前拉下来，跟正式包保持一致（拿测试包验语音才验得准）
-      - name: Fetch offline voice model
-        run: bash scripts/fetch-voice-model.sh
-
       - name: Build universal beta APK
         run: ./gradlew :app:assembleUniversalBeta --stacktrace
 

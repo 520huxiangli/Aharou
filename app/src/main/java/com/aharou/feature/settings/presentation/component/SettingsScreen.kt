@@ -263,7 +263,7 @@ fun SettingsScreen(
     val isDefaultAssistant by viewModel.isDefaultAssistant.collectAsStateWithLifecycle()
     val ocrForTextOnlyModels by viewModel.ocrForTextOnlyModels.collectAsStateWithLifecycle()
     val voiceModelStatus by viewModel.voiceModelStatus.collectAsStateWithLifecycle()
-    val voiceModelMessage by viewModel.voiceModelMessage.collectAsStateWithLifecycle()
+    val voiceModelState by viewModel.voiceModelState.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
     val containerProfiles by viewModel.profiles.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
@@ -1042,8 +1042,8 @@ fun SettingsScreen(
                     ocrForTextOnlyModels = ocrForTextOnlyModels,
                     onToggleOcrForTextOnlyModels = { viewModel.toggleOcrForTextOnlyModels() },
                     voiceModelStatus = voiceModelStatus,
-                    voiceModelMessage = voiceModelMessage,
-                    onRereleaseVoiceModel = { viewModel.rereleaseVoiceModel() },
+                    voiceModelState = voiceModelState,
+                    onDownloadVoiceModel = { viewModel.downloadVoiceModel() },
                     modelMetadata = modelMetadata,
                     onLoadMetadata = { viewModel.loadAllModelMetadata() },
                     onSelectVisionModel = { pid, m -> viewModel.setVisionModel(pid, m) },

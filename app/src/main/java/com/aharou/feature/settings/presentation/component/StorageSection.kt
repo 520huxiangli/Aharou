@@ -112,6 +112,7 @@ internal fun StorageSection(
                     val cleanupKind = when (category) {
                         StorageCategory.Logs -> CleanupKind.Logs
                         StorageCategory.Caches -> CleanupKind.Caches
+                        StorageCategory.VoiceModels -> CleanupKind.VoiceModels
                         else -> null
                     }
                     CategoryRow(

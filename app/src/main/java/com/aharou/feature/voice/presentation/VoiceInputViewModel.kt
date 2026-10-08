@@ -27,7 +27,7 @@ import kotlinx.coroutines.Dispatchers
 internal sealed interface VoiceInputState {
     data object Idle : VoiceInputState
 
-    /** 模型还没准备好：带进度的提示（内置模型只需释放，通常一闪而过）。 */
+    /** 模型还没准备好：带下载/解压进度的提示（首次要下百来 MB，之后直接命中本地）。 */
     data class Preparing(val progress: Float, @StringRes val messageRes: Int) : VoiceInputState
 
     /** 正在收音；[liveText] 是边说边出的实时识别文本（云端模式恒为空）。 */
@@ -70,7 +70,7 @@ internal class VoiceInputViewModel @Inject constructor(
     private var finishing = false
 
     /**
-     * 开始收音。模型未就绪时先准备（内置模型只是从 assets 释放），然后开录音。
+     * 开始收音。模型未就绪时先下载（首次要下百来 MB），再开录音。
      *
      * @param onResult 识别出结果时回调（端点自动结束或用户手动停止都会触发）
      */
@@ -80,9 +80,18 @@ internal class VoiceInputViewModel @Inject constructor(
         viewModelScope.launch {
             val cloud = cloudSttConfig()
             if (cloud == null && !modelManager.isReady(VoiceModels.ASR_ZH)) {
-                // 模型随安装包内置，这里只是从 assets 释放到私有目录，不上网
-                _state.value = VoiceInputState.Preparing(0f, R.string.voice_model_preparing)
-                val ok = runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH) }.isSuccess
+                _state.value = VoiceInputState.Preparing(0f, R.string.voice_model_downloading)
+                val ok = runCatching {
+                    modelManager.ensureModel(VoiceModels.ASR_ZH) { state ->
+                        when (state) {
+                            is VoiceModelState.Downloading -> _state.value =
+                                VoiceInputState.Preparing(state.progress, R.string.voice_model_downloading)
+                            VoiceModelState.Extracting -> _state.value =
+                                VoiceInputState.Preparing(0f, R.string.voice_model_extracting)
+                            else -> Unit
+                        }
+                    }
+                }.isSuccess
                 if (!ok) {
                     _state.value = VoiceInputState.Error(R.string.voice_model_failed)
                     return@launch

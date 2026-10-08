@@ -91,6 +91,8 @@ class StorageUsageScanner @Inject constructor(
             CleanupKind.Logs -> FileLogger.clearLogs() + AILogger.clearLogs()
             CleanupKind.ToolOutput -> clearDirContents(toolOutputStore.outputDir)
             CleanupKind.VisionSessions -> clearDirContents(visionSessionStore.sessionDir)
+            // 整个 voice_models 一起清：里面的 .staging 与没删干净的 tar.bz2 都是同一批下载的残留
+            CleanupKind.VoiceModels -> clearDirContents(File(context.filesDir, VOICE_MODELS_DIR))
         }
     }
 

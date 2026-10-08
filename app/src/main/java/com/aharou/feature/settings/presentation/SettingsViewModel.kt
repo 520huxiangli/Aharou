@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.core.net.AppProxy
 import com.aharou.feature.voice.domain.VoiceModelManager
+import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LogLevel
@@ -693,23 +694,22 @@ class SettingsViewModel @Inject constructor(
     private val _voiceModelStatus = MutableStateFlow(voiceModelManager.statusAll())
     val voiceModelStatus: StateFlow<VoiceModelStatus> = _voiceModelStatus.asStateFlow()
 
-    /** 「重新释放」的结果提示，null 表示无提示。 */
-    private val _voiceModelMessage = MutableStateFlow<Int?>(null)
-    val voiceModelMessage: StateFlow<Int?> = _voiceModelMessage.asStateFlow()
+    /** 进行中的下载/解压状态；[VoiceModelState.Idle] 表示没在跑。 */
+    private val _voiceModelState = MutableStateFlow<VoiceModelState>(VoiceModelState.Idle)
+    val voiceModelState: StateFlow<VoiceModelState> = _voiceModelState.asStateFlow()
 
     fun refreshVoiceModelStatus() {
         _voiceModelStatus.value = voiceModelManager.statusAll()
     }
 
-    /** 强制从安装包重新释放模型（文件坏了/缺失时用）；唤醒与整句识别用的模型一并重放。 */
-    fun rereleaseVoiceModel() {
+    /** 下载（已下载则重新下载）全部离线语音模型；进度与结果都走 [voiceModelState]。 */
+    fun downloadVoiceModel() {
+        val running = _voiceModelState.value
+        if (running is VoiceModelState.Downloading || running is VoiceModelState.Extracting) return
         viewModelScope.launch {
-            val ok = voiceModelManager.rereleaseAll()
-            _voiceModelMessage.value = if (ok) {
-                R.string.settings_voice_model_rereleased
-            } else {
-                R.string.settings_voice_model_rerelease_failed
-            }
+            val ok = voiceModelManager.redownloadAll { _voiceModelState.value = it }
+            // 中途失败的模型会被后面成功那个的回调冲成 Ready，这里保留失败态让界面提示重试
+            if (!ok) _voiceModelState.value = VoiceModelState.Failed("")
             refreshVoiceModelStatus()
         }
     }

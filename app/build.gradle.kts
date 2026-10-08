@@ -255,11 +255,9 @@ android {
         }
     }
 
-    // 内置语音模型（model.int8.onnx，78MB）不再压缩：它已是紧凑的二进制权重，再压几无收益，
-    // 却要在安装/读取时多一次解压，且会让 APK 启动时的 asset 扫描变慢。
-    // Tesseract 语言包同理：它本身就是压缩包格式，再压一遍几乎没收益。
+    // Tesseract 语言包本身已是压缩包格式，再压一遍几无收益，却要在读取时多一次解压。
     androidResources {
-        noCompress += listOf("onnx", "mvn", "traineddata", "mp4")
+        noCompress += listOf("mvn", "traineddata", "mp4")
     }
 
     // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，

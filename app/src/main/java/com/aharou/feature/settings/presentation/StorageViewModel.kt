@@ -36,7 +36,8 @@ data class StorageUiState(
             CleanupKind.Caches to (entries[StorageCategory.Caches]?.bytes ?: 0L),
             CleanupKind.Logs to (entries[StorageCategory.Logs]?.bytes ?: 0L),
             CleanupKind.ToolOutput to aiConfigDetail(StorageDetailKey.TOOL_OUTPUT),
-            CleanupKind.VisionSessions to aiConfigDetail(StorageDetailKey.VISION_SESSIONS)
+            CleanupKind.VisionSessions to aiConfigDetail(StorageDetailKey.VISION_SESSIONS),
+            CleanupKind.VoiceModels to (entries[StorageCategory.VoiceModels]?.bytes ?: 0L)
         )
 
     val selectedBytes: Long

@@ -129,11 +129,6 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 
-      # 离线语音模型不进 git（单个 onnx 154MB，超过 GitHub 单文件 100MB 上限），
-      # 构建前拉下来放进 assets，正式包才内置它、用户拿到就能离线用。
-      - name: Fetch offline voice model
-        run: bash scripts/fetch-voice-model.sh
-
       # 一次性构建全部 flavor 的 release APK（universal/armsolo/x86solo）
       # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。
       - name: Build all flavor Release APKs
@@ -273,3 +268,22 @@ jobs:
           GH_MIRROR: https://gh-proxy.com/
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/sync-gitcode-releases.py
+
+      # 同一批资产再同步一份到 cnb 发布仓（App 的第二个国内下载源，见 UpdateDownloadSource）。
+      # 策略与 GitCode 一致：发版即同步，失败不拦发版（GitHub 上资产还在，重跑脚本即可补齐）。
+      # 只传 universal：App 挑包优先 universal（含两套 ABI 镜像），三个 ABI 全传要 4GB+ 没必要。
+      - name: Sync release assets to cnb
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_OWNER: ${{ vars.CNB_OWNER }}
+          CNB_REPO: ${{ vars.CNB_REPO }}
+          GH_REPO: ${{ github.repository }}
+          GH_MIRROR: https://gh-proxy.com/
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET_FILTER: universal
+          # 只同步当次发版的 tag：脚本默认的「最新 3 个正式版」策略不适合发版流水线——
+          # 已发布但用户不想放上 cnb 的版本（如待重发的），下次发版会被这个策略又搬过去。
+          RELEASE_FILTER: ^${{ github.ref_name }}$
+        run: python3 scripts/sync-cnb-releases.py

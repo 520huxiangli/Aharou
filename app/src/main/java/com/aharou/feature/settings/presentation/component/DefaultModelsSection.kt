@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
+import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -96,8 +97,8 @@ internal fun DefaultModelsSection(
     ocrForTextOnlyModels: Boolean = true,
     onToggleOcrForTextOnlyModels: () -> Unit = {},
     voiceModelStatus: VoiceModelStatus,
-    voiceModelMessage: Int? = null,
-    onRereleaseVoiceModel: () -> Unit = {},
+    voiceModelState: VoiceModelState = VoiceModelState.Idle,
+    onDownloadVoiceModel: () -> Unit = {},
     modelMetadata: Map<String, ModelMetadata>,
     onLoadMetadata: () -> Unit,
     onSelectVisionModel: (providerId: String, model: String) -> Unit,
@@ -326,26 +327,38 @@ internal fun DefaultModelsSection(
                 }
             )
             SettingsDivider()
-            val voiceModelProblem = if (voiceModelStatus.ready) {
-                null
-            } else {
-                val missing = stringResource(R.string.settings_voice_model_missing)
-                val mismatch = stringResource(R.string.settings_voice_model_size_mismatch)
-                voiceModelStatus.files.filter { !it.ok }
-                    .joinToString("、") { f -> "${f.name}：" + if (f.actual == null) missing else mismatch }
+            val voiceState = voiceModelState
+            val voiceDownloading = voiceState as? VoiceModelState.Downloading
+            val voiceBusy = voiceDownloading != null || voiceState is VoiceModelState.Extracting
+            val voiceModelProblem = when {
+                voiceModelStatus.ready -> null
+                // 从未下载过（而不是下载残了），给「点右边下载」的提示，别一上来就报一堆文件缺失
+                voiceModelStatus.neverDownloaded -> stringResource(R.string.settings_voice_model_not_downloaded)
+                else -> {
+                    val missing = stringResource(R.string.settings_voice_model_missing)
+                    val mismatch = stringResource(R.string.settings_voice_model_size_mismatch)
+                    voiceModelStatus.files.filter { !it.ok }
+                        .joinToString("、") { f -> "${f.name}：" + if (f.actual == null) missing else mismatch }
+                }
             }
             SettingsRow(
                 icon = FeatherIcons.Mic,
                 title = stringResource(R.string.settings_voice_model_title),
                 subtitle = when {
-                    voiceModelMessage != null -> stringResource(voiceModelMessage)
+                    voiceDownloading != null -> stringResource(
+                        R.string.settings_voice_model_downloading,
+                        (voiceDownloading.progress * 100).toInt()
+                    )
+                    voiceState is VoiceModelState.Extracting -> stringResource(R.string.voice_model_extracting)
+                    voiceState is VoiceModelState.Failed -> stringResource(R.string.settings_voice_model_download_failed)
                     voiceModelProblem != null -> voiceModelProblem
                     else -> stringResource(R.string.settings_voice_model_ready)
                 },
-                onClick = onRereleaseVoiceModel,
+                onClick = onDownloadVoiceModel,
                 trailing = {
                     Text(
-                        text = stringResource(R.string.settings_voice_model_rerelease),
+                        text = if (voiceBusy) stringResource(R.string.settings_voice_model_downloading_short)
+                        else stringResource(R.string.settings_voice_model_download),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1
