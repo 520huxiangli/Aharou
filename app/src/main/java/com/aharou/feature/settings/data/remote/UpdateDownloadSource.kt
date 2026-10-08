@@ -3,7 +3,7 @@ package com.aharou.feature.settings.data.remote
 /**
  * 更新包下载源解析：把 tag + 资产名展开成**有序候选 URL**。
  *
- * 优先国内可达的来源（GitCode 镜像 → cnb 发布仓 → GitHub 文件反代），最后回退 GitHub 原链；
+ * 优先国内可达的来源（cnb 发布仓 → GitCode 镜像 → GitHub 文件反代），最后回退 GitHub 原链；
  * 调用方逐个探测，第一个可达的即用于下载——任一来源失效都会自动降级，
  * 不需要联网失败重试逻辑。
  *
@@ -64,8 +64,10 @@ object UpdateDownloadSource {
     fun candidates(tag: String, assetName: String): List<String> {
         val github = "$GITHUB_BASE/releases/download/$tag/$assetName"
         return buildList {
-            add("$GITCODE_BASE/releases/download/$tag/$assetName")
+            // cnb 排第一：实测匿名可下、4~5MB/s，且它只同步「当次发版」的资产，不会像
+            // GitCode 那样落后好几个大版本。
             add("$CNB_BASE/-/releases/download/$tag/$assetName")
+            add("$GITCODE_BASE/releases/download/$tag/$assetName")
             PROXIES.forEach { add(it + github) }
             add(github)
         }
