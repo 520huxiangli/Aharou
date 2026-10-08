@@ -94,14 +94,14 @@ class BrowserUseManager(
 
         @SuppressLint("SetJavaScriptEnabled")
         fun configureWebView(webView: WebView, profile: UserAgentProfile, customUA: String? = null) {
-            // [T-android-browser-blank] The browser lives inside a Material3
-            // ModalBottomSheet, which hosts content in its own secondary
-            // window. On some OEM GPUs the WebView's hardware draw functor
-            // fails to composite in that window — the page loads (title/URL
-            // update normally) but the content area stays black or white.
-            // Rendering the WebView through its own hardware layer texture is
-            // the standard workaround for WebView-in-dialog blank rendering.
-            webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+            // [T-android-browser-blank] 这里原来给 WebView 强制 LAYER_TYPE_HARDWARE：
+            // 面板当时挂在 Material3 ModalBottomSheet 的二级窗口里，WebView 的硬件绘制
+            // 在那个窗口合成失败（页面加载正常但内容区黑/白），独立硬件层纹理是当时的
+            // 标准绕法。面板现已改到主窗口渲染（见 BrowserSheet 的 BrowserFullScreenHost），
+            // 这层强制硬件层不再需要：它会让 WebView 走单独的 texture 合成，部分 OEM GPU
+            // 上反而把主窗口的合成一起弄坏——实测白屏那一刻 HWUI 正在打
+            // `SkiaVulkanPipeline::setSurface: surface=NULL` 与 `RenderProxy::destroy`。
+            // 所以恢复默认层类型，与主窗口共用同一条绘制管线。
             webView.settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true

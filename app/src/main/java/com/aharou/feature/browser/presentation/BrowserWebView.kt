@@ -67,6 +67,15 @@ fun BrowserWebView(
                 // 主动请求一次布局与重绘，把它拉回可见状态。
                 webView.requestLayout()
                 webView.invalidate()
+                // 上面那次 invalidate 在尚未 attach 到新窗口时会被丢弃（换窗口后旧硬件层已作废），
+                // 而静态页面没人再触发重绘 —— 只能等下一次滚动/动画才突然出画面（「空屏一段」）。
+                // 因此再排一帧，等真正 attach 到新窗口后补一次重绘。
+                webView.post {
+                    if (webView.isAttachedToWindow) {
+                        webView.requestLayout()
+                        webView.invalidate()
+                    }
+                }
             }
         },
         onRelease = { container ->

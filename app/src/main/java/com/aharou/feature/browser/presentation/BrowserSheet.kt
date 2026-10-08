@@ -1,6 +1,7 @@
 package com.aharou.feature.browser.presentation
 
 import com.aharou.R
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
@@ -134,7 +135,7 @@ fun BrowserSheet(
         }
     }
 
-    StandardChatSheet(
+    BrowserFullScreenHost(
         title = pageTitle.ifEmpty { stringResource(R.string.browser_title) },
         onDismiss = onDismiss,
         leadingAction = {
@@ -631,4 +632,41 @@ private fun normalizeURLInput(input: String): String {
         return "https://www.google.com/search?q=${java.net.URLEncoder.encode(trimmed, "UTF-8")}"
     }
     return "https://$trimmed"
+}
+
+/**
+ * 浏览器面板的全屏宿主：内容直接画在当前窗口里，不套 [ModalBottomSheet]。
+ *
+ * 这个面板原来用 [StandardChatSheet]（内部就是 ModalBottomSheet）。WebView 挂在那个独立
+ * Dialog 窗口时，部分 OEM GPU 的上层合成会失败：页面其实加载好了，但内容区黑/白，严重时
+ * 同一窗口的兄弟 Compose UI（标题、URL 条、标签胶囊）一起被画成白板（见 BrowserUseManager
+ * 与 BrowserSheet 里挂载 WebView 处的同款记录）。浏览器面板本来就是全屏语义，也不需要 sheet
+ * 的下拉关闭手势，所以换成普通容器：不换窗口，合成链路与聊天界面保持一致。
+ */
+@Composable
+private fun BrowserFullScreenHost(
+    title: String,
+    onDismiss: () -> Unit,
+    leadingAction: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    // sheet 的返回键由 ModalBottomSheet 自己接管；换普通容器后得显式处理。
+    BackHandler(enabled = true) { onDismiss() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ChatColors.background),
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            StandardChatSheetHeader(
+                title = title,
+                onDismiss = onDismiss,
+                leadingAction = leadingAction,
+            )
+            HorizontalDivider(thickness = 0.5.dp, color = ChatColors.separator)
+            Box(modifier = Modifier.fillMaxSize()) {
+                content()
+            }
+        }
+    }
 }
