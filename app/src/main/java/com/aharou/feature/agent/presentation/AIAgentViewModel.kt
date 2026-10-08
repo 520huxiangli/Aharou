@@ -1817,8 +1817,8 @@ class AIAgentViewModel @Inject constructor(
         targetSessionId: String? = null
     ) {
         val sid = targetSessionId ?: _currentSessionId.value
-        val isCurrentRunning = sid != null &&
-            (sid in stoppingSessions || sessionJobs[sid]?.isCompleted == false || sid in _runningCommandSessions.value)
+        // 软打断的会话不算忙：软打断=「停下听我说」，这时发的话要直接进会话，不该排队
+        val isCurrentRunning = sid != null && sid !in stoppingSessions && (sessionJobs[sid]?.isCompleted == false || sid in _runningCommandSessions.value)
         if (isCurrentRunning) {
             val req = QueuedRequest(
                 id = UUID.randomUUID().toString(),

@@ -40,6 +40,15 @@
 - release 签名凭据读 `app/keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）；本地通常不存放签名文件，CI 从 GitHub secret 还原到 `app/aicode.jks`。
 - **`targetSdk = 35`**（`minSdk = 26`）：早年锁 28 是为了绕开 PRoot 的 W^X / SELinux 限制（App 可写目录不许 execve），后来 proot 全套改由 jniLibs 装进 `nativeLibraryDir`（`apk_data_file`，允许 execve），这条理由已消失。34 起前台服务必须声明类型并申请对应权限，35 起 dataSync 前台服务有「24 小时内累计 6 小时」上限——故两个前台服务统一用 `specialUse`。共享存储直读依赖「所有文件访问」（`MANAGE_EXTERNAL_STORAGE`），代码改动前先看 `app/build.gradle.kts` 的 `defaultConfig` 注释。
 
+### 产物交付（硬规则）
+
+**编译出的 APK / AAB / 构建产物一律复制到跨工作区共享区 `~/shared`**（= `files/aharou-global/shared`，工作台顶栏最右「硬盘」图标是它的入口）。不要只丢在聊天文件附件里，也不要留在 `app/build/outputs/` 就算了事。
+
+- 复制时文件名带上版本与短 hash，例如 `Aharou-2.14.0-dirty-1152-<sha8>.apk`
+- 汇报时必须给出：**文件名 + 字节数 + sha256**
+- 装完核对：用 `Shizuku` 读设备上 `/data/app/**/base.apk` 的字节数与 sha256，与共享区那份对比——同 versionCode 的覆盖安装可能被 ROM 跳过，字节数/哈希是唯一可靠判据（2026-10-08 就因此白测两轮）
+- 主人已多次强调此约定（原话：「构建的放共享区，我 tm 说多少次了」），不要再问、也不要自行决定输出路径
+
 ### CI 全景（`.github/workflows/`）
 
 - `ci.yml`：push 与 PR 门禁，构建前跑迁移对账、官方技能自检与同一套单测。

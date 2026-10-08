@@ -66,6 +66,12 @@ fun TodoDashboardBar(
 ) {
     if (items.isEmpty()) return
 
+    // 全部完成就整条撤掉：留着只占输入框上方的地方（主人反馈「任务都做完了还显示在上面」）。
+    // 同时把展开状态复位——组件不渲染后回调不会再触发，否则外层的折叠判断会一直以为它还展开着。
+    val allCompleted = items.all { it.status == TodoStatus.COMPLETED }
+    LaunchedEffect(allCompleted) { if (allCompleted) onExpandedChange(false) }
+    if (allCompleted) return
+
     // 按会话隔离记忆展开状态，新会话默认收起
     var isExpanded by rememberSaveable(sessionId) { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
