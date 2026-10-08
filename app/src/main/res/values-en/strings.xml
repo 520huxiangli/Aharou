@@ -2298,6 +2298,17 @@
     <string name="memory_delete_title">Delete \"%1$s\"?</string>
     <string name="memory_delete_body">This cannot be undone; the memory will no longer be injected.</string>
     <string name="memory_read_error">Could not read this file (too large or already deleted).</string>
+    <string name="memory_trace_header">Recent memory activity</string>
+    <string name="memory_trace_empty">No memory writes yet</string>
+    <string name="memory_trace_action_save">Saved</string>
+    <string name="memory_trace_action_new">New</string>
+    <string name="memory_trace_action_edit">Edited</string>
+    <string name="memory_trace_action_delete">Deleted</string>
+    <string name="memory_trace_action_archive">Archived</string>
+    <string name="memory_trace_action_merge">Merged</string>
+    <string name="memory_trace_action_conflict">Conflict</string>
+    <string name="memory_trace_action_skip">Skipped</string>
+    <string name="memory_trace_action_unknown">Action</string>
 
     <!-- Voice input -->
     <string name="voice_input_hold">Hold to talk</string>

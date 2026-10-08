@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.memory.AharouMemoryStore
+import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.settings.presentation.SettingsViewModel
@@ -62,7 +63,9 @@ import java.util.Locale
 internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val store = remember { AharouMemoryStore(context.applicationContext) }
+    val trace = remember { MemoryTraceLog(context.applicationContext) }
     var files by remember { mutableStateOf(store.listFiles()) }
+    var records by remember { mutableStateOf(trace.recent(TRACE_DISPLAY_LIMIT)) }
     var enabled by remember { mutableStateOf(store.isMemoryEnabled()) }
     var detailName by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<String?>(null) }
@@ -87,6 +90,7 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
 
     LifecycleResumeEffect(Unit) {
         files = store.listFiles()
+        records = trace.recent(TRACE_DISPLAY_LIMIT)
         enabled = store.isMemoryEnabled()
         onPauseOrDispose { }
     }
@@ -193,6 +197,65 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
                 }
             }
         }
+
+        // 写入流水：某条记忆是被覆盖、被跳过还是整理压根没跑，看这里而不是翻文件。
+        SettingsGroupHeader(text = stringResource(R.string.memory_trace_header))
+        if (records.isEmpty()) {
+            SettingsGroup {
+                Text(
+                    text = stringResource(R.string.memory_trace_empty),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 16.dp),
+                )
+            }
+        } else {
+            SettingsGroup {
+                records.forEachIndexed { index, record ->
+                    if (index > 0) SettingsDivider()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.lg, vertical = 11.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = memoryActionLabel(record.action),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Text(
+                                text = record.name,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 8.dp),
+                            )
+                            Text(
+                                text = formatDate(record.at),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        val detail = record.detail
+                        if (detail != null) {
+                            Text(
+                                text = detail,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     deleteTarget?.let { target ->
@@ -284,6 +347,25 @@ private fun MemoryDetailPane(
         )
     }
 }
+
+/** 把流水里的动作码翻成给用户看的文案。 */
+@Composable
+private fun memoryActionLabel(action: String): String = stringResource(
+    when (action) {
+        MemoryTraceLog.ACTION_SAVE -> R.string.memory_trace_action_save
+        MemoryTraceLog.ACTION_NEW -> R.string.memory_trace_action_new
+        MemoryTraceLog.ACTION_EDIT -> R.string.memory_trace_action_edit
+        MemoryTraceLog.ACTION_DELETE -> R.string.memory_trace_action_delete
+        MemoryTraceLog.ACTION_ARCHIVE -> R.string.memory_trace_action_archive
+        MemoryTraceLog.ACTION_MERGE -> R.string.memory_trace_action_merge
+        MemoryTraceLog.ACTION_CONFLICT -> R.string.memory_trace_action_conflict
+        MemoryTraceLog.ACTION_SKIP -> R.string.memory_trace_action_skip
+        else -> R.string.memory_trace_action_unknown
+    }
+)
+
+/** 「最近记忆操作」展示条数：够看出最近发生了什么，又不至于把设置页拉得很长。 */
+private const val TRACE_DISPLAY_LIMIT = 20
 
 private fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"

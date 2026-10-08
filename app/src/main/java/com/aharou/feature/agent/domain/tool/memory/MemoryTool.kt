@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool.memory
 
+import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
@@ -24,6 +25,7 @@ import javax.inject.Inject
 class MemoryTool @Inject constructor(
     private val memoryRepository: MemoryRepository,
     private val aharouMemory: com.aharou.core.memory.AharouMemoryStore,
+    private val memoryTrace: MemoryTraceLog,
 ) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
@@ -121,9 +123,9 @@ class MemoryTool @Inject constructor(
                 "list" -> handleList(context.projectRoot)
                 "search" -> handleSearch(args, context.projectRoot)
                 "read" -> handleRead(memoryName, context.projectRoot)
-                "save" -> handleSave(args, memoryName, scope, context.projectRoot)
-                "edit" -> handleEdit(args, memoryName, scope, context.projectRoot)
-                "delete" -> handleDelete(memoryName, scope, context.projectRoot)
+                "save" -> handleSave(args, memoryName, scope, context.projectRoot, context.sessionId)
+                "edit" -> handleEdit(args, memoryName, scope, context.projectRoot, context.sessionId)
+                "delete" -> handleDelete(memoryName, scope, context.projectRoot, context.sessionId)
                 "log" -> handleDailyLog(args)
                 "fact" -> handleFact(args)
                 "mindstream" -> handleMindstream(args)
@@ -191,7 +193,13 @@ class MemoryTool @Inject constructor(
         return ToolResult.Success(JsonPrimitive(content))
     }
 
-    private fun handleSave(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleSave(
+        args: Map<String, JsonElement>,
+        name: String?,
+        scope: MemoryScope,
+        projectRoot: String?,
+        sessionId: String?
+    ): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("save 操作需要 name 参数", "MISSING_NAME")
         val description = args["description"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: return ToolResult.Error("save 操作需要 description 参数", "MISSING_DESCRIPTION")
@@ -202,15 +210,48 @@ class MemoryTool @Inject constructor(
             return ToolResult.Error("当前未选择工作区，无法保存项目级记忆。请改用 scope=global", "NO_WORKSPACE")
         }
 
+        val existed = memoryRepository.loadContent(name, projectRoot) != null
         val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot)
-        return if (success) {
-            ToolResult.Success(JsonPrimitive("已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。它将在下一次会话启动时自动注入摘要。当前会话若需立即使用，请通过 read 操作读取。"))
+        if (!success) return ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
+
+        // 重名（意同）是记忆库最大的噪声来源：同一条事实被不同名字反复记下，检索时互相抢位。
+        // 只提醒不阻断——写进去的内容本身没毛病，模型拿到提示后可以立刻用 edit 合并。
+        val similar = memoryRepository.findSimilarMemories(name, description, projectRoot)
+        val detail = buildList {
+            if (existed) add("覆盖已有记忆（旧版已归档）")
+            if (similar.isNotEmpty()) add("命中相近记忆：" + similar.joinToString("、") { it.name })
+        }.joinToString("；").takeIf { it.isNotEmpty() }
+        memoryTrace.record(
+            source = MemoryTraceLog.SOURCE_TOOL,
+            action = if (existed) MemoryTraceLog.ACTION_SAVE else MemoryTraceLog.ACTION_NEW,
+            name = name,
+            scope = scope.name.lowercase(),
+            detail = detail,
+            sessionId = sessionId
+        )
+
+        val hint = if (similar.isEmpty()) {
+            ""
         } else {
-            ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
+            " 注意：库中已有相近记忆 " +
+                similar.joinToString("、") { "「${it.name}」（${it.description}）" } +
+                "。若这次写的是同一条事实，请改用 action=edit 就地修改，别再新建条目。"
         }
+        return ToolResult.Success(
+            JsonPrimitive(
+                "已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。它将在下一次会话启动时自动注入摘要。" +
+                    "当前会话若需立即使用，请通过 read 操作读取。$hint"
+            )
+        )
     }
 
-    private fun handleEdit(args: Map<String, JsonElement>, name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleEdit(
+        args: Map<String, JsonElement>,
+        name: String?,
+        scope: MemoryScope,
+        projectRoot: String?,
+        sessionId: String?
+    ): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("edit 操作需要 name 参数", "MISSING_NAME")
 
         val edits = parseEdits(args)
@@ -221,8 +262,17 @@ class MemoryTool @Inject constructor(
         }
 
         return when (val result = memoryRepository.editMemory(name, edits, scope, projectRoot)) {
-            is MemoryEditResult.Success ->
+            is MemoryEditResult.Success -> {
+                memoryTrace.record(
+                    source = MemoryTraceLog.SOURCE_TOOL,
+                    action = MemoryTraceLog.ACTION_EDIT,
+                    name = name,
+                    scope = scope.name.lowercase(),
+                    detail = "局部编辑 ${edits.size} 处",
+                    sessionId = sessionId
+                )
                 ToolResult.Success(JsonPrimitive("已成功编辑记忆「$name」的正文（${scope.name.lowercase()} 作用域）。"))
+            }
             is MemoryEditResult.NotFound ->
                 ToolResult.Error("未找到记忆「${result.name}」，请先通过 save 创建，或确认 name 与作用域是否正确。", "MEMORY_NOT_FOUND")
             is MemoryEditResult.Error ->
@@ -242,11 +292,18 @@ class MemoryTool @Inject constructor(
         }.takeIf { it.isNotEmpty() }
     }
 
-    private fun handleDelete(name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleDelete(name: String?, scope: MemoryScope, projectRoot: String?, sessionId: String?): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("delete 操作需要 name 参数", "MISSING_NAME")
         
         val success = memoryRepository.deleteMemory(name, scope, projectRoot)
         return if (success) {
+            memoryTrace.record(
+                source = MemoryTraceLog.SOURCE_TOOL,
+                action = MemoryTraceLog.ACTION_DELETE,
+                name = name,
+                scope = scope.name.lowercase(),
+                sessionId = sessionId
+            )
             ToolResult.Success(JsonPrimitive("已成功删除 ${scope.name.lowercase()} 作用域的记忆「$name」。"))
         } else {
             ToolResult.Error("删除失败，记忆「$name」可能不存在于该作用域。", "DELETE_FAILED")

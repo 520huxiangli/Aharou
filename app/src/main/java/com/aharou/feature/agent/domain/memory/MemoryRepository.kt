@@ -155,6 +155,9 @@ class MemoryRepository @Inject constructor(
     private fun isCjk(ch: Char): Boolean = ch.code in 0x4E00..0x9FFF
 
     private companion object {
+        /** 近重复提示的最低相关度：至少命中一个关键词或名称才值得提醒，避免提示噪声。 */
+        const val SIMILAR_MEMORY_MIN_SCORE = 2
+
         /** 注入清单的条数上限。超出的条目只是不进提示词，文件仍在，模型仍可 read / edit / delete。 */
         const val MAX_INJECTED_MEMORIES = 60
 
@@ -186,6 +189,31 @@ class MemoryRepository @Inject constructor(
             "一个", "这个", "那个", "就是", "可以", "已经", "还有", "如果", "所以", "但是", "因为",
             "全部", "需要", "注意", "表示", "使用", "进行", "没有", "不是", "以及", "或者"
         )
+    }
+
+    /**
+     * 找「可能意同的已有条目」，供 memory 工具在保存后提醒模型改用 edit。
+     *
+     * 复用与注入排序同一套相关度打分（keywords > name > description），只比元信息不比正文：
+     * 正文比对要么靠分词要么靠向量，成本与误报都不划算，宁可漏报也不误报。
+     * 同名条目已被排除——那是覆盖，不是重名。
+     */
+    fun findSimilarMemories(
+        name: String,
+        description: String,
+        projectRoot: String?,
+        limit: Int = 3
+    ): List<Memory> {
+        val query = "$name $description".lowercase()
+        return listMemories(projectRoot)
+            .asSequence()
+            .filterNot { it.name.equals(name, ignoreCase = true) }
+            .map { it to relevanceScore(it, query) }
+            .filter { it.second >= SIMILAR_MEMORY_MIN_SCORE }
+            .sortedByDescending { it.second }
+            .take(limit)
+            .map { it.first }
+            .toList()
     }
 
     /** 读取指定 memory 的完整指令正文；不存在 / 解析失败返回 null。 */
@@ -225,6 +253,28 @@ class MemoryRepository @Inject constructor(
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) false
                 else projectSource(projectRoot).deleteMemory(name)
+            }
+        }
+    }
+
+    /**
+     * 把一条没能写成本体的内容存进归档目录。
+     *
+     * 归档只落在对应作用域的记忆根目录下（全局或该项目），不跨作用域写入——项目记忆里
+     * 的候选不该因为同名条目在全局就跑到全局目录去。
+     */
+    fun archiveContent(
+        name: String,
+        description: String,
+        content: String,
+        scope: MemoryScope,
+        projectRoot: String?
+    ): Boolean {
+        return when (scope) {
+            MemoryScope.GLOBAL -> globalMemorySource.archiveContent(name, description, content)
+            MemoryScope.PROJECT -> {
+                if (projectRoot.isNullOrBlank()) false
+                else projectSource(projectRoot).archiveContent(name, description, content)
             }
         }
     }

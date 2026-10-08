@@ -3,6 +3,9 @@ package com.aharou.feature.agent.domain.memory
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.writeTextSafely
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** 单个编辑项，语义与 editFile 的 edits 一致。 */
 data class MemoryEdit(
@@ -85,6 +88,16 @@ interface MemorySource {
 
     fun deleteMemory(name: String): Boolean
 
+    /**
+     * 把一条「没能写成本体」的内容存进归档目录（记忆根目录下的 `archive/`）。
+     *
+     * 记忆是「一个名字一条」的模型，同名再写就会覆盖旧版，而旧值本身常常是有用信息
+     * （判断演变方向、回滚误改都要靠它）。所以凡是要被覆盖或被丢弃的版本，都往这里留一份。
+     * 归档是子目录，[listMemories] 只扫顶层 `.md`，因此归档不会被注入提示词、也不会被
+     * search 命中——要取回得显式读文件。
+     */
+    fun archiveContent(name: String, description: String, content: String): Boolean
+
     companion object {
         /**
          * 将模型传入的记忆名归一化为安全文件名片段。
@@ -110,6 +123,68 @@ interface MemorySource {
         fun resolveMemoryFile(root: File, name: String): File {
             val safe = sanitizeName(name)
             return File(root, "$safe.md")
+        }
+
+        /** 归档子目录名。放在记忆根目录下，天然被 [listMemories] 的顶层扫描排除。 */
+        private const val ARCHIVE_DIR = "archive"
+
+        /** 归档目录；[mkdirs] 为 true 时尝试创建，创建失败返回 null。 */
+        private fun archiveDir(root: File, mkdirs: Boolean = false): File? {
+            val dir = File(root, ARCHIVE_DIR)
+            if (mkdirs && !dir.exists() && !dir.mkdirs()) return null
+            return dir
+        }
+
+        /**
+         * 为 [name] 在归档目录里挑一个不重名的目标文件（带时间戳）。
+         * 同一秒内重复归档时追加序号，绝不覆盖已有归档。
+         */
+        fun uniqueArchiveFile(root: File, name: String): File? {
+            val dir = archiveDir(root, mkdirs = true) ?: return null
+            val base = sanitizeName(name)
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+            var candidate = File(dir, "$base-$stamp.md")
+            var seq = 1
+            while (candidate.exists()) {
+                candidate = File(dir, "$base-$stamp-$seq.md")
+                seq++
+            }
+            return candidate
+        }
+
+        /** 覆盖写之前把 [name] 现有文件原样留一份到归档目录；没有现成文件时返回 null。 */
+        fun archiveExistingFile(root: File, name: String): File? {
+            val existing = resolveMemoryFile(root, name)
+            if (!existing.isFile) return null
+            val target = uniqueArchiveFile(root, name) ?: return null
+            return try {
+                existing.copyTo(target, overwrite = false)
+                target
+            } catch (e: Exception) {
+                FileLogger.w("MemorySource", "归档旧版记忆失败: $name", e)
+                null
+            }
+        }
+
+        /** 把任意内容按记忆格式写进归档目录；成功返回归档文件。 */
+        fun writeArchiveFile(
+            root: File,
+            name: String,
+            description: String,
+            content: String,
+            tag: String
+        ): File? {
+            val target = uniqueArchiveFile(root, name) ?: return null
+            return try {
+                target.writeTextSafely(
+                    MemoryParser.format(sanitizeName(name), description, content),
+                    tag
+                )
+                target
+            } catch (e: Exception) {
+                FileLogger.w(tag, "写入归档记忆失败: $name", e)
+                null
+            }
         }
     }
 }

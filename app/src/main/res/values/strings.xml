@@ -2298,6 +2298,17 @@
     <string name="memory_delete_title">删除「%1$s」？</string>
     <string name="memory_delete_body">删除后不可恢复；相关记忆将不再注入。</string>
     <string name="memory_read_error">读不出这个文件（可能过大或已删除）</string>
+    <string name="memory_trace_header">最近记忆操作</string>
+    <string name="memory_trace_empty">还没有记忆写入记录</string>
+    <string name="memory_trace_action_save">保存</string>
+    <string name="memory_trace_action_new">新建</string>
+    <string name="memory_trace_action_edit">编辑</string>
+    <string name="memory_trace_action_delete">删除</string>
+    <string name="memory_trace_action_archive">归档</string>
+    <string name="memory_trace_action_merge">合并</string>
+    <string name="memory_trace_action_conflict">冲突</string>
+    <string name="memory_trace_action_skip">跳过</string>
+    <string name="memory_trace_action_unknown">操作</string>
 
     <!-- 语音输入 -->
     <string name="voice_input_hold">按住说话</string>
