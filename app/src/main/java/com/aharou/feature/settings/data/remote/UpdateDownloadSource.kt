@@ -3,7 +3,8 @@ package com.aharou.feature.settings.data.remote
 /**
  * 更新包下载源解析：把 tag + 资产名展开成**有序候选 URL**。
  *
- * 优先国内可达的来源（cnb 发布仓 → GitCode 镜像 → GitHub 文件反代），最后回退 GitHub 原链；
+ * 优先国内可达的来源（cnb 发布仓 → GitHub 文件反代），最后回退 GitHub 原链；
+ * GitCode 已于 2026-10-08 按主人要求停用（同步也停了，那边不会再更新，不再作候选）。
  * 调用方逐个探测，第一个可达的即用于下载——任一来源失效都会自动降级，
  * 不需要联网失败重试逻辑。
  *
@@ -18,13 +19,6 @@ object UpdateDownloadSource {
     const val ASSET_PREFIX = "Aharou-"
 
     private const val GITHUB_BASE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO"
-
-    /**
-     * GitCode 镜像仓库。注意它是**另一个账号**下的同名仓库（2026-09-27 建仓），
-     * 路径与 GitHub 不同名，别把两者混用。代码/tag/Release 资产均已同步过去。
-     */
-    private const val GITCODE_OWNER = "Aharou"
-    private const val GITCODE_BASE = "https://gitcode.com/$GITCODE_OWNER/$GITHUB_REPO"
 
     /**
      * cnb 发布仓（`huxiangli/aharou-releases`，2026-10-08 建）。
@@ -67,7 +61,6 @@ object UpdateDownloadSource {
             // cnb 排第一：实测匿名可下、4~5MB/s，且它只同步「当次发版」的资产，不会像
             // GitCode 那样落后好几个大版本。
             add("$CNB_BASE/-/releases/download/$tag/$assetName")
-            add("$GITCODE_BASE/releases/download/$tag/$assetName")
             PROXIES.forEach { add(it + github) }
             add(github)
         }

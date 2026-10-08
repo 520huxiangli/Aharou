@@ -42,17 +42,16 @@ class UpdateDownloadSourceTest {
     }
 
     @Test
-    fun candidates_areOrderedCnbThenGitCodeThenProxiesThenGitHub() {
+    fun candidates_areOrderedCnbThenProxiesThenGitHub() {
         val list = UpdateDownloadSource.candidates("v1.13.5", "Aharou-universal-v1.13.5.apk")
         val github = "https://github.com/520huxiangli/Aharou/releases/download/" +
             "v1.13.5/Aharou-universal-v1.13.5.apk"
 
-        // cnb 的附件路由比 GitHub/GitCode 多一截 `-`
+        // cnb 的附件路由比 GitHub 多一截 `-`
         assertTrue("cnb 应排第一", list.first().startsWith("https://cnb.cool/huxiangli/aharou-releases/-/releases/download/"))
-        assertTrue("GitCode 应排第二", list[1].startsWith("https://gitcode.com/Aharou/Aharou/"))
         assertEquals("GitHub 原链应排最后", github, list.last())
-        // 除前两个国内源与末尾原链外，剩下的都是「反代前缀 + GitHub 原链」
-        list.drop(2).dropLast(1).forEach { assertTrue(it.endsWith(github)) }
+        // 除首个国内源与末尾原链外，剩下的都是「反代前缀 + GitHub 原链」
+        list.drop(1).dropLast(1).forEach { assertTrue(it.endsWith(github)) }
         assertEquals(list.size, list.distinct().size)
     }
 
