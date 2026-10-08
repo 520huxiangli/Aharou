@@ -963,24 +963,18 @@ fun AIChatPanel(
         retainedStreamingReasoning = null
     }
 
-    val lastMsg = messages.lastOrNull()
-    // 本轮助手消息是否已经在消息列表中正式就位渲染：
-    // 只有末尾消息是 ASSISTANT 且正文与思考前缀吻合，才代表本轮输出已落库进 messages 列表
-    val isAssistantSettled = lastMsg?.role == MessageRole.ASSISTANT && run {
+    // 判据不能只认「列表最后一条是助手行」：助手正文落库后常紧跟一条工具行，末尾会变成 TOOL，
+    // 那样判据恒为 false，已落库的正文与尾巴流式气泡同屏各一份（同一段话上下两遍）。
+    val lastAssistantMsg = messages.lastOrNull { it.role == MessageRole.ASSISTANT }
+    val isAssistantSettled = lastAssistantMsg != null && run {
         val currentText = streamingText ?: retainedStreamingText
         val currentReasoning = streamingReasoning ?: retainedStreamingReasoning
-        val textSettled = if (currentText.isNullOrBlank()) {
-            true
-        } else {
-            val prefix = currentText.trimStart().take(20)
-            prefix.isEmpty() || lastMsg.content.trimStart().startsWith(prefix)
-        }
-        val reasoningSettled = if (currentReasoning.isNullOrBlank()) {
-            true
-        } else {
-            val prefix = currentReasoning.trimStart().take(20)
-            prefix.isEmpty() || (lastMsg.reasoning?.trimStart()?.startsWith(prefix) == true)
-        }
+        // 前缀确认就是本轮那段文字，长度约束挡掉前缀偶然相同的旧消息
+        val textSettled = currentText.isNullOrBlank() ||
+            (lastAssistantMsg.content.trimStart().startsWith(currentText.trimStart().take(20)) &&
+                lastAssistantMsg.content.length >= currentText.length)
+        val reasoningSettled = currentReasoning.isNullOrBlank() ||
+            (lastAssistantMsg.reasoning?.trimStart()?.startsWith(currentReasoning.trimStart().take(20)) == true)
         textSettled && reasoningSettled
     }
 

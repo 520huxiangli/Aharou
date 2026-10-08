@@ -858,7 +858,11 @@ internal fun ReasoningBubble(
                     cache = cache,
                     compact = true,
                     cacheEnabled = !preRendered && !live,
-                    retainState = !preRendered && !live,
+                    // 与正文同理（见下侧 StreamingBubble）：解析未完成的那几帧必须沿用上一次解析好的
+                    // 排版。否则纯文本兑底与 Markdown 两态每帧交替，窗口高度上下跳，而列表是贴底钉住的，
+                    // 整个思考块就会持续抖动——正文当时修了这处，思考窗口被漏掉（窗口是 heightIn(max)
+                    // 而不是固定高度，内容不足上限时高度照样由内容决定）。
+                    retainState = true,
                     lazyScroll = true,
                     modifier = Modifier
                         .fillMaxWidth()
