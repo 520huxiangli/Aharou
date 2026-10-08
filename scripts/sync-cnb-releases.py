@@ -44,12 +44,14 @@ import urllib.request
 
 UA = "aharou-cnb-sync"
 
-GH_REPO = os.environ.get("GH_REPO", "520huxiangli/Aharou")
+# 环境变量一律用 `or` 兑默认值：CI 里 `${{ vars.X }}` 未定义时会传空串，
+# `os.environ.get(k, default)` 会拿到 "" 而不是 default，拼出的 API 路径直接变空 owner。
+GH_REPO = os.environ.get("GH_REPO") or "520huxiangli/Aharou"
 GH_MIRROR = os.environ.get("GH_MIRROR", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-CNB_OWNER = os.environ.get("CNB_OWNER", "huxiangli")
-CNB_REPO = os.environ.get("CNB_REPO", "aharou-releases")
-CNB_BRANCH = os.environ.get("CNB_BRANCH", "main")
+CNB_OWNER = os.environ.get("CNB_OWNER") or "huxiangli"
+CNB_REPO = os.environ.get("CNB_REPO") or "aharou-releases"
+CNB_BRANCH = os.environ.get("CNB_BRANCH") or "main"
 CNB_TOKEN = os.environ.get("CNB_TOKEN", "")
 RELEASE_FILTER = os.environ.get("RELEASE_FILTER", "")
 ASSET_FILTER = os.environ.get("ASSET_FILTER", "")
