@@ -23,6 +23,7 @@ import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -59,6 +60,12 @@ class ContextCompactor @Inject constructor(
     private val pathHomeResolver: PathHomeResolver
 ) {
     private val failedMaterials = LinkedHashSet<String>()
+
+    /**
+     * 压缩主体（组装、token 估算、分块切分）跑的调度器。默认挑到后台，避免长历史在主线程上掉帧；
+     * 测试替换成虚拟时间调度器，否则 runTest 推不动真实线程池上的超时等待。
+     */
+    internal var backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default
     internal companion object {
         const val TAG = "ContextCompactor"
         const val MAX_SUMMARY_BLOCKS = 32
@@ -186,7 +193,7 @@ class ContextCompactor @Inject constructor(
         // 事件回调要放回调用方原本的上下文（去掉 Job 重建），否则 CompactionFinished 之类的
         // UI 更新会落到别的作用域里。
         val eventContext = currentCoroutineContext().minusKey(Job)
-        return withContext(Dispatchers.Default) {
+        return withContext(backgroundDispatcher) {
             compactOnBackground(
                 messages, aiProvider, sessionId, force, windowProvider, systemPrompt, tools,
                 currentInputTokens

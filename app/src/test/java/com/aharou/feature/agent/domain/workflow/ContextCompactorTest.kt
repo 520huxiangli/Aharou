@@ -26,6 +26,7 @@ import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
@@ -384,6 +385,7 @@ class ContextCompactorTest {
 
     @Test
     fun hangingSummaryTimesOutAndKeepsHistoryWithoutCommitting() = runTest {
+        compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         coEvery { provider.complete(any(), any(), any(), any()) } coAnswers { awaitCancellation() }
         val original = history()
@@ -400,6 +402,7 @@ class ContextCompactorTest {
 
     @Test
     fun metadataAndSettingsShareTheSummaryDeadline() = runTest {
+        compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         coEvery { metadata.resolve(any(), any(), any()) } coAnswers {
             delay(ContextCompactor.SUMMARY_DEADLINE_MS + 1)
@@ -416,6 +419,7 @@ class ContextCompactorTest {
 
     @Test
     fun metadataAndSettingsCompleteBeforeSummaryAndLeaveOneDeadline() = runTest {
+        compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         coEvery { metadata.resolve(any(), any(), any()) } coAnswers {
             delay(20_000)
@@ -440,6 +444,7 @@ class ContextCompactorTest {
 
     @Test
     fun outputStarvedRetrySharesTheOriginalDeadline() = runTest {
+        compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         var calls = 0
         coEvery { provider.complete(any(), any(), any(), any()) } coAnswers {
@@ -458,6 +463,7 @@ class ContextCompactorTest {
 
     @Test
     fun persistedHistoryPreparationAlsoTimesOut() = runTest {
+        compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         coEvery { dao.getMessagesBySessionOnce("session") } coAnswers { awaitCancellation() }
         val original = history()
