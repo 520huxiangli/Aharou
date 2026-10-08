@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.mcp
 import android.system.OsConstants
 import com.aharou.core.util.FileLogger
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -77,8 +78,9 @@ object McpStdioChannel {
         }
         collectDescendantPids(rootPid).forEach { sendSignal(serverName, it, OsConstants.SIGTERM) }
         runCatching { root.destroy() }
+        // 等根进程退出到多 KILL_GRACE_MS：拿得到进程句柄就用 waitFor，进程秒退时不白等固定时长。
         try {
-            Thread.sleep(KILL_GRACE_MS)
+            root.waitFor(KILL_GRACE_MS, TimeUnit.MILLISECONDS)
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }

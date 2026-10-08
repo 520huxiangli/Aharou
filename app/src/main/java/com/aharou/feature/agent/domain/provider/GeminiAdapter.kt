@@ -160,7 +160,7 @@ class GeminiAdapter @Inject constructor(
         // 响应结构损坏（解析过程抛异常）且没有可展示的正文/原因：返回明确的中止结果而非崩溃，
         // stopReason=failed 命中 isAborted，上层会展示错误文案。
         val aborted = parseFailure != null && finishReason == null
-        return AIResponse(
+        return sanitizeTruncatedToolCalls(AIResponse(
             content = contentText,
             toolCalls = toolCalls,
             stopReason = if (aborted) "failed" else finishReason,
@@ -171,7 +171,7 @@ class GeminiAdapter @Inject constructor(
             outputTokens = outputTokens,
             cachedInputTokens = cachedInputTokens,
             images = images
-        )
+        ))
     }
 
     override fun completeStream(
@@ -320,7 +320,7 @@ class GeminiAdapter @Inject constructor(
                     }
                 }
 
-                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images)))
+                emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images))))
                     }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
@@ -423,7 +423,7 @@ class GeminiAdapter @Inject constructor(
             ?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
             ?.get("message")?.takeIf { it.isJsonPrimitive }?.asString
 
-        return AIResponse(
+        return sanitizeTruncatedToolCalls(AIResponse(
             content = parsed.text,
             toolCalls = parsed.toolCalls,
             stopReason = interactionStopReason(status),
@@ -434,7 +434,7 @@ class GeminiAdapter @Inject constructor(
             outputTokens = usage.outputTokens,
             cachedInputTokens = usage.cachedInputTokens,
             images = parsed.images
-        )
+        ))
     }
 
     /**
@@ -538,7 +538,7 @@ class GeminiAdapter @Inject constructor(
                         }
                     }
 
-                    emit(AIStreamChunk.Final(acc.toResponse()))
+                    emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
                     }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }

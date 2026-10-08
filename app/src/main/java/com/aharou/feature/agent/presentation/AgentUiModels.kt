@@ -138,6 +138,8 @@ data class AgentUIMessage(
     val isContextSummary: Boolean = false,
     // 上下文压缩失败记录（TOOL 消息）：渲染为可展开的失败卡片，展示失败原因。
     val isCompactionFailure: Boolean = false,
+    // 采样循环中止记录（TOOL 消息）：模型反复输出同一段内容导致回复被截断，渲染为一行提示。
+    val isSamplingLoopStop: Boolean = false,
     // 后台任务完成通知：参与模型上下文但不显示为普通用户气泡，渲染为轻量提示条。
     val isBackgroundNotification: Boolean = false,
     val inputTokens: Int = 0,
@@ -186,6 +188,12 @@ const val BACKGROUND_NOTIFICATION_PREFIX = "[系统通知 - 非用户输入]"
  * 该消息无配对 toolCallId，[MessagePersistenceUseCase.buildHistory] 回放时会自动丢弃，不进入模型上下文。
  */
 const val COMPACTION_FAILURE_TOOL_NAME = "上下文压缩"
+
+/**
+ * 采样循环中止记录的 TOOL 消息 toolName。与 [COMPACTION_FAILURE_TOOL_NAME] 同构：无配对 toolCallId，
+ * [MessagePersistenceUseCase.buildHistory] 回放时自动丢弃，界面上渲染成一行提示。
+ */
+const val SAMPLING_LOOP_TOOL_NAME = "采样循环中止"
 
 /**
  * 一次会话消息查询的结果快照。

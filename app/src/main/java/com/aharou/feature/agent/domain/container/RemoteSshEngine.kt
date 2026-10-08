@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -24,6 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import net.schmizz.sshj.connection.channel.direct.Session
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -64,7 +67,7 @@ class RemoteSshEngine @Inject constructor(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): Flow<CommandEvent> = flow {
+    ): Flow<CommandEvent> = channelFlow {
         val effectiveTimeout = timeoutMs.coerceIn(1L, CommandEngine.MAX_TIMEOUT_MS)
         FileLogger.d(TAG, "执行命令(远程流式) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
         val session = connection.startExecSession(buildCdCommand(command, projectPath))
@@ -84,39 +87,41 @@ class RemoteSshEngine @Inject constructor(
                 runCatching { session.close() }
             }
         }
-        val reader = BoundedLineReader(InputStreamReader(session.inputStream))
         try {
-            while (true) {
-                val line = reader.readLine() ?: break
-                emit(CommandEvent.Line(if (line.truncated) "${line.text}\n$LINE_TRUNCATED_NOTE" else line.text))
-            }
+            // stdout 与 stderr 并发逐行 emit：本地引擎 redirectErrorStream(true) 是合并语义，
+            // 远程 exec 通道两路分离，不读 stderr 会丢掉 `command not found`、编译错误、--progress 等。
+            pumpMergedOutput(session) { send(CommandEvent.Line(it)) }
+            // sshj 的 exitStatus 在流 EOF 后未必就绪，close 后才保证有值（与同步路径一致）
+            runCatching { session.close() }
             val exitCode = session.exitStatus
             watchdog.cancel()
             if (timedOut.get()) {
-                emit(CommandEvent.Line("[命令执行超时：超过 ${effectiveTimeout}ms 已被强制终止]"))
-                emit(CommandEvent.Exit(null))
+                send(CommandEvent.Line("[命令执行超时：超过 ${effectiveTimeout}ms 已被强制终止]"))
+                send(CommandEvent.Exit(null))
             } else {
-                if (exitCode != 0) FileLogger.w(TAG, "命令退出码=$exitCode: ${sanitizeCommandForLog(command)}")
-                else FileLogger.v(TAG, "命令完成(退出码 0): ${sanitizeCommandForLog(command)}")
-                emit(CommandEvent.Exit(exitCode))
+                when {
+                    exitCode == null -> FileLogger.w(TAG, "命令未收到退出码: ${sanitizeCommandForLog(command)}")
+                    exitCode != 0 -> FileLogger.w(TAG, "命令退出码=$exitCode: ${sanitizeCommandForLog(command)}")
+                    else -> FileLogger.v(TAG, "命令完成(退出码 0): ${sanitizeCommandForLog(command)}")
+                }
+                send(CommandEvent.Exit(exitCode))
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             watchdog.cancel()
             if (timedOut.get()) {
-                emit(CommandEvent.Line("[命令执行超时：超过 ${effectiveTimeout}ms 已被强制终止]"))
-                emit(CommandEvent.Exit(null))
+                send(CommandEvent.Line("[命令执行超时：超过 ${effectiveTimeout}ms 已被强制终止]"))
+                send(CommandEvent.Exit(null))
             } else {
                 FileLogger.e(TAG, "命令读输出异常(已保留此前输出): ${sanitizeCommandForLog(command)}", e)
-                emit(CommandEvent.Line("[命令执行异常：${e.message}]"))
-                emit(CommandEvent.Exit(null))
+                send(CommandEvent.Line("[命令执行异常：${e.message}]"))
+                send(CommandEvent.Exit(null))
             }
         } finally {
             cancellationHook?.dispose()
             watchdog.cancel()
             watchScope.cancel()
-            runCatching { reader.close() }
             runCatching { session.close() }
         }
     }.flowOn(Dispatchers.IO)
@@ -181,32 +186,12 @@ class RemoteSshEngine @Inject constructor(
                         runCatching { session.close() }
                     }
                 }
-                val reader = BoundedLineReader(InputStreamReader(session.inputStream))
                 try {
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        output.append(if (line.truncated) "${line.text}\n$LINE_TRUNCATED_NOTE" else line.text)
-                        output.append("\n")
-                    }
+                    // 并发读 stdout/stderr 并按行合并（共用 pumpMergedOutput，与流式路径一致）
+                    pumpMergedOutput(session) { line -> output.append("$line\n") }
                 } finally {
                     watchdog.cancel()
-                    runCatching { reader.close() }
                 }
-                // 并发读 stderr 合并进 output：本地引擎 redirectErrorStream(true) 是合并语义，
-                // 远程若不合并，命令报错（如 rg 未安装时的 command not found）只写 stderr 会被静默丢弃。
-                val stderrJob = launch {
-                    val errReader = BoundedLineReader(InputStreamReader(session.errorStream))
-                    try {
-                        while (true) {
-                            val errLine = errReader.readLine() ?: break
-                            output.append(if (errLine.truncated) "${errLine.text}\n$LINE_TRUNCATED_NOTE" else errLine.text)
-                            output.append("\n")
-                        }
-                    } finally {
-                        runCatching { errReader.close() }
-                    }
-                }
-                stderrJob.join()
                 // sshj 的 exitStatus 在流 EOF 后未必就绪，close 后才保证有值
                 runCatching { session.close() }
                 exitCode = session.exitStatus
@@ -216,6 +201,33 @@ class RemoteSshEngine @Inject constructor(
         }
         FileLogger.v(TAG, "命令完成(远程, 退出码 $exitCode，输出 ${output.totalChars} 字符): ${sanitizeCommandForLog(command)}")
         CommandResult(output.build(), exitCode, output.truncated)
+    }
+
+    /**
+     * 并发读取 [session] 的 stdout 与 stderr，逐行回调 [onLine]（已处理超长行截断）。
+     * 本地引擎用 redirectErrorStream(true) 合并两路输出；远程 exec 通道二者分离，
+     * 不并发读会把 `command not found`、编译错误、`git clone --progress` 等 stderr 输出静默丢弃。
+     * 回调可能从两个协程并发触发，调用方自行保证线程安全（[BoundedOutput.append] 已同步）。
+     */
+    private suspend fun pumpMergedOutput(
+        session: Session.Command,
+        onLine: suspend (String) -> Unit
+    ) = coroutineScope {
+        suspend fun pump(stream: InputStream) {
+            val reader = BoundedLineReader(InputStreamReader(stream))
+            try {
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    onLine(if (line.truncated) "${line.text}\n$LINE_TRUNCATED_NOTE" else line.text)
+                }
+            } finally {
+                runCatching { reader.close() }
+            }
+        }
+        val stdout = launch { pump(session.inputStream) }
+        val stderr = launch { pump(session.errorStream) }
+        stdout.join()
+        stderr.join()
     }
 
     override fun isContainerInstalled(): Boolean = connection.isConnected()

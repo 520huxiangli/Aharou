@@ -11,10 +11,6 @@ import java.io.ByteArrayOutputStream
 internal object WavEncoder {
 
     private const val HEADER_SIZE = 44
-    private const val RIFF = 0x52494646 // "RIFF"
-    private const val WAVE = 0x57415645 // "WAVE"
-    private const val FMT = 0x666d7420 // "fmt "
-    private const val DATA = 0x64617461 // "data"
 
     /** 音频容器格式（1 = PCM，无压缩）。 */
     private const val FORMAT_PCM = 1
@@ -30,12 +26,12 @@ internal object WavEncoder {
         val out = ByteArrayOutputStream(HEADER_SIZE + dataSize)
 
         // RIFF chunk
-        out.writeIntLE(RIFF)
+        out.writeAsciiTag("RIFF")
         out.writeIntLE(36 + dataSize) // 后续所有字节数 = 36 + data
-        out.writeIntLE(WAVE)
+        out.writeAsciiTag("WAVE")
 
         // fmt subchunk
-        out.writeIntLE(FMT)
+        out.writeAsciiTag("fmt ")
         out.writeIntLE(16) // PCM 子块固定 16 字节
         out.writeShortLE(FORMAT_PCM)
         out.writeShortLE(CHANNELS)
@@ -45,7 +41,7 @@ internal object WavEncoder {
         out.writeShortLE(BITS_PER_SAMPLE)
 
         // data subchunk
-        out.writeIntLE(DATA)
+        out.writeAsciiTag("data")
         out.writeIntLE(dataSize)
         for (s in samples) {
             // 负半轴 -1.0 乘 32768 会溢出 Short 范围，钳到 32767 避免爆音
@@ -54,6 +50,14 @@ internal object WavEncoder {
             out.write((v shr 8) and 0xFF)
         }
         return out.toByteArray()
+    }
+
+    /**
+     * 写 chunk tag。`writeIntLE` 是低字节先出，把 "RIFF" 打包成 0x52494646 再走它会写成 FFIR，
+     * 所以这四个 tag 只能按 ASCII 字节直接落盘。
+     */
+    private fun ByteArrayOutputStream.writeAsciiTag(tag: String) {
+        write(tag.toByteArray(Charsets.US_ASCII))
     }
 
     private fun ByteArrayOutputStream.writeIntLE(value: Int) {

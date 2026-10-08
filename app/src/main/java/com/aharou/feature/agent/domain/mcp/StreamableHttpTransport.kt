@@ -1,25 +1,31 @@
 package com.aharou.feature.agent.domain.mcp
 
+import kotlin.coroutines.resumeWithException
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.encodeToJsonElement
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * MCP「Streamable HTTP」传输实现。
  *
  * 单一端点 POST JSON-RPC；server 可回 `application/json`（单条响应）或
- * `text/event-stream`（SSE，我们读取其中首条带 id 的 message 事件即可，因为本传输是
- * 一问一答、不维持服务端推送通道）。`initialize` 响应里的 `Mcp-Session-Id` 头会被记下，
- * 之后每条请求都带上（spec 要求）。
+ * `text/event-stream`（SSE，本传输一问一答、不维持服务端推送通道，故只读取其中 JSON-RPC `id`
+ * 与本次请求匹配的那条 message 事件，跳过无 id 的通知与乱序事件）。`initialize` 响应里的
+ * `Mcp-Session-Id` 头会被记下，之后每条请求都带上（spec 要求）。
  *
  * SSE 的解析方式与 AnthropicAdapter 一致——手动读 `data:` 行，避免引入 okhttp-sse。
  */
@@ -33,6 +39,10 @@ class StreamableHttpTransport(
     private companion object {
         const val TAG = "McpHttpTransport"
         val JSON_MEDIA = "application/json".toMediaType()
+
+        /** SSE 事件读取上限：超出仍未等到匹配 id 的事件就当作没有响应，避免 server 持续推事件时死循环。 */
+        const val MAX_SSE_EVENTS = 100
+
         @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
         val DEFAULT_JSON = Json {
             ignoreUnknownKeys = true
@@ -54,7 +64,9 @@ class StreamableHttpTransport(
             FileLogger.d(TAG, "→ [$method] id=$id")
 
             val httpReq = buildRequest(bodyJson)
-            client.newCall(httpReq).execute().use { resp ->
+            // enqueue + suspendCancellableCoroutine：调用方取消（停止生成/切工作区）时能 cancel 掉 call，
+            // 不至于因 server 不回包而把调用方连同它持有的锁一起挂死。
+            awaitCall(client.newCall(httpReq)).use { resp ->
                 // 会话 id 在首个响应（initialize）里下发，记下供后续请求复用。
                 resp.header("Mcp-Session-Id")?.let { if (it.isNotBlank()) sessionId = it }
 
@@ -64,8 +76,8 @@ class StreamableHttpTransport(
 
                 val contentType = resp.header("Content-Type").orEmpty()
                 val rawJson = if (contentType.contains("text/event-stream", ignoreCase = true)) {
-                    extractSseJson(resp.body?.charStream()?.buffered())
-                        ?: throw McpException(message = "SSE 响应中未找到 $method 的数据")
+                    extractSseJson(resp.body?.charStream()?.buffered(), id)
+                        ?: throw McpException(message = "SSE 响应中未找到 id=$id 的 $method 数据")
                 } else {
                     resp.body?.string()
                         ?: throw McpException(message = "$method 响应体为空")
@@ -79,7 +91,7 @@ class StreamableHttpTransport(
         val payload = JsonRpcNotification(method = method, params = params)
         val bodyJson = json.encodeToString(JsonRpcNotification.serializer(), payload)
         FileLogger.d(TAG, "→ notify [$method]")
-        client.newCall(buildRequest(bodyJson)).execute().use { resp ->
+        awaitCall(client.newCall(buildRequest(bodyJson))).use { resp ->
             // 通知按 spec 服务端通常返回 202 且无 body；非 2xx 仅记日志，不阻断流程。
             if (!resp.isSuccessful) {
                 FileLogger.w(TAG, "通知 $method 返回 HTTP ${resp.code}")
@@ -89,6 +101,25 @@ class StreamableHttpTransport(
 
     override fun close() {
         sessionId = null
+    }
+
+    /** 把 OkHttp 的异步回调桥接成可取消的挂起调用；调用方取消时 cancel 掉 call。 */
+    private suspend fun awaitCall(call: Call): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isCancelled) return
+                cont.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isCancelled) {
+                    response.close()
+                    return
+                }
+                cont.resume(response, null)
+            }
+        })
     }
 
     private fun buildRequest(bodyJson: String): Request {
@@ -108,20 +139,42 @@ class StreamableHttpTransport(
             .build()
     }
 
-    /** 从 SSE 流里取第一条 `data:` 负载（可能跨多行），拼成完整 JSON 文本。
-     * 多行 data 属于同一事件，按 SSE 规范以换行连接（JSON 允许空白，拼接后仍可解析）。 */
-    private fun extractSseJson(reader: java.io.BufferedReader?): String? {
+    /**
+     * 从 SSE 流里循环读事件，返回第一条 JSON-RPC `id` 与 [expectedId] 匹配的 `data:` 负载。
+     * server 可能先推 progress 之类的通知（无 id）或乱序响应，第一个事件不能当成这次请求的响应；
+     * 事件数设上限，避免 server 持续推无关事件导致死循环。多行 data 属于同一事件，
+     * 按 SSE 规范以换行连接（JSON 允许空白，拼接后仍可解析）。
+     */
+    private fun extractSseJson(reader: java.io.BufferedReader?, expectedId: Long): String? {
         reader ?: return null
         val data = StringBuilder()
-        var line = reader.readLine()
-        while (line != null) {
+        var events = 0
+        while (events < MAX_SSE_EVENTS) {
+            val line = reader.readLine() ?: break
             when {
                 line.startsWith("data:") -> data.append(line.removePrefix("data:").trim()).append('\n')
-                line.isBlank() && data.isNotEmpty() -> return data.toString().trimEnd('\n')
+                line.isBlank() && data.isNotEmpty() -> {
+                    events++
+                    val payload = data.toString().trimEnd('\n')
+                    data.setLength(0)
+                    if (hasId(payload, expectedId)) return payload
+                }
             }
-            line = reader.readLine()
         }
-        return data.takeIf { it.isNotEmpty() }?.toString()?.trimEnd('\n')
+        // 流未以空行收尾：残留的 data 也当一条事件判一次。
+        if (data.isNotEmpty()) {
+            val payload = data.toString().trimEnd('\n')
+            if (hasId(payload, expectedId)) return payload
+        }
+        return null
+    }
+
+    /** 事件负载的 JSON-RPC `id` 是否等于 [expectedId]；无 id（server 主动通知）或解析失败都算不匹配。 */
+    private fun hasId(payload: String, expectedId: Long): Boolean {
+        val resp = runCatching {
+            json.decodeFromString(JsonRpcResponse.serializer(), payload)
+        }.getOrNull()
+        return resp?.id == expectedId
     }
 
     private fun parseAndValidate(rawJson: String, expectedId: Long, method: String): JsonRpcResponse {

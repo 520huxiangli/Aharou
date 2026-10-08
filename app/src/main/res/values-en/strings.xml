@@ -558,9 +558,13 @@
 
     <!-- Backup ViewModel -->
     <string name="backup_export_failed">Export failed</string>
-    <string name="backup_wrong_password">Wrong backup password, or the encrypted backup file is corrupted</string>
+    <string name="backup_wrong_password">Wrong backup password, or the encrypted backup file is corrupted. If the backup is not encrypted, leave the password empty</string>
     <string name="backup_import_failed">Import failed</string>
     <string name="backup_content_corrupted">Backup content is corrupted and cannot be read</string>
+    <string name="backup_error_unsupported_version">Unsupported encrypted backup file version</string>
+    <string name="backup_error_truncated">The encrypted backup file is truncated (incomplete export or interrupted transfer)</string>
+    <string name="backup_error_corrupted">The encrypted backup file is corrupted</string>
+    <string name="backup_error_not_a_backup_file">Not a valid encrypted Aharou backup file</string>
 
     <!-- Chat Drawer -->
     <string name="chat_history">History</string>
@@ -722,6 +726,7 @@
     <string name="chat_bg_commands_partial_failed">%1$d background tasks finished, %2$d failed</string>
     <string name="chat_context_compressed">Context compressed</string>
     <string name="chat_compaction_failed">Context compaction failed</string>
+    <string name="chat_sampling_loop_stopped">The model was repeating the same content, so this reply was truncated and stopped</string>
     <string name="chat_compressing_context">Compressing context</string>
     <string name="chat_retrying">Retrying %1$s/%2$s</string>
     <string name="chat_key_switched">Switched to key %1$d of %2$d</string>

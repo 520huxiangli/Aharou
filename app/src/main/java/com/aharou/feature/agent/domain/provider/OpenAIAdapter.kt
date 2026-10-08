@@ -142,7 +142,7 @@ class OpenAIAdapter @Inject constructor(
             ?: message?.reasoning?.takeIf { it.isNotEmpty() }
         val usage = response.usage
 
-        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0, cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?: 0, cacheCreationTokens = usage?.prompt_tokens_details?.cache_write_tokens ?: 0, images = images)
+        return sanitizeTruncatedToolCalls(AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0, cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?: 0, cacheCreationTokens = usage?.prompt_tokens_details?.cache_write_tokens ?: 0, images = images))
     }
 
     /**
@@ -252,7 +252,7 @@ class OpenAIAdapter @Inject constructor(
         val status = response.get("status")?.takeIf { it.isJsonPrimitive }?.asString
         val incompleteReason = response.get("incomplete_details")?.takeIf { it.isJsonObject }?.asJsonObject
             ?.get("reason")?.takeIf { it.isJsonPrimitive }?.asString
-        return AIResponse(
+        return sanitizeTruncatedToolCalls(AIResponse(
             content = parsed.text,
             toolCalls = parsed.toolCalls,
             stopReason = responsesStopReason(status, incompleteReason, parsed.toolCalls.isNotEmpty()),
@@ -262,7 +262,7 @@ class OpenAIAdapter @Inject constructor(
             outputTokens = usage.outputTokens,
             cachedInputTokens = usage.cachedInputTokens,
             images = parsed.images
-        )
+        ))
     }
 
     override fun completeStream(
@@ -466,7 +466,7 @@ class OpenAIAdapter @Inject constructor(
             val toolCalls = toolAccs.values
                 .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseToolArguments(acc.args.toString())) }
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens, images = streamedImages)))
+            emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens, images = streamedImages))))
                     }
             },
             onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
@@ -592,7 +592,7 @@ class OpenAIAdapter @Inject constructor(
                         }
                     }
 
-                    emit(AIStreamChunk.Final(acc.toResponse()))
+                    emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
                     }
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }

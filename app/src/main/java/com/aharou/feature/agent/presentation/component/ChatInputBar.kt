@@ -100,8 +100,6 @@ import com.aharou.core.ui.rememberImeBottomInset
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.call.VoiceCallService
-import com.aharou.feature.voice.presentation.LiveTranscript
-import com.aharou.feature.voice.presentation.VoiceInputState
 import com.aharou.feature.voice.presentation.VoiceMicButton
 import com.aharou.feature.agent.domain.command.SlashCommand
 import com.aharou.feature.agent.domain.command.SlashCommandKind
@@ -183,11 +181,6 @@ internal fun ChatInputBar(
     onUploadFile: () -> Unit,
     onUploadImage: () -> Unit,
     onTakePhoto: () -> Unit,
-    /** 按住说话：语音状态与起止回调。默认 Idle + 空回调时按钮仍显示（可用于提示未配置）。 */
-    voiceState: VoiceInputState = VoiceInputState.Idle,
-    onVoiceStart: () -> Unit = {},
-    onVoiceStop: () -> Unit = {},
-    onVoiceCancel: () -> Unit = {},
     slashCommands: List<SlashCommand> = emptyList(),
     queuedRequests: List<QueuedRequest> = emptyList(),
     onRemoveQueued: (String) -> Unit = {},
@@ -305,8 +298,6 @@ internal fun ChatInputBar(
                     .padding(bottom = Spacing.md)
                     .padding(bottom = imeInset)
             ) {
-            // 流式识别的实时文本：贴在输入框上方浮动，说话期间持续刷新
-            LiveTranscript(voiceState)
             if (filteredCommands.isNotEmpty()) {
                 Surface(
                     modifier = Modifier

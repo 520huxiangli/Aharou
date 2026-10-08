@@ -62,3 +62,17 @@ internal fun samplingLoopStart(text: CharSequence, minRepeat: Int = 20, maxUnit:
     }
     return -1
 }
+
+/**
+ * 采样循环命中后的收尾：把累积文本截到首次出现处，并向 UI 报一条命中事件。
+ * 放在这里而不是 [StatefulAgentWorkflow] 里，是为了不动那个文件的行数预算。
+ */
+internal suspend fun cutSamplingLoop(
+    text: StringBuilder,
+    loopStart: Int,
+    inReasoning: Boolean,
+    emit: suspend (AgentEvent) -> Unit,
+) {
+    text.setLength(loopStart)
+    emit(AgentEvent.SamplingLoopDetected(inReasoning = inReasoning))
+}

@@ -75,7 +75,9 @@ internal class VoiceRecorder @Inject constructor(
             return RecordStartResult.Failed
         }
 
-        val samples = ArrayList<Float>(SAMPLE_RATE * 8)
+        // 只有调用方会回读整段录音（onChunk == null）时才累积：流式路径与通话/唤醒是常驻录音，
+        // 从不读 stop() 返回值，累积只会随挂机时长无限增长直至 OOM。
+        val samples = if (onChunk == null) ArrayList<Float>(SAMPLE_RATE * 8) else null
         buffer = samples
         recording = true
         record = recorder
@@ -90,8 +92,16 @@ internal class VoiceRecorder @Inject constructor(
                         if (n < 0) FileLogger.w(TAG, "AudioRecord.read 返回 $n")
                         continue
                     }
-                    synchronized(samples) {
-                        for (i in 0 until n) samples.add(chunk[i] / 32768f)
+                    // 到顶停止累积（保留开头）：samples.size 恒等于返回长度，时长与静音判定不失真，
+                    // 也避免在录音线程上做 removeAt(0) 的搬移开销。
+                    samples?.let { acc ->
+                        synchronized(acc) {
+                            val room = MAX_ACCUMULATED_SAMPLES - acc.size
+                            if (room > 0) {
+                                val count = if (n < room) n else room
+                                for (i in 0 until count) acc.add(chunk[i] / 32768f)
+                            }
+                        }
                     }
                     // 流式识别：把同一块 PCM 交给回调（拷贝一份，避免与累积缓冲共享引用）
                     chunkListener?.let { listener ->
@@ -178,5 +188,8 @@ internal class VoiceRecorder @Inject constructor(
 
         /** 峰值低于此值视为静音（PCM16 满量程归一化后 0.02 约等于 -34dBFS）。 */
         const val MIN_PEAK = 0.02f
+
+        /** 整段累积上限 30 秒，与 VoiceCallSession.UTTERANCE_MAX_SAMPLES 口径一致。 */
+        const val MAX_ACCUMULATED_SAMPLES = SAMPLE_RATE * 30
     }
 }

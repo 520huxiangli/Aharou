@@ -12,6 +12,7 @@ import com.aharou.R
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.LinkedList
 
 /**
@@ -26,7 +27,8 @@ import java.util.LinkedList
  * 工作区物理上在 app 私有 ext4（filesDir），换取 symlink 支持（npm/pnpm/yarn/git 零配置可用）；
  * emulated 存储虽天然可见但内核拒绝 symlink。可见性这里用官方 SAF API 在 API 层补回，与物理位置解耦。
  *
- * docId 直接用文件绝对路径（与 Termux 实现一致），简单且跨进程稳定。
+ * docId 用文件规范路径（canonicalPath），与 [fileForDocId] 的解析口径一致，并统一校验解析结果
+ * 落在允许根（filesDir）之内，挡住 `..` 与 symlink 逃逸。
  */
 class WorkspaceDocumentsProvider : DocumentsProvider() {
 
@@ -121,7 +123,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         val parent = fileForDocId(parentDocumentId)
         // 根目录（filesDir 本身）只放出白名单子目录，隐藏 rootfs/数据库等内部目录；
         // 其余层级照常列出全部内容。
-        val children = if (parent.absolutePath == baseDir().absolutePath) {
+        val children = if (parent.path == rootDir().path) {
             exposedChildren()
         } else {
             parent.listFiles()?.toList() ?: emptyList()
@@ -146,10 +148,15 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         displayName: String,
     ): String {
         val parent = fileForDocId(parentDocumentId)
-        var newFile = File(parent, displayName)
+        // parent 已是校验过的规范路径；displayName 来自外部，只取 basename 再拼接，杜绝含 `/` 与 `..` 的逃逸。
+        val safeName = File(displayName).name
+        if (safeName.isEmpty() || safeName == "." || safeName == "..") {
+            throw FileNotFoundException("Invalid display name: $displayName")
+        }
+        var newFile = File(parent, safeName)
         var conflictId = 2
         while (newFile.exists()) {
-            newFile = File(parent, "$displayName ($conflictId)")
+            newFile = File(parent, "$safeName ($conflictId)")
             conflictId++
         }
         val ok = try {
@@ -180,7 +187,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         val root = fileForDocId(rootId)
         val rootCanonical = root.canonicalPath
         // 从根（filesDir）搜索时只下钻白名单子目录，避免扫到 rootfs 等内部目录；其余层级照常。
-        val seeds = if (root.absolutePath == baseDir().absolutePath) exposedChildren() else listOf(root)
+        val seeds = if (root.path == rootDir().path) exposedChildren() else listOf(root)
         val pending = LinkedList<File>().apply { addAll(seeds) }
         val needle = query.lowercase()
 
@@ -188,7 +195,8 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
             val file = pending.removeFirst()
             // 仅在根目录内搜索，避免 symlink 指向外部导致扫到整个磁盘
             val insideRoot = try {
-                file.canonicalPath.startsWith(rootCanonical)
+                val path = file.canonicalPath
+                path == rootCanonical || path.startsWith(rootCanonical + File.separator)
             } catch (e: Exception) {
                 false
             }
@@ -202,16 +210,53 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         return result
     }
 
-    override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean =
-        documentId.startsWith(parentDocumentId)
-
-    private fun docIdForFile(file: File): String = file.absolutePath
-
-    private fun fileForDocId(docId: String): File {
-        val f = File(docId)
-        if (!f.exists()) throw FileNotFoundException("${f.absolutePath} not found")
-        return f
+    /**
+     * AOSP `enforceTree` 唯一会问的子类闸门，必须按规范路径比较：`<parent>/../../x` 这类输入只有解析掉
+     * `..`（含已存在前缀里的 symlink）才看得出它已离开 parent 子树，纯字符串前缀会被绕过。比较带分隔符
+     * 以排除同级 `/foo` 命中 `/foobar`；解析抛异常时 fail-closed 返回 false。
+     */
+    override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        val parent = runCatching { File(parentDocumentId).canonicalPath }.getOrNull() ?: return false
+        val child = runCatching { File(documentId).canonicalPath }.getOrNull() ?: return false
+        return child == parent || child.startsWith(parent + File.separator)
     }
+
+    /** 允许根目录（filesDir）的规范路径，作为全部 docId 的包含校验基准。 */
+    private fun rootDir(): File = baseDir().canonicalFile
+
+    /** [file] 的规范路径是否等于允许根或位于其子层（前缀带分隔符，避免 /foo 命中 /foobar）。 */
+    private fun isInsideRoot(file: File): Boolean {
+        val rootPath = try {
+            rootDir().path
+        } catch (e: IOException) {
+            return false
+        }
+        val targetPath = try {
+            file.canonicalPath
+        } catch (e: IOException) {
+            return false
+        }
+        return targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)
+    }
+
+    /** docId 统一按规范路径解析；解析结果必须仍在允许根目录内，否则拒绝（挡 `..` 与 symlink 逃逸）。 */
+    private fun fileForDocId(docId: String): File {
+        val file = try {
+            File(docId).canonicalFile
+        } catch (e: IOException) {
+            throw FileNotFoundException("Invalid document id: $docId")
+        }
+        if (!isInsideRoot(file)) throw FileNotFoundException("$docId outside allowed root")
+        if (!file.exists()) throw FileNotFoundException("${file.absolutePath} not found")
+        return file
+    }
+
+    private fun docIdForFile(file: File): String =
+        try {
+            file.canonicalPath
+        } catch (e: IOException) {
+            file.absolutePath
+        }
 
     private fun mimeType(file: File): String {
         if (file.isDirectory) return Document.MIME_TYPE_DIR

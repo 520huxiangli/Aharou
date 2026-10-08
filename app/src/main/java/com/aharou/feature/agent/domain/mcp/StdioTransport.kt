@@ -99,9 +99,14 @@ class StdioTransport(
             throw McpException(message = "[$serverName] 写入 stdin 失败: ${e.message}", cause = e)
         }
 
-        val response = withTimeoutOrNull(REQUEST_TIMEOUT_MS) { deferred.await() }
-        if (response == null) {
+        // 正常响应由读循环 remove；这里 finally 兜底清掉超时/取消留下的死条目，
+        // 否则调用方取消后 pending 会随每次取消持续增长。
+        val response = try {
+            withTimeoutOrNull(REQUEST_TIMEOUT_MS) { deferred.await() }
+        } finally {
             pending.remove(id)
+        }
+        if (response == null) {
             throw McpException(message = "[$serverName] 请求 $method 超时（${REQUEST_TIMEOUT_MS}ms）")
         }
         response.error?.let {

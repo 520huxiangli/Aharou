@@ -24,6 +24,7 @@ import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.COMPACTION_FAILURE_TOOL_NAME
+import com.aharou.feature.agent.presentation.SAMPLING_LOOP_TOOL_NAME
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
@@ -240,6 +241,17 @@ class AgentTurnRunner @Inject constructor(
                         event.reason,
                         toolName = COMPACTION_FAILURE_TOOL_NAME,
                         isError = true,
+                    )
+                }
+
+                is AgentEvent.SamplingLoopDetected -> {
+                    // 与压缩失败同构：无配对 toolCallId 的 TOOL 记录，界面渲染成一行提示、回放时丢弃。
+                    // 正文被截断时用户只看到内容断在半截，这条把原因说清楚。
+                    messagePersistenceUseCase.persist(
+                        sessionId,
+                        MessageRole.TOOL,
+                        context.getString(R.string.chat_sampling_loop_stopped),
+                        toolName = SAMPLING_LOOP_TOOL_NAME,
                     )
                 }
 

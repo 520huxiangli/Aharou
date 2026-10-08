@@ -4,7 +4,8 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aharou.feature.backup.domain.BackupDecryptionException
+import com.aharou.feature.backup.domain.BackupCryptoError
+import com.aharou.feature.backup.domain.BackupCryptoException
 import com.aharou.feature.backup.domain.BackupManager
 import com.aharou.feature.backup.domain.BackupOptions
 import com.aharou.feature.backup.domain.ProviderConflict
@@ -214,9 +215,31 @@ class BackupViewModel @Inject constructor(
         return "${uri.scheme}://${uri.authority}/…/$last"
     }
 
-    private fun describeImportError(e: Throwable): String = when (e) {
-        is BackupDecryptionException -> e.message ?: context.getString(R.string.backup_wrong_password)
-        else -> buildString {
+    /** 沿 cause 链找解密/解析失败的错误码；异常 message 是日志用的中文，不能直接展示给英文界面。 */
+    private fun findCryptoError(e: Throwable): BackupCryptoError? {
+        var current: Throwable? = e
+        var depth = 0
+        while (current != null && depth < 4) {
+            (current as? BackupCryptoException)?.let { return it.error }
+            current = current.cause
+            depth++
+        }
+        return null
+    }
+
+    private fun describeImportError(e: Throwable): String {
+        findCryptoError(e)?.let { error ->
+            return context.getString(
+                when (error) {
+                    BackupCryptoError.WRONG_PASSWORD_OR_CORRUPTED -> R.string.backup_wrong_password
+                    BackupCryptoError.UNSUPPORTED_VERSION -> R.string.backup_error_unsupported_version
+                    BackupCryptoError.TRUNCATED -> R.string.backup_error_truncated
+                    BackupCryptoError.CORRUPTED -> R.string.backup_error_corrupted
+                    BackupCryptoError.NOT_A_BACKUP_FILE -> R.string.backup_error_not_a_backup_file
+                }
+            )
+        }
+        return buildString {
             append(e.message ?: e::class.simpleName ?: context.getString(R.string.backup_import_failed))
             // 诊断期附上 cause 链（最多两层），方便定位真实异常
             var cause = e.cause

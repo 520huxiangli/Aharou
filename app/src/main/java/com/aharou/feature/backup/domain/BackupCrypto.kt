@@ -27,7 +27,42 @@ import javax.crypto.spec.SecretKeySpec
  *
  * 口令不落盘、不记忆。GCM 自带完整性校验，口令错误或文件被篡改时解密抛 [BackupDecryptionException]。
  */
-class BackupDecryptionException(cause: Throwable? = null) : IllegalArgumentException(
+
+/**
+ * 备份解密/解析失败的稳定错误码。异常 message 只用于日志诊断、不面向用户，
+ * 界面文案由 [com.aharou.feature.backup.presentation.BackupViewModel] 按错误码映射双语资源，
+ * 避免中文写死在异常里、在英文界面露出。
+ */
+enum class BackupCryptoError {
+    /** 口令错误，或密文被篡改（GCM 完整性校验失败）。 */
+    WRONG_PASSWORD_OR_CORRUPTED,
+
+    /** 文件头版本号不受支持。 */
+    UNSUPPORTED_VERSION,
+
+    /** 文件在读取过程中提前结束（被截断）。 */
+    TRUNCATED,
+
+    /** 分块结构非法（长度越界或块序号超限）。 */
+    CORRUPTED,
+
+    /** 开头既非本格式 MAGIC、也无法读出旧格式所需头部。 */
+    NOT_A_BACKUP_FILE
+}
+
+/**
+ * 备份解密/解析失败。携带稳定 [error] 码供 UI 映射本地化文案；message 仅用于日志。
+ * 仍继承 [IllegalArgumentException]，与既有调用方的异常契约保持一致。
+ */
+open class BackupCryptoException(
+    val error: BackupCryptoError,
+    message: String,
+    cause: Throwable? = null
+) : IllegalArgumentException(message, cause)
+
+/** 口令错误或密文损坏（GCM 完整性校验失败）。 */
+class BackupDecryptionException(cause: Throwable? = null) : BackupCryptoException(
+    BackupCryptoError.WRONG_PASSWORD_OR_CORRUPTED,
     "备份口令错误，或加密备份文件已损坏；若备份未加密，请留空口令",
     cause
 )
@@ -134,7 +169,7 @@ object BackupCrypto {
             return
         }
         if (header[MAGIC.size].toInt() != FORMAT_VERSION) {
-            throw IllegalArgumentException("不支持的加密备份文件版本")
+            throw BackupCryptoException(BackupCryptoError.UNSUPPORTED_VERSION, "不支持的加密备份文件版本")
         }
 
         val salt = readFully(input, SALT_LEN)
@@ -144,10 +179,10 @@ object BackupCrypto {
         var index = 0L
         while (true) {
             val flag = input.read()
-            if (flag < 0) throw IllegalArgumentException("加密备份文件已截断")
+            if (flag < 0) throw BackupCryptoException(BackupCryptoError.TRUNCATED, "加密备份文件已截断")
             val len = readInt(input)
             if (len < TAG_BYTES || len > CHUNK_SIZE + TAG_BYTES) {
-                throw IllegalArgumentException("加密备份文件已损坏")
+                throw BackupCryptoException(BackupCryptoError.CORRUPTED, "加密备份文件已损坏")
             }
             val chunk = readFully(input, len)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, chunkNonce(nonceBase, index)))
@@ -160,7 +195,7 @@ object BackupCrypto {
             output.write(plain)
             if (flag == 1) break
             index++
-            check(index <= 0xFFFFFFFFL) { "加密备份文件已损坏" }
+            if (index > 0xFFFFFFFFL) throw BackupCryptoException(BackupCryptoError.CORRUPTED, "加密备份文件已损坏")
         }
         output.flush()
     }
@@ -200,7 +235,7 @@ object BackupCrypto {
         val b1 = input.read()
         val b2 = input.read()
         val b3 = input.read()
-        if (b0 < 0 || b1 < 0 || b2 < 0 || b3 < 0) throw IllegalArgumentException("加密备份文件已截断")
+        if (b0 < 0 || b1 < 0 || b2 < 0 || b3 < 0) throw BackupCryptoException(BackupCryptoError.TRUNCATED, "加密备份文件已截断")
         return (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
     }
 
@@ -225,7 +260,7 @@ object BackupCrypto {
         var read = 0
         while (read < len) {
             val n = input.read(buffer, offset + read, len - read)
-            if (n < 0) throw IllegalArgumentException("不是有效的加密 Aharou 备份文件")
+            if (n < 0) throw BackupCryptoException(BackupCryptoError.NOT_A_BACKUP_FILE, "不是有效的加密 Aharou 备份文件")
             read += n
         }
     }

@@ -1,7 +1,9 @@
 package com.aharou.feature.terminal.domain.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -82,5 +84,49 @@ class TerminalThemePresetTest {
     fun find_by_id_unknown_falls_back_to_termius_dark() {
         assertEquals(TerminalThemePreset.TERMIUS_DARK, TerminalThemePreset.findById("no_such_theme"))
         assertEquals(TerminalThemePreset.TERMIUS_DARK, TerminalThemePreset.findById("github_light"))
+    }
+
+    @Test
+    fun equals_rejects_null_and_foreign_types() {
+        val preset = theme("custom")
+        assertNotEquals(preset as Any, null as Any?)
+        assertFalse(preset.equals("custom"))
+    }
+
+    @Test
+    fun hash_code_is_exactly_id_hash_code() {
+        assertEquals("custom".hashCode(), theme("custom").hashCode())
+    }
+
+    @Test
+    fun ansi_colors_do_not_participate_in_equality() {
+        val a = TerminalThemePreset("custom", 1, 0xFF000000.toInt(), 0xFFFFFFFF.toInt(), 0xFFFF0000.toInt(), IntArray(16))
+        val b = TerminalThemePreset("custom", 9, 1, 2, 3, IntArray(16) { 0xFF })
+        assertEquals(a, b)
+        assertEquals(a.hashCode(), b.hashCode())
+    }
+
+    @Test
+    fun find_by_id_returns_the_companion_instance() {
+        assertSame(TerminalThemePreset.DRACULA, TerminalThemePreset.findById("dracula"))
+    }
+
+    @Test
+    fun all_presets_holds_the_companion_instances() {
+        val expected = listOf(
+            TerminalThemePreset.TERMIUS_DARK,
+            TerminalThemePreset.DRACULA,
+            TerminalThemePreset.ONE_DARK,
+            TerminalThemePreset.MONOKAI,
+            TerminalThemePreset.GITHUB_DARK
+        )
+        expected.forEach { preset ->
+            assertTrue(TerminalThemePreset.ALL_PRESETS.any { it === preset })
+        }
+    }
+
+    @Test
+    fun default_ansi_palette_is_all_zero() {
+        assertTrue(theme("custom").ansiColors.all { it == 0 })
     }
 }

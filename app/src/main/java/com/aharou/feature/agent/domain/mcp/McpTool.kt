@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -99,6 +100,8 @@ class McpTool(
         } catch (e: McpException) {
             FileLogger.e(TAG, "MCP 工具调用失败: $name", e)
             ToolResult.Error("MCP 工具执行失败: ${e.message}")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "MCP 工具调用异常: $name", e)
             ToolResult.Error("MCP 工具执行异常: ${e.message}")

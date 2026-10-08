@@ -280,6 +280,20 @@ object AgentModule {
             .build()
     }
 
+    /**
+     * MCP 专用 client：共享 client 的 readTimeout(0) 是为 LLM 流式准备的（不限制相邻数据块间隔），
+     * MCP 请求一问一答不能沿用——server 建连后不回包会永久挂住并持有 reloadMutex。这里用 newBuilder
+     * 派生（复用连接池与事件监听）并加 callTimeout 兜底，不改共享 client 本身。
+     */
+    @Provides
+    @Singleton
+    @Named("Mcp")
+    fun provideMcpOkHttpClient(client: OkHttpClient): OkHttpClient {
+        return client.newBuilder()
+            .callTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
+
     @Provides
     @Singleton
     @Named("OpenAI")

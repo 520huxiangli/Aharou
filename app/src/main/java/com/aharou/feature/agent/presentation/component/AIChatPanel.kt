@@ -100,8 +100,6 @@ import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.presentation.ReadAloudViewModel
-import com.aharou.feature.voice.presentation.VoiceErrorAutoClear
-import com.aharou.feature.voice.presentation.VoiceInputViewModel
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
@@ -231,7 +229,7 @@ private val ToolGroupMemberPadding = PaddingValues(start = 16.dp)
  */
 private fun AgentUIMessage.isGroupableTool(): Boolean =
     role == MessageRole.TOOL && !isCompactionFailure && !isContextSummary &&
-        !isCompactionMarker && !isBackgroundNotification && attachments.isEmpty()
+        !isCompactionMarker && !isBackgroundNotification && !isSamplingLoopStop && attachments.isEmpty()
 
 /** 分组标识：取组内首条消息 id，保证一批工具调用在追加过程中 item key 稳定（不会重建导致视口跳动）。 */
 private fun toolGroupKey(first: AgentUIMessage): String = "toolgroup:${first.id}"
@@ -246,6 +244,7 @@ private fun toolGroupKey(first: AgentUIMessage): String = "toolgroup:${first.id}
 private fun AgentUIMessage.rendersActionRow(): Boolean =
     role == MessageRole.ASSISTANT &&
         !isCompactionMarker && !isContextSummary && !isCompactionFailure && !isBackgroundNotification &&
+        !isSamplingLoopStop &&
         (content.hasVisibleContent() || attachments.isNotEmpty())
 
 /**
@@ -257,6 +256,7 @@ private fun messageRenderItems(message: AgentUIMessage, showSoulHeader: Boolean 
         !message.isCompactionMarker &&
         !message.isContextSummary &&
         !message.isCompactionFailure &&
+        !message.isSamplingLoopStop &&
         !message.isBackgroundNotification &&
         message.content.length > CHUNK_SPLIT_THRESHOLD_CHARS
     if (!canSplit) {
@@ -379,6 +379,7 @@ private fun splitChatTurns(messages: List<AgentUIMessage>): Pair<List<AgentUIMes
 /** 该消息在整轮折叠里是否「常显」——不参与过程折叠，无论轮展开与否都显示。 */
 private fun AgentUIMessage.isPersistentInTurn(): Boolean =
     isCompactionMarker || isContextSummary || isCompactionFailure || isBackgroundNotification ||
+        isSamplingLoopStop ||
         (role == MessageRole.TOOL && attachments.isNotEmpty())
 
 /** 能否作为一轮的「结果」：最后一条有可见正文的普通助手消息。 */
@@ -582,10 +583,6 @@ fun AIChatPanel(
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
     val slashCommands by viewModel.slashCommands.collectAsStateWithLifecycle()
 
-    // 语音输入：按住说话 → 离线识别 → 追加到输入框
-    val voiceViewModel: VoiceInputViewModel = hiltViewModel()
-    val voiceState by voiceViewModel.state.collectAsStateWithLifecycle()
-    VoiceErrorAutoClear(voiceState, voiceViewModel::clearError)
     // 朗读：气泡上的喇叭按钮读这一条；开了自动朗读时，每条回复落地就念
     val readAloudViewModel: ReadAloudViewModel = hiltViewModel()
     val readingText by readAloudViewModel.currentText.collectAsStateWithLifecycle()
@@ -1740,18 +1737,6 @@ fun AIChatPanel(
                     )
                 },
                 onTakePhoto = ::takePhoto,
-                voiceState = voiceState,
-                onVoiceStart = {
-                    voiceViewModel.start { text ->
-                        // 语音输入按「说完即发」处理：结果拼进当前草稿后直接走正常发送流程。
-                        // 输入框里已有的文字（先打字再补一句语音）会一并带出去。
-                        val merged = if (inputText.isBlank()) text else "$inputText $text"
-                        viewModel.updateInputDraft(merged)
-                        sendMessage(merged)
-                    }
-                },
-                onVoiceStop = { voiceViewModel.stop() },
-                onVoiceCancel = voiceViewModel::cancel,
                 slashCommands = slashCommands,
                 queuedRequests = queuedRequests,
                 onRemoveQueued = { viewModel.removeQueuedRequest(it) },

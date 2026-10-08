@@ -675,8 +675,8 @@ class StatefulAgentWorkflow @Inject constructor(
                         acc.append(chunk.text)
                         val loopStart = samplingLoopStart(acc)
                         if (loopStart >= 0) {
-                            acc.setLength(loopStart)
                             samplingLoopCut = true
+                            cutSamplingLoop(acc, loopStart, inReasoning = false) { emit(it) }
                         }
                         pendingTextDelta = true
                         val now = SystemClock.elapsedRealtime()
@@ -691,8 +691,8 @@ class StatefulAgentWorkflow @Inject constructor(
                         reasoningAcc.append(chunk.text)
                         val loopStart = samplingLoopStart(reasoningAcc)
                         if (loopStart >= 0) {
-                            reasoningAcc.setLength(loopStart)
                             samplingLoopCut = true
+                            cutSamplingLoop(reasoningAcc, loopStart, inReasoning = true) { emit(it) }
                         }
                         pendingReasoningDelta = true
                         val now = SystemClock.elapsedRealtime()

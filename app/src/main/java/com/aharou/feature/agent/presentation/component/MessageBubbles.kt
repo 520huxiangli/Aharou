@@ -112,7 +112,7 @@ internal data class TurnUsage(
  */
 private fun splitTurns(messages: List<AgentUIMessage>, lastTurnFinished: Boolean): List<AgentTurn> {
     val turnMessages = messages.filter {
-        !it.isCompactionMarker && !it.isContextSummary && !it.isCompactionFailure
+        !it.isCompactionMarker && !it.isContextSummary && !it.isCompactionFailure && !it.isSamplingLoopStop
     }
     if (turnMessages.isEmpty()) return emptyList()
     val turns = mutableListOf<AgentTurn>()
@@ -258,6 +258,11 @@ internal fun AgentMessageItem(
 
     if (message.isCompactionFailure) {
         CompactionFailureCard(message)
+        return
+    }
+
+    if (message.isSamplingLoopStop) {
+        SamplingLoopStopBar(message)
         return
     }
 
@@ -764,6 +769,38 @@ private fun CompactionSummaryCard(message: AgentUIMessage, markdownCache: Markdo
                     cache = markdownCache
                 )
             }
+        }
+    }
+}
+
+/**
+ * 采样循环中止提示：模型反复输出同一段内容，回复被截断在半截。一行浅色提示把原因说清楚，
+ * 与压缩失败行同构、但无需展开。
+ */
+@Composable
+private fun SamplingLoopStopBar(message: AgentUIMessage) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs)) {
+        ChatHairline()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(ChatStyle.panelCorner))
+                .background(chatMutedSurfaceColor())
+                .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.error)
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            Text(
+                text = message.content.ifBlank { stringResource(R.string.chat_sampling_loop_stopped) },
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelMedium,
+            )
         }
     }
 }

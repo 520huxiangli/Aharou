@@ -69,6 +69,12 @@ sealed class AgentEvent {
     /** 多 Key 自动切换：当前 Key 不可用，已改用第 [newIndex]/[total] 个 Key 重发本次请求。仅用于 UI 实时展示，不落库。 */
     data class KeySwitched(val newIndex: Int, val total: Int) : AgentEvent()
 
+    /**
+     * 采样循环检测命中：模型在反复输出同一段内容（[inReasoning] 表示命中在思考还是正文），
+     * 已截断到首次出现处并中止本次流式。UI 据此落一条提示记录，免得内容无声断在半截。
+     */
+    data class SamplingLoopDetected(val inReasoning: Boolean) : AgentEvent()
+
     /** 正在进行上下文压缩。仅用于 UI 实时展示，不落库。 */
     data class CompactionStarted(val estimatedTokens: Int) : AgentEvent()
 

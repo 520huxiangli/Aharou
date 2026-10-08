@@ -819,6 +819,9 @@ class PetOverlayService : Service() {
     )
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 前台化失败时 onCreate 已 stopSelf()，但同一次启动的 onStartCommand 仍会派发（框架不撤回已投递的 start），
+        // 此时 overlay 尚未初始化，任何分支解引用都会撞 UninitializedPropertyAccessException 把进程带走。
+        if (!running) return START_NOT_STICKY
         when (intent?.action) {
             ACTION_SET_SIZE -> {
                 val key = intent.getStringExtra(EXTRA_SIZE)

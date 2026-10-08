@@ -558,9 +558,13 @@
 
     <!-- Backup ViewModel -->
     <string name="backup_export_failed">导出失败</string>
-    <string name="backup_wrong_password">备份口令错误，或加密备份文件已损坏</string>
+    <string name="backup_wrong_password">备份口令错误，或加密备份文件已损坏；若备份未加密，请留空口令</string>
     <string name="backup_import_failed">导入失败</string>
     <string name="backup_content_corrupted">备份内容已损坏，无法读取</string>
+    <string name="backup_error_unsupported_version">不支持的加密备份文件版本</string>
+    <string name="backup_error_truncated">加密备份文件已截断，可能未完整导出或被中断</string>
+    <string name="backup_error_corrupted">加密备份文件已损坏</string>
+    <string name="backup_error_not_a_backup_file">不是有效的加密 Aharou 备份文件</string>
 
     <!-- Chat Drawer -->
     <string name="chat_history">历史记录</string>
@@ -722,6 +726,7 @@
     <string name="chat_bg_commands_partial_failed">%1$d 个后台任务结束，%2$d 个失败</string>
     <string name="chat_context_compressed">上下文已压缩</string>
     <string name="chat_compaction_failed">上下文压缩失败</string>
+    <string name="chat_sampling_loop_stopped">检测到模型在重复输出同一段内容，已截断并中止本次回复</string>
     <string name="chat_compressing_context">正在压缩上下文</string>
     <string name="chat_retrying">正在重试 %1$s/%2$s</string>
     <string name="chat_key_switched">已切换到第 %1$d/%2$d 个 Key</string>

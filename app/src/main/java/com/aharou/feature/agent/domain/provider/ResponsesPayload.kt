@@ -19,6 +19,19 @@ internal fun parseToolArguments(raw: String): JsonObject {
     return runCatching { Json.parseToJsonElement(trimmed).jsonObject }.getOrElse { JsonObject(emptyMap()) }
 }
 
+/**
+ * 输出被 token 上限截断（[AIResponse.isTruncated]）时，本轮的 tool_call 参数 JSON 很可能只传了一半，
+ * 被 [parseToolArguments] 静默回退成空对象。如果照常执行，模型收不到「被截断」这一信号，容易误以为
+ * 是自己漏传了参数而反复重试。这里把这类调用整批清空：Agent 循环的 reducer 只在「零 tool_calls 且
+ * 被截断」时才自动续写（见 StatefulAgentWorkflowReducer.reduce），清空即复用该续写分支，
+ * 让模型重新给出完整参数。未截断、或参数完整时原样返回，不影响正常批次执行。
+ */
+internal fun sanitizeTruncatedToolCalls(response: AIResponse): AIResponse {
+    if (!response.isTruncated || response.toolCalls.isEmpty()) return response
+    if (response.toolCalls.none { it.arguments.isEmpty() }) return response
+    return response.copy(toolCalls = emptyList())
+}
+
 /** 工具定义 → Responses 扁平 function 定义；无工具时返回 null（不发 `tools` 字段）。 */
 internal fun buildResponsesTools(tools: List<AgentTool>): List<ResponsesToolDefinition>? =
     tools.takeIf { it.isNotEmpty() }?.map { tool ->

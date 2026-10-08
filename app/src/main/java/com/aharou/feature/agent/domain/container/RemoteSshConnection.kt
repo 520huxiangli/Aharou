@@ -15,6 +15,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import net.schmizz.keepalive.KeepAliveProvider
+import net.schmizz.sshj.DefaultConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.sftp.SFTPClient
@@ -139,9 +141,24 @@ class RemoteSshConnection @Inject constructor(
         sftpSshClient = null
     }
 
-    /** 建立一条 SSH transport 并完成认证与保活（exec 与 SFTP 各建一条）。 */
-    private fun newSshClient(config: RemoteConnectionConfig): SSHClient = SSHClient().apply {
+    /**
+     * 建立一条 SSH transport 并完成认证与保活（exec 与 SFTP 各建一条）。
+     *
+     * 用 [DefaultConfig] 覆写 keepAlive provider 为 [KeepAliveProvider.KEEP_ALIVE]：sshj 默认的 HEARTBEAT
+     * 只单向发心跳、不校验回应，对端已死也判不出失联；KEEP_ALIVE（KeepAliveRunner）要求服务器回应
+     * keepalive 请求，连续 5 个间隔（5 × 30s）收不到回应即判 CONNECTION_LOST 并断开 transport，
+     * 由 supervisor 走重连。
+     *
+     * 超时：sshj 的 connectTimeout/timeout 默认均为 0（无限等），TCP SYN 重试约 130s 是唯一兜底。
+     * 两者均取 15s，与同项目 SftpSyncClient/FtpSyncClient 的取值一致。sshj 的 Reader 捕获
+     * SocketTimeoutException 后仅重试、不清连接，故 15s 读超时不会误断空闲但健康的连接。
+     */
+    private fun newSshClient(config: RemoteConnectionConfig): SSHClient = SSHClient(
+        DefaultConfig().apply { keepAliveProvider = KeepAliveProvider.KEEP_ALIVE }
+    ).apply {
         addHostKeyVerifier(hostKeyVerifier)
+        connectTimeout = 15_000
+        timeout = 15_000
         connect(config.host, config.port)
         when (val auth = config.auth) {
             is RemoteAuth.Password -> authPassword(config.username, auth.password)
@@ -151,7 +168,7 @@ class RemoteSshConnection @Inject constructor(
                 authPublickey(config.username, loadKeys(pem, null, passwordFinder))
             }
         }
-        // 启用 SSH 心跳保活，防止空闲超时断连
+        // 启用 SSH 保活（KEEP_ALIVE：要求服务器回应 keepalive，同时兼作失联检测）
         runCatching {
             connection.keepAlive?.let {
                 it.setKeepAliveInterval(30)
@@ -272,7 +289,7 @@ class RemoteSshConnection @Inject constructor(
                 val session = client.startSession()
                 val cmd = session.exec(
                     "if [ -d ~/workspace ] && [ ! -L ~/workspace ]; then echo skip; " +
-                        "else ln -sfn '$ws' ~/workspace 2>/dev/null; echo done; fi"
+                        "else ln -sfn ${shellQuote(ws)} ~/workspace 2>/dev/null; echo done; fi"
                 )
                 val out = java.io.BufferedReader(java.io.InputStreamReader(cmd.inputStream)).readText().trim()
                 session.close()
@@ -331,14 +348,15 @@ class RemoteSshConnection @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val mk = client.startSession()
-                mk.exec("mkdir -p '$destDir'").join()
+                mk.exec("mkdir -p ${shellQuote(destDir)}").join()
                 mk.close()
                 for ((name, bytes) in files) {
                     val dest = "$destDir/$name"
                     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    val chmod = if (executable) " chmod +x '$dest';" else ""
+                    val chmod = if (executable) " chmod +x ${shellQuote(dest)};" else ""
                     val session = client.startSession()
-                    session.exec("if [ ! -e '$dest' ]; then printf %s '$b64' | base64 -d > '$dest';$chmod fi").join()
+                    // $b64 是 base64 无需转义；路径统一走 shellQuote，防路径含单引号时被截断/注入
+                    session.exec("if [ ! -e ${shellQuote(dest)} ]; then printf %s '$b64' | base64 -d > ${shellQuote(dest)};$chmod fi").join()
                     session.close()
                 }
                 FileLogger.i(TAG, "已释放 ${files.size} 个内置文件到远程 $destDir")
@@ -365,7 +383,7 @@ class RemoteSshConnection @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val mkdirSession = client.startSession()
-                mkdirSession.exec("mkdir -p '$aharouDir'").join()
+                mkdirSession.exec("mkdir -p ${shellQuote(aharouDir)}").join()
                 mkdirSession.close()
 
                 val creds = credentials.joinToString("\n") { c ->
@@ -379,7 +397,7 @@ class RemoteSshConnection @Inject constructor(
                 val helperScript = java.io.File(containerInstaller.aharouDir, "git-credential-aicode").readText()
                 writeRemoteFile(client, "$aharouDir/git-credential-aicode", helperScript)
                 val chmodSession = client.startSession()
-                chmodSession.exec("chmod +x '$aharouDir/git-credential-aicode'").join()
+                chmodSession.exec("chmod +x ${shellQuote("$aharouDir/git-credential-aicode")}").join()
                 chmodSession.close()
 
                 val gitconfig = buildString {
@@ -411,7 +429,13 @@ class RemoteSshConnection @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val session = client.startSession()
-                session.exec("rm -f '$aharouDir/gitconfig' '$aharouDir/gitconfig.credential' '$aharouDir/git-credentials' '$aharouDir/git-credential-aicode' 2>/dev/null; echo done").join()
+                val managedFiles = listOf(
+                    "$aharouDir/gitconfig",
+                    "$aharouDir/gitconfig.credential",
+                    "$aharouDir/git-credentials",
+                    "$aharouDir/git-credential-aicode"
+                )
+                session.exec("rm -f ${managedFiles.joinToString(" ") { shellQuote(it) }} 2>/dev/null; echo done").join()
                 session.close()
                 FileLogger.i(TAG, "已撤销远程 git 凭据注入")
             }.onFailure { FileLogger.w(TAG, "撤销远程 git 凭据注入失败", it) }

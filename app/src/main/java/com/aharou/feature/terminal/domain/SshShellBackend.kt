@@ -18,8 +18,10 @@ private const val TAG = "SshShellBackend"
  *
  * The [Session.Shell] must already be started (with a PTY allocated) before being wrapped
  * here. [waitForExit] blocks on [Session.Shell.join]; remote shells have no meaningful
- * exit status, so 0 is returned (the emulator appends its own "[Process completed]" notice
- * via [com.termux.terminal.TerminalSession] once the reader thread hits EOF).
+ * exit status, so 0 is always returned (the emulator appends its own "[Process completed]"
+ * notice via [com.termux.terminal.TerminalSession] once the reader thread hits EOF).
+ * The real exit code cannot be obtained here — [RemoteTerminalSessionManager] recovers it by
+ * parsing the `[command exited: N]` marker echoed by the command itself.
  */
 class SshShellBackend(
     private val shell: Session.Shell
@@ -42,6 +44,7 @@ class SshShellBackend(
     }
 
     override fun waitForExit(): Int {
+        // sshj 的 Shell 通道没有退出状态，恒回 0；真实退出码由 RemoteTerminalSessionManager 解析回显标记取得。
         return runCatching {
             shell.join()
             0

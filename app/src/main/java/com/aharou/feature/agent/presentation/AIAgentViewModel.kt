@@ -2085,10 +2085,9 @@ class AIAgentViewModel @Inject constructor(
                     is AgentEvent.ContextUsage -> {
                         _contextUsages.value = _contextUsages.value + (sessionId to event)
                     }
-                    is AgentEvent.CompactionFailed -> {
-                        setCompacting(sessionId, false)
-                        // 失败记录的落库在 runner 里做（无配对的 TOOL 消息，界面渲染成失败卡片）
-                    }
+                    // 压缩失败与采样循环中止都落库为无配对的 TOOL 消息（界面各渲染成卡片/提示行），落库在 runner 里做
+                    is AgentEvent.CompactionFailed -> setCompacting(sessionId, false)
+                    is AgentEvent.SamplingLoopDetected -> Unit
                     is AgentEvent.AssistantText -> {
                         val reasoningDuration = currentReasoningStart?.let { System.currentTimeMillis() - it }
                         currentReasoningStart = null

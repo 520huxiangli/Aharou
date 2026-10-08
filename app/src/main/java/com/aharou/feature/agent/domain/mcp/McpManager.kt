@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +26,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
 
 data class McpServerStatus(
@@ -41,7 +43,7 @@ data class McpServerStatus(
 class McpManager @Inject constructor(
     private val configRepository: McpConfigRepository,
     private val toolRegistry: ToolRegistry,
-    private val okHttpClient: OkHttpClient,
+    @Named("Mcp") private val okHttpClient: OkHttpClient,
     private val containerEngine: LinuxContainerEngine,
     private val workspaceRepository: WorkspaceRepository,
     private val containerSettingsRepository: ContainerSettingsRepository
@@ -60,7 +62,9 @@ class McpManager @Inject constructor(
     private val reloadMutex = Mutex()
 
     private val activeClients = mutableMapOf<String, McpClient>()
-    private val registeredToolNames = mutableSetOf<String>()
+
+    /** server → 已注册的命名空间工具名（`mcp__server__tool`）；反注册要用它，不能用 server 下发的原始名。 */
+    private val registeredToolNames = mutableMapOf<String, List<String>>()
 
     /** 各 server 连续重连失败次数：用于退避与上限，连上即清零。 */
     private val reconnectAttempts = mutableMapOf<String, Int>()
@@ -104,7 +108,8 @@ class McpManager @Inject constructor(
         val servers = configRepository.getEffectiveServers()
         FileLogger.i(TAG, "重新加载 MCP 配置，共 ${servers.size} 个 server")
 
-        teardown()
+        // 关闭 stdio 会杀进程树并等待，调用方（设置页）走 Main，必须切到 IO 做。
+        withContext(Dispatchers.IO) { teardown() }
 
         if (servers.isEmpty()) {
             _statuses.value = emptyList()
@@ -135,10 +140,12 @@ class McpManager @Inject constructor(
 
     private suspend fun connectOne(cfg: McpServerConfig): McpServerStatus {
         val t0 = System.currentTimeMillis()
+        var created: McpClient? = null
+        // transport 在 try 之外声明：client 构造失败时 created 还是 null，得靠它兜底 close。
+        var transport: McpTransport? = null
         return try {
             FileLogger.i(TAG, "[${cfg.name}] 开始连接（${if (cfg.isStdio) "stdio" else "HTTP"}）")
-            var created: McpClient? = null
-            val transport = if (cfg.isStdio) {
+            val t = if (cfg.isStdio) {
                 // stdio server 跑在「运行时容器」上：本地模式用当前容器，远程 SSH 模式用默认容器。
                 // 容器未就绪不自动初始化，直接失败并引导去终端页完成初始化。
                 val runtimeProfile = resolveMcpRuntimeProfile()
@@ -163,21 +170,28 @@ class McpManager @Inject constructor(
                     extraHeaders = cfg.headers
                 )
             }
-            val client = McpClient(serverName = cfg.name, transport = transport).also { created = it }
+            transport = t
+            val client = McpClient(serverName = cfg.name, transport = t).also { created = it }
             client.connect()
 
             val tools = client.tools.map { McpTool(client, it) }
             val enabledTools = tools.filter { it.remoteName !in cfg.disabledTools }
+            val registeredNames = enabledTools.map { it.name }
             synchronized(activeClients) {
                 activeClients[cfg.name] = client
-                enabledTools.forEach { tool ->
-                    toolRegistry.register(tool.name, tool)
-                    registeredToolNames.add(tool.name)
-                }
+                enabledTools.forEach { toolRegistry.register(it.name, it) }
+                registeredToolNames[cfg.name] = registeredNames
             }
             FileLogger.i(TAG, "[${cfg.name}] 连接成功，注册 ${enabledTools.size}/${tools.size} 个工具（${System.currentTimeMillis() - t0}ms）")
             McpServerStatus(cfg.name, McpServerStatus.State.CONNECTED, toolCount = enabledTools.size)
+        } catch (e: CancellationException) {
+            // 取消不是失败：先收掉半开连接再原样抛出，别让 stdio 子进程与并发名额跟着泄漏。
+            runCatching { created?.close() ?: transport?.close() }
+            throw e
         } catch (e: Exception) {
+            runCatching { created?.close() ?: transport?.close() }
+            // 连接失败回到「无退避记录」状态：手动重载应重新从第 1 次退避开始。
+            reconnectAttempts.remove(cfg.name)
             FileLogger.e(TAG, "[${cfg.name}] 连接失败（${System.currentTimeMillis() - t0}ms）", e)
             McpServerStatus(cfg.name, McpServerStatus.State.FAILED, error = e.message)
         }
@@ -195,7 +209,7 @@ class McpManager @Inject constructor(
      */
     suspend fun reloadServer(name: String) = reloadMutex.withLock {
         val cfg = configRepository.getEffectiveServers().firstOrNull { it.name == name } ?: return@withLock
-        teardownServer(name)
+        withContext(Dispatchers.IO) { teardownServer(name) }
         if (_statuses.value.none { it.name == name }) {
             _statuses.value = _statuses.value + McpServerStatus(name, McpServerStatus.State.CONNECTING)
         }
@@ -280,19 +294,17 @@ class McpManager @Inject constructor(
 
     /** 删除 server 时仅断开其连接并反注册其工具，不影响其他 server。 */
     suspend fun removeServer(name: String) = reloadMutex.withLock {
-        teardownServer(name)
+        withContext(Dispatchers.IO) { teardownServer(name) }
         _statuses.value = _statuses.value.filterNot { it.name == name }
     }
 
     private fun teardownServer(name: String) {
-        synchronized(activeClients) {
-            val client = activeClients.remove(name) ?: return
-            runCatching { client.close() }
-            client.tools.forEach { tool ->
-                toolRegistry.unregister(tool.name)
-                registeredToolNames.remove(tool.name)
-            }
+        // close() 会杀进程树并等待，放到锁外做，别让其它 server 的注册/重连被这条连接拖住。
+        val client = synchronized(activeClients) {
+            registeredToolNames.remove(name)?.forEach { toolRegistry.unregister(it) }
+            activeClients.remove(name)
         }
+        runCatching { client?.close() }
     }
 
     /**
@@ -307,10 +319,7 @@ class McpManager @Inject constructor(
         val takenOver = synchronized(activeClients) {
             if (client != null && activeClients[serverName] === client) {
                 activeClients.remove(serverName)
-                client.tools.forEach { tool ->
-                    toolRegistry.unregister(tool.name)
-                    registeredToolNames.remove(tool.name)
-                }
+                registeredToolNames.remove(serverName)?.forEach { toolRegistry.unregister(it) }
                 true
             } else {
                 false
@@ -327,8 +336,7 @@ class McpManager @Inject constructor(
     }
 
     /** 断线重连：按 [RECONNECT_DELAYS_MS] 退避，最多 [MAX_RECONNECT_ATTEMPTS] 次；连上即清零计数并停止。 */
-    private fun scheduleReconnect(serverName: String) {
-        val attempt = (reconnectAttempts[serverName] ?: 0) + 1
+    private fun scheduleReconnect(serverName: String, attempt: Int = (reconnectAttempts[serverName] ?: 0) + 1) {
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             FileLogger.w(
                 TAG,
@@ -356,17 +364,21 @@ class McpManager @Inject constructor(
             if (connected) {
                 reconnectAttempts.remove(serverName)
             } else {
-                scheduleReconnect(serverName)
+                // 显式带上下一次次数：connectOne 失败时会清掉 map 里的记录，靠 map 读会永远算回第 1 次。
+                scheduleReconnect(serverName, attempt + 1)
             }
         }
     }
 
     private fun teardown() {
-        synchronized(activeClients) {
-            registeredToolNames.forEach { toolRegistry.unregister(it) }
+        // 先在锁内摘干净注册表与连接表，出锁后再逐个 close（close 会阻塞）。
+        val clients = synchronized(activeClients) {
+            registeredToolNames.values.forEach { names -> names.forEach { toolRegistry.unregister(it) } }
             registeredToolNames.clear()
-            activeClients.values.forEach { runCatching { it.close() } }
+            val snapshot = activeClients.values.toList()
             activeClients.clear()
+            snapshot
         }
+        clients.forEach { runCatching { it.close() } }
     }
 }
