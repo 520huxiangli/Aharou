@@ -24,10 +24,16 @@ class FileMigration(
                 db.execSQL(sql)
             }
             db.execSQL(
-                "INSERT INTO migration_history (version, script_name, executed_at) VALUES (?, ?, ?)",
+                // OR REPLACE：非正常降级（旧版的 fallbackToDestructiveMigration 只 DROP Room 实体表、
+                // 按旧 schema 重建并把 user_version 置回旧值，migration_history 不是实体表因而留存）
+                // 会让同一版本被重放，普通 INSERT 会撞 version 主键。记录以最后一次执行为准。
+                "INSERT OR REPLACE INTO migration_history (version, script_name, executed_at) VALUES (?, ?, ?)",
                 arrayOf<Any>(version, scriptName, System.currentTimeMillis())
             )
             db.setTransactionSuccessful()
+        } catch (t: Throwable) {
+            FileLogger.e("MigrationLoader", "Migration failed: $scriptName", t)
+            throw t
         } finally {
             db.endTransaction()
         }

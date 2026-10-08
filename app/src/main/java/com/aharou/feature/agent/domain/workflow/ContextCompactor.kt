@@ -24,6 +24,7 @@ import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
@@ -180,6 +181,30 @@ class ContextCompactor @Inject constructor(
         tools: List<AgentTool> = emptyList(),
         currentInputTokens: Int = 0,
         onEvent: suspend (AgentEvent) -> Unit = {}
+    ): CompactionResult {
+        // 组装、token 估算、分块切分都是纯 CPU 活，历史长时在主线程上跑会明显掉帧；整段挑到 Default。
+        // 事件回调要放回调用方原本的上下文（去掉 Job 重建），否则 CompactionFinished 之类的
+        // UI 更新会落到别的作用域里。
+        val eventContext = currentCoroutineContext().minusKey(Job)
+        return withContext(Dispatchers.Default) {
+            compactOnBackground(
+                messages, aiProvider, sessionId, force, windowProvider, systemPrompt, tools,
+                currentInputTokens
+            ) { event -> withContext(eventContext) { onEvent(event) } }
+        }
+    }
+
+    /** [compactIfNeeded] 的执行体（在 Default 调度器上跑）。 */
+    private suspend fun compactOnBackground(
+        messages: List<AgentMessage>,
+        aiProvider: AIProvider,
+        sessionId: String?,
+        force: Boolean,
+        windowProvider: AIProvider?,
+        systemPrompt: String,
+        tools: List<AgentTool>,
+        currentInputTokens: Int,
+        onEvent: suspend (AgentEvent) -> Unit
     ): CompactionResult {
         val unchanged = CompactionResult(messages, compacted = false)
         if (messages.isEmpty()) return unchanged
