@@ -28,6 +28,7 @@
 | 推送前迁移对账 | `python3 scripts/check_migrations.py`（或 `./gradlew checkMigrations`） |
 | 推送前技能自检 | `python3 scripts/check_skills.py`（frontmatter/命名、description、验收用例齐全、市场配置与文档同步） |
 | 推送前架构门禁 | `python3 scripts/check_architecture.py`（或 `./gradlew checkArchitecture`；已挂 `preBuild`，禁用组件 import、单文件行数棘轮、双语 strings 不一致会直接编不过） |
+| proot 资产校验 | `python3 scripts/check_proot_assets.py`（或 `./gradlew checkProotAssets`；已挂 `preBuild`，换了 .so 却没同步 `assets/proot-runtime.json` 时拦下） |
 | 发版构建 APK / AAB | `./gradlew assembleRelease` / `./gradlew bundleRelease` |
 
 - 只跑单个测试类：`./gradlew :app:testUniversalDebugUnitTest --tests "com.aharou.<包>.<类>Test"`；结果读 `app/build/test-results/testUniversalDebugUnitTest/TEST-*.xml`——**看用例数，别只看 BUILD SUCCESSFUL**（`--tests` 过滤成 0 个也是成功）。
@@ -55,7 +56,7 @@
 - `android-release.yml`：由 push `v*` tag 触发，构建 APK / AAB 并发布 GitHub Release；构建前同样跑迁移对账、技能自检与单测，失败会拦住发版。
 - `beta.yml`：push `master` 时自动构建 `.beta` 测试包（universal、正式签名、与 release 同配置），**只传 Actions Artifacts（保留 90 天），不进 Release**；纯文档/资源改动按 `paths-ignore` 跳过。
 - `docs-deploy.yml`：**只在 push `v*` tag 时部署**文档站到 GitHub Pages（https://520huxiangli.github.io/Aharou/）——改完 `docs-site/` 推 `master` 不会上线，要等下一次发版才生效。
-- `sync-gitcode.yml` / `sync-models.yml`：每日 cron 定时同步 GitCode 镜像与 models.dev 模型数据，不用手动跑。
+- `sync-models.yml`：每日 cron 同步 models.dev 模型数据到 data 分支（全量），不用手动跑；发版前另需手动跑 `scripts/update-models-dev-assets.py` 只保留内置 12 个官方 provider（见〈发版〉步骤 0）。
 
 ## 架构地图
 
@@ -84,7 +85,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 改 schema 三步：
 
-1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 65）。
+1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 67）。
 2. 文件式：在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**；AutoMigration：加注解，保证 `to == SCHEMA_VERSION` 且 `from` 衔接文件式最大版本。
 3. 写入 DDL/SQL，启动时自动执行并记入 `migration_history` 表。
 
