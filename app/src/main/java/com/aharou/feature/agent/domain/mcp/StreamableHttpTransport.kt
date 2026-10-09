@@ -33,6 +33,8 @@ class StreamableHttpTransport(
     private val endpoint: String,
     private val client: OkHttpClient,
     private val extraHeaders: Map<String, String> = emptyMap(),
+    /** OAuth 令牌提供者；非空时每条请求带 `Authorization: Bearer`，401 时强制刷新一次并重试。 */
+    private val authProvider: McpBearerProvider? = null,
     private val json: Json = DEFAULT_JSON
 ) : McpTransport {
 
@@ -62,14 +64,26 @@ class StreamableHttpTransport(
             val payload = JsonRpcRequest(id = id, method = method, params = params)
             val bodyJson = json.encodeToString(JsonRpcRequest.serializer(), payload)
             FileLogger.d(TAG, "→ [$method] id=$id")
+            sendWithAuth(bodyJson, id, method)
+        }
 
-            val httpReq = buildRequest(bodyJson)
-            // enqueue + suspendCancellableCoroutine：调用方取消（停止生成/切工作区）时能 cancel 掉 call，
-            // 不至于因 server 不回包而把调用方连同它持有的锁一起挂死。
-            awaitCall(client.newCall(httpReq)).use { resp ->
-                // 会话 id 在首个响应（initialize）里下发，记下供后续请求复用。
+    /**
+     * 带 OAuth 令牌发一条请求。取令牌（含过期自动刷新）失败以 [McpException] 形式抛出，消息面向用户；
+     * 服务端以 401 拒绝时强制刷新一次再重试，避免死循环。
+     */
+    private suspend fun sendWithAuth(bodyJson: String, id: Long, method: String): JsonRpcResponse {
+        var bearer = authProvider?.accessToken()
+        var refreshed = false
+        while (true) {
+            val resp = awaitCall(client.newCall(buildRequest(bodyJson, bearer)))
+            try {
                 resp.header("Mcp-Session-Id")?.let { if (it.isNotBlank()) sessionId = it }
 
+                if (resp.code == 401 && authProvider != null && !refreshed) {
+                    refreshed = true
+                    bearer = authProvider.refreshAfterUnauthorized()
+                    continue
+                }
                 if (!resp.isSuccessful) {
                     throw McpException(message = "HTTP ${resp.code} 调用 $method 失败: ${resp.message}")
                 }
@@ -82,16 +96,19 @@ class StreamableHttpTransport(
                     resp.body?.string()
                         ?: throw McpException(message = "$method 响应体为空")
                 }
-
-                parseAndValidate(rawJson, id, method)
+                return parseAndValidate(rawJson, id, method)
+            } finally {
+                resp.close()
             }
         }
+    }
 
     override suspend fun notify(method: String, params: JsonObject?) = withContext(Dispatchers.IO) {
         val payload = JsonRpcNotification(method = method, params = params)
         val bodyJson = json.encodeToString(JsonRpcNotification.serializer(), payload)
         FileLogger.d(TAG, "→ notify [$method]")
-        awaitCall(client.newCall(buildRequest(bodyJson))).use { resp ->
+        val bearer = authProvider?.accessToken()
+        awaitCall(client.newCall(buildRequest(bodyJson, bearer))).use { resp ->
             // 通知按 spec 服务端通常返回 202 且无 body；非 2xx 仅记日志，不阻断流程。
             if (!resp.isSuccessful) {
                 FileLogger.w(TAG, "通知 $method 返回 HTTP ${resp.code}")
@@ -122,14 +139,19 @@ class StreamableHttpTransport(
         })
     }
 
-    private fun buildRequest(bodyJson: String): Request {
+    private fun buildRequest(bodyJson: String, bearer: String? = null): Request {
         val headers = Headers.Builder().apply {
             add("Content-Type", "application/json")
             // 同时接受两种响应，让 server 自行决定单条 JSON 还是 SSE。
             add("Accept", "application/json, text/event-stream")
             sessionId?.let { add("Mcp-Session-Id", it) }
+            // OAuth Bearer 优先；此时配置里同名的静态 Authorization 头不再重复添加。
+            bearer?.let { if (it.isNotBlank()) add("Authorization", "Bearer $it") }
             // 名称为空的 header 会被 OkHttp 拒绝（name is empty）并整条连接失败，配置里常见的空行不该拖垮连接。
-            extraHeaders.forEach { (k, v) -> if (k.isNotBlank()) add(k, v) }
+            extraHeaders.forEach { (k, v) ->
+                val isDuplicateAuth = bearer != null && k.equals("Authorization", ignoreCase = true)
+                if (k.isNotBlank() && !isDuplicateAuth) add(k, v)
+            }
         }.build()
 
         return Request.Builder()

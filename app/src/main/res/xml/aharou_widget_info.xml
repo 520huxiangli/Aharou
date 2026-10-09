@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小组件配置。
+
+  updatePeriodMillis = 30 分钟（系统下限），AppWidgetProvider.onUpdate 借此被动定时刷新；
+  另有「被添加到桌面 / 设备重启 / 应用更新」时系统主动调用 onUpdate。不做常驻服务。
+
+  targetCellWidth/Height 仅 Android 12+ 生效，低版本忽略，用 minWidth/minHeight 兜底。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_aharou"
+    android:previewImage="@mipmap/ic_launcher"
+    android:description="@string/widget_aharou_description"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

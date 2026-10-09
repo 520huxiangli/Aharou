@@ -21,6 +21,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 | File browsing & code editing | Indented tree view, syntax highlighting, built-in code editor (since v1.11.0-dev), plus where workspace files live on the phone and how to reach them |
 | Git version management | Visual status management, branch switching, commit history, revert and delete (since v1.11.0-dev) |
 | Tablet & large screen | Responsive split panes, persistent sidebar, side-by-side workbench (since v1.11.0-dev) |
+| [Home-screen widget](/en/guide/widget) | Quick entries (new chat / open chat / voice call) and recent sessions, placed on the phone's home screen |
 
 ## Settings & Extension Index
 

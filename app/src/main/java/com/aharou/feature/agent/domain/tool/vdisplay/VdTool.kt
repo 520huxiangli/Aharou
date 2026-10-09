@@ -2,6 +2,10 @@ package com.aharou.feature.agent.domain.tool.vdisplay
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.util.Base64
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentImage
@@ -46,10 +50,11 @@ class VdTool @Inject constructor(
     override val name = "vscreen"
 
     override val description =
-        "影子屏：宿主上的无头虚拟显示屏（不在设备屏幕显示）。可在其中启动 App、截图、点按、滑动、按键，全程不影响用户主屏。" +
+        "影子屏：宿主上的无头虚拟显示屏（不在设备屏幕显示）。可在其中启动 App、截图、点按、滑动、输入文字、按键，全程不影响用户主屏。" +
             "操作宿主上第三方 App 的标准手段——要动 Aharou 以外的应用就用它，别用 a11y 抢占用户主屏。" +
             "action=start 创建（可选 width/height/dpi）；status 查询；stop 停止；launch 启动应用（component=\"包名/Activity\" 或仅包名）；" +
-            "shot 截图（图片随结果返回，传 ocr=true 则改回文字）；tap / swipe / key 触控。需 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
+            "shot 截图（图片随结果返回，图上带坐标网格；传 ocr=true 则改回文字、传 grid=false 关闭网格）；" +
+            "tap / swipe / key 触控；type 往焦点输入框输文字（text=内容，可选 submit=true 回车，支持中文）。需 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
 
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
@@ -58,8 +63,8 @@ class VdTool @Inject constructor(
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             "action", ParameterType.STRING,
-            "操作：start / status / stop / launch / shot / tap / swipe / key", true,
-            enum = listOf("start", "status", "stop", "launch", "shot", "tap", "swipe", "key"),
+            "操作：start / status / stop / launch / shot / tap / swipe / key / type", true,
+            enum = listOf("start", "status", "stop", "launch", "shot", "tap", "swipe", "key", "type"),
         ),
         "width" to ToolParameter("width", ParameterType.INTEGER, "start 专用：宽（默认 1080）", false),
         "height" to ToolParameter("height", ParameterType.INTEGER, "start 专用：高（默认 1920）", false),
@@ -76,6 +81,21 @@ class VdTool @Inject constructor(
             "shot 专用：true 时用本机 OCR 把屏幕画面转成文字返回（不返回图片）。当前模型不支持图片输入时用，省 token。",
             false
         ),
+        "grid" to ToolParameter(
+            "grid", ParameterType.BOOLEAN,
+            "shot 专用：是否在图上叠加坐标网格与缩放信息（默认 true）。网格线标注的数字就是 tap 用的坐标，可直接照读。",
+            false
+        ),
+        "text" to ToolParameter(
+            "text", ParameterType.STRING,
+            "type 专用：要输入到焦点输入框的文字。支持中文等非 ASCII（内部走剪贴板粘贴）。",
+            false
+        ),
+        "submit" to ToolParameter(
+            "submit", ParameterType.BOOLEAN,
+            "type 专用：输完后是否回车（默认 false）。",
+            false
+        ),
     )
 
     override fun buildPermissionRequest(
@@ -90,6 +110,7 @@ class VdTool @Inject constructor(
             args["component"]?.jsonPrimitive?.contentOrNull?.let { "component = $it" },
             args["keycode"]?.jsonPrimitive?.contentOrNull?.let { "keycode = $it" },
             args["package"]?.jsonPrimitive?.contentOrNull?.let { "package = $it" },
+            args["text"]?.jsonPrimitive?.contentOrNull?.let { "text = $it" },
         ).joinToString("\n")
         return PendingToolPermission(
             id = callId,
@@ -104,7 +125,7 @@ class VdTool @Inject constructor(
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return ToolResult.Error("缺少 action（start / status / stop / launch / shot / tap / swipe / key）", "MISSING_ACTION")
+            ?: return ToolResult.Error("缺少 action（start / status / stop / launch / shot / tap / swipe / key / type）", "MISSING_ACTION")
         return try {
             when (action) {
                 "start" -> {
@@ -145,21 +166,25 @@ class VdTool @Inject constructor(
 
                 "shot" -> {
                     val (info, file) = vdController.screenshot()
-                    val base64 = fileToJpegBase64(file)
-                    if (args["ocr"]?.jsonPrimitive?.booleanOrNull == true) {
-                        val image = AgentImage(mimeType = "image/jpeg", base64Data = base64)
+                    val wantOcr = args["ocr"]?.jsonPrimitive?.booleanOrNull == true
+                    val wantGrid = args["grid"]?.jsonPrimitive?.booleanOrNull ?: true
+                    // OCR 直接吃画面，网格线会干扰识别，故 OCR 时不叠网格。
+                    val shot = encodeScreenshot(file, withGrid = wantGrid && !wantOcr)
+                    if (wantOcr) {
+                        val image = AgentImage(mimeType = "image/jpeg", base64Data = shot.base64)
                         val text = ocrEngine.recognize(image)
                         ToolResult.Success(
                             infoJson(
                                 info,
                                 if (text.isNullOrBlank()) "已截图，但未识别到文字" else "已截图并识别出屏幕文字",
-                                ocrText = text.orEmpty()
+                                ocrText = text.orEmpty(),
+                                shot = shot,
                             )
                         )
                     } else {
                         ToolResult.Success(
-                            infoJson(info, "已截图（图片随结果返回）"),
-                            if (base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = base64)) else emptyList(),
+                            infoJson(info, "已截图（图片随结果返回，图中网格标注的数字即 input 坐标）", shot = shot),
+                            if (shot.base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = shot.base64)) else emptyList(),
                         )
                     }
                 }
@@ -192,6 +217,18 @@ class VdTool @Inject constructor(
                     ToolResult.Success(buildJsonObject { put("message", "已发送按键 $code") })
                 }
 
+                "type" -> {
+                    val text = args["text"]?.jsonPrimitive?.contentOrNull
+                    if (text == null) return ToolResult.Error("type 需要 text", "MISSING_ARGS")
+                    val submit = args["submit"]?.jsonPrimitive?.booleanOrNull ?: false
+                    vdController.type(text, submit)
+                    ToolResult.Success(
+                        buildJsonObject {
+                            put("message", if (submit) "已输入文字并回车" else "已输入文字")
+                        }
+                    )
+                }
+
                 else -> ToolResult.Error("不支持的 action：$action", "INVALID_ACTION")
             }
         } catch (e: CancellationException) {
@@ -202,7 +239,12 @@ class VdTool @Inject constructor(
         }
     }
 
-    private fun infoJson(info: VdInfo, message: String, ocrText: String? = null): JsonElement = buildJsonObject {
+    private fun infoJson(
+        info: VdInfo,
+        message: String,
+        ocrText: String? = null,
+        shot: ShotImage? = null,
+    ): JsonElement = buildJsonObject {
         put("message", message)
         put("running", true)
         put("displayId", info.displayId)
@@ -211,25 +253,114 @@ class VdTool @Inject constructor(
         put("height", info.height)
         put("dpi", info.dpi)
         if (ocrText != null) put("text", ocrText)
+        if (shot != null && shot.imageWidth > 0) {
+            put("imageWidth", shot.imageWidth)
+            put("imageHeight", shot.imageHeight)
+            put("scale", shot.scale)
+            put(
+                "coordinateHint",
+                "返回图片已缩放：图上量到的像素 ×%s（=1/scale）才是 tap 用的坐标；".format("%.3f".format(1f / shot.scale)) +
+                    "图中网格线标注的数字已是 input 坐标，可直接照读（宽 ${shot.inputWidth} 高 ${shot.inputHeight}）。",
+            )
+        }
     }
 
-    /** 截图转 JPEG base64：长边压到 ≤1440，控制给模型的图片体积。 */
-    private fun fileToJpegBase64(file: File): String {
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return ""
-        val longest = maxOf(bitmap.width, bitmap.height)
-        val scaled = if (longest > MAX_IMAGE_EDGE) {
-            val ratio = MAX_IMAGE_EDGE.toFloat() / longest
+    /** 一次截图的编码结果：base64 与图上像素/缩放信息，供模型换算坐标。 */
+    private data class ShotImage(
+        val base64: String,
+        val imageWidth: Int,
+        val imageHeight: Int,
+        val inputWidth: Int,
+        val inputHeight: Int,
+        val scale: Float,
+    )
+
+    /**
+     * 截图转 JPEG base64：长边压到 ≤1440 控制给模型的体积；[withGrid] 为真时在图上
+     * 叠加坐标网格，网格标注的是 **input（未缩放）坐标**，让模型照读即可点击。
+     */
+    private fun encodeScreenshot(file: File, withGrid: Boolean): ShotImage {
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return ShotImage("", 0, 0, 0, 0, 1f)
+        // 原图就是设备真实像素，也是 tap 使用的坐标系（不依赖 dumpsys 报的尺寸）。
+        val inputW = bitmap.width
+        val inputH = bitmap.height
+        val longest = maxOf(inputW, inputH)
+        val ratio = if (longest > MAX_IMAGE_EDGE) MAX_IMAGE_EDGE.toFloat() / longest else 1f
+        val scaled = if (ratio < 1f) {
             Bitmap.createScaledBitmap(
                 bitmap,
-                (bitmap.width * ratio).toInt().coerceAtLeast(1),
-                (bitmap.height * ratio).toInt().coerceAtLeast(1),
+                (inputW * ratio).toInt().coerceAtLeast(1),
+                (inputH * ratio).toInt().coerceAtLeast(1),
                 true,
             )
         } else {
             bitmap
         }
+        val scale = scaled.width.toFloat() / inputW
+        val annotated = if (withGrid && inputW > 0 && inputH > 0) drawGrid(scaled, inputW, inputH, scale) else scaled
         val bos = ByteArrayOutputStream()
-        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
-        return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
+        annotated.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
+        return ShotImage(
+            base64 = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP),
+            imageWidth = annotated.width,
+            imageHeight = annotated.height,
+            inputWidth = inputW,
+            inputHeight = inputH,
+            scale = scale,
+        )
+    }
+
+    /** 在缩略图上叠坐标网格：细线半透明不盖内容，顶部信息条给出缩放比与尺寸。 */
+    private fun drawGrid(src: Bitmap, inputW: Int, inputH: Int, scale: Float): Bitmap {
+        val bmp = if (src.isMutable) src else src.copy(Bitmap.Config.ARGB_8888, true) ?: return src
+        val canvas = Canvas(bmp)
+        val textSize = (bmp.width / 32f).coerceIn(18f, 40f)
+        val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x5533B5FF
+            strokeWidth = 1f
+        }
+        val labelText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            this.textSize = textSize
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val labelBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xAA000000.toInt() }
+        val barH = textSize + 8f
+        val step = gridStep(minOf(inputW, inputH))
+        var x = step
+        while (x < inputW) {
+            val px = x * scale
+            canvas.drawLine(px, 0f, px, bmp.height.toFloat(), linePaint)
+            drawLabel(canvas, x.toString(), px + 2f, barH + textSize, labelText, labelBg)
+            x += step
+        }
+        var y = step
+        while (y < inputH) {
+            val py = y * scale
+            canvas.drawLine(0f, py, bmp.width.toFloat(), py, linePaint)
+            drawLabel(canvas, y.toString(), 3f, py - 3f, labelText, labelBg)
+            y += step
+        }
+        val caption = "input ${inputW}x$inputH   image ${bmp.width}x${bmp.height}   tap = image / ${(scale * 1000).toInt() / 1000f}"
+        canvas.drawRect(0f, 0f, bmp.width.toFloat(), barH, labelBg)
+        canvas.drawText(caption, 4f, textSize + 3f, labelText)
+        return bmp
+    }
+
+    /** 网格步长：让短边约分 6 段，取 1/2/5×10^k 的整值，不小于 50。 */
+    private fun gridStep(shortSide: Int): Int {
+        val target = (shortSide / 6).coerceAtLeast(1)
+        var pow = 1
+        while (pow * 10 < target) pow *= 10
+        val step = listOf(1, 2, 5, 10).map { it * pow }.firstOrNull { it >= target } ?: pow * 10
+        return step.coerceAtLeast(50)
+    }
+
+    /** 画一个带底色的小标签（网格坐标值），底色避免文字被画面吃掉。 */
+    private fun drawLabel(canvas: Canvas, text: String, x: Float, baseline: Float, tp: Paint, bg: Paint) {
+        val w = tp.measureText(text)
+        val h = tp.textSize
+        canvas.drawRoundRect(x - 2f, baseline - h, x + w + 2f, baseline + h * 0.3f, 4f, 4f, bg)
+        canvas.drawText(text, x, baseline, tp)
     }
 }

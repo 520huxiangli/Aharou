@@ -24,8 +24,9 @@ Agent 有一个 `vscreen` 工具：
 | `start` | 创建虚拟屏，可带 `width` / `height` / `dpi`（默认 1080 / 1920 / 440） |
 | `status` | 查看当前状态与 displayId |
 | `launch` | 在影子屏里启动 App，`component` 填「包名/Activity」或只填包名 |
-| `shot` | 截取影子屏画面；传 `ocr=true` 则不返图片，改用本机 OCR 返回屏幕上的文字 |
+| `shot` | 截取影子屏画面；传 `ocr=true` 则不返图片，改用本机 OCR 返回屏幕上的文字。截图会叠加半透明坐标网格，**网格上标的数字就是 `tap` 要用的坐标** |
 | `tap` / `swipe` | 在影子屏里点按、滑动（`swipe` 默认 300 毫秒） |
+| `type` | 往影子屏的输入框里打字：`text` 填内容，`submit=true` 会在输入后按一次回车。中英文都能打（中文走剪贴板粘贴） |
 | `key` | 发送按键，支持 `KEYCODE_xxx` 或 `4` 这类数字 |
 | `stop` | 停止影子屏 |
 

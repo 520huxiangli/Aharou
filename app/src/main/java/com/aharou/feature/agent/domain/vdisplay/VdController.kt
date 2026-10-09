@@ -1,7 +1,10 @@
 package com.aharou.feature.agent.domain.vdisplay
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.shell.HostShellManager
 import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.shell.ShellCommandResult
@@ -61,6 +64,9 @@ class VdController @Inject constructor(
         const val DEFAULT_WIDTH = 1080
         const val DEFAULT_HEIGHT = 1920
         const val DEFAULT_DPI = 440
+
+        /** KEYCODE_PASTE：让目标输入框自己从剪贴板取文本，中文等非 ASCII 走这条路。 */
+        const val KEYCODE_PASTE = 279
     }
 
     private val _state = MutableStateFlow<VdInfo?>(null)
@@ -328,6 +334,39 @@ class VdController @Inject constructor(
         val c = code.trim()
         require(keyCodeRe.matches(c)) { "keycode 不合法：$c" }
         exec("input -d ${info.displayId} keyevent $c", 20_000L)
+    }
+
+    /**
+     * 在影子屏当前获得焦点的输入框里输入文字，[submit] 为真时补一个回车。
+     *
+     * `input text` 只可靠地支持 ASCII，且空格必须写成 `%s`（input 命令自身的约定：
+     * 它的参数按空白切分，`%s` 会被还原成空格）；中文等非 ASCII 走宿主剪贴板 +
+     * `KEYCODE_PASTE`，让目标 App 自己粘贴（`input text` 传不进去多字节字符）。
+     */
+    suspend fun type(text: String, submit: Boolean) {
+        val info = refresh() ?: error("影子屏未运行")
+        if (text.isNotEmpty()) {
+            if (text.any { it.code > 0x7F }) {
+                setHostClipboard(text)
+                // 等系统把新剪贴板同步到目标进程，再发粘贴键，否则可能粘到旧内容。
+                delay(150L)
+                exec("input -d ${info.displayId} keyevent $KEYCODE_PASTE", 20_000L)
+            } else {
+                // text 来自模型/用户，进 shell 前整体单引号转义；空格按 input 约定换成 %s。
+                val encoded = text.replace(" ", "%s")
+                exec("input -d ${info.displayId} text ${shellQuote(encoded)}", 20_000L)
+            }
+        }
+        if (submit) {
+            exec("input -d ${info.displayId} keyevent 66", 20_000L)
+        }
+    }
+
+    /** 把文本写进宿主剪贴板——App 与目标 App 同机，影子屏上的粘贴键即可取到。 */
+    private fun setHostClipboard(text: String) {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            ?: error("拿不到宿主剪贴板服务")
+        cm.setPrimaryClip(ClipData.newPlainText("aharou-vd", text))
     }
 
     private fun md5Hex(file: File): String {

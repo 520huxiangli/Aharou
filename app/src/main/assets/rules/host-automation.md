@@ -10,9 +10,10 @@
 
 ## 影子屏用法
 
-- 动作：`start` / `status` / `stop` / `launch` / `shot` / `tap` / `swipe` / `key`。
+- 动作：`start` / `status` / `stop` / `launch` / `shot` / `tap` / `swipe` / `key` / `type`。
 - 需要屏幕文字时传 `shot(ocr=true)`，由本机 OCR 转文字返回，比先取图再识别省一轮。
-- 点按用 `tap`，滑动用 `swipe`（坐标按影子屏分辨率给）。
+- 点按用 `tap`，滑动用 `swipe`（坐标按影子屏分辨率给）。**截图默认叠了一层半透明坐标网格，网格上标的数字就是 `tap` 用的坐标**，照数字点即可；若要按图上像素自己量，用返回里的 `scale` 换算（真实坐标 = 图上像素 ÷ scale）。
+- 输入文字用 `type`：`text` 填内容，`submit=true` 会在输入后补一次回车。纯英文/数字走 `input text`，含中文时走宿主剪贴板 + 粘贴键；两条路都要求目标输入框**已获得焦点**，所以先 `tap` 点中输入框再 `type`。
 
 ## 边界
 

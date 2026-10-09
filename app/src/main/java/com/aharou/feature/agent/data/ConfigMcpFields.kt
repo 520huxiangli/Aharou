@@ -8,8 +8,10 @@ import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
+import com.aharou.feature.agent.domain.mcp.oauthStatusOf
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,9 +24,10 @@ import javax.inject.Singleton
  * （[McpConfigRepository.setGlobalServers]），所以单字段写回时先取全表、替换一项、
  * 再整体落盘。
  *
- * 集合 id 是 server 名（受名称校验约束，仅 ASCII 字母数字下划线连字符），
- * 但 `setGlobalServers` 自身不校验重名，因此 add 用未知 id 会与既有 server 冲突，
- * 这里显式查重。
+ * 集合 id 是 server 名（受名称校验约束，仅 ASCII 字母数字下划线连字符）。
+ * `setGlobalServers` 是整表替换，add 同名会覆盖既有 server——覆盖时保留 payload
+ * 表达不了的字段（headers / env / enabled / disabled_tools 及 oauth 令牌块），
+ * 避免「同名覆盖」把用户的授权令牌冲掉。
  */
 @Singleton
 class ConfigMcpFields @Inject constructor(
@@ -54,12 +57,13 @@ class ConfigMcpFields @Inject constructor(
         override val basePath = "mcp.servers"
         override val displayName = "MCP 服务器"
         override val description =
-            "全局 mcp.json 里的 server。子字段：url / headers / command / args / env / enabled / disabled_tools。"
+            "全局 mcp.json 里的 server。子字段：url / headers / command / args / env / enabled / disabled_tools / oauth（只读：status / client_id / authorization_server / 授权与令牌端点 / scope / expires_at，以及存在时才出现的 access_token / refresh_token / client_secret）。"
 
         override fun childIds(): List<String> = servers().map { it.name }
 
         override fun fields(forId: String): List<ConfigField> {
-            if (server(forId) == null) return emptyList()
+            val current = server(forId) ?: return emptyList()
+            val oauthSnapshot = current.oauth
             val path = "$basePath.$forId"
 
             fun text(
@@ -82,6 +86,52 @@ class ConfigMcpFields @Inject constructor(
                     mutate(forId) { apply(it, s) }
                 },
             )
+
+            fun readonly(
+                segment: String,
+                label: String,
+                desc: String,
+                schema: ConfigSchema = ConfigSchema.Str(),
+                risk: ConfigRisk = ConfigRisk.NORMAL,
+                read: (McpServerConfig) -> String,
+            ) = ReadOnlyField(
+                path = "$path.$segment",
+                displayName = "$label（$forId）",
+                description = desc,
+                valueSchema = schema,
+                risk = risk,
+                reader = { ConfigValue.Str(server(forId)?.let(read).orEmpty()) },
+            )
+
+            // OAuth 子字段全部只读：本通道只暴露授权状态，不提供写入口。未配置 oauth 块时
+            // 仅保留 status（NOT_CONFIGURED），不展开明细，也不谎报为「未授权」。
+            // 令牌类字段（access_token / refresh_token / client_secret）标 SENSITIVE，
+            // 由 core.config 的打码机制在展示面遮住，绝不返回明文。
+            val oauthFields = buildList<ConfigField> {
+                add(
+                    readonly(
+                        "oauth.status",
+                        "OAuth 状态",
+                        "NOT_CONFIGURED（未配置 OAuth）/ NOT_AUTHORIZED（未授权）/ AUTHORIZED（已授权）/ EXPIRED（过期且无刷新令牌）。",
+                        schema = ConfigSchema.StrEnum(
+                            listOf("NOT_CONFIGURED", "NOT_AUTHORIZED", "AUTHORIZED", "EXPIRED"),
+                        ),
+                        read = { s -> s.oauth?.let { oauthStatusOf(it).name } ?: "NOT_CONFIGURED" },
+                    ),
+                )
+                val o = oauthSnapshot ?: return@buildList
+                add(readonly("oauth.client_id", "OAuth 客户端 ID", "授权服务器分配的 client_id（非机密）。", read = { it.oauth?.clientId.orEmpty() }))
+                add(readonly("oauth.authorization_server", "授权服务器", "OAuth 授权服务器标识/地址（非机密）。", read = { it.oauth?.authorizationServer.orEmpty() }))
+                add(readonly("oauth.authorization_endpoint", "授权端点", "authorization_endpoint（非机密）。", read = { it.oauth?.authorizationEndpoint.orEmpty() }))
+                add(readonly("oauth.token_endpoint", "令牌端点", "token_endpoint（非机密）。", read = { it.oauth?.tokenEndpoint.orEmpty() }))
+                add(readonly("oauth.redirect_uri", "回调地址", "OAuth 回调 URI（非机密）。", read = { it.oauth?.redirectUri.orEmpty() }))
+                add(readonly("oauth.scope", "授权范围", "申请的 scope（非机密）。", read = { it.oauth?.scope.orEmpty() }))
+                add(readonly("oauth.expires_at", "过期时间", "访问令牌过期时刻（epoch 毫秒）；0 表示未知。", read = { it.oauth?.expiresAt?.toString().orEmpty() }))
+                // 令牌字段仅在确实存在时出现（避免空值时被遮成「已隐藏」而误导），且一律 SENSITIVE。
+                if (o.hasAccessToken) add(readonly("oauth.access_token", "访问令牌", "accessToken（密文/密钥），展示面已打码。", risk = ConfigRisk.SENSITIVE, read = { it.oauth?.accessToken.orEmpty() }))
+                if (o.hasRefreshToken) add(readonly("oauth.refresh_token", "刷新令牌", "refreshToken（密文/密钥），展示面已打码。", risk = ConfigRisk.SENSITIVE, read = { it.oauth?.refreshToken.orEmpty() }))
+                if (o.clientSecret.isNotBlank()) add(readonly("oauth.client_secret", "客户端密钥", "clientSecret（密文/密钥），展示面已打码。", risk = ConfigRisk.SENSITIVE, read = { it.oauth?.clientSecret.orEmpty() }))
+            }
 
             return listOf(
                 text(
@@ -133,7 +183,7 @@ class ConfigMcpFields @Inject constructor(
                         mutate(forId) { it.copy(enabled = b) }
                     },
                 ),
-            )
+            ) + oauthFields
         }
 
         override fun add(payload: ConfigValue): String {
@@ -144,15 +194,39 @@ class ConfigMcpFields @Inject constructor(
             if (!McpServerConfig.isValidName(name)) {
                 throw ConfigError.InvalidValue("server 名只能含 ASCII 字母、数字、下划线与连字符：$name")
             }
-            if (server(name) != null) throw ConfigError.InvalidValue("MCP server 已存在：$name")
+            // 同名覆盖：payload 只表达 name / url / command / args，其余字段（headers /
+            // env / enabled / disabled_tools，以及最关键的 oauth 令牌块）一律从既有同名
+            // server 继承——重建时丢掉 oauth 会让用户必须重新授权。无同名 server 时按
+            // 新项处理（取默认值）。
+            // 连接字段：payload 只要给了 url / command 之一，就按它重建（未给的那个清空，
+            // 以支持 http↔stdio 切换）；两者都未给则保留旧值，避免空 payload 把 server 打废。
+            val existing = server(name)
+            val providesConnection = obj.containsKey("url") || obj.containsKey("command")
             val created = McpServerConfig(
                 name = name,
-                url = (obj["url"] as? ConfigValue.Str)?.value?.ifBlank { null },
-                command = (obj["command"] as? ConfigValue.Str)?.value?.ifBlank { null },
-                args = (obj["args"] as? ConfigValue.Str)?.value
-                    ?.split(' ')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty(),
+                url = if (providesConnection) {
+                    (obj["url"] as? ConfigValue.Str)?.value?.ifBlank { null }
+                } else {
+                    existing?.url
+                },
+                command = if (providesConnection) {
+                    (obj["command"] as? ConfigValue.Str)?.value?.ifBlank { null }
+                } else {
+                    existing?.command
+                },
+                args = if (obj.containsKey("args")) {
+                    (obj["args"] as? ConfigValue.Str)?.value
+                        ?.split(' ')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                } else {
+                    existing?.args.orEmpty()
+                },
+                headers = existing?.headers ?: emptyMap(),
+                env = existing?.env ?: emptyMap(),
+                enabled = existing?.enabled ?: true,
+                disabledTools = existing?.disabledTools ?: emptySet(),
+                oauth = existing?.oauth,
             )
-            saveAll(servers() + created)
+            saveAll(servers().filterNot { it.name == name } + created)
             return name
         }
 

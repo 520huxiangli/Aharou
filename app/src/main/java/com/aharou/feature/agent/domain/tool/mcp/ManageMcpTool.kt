@@ -141,15 +141,21 @@ class ManageMcpTool @Inject constructor(
                     val command = args["command"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("add_stdio 缺少 command")
                     val commandArgs = args["args"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
                     
+                    val servers = readServers().toMutableList()
+                    // 同名覆盖时继承旧 server 的凭据类字段：env / headers / oauth 里都可能放着密钥，
+                    // 直接重建会把它们清空（令牌/API Key 丢失，用户得重新配）。
+                    val existing = servers.firstOrNull { it.name == name }
                     val newServer = McpServerConfig(
                         name = name,
                         command = command,
                         args = commandArgs,
-                        env = emptyMap(),
-                        enabled = true
+                        headers = existing?.headers ?: emptyMap(),
+                        env = existing?.env ?: emptyMap(),
+                        enabled = existing?.enabled ?: true,
+                        disabledTools = existing?.disabledTools ?: emptySet(),
+                        oauth = existing?.oauth,
                     )
-                    
-                    val servers = readServers().toMutableList()
+
                     servers.removeIf { it.name == name }
                     servers.add(newServer)
                     writeServers(servers)
@@ -161,14 +167,18 @@ class ManageMcpTool @Inject constructor(
                     if (!McpServerConfig.isValidName(name)) return ToolResult.Error(invalidNameMessage(name))
                     val url = args["url"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("add_http 缺少 url")
                     
+                    val servers = readServers().toMutableList()
+                    // 同 add_stdio：同名覆盖时保留旧凭据（headers 里常见 API Key，oauth 里是授权令牌）。
+                    val existing = servers.firstOrNull { it.name == name }
                     val newServer = McpServerConfig(
                         name = name,
                         url = url,
-                        headers = emptyMap(),
-                        enabled = true
+                        headers = existing?.headers ?: emptyMap(),
+                        enabled = existing?.enabled ?: true,
+                        disabledTools = existing?.disabledTools ?: emptySet(),
+                        oauth = existing?.oauth,
                     )
-                    
-                    val servers = readServers().toMutableList()
+
                     servers.removeIf { it.name == name }
                     servers.add(newServer)
                     writeServers(servers)

@@ -42,6 +42,7 @@ data class McpServerStatus(
 @Singleton
 class McpManager @Inject constructor(
     private val configRepository: McpConfigRepository,
+    private val oauthClient: McpOAuthClient,
     private val toolRegistry: ToolRegistry,
     @Named("Mcp") private val okHttpClient: OkHttpClient,
     private val containerEngine: LinuxContainerEngine,
@@ -167,7 +168,9 @@ class McpManager @Inject constructor(
                 StreamableHttpTransport(
                     endpoint = cfg.url.orEmpty(),
                     client = okHttpClient,
-                    extraHeaders = cfg.headers
+                    extraHeaders = cfg.headers,
+                    // 配了 oauth 块的 server 由提供者在每次请求前注入/刷新 Bearer 令牌。
+                    authProvider = if (cfg.oauth != null) oauthClient.bearerProvider(cfg.name) else null
                 )
             }
             transport = t

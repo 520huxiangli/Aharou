@@ -66,6 +66,10 @@ interface ChatSessionDao {
     @Query("UPDATE chat_sessions SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: String, pinned: Boolean)
 
+    /** 切换会话级隐身模式。 */
+    @Query("UPDATE chat_sessions SET ghostMode = :ghost WHERE id = :id")
+    suspend fun updateGhostMode(id: String, ghost: Boolean)
+
     @Query("DELETE FROM chat_sessions WHERE id = :id")
     suspend fun delete(id: String)
 

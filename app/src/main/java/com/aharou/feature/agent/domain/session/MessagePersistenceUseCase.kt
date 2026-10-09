@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.session
 
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSearchMatch
+import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -14,6 +15,9 @@ import com.aharou.feature.agent.presentation.MessageRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -29,6 +33,9 @@ class MessagePersistenceUseCase @Inject constructor(
     private val messageArchiveStore: MessageArchiveStore
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** 惰性取会话 DAO：仅在隐身判定时用到，非隐身路径不初始化。 */
+    private val chatSessionDao: ChatSessionDao by lazy { agentDatabase.chatSessionDao() }
 
     /** agent_messages 表变更版本号：任何写路径（含 rewind 删除、压缩标记、冷启动清理）触发递增，
      *  作为 [buildHistory] 缓存的失效信号。InvalidationTracker 监听表级变更，覆盖所有 DAO 写入。 */
@@ -106,31 +113,77 @@ class MessagePersistenceUseCase @Inject constructor(
         isCompacted: Boolean = false,
         isContextExcluded: Boolean = false
     ) {
-        agentMessageDao.insert(
-            prepareForStorage(AgentMessageEntity(
-                id = id,
-                sessionId = sessionId,
-                role = role.name,
-                content = content,
-                timestamp = nextTimestamp(),
-                toolCallsJson = if (toolCalls.isNotEmpty()) json.encodeToString(toolCalls) else null,
-                toolCallId = toolCallId,
-                toolName = toolName,
-                toolArgs = toolArgs,
-                isError = isError,
-                reasoning = reasoning,
-                signature = signature,
-                thinkingBlocksJson = thinkingBlocksJson,
-                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
-                inputTokens = inputTokens,
-                outputTokens = outputTokens,
-                cachedInputTokens = cachedInputTokens,
-                isCompacted = isCompacted,
-                isContextExcluded = isContextExcluded
-            ))
+        val entity = AgentMessageEntity(
+            id = id,
+            sessionId = sessionId,
+            role = role.name,
+            content = content,
+            timestamp = nextTimestamp(),
+            toolCallsJson = if (toolCalls.isNotEmpty()) json.encodeToString(toolCalls) else null,
+            toolCallId = toolCallId,
+            toolName = toolName,
+            toolArgs = toolArgs,
+            isError = isError,
+            reasoning = reasoning,
+            signature = signature,
+            thinkingBlocksJson = thinkingBlocksJson,
+            attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens,
+            cachedInputTokens = cachedInputTokens,
+            isCompacted = isCompacted,
+            isContextExcluded = isContextExcluded
         )
+        if (GhostModeStore.isGhost(chatSessionDao, sessionId)) {
+            // 隐身会话：不落库、不归档，只留一份内存副本供本轮上下文与当前界面使用。
+            GhostModeStore.appendGhost(sessionId, ghostProjection(entity))
+            invalidateHistory(sessionId)
+            return
+        }
+        agentMessageDao.insert(prepareForStorage(entity))
         invalidateHistory(sessionId)
     }
+
+    /**
+     * 当前会话的消息流：数据库历史 + 该会话驻留内存的隐身消息（若有），按时间合并取末段。
+     * 界面不再直读 DAO，改走这里，隐身会话不写库也能正常渲染。
+     */
+    fun messagesFlow(sessionId: String, limit: Int): Flow<List<AgentMessageEntity>> =
+        combine(
+            agentMessageDao.getMessagesBySessionPaged(sessionId, limit),
+            GhostModeStore.bufferFlow(sessionId)
+        ) { stored, ghost ->
+            if (ghost.isEmpty()) stored
+            else (stored + ghost).sortedWith(compareBy({ it.timestamp }, { it.id })).takeLast(limit)
+        }.onStart { GhostModeStore.dropOtherBuffers(sessionId) }
+
+    /**
+     * 一次性读取会话的全部消息（数据库历史 + 隐身内存缓冲），供子代理结果检查等「一次读全量」场景。
+     * 不经过归档恢复（子代理读取只取正文，加密签名字段不需要）。
+     */
+    suspend fun getMessagesOnce(sessionId: String): List<AgentMessageEntity> {
+        val stored = agentMessageDao.getMessagesBySessionOnce(sessionId)
+        val ghost = GhostModeStore.ghostMessages(sessionId)
+        return if (ghost.isEmpty()) stored
+        else (stored + ghost).sortedWith(compareBy({ it.timestamp }, { it.id }))
+    }
+
+    /** 会话是否处于隐身模式（供压缩、标题等其它环节复用同一判定）。 */
+    suspend fun isGhost(sessionId: String): Boolean = GhostModeStore.isGhost(chatSessionDao, sessionId)
+
+    /**
+     * 隐身消息的内存投影：与数据库行保持同量级的净化（剥离内嵌 base64 图片、按字段限长），
+     * 但不写入归档——隐身模式不允许任何持久化，代价是超长工具输出在后续轮次只能看到截断版。
+     */
+    private fun ghostProjection(entity: AgentMessageEntity): AgentMessageEntity = entity.copy(
+        content = sanitizeContent(entity.content),
+        reasoning = entity.reasoning?.let { capBytes(it, MAX_CONTENT_BYTES) },
+        toolCallsJson = entity.toolCallsJson?.let { capBytes(it, MAX_SNAPSHOT_BYTES) },
+        toolArgs = entity.toolArgs?.let { capBytes(it, MAX_TOOL_ARGS_BYTES) },
+        signature = entity.signature?.let { capBytes(it, MAX_SNAPSHOT_BYTES) },
+        thinkingBlocksJson = entity.thinkingBlocksJson?.let { capBytes(it, MAX_SNAPSHOT_BYTES) },
+        attachmentsJson = entity.attachmentsJson?.let { capBytes(it, MAX_ATTACHMENTS_BYTES) }
+    )
 
     suspend fun prepareForStorage(entity: AgentMessageEntity): AgentMessageEntity =
         messageArchiveStore.prepareForStorage(entity)
@@ -324,8 +377,14 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     private suspend fun buildHistoryUncached(sessionId: String, pendingToolMarker: String): List<AgentMessage> {
-        val entities = restoreAll(agentMessageDao.getMessagesBySessionOnce(sessionId)
-            .filter { !it.isCompacted && !it.isContextExcluded })
+        val stored = agentMessageDao.getMessagesBySessionOnce(sessionId)
+            .filter { !it.isCompacted && !it.isContextExcluded }
+        val ghost = GhostModeStore.ghostMessages(sessionId)
+            .filter { !it.isCompacted && !it.isContextExcluded }
+        val entities = restoreAll(
+            if (ghost.isEmpty()) stored
+            else (stored + ghost).sortedWith(compareBy({ it.timestamp }, { it.id }))
+        )
 
         // 第一遍：求 assistant 声明的 toolCallId 与 tool 结果 toolCallId 的交集。
         val declaredIds = mutableSetOf<String>()

@@ -80,6 +80,25 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- 划词菜单：在任意 App 选中文字后，菜单里出现「Aharou」，点了把这段文字送进聊天输入框。
+                 只接管 text/plain；同一个 Activity 加 filter，不新建 Activity。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- 桌面快捷方式（长按图标）走隐式 intent：applicationId 随 flavor 变化
+                 （com.aharou.agent / .debug / .beta），而 res/xml 不支持 applicationId 占位符替换
+                 （Intent.parseIntent 只有 targetPackage 与 targetClass 同时存在才会设显式组件），
+                 故用自定义 action 在此声明匹配，shortcuts.xml 里不写 targetPackage。 -->
+            <intent-filter>
+                <action android:name="com.aharou.intent.NEW_CHAT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.aharou.intent.START_VOICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- 「打开方式」入口：在文件管理器 / QQ 等选「用 Aharou 打开」。只收 content/file
                  两种 scheme——不加限定的话，浏览器点 http 链接也会把 Aharou 列进候选。 -->
             <intent-filter>
@@ -89,6 +108,10 @@
                 <data android:scheme="file" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- 长按桌面图标弹出的静态快捷方式（新建对话 / 开始语音通话）。 -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <!-- 未捕获异常时由 AIEditorApp 的全局 handler 拉起，全屏展示崩溃详情供复制反馈。独立进程运行，避免被主进程崩溃影响或引发 Application 业务逻辑重跑。 -->
@@ -209,6 +232,25 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <!-- 桌面小组件：快捷入口 + 最近会话。 -->
+        <receiver
+            android:name="com.aharou.feature.widget.AharouAppWidget"
+            android:exported="false"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/aharou_widget_info" />
+        </receiver>
+
+        <!-- 工具授权通知的动作接收器：通知栏「允许/拒绝/直接回复」经它回填到 App 内的授权入口。
+             无 intent-filter，exported=false，只接收本 App 通过显式 PendingIntent 发来的广播。 -->
+        <receiver
+            android:name="com.aharou.feature.agent.presentation.notification.AgentPermissionActionReceiver"
+            android:exported="false" />
 
         <!-- Shizuku：用于以 adb shell 身份执行命令（UserService）。
              permission 声明为 INTERACT_ACROSS_USERS_FULL 是官方要求，防止普通应用访问该 provider。 -->

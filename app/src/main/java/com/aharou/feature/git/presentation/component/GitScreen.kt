@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Radius
@@ -70,6 +71,7 @@ import com.aharou.feature.settings.presentation.component.settingsPageBackground
 import com.aharou.feature.git.domain.model.GitStatus
 import com.aharou.feature.git.domain.model.GitTab
 import com.aharou.feature.git.presentation.GitViewModel
+import com.aharou.feature.git.presentation.PullRequestViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Activity
 import compose.icons.feathericons.ArrowLeft
@@ -89,13 +91,22 @@ fun GitScreen(
     onNavigateToCredentials: () -> Unit,
     onNavigateBack: () -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
-    embedded: Boolean = false
+    embedded: Boolean = false,
+    /** CI 失败时把失败摘要交给当前会话的 AI；为 null（未接线）时不显示「让 AI 分析」入口。 */
+    onAnalyzeWithAi: ((String) -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val prViewModel: PullRequestViewModel = hiltViewModel()
+    val prState by prViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 进入仓库态或当前分支变化时，拉取该分支关联的 PR 与 CI 状态。
+    LaunchedEffect(state.loading, state.notARepo, state.status?.branch) {
+        if (!state.loading && !state.notARepo) prViewModel.refresh(state.status?.branch)
+    }
 
     // toast → Snackbar 一次性消费。
     LaunchedEffect(state.toast) {
@@ -180,6 +191,19 @@ fun GitScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(modifier = Modifier.fillMaxSize()) {
+            if (!state.loading && !state.notARepo && prState.visible) {
+                PullRequestCard(
+                    state = prState,
+                    onRefresh = { prViewModel.refresh(state.status?.branch) },
+                    onOpenTokenDialog = prViewModel::openTokenDialog,
+                    onSaveToken = prViewModel::saveToken,
+                    onDismissTokenDialog = prViewModel::dismissTokenDialog,
+                    showAnalyze = onAnalyzeWithAi != null,
+                    onAnalyze = {
+                        prViewModel.buildFailureSummary()?.let { summary -> onAnalyzeWithAi?.invoke(summary) }
+                    }
+                )
+            }
             when {
                 state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()

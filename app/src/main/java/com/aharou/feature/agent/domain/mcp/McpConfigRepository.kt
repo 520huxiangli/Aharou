@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.mcp
 
+import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChangeHub
@@ -35,6 +36,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -201,8 +203,9 @@ class McpConfigRepository @Inject constructor(
     }
 
     suspend fun setGlobalServers(servers: List<McpServerConfig>) {
-        val json = serialize(servers)
         mutex.withLock {
+            // serialize 会做 Keystore 加密，放到 IO 线程；别在（可能为 Main 的）调用方线程上做。
+            val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
                 globalState.value = json
             } else {
@@ -213,8 +216,8 @@ class McpConfigRepository @Inject constructor(
 
     suspend fun setProjectServers(servers: List<McpServerConfig>) {
         val path = workspaceRepository.currentPath()
-        val json = serialize(servers)
         mutex.withLock {
+            val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(path), json) }) {
                 getProjectState(path).value = json
             } else {
@@ -257,6 +260,23 @@ class McpConfigRepository @Inject constructor(
                         if (server.headers.isNotEmpty()) {
                             putJsonObject("headers") {
                                 server.headers.forEach { (key, value) -> put(key, value) }
+                            }
+                        }
+                        server.oauth?.let { oauth ->
+                            putJsonObject("oauth") {
+                                put("clientId", oauth.clientId)
+                                if (oauth.clientSecret.isNotBlank()) put("clientSecret", encryptSecret(oauth.clientSecret))
+                                put("authorizationEndpoint", oauth.authorizationEndpoint)
+                                put("tokenEndpoint", oauth.tokenEndpoint)
+                                if (oauth.registrationEndpoint.isNotBlank()) put("registrationEndpoint", oauth.registrationEndpoint)
+                                put("redirectUri", oauth.redirectUri)
+                                if (oauth.scope.isNotBlank()) put("scope", oauth.scope)
+                                if (oauth.resource.isNotBlank()) put("resource", oauth.resource)
+                                if (oauth.accessToken.isNotBlank()) put("accessToken", encryptSecret(oauth.accessToken))
+                                if (oauth.refreshToken.isNotBlank()) put("refreshToken", encryptSecret(oauth.refreshToken))
+                                put("tokenType", oauth.tokenType)
+                                put("expiresAt", oauth.expiresAt)
+                                if (oauth.authorizationServer.isNotBlank()) put("authorizationServer", oauth.authorizationServer)
                             }
                         }
                     }
@@ -315,7 +335,8 @@ class McpConfigRepository @Inject constructor(
                         url = url,
                         headers = headers,
                         enabled = enabled,
-                        disabledTools = disabledTools
+                        disabledTools = disabledTools,
+                        oauth = parseOAuth(obj["oauth"] as? JsonObject)
                     )
                 }
                 else -> {
@@ -325,6 +346,43 @@ class McpConfigRepository @Inject constructor(
                 }
             }
         }
+    }
+
+    /** 解析 oauth 块；敏感字段按落盘密文原样读出，使用方自己用 KeystoreCipher 解密。 */
+    private fun parseOAuth(obj: JsonObject?): McpOAuthConfig? {
+        obj ?: return null
+        fun str(key: String): String = (obj[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        return McpOAuthConfig(
+            clientId = str("clientId"),
+            clientSecret = str("clientSecret"),
+            authorizationEndpoint = str("authorizationEndpoint"),
+            tokenEndpoint = str("tokenEndpoint"),
+            registrationEndpoint = str("registrationEndpoint"),
+            redirectUri = str("redirectUri").ifBlank { MCP_OAUTH_CUSTOM_SCHEME_REDIRECT },
+            scope = str("scope"),
+            resource = str("resource"),
+            accessToken = str("accessToken"),
+            refreshToken = str("refreshToken"),
+            tokenType = str("tokenType").ifBlank { "Bearer" },
+            expiresAt = (obj["expiresAt"] as? JsonPrimitive)?.longOrNull ?: 0L,
+            authorizationServer = str("authorizationServer")
+        )
+    }
+
+    /** 敏感字段落盘前确保为密文；已是密文则不重复加密。 */
+    private fun encryptSecret(value: String): String =
+        if (KeystoreCipher.isEncryptedString(value)) value else KeystoreCipher.encryptString(value)
+
+    /** 按名称查找当前生效条目（含来源作用域）；不存在返回 null。 */
+    suspend fun findEntry(name: String): McpServerEntry? =
+        getEffectiveEntries().firstOrNull { it.server.name == name }
+
+    /** 把某个 server 的 oauth 块整体替换后写回所属作用域。 */
+    suspend fun updateServerOAuth(name: String, scope: McpScope, oauth: McpOAuthConfig?) {
+        val base = if (scope == McpScope.GLOBAL) getGlobalServers() else getProjectServers()
+        if (base.none { it.name == name }) return
+        val updated = base.map { if (it.name == name) it.copy(oauth = oauth) else it }
+        if (scope == McpScope.GLOBAL) setGlobalServers(updated) else setProjectServers(updated)
     }
 
     /** 合并全局与项目配置：全局按序在前，项目项覆盖同名，顺序 = 全局序 + 项目新增项。 */

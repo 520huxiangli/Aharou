@@ -74,9 +74,6 @@ import com.aharou.core.ui.pageEnter
 import com.aharou.core.ui.pageExit
 import com.aharou.core.util.LogLevel
 import com.aharou.R
-import com.aharou.feature.agent.domain.mcp.McpServerEntry
-import com.aharou.feature.agent.domain.mcp.McpServerConfig
-import com.aharou.feature.agent.domain.mcp.McpServerStatus
 import com.aharou.feature.agent.domain.prompt.PromptFragment
 import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
 import com.aharou.feature.agent.presentation.component.MarkdownContent
@@ -143,6 +140,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
     Mcp(R.string.settings_mcp),
+    McpDirectory(R.string.mcp_directory_title),
     Skills(R.string.settings_skills),
     SkillDetail(R.string.settings_skills),
     SkillEditor(R.string.settings_skills),
@@ -189,6 +187,7 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SubAgentEditor,
     SettingsSection.PromptEditor -> 3
     SettingsSection.ProviderEditor,
+    SettingsSection.McpDirectory,
     SettingsSection.SkillDetail,
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
@@ -305,8 +304,7 @@ fun SettingsScreen(
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
     var showAddProviderSheet by remember { mutableStateOf(false) }
     var providerPresetPrefill by remember { mutableStateOf<ProviderPreset?>(null) }
-    var showMcpDialog by remember { mutableStateOf(false) }
-    var editingMcp by remember { mutableStateOf<McpServerEntry?>(null) }
+    var mcpDialogRequest by remember { mutableStateOf<McpDialogRequest?>(null) }
 
     LaunchedEffect(onboardingStep) {
         when (onboardingStep) {
@@ -436,6 +434,7 @@ fun SettingsScreen(
         SettingsSection.About -> SettingsSection.HelpGroup
         SettingsSection.Prompts -> SettingsSection.AharouGroup
         SettingsSection.ProviderEditor -> SettingsSection.Providers
+        SettingsSection.McpDirectory -> SettingsSection.Mcp
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail -> SettingsSection.Skills
         SettingsSection.SkillMarket -> SettingsSection.Skills
@@ -742,8 +741,7 @@ fun SettingsScreen(
                                 }
                             }
                             IconButton(onClick = {
-                                editingMcp = null
-                                showMcpDialog = true
+                                mcpDialogRequest = McpDialogRequest(editing = null, prefill = null)
                             }) {
                                 Icon(
                                     FeatherIcons.Plus,
@@ -1070,11 +1068,13 @@ fun SettingsScreen(
                     reloading = mcpReloading,
                     onReload = { viewModel.reloadMcp() },
                     onToggle = { name, enabled, scope -> viewModel.setMcpServerEnabled(name, enabled, scope) },
-                    onEdit = {
-                        editingMcp = it
-                        showMcpDialog = true
-                    },
-                    onDelete = { name, scope -> viewModel.deleteMcpServer(name, scope) }
+                    onEdit = { mcpDialogRequest = McpDialogRequest(editing = it, prefill = null) },
+                    onDelete = { name, scope -> viewModel.deleteMcpServer(name, scope) },
+                    onBrowseDirectory = { section = SettingsSection.McpDirectory }
+                )
+                SettingsSection.McpDirectory -> McpDirectorySection(
+                    languageTag = languageTag,
+                    onPick = { prefill -> mcpDialogRequest = McpDialogRequest(editing = null, prefill = prefill) }
                 )
                 SettingsSection.Skills -> SkillsSection(
                     projectName = currentProjectName,
@@ -1335,24 +1335,20 @@ fun SettingsScreen(
         } // 右栏结束
     } // Row 结束
 
-    if (showMcpDialog) {
-        McpServerEditDialog(
-            initial = editingMcp?.server,
-            initialScope = editingMcp?.scope,
-            tools = viewModel.getMcpServerTools(editingMcp?.server?.name),
-            onRefreshTools = { editingMcp?.let { viewModel.reloadMcpServer(it.server.name) } },
-            onOpenLogs = editingMcp?.let { existing ->
-                {
-                    showMcpDialog = false
-                    logReturnSection = SettingsSection.Mcp
-                    viewModel.refreshLogs(filterServerName = existing.server.name)
-                    section = SettingsSection.Log
-                }
+    mcpDialogRequest?.let { request ->
+        McpServerDialogHost(
+            viewModel = viewModel,
+            request = request,
+            onDismiss = {
+                mcpDialogRequest = null
+                // 从连接器目录新增/取消后回到 MCP 列表，避免停在目录页。
+                section = SettingsSection.Mcp
             },
-            onDismiss = { showMcpDialog = false },
-            onSave = { config, scope ->
-                viewModel.upsertMcpServer(editingMcp?.server?.name, editingMcp?.scope, config, scope)
-                showMcpDialog = false
+            onOpenLogs = { name ->
+                mcpDialogRequest = null
+                logReturnSection = SettingsSection.Mcp
+                viewModel.refreshLogs(filterServerName = name)
+                section = SettingsSection.Log
             }
         )
     }

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  长按桌面图标弹出的静态快捷方式。
+
+  <intent> 用隐式 action（不写 targetPackage）：applicationId 随 flavor 变化
+  （com.aharou.agent / .debug / .beta），而 res/xml 不支持 applicationId 占位符替换；
+  Intent.parseIntent 也只有 targetPackage 与 targetClass 同时存在时才会设显式组件，
+  只写 targetClass 不生效。对应 action 已在 AndroidManifest 的 MainActivity 上声明
+  intent-filter，做到三种 flavor 通用。targetClass 保留作意图声明。
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@drawable/ic_pet_say"
+        android:shortcutShortLabel="@string/shortcut_new_chat">
+        <intent
+            android:action="com.aharou.intent.NEW_CHAT"
+            android:targetClass="com.aharou.MainActivity">
+            <categories android:name="android.intent.category.DEFAULT" />
+        </intent>
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="start_voice"
+        android:enabled="true"
+        android:icon="@drawable/ic_pet_mic"
+        android:shortcutShortLabel="@string/shortcut_start_voice">
+        <intent
+            android:action="com.aharou.intent.START_VOICE"
+            android:targetClass="com.aharou.MainActivity">
+            <categories android:name="android.intent.category.DEFAULT" />
+        </intent>
+    </shortcut>
+
+</shortcuts>

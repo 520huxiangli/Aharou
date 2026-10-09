@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  桌面小组件的 RemoteViews 布局。
+
+  RemoteViews 不支持动态增删子视图，所以「最近会话」预置 5 行固定槽位，
+  运行期按数据条数逐行切换可见性（见 WidgetRenderer）。
+
+  只使用 RemoteViews 支持的 View 类型（LinearLayout / TextView / View）。
+  颜色初值按默认浅色主题填，真实主题色在 onUpdate 时由 WidgetRenderer 用
+  setBackgroundColor / setTextColor 覆盖，保证跟随 App 主题与深浅色。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F8F8F8"
+    android:padding="12dp">
+
+    <!-- 顶部快捷入口：新建对话 / 打开聊天 / 语音通话 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:baselineAligned="false">
+
+        <TextView
+            android:id="@+id/widget_entry_new"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:gravity="center"
+            android:background="#2563EB"
+            android:paddingTop="9dp"
+            android:paddingBottom="9dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="@string/widget_entry_new_chat"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/widget_entry_chat"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:gravity="center"
+            android:background="#E9E9EB"
+            android:paddingTop="9dp"
+            android:paddingBottom="9dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="@string/widget_entry_open_chat"
+            android:textColor="#0F172A"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/widget_entry_voice"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:gravity="center"
+            android:background="#E9E9EB"
+            android:paddingTop="9dp"
+            android:paddingBottom="9dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:text="@string/widget_entry_voice"
+            android:textColor="#0F172A"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 分隔线用 LinearLayout 而不是 <View>：RemoteViews 只允许带 @RemoteView 注解的类，
+         android.view.View 没有这个注解，会让 Launcher 在 inflate 整个布局时直接失败，
+         桌面上的组件就会显示「载入窗口小部件时出现问题」。 -->
+    <LinearLayout
+        android:id="@+id/widget_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="2dp"
+        android:background="#E5E5EA" />
+
+    <LinearLayout
+        android:id="@+id/widget_sessions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:id="@+id/widget_row_0"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp">
+
+            <TextView
+                android:id="@+id/widget_row_title_0"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#0F172A"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_row_time_0"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#8E8E93"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_row_1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp">
+
+            <TextView
+                android:id="@+id/widget_row_title_1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#0F172A"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_row_time_1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#8E8E93"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_row_2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp">
+
+            <TextView
+                android:id="@+id/widget_row_title_2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#0F172A"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_row_time_2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#8E8E93"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_row_3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp">
+
+            <TextView
+                android:id="@+id/widget_row_title_3"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#0F172A"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_row_time_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#8E8E93"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/widget_row_4"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="7dp"
+            android:paddingBottom="7dp">
+
+            <TextView
+                android:id="@+id/widget_row_title_4"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:singleLine="true"
+                android:ellipsize="end"
+                android:textColor="#0F172A"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/widget_row_time_4"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:singleLine="true"
+                android:textColor="#8E8E93"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:text="@string/widget_empty_sessions"
+        android:textColor="#8E8E93"
+        android:textSize="12sp" />
+</LinearLayout>

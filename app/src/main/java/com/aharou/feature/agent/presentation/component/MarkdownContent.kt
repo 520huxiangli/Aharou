@@ -68,7 +68,7 @@ import kotlinx.coroutines.withContext
 
 // 代码块与行内代码共用字体。系统等宽（FontFamily.Monospace）缺下标字形且不回落，
 // 内置 JetBrains Mono NL 经资源加载可走系统 fallback，能显示 ₀-₉ 等下标/上标字符。
-private val CodeFontFamily = FontFamily(Font(R.font.jetbrains_mono_nl))
+internal val CodeFontFamily = FontFamily(Font(R.font.jetbrains_mono_nl))
 
 internal class WeightedLruCache<K, V>(
     private val maxEntries: Int,
@@ -311,7 +311,7 @@ internal fun MarkdownContent(
                         content = it.content,
                         node = it.node,
                     ) { code, language, style ->
-                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
+                        ArtifactAwareCodeBlock(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
                     }
                 },
                 codeBlock = {
@@ -319,7 +319,7 @@ internal fun MarkdownContent(
                         content = it.content,
                         node = it.node,
                     ) { code, language, style ->
-                        SafeMarkdownHighlightedCode(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
+                        ArtifactAwareCodeBlock(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
                     }
                 },
                 // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
@@ -408,7 +408,7 @@ private object CodeHighlightCache {
 }
 
 @Composable
-private fun SafeMarkdownHighlightedCode(
+internal fun SafeMarkdownHighlightedCode(
     code: String,
     language: String?,
     style: TextStyle,
@@ -449,7 +449,7 @@ private fun SafeMarkdownHighlightedCode(
     }
 }
 
-private fun buildHighlightedText(
+internal fun buildHighlightedText(
     code: String,
     language: String?,
     highlightsBuilder: Highlights.Builder,

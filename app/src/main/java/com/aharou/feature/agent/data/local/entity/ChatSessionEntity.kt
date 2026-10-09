@@ -32,7 +32,9 @@ data class ChatSessionEntity(
     /** 子代理会话：父会话 id；null 表示普通根会话。 */
     val parentId: String? = null,
     /** 子代理会话：派生子代理的类型（如 coder / researcher）；null 表示普通根会话。 */
-    val subagentType: String? = null
+    val subagentType: String? = null,
+    /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
+    val ghostMode: Boolean = false
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
@@ -50,7 +52,8 @@ data class ChatSessionEntity(
         lastInputTokens = lastInputTokens,
         isPinned = isPinned,
         parentId = parentId,
-        subagentType = subagentType
+        subagentType = subagentType,
+        ghostMode = ghostMode
     )
 
     companion object {
@@ -70,7 +73,8 @@ data class ChatSessionEntity(
             lastInputTokens = session.lastInputTokens,
             isPinned = session.isPinned,
             parentId = session.parentId,
-            subagentType = session.subagentType
+            subagentType = session.subagentType,
+            ghostMode = session.ghostMode
         )
     }
 }

@@ -71,6 +71,7 @@ import com.aharou.R
 fun McpServerEditDialog(
     initial: McpServerConfig?,
     initialScope: McpScope? = null,
+    prefill: McpServerConfig? = null,
     tools: List<McpToolDescriptor> = emptyList(),
     onRefreshTools: () -> Unit = {},
     onOpenLogs: (() -> Unit)? = null,
@@ -79,34 +80,37 @@ fun McpServerEditDialog(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0: 基础设置, 1: 工具
 
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
-    var isStdio by remember { mutableStateOf(initial?.isStdio ?: false) }
+    // 预填来源：编辑时用现有配置；从连接器目录新增时用目录条目（标题仍显示「添加」）。
+    val seed = initial ?: prefill
+
+    var name by remember { mutableStateOf(seed?.name ?: "") }
+    var enabled by remember { mutableStateOf(seed?.enabled ?: true) }
+    var isStdio by remember { mutableStateOf(seed?.isStdio ?: false) }
     // 作用域：新增默认当前项目，编辑保持原作用域。
     var scope by remember { mutableStateOf(initialScope ?: McpScope.PROJECT) }
 
     // HTTP 形态字段
-    var url by remember { mutableStateOf(initial?.url ?: "") }
+    var url by remember { mutableStateOf(seed?.url ?: "") }
     val headers = remember {
         mutableStateListOf<Pair<String, String>>().apply {
-            addAll(initial?.headers?.toList() ?: emptyList())
+            addAll(seed?.headers?.toList() ?: emptyList())
         }
     }
 
     // stdio 形态字段
-    var command by remember { mutableStateOf(initial?.command ?: "") }
+    var command by remember { mutableStateOf(seed?.command ?: "") }
     val argsList = remember {
-        mutableStateListOf<String>().apply { addAll(initial?.args ?: emptyList()) }
+        mutableStateListOf<String>().apply { addAll(seed?.args ?: emptyList()) }
     }
     val envList = remember {
         mutableStateListOf<Pair<String, String>>().apply {
-            addAll(initial?.env?.toList() ?: emptyList())
+            addAll(seed?.env?.toList() ?: emptyList())
         }
     }
 
     // 工具权限字段 (disabledTools)
     val disabledToolsSet = remember {
-        mutableStateListOf<String>().apply { addAll(initial?.disabledTools ?: emptyList()) }
+        mutableStateListOf<String>().apply { addAll(seed?.disabledTools ?: emptyList()) }
     }
 
     // 名称会拼进 `mcp__<名称>__<工具名>` 送给模型，必须符合 function-calling 命名规范。
@@ -458,7 +462,9 @@ fun McpServerEditDialog(
                                         .filter { it.first.isNotEmpty() }
                                         .toMap(),
                                     enabled = enabled,
-                                    disabledTools = disabledToolsSet.toSet()
+                                    disabledTools = disabledToolsSet.toSet(),
+                                    // 保留既有 oauth 块（目录 OAuth 项预填的、或已授权 server 的令牌），避免编辑时丢失。
+                                    oauth = seed?.oauth
                                 )
                             }
                             onSave(config, scope)

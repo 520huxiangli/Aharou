@@ -37,6 +37,7 @@ internal fun WorkbenchPaneContent(
     editorLine: Int,
     onClose: () -> Unit,
     onAddSelectionToInput: (String) -> Unit,
+    onSendToChat: (String) -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -77,6 +78,7 @@ internal fun WorkbenchPaneContent(
                         onNavigateToCredentials = { showCredentials = true },
                         onNavigateBack = onClose,
                         onOpenFile = onOpenFile,
+                        onAnalyzeWithAi = onSendToChat,
                         embedded = true
                     )
                 }

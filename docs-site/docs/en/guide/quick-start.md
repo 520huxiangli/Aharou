@@ -72,6 +72,27 @@ The first-time container preparation (extracting the system, installing base too
 
 Type in the input box and hit send. The mode button on the left of the input box switches between BUILD, PLAN and AUTO — see the full documentation on the three modes for the differences.
 
+## Launching from the System
+
+Besides opening the app, two system entry points can send content or actions straight in.
+
+### Send selected text
+
+Select a piece of text in any app, and **Aharou** appears in the pop-up menu (it shows the app name, following the system language). Tap it, and the text is placed in the current session's input box and the app switches to the chat page; add a note and send.
+
+- Only the text is **placed in the input box** — nothing is written back to the other app, so the selection there is left untouched.
+- Only plain text is handled. Selections with images or rich text do not appear in the menu.
+- If the input box already holds an unsent draft, it is replaced by the selected text.
+
+### Home-screen icon shortcuts
+
+Long-press the Aharou icon on the home screen (or in the app list), and the menu offers two entries:
+
+- **New chat**: start a new session and go straight to the chat page.
+- **Start voice chat**: open the app and begin a voice call right away.
+
+Some launchers let you drag these shortcuts onto the home screen on their own.
+
 ## Useful Tips
 
 - The model selected in an empty conversation on the home page becomes the default for new conversations.

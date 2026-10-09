@@ -2,11 +2,13 @@ package com.aharou.feature.agent.domain.tool.memory
 
 import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -26,6 +28,7 @@ class MemoryTool @Inject constructor(
     private val memoryRepository: MemoryRepository,
     private val aharouMemory: com.aharou.core.memory.AharouMemoryStore,
     private val memoryTrace: MemoryTraceLog,
+    private val chatSessionDao: ChatSessionDao,
 ) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
@@ -118,6 +121,14 @@ class MemoryTool @Inject constructor(
         val scopeStr = args["scope"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
         val scope = if (scopeStr == "global") MemoryScope.GLOBAL else MemoryScope.PROJECT
 
+        // 隐身会话不写任何记忆（read/list/search 等只读操作照常放行）。
+        val ghostSessionId = context.sessionId
+        if (ghostSessionId != null && writesMemory(action, args) &&
+            GhostModeStore.isGhost(chatSessionDao, ghostSessionId)
+        ) {
+            return ToolResult.Error("当前会话处于隐身模式，本会话的任何内容都不会写入记忆。", "GHOST_MODE")
+        }
+
         return try {
             when (action) {
                 "list" -> handleList(context.projectRoot)
@@ -136,6 +147,13 @@ class MemoryTool @Inject constructor(
             FileLogger.e(TAG, "Memory 工具执行失败: ${e.message}", e)
             ToolResult.Error("记忆操作失败: ${e.message}")
         }
+    }
+
+    /** 该动作是否会写记忆（core 带 content 才写，不带 content 是读）。 */
+    private fun writesMemory(action: String, args: Map<String, JsonElement>): Boolean = when (action) {
+        "save", "edit", "delete", "log", "fact", "mindstream" -> true
+        "core" -> !args["content"]?.jsonPrimitive?.contentOrNull.isNullOrEmpty()
+        else -> false
     }
 
     private fun handleList(projectRoot: String?): ToolResult {

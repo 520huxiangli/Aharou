@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  debug 变体专属 manifest（Gradle manifest merger 会并入 debug 变体的合并结果）。
+  【不修改共享文件 app/src/main/AndroidManifest.xml】——本文件只影响 debug 构建，
+  正式 / beta 变体完全不含它，因此这份调试用 MCP server 绝不会进正式包。
+  作用：注册空壳 Provider，让 App 启动时自动拉起 DebugMcpServer。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <provider
+            android:name="com.aharou.debugmcp.DebugMcpProvider"
+            android:authorities="${applicationId}.debugmcp"
+            android:enabled="true"
+            android:exported="false" />
+
+    </application>
+
+</manifest>

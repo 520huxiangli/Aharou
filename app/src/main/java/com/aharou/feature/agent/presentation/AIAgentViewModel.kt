@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
+import android.widget.Toast
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -98,6 +99,8 @@ import com.aharou.feature.agent.presentation.component.RewindOption
 import com.aharou.feature.agent.presentation.component.expandPastePlaceholders
 import com.aharou.feature.agent.presentation.component.formatTokenCount
 import com.aharou.feature.agent.presentation.component.shouldPasteAsFile
+import com.aharou.feature.agent.presentation.notification.AgentCompletedNotifier
+import com.aharou.feature.agent.presentation.notification.AgentPermissionNotifier
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -108,6 +111,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -170,11 +174,13 @@ class AIAgentViewModel @Inject constructor(
     private val backupManager: BackupManager,
     private val mcpManager: McpManager,
     private val agentSoundSettings: AgentSoundSettingsRepository,
+    private val agentCompletedNotifier: AgentCompletedNotifier,
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val keepaliveSettings: KeepaliveSettingsRepository,
     private val subAgentEventBus: SubAgentEventBus,
     private val scheduledRunBus: ScheduledRunBus,
     private val agentNotificationCenter: AgentNotificationCenter,
+    private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
     private val todoItemDao: TodoItemDao,
@@ -388,6 +394,12 @@ class AIAgentViewModel @Inject constructor(
     internal fun addPendingAttachments(items: List<PendingUploadAttachment>) {
         if (items.isEmpty()) return
         _pendingAttachments.value = _pendingAttachments.value + items
+    }
+
+    /** 外部分享投递的附件：标记来源，切会话时不被清掉。 */
+    internal fun addSharedAttachments(items: List<PendingUploadAttachment>) {
+        if (items.isEmpty()) return
+        _pendingAttachments.value = _pendingAttachments.value + items.map { it.copy(fromShare = true) }
     }
 
     internal fun setPendingAttachments(items: List<PendingUploadAttachment>) {
@@ -1077,6 +1089,10 @@ class AIAgentViewModel @Inject constructor(
     val currentSessionMode: StateFlow<AgentMode> = currentSessionState.map { it?.mode ?: AgentMode.BUILD }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AgentMode.BUILD)
 
+    /** 当前会话是否处于隐身模式（不写历史、不写记忆，见 GhostModeStore）。 */
+    val currentSessionGhostMode: StateFlow<Boolean> = currentSessionState.map { it?.ghostMode ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     /** 当前会话的思考强度（默认 MEDIUM）。 */
     val currentSessionReasoningEffort: StateFlow<ReasoningEffort> =
         currentSessionState.map { it?.reasoningEffort ?: ReasoningEffort.DEFAULT }
@@ -1102,7 +1118,7 @@ class AIAgentViewModel @Inject constructor(
     ) { id, limitMap, selections -> Triple(id, limitMap[id] ?: defaultLimit, selections) }
         .flatMapLatest { (id, limit, selections) ->
             if (id == null) flowOf(ChatMessagesState(null, emptyList(), loaded = false))
-            else agentMessageDao.getMessagesBySessionPaged(id, limit).map { list ->
+            else messagePersistenceUseCase.messagesFlow(id, limit).map { list ->
                 ChatMessagesState(
                     sessionId = id,
                     messages = applyVariantSelection(
@@ -1382,29 +1398,6 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
-    /** App 退到后台时 Agent 完成，弹一条可点击的系统通知（标题=任务完成，正文=用户消息）。 */
-    private fun showAgentCompletedNotification(userRequest: String) {
-        val openAppIntent = PendingIntent.getActivity(
-            context,
-            0,
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(context, AGENT_COMPLETE_CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setContentTitle(context.getString(R.string.agent_complete_notification_title))
-            .setContentText(agentCompleteNotificationBody(userRequest))
-            .setContentIntent(openAppIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-        runCatching {
-            NotificationManagerCompat.from(context).notify(AGENT_COMPLETE_NOTIFICATION_ID, notification)
-        }.onFailure { FileLogger.e(TAG, "发送 agent 完成通知失败", it) }
-    }
-
     /**
      * 系统通知正文：普通用户消息直接展示；后台回调触发的轮次不裸露
      * 「[系统通知 - 非用户输入]…」内部构造文本，改为展示任务标题。
@@ -1449,10 +1442,8 @@ class AIAgentViewModel @Inject constructor(
 
         /** 附件预览的字符上限。 */
         const val PREVIEW_MAX_CHARS = 200_000
-        const val AGENT_COMPLETE_CHANNEL = "agent_complete"
         /** 记忆兑现节流：同一会话两次自动整理的最小间隔。 */
         const val MEMORY_CURATE_INTERVAL_MS = 10 * 60 * 1000L
-        const val AGENT_COMPLETE_NOTIFICATION_ID = 100
         /** wakeLock 超时保险：构建、装依赖类工具动辄十几分钟，给足 60 分钟；任务正常结束会主动释放。 */
         const val KEEPALIVE_TIMEOUT_MS = 60 * 60 * 1000L
         /** 从后台任务通知文本中提取 <title> 内容，供系统通知正文展示。 */
@@ -1475,7 +1466,16 @@ class AIAgentViewModel @Inject constructor(
         // 附件按会话隔离：用户主动切换会话时清空。原本挂在聊天面板的 collect 里，
         // 面板被销毁时清不掉，且分享投递与面板组合时序耦合，这里提到 VM 统一处理。
         viewModelScope.launch {
-            _sessionSwitchEvents.collect { _pendingAttachments.value = emptyList() }
+            _sessionSwitchEvents.collect {
+                // 分享投递进来的附件要留住：冷启动时「会话就绪」紧接着分享投递，一律清空会让
+                // 用户刚点进来的文件凭空消失（退出重进才看到）。
+                val before = _pendingAttachments.value
+                val kept = before.filter { it.fromShare }
+                _pendingAttachments.value = kept
+                if (before.size != kept.size) {
+                    FileLogger.i("ChatAttachDbg", "切会话清附件：清 ${before.size - kept.size} 项，保留分享 ${kept.size} 项")
+                }
+            }
         }
 
         // 会话就绪后接管「无会话期间」打的草稿（见 adoptPendingDraft）。
@@ -1573,6 +1573,8 @@ class AIAgentViewModel @Inject constructor(
         viewModelScope.launch {
             scheduledRunBus.requests.collect { request -> runScheduledTask(request) }
         }
+        viewModelScope.launch { awaitingPermissionSessionIds.collect { agentPermissionNotifier.sync(it) } }
+        viewModelScope.launch { agentPermissionNotifier.replies.collect { r -> enqueueAgentRequest(request = r.text, projectRoot = workspaceOf(r.sessionId), targetSessionId = r.sessionId) } }
     }
 
     /**
@@ -2146,7 +2148,7 @@ class AIAgentViewModel @Inject constructor(
                         val inForeground = ProcessLifecycleOwner.get().lifecycle.currentState
                             .isAtLeast(Lifecycle.State.STARTED)
                         if (!inForeground && agentSoundSettings.isEnabled()) {
-                            showAgentCompletedNotification(modelRequest)
+                            agentCompletedNotifier.notify(sessionId, agentCompleteNotificationBody(modelRequest))
                         }
                         // 引擎级记忆兜底：主模型当轮没调 memory 工具时，后台用轻量模型抽取沉淀。
                         // 静默失败、不进对话流；同一会话 10 分钟内不重复跑。
@@ -2223,13 +2225,9 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
-    fun resolveToolPermission(id: String, choice: PermissionChoice) {
-        toolPermissionManager.resolve(id, choice)
-    }
+    fun resolveToolPermission(id: String, choice: PermissionChoice) = toolPermissionManager.resolve(id, choice)
 
-    fun resolveUserQuestion(id: String, answer: UserQuestionAnswer) {
-        askUserQuestionManager.resolve(id, answer)
-    }
+    fun resolveUserQuestion(id: String, answer: UserQuestionAnswer) = askUserQuestionManager.resolve(id, answer)
 
     /**
      * 停止所有正在运行的 AI 会话并关闭终端标签（切换/重置容器前调用）。
@@ -2451,6 +2449,31 @@ class AIAgentViewModel @Inject constructor(
     fun setCurrentSessionId(id: String) {
         if (_currentSessionId.value == id) return
         _currentSessionId.value = id
+    }
+
+    /**
+     * 切换当前会话的隐身模式。空会话（还没建 session）点「开启」时先等当前工作区就绪，再走 [newSession] 建会话
+     * 并开启（工作区为空时 newSession 会直接返回）；远程未连接等场景等不到就弹提示，不静默。关闭时无会话可关。
+     */
+    fun setGhostMode(enabled: Boolean) {
+        val id = _currentSessionId.value
+        if (id != null) {
+            viewModelScope.launch { sessionUseCase.updateGhostMode(id, enabled) }
+            return
+        }
+        if (!enabled) return
+        viewModelScope.launch {
+            withTimeoutOrNull(3_000L) {
+                // 工作区为空时 newSession 会直接返回：先等它就绪再走既有入口建会话，随后等会话落定。
+                _currentWorkspace.first { it.isNotBlank() }
+                newSession()
+                _currentSessionId.filterNotNull().first()
+            }
+            // 取最新值而非等待结果：期间若有别的链路落定会话，也据它开启，避免对过期 id 操作。
+            val sid = _currentSessionId.value
+            if (sid == null) Toast.makeText(context, R.string.ghost_mode_session_not_ready, Toast.LENGTH_SHORT).show()
+            else sessionUseCase.updateGhostMode(sid, true)
+        }
     }
 
     fun setSessionMode(mode: AgentMode) {
@@ -3004,7 +3027,7 @@ class AIAgentViewModel @Inject constructor(
      * 助手行专门承载它——它不渲染气泡、也不参与上下文回放，只用于重载后恢复错误横幅与重试入口。
      */
     private suspend fun persistFailureMessage(sessionId: String, error: String) {
-        if (error.isBlank()) return
+        if (error.isBlank() || sessionUseCase.isGhostSession(sessionId)) return
         runCatching {
             val last = agentMessageDao.getMessagesBySessionOnce(sessionId).lastOrNull()
             if (last != null && last.role == MessageRole.ASSISTANT.name) {

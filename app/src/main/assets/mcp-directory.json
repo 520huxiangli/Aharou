@@ -1,0 +1,191 @@
+{
+  "categories": [
+    { "id": "docs", "name": { "zh": "文档检索", "en": "Docs & Search" } },
+    { "id": "dev", "name": { "zh": "开发工具", "en": "Developer Tools" } },
+    { "id": "productivity", "name": { "zh": "效率协作", "en": "Productivity" } },
+    { "id": "cloud", "name": { "zh": "云与数据", "en": "Cloud & Data" } },
+    { "id": "finance", "name": { "zh": "支付财务", "en": "Payments & Finance" } }
+  ],
+  "servers": [
+    {
+      "id": "context7",
+      "title": "Context7",
+      "description": {
+        "zh": "为模型注入最新、按版本区分的库与框架文档和代码示例。无需鉴权即可试用；在请求头填 CONTEXT7_API_KEY 可提升额度。",
+        "en": "Feed up-to-date, version-specific library and framework docs and code examples into prompts. Works without auth; add a CONTEXT7_API_KEY header for higher limits."
+      },
+      "url": "https://mcp.context7.com/mcp",
+      "auth": "optional",
+      "categories": ["docs", "dev"],
+      "docsUrl": "https://context7.com/docs/resources/all-clients"
+    },
+    {
+      "id": "deepwiki",
+      "title": "DeepWiki",
+      "description": {
+        "zh": "用自然语言查询任意公开 GitHub 仓库的代码结构与文档（Devin Wiki）。免费，无需鉴权。",
+        "en": "Ask questions about any public GitHub repository's code and docs (Devin Wiki). Free and no authentication required."
+      },
+      "url": "https://mcp.deepwiki.com/mcp",
+      "auth": "none",
+      "categories": ["docs", "dev"],
+      "docsUrl": "https://docs.devin.ai/work-with-devin/deepwiki-mcp"
+    },
+    {
+      "id": "exa",
+      "title": "Exa",
+      "description": {
+        "zh": "面向 AI 的网页搜索与内容抓取。匿名可用但有限速；填 API Key（Authorization: Bearer 或 x-api-key 请求头）可提升额度。",
+        "en": "AI-oriented web search and content fetching. Usable anonymously with rate limits; add an API key (Authorization: Bearer or x-api-key header) for higher limits."
+      },
+      "url": "https://mcp.exa.ai/mcp",
+      "auth": "optional",
+      "categories": ["docs"],
+      "docsUrl": "https://exa.ai/mcp"
+    },
+    {
+      "id": "github",
+      "title": "GitHub",
+      "description": {
+        "zh": "读写仓库、Issue、PR、Actions 等。用 GitHub PAT 作为 Bearer 令牌即可接入。",
+        "en": "Read and write repositories, issues, pull requests, Actions and more. Works with a GitHub PAT sent as a bearer token."
+      },
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": "token",
+      "categories": ["dev"],
+      "docsUrl": "https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/use-the-github-mcp-server"
+    },
+    {
+      "id": "cloudflare-docs",
+      "title": "Cloudflare Docs",
+      "description": {
+        "zh": "检索 Cloudflare 官方文档，供 AI 参考最新的 API 与配置用法。无需鉴权。",
+        "en": "Look up Cloudflare's official documentation so AI can reference current APIs and configuration. No authentication required."
+      },
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "auth": "none",
+      "categories": ["docs", "cloud"],
+      "docsUrl": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/"
+    },
+    {
+      "id": "cloudflare",
+      "title": "Cloudflare",
+      "description": {
+        "zh": "读取并管理你的 Cloudflare 账户配置（Workers、DNS、安全等）。需通过 OAuth 授权。",
+        "en": "Read and manage your Cloudflare account configuration (Workers, DNS, security and more). Requires OAuth authorization."
+      },
+      "url": "https://mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "categories": ["cloud"],
+      "docsUrl": "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/"
+    },
+    {
+      "id": "neon",
+      "title": "Neon",
+      "description": {
+        "zh": "用自然语言管理 Neon Postgres：建库、开分支、跑 SQL。支持 OAuth 或 Neon API Key（Authorization: Bearer）。",
+        "en": "Manage Neon Postgres with natural language: projects, branches and SQL. Supports OAuth or a Neon API key via Authorization: Bearer."
+      },
+      "url": "https://mcp.neon.tech/mcp",
+      "auth": "token",
+      "categories": ["cloud"],
+      "docsUrl": "https://neon.tech/docs/ai/neon-mcp-server"
+    },
+    {
+      "id": "notion",
+      "title": "Notion",
+      "description": {
+        "zh": "让 AI 检索并读写你的 Notion 工作区内容。官方托管服务，需通过 OAuth 授权。",
+        "en": "Let AI search, read and edit your Notion workspace. Hosted by Notion and requires OAuth authorization."
+      },
+      "url": "https://mcp.notion.com/mcp",
+      "auth": "oauth",
+      "categories": ["productivity"],
+      "docsUrl": "https://developers.notion.com/guides/mcp/get-started-with-mcp"
+    },
+    {
+      "id": "linear",
+      "title": "Linear",
+      "description": {
+        "zh": "查询与管理 Linear 的 Issue、项目和评论。支持 OAuth，也可直接用 Linear API Key 作为 Bearer 令牌。",
+        "en": "Find, create and update Linear issues, projects and comments. Supports OAuth, or a Linear API key as a bearer token."
+      },
+      "url": "https://mcp.linear.app/mcp",
+      "auth": "token",
+      "categories": ["productivity", "dev"],
+      "docsUrl": "https://linear.app/docs/mcp"
+    },
+    {
+      "id": "atlassian",
+      "title": "Atlassian",
+      "description": {
+        "zh": "接入 Jira、Confluence、Bitbucket 等 Atlassian 云产品，支持 OAuth 2.1 或 API Token。",
+        "en": "Connect Jira, Confluence, Bitbucket and other Atlassian Cloud products. Supports OAuth 2.1 or an API token."
+      },
+      "url": "https://mcp.atlassian.com/v2/mcp",
+      "auth": "token",
+      "categories": ["productivity", "dev"],
+      "docsUrl": "https://atlassian.github.io/atlassian-mcp-server"
+    },
+    {
+      "id": "asana",
+      "title": "Asana",
+      "description": {
+        "zh": "读写 Asana 的任务、项目与工作区数据。需先在 Asana 控制台注册 OAuth 应用，其 V2 服务不支持动态客户端注册。",
+        "en": "Read and write Asana tasks, projects and workspace data. Requires an OAuth app registered in the Asana console; the V2 server does not support dynamic client registration."
+      },
+      "url": "https://mcp.asana.com/v2/mcp",
+      "auth": "oauth",
+      "categories": ["productivity"],
+      "docsUrl": "https://developers.asana.com/docs/using-asanas-mcp-server"
+    },
+    {
+      "id": "sentry",
+      "title": "Sentry",
+      "description": {
+        "zh": "检索错误、分析性能、排查线上问题。官方托管服务，需通过 OAuth 授权。",
+        "en": "Search errors, analyze performance and triage production issues. Hosted by Sentry and requires OAuth authorization."
+      },
+      "url": "https://mcp.sentry.dev/mcp",
+      "auth": "oauth",
+      "categories": ["dev"],
+      "docsUrl": "https://mcp.sentry.dev/"
+    },
+    {
+      "id": "figma",
+      "title": "Figma",
+      "description": {
+        "zh": "让 AI 读取 Figma 设计上下文，并可写回画布。官方托管服务，需通过 OAuth 授权。",
+        "en": "Give AI access to Figma design context and let it write back to the canvas. Hosted by Figma and requires OAuth authorization."
+      },
+      "url": "https://mcp.figma.com/mcp",
+      "auth": "oauth",
+      "categories": ["productivity", "dev"],
+      "docsUrl": "https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server"
+    },
+    {
+      "id": "stripe",
+      "title": "Stripe",
+      "description": {
+        "zh": "让 AI 调用 Stripe API 并检索 Stripe 文档。优先 OAuth；不支持 OAuth 的客户端可用受限 API Key 作为 Bearer 令牌。",
+        "en": "Let AI call the Stripe API and search Stripe docs. OAuth is preferred; clients without OAuth can use a restricted API key as a bearer token."
+      },
+      "url": "https://mcp.stripe.com",
+      "auth": "token",
+      "categories": ["finance"],
+      "docsUrl": "https://docs.stripe.com/mcp"
+    },
+    {
+      "id": "paypal",
+      "title": "PayPal",
+      "description": {
+        "zh": "用自然语言处理 PayPal 发票、订单等业务。官方托管服务，需通过 OAuth 授权。",
+        "en": "Handle PayPal invoices, orders and other business tasks with natural language. Hosted by PayPal and requires OAuth authorization."
+      },
+      "url": "https://mcp.paypal.com",
+      "auth": "oauth",
+      "categories": ["finance"],
+      "docsUrl": "https://developer.paypal.com/tools/mcp-server"
+    }
+  ]
+}

@@ -12,7 +12,9 @@ data class McpServerConfig(
     val args: List<String> = emptyList(),
     val env: Map<String, String> = emptyMap(),
     val enabled: Boolean = true,
-    val disabledTools: Set<String> = emptySet()
+    val disabledTools: Set<String> = emptySet(),
+    // OAuth 授权配置（仅远程 HTTP 形态用）；为 null 表示该 server 不走 OAuth。旧配置无此块时保持 null。
+    val oauth: McpOAuthConfig? = null
 ) {
     val isStdio: Boolean get() = !command.isNullOrBlank()
 

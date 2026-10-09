@@ -189,6 +189,10 @@ class ContextCompactor @Inject constructor(
         currentInputTokens: Int = 0,
         onEvent: suspend (AgentEvent) -> Unit = {}
     ): CompactionResult {
+        // 隐身会话的消息只在内存、库里没有可标记压缩的行，压缩既无意义又会把摘要写进库，直接跳过。
+        if (sessionId != null && messagePersistenceUseCase.isGhost(sessionId)) {
+            return CompactionResult(messages, compacted = false)
+        }
         // 组装、token 估算、分块切分都是纯 CPU 活，历史长时在主线程上跑会明显掉帧；整段挑到 Default。
         // 事件回调要放回调用方原本的上下文（去掉 Job 重建），否则 CompactionFinished 之类的
         // UI 更新会落到别的作用域里。

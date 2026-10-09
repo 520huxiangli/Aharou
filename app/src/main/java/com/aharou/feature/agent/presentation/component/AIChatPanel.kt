@@ -485,6 +485,7 @@ fun AIChatPanel(
     val agentState by viewModel.agentState.collectAsStateWithLifecycle()
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
     val messages = messagesState.messages
+    val ghostMode by viewModel.currentSessionGhostMode.collectAsStateWithLifecycle()
 
     // [Aharou] Aharou Computer：点工具行掀开"电脑"详情面板
     val computerOpenTarget by ToolComputerSignal.target.collectAsStateWithLifecycle()
@@ -619,7 +620,7 @@ fun AIChatPanel(
         sharedIntakeHolder.pending.collect { items ->
             if (items.isNotEmpty()) {
                 val taken = sharedIntakeHolder.consume()
-                viewModel.addPendingAttachments(taken)
+                viewModel.addSharedAttachments(taken)
                 FileLogger.i("ChatAttachDbg", "分享并入 ${taken.size} 项，现 ${viewModel.pendingAttachments.value.size} 项")
             }
         }
@@ -1476,6 +1477,8 @@ fun AIChatPanel(
         ) {
             // 内容层：消息列表延伸到屏幕底部，输入框悬浮其上，滚动时卡片可滑入输入框后面
             Column(modifier = Modifier.fillMaxSize()) {
+            GhostModeIndicator(isGhost = ghostMode, onToggle = viewModel::setGhostMode)
+            if (ghostMode) GhostModeBanner()
             Box(modifier = Modifier.weight(1f)) {
                 if (!messagesReady) {
                     // 远程模式连接未就绪时显示连接状态占位，避免空白或旧工作区记录闪烁
@@ -1938,9 +1941,9 @@ fun AIChatPanel(
         }
     }
 
-        // Dialog 是独立 window、不占父布局尺寸，挂在 Scaffold 之后即可覆盖整屏 ——
-        // 平板双栏下不会只盖住聊天列，也不会被 MainActivity 画在最上层的全局背景水印压住。
+        // Dialog 独立 window，挂 Scaffold 之后可覆盖整屏；平板双栏下也盖住聊天列，不被全局水印压住。
         ImageViewerHost(state = imageViewerState, load = chatImageLoad)
+        ArtifactPreviewStateHost() // 产物预览（HTML/SVG）：全屏宿主挂主窗口，避开独立 sheet 窗口的 WebView 合成问题
     }
 }
 

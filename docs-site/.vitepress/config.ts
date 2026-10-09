@@ -63,7 +63,8 @@ export default defineConfig({
             {
               text: 'Core Workflows',
               items: [
-                { text: 'Chat Interface', link: '/en/guide/chat' }
+                { text: 'Chat Interface', link: '/en/guide/chat' },
+                { text: 'Home-screen Widget', link: '/en/guide/widget' }
               ]
             },
             {
@@ -150,7 +151,8 @@ export default defineConfig({
             { text: '内置浏览器', link: '/guide/browser' },
             { text: '文件浏览与代码编辑', link: '/guide/files' },
             { text: 'Git 版本管理', link: '/guide/git' },
-            { text: '平板与大屏适配', link: '/guide/tablet' }
+            { text: '平板与大屏适配', link: '/guide/tablet' },
+            { text: '桌面小组件', link: '/guide/widget' }
           ]
         },
         {

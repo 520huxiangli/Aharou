@@ -3,9 +3,11 @@ package com.aharou.feature.agent.data.local.task
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.AgentTaskDao
+import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.data.local.entity.AgentTaskEntity
 import com.aharou.feature.agent.data.local.entity.AgentTaskStatus
+import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
@@ -28,7 +30,8 @@ import javax.inject.Singleton
 class SubAgentTaskTracker @Inject constructor(
     private val agentTaskDao: AgentTaskDao,
     private val agentMessageDao: AgentMessageDao,
-    private val eventBus: SubAgentEventBus
+    private val eventBus: SubAgentEventBus,
+    private val chatSessionDao: ChatSessionDao
 ) {
     companion object {
         private const val TAG = "SubAgentTaskTracker"
@@ -82,6 +85,8 @@ class SubAgentTaskTracker @Inject constructor(
     }
 
     private suspend fun handleEvent(event: SubAgentEvent) {
+        // 隐身会话派生的子代理任务不登记：instruction 是任务指令，落库会把隐身内容漏出去。
+        if (GhostModeStore.isGhost(chatSessionDao, event.parentSessionId)) return
         when (event.type) {
             SubAgentEventType.SPAWNED -> onCreate(event)
             SubAgentEventType.COMPLETED -> onTerminal(event, AgentTaskStatus.COMPLETED, null)

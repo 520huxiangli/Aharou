@@ -2,9 +2,11 @@ package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.prompt.PromptFileResolver
 import com.aharou.feature.agent.domain.provider.AIProvider
+import com.aharou.feature.agent.domain.session.GhostModeStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -34,6 +36,7 @@ class MemoryCurator @Inject constructor(
     private val memoryRepository: MemoryRepository,
     private val promptFileResolver: PromptFileResolver,
     private val memoryTrace: MemoryTraceLog,
+    private val chatSessionDao: ChatSessionDao,
 ) {
     /** 提示词文件名，与 [PromptFileResolver.resolve] 的路径约定一致。 */
     private fun prompt(): String = promptFileResolver.resolve("agent/memory-curator.md")
@@ -50,6 +53,8 @@ class MemoryCurator @Inject constructor(
         projectRoot: String?,
         transcript: String,
     ): Int = runCatching {
+        // 隐身会话不自动沉淀记忆（主模型经 memory 工具写入的路径已在 MemoryTool 拦截）。
+        if (GhostModeStore.isGhost(chatSessionDao, sessionId)) return@runCatching 0
         if (transcript.isBlank()) return@runCatching 0
         val systemPrompt = prompt().replace(LEADING_COMMENT, "").trim()
         if (systemPrompt.isEmpty()) return@runCatching 0

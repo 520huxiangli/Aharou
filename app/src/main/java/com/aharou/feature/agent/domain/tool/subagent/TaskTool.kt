@@ -1,11 +1,11 @@
 package com.aharou.feature.agent.domain.tool.subagent
 
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ReasoningEffort
+import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -59,7 +59,7 @@ import javax.inject.Inject
 class TaskTool @Inject constructor(
     private val sessionUseCase: SessionUseCase,
     private val chatSessionDao: ChatSessionDao,
-    private val agentMessageDao: AgentMessageDao,
+    private val messagePersistenceUseCase: MessagePersistenceUseCase,
     private val eventBus: SubAgentEventBus,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val aiProviderRepository: AIProviderRepository,
@@ -350,7 +350,7 @@ class TaskTool @Inject constructor(
             return ToolResult.Error("只能读取当前会话派生的子代理", "NOT_YOUR_SUBAGENT")
         }
 
-        val messages = agentMessageDao.getMessagesBySessionOnce(subSessionId)
+        val messages = messagePersistenceUseCase.getMessagesOnce(subSessionId)
         // 取最后一条有内容的助手回复（跳过 reasoning-only 的中间消息）
         val lastAssistant = messages.lastOrNull {
             it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank()

@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
@@ -41,15 +42,19 @@ import com.aharou.feature.agent.domain.mcp.McpScope
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.mcp.McpServerEntry
 import com.aharou.feature.agent.domain.mcp.McpServerStatus
+import com.aharou.feature.agent.domain.mcp.McpOAuthStatus
+import com.aharou.feature.agent.domain.mcp.oauthStatusOf
+import dagger.hilt.android.EntryPointAccessors
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Box
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Terminal
 import com.aharou.R
 
 /**
  * MCP 二级页：与提供商/默认模型一致的 iOS 分组列表。
- * 白色分组卡片内每台 server 一行，两行布局（名称+状态 / 类型+摘要），支持左滑删除。
+ * 顶部是「浏览连接器」入口；白色分组卡片内每台 server 一行，两行布局（名称+状态 / 类型+摘要），支持左滑删除。
  */
 @Composable
 internal fun McpSection(
@@ -59,69 +64,87 @@ internal fun McpSection(
     onReload: () -> Unit,
     onToggle: (String, Boolean, McpScope) -> Unit,
     onEdit: (McpServerEntry) -> Unit,
-    onDelete: (String, McpScope) -> Unit
+    onDelete: (String, McpScope) -> Unit,
+    onBrowseDirectory: () -> Unit
 ) {
-    if (entries.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(vertical = 48.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(Spacing.md)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(Radius.lg)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        FeatherIcons.Terminal,
-                        contentDescription = null,
-                        modifier = Modifier.size(28.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Text(
-                    text = stringResource(R.string.mcp_empty),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = stringResource(R.string.mcp_empty_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        return
+    val context = LocalContext.current
+    val oauthController = remember(context) {
+        EntryPointAccessors.fromApplication(context.applicationContext, McpOAuthEntryPoint::class.java)
+            .mcpOAuthController()
     }
-
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = Spacing.lg)
-            .padding(bottom = Spacing.xl),
+            .padding(top = Spacing.sm, bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
         SettingsGroup {
-            entries.forEachIndexed { index, entry ->
-                if (index > 0) {
-                    SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Globe,
+                title = stringResource(R.string.mcp_browse_directory),
+                subtitle = stringResource(R.string.mcp_browse_directory_hint),
+                onClick = onBrowseDirectory
+            )
+        }
+
+        if (entries.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 48.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(Radius.lg)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            FeatherIcons.Terminal,
+                            contentDescription = null,
+                            modifier = Modifier.size(28.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.mcp_empty),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.mcp_empty_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                McpServerRow(
-                    server = entry.server,
-                    scope = entry.scope,
-                    status = statuses.firstOrNull { it.name == entry.server.name },
-                    onClick = { onEdit(entry) },
-                    onDelete = { onDelete(entry.server.name, entry.scope) }
-                )
+            }
+        } else {
+            SettingsGroup {
+                entries.forEachIndexed { index, entry ->
+                    if (index > 0) {
+                        SettingsDivider()
+                    }
+                    McpServerRow(
+                        server = entry.server,
+                        scope = entry.scope,
+                        status = statuses.firstOrNull { it.name == entry.server.name },
+                        onClick = { onEdit(entry) },
+                        onDelete = { onDelete(entry.server.name, entry.scope) },
+                        onAuthorize = { oauthController.open(entry) }
+                    )
+                }
             }
         }
+    }
+    McpOAuthHost(oauthController)
     }
 }
 
@@ -134,7 +157,8 @@ internal fun McpServerRow(
     scope: McpScope,
     status: McpServerStatus?,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAuthorize: () -> Unit = {}
 ) {
     val isConnected = server.enabled && status?.state == McpServerStatus.State.CONNECTED
     val light = MaterialTheme.colorScheme.background.luminance() > 0.5f
@@ -229,6 +253,22 @@ internal fun McpServerRow(
                         textColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
                     )
+                    // OAuth server：状态胶囊可点，直接打开授权面板（未授权 / 已授权 / 已过期）。
+                    if (server.oauth != null) {
+                        val oauthStatus = oauthStatusOf(server.oauth)
+                        val oauthColor = when (oauthStatus) {
+                            McpOAuthStatus.AUTHORIZED -> MaterialTheme.colorScheme.tertiary
+                            McpOAuthStatus.EXPIRED -> MaterialTheme.colorScheme.error
+                            McpOAuthStatus.NOT_AUTHORIZED -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        McpPill(
+                            text = stringResource(R.string.mcp_oauth_badge) + " " +
+                                stringResource(oauthPillStatusRes(oauthStatus)),
+                            textColor = oauthColor,
+                            backgroundColor = oauthColor.copy(alpha = 0.12f),
+                            modifier = Modifier.clickable { onAuthorize() }
+                        )
+                    }
                     if (infoText != null) {
                         McpPill(
                             text = infoText,
@@ -257,6 +297,13 @@ internal fun McpServerRow(
             )
         }
     }
+}
+
+/** OAuth 状态胶囊文案（与授权面板共用同一组状态字符串）。 */
+private fun oauthPillStatusRes(status: McpOAuthStatus): Int = when (status) {
+    McpOAuthStatus.NOT_AUTHORIZED -> R.string.mcp_oauth_status_not_authorized
+    McpOAuthStatus.AUTHORIZED -> R.string.mcp_oauth_status_authorized
+    McpOAuthStatus.EXPIRED -> R.string.mcp_oauth_status_expired
 }
 
 /** 紧凑 pill 标签：胶囊背景 + 小字，用于状态/类型/摘要。 */

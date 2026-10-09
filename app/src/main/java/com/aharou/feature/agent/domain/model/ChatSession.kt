@@ -31,5 +31,7 @@ data class ChatSession(
     /** 子代理会话：父会话 id；null 表示普通根会话。 */
     val parentId: String? = null,
     /** 子代理会话：派生子代理的类型（如 coder / researcher）；null 表示普通根会话。 */
-    val subagentType: String? = null
+    val subagentType: String? = null,
+    /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
+    val ghostMode: Boolean = false
 )

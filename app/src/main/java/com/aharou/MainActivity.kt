@@ -126,14 +126,21 @@ import com.aharou.feature.terminal.domain.TerminalKeepaliveService
 import com.aharou.feature.terminal.presentation.TerminalViewModel
 import com.aharou.feature.terminal.presentation.component.TerminalScreen
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
+import com.aharou.feature.widget.WidgetActions
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import com.aharou.R
+
+/** 桌面快捷方式的自定义 action，需与 res/xml/shortcuts.xml 及清单里的 intent-filter 保持一致。 */
+private const val ACTION_NEW_CHAT = "com.aharou.intent.NEW_CHAT"
+private const val ACTION_START_VOICE = "com.aharou.intent.START_VOICE"
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -187,6 +194,12 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var onboardingRepository: com.aharou.feature.onboarding.data.OnboardingRepository
 
+    /** 划词 / 桌面快捷方式等外部入口的一次性 Intent，交给 AppNavigation 落到具体界面。 */
+    private val pendingExternalIntent = MutableStateFlow<Intent?>(null)
+
+    /** 快捷方式「开始语音通话」：延到 onResume（Activity 已可见）再启动 microphone 型前台服务。 */
+    private var pendingStartVoice = false
+
     override fun attachBaseContext(newBase: android.content.Context) {
         // 在 Activity 创建前同步应用用户选择的语言，确保冷启动也生效。
         // Hilt 尚未注入，直接从 SharedPreferences 同步读取。
@@ -208,6 +221,7 @@ class MainActivity : ComponentActivity() {
         // singleTop 复用本实例时 getIntent() 还指向旧的，必须显式接过来。
         setIntent(intent)
         handleShareIntent(intent)
+        handleLaunchIntent(intent)
     }
 
     /**
@@ -281,6 +295,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * 接收划词（ACTION_PROCESS_TEXT）与桌面快捷方式的自定义 action。
+     *
+     * 划词文本与「新建对话」交给 [AppNavigation]——那里才有 NavController 与 Activity 级
+     * [AIAgentViewModel]，能把文本落进聊天输入框、把页面切到聊天页。「开始语音通话」只置标志，
+     * 等 onResume（Activity 可见）后再启动。
+     */
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            ACTION_START_VOICE -> pendingStartVoice = true
+            Intent.ACTION_PROCESS_TEXT, ACTION_NEW_CHAT,
+            WidgetActions.ACTION_OPEN_CHAT -> pendingExternalIntent.value = intent
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 从冷启动闪屏主题恢复为应用主主题
         setTheme(R.style.Theme_AICode)
@@ -290,6 +320,9 @@ class MainActivity : ComponentActivity() {
 
         // 冷启动若由分享拉起，直接导入附件（singleTop 复用时走 [onNewIntent]）。
         handleShareIntent(intent)
+        // 冷启动若由划词 / 快捷方式拉起，同样在这里接住；recreate（如切语言）时 getIntent() 仍是
+        // 同一个，靠 savedInstanceState 判断，避免每次重建都重复触发。
+        if (savedInstanceState == null) handleLaunchIntent(intent)
 
         // 监听语言偏好变化，更新 Application/Activity locale 后重建。
         lifecycleScope.launch {
@@ -357,7 +390,10 @@ class MainActivity : ComponentActivity() {
                     val bgPath by backgroundSettings.imagePathFlow.collectAsStateWithLifecycle(initialValue = null)
                     val bgAlpha by backgroundSettings.alphaFlow.collectAsStateWithLifecycle(initialValue = BackgroundSettingsRepository.DEFAULT_ALPHA)
                     Box(modifier = Modifier.fillMaxSize()) {
-                        AppNavigation(onboardingRepository = onboardingRepository)
+                        AppNavigation(
+                            onboardingRepository = onboardingRepository,
+                            pendingExternalIntent = pendingExternalIntent
+                        )
                         // 全局凭据弹窗：覆盖所有页面，命令行 git 缺凭据在任意页面都能弹。
                         com.aharou.feature.credentials.presentation.component.GlobalCredentialDialogHost(
                             bridge = credentialRequestBridge
@@ -427,6 +463,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // 快捷方式「开始语音通话」：确认 Activity 已可见（onResume）再启动，否则 Android 14+
+        // 会拒绝启动 microphone 型前台服务。放在通话唤醒补启之后，让用户显式发起的通话优先。
+        if (pendingStartVoice) {
+            pendingStartVoice = false
+            VoiceCallService.start(this)
+        }
     }
 
     override fun onDestroy() {
@@ -456,7 +498,8 @@ private const val MAX_PANE_SPLIT = 0.7f
  */
 @Composable
 fun AppNavigation(
-    onboardingRepository: com.aharou.feature.onboarding.data.OnboardingRepository
+    onboardingRepository: com.aharou.feature.onboarding.data.OnboardingRepository,
+    pendingExternalIntent: MutableStateFlow<Intent?>
 ) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -512,6 +555,57 @@ fun AppNavigation(
         // 远程模式连接未就绪时 currentWorkspace 为 null，不触发 setWorkspace，避免空路径点燃 session 加载
         val path = currentWorkspace?.path ?: return@LaunchedEffect
         agentViewModel.setWorkspace(path)
+    }
+
+    // 外部入口（划词 / 桌面快捷方式）投递过来的一次性 Intent：这里才有 NavController 与
+    // Activity 级 agentViewModel，把请求落到具体界面。
+    LaunchedEffect(Unit) {
+        pendingExternalIntent.collect { intent ->
+            pendingExternalIntent.value = null
+            if (intent == null) return@collect
+            when (intent.action) {
+                Intent.ACTION_PROCESS_TEXT -> {
+                    val text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString().orEmpty()
+                    FileLogger.i(
+                        "MainActivity",
+                        "划词入口：len=${text.length} " +
+                            "readonly=${intent.getBooleanExtra(Intent.EXTRA_PROCESS_TEXT_READONLY, false)}"
+                    )
+                    // 本轮只做「把文本送进聊天输入框」，不回填给原 App。
+                    if (text.isNotBlank()) agentViewModel.updateInputDraft(text)
+                    navController.navigate("chat") {
+                        launchSingleTop = true
+                        popUpTo("chat") { inclusive = false }
+                    }
+                }
+
+                ACTION_NEW_CHAT -> {
+                    // 等当前工作区就绪：newSession() 在工作区为空时直接返回，冷启动会落空。
+                    var waited = 0
+                    while (currentWorkspace?.path.isNullOrBlank() && waited < 3000) {
+                        delay(50)
+                        waited += 50
+                    }
+                    agentViewModel.newSession()
+                    navController.navigate("chat") {
+                        launchSingleTop = true
+                        popUpTo("chat") { inclusive = false }
+                    }
+                }
+
+                WidgetActions.ACTION_OPEN_CHAT -> {
+                    // 桌面小组件的「点会话」：切到该会话再进聊天页。
+                    val sessionId = WidgetActions.sessionId(intent)
+                    if (sessionId != null) {
+                        agentViewModel.selectSession(sessionId)
+                        navController.navigate("chat") {
+                            launchSingleTop = true
+                            popUpTo("chat") { inclusive = false }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // 侧边栏按文件夹（工作区）分成两层，要跨工作区的会话，不能只取当前工作区那份。
@@ -846,6 +940,7 @@ fun AppNavigation(
                             onAddSelectionToInput = { text ->
                                 agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
                             },
+                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) },
                             modifier = Modifier.weight(1f - paneSplit)
                         )
                     }
@@ -966,7 +1061,8 @@ fun AppNavigation(
                     viewModel = gitViewModel,
                     onNavigateToCredentials = { navController.navigate("credentials") },
                     onNavigateBack = { navController.popBackStack() },
-                    onOpenFile = { path -> openFile(path, 0, false) }
+                    onOpenFile = { path -> openFile(path, 0, false) },
+                    onAnalyzeWithAi = { text -> agentViewModel.updateInputDraft(text) }
                 )
             }
             composable("credentials") {

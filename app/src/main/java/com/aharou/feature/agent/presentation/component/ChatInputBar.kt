@@ -96,6 +96,7 @@ import com.aharou.core.theme.Brand
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.util.FileLogger
 import com.aharou.core.ui.rememberImeBottomInset
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
@@ -399,6 +400,9 @@ internal fun ChatInputBar(
             // 插入/移除会同时改动三个修饰符的尺寸计算，时序稍有偏差就是「占位对了、
             // 屏幕上一片空白」，且时好时坏。参照 Operit（AgentChatInputSection）：
             // 附件行与输入框卡片是兄弟节点，高度由外层自然流动。
+            LaunchedEffect(pendingAttachments.size) {
+                FileLogger.i("ChatInputDbg", "输入栏附件 ${pendingAttachments.size} 项")
+            }
             if (pendingAttachments.isNotEmpty()) {
                 PendingAttachmentPreviewList(
                     attachments = pendingAttachments,

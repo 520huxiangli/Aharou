@@ -31,6 +31,8 @@ internal data class PendingUploadAttachment(
     val mimeType: String,
     val sizeBytes: Long,
     val image: AgentImage? = null,
+    /** 来自外部分享（ACTION_SEND / VIEW）：切会话时保留，避免刚投进来就被清掉。 */
+    val fromShare: Boolean = false,
 )
 
 internal val PendingUploadAttachment.isImage: Boolean

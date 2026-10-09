@@ -2,7 +2,6 @@ package com.aharou.feature.agent.domain.runner
 
 import android.content.Context
 import com.aharou.R
-import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
@@ -79,7 +78,6 @@ class AgentTurnRunner @Inject constructor(
     private val agentWorkflow: AgentWorkflow,
     private val toolRegistry: ToolRegistry,
     private val chatSessionDao: ChatSessionDao,
-    private val agentMessageDao: AgentMessageDao,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
     private val modelReasoningEffortRepository: ModelReasoningEffortRepository,
     private val sessionUseCase: SessionUseCase,
@@ -150,6 +148,8 @@ class AgentTurnRunner @Inject constructor(
         val isFirst = history.isEmpty()
 
         val userMsgId = UUID.randomUUID().toString()
+        // 隐身会话不建检查点、不动标题：检查点会存下用户提问片段、标题会写进会话行，都属内容外泄。
+        val ghost = messagePersistenceUseCase.isGhost(sessionId)
         if (!turn.isAutoTrigger) {
             messagePersistenceUseCase.persist(
                 sessionId,
@@ -158,12 +158,14 @@ class AgentTurnRunner @Inject constructor(
                 id = userMsgId,
                 attachments = turn.inputAttachments,
             )
-            checkpointManager.createCheckpoint(sessionId, userMsgId, turn.text)
-            if (isFirst && !turn.skipTitleUpdate) {
-                sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(turn.text))
-                // 后台异步用 LLM 生成更贴切的标题替换临时标题；失败或取不到时保留临时标题
-                scope.launch {
-                    agentWorkflow.generateTitle(sessionId, turn.text)?.let { sessionUseCase.updateTitle(sessionId, it) }
+            if (!ghost) {
+                checkpointManager.createCheckpoint(sessionId, userMsgId, turn.text)
+                if (isFirst && !turn.skipTitleUpdate) {
+                    sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(turn.text))
+                    // 后台异步用 LLM 生成更贴切的标题替换临时标题；失败或取不到时保留临时标题
+                    scope.launch {
+                        agentWorkflow.generateTitle(sessionId, turn.text)?.let { sessionUseCase.updateTitle(sessionId, it) }
+                    }
                 }
             }
         } else {
@@ -343,7 +345,7 @@ class AgentTurnRunner @Inject constructor(
     private suspend fun emitSubAgentFinished(sessionId: String, type: SubAgentEventType, error: String?) {
         val parentId = sessionUseCase.getSessionById(sessionId)?.parentId ?: return
         val result = runCatching {
-            SubAgentResultInspector.inspect(sessionId, agentMessageDao.getMessagesBySessionOnce(sessionId))
+            SubAgentResultInspector.inspect(sessionId, messagePersistenceUseCase.getMessagesOnce(sessionId))
         }.getOrNull()
         val runFailed = !error.isNullOrBlank()
         val detail = buildString {
