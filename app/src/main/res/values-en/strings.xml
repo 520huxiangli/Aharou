@@ -620,6 +620,7 @@
     <string name="file_browser_delete_file_confirm">Delete file "%1$s"?</string>
     <string name="file_browser_delete_folder_confirm">Delete folder "%1$s" and all of its contents?</string>
     <string name="file_browser_create_failed">Create failed: name may already exist or the folder is not writable</string>
+    <string name="file_browser_deleting">Deleting...</string>
     <string name="file_browser_rename_failed">Rename failed: the name may already exist</string>
     <string name="file_browser_delete_failed">Delete failed</string>
     <string name="file_browser_paste_here">Paste here</string>
@@ -903,6 +904,7 @@
     <string name="git_tab_branches">Branches</string>
     <string name="git_tab_commits">Commits</string>
     <string name="git_computing_diff">Computing diff...</string>
+    <string name="git_clone_finalizing">Finalizing...</string>
     <string name="git_status_clean">Working tree clean, no changes</string>
     <string name="git_commit_needs_identity">No commit identity configured. Set your name and email in “Credentials &amp; Identity”.</string>
     <string name="git_commit_needs_identity_action">Tap here to fill in →</string>
@@ -1961,11 +1963,14 @@
 <string name="filebrowser_sort_name">Name</string>
 <string name="filebrowser_sort_size">Size</string>
 <string name="filebrowser_title">Files</string>
+<string name="computer_params">Params</string>
+<string name="computer_result">Result</string>
 <string name="filepreview_apk_install">Install</string>
 <string name="filepreview_apk_unreadable">Package details could not be read.</string>
 <string name="filepreview_image_decode_error">Unable to decode image</string>
 <string name="filepreview_image_load_error">Failed to load image</string>
 <string name="filepreview_loading">Loading…</string>
+<string name="filepreview_error_read">Failed to read file</string>
 <string name="filepreview_loading_archive">Reading archive…</string>
 <string name="filepreview_loading_pdf">Loading PDF…</string>
 <string name="filepreview_office_subtitle">Office documents preview in an external viewer.</string>

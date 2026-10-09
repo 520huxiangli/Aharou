@@ -21,12 +21,10 @@
   },
   "bannedImports": {
     "androidx.compose.material3.ModalBottomSheet": [
-      "app/src/main/java/com/aharou/feature/agent/presentation/component/AharouComputerSheet.kt",
       "app/src/main/java/com/aharou/feature/browser/presentation/BrowserDownloadsSheet.kt",
       "app/src/main/java/com/aharou/feature/browser/presentation/BrowserHistorySheet.kt",
       "app/src/main/java/com/aharou/feature/browser/presentation/BrowserSettingsSheet.kt",
-      "app/src/main/java/com/aharou/feature/browser/presentation/StandardChatSheet.kt",
-      "app/src/main/java/com/aharou/feature/settings/presentation/component/SoulSettingsSection.kt"
+      "app/src/main/java/com/aharou/feature/browser/presentation/StandardChatSheet.kt"
     ],
     "androidx.compose.material3.TextField": [
       "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt"

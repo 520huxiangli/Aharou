@@ -32,7 +32,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -66,6 +65,7 @@ import com.aharou.core.soul.SoulMDParser
 import com.aharou.core.soul.SoulMetadata
 import com.aharou.core.soul.SoulStore
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.AdaptiveModalBottomSheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -78,7 +78,6 @@ import kotlinx.coroutines.withContext
  * 与超限提示）→ 恢复默认 / 保存。保存走 [SoulStore.save]，同时刷新
  * [SoulStore.cachedMetadata]，聊天里的身份行立刻跟着变，无需重启。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SoulSettingsSection() {
     val context = LocalContext.current
@@ -465,6 +464,7 @@ internal fun SoulIconGlyph(
 }
 
 /** 图标选择弹层：建议 emoji 两行（点选即填）+ 自由输入（逐键归一）。 */
+// AdaptiveModalBottomSheet 的签名暴露了实验类型 SheetState/ModalBottomSheetProperties，调用点需自带 OptIn
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SoulEmojiPickerSheet(
@@ -473,7 +473,7 @@ private fun SoulEmojiPickerSheet(
     onPick: (String) -> Unit,
 ) {
     var draft by remember { mutableStateOf(current) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

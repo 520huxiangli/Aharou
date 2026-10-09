@@ -29,7 +29,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -54,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
 import com.aharou.core.theme.Radius
+import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.browser.BrowserTabPool
@@ -111,7 +111,7 @@ internal fun AharouComputerSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val current = toolMessages.getOrNull(pagerState.currentPage)
 
-    ModalBottomSheet(
+    AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         dragHandle = null,
@@ -286,10 +286,10 @@ private fun ToolComputerPage(
                 // [Aharou] 影子屏：大图实时围观 Agent 的离屏操作
                 VdCard(capture = vdCapture, running = running)
                 message.toolArgs?.takeIf { it.isNotBlank() && it != "{}" }?.let {
-                    InfoCard(title = "参数", body = it, mono = true)
+                    InfoCard(title = stringResource(R.string.computer_params), body = it, mono = true)
                 }
                 InfoCard(
-                    title = "结果",
+                    title = stringResource(R.string.computer_result),
                     body = formatComputerOutput(message.content, running),
                     mono = false,
                     isError = message.isError,
@@ -298,10 +298,10 @@ private fun ToolComputerPage(
             else -> {
                 val args = message.toolArgs?.takeIf { it.isNotBlank() && it != "{}" }
                 if (args != null) {
-                    InfoCard(title = "参数", body = args, mono = true)
+                    InfoCard(title = stringResource(R.string.computer_params), body = args, mono = true)
                 }
                 InfoCard(
-                    title = "结果",
+                    title = stringResource(R.string.computer_result),
                     body = formatComputerOutput(message.content, running),
                     mono = false,
                     isError = message.isError,

@@ -615,6 +615,7 @@
     <string name="file_browser_delete_file_confirm">确定删除文件「%1$s」？</string>
     <string name="file_browser_delete_folder_confirm">确定删除文件夹「%1$s」及其全部内容？</string>
     <string name="file_browser_create_failed">创建失败，可能已存在同名项或无写入权限</string>
+    <string name="file_browser_deleting">正在删除…</string>
     <string name="file_browser_rename_failed">重命名失败，可能已存在同名项</string>
     <string name="file_browser_delete_failed">删除失败</string>
     <string name="file_browser_paste_here">粘贴到此处</string>
@@ -903,6 +904,7 @@
     <string name="git_tab_branches">分支</string>
     <string name="git_tab_commits">提交</string>
     <string name="git_computing_diff">正在计算差异…</string>
+    <string name="git_clone_finalizing">收尾中…</string>
     <string name="git_status_clean">工作区干净，无改动</string>
     <string name="git_commit_needs_identity">尚未配置提交署名，请在「凭据与署名」页填写用户名和邮箱</string>
     <string name="git_commit_needs_identity_action">点这里去填写 →</string>
@@ -1961,11 +1963,14 @@
 <string name="filebrowser_sort_name">名称</string>
 <string name="filebrowser_sort_size">大小</string>
 <string name="filebrowser_title">文件</string>
+<string name="computer_params">参数</string>
+<string name="computer_result">结果</string>
 <string name="filepreview_apk_install">安装</string>
 <string name="filepreview_apk_unreadable">无法读取安装包详情。</string>
 <string name="filepreview_image_decode_error">无法解码图片</string>
 <string name="filepreview_image_load_error">图片加载失败</string>
 <string name="filepreview_loading">正在加载…</string>
+<string name="filepreview_error_read">读取文件失败</string>
 <string name="filepreview_loading_archive">正在读取压缩包…</string>
 <string name="filepreview_loading_pdf">正在加载 PDF…</string>
 <string name="filepreview_office_subtitle">Office 文档需要使用外部应用预览。</string>
