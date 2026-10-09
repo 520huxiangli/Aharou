@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.container
 import com.aharou.core.util.BoundedLineReader
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -267,6 +268,4 @@ class RemoteSshEngine @Inject constructor(
         return prefix + "cd ~/workspace 2>/dev/null || cd ${shellQuote(projectPath)} 2>/dev/null || exit 1; $command"
     }
 
-    /** 单引号包裹并转义内部的单引号（`'` → `'\''`），保证作为整体传给 shell。 */
-    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 }

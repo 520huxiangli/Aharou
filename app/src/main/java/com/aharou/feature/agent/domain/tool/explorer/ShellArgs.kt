@@ -145,6 +145,4 @@ fun expandTilde(arg: String, home: String = "/root"): String =
     }
 
 /** 单引号包裹，shell 命令安全。 */
-fun shellQuote(value: String): String {
-    return "'" + value.replace("'", "'\"'\"'") + "'"
-}
+fun shellQuote(value: String): String = com.aharou.core.util.shellQuote(value)

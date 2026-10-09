@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.container
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.credentials.domain.model.GitCredential
 import kotlinx.coroutines.CoroutineScope
@@ -448,12 +449,6 @@ class RemoteSshConnection @Inject constructor(
         session.exec("printf %s ${shellQuote(content)} > ${shellQuote(dest)}").join()
         session.close()
     }
-
-    /**
-     * 单引号包裹并转义内部单引号（`'` → `'\''`），保证作为整体交给 shell。
-     * 单引号内的反斜杠是字面量，不能再转义，否则会多写出一份。
-     */
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private fun enc(part: String): String = java.net.URLEncoder.encode(part, "UTF-8")
 

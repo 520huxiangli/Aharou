@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
 import com.aharou.R
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.ConnectionState
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.agent.domain.session.SessionUseCase
@@ -648,9 +649,6 @@ class WorkspaceRepository @Inject constructor(
     private suspend fun writeExternalWorkspaces(list: List<ExternalWorkspaceRecord>) {
         context.workspaceDataStore.edit { it[externalWorkspacesKey] = json.encodeToString(list) }
     }
-
-    /** 单引号转义，保证 shell 命令安全。 */
-    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
     /** 当前工作区的路径，供 projectRoot / 命令执行目录使用。
      * 本地模式返回宿主工作区绝对路径；远程模式返回选中工作区的远程绝对路径（命令 cd 到此）。

@@ -1,6 +1,7 @@
 package com.aharou.feature.settings.domain.service
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ProviderKeyRotator
@@ -725,23 +726,20 @@ class ProviderDashboardRunner @Inject constructor(
     }
 
     private fun buildEnvPrefix(provider: AIProviderConfig, context: DashboardContext? = null): String {
-        fun escape(value: String): String {
-            return "'" + value.replace("'", "'\\''") + "'"
-        }
         val effectiveModel = context?.model?.ifBlank { null }
             ?: provider.selectedModel.ifBlank { provider.defaultModel }
         // 多 Key 模式下查当前活动的 Key，否则面板会报一个已被切走的 Key 的余额。
         val effectiveApiKey = keyRotator.currentKey(provider) ?: provider.apiKey
 
         val envs = mutableListOf(
-            "AICODE_PROVIDER_ID=${escape(provider.id)}",
-            "AICODE_PROVIDER_NAME=${escape(provider.name)}",
-            "AICODE_PROVIDER_TYPE=${escape(provider.type.name)}",
-            "AICODE_PROVIDER_API_KEY=${escape(effectiveApiKey)}",
-            "AICODE_PROVIDER_BASE_URL=${escape(provider.baseUrl)}",
-            "AICODE_PROVIDER_DEFAULT_MODEL=${escape(provider.defaultModel)}",
-            "AICODE_PROVIDER_SELECTED_MODEL=${escape(provider.selectedModel)}",
-            "AICODE_MODEL=${escape(effectiveModel)}"
+            "AICODE_PROVIDER_ID=${shellQuote(provider.id)}",
+            "AICODE_PROVIDER_NAME=${shellQuote(provider.name)}",
+            "AICODE_PROVIDER_TYPE=${shellQuote(provider.type.name)}",
+            "AICODE_PROVIDER_API_KEY=${shellQuote(effectiveApiKey)}",
+            "AICODE_PROVIDER_BASE_URL=${shellQuote(provider.baseUrl)}",
+            "AICODE_PROVIDER_DEFAULT_MODEL=${shellQuote(provider.defaultModel)}",
+            "AICODE_PROVIDER_SELECTED_MODEL=${shellQuote(provider.selectedModel)}",
+            "AICODE_MODEL=${shellQuote(effectiveModel)}"
         )
 
         // 自定义脚本参数：按提供商配置注入为 AICODE_KEY_<KEY> 环境变量，
@@ -751,13 +749,13 @@ class ProviderDashboardRunner @Inject constructor(
             val envKey = "AICODE_KEY_" + sanitizeEnvKey(key)
             if (envKey == PREFIX_SCRIPT_PARAM) return@forEach
             val resolved = resolveScriptParamPlaceholders(rawValue, provider, effectiveApiKey, effectiveModel)
-            envs.add("$envKey=${escape(resolved)}")
+            envs.add("$envKey=${shellQuote(resolved)}")
         }
 
         if (context != null) {
-            envs.add("AICODE_WORKSPACE=${escape(context.workspacePath)}")
-            envs.add("AICODE_WORKSPACE_NAME=${escape(context.workspaceName)}")
-            envs.add("AICODE_SESSION_ID=${escape(context.sessionId)}")
+            envs.add("AICODE_WORKSPACE=${shellQuote(context.workspacePath)}")
+            envs.add("AICODE_WORKSPACE_NAME=${shellQuote(context.workspaceName)}")
+            envs.add("AICODE_SESSION_ID=${shellQuote(context.sessionId)}")
             envs.add("AICODE_LAST_INPUT_TOKENS=${context.lastInputTokens}")
             envs.add("AICODE_LAST_OUTPUT_TOKENS=${context.lastOutputTokens}")
             envs.add("AICODE_LAST_CACHED_TOKENS=${context.lastCachedTokens}")
@@ -773,10 +771,10 @@ class ProviderDashboardRunner @Inject constructor(
             envs.add("AICODE_MODEL_SUPPORTS_VISION=${context.modelSupportsVision}")
             envs.add("AICODE_MODEL_SUPPORTS_REASONING=${context.modelSupportsReasoning}")
             envs.add("AICODE_MESSAGE_COUNT=${context.messageCount}")
-            envs.add("AICODE_AGENT_STATE=${escape(context.agentState)}")
-            envs.add("AICODE_SESSION_MODE=${escape(context.sessionMode)}")
-            envs.add("AICODE_REASONING_EFFORT=${escape(context.reasoningEffort)}")
-            envs.add("AICODE_REFRESH_REASON=${escape(context.refreshReason)}")
+            envs.add("AICODE_AGENT_STATE=${shellQuote(context.agentState)}")
+            envs.add("AICODE_SESSION_MODE=${shellQuote(context.sessionMode)}")
+            envs.add("AICODE_REASONING_EFFORT=${shellQuote(context.reasoningEffort)}")
+            envs.add("AICODE_REFRESH_REASON=${shellQuote(context.refreshReason)}")
         }
 
         // [Aharou 改名] 过渡期同时注入两套前缀：新脚本用 AHAROU_*，旧脚本 AICODE_* 照常可用。

@@ -1,6 +1,7 @@
 package com.aharou.feature.editor.domain.diagnostics
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.PathHomeResolver
@@ -129,9 +130,6 @@ private enum class Checker(val extensions: Set<String>, val binaryName: String) 
 
     abstract fun parse(output: String): List<EditorDiagnostic>
 }
-
-/** 单引号包裹 + 转义，避免路径里的空格/引号被 shell 拆开。 */
-private fun shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
 /**
  * 解析 `py_compile` 的输出。两种形态：

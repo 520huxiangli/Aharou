@@ -1,6 +1,7 @@
 package com.aharou.feature.workspace.domain
 
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.Dispatchers
@@ -261,6 +262,4 @@ class WorkspaceSearchEngine @Inject constructor(
         output.contains("command not found", ignoreCase = true) ||
             output.contains("rg: not found", ignoreCase = true)
 
-    /** 单引号包裹并转义内部单引号，避免关键词里的空格/引号被 shell 拆开或执行。 */
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 }

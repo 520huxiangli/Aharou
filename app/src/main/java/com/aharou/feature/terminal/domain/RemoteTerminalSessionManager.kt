@@ -3,6 +3,7 @@ package com.aharou.feature.terminal.domain
 import android.content.Context
 import android.content.Intent
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
@@ -347,9 +348,6 @@ class RemoteTerminalSessionManager @Inject constructor(
             }
         }
     }
-
-    /** 单引号包裹并转义内部单引号，与命令执行链路（RemoteSshEngine.shellQuote）一致。 */
-    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
     private fun startKeepaliveService() {
         val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
