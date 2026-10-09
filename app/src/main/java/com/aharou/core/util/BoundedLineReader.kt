@@ -1,6 +1,9 @@
 package com.aharou.core.util
 
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
+import java.io.File
+import java.io.FileInputStream
 import java.io.Reader
 
 /**
@@ -75,4 +78,25 @@ internal fun boundedLines(open: () -> Reader): Sequence<String> = sequence {
             yield(if (line.truncated) line.text + LINE_TRUNCATED_NOTE else line.text)
         }
     }
+}
+
+/**
+ * 只读取 [file] 开头的至多 [maxBytes] + 1 字节：调用方据返回长度判断是否被截断，
+ * 又不会把几百 MB 的日志/数据库整个读进内存。
+ *
+ * 不用 `InputStream.readNBytes`——那是 Android 13+ (API 33) 才有的方法，本应用 minSdk 26。
+ */
+internal fun readFileHead(file: File, maxBytes: Int): ByteArray {
+    val out = ByteArrayOutputStream(maxBytes + 1)
+    FileInputStream(file).use { input ->
+        val buf = ByteArray(64 * 1024)
+        var remaining = maxBytes + 1
+        while (remaining > 0) {
+            val read = input.read(buf, 0, minOf(buf.size, remaining))
+            if (read < 0) break
+            out.write(buf, 0, read)
+            remaining -= read
+        }
+    }
+    return out.toByteArray()
 }

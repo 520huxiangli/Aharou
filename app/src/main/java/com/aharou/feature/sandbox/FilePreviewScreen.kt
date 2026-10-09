@@ -84,6 +84,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.readFileHead
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -341,14 +342,9 @@ private fun TextPreview(item: FileItem) {
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
             try {
-                val bytes = item.file.readBytes()
-                if (bytes.size > MAX_TEXT_PREVIEW_BYTES) {
-                    content = String(bytes, 0, MAX_TEXT_PREVIEW_BYTES, Charsets.UTF_8)
-                    truncated = true
-                } else {
-                    content = String(bytes, Charsets.UTF_8)
-                    truncated = false
-                }
+                val bytes = readFileHead(item.file, MAX_TEXT_PREVIEW_BYTES)
+                truncated = bytes.size > MAX_TEXT_PREVIEW_BYTES
+                content = String(bytes, 0, if (truncated) MAX_TEXT_PREVIEW_BYTES else bytes.size, Charsets.UTF_8)
             } catch (e: Exception) {
                 error = e.message ?: "Failed to read file"
             }
@@ -423,7 +419,7 @@ private fun MarkdownPreview(item: FileItem) {
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
             try {
-                val bytes = item.file.readBytes()
+                val bytes = readFileHead(item.file, MAX_TEXT_PREVIEW_BYTES)
                 val cap = if (bytes.size > MAX_TEXT_PREVIEW_BYTES) MAX_TEXT_PREVIEW_BYTES else bytes.size
                 content = String(bytes, 0, cap, Charsets.UTF_8)
             } catch (e: Exception) {
@@ -728,7 +724,7 @@ private fun JsonPreview(item: FileItem) {
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
             try {
-                val bytes = item.file.readBytes()
+                val bytes = readFileHead(item.file, MAX_TEXT_PREVIEW_BYTES)
                 val cap = if (bytes.size > MAX_TEXT_PREVIEW_BYTES) {
                     truncated = true; MAX_TEXT_PREVIEW_BYTES
                 } else bytes.size
@@ -1254,7 +1250,7 @@ private fun printFile(context: Context, item: FileItem) {
         if (item.isHtmlFile) {
             webView.loadUrl("file://${item.file.absolutePath}")
         } else {
-            val raw = item.file.readBytes().let { bytes ->
+            val raw = readFileHead(item.file, MAX_TEXT_PREVIEW_BYTES).let { bytes ->
                 val cap = if (bytes.size > MAX_TEXT_PREVIEW_BYTES) MAX_TEXT_PREVIEW_BYTES else bytes.size
                 String(bytes, 0, cap, Charsets.UTF_8)
             }
