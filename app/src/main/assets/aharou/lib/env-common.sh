@@ -170,7 +170,7 @@ runtime_candidates() {
             ;;
         apt:java)  apt-cache search '^openjdk-[0-9]*-jdk-headless$' 2>/dev/null | awk '{print $1}' | sort -V -r ;;
         dnf:java|yum:java)
-            for p in java-21-openjdk-headless java-17-openjdk-headless; do
+            for p in java-25-openjdk-headless java-21-openjdk-headless java-17-openjdk-headless; do
                 [ -n "$(pkg_versions "$p" | head -1)" ] && echo "$p"
             done
             ;;
@@ -180,12 +180,12 @@ runtime_candidates() {
             done
             ;;
         apk:php)
-            for p in php84 php83 php82; do
+            for p in php85 php84 php83 php82; do
                 [ -n "$(pkg_versions "$p" | head -1)" ] && echo "$p"
             done
             ;;
         apt:php)
-            for p in php8.4-cli php8.3-cli php8.2-cli; do
+            for p in php8.5-cli php8.4-cli php8.3-cli php8.2-cli; do
                 [ -n "$(pkg_versions "$p" | head -1)" ] && echo "$p"
             done
             ;;
@@ -525,7 +525,7 @@ probe_mirror() {
     m="$1"
     case "$PMGR" in
         apk)
-            code=$(http_code "http://$m/alpine/v3.21/main/x86_64/APKINDEX.tar.gz")
+            code=$(http_code "http://$m/alpine/v3.24/main/x86_64/APKINDEX.tar.gz")
             case "$code" in 2[0-9][0-9]) return 0 ;; *) return 1 ;; esac
             ;;
         apt)
@@ -578,8 +578,8 @@ setup_apk_mirror() {
     mkdir -p /etc/apk
     # Alpine 大版本分支从镜像自身动态读取，兼容用户导入的不同版本 Alpine 镜像：
     # 1) 优先从现有 repositories 提取（官方源 / 已换过的源都含 `alpine/<分支>/`，edge 也能拿到）；
-    # 2) 读不到再回退到 /etc/os-release 的 VERSION_ID（如 3.21.3 → v3.21）；
-    # 3) 最后兜底 v3.21（与内置 Alpine 一致）。
+    # 2) 读不到再回退到 /etc/os-release 的 VERSION_ID（如 3.24.2 → v3.24）；
+    # 3) 最后兜底 v3.24（与内置 Alpine 一致）。
     branch=""
     if [ -f /etc/apk/repositories ]; then
         branch=$(sed -n 's#.*alpine/\([^/]*\)/.*#\1#p' /etc/apk/repositories 2>/dev/null | head -1)
@@ -590,7 +590,7 @@ setup_apk_mirror() {
             branch="v$(echo "$VERSION_ID" | cut -d. -f1-2)"
         fi
     fi
-    [ -z "$branch" ] && branch="v3.21"
+    [ -z "$branch" ] && branch="v3.24"
     cat > /etc/apk/repositories <<EOF
 http://$MIRROR/alpine/$branch/main
 http://$MIRROR/alpine/$branch/community

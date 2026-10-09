@@ -5,6 +5,8 @@
   CNB_TOKEN=<token> python3 scripts/sync-cnb-releases.py            # 同步保留集合
   CNB_TOKEN=<token> python3 scripts/sync-cnb-releases.py --all      # 同步 GitHub 全部 Release
   CNB_TOKEN=<token> python3 scripts/sync-cnb-releases.py --voice-models   # 只同步离线语音模型包
+  CNB_TOKEN=<token> RELEASE_FILTER='^container-images$' GH_MIRROR=https://gh-proxy.com/ \
+      python3 scripts/sync-cnb-releases.py            # 只同步容器镜像 rootfs（App 的「Aharou 自建源」，tag 固定为 container-images）
 
 保留集合（未设 RELEASE_FILTER 时自动推导）：
   仅最新 KEEP_STABLE 个正式版（默认 3），与 GitCode 那边保持一致。

@@ -7,7 +7,8 @@
       },
       "distros": {
         "alpine": "https://dl-cdn.alpinelinux.org",
-        "ubuntu": "https://cdimage.ubuntu.com"
+        "ubuntu": "https://cdimage.ubuntu.com",
+        "debian": "https://doi-janky.infosiftr.net"
       }
     },
     "huawei": {
@@ -46,9 +47,9 @@
         "en": "Aharou (self-hosted)"
       },
       "distros": {
-        "alpine": "https://gh-proxy.com/https://github.com/520huxiangli/Aharou/releases/download/container-images",
-        "ubuntu": "https://gh-proxy.com/https://github.com/520huxiangli/Aharou/releases/download/container-images",
-        "debian": "https://gh-proxy.com/https://github.com/520huxiangli/Aharou/releases/download/container-images"
+        "alpine": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
+        "ubuntu": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
+        "debian": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images"
       }
     }
   },
@@ -200,9 +201,9 @@
     {
       "id": "debian-12",
       "name": "Debian",
-      "version": "12 (bookworm)",
+      "version": "12.15 (bookworm)",
       "description": "Debian 12 稳定版，Docker 官方镜像同源 rootfs（debuerreotype 构建）",
-      "sizeBytes": 28488488,
+      "sizeBytes": 28482800,
       "distro": "debian",
       "path": "job/tianon/job/debuerreotype/job/{abi}/lastSuccessfulBuild/artifact/bookworm/rootfs.tar.xz",
       "paths": {
@@ -216,9 +217,9 @@
     {
       "id": "debian-13",
       "name": "Debian",
-      "version": "13 (trixie)",
+      "version": "13.7 (trixie)",
       "description": "Debian 13 最新稳定版，Docker 官方镜像同源 rootfs（debuerreotype 构建）",
-      "sizeBytes": 30320704,
+      "sizeBytes": 30331984,
       "distro": "debian",
       "path": "job/tianon/job/debuerreotype/job/{abi}/lastSuccessfulBuild/artifact/trixie/rootfs.tar.xz",
       "paths": {

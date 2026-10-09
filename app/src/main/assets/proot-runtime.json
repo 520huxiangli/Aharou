@@ -7,8 +7,8 @@
     "packaging": "取自 Termux apt 仓库的 .deb（ar 封装 data.tar.xz）解包后提取文件",
     "embeddedVersionString": "5.1.0",
     "packageVersions": {
-      "arm64-v8a": "未记录",
-      "x86_64": "proot 5.1.107.81 / libtalloc 2.4.3 / libandroid-shmem 0.7"
+      "arm64-v8a": "proot 5.1.107.96 / libtalloc 2.5.0 / libandroid-shmem 0.7",
+      "x86_64": "proot 5.1.107.96 / libtalloc 2.5.0 / libandroid-shmem 0.7"
     },
     "license": "GPL-2.0-or-later"
   },
@@ -26,29 +26,29 @@
       "abi": "arm64-v8a",
       "role": "proot-executable",
       "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot.so",
-      "sizeBytes": 234000,
-      "sha256": "f4bb92d741d69b06c39210e1cd5daacf6093f10691a4582fd7409c85cb807b36"
+      "sizeBytes": 247488,
+      "sha256": "0df9240e08015aa7f5194c32b3fe5d9c8a8ea16dfb895ccafb65847a7f392c7d"
     },
     {
       "abi": "arm64-v8a",
       "role": "loader-64",
       "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot-loader.so",
       "sizeBytes": 18136,
-      "sha256": "44ef39c1e1a18c09f6e4c4b5d6f8bba82d30596598bd155ec162d05c5122ff04"
+      "sha256": "cbdef0e652c2b78af25d867e1719fdebbb0915e25aae2dd35b3b5c1835f6b551"
     },
     {
       "abi": "arm64-v8a",
       "role": "loader-32",
       "repoPath": "app/src/_armJniLibs/arm64-v8a/libproot-loader32.so",
       "sizeBytes": 6244,
-      "sha256": "25f6bd90bc5a3d3088026289a0d3eaf3e502bd2b00e5cb74fadd9791132efa34"
+      "sha256": "c429996fee730e1a4fe12625b22dab5a5bc2847a4cae274d36fd4a19cd8299a8"
     },
     {
       "abi": "arm64-v8a",
       "role": "talloc",
       "repoPath": "app/src/_armJniLibs/arm64-v8a/libtalloc.so",
-      "sizeBytes": 31440,
-      "sha256": "34c92182bdbda07e009eaa09afa852c575c566691786ca456b28778222ba0afc"
+      "sizeBytes": 33592,
+      "sha256": "160d39bc0d7ed946f22310d1d6f20addda21b02b0972dffe929fe49951543941"
     },
     {
       "abi": "arm64-v8a",
@@ -61,29 +61,29 @@
       "abi": "x86_64",
       "role": "proot-executable",
       "repoPath": "app/src/_x86JniLibs/x86_64/libproot.so",
-      "sizeBytes": 250752,
-      "sha256": "9c2c572f6c66887129ff291780155d836b4fef7d18977174bde0133776a49673"
+      "sizeBytes": 263784,
+      "sha256": "cd893e5243aa0213a4f8dec38c84fb41b24a104605fda71e61d0b2f459f31177"
     },
     {
       "abi": "x86_64",
       "role": "loader-64",
       "repoPath": "app/src/_x86JniLibs/x86_64/libproot-loader.so",
-      "sizeBytes": 18352,
-      "sha256": "914564ea1c66f50b38f18cac857fcf814c6b1ab027789178880fca1d530599b3"
+      "sizeBytes": 18368,
+      "sha256": "a836b0569c84b1661333d16bacf6b396ff08fea816a5c936a82e08ddeeca8341"
     },
     {
       "abi": "x86_64",
       "role": "loader-32",
       "repoPath": "app/src/_x86JniLibs/x86_64/libproot-loader32.so",
       "sizeBytes": 6036,
-      "sha256": "7fb73fa7f1879f7d210db70a0e3961161d0439e892c38bb834e6e17f162fae30"
+      "sha256": "fd5b394aa0801619e293b76fe6e830a3beb363aed4fa4b9a5a41f1388a0cb9b9"
     },
     {
       "abi": "x86_64",
       "role": "talloc",
       "repoPath": "app/src/_x86JniLibs/x86_64/libtalloc.so",
-      "sizeBytes": 30096,
-      "sha256": "6446ba83f6ac6c9d226177feaa819ce97861a1ebf186febd1d166d21f4df75de"
+      "sizeBytes": 32536,
+      "sha256": "7354442094c5363639cc87e1126e9298442a2546dd2a0699972f74d263901da2"
     },
     {
       "abi": "x86_64",

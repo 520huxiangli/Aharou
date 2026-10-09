@@ -235,14 +235,14 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
-         * 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于拼镜像源地址。
-         * 固定 v3.21：与 [INSTALL_VERSION]（alpine-3.21.3）一致；该版本 apk-tools 2.14 在 proot 下可靠。
-         */
-        /**
          * 安装版本。换 rootfs / proot 或改安装逻辑时 +1，触发重新解压。
          * 与 assets 里实际放的 Alpine 版本保持一致以便排查。
+         *
+         * 3.23 起 Alpine 的 apk-tools 是 3.x：它用 memfd_create + execveat 跑包脚本，在 proot 下
+         * 要靠 proot 对 `lib/apk/exec/` 的 memfd 过滤兜底（termux/proot-distro#595）。换 rootfs 时
+         * 别把 proot 退到 5.1.107-69 之前，否则 apk 装包会炸。
          */
-        private const val INSTALL_VERSION = "alpine-3.21.3-v6"
+        private const val INSTALL_VERSION = "alpine-3.24.2-v7"
 
         /** 删 rootfs 时每删这么多条目回调一次进度（太密会刷爆 UI 状态流）。 */
         private const val DELETE_PROGRESS_STEP = 2000
