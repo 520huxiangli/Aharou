@@ -174,6 +174,7 @@ data class FileBrowserUiState(
     val items: List<FileItem> = emptyList(),
     val pathComponents: List<String> = emptyList(),
     val isLoading: Boolean = false,
+    val isDeleting: Boolean = false,
     val isEmpty: Boolean = false,
     val canGoBack: Boolean = false,
     val currentPath: String = "",
@@ -371,6 +372,7 @@ class FileBrowserViewModel(
 
     fun deleteItem(item: FileItem) {
         viewModelScope.launch(Dispatchers.IO) {
+            _uiState.value = _uiState.value.copy(isDeleting = true)
             try {
                 if (!forceDelete(item.file) && item.file.exists()) {
                     appContext?.getString(R.string.file_browser_delete_failed)?.let { msg ->
@@ -380,6 +382,8 @@ class FileBrowserViewModel(
                 loadItems()
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(errorMessage = e.message)
+            } finally {
+                _uiState.value = _uiState.value.copy(isDeleting = false)
             }
         }
     }

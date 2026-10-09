@@ -136,12 +136,24 @@ fun FileBrowserScreen(
 
             // Content
             when {
-                state.isLoading -> {
+                state.isLoading || state.isDeleting -> {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator()
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            CircularProgressIndicator()
+                            if (state.isDeleting) {
+                                Text(
+                                    stringResource(R.string.file_browser_deleting),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
                     }
                 }
 

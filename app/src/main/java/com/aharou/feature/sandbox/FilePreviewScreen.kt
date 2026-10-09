@@ -338,6 +338,7 @@ private fun TextPreview(item: FileItem) {
     var content by remember { mutableStateOf<String?>(null) }
     var truncated by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val readErrorText = stringResource(R.string.filepreview_error_read)
 
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
@@ -346,7 +347,7 @@ private fun TextPreview(item: FileItem) {
                 truncated = bytes.size > MAX_TEXT_PREVIEW_BYTES
                 content = String(bytes, 0, if (truncated) MAX_TEXT_PREVIEW_BYTES else bytes.size, Charsets.UTF_8)
             } catch (e: Exception) {
-                error = e.message ?: "Failed to read file"
+                error = readErrorText
             }
         }
     }
@@ -415,6 +416,7 @@ private fun TextPreview(item: FileItem) {
 private fun MarkdownPreview(item: FileItem) {
     var content by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    val readErrorText = stringResource(R.string.filepreview_error_read)
 
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
@@ -423,7 +425,7 @@ private fun MarkdownPreview(item: FileItem) {
                 val cap = if (bytes.size > MAX_TEXT_PREVIEW_BYTES) MAX_TEXT_PREVIEW_BYTES else bytes.size
                 content = String(bytes, 0, cap, Charsets.UTF_8)
             } catch (e: Exception) {
-                error = e.message ?: "Failed to read file"
+                error = readErrorText
                 FileLogger.w("FilePreview", "markdown read failed for ${item.name}: ${e.message}")
             }
         }
@@ -720,6 +722,7 @@ private fun JsonPreview(item: FileItem) {
     var pretty by remember(item.file) { mutableStateOf<String?>(null) }
     var truncated by remember(item.file) { mutableStateOf(false) }
     var error by remember(item.file) { mutableStateOf<String?>(null) }
+    val readErrorText = stringResource(R.string.filepreview_error_read)
 
     LaunchedEffect(item.file) {
         withContext(Dispatchers.IO) {
@@ -737,7 +740,7 @@ private fun JsonPreview(item: FileItem) {
                     }
                 } catch (_: Exception) { raw }
             } catch (e: Exception) {
-                error = e.message ?: "Failed to read file"
+                error = readErrorText
             }
         }
     }
