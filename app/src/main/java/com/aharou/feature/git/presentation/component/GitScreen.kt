@@ -460,10 +460,10 @@ private fun CloneProgress(progress: Int?) {
             )
         }
         Text(
-            text = if (progress == null) {
-                stringResource(R.string.git_cloning_hint)
-            } else {
-                stringResource(R.string.git_cloning_progress, progress)
+            text = when {
+                progress == null -> stringResource(R.string.git_cloning_hint)
+                progress >= 100 -> stringResource(R.string.git_clone_finalizing)
+                else -> stringResource(R.string.git_cloning_progress, progress)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
