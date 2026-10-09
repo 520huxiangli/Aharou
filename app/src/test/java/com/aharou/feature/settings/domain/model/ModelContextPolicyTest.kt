@@ -39,11 +39,11 @@ class ModelContextPolicyTest {
         assertEquals(20_000, ModelContextPolicy.preserveRecentTokens(80_001))
     }
 
-    /** 超过上界时 clamp 到上界，包括超大值与 Int.MAX_VALUE。 */
+    /** 超过上界时 clamp 到上界；窗口超过 20 万后上界放宽到窗口的十分之一。 */
     @Test
     fun preserveRecentTokens_aboveMaximum_clampedToMaximum() {
         assertEquals(20_000, ModelContextPolicy.preserveRecentTokens(128_000))
-        assertEquals(20_000, ModelContextPolicy.preserveRecentTokens(Int.MAX_VALUE))
+        assertEquals(Int.MAX_VALUE / 10, ModelContextPolicy.preserveRecentTokens(Int.MAX_VALUE))
     }
 
     /** 负数（理论上不会出现）同样被 clamp 到下界。 */

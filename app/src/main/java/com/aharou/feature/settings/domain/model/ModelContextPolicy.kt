@@ -6,8 +6,15 @@ object ModelContextPolicy {
     const val MAX_PRESERVE_RECENT_TOKENS = 20_000
     const val CHARS_PER_TOKEN = 4
 
+    /**
+     * 保留最近上下文的上限：写死 20K 对百万级窗口只占 2%，压缩时几乎全部内容都要挤进摘要请求。
+     * 窗口足够大时放宽到窗口的十分之一，小窗口仍是 20K（行为不变）。
+     */
     fun preserveRecentTokens(usableTokens: Int): Int =
-        (usableTokens / 4).coerceIn(MIN_PRESERVE_RECENT_TOKENS, MAX_PRESERVE_RECENT_TOKENS)
+        (usableTokens / 4).coerceIn(
+            MIN_PRESERVE_RECENT_TOKENS,
+            maxOf(MAX_PRESERVE_RECENT_TOKENS, usableTokens / 10)
+        )
 
     fun estimateTokens(chars: Int): Int =
         chars / CHARS_PER_TOKEN + if (chars % CHARS_PER_TOKEN == 0) 0 else 1

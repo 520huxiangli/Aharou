@@ -79,6 +79,14 @@ class ContextCompactor @Inject constructor(
         /** 一次完整压缩的总时长上限：超出即放弃本轮（保留原历史），避免长时间「一直在压缩」。 */
         const val SUMMARY_DEADLINE_MS = 120_000L
 
+        /**
+         * 分块摘要只分配这么多比例的预算。本地估算按 4 个 ASCII 字符 1 token 折算，对代码、
+         * JSON、工具输出这类密集内容低估 25%~60%；按乐观预算切满一块，摘要请求的实际 token
+         * 就会超出模型窗口被上游拒掉（HTTP 400），压缩彻底失效。宁可多切几块。
+         * 切块与校验必须用同一比例，否则校验验的是乐观值，形同虚设。
+         */
+        const val SUMMARY_BUDGET_PERCENT = 60
+
         /** 软精简时单条工具输出的保留上限（比硬压缩宽松，尽量少丢信息）。 */
         const val SOFT_TRIM_TOOL_CHARS = 3_000
 
@@ -291,7 +299,12 @@ class ContextCompactor @Inject constructor(
                     ModelContextPolicy.outputReserveTokens(summaryMetadata)
                 )
                 aiProvider.maxOutputTokens = outputLimit
-                val summaryBudget = minOf(ModelContextPolicy.effectiveInputBudget(summaryMetadata), summaryContext - outputLimit)
+                // 分块只分配预算的一部分（见 SUMMARY_BUDGET_PERCENT）：本地估算对代码、JSON 这类
+                // 密集 ASCII 内容偏低，按全额切满一块会让摘要请求实际超出模型窗口被上游拒掉。
+                val summaryBudget = minOf(
+                    ModelContextPolicy.effectiveInputBudget(summaryMetadata),
+                    summaryContext - outputLimit
+                ) * SUMMARY_BUDGET_PERCENT / 100
                 val prompt = systemPromptProvider.resolvePrompt("agent/compact-summary.md").replace(LEADING_COMMENT, "")
                 var summary = extractPreviousSummary(head)
                 val cursor = CompactionText.Cursor(CompactionText.units(material))
