@@ -80,7 +80,7 @@ internal class VoiceCallSession @Inject constructor(
      */
     val displayText: StateFlow<String> = combine(speechQueue.currentText, _liveText) { speaking, live ->
         speaking.ifBlank { live }
-    }.stateIn(scope, SharingStarted.Eagerly, "")
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), "")
 
     /**
      * 音频回调线程与主线程共用的锁。

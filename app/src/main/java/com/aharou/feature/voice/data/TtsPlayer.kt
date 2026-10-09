@@ -29,6 +29,10 @@ internal class TtsPlayer @Inject constructor(
     /** [playAndWait] 的等待句柄。被打断时 [stop] 要主动完成它，调用方才能醒过来。 */
     private var pendingCompletion: CompletableDeferred<Unit>? = null
 
+    /** 每次 [play] 自增的唯一代号，回调据此判断自己还是不是当前这一轮。 */
+    @Volatile
+    private var playbackId = 0L
+
     /** 是否正在播放。 */
     val isPlaying: Boolean get() = player?.isPlaying == true
 
@@ -37,19 +41,23 @@ internal class TtsPlayer @Inject constructor(
      *
      * @param tag 文件名后缀。语音通话的播报队列里可能同时存在多段音频，靠它区分，
      *            免得后一段把前一段的文件覆盖掉。
-     * @param onCompletion 自然播完时回调（被下一次朗读打断则不回调）
+     * @param onCompletion 结束（自然播完或出错）时回调（被下一次朗读打断则不回调）
+     * @return 是否已开始播放；false 表示写盘或准备失败，不会再有回调，调用方无需等待
      */
     suspend fun play(
         bytes: ByteArray,
         tag: String = DEFAULT_TAG,
         onCompletion: () -> Unit = {},
-    ) = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
         stop()
-        val file = File(context.cacheDir, "tts_playback_$tag.mp3")
+        val id = ++playbackId
+        // 文件名加唯一后缀：同一 tag 的多段音频共用文件名时，后一段会覆盖掉前一段
+        val file = File(context.cacheDir, "tts_playback_${tag}_${System.nanoTime()}.mp3")
         runCatching { file.writeBytes(bytes) }
             .onFailure {
                 FileLogger.e(TAG, "写入朗读音频失败", it)
-                return@withContext
+                runCatching { file.delete() }
+                return@withContext false
             }
         try {
             val mp = MediaPlayer().apply {
@@ -61,16 +69,12 @@ internal class TtsPlayer @Inject constructor(
                 )
                 setDataSource(file.absolutePath)
                 setOnCompletionListener {
-                    releasePlayer()
-                    file.delete()
-                    currentFile = null
-                    onCompletion()
+                    finishPlayback(id, file, onCompletion)
                 }
                 setOnErrorListener { _, what, extra ->
                     FileLogger.e(TAG, "朗读播放出错 what=$what extra=$extra")
-                    releasePlayer()
-                    file.delete()
-                    currentFile = null
+                    // onError 返回 true 时框架不会回调 onCompletion，这里自己收尾并唤醒等待方
+                    finishPlayback(id, file, onCompletion)
                     true
                 }
                 prepare()
@@ -78,10 +82,24 @@ internal class TtsPlayer @Inject constructor(
             }
             player = mp
             currentFile = file
+            true
         } catch (e: Exception) {
             FileLogger.e(TAG, "朗读播放失败", e)
-            file.delete()
+            runCatching { file.delete() }
+            false
         }
+    }
+
+    /**
+     * 收尾并回调，但只对仍是当前这一轮的播放生效；已被下一段接管的迟到回调直接忽略，
+     * 否则会误删新段的文件、误释放新段的 player。
+     */
+    private fun finishPlayback(id: Long, file: File, onCompletion: () -> Unit) {
+        if (id != playbackId) return
+        releasePlayer()
+        runCatching { file.delete() }
+        currentFile = null
+        onCompletion()
     }
 
     /**
@@ -92,7 +110,12 @@ internal class TtsPlayer @Inject constructor(
      */
     suspend fun playAndWait(bytes: ByteArray, tag: String = DEFAULT_TAG) {
         val done = CompletableDeferred<Unit>()
-        play(bytes, tag) { done.complete(Unit) }
+        val started = play(bytes, tag) { done.complete(Unit) }
+        if (!started) {
+            // 没播起来（写盘/准备失败）就不会有回调，自己唤醒自己，免得调用方永久挂起
+            done.complete(Unit)
+            return
+        }
         pendingCompletion = done
         done.await()
     }
