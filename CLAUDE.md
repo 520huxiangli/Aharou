@@ -15,6 +15,12 @@
   - **左滑删除**：一律使用 `core/ui/SwipeToDeleteRow.kt`。
   - **主题与设计规范**：严格遵循 `core/theme/AIEditorTheme.kt` 的 `Spacing`、`Radius`（含 `Radius.mdLarge = 12.dp`）与 `MaterialTheme.semanticColors`，禁止随意硬编码非标魔数与色彩。
 
+### API 与编译红线（实战踩过）
+
+- **minSdk 26**：用新 API 前先确认它在 Android 8.0 上存在。不要用 `InputStream.readNBytes(int)`（API 33+，低版本抛 `NoSuchMethodError`）——需要「最多读 N 字节」时用 `core/util/BoundedLineReader.kt` 的 `readFileHead`。`Array` 没有 `asReversed()`（那是 `MutableList` 的扩展），数组要用 `reversedArray()` / `reversed()`。
+- **`AdaptiveModalBottomSheet` 的调用点必须自带 `@OptIn(ExperimentalMaterial3Api::class)`**：它的签名暴露了实验类型 `SheetState` / `ModalBottomSheetProperties`，删掉 OptIn 会直接编译失败（设置页灵魂图标弹层就踩过）。
+- **英文 `strings.xml` 里的撇号必须转义成 `\'`**（`Don\'t`、`The backup\'s`）：漏了会 aapt2 报 `Apostrophe not preceded by \`，整包编不过。
+
 ## 构建与验证
 
 **改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。** 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
