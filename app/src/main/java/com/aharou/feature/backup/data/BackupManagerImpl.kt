@@ -252,8 +252,8 @@ class BackupManagerImpl @Inject constructor(
                 when {
                     // 来源是已解密的加密备份：口令已用过且解密成功，解析失败只可能是内容损坏，不能提示重输口令。
                     sourceAlreadyDecrypted -> context.getString(R.string.backup_content_corrupted)
-                    pw != null -> "备份文件已损坏，或口令与备份文件不匹配"
-                    else -> "不是有效的 Aharou 备份文件；如果这是加密备份，请输入导出口令"
+                    pw != null -> context.getString(R.string.backup_error_password_or_corrupted)
+                    else -> context.getString(R.string.backup_error_invalid_file)
                 },
                 e
             )
@@ -433,7 +433,7 @@ class BackupManagerImpl @Inject constructor(
     }
 
     /**
-     * 递归遍历本地工作区，按「.gitignore（锚定）+ 同步忽略清单」排除文件；
+     * 迭代遍历本地工作区（显式栈，避免深层目录栈溢出），按「.gitignore（锚定）+ 同步忽略清单」排除文件；
      * `.git` 目录强制包含（其内部不参与忽略判断）；符号链接跳过（防循环）。
      */
     private fun walkWorkspaceFiles(
@@ -446,20 +446,27 @@ class BackupManagerImpl @Inject constructor(
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         val gitignorePatterns = parseGitIgnore(File(root, ".gitignore"))
 
-        fun walk(dir: File, relParts: List<String>) {
-            dir.listFiles()?.forEach { f ->
-                val parts = relParts + f.name
-                if (java.nio.file.Files.isSymbolicLink(f.toPath())) return@forEach
+        // 显式栈做深度优先遍历：子项逆序入栈，出栈即原顺序，等价于原递归的先序遍历。
+        val stack = java.util.ArrayDeque<Pair<File, List<String>>>()
+        stack.addLast(root to emptyList())
+        while (stack.isNotEmpty()) {
+            val (f, parts) = stack.removeLast()
+            if (parts.isNotEmpty()) {  // 根目录不做忽略/符号链接判断
+                if (java.nio.file.Files.isSymbolicLink(f.toPath())) continue
                 if (parts.first() != ".git" &&
                     (customIgnores.any { it in parts } ||
                         GitIgnoreMatcher.isIgnored(gitignorePatterns, parts, anchored = true))
                 ) {
-                    return@forEach
+                    continue
                 }
-                if (f.isDirectory) walk(f, parts) else onFile(f, parts)
+            }
+            if (f.isDirectory) {
+                val children = f.listFiles() ?: continue
+                for (c in children.reversedArray()) stack.addLast(c to (parts + c.name))
+            } else {
+                onFile(f, parts)
             }
         }
-        walk(root, emptyList())
     }
 
     /** 解析工作区根 .gitignore：去空行/注释/结尾斜杠。 */
@@ -570,7 +577,7 @@ class BackupManagerImpl @Inject constructor(
         }
         val meta = metadata ?: run {
             FileLogger.e(TAG, "导入失败：tar 中缺少 metadata.json")
-            error("不是有效的 Aharou 备份文件：缺少 metadata.json")
+            error(context.getString(R.string.backup_error_missing_metadata))
         }
         FileLogger.i(TAG, "tar 解析完成，开始还原元数据段")
         return stats + restoreMeta(meta, providerConflict)
@@ -619,7 +626,7 @@ class BackupManagerImpl @Inject constructor(
 
     private fun checkVersion(schemaVersion: Int) {
         if (schemaVersion > currentSchemaVersion()) {
-            error("备份的数据库版本 v$schemaVersion 高于本应用 v${currentSchemaVersion()}，请升级应用")
+            error(context.getString(R.string.backup_error_db_version_too_new, schemaVersion, currentSchemaVersion()))
         }
     }
 

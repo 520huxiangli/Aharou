@@ -565,6 +565,12 @@
     <string name="backup_error_truncated">The encrypted backup file is truncated (incomplete export or interrupted transfer)</string>
     <string name="backup_error_corrupted">The encrypted backup file is corrupted</string>
     <string name="backup_error_not_a_backup_file">Not a valid encrypted Aharou backup file</string>
+    <string name="backup_error_password_or_corrupted">The backup file is corrupted, or the password does not match the backup file</string>
+    <string name="backup_error_invalid_file">Not a valid Aharou backup file. If this is an encrypted backup, enter the export password</string>
+    <string name="backup_error_file_too_large">The backup file is too large and exceeds the encryption format limit</string>
+    <string name="backup_error_missing_metadata">Not a valid Aharou backup file: metadata.json is missing</string>
+    <string name="backup_error_db_version_too_new">The backup\'s database version v%1$d is newer than this app (v%2$d). Please update the app</string>
+    <string name="backup_error_unknown_exception">Unknown error</string>
 
     <!-- Chat Drawer -->
     <string name="chat_history">History</string>

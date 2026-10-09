@@ -47,7 +47,10 @@ enum class BackupCryptoError {
     CORRUPTED,
 
     /** 开头既非本格式 MAGIC、也无法读出旧格式所需头部。 */
-    NOT_A_BACKUP_FILE
+    NOT_A_BACKUP_FILE,
+
+    /** 导出侧：分块序号超过格式上限（备份过大）。 */
+    FILE_TOO_LARGE
 }
 
 /**
@@ -149,7 +152,9 @@ object BackupCrypto {
 
             if (isLast) break
             index++
-            check(index <= 0xFFFFFFFFL) { "备份文件过大，超出加密格式支持范围" }
+            if (index > 0xFFFFFFFFL) {
+                throw BackupCryptoException(BackupCryptoError.FILE_TOO_LARGE, "备份文件过大，超出加密格式支持范围")
+            }
         }
         output.flush()
     }

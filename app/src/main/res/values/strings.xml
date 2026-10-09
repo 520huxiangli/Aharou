@@ -565,6 +565,12 @@
     <string name="backup_error_truncated">加密备份文件已截断，可能未完整导出或被中断</string>
     <string name="backup_error_corrupted">加密备份文件已损坏</string>
     <string name="backup_error_not_a_backup_file">不是有效的加密 Aharou 备份文件</string>
+    <string name="backup_error_password_or_corrupted">备份文件已损坏，或口令与备份文件不匹配</string>
+    <string name="backup_error_invalid_file">不是有效的 Aharou 备份文件；如果这是加密备份，请输入导出口令</string>
+    <string name="backup_error_file_too_large">备份文件过大，超出加密格式支持范围</string>
+    <string name="backup_error_missing_metadata">不是有效的 Aharou 备份文件：缺少 metadata.json</string>
+    <string name="backup_error_db_version_too_new">备份的数据库版本 v%1$d 高于本应用 v%2$d，请升级应用</string>
+    <string name="backup_error_unknown_exception">未知异常</string>
 
     <!-- Chat Drawer -->
     <string name="chat_history">历史记录</string>

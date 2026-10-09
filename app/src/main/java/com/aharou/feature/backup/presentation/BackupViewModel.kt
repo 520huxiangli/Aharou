@@ -100,7 +100,7 @@ class BackupViewModel @Inject constructor(
                 backupManager.export(pw, options, output)
                 _state.value = BackupState.ExportDone
             } catch (e: Exception) {
-                _state.value = BackupState.Error(e.message ?: context.getString(R.string.backup_export_failed))
+                _state.value = BackupState.Error(describeExportError(e))
             } finally {
                 runCatching { output.close() }
             }
@@ -227,6 +227,13 @@ class BackupViewModel @Inject constructor(
         return null
     }
 
+    private fun describeExportError(e: Throwable): String {
+        return when (findCryptoError(e)) {
+            BackupCryptoError.FILE_TOO_LARGE -> context.getString(R.string.backup_error_file_too_large)
+            else -> e.message ?: context.getString(R.string.backup_export_failed)
+        }
+    }
+
     private fun describeImportError(e: Throwable): String {
         findCryptoError(e)?.let { error ->
             return context.getString(
@@ -236,6 +243,7 @@ class BackupViewModel @Inject constructor(
                     BackupCryptoError.TRUNCATED -> R.string.backup_error_truncated
                     BackupCryptoError.CORRUPTED -> R.string.backup_error_corrupted
                     BackupCryptoError.NOT_A_BACKUP_FILE -> R.string.backup_error_not_a_backup_file
+                    BackupCryptoError.FILE_TOO_LARGE -> R.string.backup_error_file_too_large
                 }
             )
         }
@@ -246,7 +254,7 @@ class BackupViewModel @Inject constructor(
             var depth = 0
             while (cause != null && depth < 2) {
                 append("\nCaused by: ")
-                append(cause::class.simpleName ?: "未知异常")
+                append(cause::class.simpleName ?: context.getString(R.string.backup_error_unknown_exception))
                 append(": ")
                 append(cause.message ?: "")
                 cause = cause.cause
