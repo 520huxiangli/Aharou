@@ -19,6 +19,7 @@ import com.aharou.feature.workspace.domain.model.RemoteMount
 import com.aharou.feature.workspace.domain.model.RemoteProtocol
 import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
+import com.aharou.feature.workspace.domain.remote.RemoteSyncClient
 import com.aharou.feature.workspace.domain.remote.SyncEngine
 import com.aharou.feature.workspace.domain.remote.SyncIndexStore
 import com.aharou.feature.workspace.domain.remote.ftp.FtpSyncClient
@@ -221,6 +222,7 @@ class RemoteRepository @Inject constructor(
     }
 
     suspend fun connectMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        var client: RemoteSyncClient? = null
         try {
             // 已存在旧连接时先清理，避免重复/并发连接泄漏 engine
             activeEngines[mountId]?.shutdown()
@@ -234,7 +236,7 @@ class RemoteRepository @Inject constructor(
             val conn = connEntity.toDomainModel()
             val mount = mountEntity.toDomainModel(conn)
 
-            val client = when (conn.protocol) {
+            client = when (conn.protocol) {
                 RemoteProtocol.SFTP -> SftpSyncClient(hostKeyVerifier, privateKeyStore)
                 RemoteProtocol.FTP -> FtpSyncClient()
             }
@@ -261,6 +263,8 @@ class RemoteRepository @Inject constructor(
             startStateWatch(mountId, engine)
             Result.success(Unit)
         } catch (e: Exception) {
+            // 客户端内部失败时未必来得及关掉已建立的连接（如 SFTP 认证失败时字段未赋值），此处兜底关闭
+            runCatching { client?.disconnect() }
             // 挂载连接不弹确认：提示用户先去连接配置页测试连通性完成确认
             val pending = hostKeyVerifier.consumePending()
             if (pending != null) {

@@ -46,22 +46,32 @@ class SftpSyncClient(
         }
 
     private fun doConnect(host: String, port: Int, username: String, auth: RemoteAuth) {
-        sshClient = SSHClient().apply {
-            setConnectTimeout(CONNECT_TIMEOUT_MS)
-            setTimeout(READ_TIMEOUT_MS)
-            addHostKeyVerifier(hostKeyVerifier)
-            connect(host, port)
+        val ssh = SSHClient()
+        try {
+            ssh.apply {
+                setConnectTimeout(CONNECT_TIMEOUT_MS)
+                setTimeout(READ_TIMEOUT_MS)
+                addHostKeyVerifier(hostKeyVerifier)
+                connect(host, port)
 
-            when (auth) {
-                is RemoteAuth.Password -> authPassword(username, auth.password)
-                is RemoteAuth.PrivateKey -> {
-                    val pem = privateKeyStore.readPem(auth.privateKeyPath)
-                    val passwordFinder = auth.passphrase?.let { PasswordUtils.createOneOff(it.toCharArray()) }
-                    authPublickey(username, loadKeys(pem, null, passwordFinder))
+                when (auth) {
+                    is RemoteAuth.Password -> authPassword(username, auth.password)
+                    is RemoteAuth.PrivateKey -> {
+                        val pem = privateKeyStore.readPem(auth.privateKeyPath)
+                        val passwordFinder = auth.passphrase?.let { PasswordUtils.createOneOff(it.toCharArray()) }
+                        authPublickey(username, loadKeys(pem, null, passwordFinder))
+                    }
                 }
             }
+            val sftp = ssh.newSFTPClient()
+            // 成功后才落字段；失败路径字段保持 null，由本方法的 catch 负责关连接
+            sshClient = ssh
+            sftpClient = sftp
+        } catch (e: Exception) {
+            // 认证或建 SFTP 会话失败时字段尚未赋值，无人会关这个已建立 TCP 的 ssh 实例，就地关闭
+            runCatching { ssh.disconnect() }
+            throw e
         }
-        sftpClient = sshClient?.newSFTPClient()
     }
 
     private fun doDisconnect() {
