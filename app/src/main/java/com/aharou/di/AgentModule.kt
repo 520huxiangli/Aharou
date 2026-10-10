@@ -39,6 +39,7 @@ import com.aharou.feature.agent.domain.tool.container.TerminalSessionTool
 import com.aharou.feature.agent.domain.tool.explorer.ListFilesTool
 import com.aharou.feature.agent.domain.tool.explorer.SearchCodeTool
 import com.aharou.feature.agent.domain.tool.shizuku.ShizukuTool
+import com.aharou.feature.agent.domain.tool.knowledge.KnowledgeSearchTool
 import com.aharou.feature.agent.domain.tool.rule.LoadRuleTool
 import com.aharou.feature.agent.domain.tool.skill.LoadSkillTool
 import com.aharou.feature.agent.domain.tool.question.AskUserQuestionTool
@@ -396,6 +397,7 @@ object AgentModule {
         searchCodeTool: SearchCodeTool,
         loadSkillTool: LoadSkillTool,
         loadRuleTool: LoadRuleTool,
+        knowledgeSearchTool: KnowledgeSearchTool,
         askUserQuestionTool: AskUserQuestionTool,
         manageMcpTool: ManageMcpTool,
         toolSearchTool: ToolSearchTool,
@@ -426,6 +428,7 @@ object AgentModule {
             register("search", searchCodeTool)
             register("loadSkill", loadSkillTool)
             register("loadRule", loadRuleTool)
+            register("knowledge_search", knowledgeSearchTool)
             register("askUserQuestion", askUserQuestionTool)
             register("manageMcp", manageMcpTool)
             register("tool_search", toolSearchTool)

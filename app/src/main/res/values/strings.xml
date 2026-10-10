@@ -2538,4 +2538,21 @@
     <string name="config_confirm_fallback_caption">Aharou 想修改自己的设置</string>
     <string name="config_confirm_approve">同意</string>
     <string name="config_confirm_reject">驳回</string>
+
+    <!-- 共享知识库 -->
+    <string name="settings_knowledge_base">共享知识库</string>
+    <string name="knowledge_base_sync_all">同步全部</string>
+    <string name="knowledge_base_sync_all_hint">从各源拉取最新文档到本机</string>
+    <string name="knowledge_base_source_meta">%1$d 篇 · %2$s</string>
+    <string name="knowledge_base_sync">同步</string>
+    <string name="knowledge_base_remove">移除</string>
+    <string name="knowledge_base_add_source">添加知识库</string>
+    <string name="knowledge_base_add_source_label">仓库地址</string>
+    <string name="knowledge_base_add_source_hint">如 owner/repo，或完整的仓库链接</string>
+    <string name="knowledge_base_add">添加</string>
+    <string name="knowledge_base_syncing">正在同步…</string>
+    <string name="knowledge_base_synced">同步完成</string>
+    <string name="knowledge_base_sync_failed">同步失败，检查网络后重试</string>
+    <string name="knowledge_base_invalid_repo">认不出这个仓库地址</string>
+    <string name="knowledge_base_no_source">还没有配置任何知识库</string>
 </resources>

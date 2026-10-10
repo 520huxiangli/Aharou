@@ -1,0 +1,74 @@
+{
+  "sources": {
+    "aharou-kb": {
+      "name": { "zh": "Aharou 文档", "en": "Aharou Docs" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "aharou"
+    },
+    "kb-ima": {
+      "name": { "zh": "ima 知识库", "en": "ima KB" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "ima"
+    },
+    "kb-freekill": {
+      "name": { "zh": "新月杀资料", "en": "FreeKill Notes" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "freekill"
+    },
+    "kb-fox": {
+      "name": { "zh": "狐狸服资料", "en": "Fox Server Notes" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "fox"
+    },
+    "kb-oh-story": {
+      "name": { "zh": "网文写作手册（oh-story）", "en": "oh-story Writing Handbook" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/oh-story"
+    },
+    "kb-prompt-engineering": {
+      "name": { "zh": "提示工程指南", "en": "Prompt Engineering Guide" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/prompt-engineering"
+    },
+    "kb-anthropic-cookbook": {
+      "name": { "zh": "Anthropic 实战手册", "en": "Anthropic Cookbook" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/anthropic-cookbook"
+    },
+    "kb-openai-cookbook": {
+      "name": { "zh": "OpenAI 实战手册", "en": "OpenAI Cookbook" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/openai-cookbook"
+    },
+    "kb-java-guide": {
+      "name": { "zh": "JavaGuide 后端知识体系", "en": "JavaGuide" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/java-guide"
+    },
+    "kb-leetcode-go": {
+      "name": { "zh": "LeetCode 题解（Go）", "en": "LeetCode-Go" },
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/leetcode-go"
+    }
+  }
+}

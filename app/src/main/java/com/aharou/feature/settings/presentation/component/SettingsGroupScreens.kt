@@ -28,6 +28,7 @@ import compose.icons.feathericons.Box
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
+import compose.icons.feathericons.Database
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
@@ -134,6 +135,12 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.Book,
                 title = stringResource(SettingsSection.Skills.titleRes),
                 onClick = { onOpen(SettingsSection.Skills) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Database,
+                title = stringResource(SettingsSection.Knowledge.titleRes),
+                onClick = { onOpen(SettingsSection.Knowledge) }
             )
             SettingsDivider()
             SettingsRow(

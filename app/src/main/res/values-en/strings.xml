@@ -2538,4 +2538,21 @@
     <string name="config_confirm_fallback_caption">Aharou wants to change its own settings</string>
     <string name="config_confirm_approve">Approve</string>
     <string name="config_confirm_reject">Reject</string>
+
+    <!-- Shared knowledge base -->
+    <string name="settings_knowledge_base">Knowledge Base</string>
+    <string name="knowledge_base_sync_all">Sync all</string>
+    <string name="knowledge_base_sync_all_hint">Pull the latest docs from every source</string>
+    <string name="knowledge_base_source_meta">%1$d docs · %2$s</string>
+    <string name="knowledge_base_sync">Sync</string>
+    <string name="knowledge_base_remove">Remove</string>
+    <string name="knowledge_base_add_source">Add a knowledge base</string>
+    <string name="knowledge_base_add_source_label">Repository</string>
+    <string name="knowledge_base_add_source_hint">e.g. owner/repo, or a full repo URL</string>
+    <string name="knowledge_base_add">Add</string>
+    <string name="knowledge_base_syncing">Syncing…</string>
+    <string name="knowledge_base_synced">Synced</string>
+    <string name="knowledge_base_sync_failed">Sync failed, check your network and retry</string>
+    <string name="knowledge_base_invalid_repo">That repository address is not recognised</string>
+    <string name="knowledge_base_no_source">No knowledge base configured yet</string>
 </resources>

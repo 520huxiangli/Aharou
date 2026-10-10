@@ -184,6 +184,7 @@ export default defineConfig({
             { text: '定时任务', link: '/guide/scheduled-tasks' },
             { text: '自定义提示词', link: '/guide/custom-prompts' },
             { text: '记忆与项目规则', link: '/guide/memory' },
+            { text: '共享知识库', link: '/guide/knowledge-base' },
             { text: '人格（Soul）', link: '/guide/soul' }
           ]
         },

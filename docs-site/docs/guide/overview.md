@@ -50,6 +50,7 @@
 | 定时任务 | 按固定周期自动在指定会话里跑一条指令，可限次、错过不补跑（v2.8.2 起）→ [文档](/guide/scheduled-tasks) |
 | 自定义提示词 | 覆盖与定制 AI 系统的提示词片段 → [文档](/guide/custom-prompts) |
 | 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md 项目规则 → [文档](/guide/memory) |
+| 共享知识库 | 从一个公开 Markdown 仓库同步资料到本地，AI 用 `knowledge_search` 检索 → [文档](/guide/knowledge-base) |
 | 人格（Soul） | 助手的名字、图标、风格与人格正文，注入系统提示词 → [文档](/guide/soul) |
 
 ### 运行环境
