@@ -1,74 +1,466 @@
 {
+  "categories": {
+    "ai": {
+      "zh": "AI",
+      "en": "AI"
+    },
+    "algo": {
+      "zh": "算法",
+      "en": "Algorithms"
+    },
+    "backend": {
+      "zh": "后端",
+      "en": "Backend"
+    },
+    "frontend": {
+      "zh": "前端",
+      "en": "Frontend"
+    },
+    "data": {
+      "zh": "数据",
+      "en": "Data"
+    },
+    "learning": {
+      "zh": "学习",
+      "en": "Learning"
+    },
+    "security": {
+      "zh": "安全",
+      "en": "Security"
+    },
+    "devops": {
+      "zh": "运维",
+      "en": "DevOps"
+    },
+    "writing": {
+      "zh": "写作",
+      "en": "Writing"
+    },
+    "humanities": {
+      "zh": "人文",
+      "en": "Humanities"
+    }
+  },
   "sources": {
-    "aharou-kb": {
-      "name": { "zh": "Aharou 文档", "en": "Aharou Docs" },
+    "ms-genai": {
+      "name": {
+        "zh": "生成式 AI 入门（微软）",
+        "en": "Generative AI for Beginners"
+      },
+      "description": {
+        "zh": "21 节课，从提示词到 RAG、Agent 的动手教程",
+        "en": "21 lessons from prompting to RAG and agents"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
-      "path": "aharou"
+      "path": "sources/ms-genai"
     },
-    "kb-ima": {
-      "name": { "zh": "ima 知识库", "en": "ima KB" },
+    "ms-ai": {
+      "name": {
+        "zh": "AI 入门（微软）",
+        "en": "AI for Beginners"
+      },
+      "description": {
+        "zh": "24 节课的人工智能基础课，含神经网络与伦理",
+        "en": "24 lessons on AI fundamentals, neural nets and ethics"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
-      "path": "ima"
+      "path": "sources/ms-ai"
     },
-    "kb-freekill": {
-      "name": { "zh": "新月杀资料", "en": "FreeKill Notes" },
+    "ms-ml": {
+      "name": {
+        "zh": "机器学习入门（微软）",
+        "en": "ML for Beginners"
+      },
+      "description": {
+        "zh": "经典机器学习 26 节课，配套 scikit-learn 实操",
+        "en": "26 lessons of classical ML with scikit-learn"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
-      "path": "freekill"
+      "path": "sources/ms-ml"
     },
-    "kb-fox": {
-      "name": { "zh": "狐狸服资料", "en": "Fox Server Notes" },
-      "host": "github",
-      "repo": "520huxiangli/aharou-kb",
-      "branch": "master",
-      "path": "fox"
-    },
-    "kb-oh-story": {
-      "name": { "zh": "网文写作手册（oh-story）", "en": "oh-story Writing Handbook" },
-      "host": "github",
-      "repo": "520huxiangli/aharou-kb",
-      "branch": "master",
-      "path": "sources/oh-story"
-    },
-    "kb-prompt-engineering": {
-      "name": { "zh": "提示工程指南", "en": "Prompt Engineering Guide" },
+    "prompt-engineering": {
+      "name": {
+        "zh": "提示工程指南",
+        "en": "Prompt Engineering Guide"
+      },
+      "description": {
+        "zh": "提示词技巧与论文索引，写系统提示词时的参考",
+        "en": "Prompting techniques and paper index"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
       "path": "sources/prompt-engineering"
     },
-    "kb-anthropic-cookbook": {
-      "name": { "zh": "Anthropic 实战手册", "en": "Anthropic Cookbook" },
+    "anthropic-cookbook": {
+      "name": {
+        "zh": "Anthropic 实战手册",
+        "en": "Anthropic Cookbook"
+      },
+      "description": {
+        "zh": "Claude 的实战配方：工具调用、RAG、多模态与评估",
+        "en": "Claude recipes: tool use, RAG, multimodal, evals"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
       "path": "sources/anthropic-cookbook"
     },
-    "kb-openai-cookbook": {
-      "name": { "zh": "OpenAI 实战手册", "en": "OpenAI Cookbook" },
+    "openai-cookbook": {
+      "name": {
+        "zh": "OpenAI 实战手册",
+        "en": "OpenAI Cookbook"
+      },
+      "description": {
+        "zh": "官方示例集：结构化输出、函数调用、向量检索",
+        "en": "Official examples: structured output, tools, embeddings"
+      },
+      "category": "ai",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
       "path": "sources/openai-cookbook"
     },
-    "kb-java-guide": {
-      "name": { "zh": "JavaGuide 后端知识体系", "en": "JavaGuide" },
+    "transformers": {
+      "name": {
+        "zh": "Hugging Face 文档",
+        "en": "Hugging Face Transformers Docs"
+      },
+      "description": {
+        "zh": "主流模型库的用法与原理文档，模型微调与推理",
+        "en": "Docs for the leading model library: training and inference"
+      },
+      "category": "ai",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/transformers"
+    },
+    "tensorflow-docs": {
+      "name": {
+        "zh": "TensorFlow 文档",
+        "en": "TensorFlow Docs"
+      },
+      "description": {
+        "zh": "TensorFlow 官方教程与指南",
+        "en": "TensorFlow official tutorials and guides"
+      },
+      "category": "ai",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/tensorflow-docs"
+    },
+    "llm-course": {
+      "name": {
+        "zh": "LLM 课程",
+        "en": "LLM Course"
+      },
+      "description": {
+        "zh": "大模型系统课：原理、微调与部署路线图",
+        "en": "LLM roadmap: fundamentals, fine-tuning, deployment"
+      },
+      "category": "ai",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/llm-course"
+    },
+    "applied-ml": {
+      "name": {
+        "zh": "机器学习工程实践",
+        "en": "Applied ML"
+      },
+      "description": {
+        "zh": "把模型做进产品的工程经验汇总",
+        "en": "Notes on shipping ML systems in production"
+      },
+      "category": "ai",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/applied-ml"
+    },
+    "ms-data-science": {
+      "name": {
+        "zh": "数据科学入门（微软）",
+        "en": "Data Science for Beginners"
+      },
+      "description": {
+        "zh": "10 周数据科学课：清洗、分析、可视化",
+        "en": "10 weeks of data science: cleaning, analysis, viz"
+      },
+      "category": "data",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/ms-data-science"
+    },
+    "pytorch-tutorials": {
+      "name": {
+        "zh": "PyTorch 教程",
+        "en": "PyTorch Tutorials"
+      },
+      "description": {
+        "zh": "官方教程：张量、训练循环、分布式",
+        "en": "Official tutorials: tensors, training loops, distributed"
+      },
+      "category": "data",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/pytorch-tutorials"
+    },
+    "ms-web-dev": {
+      "name": {
+        "zh": "Web 开发入门（微软）",
+        "en": "Web Dev for Beginners"
+      },
+      "description": {
+        "zh": "12 周前端基础课：HTML/CSS/JS 到小项目",
+        "en": "12 weeks of web basics: HTML/CSS/JS through projects"
+      },
+      "category": "frontend",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/ms-web-dev"
+    },
+    "react-cheatsheets": {
+      "name": {
+        "zh": "React 速查手册",
+        "en": "React TypeScript Cheatsheets"
+      },
+      "description": {
+        "zh": "TypeScript 写 React 的常见写法与坑",
+        "en": "React with TypeScript: patterns and pitfalls"
+      },
+      "category": "frontend",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/react-cheatsheets"
+    },
+    "java-guide": {
+      "name": {
+        "zh": "JavaGuide 后端知识体系",
+        "en": "JavaGuide"
+      },
+      "description": {
+        "zh": "后端通用知识：数据库、缓存、分布式、高并发",
+        "en": "Backend fundamentals: DB, cache, distributed, concurrency"
+      },
+      "category": "backend",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
       "path": "sources/java-guide"
     },
-    "kb-leetcode-go": {
-      "name": { "zh": "LeetCode 题解（Go）", "en": "LeetCode-Go" },
+    "node-best-practices": {
+      "name": {
+        "zh": "Node.js 最佳实践",
+        "en": "Node.js Best Practices"
+      },
+      "description": {
+        "zh": "Node 服务的工程规范：错误处理、安全、性能",
+        "en": "Node service practices: errors, security, performance"
+      },
+      "category": "backend",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/node-best-practices"
+    },
+    "docker-compose": {
+      "name": {
+        "zh": "Docker Compose 范例",
+        "en": "Awesome Compose"
+      },
+      "description": {
+        "zh": "常见技术栈的 compose 编排示例",
+        "en": "Compose samples for common stacks"
+      },
+      "category": "backend",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/docker-compose"
+    },
+    "leetcode-go": {
+      "name": {
+        "zh": "LeetCode 题解",
+        "en": "LeetCode Solutions"
+      },
+      "description": {
+        "zh": "算法题解合集，按题型整理思路与复杂度",
+        "en": "Algorithm solutions by topic with complexity"
+      },
+      "category": "algo",
       "host": "github",
       "repo": "520huxiangli/aharou-kb",
       "branch": "master",
       "path": "sources/leetcode-go"
+    },
+    "interview-university": {
+      "name": {
+        "zh": "计算机自学路线",
+        "en": "Coding Interview University"
+      },
+      "description": {
+        "zh": "从零补计算机基础的完整学习计划",
+        "en": "A full study plan for CS fundamentals"
+      },
+      "category": "algo",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/interview-university"
+    },
+    "ossu-cs": {
+      "name": {
+        "zh": "开源计算机课程",
+        "en": "Open Source Society University"
+      },
+      "description": {
+        "zh": "一份可自学的计算机本科课程表",
+        "en": "A self-taught CS degree curriculum"
+      },
+      "category": "algo",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/ossu-cs"
+    },
+    "project-based-learning": {
+      "name": {
+        "zh": "动手做项目学编程",
+        "en": "Project Based Learning"
+      },
+      "description": {
+        "zh": "按语言和难度整理的项目式教程清单",
+        "en": "Curated project tutorials by language"
+      },
+      "category": "algo",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/project-based-learning"
+    },
+    "algorithms-python": {
+      "name": {
+        "zh": "Python 算法集",
+        "en": "The Algorithms — Python"
+      },
+      "description": {
+        "zh": "常用算法的 Python 实现与说明",
+        "en": "Common algorithms implemented and explained"
+      },
+      "category": "algo",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/algorithms-python"
+    },
+    "k8s-hard-way": {
+      "name": {
+        "zh": "Kubernetes 硬核之道",
+        "en": "Kubernetes The Hard Way"
+      },
+      "description": {
+        "zh": "手动从零搭一个 K8s 集群的完整步骤",
+        "en": "Build a Kubernetes cluster from scratch"
+      },
+      "category": "devops",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/k8s-hard-way"
+    },
+    "owasp-cheatsheets": {
+      "name": {
+        "zh": "OWASP 安全速查",
+        "en": "OWASP Cheat Sheet Series"
+      },
+      "description": {
+        "zh": "各类漏洞的防御要点，写代码和做审查都用得上",
+        "en": "Defense guidance for common vulnerability classes"
+      },
+      "category": "security",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/owasp-cheatsheets"
+    },
+    "oh-story": {
+      "name": {
+        "zh": "网文写作手册",
+        "en": "Web Novel Writing Handbook"
+      },
+      "description": {
+        "zh": "网文方法论：去 AI 味、黄金三章、人物与爽点",
+        "en": "Web-novel craft: de-AI-flavor, hooks, characters"
+      },
+      "category": "writing",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/oh-story"
+    },
+    "chinese-poetry": {
+      "name": {
+        "zh": "中华古典诗词",
+        "en": "Chinese Poetry"
+      },
+      "description": {
+        "zh": "唐诗宋词等古典诗词数据集与说明",
+        "en": "Classical Chinese poetry datasets and docs"
+      },
+      "category": "humanities",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/chinese-poetry"
+    },
+    "free-programming-books": {
+      "name": {
+        "zh": "免费编程书单",
+        "en": "Free Programming Books"
+      },
+      "description": {
+        "zh": "分语言的免费书与课程索引",
+        "en": "Free books and courses, by language"
+      },
+      "category": "learning",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/free-programming-books"
+    },
+    "awesome": {
+      "name": {
+        "zh": "Awesome 清单",
+        "en": "Awesome"
+      },
+      "description": {
+        "zh": "各类优质资源的索引总表",
+        "en": "The index of curated awesome lists"
+      },
+      "category": "learning",
+      "host": "github",
+      "repo": "520huxiangli/aharou-kb",
+      "branch": "master",
+      "path": "sources/awesome"
     }
   }
 }
