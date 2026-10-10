@@ -19,10 +19,11 @@ object McpStdioChannel {
     /**
      * 同时运行的 STDIO server 进程数上限。
      * 每个 stdio server 都是容器内一个常驻 node/python 进程（数十 MB 内存），移动端不能任由配置堆叠：
-     * 到上限就给明确错误，而不是静默起一堆进程把设备拖垮。取 8——日常配置 1~3 个 server，8 已足够宽松，
-     * 又能挡住配置文件被复制粘贴堆出十几个进程的情况。
+     * 到上限就给明确错误，而不是静默起一堆进程把设备拖垮。取 12——LSP 与 MCP 共用这一个计数，
+     * 编辑器新收录了 Python/TypeScript/Shell/YAML 几种语言服务器，日常“几个 MCP + 几种语言的编辑器”
+     * 很容易接近旧值 8；12 约等于 5 个 LSP + 5 个 MCP + 2 个缓冲，仍能挡住配置文件被堆出十几个进程。
      */
-    const val MAX_CONCURRENT_STDIO_SERVERS = 8
+    const val MAX_CONCURRENT_STDIO_SERVERS = 12
 
     /** 发 SIGTERM 后等进程自行退出的时长；到期仍存活的（含期间新 fork 的）改用 SIGKILL。 */
     private const val KILL_GRACE_MS = 300L

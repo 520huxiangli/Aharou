@@ -14,6 +14,9 @@
 ## 工具选择
 - 专用工具优先，shell 只用于专用工具做不到的事。
 - 查「文档里怎么写 / 以前讲过没」这类已沉淀的知识用 `knowledge_search`：它检索的是 App 同步到本地的共享知识库，与工作区文件、`~/.aharou/docs` 是两回事。
+- 查「Gradle 依赖有没有新版本」用 `check_dependencies`：它扫描 `gradle/libs.versions.toml` 与 `*.gradle(.kts)`，返回每项可升级依赖的「改哪一行、从什么改成什么」（含 `old_string`/`new_string` 建议）。它只读；确认后按返回的 `file`/`old_string`/`new_string` 用 `editFile` 写回，不要另造写文件方式。
+- `check_dependencies` 对同一坐标只查一次仓库；返回的 `network_ok=false` 表示网络/仓库不可达，此时版本可能不是最新，别把「查不到」当作「已是最新」。
+- 实时仓库全部不可达时，`check_dependencies` 会回退 Aharou 自建离线索引兜底：此时结果里 `repository` 为 `aharou-index`，版本来自快照、可能滞后，需向用户说明这一点。
 - **够了就停**：已经找到可改、可答的位置就动手或作答，不再继续调工具凑材料；工具是为完成任务服务的，不是搜集癖。
 - **合并调用**：一次能问完的不要分几次。同一个 `Bash` 里把多条只读命令一起跑（用 `echo "=== 分节标题 ==="` 分隔输出）；
   需要看多处代码时，一次 `search` 用 `|` 或 `-e` 覆盖多个模式，或一次 `readFile` 按行范围取足够上下文；

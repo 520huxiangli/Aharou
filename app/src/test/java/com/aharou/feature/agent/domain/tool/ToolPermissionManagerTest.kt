@@ -72,4 +72,32 @@ class ToolPermissionManagerTest {
         mgr.resolve("id1", PermissionChoice.REJECT)
         assertEquals(PermissionChoice.REJECT, d1.await())
     }
+
+    @Test
+    fun batchApprovalResolvesAllItemsWithSameChoice() = runBlocking {
+        val mgr = ToolPermissionManager()
+        val batch = PendingPermissionBatch("b1", "s1", listOf(req("id1", "s1"), req("id2", "s1")))
+        val d = async { mgr.awaitBatchApproval(batch) }
+        withTimeout(1000) { while (mgr.pendingBatch.value == null) yield() }
+
+        assertEquals("b1", mgr.pendingBatch.value?.id)
+        assertEquals("b1", mgr.pendingBatchForSession("s1")?.id)
+        assertEquals(setOf("s1"), mgr.awaitingSessionIds.value)
+
+        mgr.resolveBatch("b1", PermissionChoice.ALWAYS)
+        assertEquals(mapOf("id1" to PermissionChoice.ALWAYS, "id2" to PermissionChoice.ALWAYS), d.await())
+        assertNull(mgr.pendingBatch.value)
+        assertTrue(mgr.awaitingSessionIds.value.isEmpty())
+    }
+
+    @Test
+    fun batchApprovalAcceptsPerItemDecisions() = runBlocking {
+        val mgr = ToolPermissionManager()
+        val batch = PendingPermissionBatch("b1", "s1", listOf(req("id1", "s1"), req("id2", "s1")))
+        val d = async { mgr.awaitBatchApproval(batch) }
+        withTimeout(1000) { while (mgr.pendingBatch.value == null) yield() }
+
+        mgr.resolveBatch("b1", mapOf("id1" to PermissionChoice.ONCE, "id2" to PermissionChoice.REJECT))
+        assertEquals(mapOf("id1" to PermissionChoice.ONCE, "id2" to PermissionChoice.REJECT), d.await())
+    }
 }

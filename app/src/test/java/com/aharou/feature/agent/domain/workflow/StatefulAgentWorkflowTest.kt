@@ -333,7 +333,7 @@ class StatefulAgentWorkflowTest {
     fun userRejectionProducesSideEffectWithoutProcessingOutputInReducer() {
         val state = StatefulAgentWorkflow.AgentSessionState(batchToolCalls = listOf(toolCall),
             pendingPermissionCalls = listOf(toolCall))
-        val action = StatefulAgentWorkflow.AgentAction.PermissionEvaluated(toolCall, false, "args")
+        val action = StatefulAgentWorkflow.AgentAction.PermissionBatchEvaluated(emptyList(), emptyMap(), userRejected = true)
         val result = workflow.reduce(state, action)
         assertEquals("RejectToolBatch", (result.second as List<*>).single()!!.javaClass.simpleName)
         verify(exactly = 0) { outputStore.process(any(), any(), any()) }
@@ -344,8 +344,10 @@ class StatefulAgentWorkflowTest {
         val denied = ToolResult.Error("bounded", "TOOL_NOT_ALLOWED").toTransportString()
         val state = StatefulAgentWorkflow.AgentSessionState(batchToolCalls = listOf(toolCall),
             pendingPermissionCalls = listOf(toolCall))
-        val action = StatefulAgentWorkflow.AgentAction.PermissionEvaluated(toolCall, false, "args",
-            "unbounded", "TOOL_NOT_ALLOWED", denied)
+        val action = StatefulAgentWorkflow.AgentAction.PermissionBatchEvaluated(
+            approved = emptyList(),
+            rejectedResults = mapOf(toolCall.id to StatefulAgentWorkflow.ToolBatchResult(toolCall.id, toolCall.name, denied, true))
+        )
         val result = workflow.reduce(state, action)
         val next = result.first as StatefulAgentWorkflow.AgentSessionState
         assertEquals(denied, next.rejectedToolResults.getValue(toolCall.id).result)

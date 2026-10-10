@@ -2,8 +2,11 @@ package com.aharou.feature.editor.lsp
 
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
+import com.aharou.feature.agent.domain.container.RuntimeProcessStore
+import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
+import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import io.mockk.mockk
@@ -31,6 +34,9 @@ class EditorLspManagerTest {
             mockk<LinuxContainerEngine>(relaxed = true),
             mockk<LanguageServerInstaller>(relaxed = true),
             resolver,
+            mockk<RuntimeProcessStore>(relaxed = true),
+            mockk<WorkspaceRepository>(relaxed = true),
+            mockk<ContainerSettingsRepository>(relaxed = true),
         )
     }
 

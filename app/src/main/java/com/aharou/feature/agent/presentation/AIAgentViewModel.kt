@@ -1328,13 +1328,17 @@ class AIAgentViewModel @Inject constructor(
 
     val pendingToolPermission = toolPermissionManager.pendingRequest
 
+    /** 一次回合的批量授权提案（一次回合的多个工具调用合并），弹窗优先渲染它。 */
+    val pendingPermissionBatch = toolPermissionManager.pendingBatch
+
     /** 当前展示的授权弹窗所属会话标题（多会话并行时供弹窗标注归属）。会话不存在时回退空串。 */
     val pendingToolPermissionSessionTitle: StateFlow<String> = combine(
         toolPermissionManager.pendingRequest,
+        toolPermissionManager.pendingBatch,
         sessions,
         subSessionsByParent
-    ) { req, roots, subs ->
-        val sid = req?.sessionId.orEmpty()
+    ) { req, batch, roots, subs ->
+        val sid = (req?.sessionId ?: batch?.sessionId).orEmpty()
         if (sid.isBlank()) return@combine ""
         val title = roots.firstOrNull { it.id == sid }?.title
             ?: subs.values.asSequence().flatten().firstOrNull { it.id == sid }?.title
@@ -2227,6 +2231,10 @@ class AIAgentViewModel @Inject constructor(
 
     fun resolveToolPermission(id: String, choice: PermissionChoice) = toolPermissionManager.resolve(id, choice)
 
+    /** 批量授权面板回传用户选择（全部同判）。 */
+    fun resolveToolPermissionBatch(batchId: String, choice: PermissionChoice) =
+        toolPermissionManager.resolveBatch(batchId, choice)
+
     fun resolveUserQuestion(id: String, answer: UserQuestionAnswer) = askUserQuestionManager.resolve(id, answer)
 
     /**
@@ -2326,11 +2334,14 @@ class AIAgentViewModel @Inject constructor(
         releaseStoppedSubAgent(sessionId)
         // 取消前先取快照：协程被取消后 _runningTools 与待授权请求会随之清空，那时就取不到了。
         val runningTools = _runningTools.value[sessionId]?.values?.toList() ?: emptyList()
-        val pendingPermission = toolPermissionManager.pendingForSession(sessionId)
+        val pendingPermissions = buildList {
+            toolPermissionManager.pendingForSession(sessionId)?.let { add(it) }
+            toolPermissionManager.pendingBatchForSession(sessionId)?.items?.let { addAll(it) }
+        }
         val stoppedText = context.getString(R.string.agent_stopped_by_user)
         FileLogger.d(
             TAG,
-            "forceStopAgent: sid=$sessionId active=${job?.isActive == true} runningTools=${runningTools.size} pendingPerm=${pendingPermission?.id}"
+            "forceStopAgent: sid=$sessionId active=${job?.isActive == true} runningTools=${runningTools.size} pendingPerm=${pendingPermissions.map { it.id }}"
         )
         // 软打断留下的占位先放行：可能有协程正挂在它上面等（排队的新消息），只替换引用会让那些
         // 等待者永远醒不过来。放行后它们会重新读 map，挂到下面这份新占位上。
@@ -2343,7 +2354,7 @@ class AIAgentViewModel @Inject constructor(
             if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
             stopped.complete(Unit)
             if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
-            settleStoppedTools(sessionId, runningTools, pendingPermission, stoppedText)
+            settleStoppedTools(sessionId, runningTools, pendingPermissions, stoppedText)
             setStreamingText(sessionId, null)
             setStreamingReasoning(sessionId, null)
             setCompacting(sessionId, false)
@@ -2368,7 +2379,7 @@ class AIAgentViewModel @Inject constructor(
     private suspend fun settleStoppedTools(
         sessionId: String,
         runningTools: List<RunningToolOutput>,
-        pendingPermission: PendingToolPermission?,
+        pendingPermissions: List<PendingToolPermission>,
         stoppedText: String
     ) {
         suspend fun needsStoppedResult(messageId: String): Boolean {
@@ -2396,15 +2407,16 @@ class AIAgentViewModel @Inject constructor(
             )
             toolArgsByMsgId.remove(running.messageId)
         }
-        if (pendingPermission != null && needsStoppedResult("tool_${pendingPermission.id}")) {
-            val msgId = "tool_${pendingPermission.id}"
+        pendingPermissions.forEach { pending ->
+            if (!needsStoppedResult("tool_${pending.id}")) return@forEach
+            val msgId = "tool_${pending.id}"
             messagePersistenceUseCase.persist(
                 sessionId = sessionId,
                 role = MessageRole.TOOL,
                 content = stoppedText,
                 id = msgId,
-                toolCallId = pendingPermission.id,
-                toolName = pendingPermission.toolName,
+                toolCallId = pending.id,
+                toolName = pending.toolName,
                 isError = true
             )
         }

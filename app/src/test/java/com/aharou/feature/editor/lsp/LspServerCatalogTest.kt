@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * LspServerCatalog：容器路径 → 语言服务器条目的扩展名匹配。
  *
- * 覆盖大小写、容器绝对路径、无扩展名、尾点与空串等边界，并核对唯一收录项（Lua）的元数据
+ * 覆盖大小写、容器绝对路径、无扩展名、尾点与空串等边界，并核对 Lua 条目的元数据
  * （program / args / 扩展名 / 语言标识）——这些字段直接拼进容器里的启动命令与语言客户端。
  */
 class LspServerCatalogTest {
@@ -30,7 +30,7 @@ class LspServerCatalogTest {
 
     @Test
     fun byPath_unsupportedExtensions_returnNull() {
-        assertNull(LspServerCatalog.byPath("a.py"))
+        assertNull(LspServerCatalog.byPath("a.rb"))
         assertNull(LspServerCatalog.byPath("a.kt"))
         assertNull(LspServerCatalog.byPath("a.cpp"))
     }

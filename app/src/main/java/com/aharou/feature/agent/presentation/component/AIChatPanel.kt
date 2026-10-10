@@ -549,6 +549,7 @@ fun AIChatPanel(
     val thinkingLabel = activeToolName?.let { stringResource(toolRunningLabelRes(it)) }
         ?: stringResource(R.string.chat_status_thinking)
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
+    val pendingBatch by viewModel.pendingPermissionBatch.collectAsStateWithLifecycle()
     val pendingPermissionSessionTitle by viewModel.pendingToolPermissionSessionTitle.collectAsStateWithLifecycle()
     val pendingQuestion by viewModel.pendingUserQuestion.collectAsStateWithLifecycle()
     val currentTodoItems by viewModel.currentSessionTodoItems.collectAsStateWithLifecycle()
@@ -1789,34 +1790,32 @@ fun AIChatPanel(
             // 悬浮授权弹窗：独立于底栏排版流，悬浮于输入框上方，避免撑大底栏高度导致消息列表被顶上去。
             // 用户上下滑动消息列表时跟随透明弱化，不遮挡阅读视线。
             val permissionForPanel = rememberLastNonNull(pendingPermission)
+            val batchForPanel = rememberLastNonNull(pendingBatch)
+            val anyPermissionPending = pendingPermission != null || pendingBatch != null
             var permissionPanelHeightPx by remember { mutableStateOf(0) }
             AnimatedVisibility(
-                visible = pendingPermission != null,
+                visible = anyPermissionPending,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(bottom = with(LocalDensity.current) { floatingLayerHeightPx.toDp() } + Spacing.xs)
-                    .onGloballyPositioned { permissionPanelHeightPx = if (pendingPermission != null) it.size.height else 0 },
-                enter = fadeIn(tween(220)) +
-                        slideInVertically(tween(220)) { it / 3 } +
-                        scaleIn(initialScale = 0.96f, animationSpec = tween(220)),
-                exit = fadeOut(tween(160)) +
-                       slideOutVertically(tween(160)) { it / 3 } +
-                       scaleOut(targetScale = 0.96f, animationSpec = tween(160))
+                    .onGloballyPositioned { permissionPanelHeightPx = if (anyPermissionPending) it.size.height else 0 },
+                enter = fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 3 } + scaleIn(initialScale = 0.96f, animationSpec = tween(220)),
+                exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { it / 3 } + scaleOut(targetScale = 0.96f, animationSpec = tween(160))
             ) {
-                permissionForPanel?.let { request ->
-                    ToolPermissionPanel(
-                        request = request,
-                        onChoice = { choice -> viewModel.resolveToolPermission(request.id, choice) },
-                        sessionTitle = pendingPermissionSessionTitle,
-                        forceCollapse = dashboardCollapseActive,
-                        isScrolling = listState.isScrollInProgress
-                    )
-                }
+                PermissionOverlayContent(
+                    batch = batchForPanel,
+                    request = permissionForPanel,
+                    sessionTitle = pendingPermissionSessionTitle,
+                    forceCollapse = dashboardCollapseActive,
+                    isScrolling = listState.isScrollInProgress,
+                    onBatchChoice = { choice -> batchForPanel?.let { viewModel.resolveToolPermissionBatch(it.id, choice) } },
+                    onRequestChoice = { choice -> permissionForPanel?.let { viewModel.resolveToolPermission(it.id, choice) } }
+                )
             }
 
             val permissionOffsetPx = with(LocalDensity.current) {
-                if (pendingPermission != null) permissionPanelHeightPx + Spacing.xs.toPx() else 0f
+                if (anyPermissionPending) permissionPanelHeightPx + Spacing.xs.toPx() else 0f
             }
 
             // 滚到上一条用户消息：与回底按钮同位于输入框右上角上方，堆在它正上方一档。

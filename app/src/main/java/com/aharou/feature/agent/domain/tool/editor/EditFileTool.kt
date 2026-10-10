@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolCapability
+import com.aharou.feature.agent.domain.tool.ToolPermissionHunk
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.file.FILE_TOOL_TIMEOUT_MS
@@ -91,6 +92,82 @@ class EditFileTool @Inject constructor(
     /** 单个编辑应用后的差异，用于 UI 渲染与喂回模型。 */
     private data class Hunk(val startLine: Int, val added: Int, val removed: Int, val diff: String)
 
+    /** 顺序应用一批编辑的结果：成功携带新内容与 hunks，失败携带错误码与提示。 */
+    private sealed interface EditApplication {
+        data class Success(val content: String, val hunks: List<Hunk>, val replacements: Int) : EditApplication
+        data class Failure(val code: String, val message: String) : EditApplication
+    }
+
+    /**
+     * 在内存的 [content] 上顺序应用 [edits]（纯函数，不碰磁盘）：任一编辑匹配失败即整体失败
+     * （找不到 / 多处匹配且未开 replace_all），与执行路径全有或全无的语义一致。
+     */
+    private fun applyEdits(content: String, edits: List<Edit>): EditApplication {
+        var current = content
+        val hunks = ArrayList<Hunk>(edits.size)
+        var totalReplacements = 0
+        edits.forEachIndexed { i, e ->
+            val occurrences = current.split(e.oldString).size - 1
+            if (occurrences == 0) {
+                return EditApplication.Failure(
+                    "NO_MATCH",
+                    "第 ${i + 1} 个编辑未在文件中找到 old_string，请确认内容（含缩进/换行）与当前文件完全一致"
+                )
+            }
+            if (occurrences > 1 && !e.replaceAll) {
+                return EditApplication.Failure(
+                    "MULTIPLE_MATCHES",
+                    "第 ${i + 1} 个编辑的 old_string 在文件中匹配到 $occurrences 处，请提供更长的唯一上下文，或对该编辑设置 replace_all=true"
+                )
+            }
+
+            // 变更在「应用本编辑前」内容中的起始行号（1 基）。内容已包含此前所有编辑的结果，
+            // 这个行号已经反映了前序编辑造成的行漂移，对自上而下的常规编辑顺序是准确的。
+            val matchIndex = current.indexOf(e.oldString)
+            val startLine = if (matchIndex >= 0) current.substring(0, matchIndex).count { it == '\n' } + 1 else 1
+
+            val diff = LineDiff.toUnified(e.oldString, e.newString)
+            val added = diff.lines().count { it.startsWith("+") }
+            val removed = diff.lines().count { it.startsWith("-") }
+            hunks.add(Hunk(startLine = startLine, added = added, removed = removed, diff = diff))
+
+            current = if (e.replaceAll) current.replace(e.oldString, e.newString)
+            else current.replaceFirst(e.oldString, e.newString)
+            totalReplacements += if (e.replaceAll) occurrences else 1
+        }
+        return EditApplication.Success(current, hunks, totalReplacements)
+    }
+
+    /**
+     * 授权预览：读文件 → 内存里应用 edits → 产出与执行结果同构的 hunks（不写盘）。
+     * 读不到/超时/编辑预览失败一律返回 null，由调用方回退 [buildPermissionRequest]。
+     */
+    override suspend fun buildPermissionPreview(
+        callId: String,
+        args: Map<String, JsonElement>,
+        context: AgentContext
+    ): PendingToolPermission? {
+        val path = args["path"]?.jsonPrimitive?.contentOrNull ?: return null
+        val edits = parseEdits(args) ?: return null
+        if (edits.any { it.oldString.isEmpty() || it.oldString == it.newString }) return null
+        val access = fileAccess.forWorkspace(context.projectRoot)
+        val content = runCatching {
+            runFileOpWithTimeout { if (!access.exists(path)) null else access.readFile(path) }
+        }.getOrNull() ?: return null
+        val applied = applyEdits(content, edits) as? EditApplication.Success ?: return null
+        val previewHunks = applied.hunks.map { ToolPermissionHunk(it.startLine, it.added, it.removed, it.diff) }
+        return PendingToolPermission(
+            id = callId,
+            toolName = name,
+            title = "确认修改文件",
+            summary = "AI 请求修改 ${access.toDisplayPath(path)}",
+            details = "编辑数量：${edits.size}\n工具会先完整匹配，任一编辑失败则不会写入。",
+            argsPreview = JsonObject(args).toString().take(500),
+            previewHunks = previewHunks,
+            itemKind = "edit"
+        )
+    }
+
     override fun buildPermissionRequest(
         callId: String,
         args: Map<String, JsonElement>,
@@ -152,45 +229,21 @@ class EditFileTool @Inject constructor(
             }
 
             // 先在内存里顺序应用所有编辑；任一失败立刻返回、绝不写盘（全有或全无）。
-            var content = runFileOpWithTimeout { access.readFile(path) }
+            val original = runFileOpWithTimeout { access.readFile(path) }
                 ?: return ToolResult.Error(
                     "读取文件超时（超过 ${FILE_TOOL_TIMEOUT_MS / 1000} 秒仍未返回）：$path",
                     "TIMEOUT"
                 )
-            val hunks = ArrayList<Hunk>(edits.size)
-            var totalReplacements = 0
-
-            edits.forEachIndexed { i, e ->
-                val occurrences = content.split(e.oldString).size - 1
-                if (occurrences == 0) {
-                    FileLogger.w(TAG, "edit_file 第 ${i + 1} 个编辑未匹配: $path")
-                    return ToolResult.Error(
-                        "第 ${i + 1} 个编辑未在文件中找到 old_string，请确认内容（含缩进/换行）与当前文件完全一致",
-                        "NO_MATCH"
-                    )
+            val applied = when (val result = applyEdits(original, edits)) {
+                is EditApplication.Success -> result
+                is EditApplication.Failure -> {
+                    FileLogger.w(TAG, "edit_file 编辑应用失败(${result.code}): $path")
+                    return ToolResult.Error(result.message, result.code)
                 }
-                if (occurrences > 1 && !e.replaceAll) {
-                    FileLogger.w(TAG, "edit_file 第 ${i + 1} 个编辑匹配 $occurrences 处且非 replace_all: $path")
-                    return ToolResult.Error(
-                        "第 ${i + 1} 个编辑的 old_string 在文件中匹配到 $occurrences 处，请提供更长的唯一上下文，或对该编辑设置 replace_all=true",
-                        "MULTIPLE_MATCHES"
-                    )
-                }
-
-                // 变更在「应用本编辑前」内容中的起始行号（1 基）。因为内容已包含此前所有编辑的结果，
-                // 这个行号已经反映了前序编辑造成的行漂移，对自上而下的常规编辑顺序是准确的。
-                val matchIndex = content.indexOf(e.oldString)
-                val startLine = if (matchIndex >= 0) content.substring(0, matchIndex).count { it == '\n' } + 1 else 1
-
-                val diff = LineDiff.toUnified(e.oldString, e.newString)
-                val added = diff.lines().count { it.startsWith("+") }
-                val removed = diff.lines().count { it.startsWith("-") }
-                hunks.add(Hunk(startLine = startLine, added = added, removed = removed, diff = diff))
-
-                content = if (e.replaceAll) content.replace(e.oldString, e.newString)
-                else content.replaceFirst(e.oldString, e.newString)
-                totalReplacements += if (e.replaceAll) occurrences else 1
             }
+            val content = applied.content
+            val hunks = applied.hunks
+            val totalReplacements = applied.replacements
 
             val writeFinished = runFileOpWithTimeout { access.writeFile(path, content, overwrite = true) }
             if (writeFinished == null) {

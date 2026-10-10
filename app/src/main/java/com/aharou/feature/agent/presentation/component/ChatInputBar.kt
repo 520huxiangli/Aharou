@@ -108,6 +108,7 @@ import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.domain.permission.PermissionChoice
+import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalRequest
 import com.aharou.feature.agent.presentation.AgentUIState

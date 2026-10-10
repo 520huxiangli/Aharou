@@ -1,0 +1,115 @@
+# Aharou 自建依赖索引的坐标清单（group:artifact，每行一条，# 开头为注释）
+#
+# 这份清单决定离线索引覆盖哪些坐标。收录标准：
+#   1. Google Maven（maven.google.com）在国内不可达，androidx.* / com.google.* 优先收录；
+#   2. Android 项目里高频出现（模板默认依赖、常见第三方库）；
+#   3. 单条抓取失败不影响其它条（同步脚本逐条容错）。
+#
+# 注意：清单外的坐标查不到是正常的——这是兜底源，不是完整镜像。
+# 由 scripts/sync-maven-index.py 消费，产出 maven-index.json.gz 传到 cnb release。
+
+# ---------- Aharou 自身依赖（com.google / androidx 系，国内访问不到 Google Maven 的那批）----------
+androidx.activity:activity-compose
+androidx.compose.animation:animation
+androidx.compose.material3:material3
+androidx.compose.ui:ui
+androidx.compose.ui:ui-tooling-preview
+androidx.compose:compose-bom
+androidx.datastore:datastore-preferences
+androidx.hilt:hilt-navigation-compose
+androidx.lifecycle:lifecycle-process
+androidx.lifecycle:lifecycle-runtime-compose
+androidx.lifecycle:lifecycle-viewmodel-compose
+androidx.navigation:navigation-compose
+androidx.room:room-ktx
+androidx.room:room-runtime
+com.google.dagger:hilt-android
+com.google.dagger:hilt-compiler
+
+# ---------- androidx 常见基础库 ----------
+androidx.annotation:annotation
+androidx.appcompat:appcompat
+androidx.biometric:biometric
+androidx.cardview:cardview
+androidx.constraintlayout:constraintlayout
+androidx.core:core
+androidx.core:core-ktx
+androidx.core:core-splashscreen
+androidx.cursoradapter:cursoradapter
+androidx.documentfile:documentfile
+androidx.drawerlayout:drawerlayout
+androidx.dynamicanimation:dynamicanimation
+androidx.exifinterface:exifinterface
+androidx.fragment:fragment-ktx
+androidx.media3:media3-exoplayer
+androidx.media3:media3-ui
+androidx.multidex:multidex
+androidx.paging:paging-runtime
+androidx.preference:preference-ktx
+androidx.recyclerview:recyclerview
+androidx.security:security-crypto
+androidx.swiperefreshlayout:swiperefreshlayout
+androidx.test.ext:junit
+androidx.test.espresso:espresso-core
+androidx.tracing:tracing
+androidx.viewpager2:viewpager2
+androidx.webkit:webkit
+androidx.window:window
+androidx.work:work-runtime-ktx
+
+# ---------- Google 系 ----------
+com.google.android.material:material
+com.google.code.gson:gson
+com.google.guava:guava
+com.google.zxing:core
+com.google.firebase:firebase-bom
+com.google.firebase:firebase-messaging
+com.google.android.gms:play-services-maps
+com.google.android.gms:play-services-location
+com.google.android.gms:play-services-auth
+
+# ---------- Gradle 插件（DependencyChecker 会把插件 id 转成 <id>.gradle.plugin）----------
+com.android.tools.build:gradle
+com.android.application:com.android.application.gradle.plugin
+com.android.library:com.android.library.gradle.plugin
+org.jetbrains.kotlin.android:org.jetbrains.kotlin.android.gradle.plugin
+org.jetbrains.kotlin.jvm:org.jetbrains.kotlin.jvm.gradle.plugin
+org.jetbrains.kotlin.plugin.serialization:org.jetbrains.kotlin.plugin.serialization.gradle.plugin
+com.google.devtools.ksp:com.google.devtools.ksp.gradle.plugin
+com.google.dagger.hilt.android:com.google.dagger.hilt.android.gradle.plugin
+androidx.navigation.safeargs:androidx.navigation.safeargs.gradle.plugin
+androidx.room:androidx.room.gradle.plugin
+
+# ---------- Kotlin / KotlinX ----------
+org.jetbrains.kotlin:kotlin-stdlib
+org.jetbrains.kotlinx:kotlinx-coroutines-android
+org.jetbrains.kotlinx:kotlinx-coroutines-core
+org.jetbrains.kotlinx:kotlinx-coroutines-test
+org.jetbrains.kotlinx:kotlinx-serialization-json
+org.jetbrains.kotlinx:kotlinx-datetime
+
+# ---------- 常见第三方（Maven Central / JitPack）----------
+com.squareup.okhttp3:okhttp
+com.squareup.okhttp3:logging-interceptor
+com.squareup.okhttp3:mockwebserver
+com.squareup.retrofit2:retrofit
+com.squareup.retrofit2:converter-gson
+com.squareup.retrofit2:converter-moshi
+com.squareup.moshi:moshi
+com.squareup.moshi:moshi-kotlin
+io.coil-kt:coil
+io.coil-kt.coil3:coil-compose
+com.github.bumptech.glide:glide
+org.jsoup:jsoup
+org.yaml:snakeyaml
+org.apache.commons:commons-lang3
+commons-io:commons-io
+com.jakewharton.timber:timber
+com.jakewharton:process-phoenix
+com.github.adaptech-cz.Tesseract4Android:tesseract4android
+com.patrykandpatrick.vico:compose-m3
+junit:junit
+org.mockito:mockito-core
+io.mockk:mockk
+org.robolectric:robolectric
+org.jetbrains:annotations

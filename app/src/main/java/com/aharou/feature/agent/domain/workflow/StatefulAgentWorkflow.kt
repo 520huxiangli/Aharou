@@ -23,19 +23,18 @@ import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.permission.PermissionChoice
-import com.aharou.feature.agent.domain.permission.PermissionScope
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.provider.AIStreamChunk
 import com.aharou.feature.agent.domain.tool.AgentTool
+import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.StreamingAgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
-import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
@@ -192,23 +191,18 @@ class StatefulAgentWorkflow @Inject constructor(
         data class InitRequest(val initialMessages: List<AgentMessage>) : AgentAction
         data class LlmResponse(val response: AIResponse, val messageId: String) : AgentAction
         data class LlmError(val error: String, val reasonCode: String? = null) : AgentAction
-        data class PermissionEvaluated(
-            val toolCall: ToolCall,
-            val approved: Boolean,
-            val argsPreview: String,
-            val denyReason: String = "用户拒绝执行该工具",
-            val errorCode: String = "USER_REJECTED",
-            val result: String = ""
+        /**
+         * 整批权限评估完成：[approved] 为可执行集（策略放行 + 用户放行），[rejectedResults] 为策略拒绝项；
+         * [userRejected]=true 表示用户拒绝了本批（含「全部拒绝」），整批取消。
+         */
+        data class PermissionBatchEvaluated(
+            val approved: List<ToolCall>,
+            val rejectedResults: Map<String, ToolBatchResult>,
+            val userRejected: Boolean = false
         ) : AgentAction
         data class ToolBatchFinished(val results: List<ToolBatchResult>) : AgentAction
         data class ToolBatchRejected(val results: List<ToolBatchResult>, val finish: Boolean) : AgentAction
     }
-
-    private data class PermissionCheckResult(
-        val approved: Boolean,
-        val denyReason: String = "用户拒绝执行该工具",
-        val errorCode: String = "USER_REJECTED"
-    )
 
     private data class ToolRunResult(
         val raw: String,
@@ -233,7 +227,8 @@ class StatefulAgentWorkflow @Inject constructor(
     sealed interface AgentSideEffect {
         object CallLlm : AgentSideEffect
         data class PersistUser(val message: AgentMessage.UserMessage) : AgentSideEffect
-        data class RequestPermission(val toolCall: ToolCall) : AgentSideEffect
+        /** 一次回合的全部 tool_call 合并成「一个提案批量审批」。 */
+        data class RequestPermissionBatch(val toolCalls: List<ToolCall>) : AgentSideEffect
         /** 批量并行执行已批准的工具；传入空列表表示本批无工具可执行，直接进入收尾。 */
         data class ExecuteToolBatch(val toolCalls: List<ToolCall>) : AgentSideEffect
         data class RejectToolBatch(
@@ -478,9 +473,9 @@ class StatefulAgentWorkflow @Inject constructor(
                             telemetry = telemetry
                         )
                     }
-                    is AgentSideEffect.RequestPermission -> {
-                        handlePermissionEffect(
-                            toolCall = effect.toolCall,
+                    is AgentSideEffect.RequestPermissionBatch -> {
+                        handlePermissionBatchEffect(
+                            toolCalls = effect.toolCalls,
                             currentContext = currentContext,
                             toolsByName = toolsByName,
                             actionQueue = actionQueue,
@@ -851,38 +846,65 @@ class StatefulAgentWorkflow @Inject constructor(
     }
 
     /**
-     * 单个工具调用的权限判定：不在允许清单的调用直接回错误结果，其余走策略引擎与用户弹窗，
-     * 结果作为 [AgentAction.PermissionEvaluated] 回灌主循环。
+     * 一次回合的多个工具调用合并为「一个提案批量审批」：先逐条纯评估（策略引擎 + planMode 特例），
+     * 放行的直接进批准集、策略拒绝的记为拒绝结果、需询问的合并成一个批次一次性挂起等用户决定；
+     * 用户拒绝（含「全部拒绝」）则整批取消。结果作为 [AgentAction.PermissionBatchEvaluated] 回灌主循环。
      */
-    private suspend fun handlePermissionEffect(
-        toolCall: ToolCall,
+    private suspend fun handlePermissionBatchEffect(
+        toolCalls: List<ToolCall>,
         currentContext: AgentContext,
         toolsByName: Map<String, AgentTool>,
         actionQueue: ArrayDeque<AgentAction>,
         emit: suspend (AgentEvent) -> Unit
     ) {
-        val argsPreview = JsonObject(toolCall.arguments).toString().take(500)
-        val tool = toolsByName[toolCall.name]
-        if (tool == null) {
-            // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
-            val reason = "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。"
-            val result = toolError(toolCall, reason, TOOL_NOT_ALLOWED_CODE)
-            emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, result, true, argsPreview))
-            actionQueue.addLast(AgentAction.PermissionEvaluated(toolCall, false, argsPreview,
-                reason, TOOL_NOT_ALLOWED_CODE, result))
-        } else {
-            val checkResult = requestPermissionIfNeeded(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.mode, currentContext.sessionId, currentContext.projectRoot)
+        val gate = PermissionGate(policyEngine, permissionManager, fileAccess)
+        val approved = mutableListOf<ToolCall>()
+        val rejectedResults = mutableMapOf<String, ToolBatchResult>()
+        val asks = mutableListOf<Pair<ToolCall, PermissionVerdict.Ask>>()
+        val argsPreviews = toolCalls.associate { it.id to JsonObject(it.arguments).toString().take(500) }
 
-            val result = if (!checkResult.approved && checkResult.errorCode != USER_REJECTED_CODE)
-                toolError(toolCall, checkResult.denyReason, checkResult.errorCode) else ""
-            if (result.isNotEmpty()) {
-                emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, result, true, argsPreview))
-            } else if (checkResult.approved) {
-                emit(AgentEvent.ToolCallStarted(toolCall.id, toolCall.name, argsPreview))
+        toolCalls.forEach { toolCall ->
+            val argsPreview = argsPreviews.getValue(toolCall.id)
+            val tool = toolsByName[toolCall.name]
+            val verdict = if (tool == null) {
+                // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
+                PermissionVerdict.Deny("工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE)
+            } else {
+                gate.evaluate(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.mode,
+                    currentContext.sessionId, currentContext.projectRoot, currentContext)
             }
-            actionQueue.addLast(AgentAction.PermissionEvaluated(toolCall, checkResult.approved,
-                argsPreview, checkResult.denyReason, checkResult.errorCode, result))
+            when (verdict) {
+                PermissionVerdict.Allow -> approved.add(toolCall)
+                is PermissionVerdict.Deny -> {
+                    val result = toolError(toolCall, verdict.reason, verdict.code)
+                    emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, result, true, argsPreview))
+                    rejectedResults[toolCall.id] = ToolBatchResult(toolCall.id, toolCall.name, result, true)
+                }
+                is PermissionVerdict.Ask -> {
+                    asks.add(toolCall to verdict)
+                    approved.add(toolCall)
+                }
+            }
         }
+
+        // 需询问的项一次性挂起一个批次，等用户对整批做决定。
+        val userRejected = if (asks.isNotEmpty()) {
+            val batch = PendingPermissionBatch(
+                id = UUID.randomUUID().toString(),
+                sessionId = currentContext.sessionId.orEmpty(),
+                items = asks.map { it.second.request }
+            )
+            val decisions = gate.awaitBatch(batch, asks.map { it.second }, currentContext.projectRoot)
+            asks.any { decisions[it.first.id] == PermissionChoice.REJECT }
+        } else false
+
+        if (userRejected) {
+            // 用户拒绝本批：整批取消，已先行被策略拒绝的项其真实原因随 rejectedResults 保留。
+            actionQueue.addLast(AgentAction.PermissionBatchEvaluated(emptyList(), rejectedResults, userRejected = true))
+            return
+        }
+        approved.forEach { emit(AgentEvent.ToolCallStarted(it.id, it.name, argsPreviews.getValue(it.id))) }
+        actionQueue.addLast(AgentAction.PermissionBatchEvaluated(approved, rejectedResults))
     }
 
     /**
@@ -1480,64 +1502,5 @@ class StatefulAgentWorkflow @Inject constructor(
             this["files_attached"] = JsonPrimitive(true)
         }
         return ToolResult.Success(JsonObject(strippedData))
-    }
-
-    private suspend fun requestPermissionIfNeeded(
-        tool: AgentTool?,
-        callId: String,
-        arguments: Map<String, JsonElement>,
-        argsPreview: String,
-        mode: AgentMode,
-        sessionId: String?,
-        /** 发起这次调用的会话工作区，授权规则按它读写（不是界面当前选中的工作区）。 */
-        workspacePath: String
-    ): PermissionCheckResult {
-        if (tool == null) {
-            return PermissionCheckResult(true)
-        }
-
-        // planMode 退出 PLAN 时，后续会有计划审查面板兜底用户决策，
-        // 此处权限弹窗冗余，直接放行；进入 PLAN 的方向无后续审查面板，仍走权限弹窗。
-        if (tool.name == "planMode" && mode == AgentMode.PLAN) {
-            val action = (arguments["action"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()
-            if (action == "exit") {
-                return PermissionCheckResult(true)
-            }
-        }
-
-        val eval = policyEngine.evaluate(tool, tool.name, arguments, mode, workspacePath)
-        if (eval.verdict == ToolPermissionPolicyEngine.Verdict.DENY) {
-            val reason = eval.denyReason ?: "该工具被项目安全规则策略禁止执行"
-            val code = if (mode == AgentMode.PLAN) "PLAN_MODE_REJECTED" else "SYSTEM_DENIED"
-            return PermissionCheckResult(false, reason, code)
-        }
-
-        if (tool.effectivePermissionPolicy(mode) == ToolPermissionPolicy.AUTO_APPROVE) {
-            return PermissionCheckResult(true)
-        }
-
-        return when (eval.verdict) {
-            ToolPermissionPolicyEngine.Verdict.ALLOW -> PermissionCheckResult(true)
-            ToolPermissionPolicyEngine.Verdict.DENY -> PermissionCheckResult(false)
-            ToolPermissionPolicyEngine.Verdict.ASK -> {
-                val base = tool.buildPermissionRequest(callId, arguments, argsPreview)
-                val request = base.copy(
-                    title = eval.askTitle ?: base.title,
-                    rememberablePatterns = eval.rememberablePatterns,
-                    rememberDisabledReason = eval.rememberDisabledReason,
-                    sessionId = sessionId.orEmpty()
-                )
-                when (permissionManager.awaitApproval(request)) {
-                    PermissionChoice.REJECT -> PermissionCheckResult(false, "用户拒绝执行该工具", "USER_REJECTED")
-                    PermissionChoice.ONCE -> PermissionCheckResult(true)
-                    PermissionChoice.ALWAYS -> {
-                        if (eval.rememberablePatterns.isNotEmpty()) {
-                            policyEngine.remember(tool.name, eval.rememberablePatterns, PermissionScope.PROJECT, workspacePath)
-                        }
-                        PermissionCheckResult(true)
-                    }
-                }
-            }
-        }
     }
 }

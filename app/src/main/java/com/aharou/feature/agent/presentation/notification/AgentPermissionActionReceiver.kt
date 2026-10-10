@@ -15,7 +15,8 @@ import javax.inject.Inject
  *
  * 只接收 [AgentPermissionNotifier] 用显式 PendingIntent 发来的广播，用 action 区分动作；
  * 「允许」等价于弹窗的单次放行（[PermissionChoice.ONCE]），「拒绝」等价于 [PermissionChoice.REJECT]，
- * 二者都调 [ToolPermissionManager.resolve] 唤醒挂起的授权等待，不另造逻辑。
+ * 二者都调 [ToolPermissionManager.resolve]（批量时为 [ToolPermissionManager.resolveBatch]）唤醒挂起的
+ * 授权等待，不另造逻辑。
  *
  * 声明为 exported=false（无 intent-filter，仅接收本 App 的显式广播），避免外部伪造动作。
  */
@@ -44,8 +45,10 @@ class AgentPermissionActionReceiver : BroadcastReceiver() {
 
     private fun resolve(intent: Intent, choice: PermissionChoice) {
         val requestId = intent.getStringExtra(AgentPermissionNotifier.EXTRA_REQUEST_ID) ?: return
-        FileLogger.i(TAG, "通知栏授权动作: choice=$choice request=$requestId")
-        toolPermissionManager.resolve(requestId, choice)
+        val isBatch = intent.getBooleanExtra(AgentPermissionNotifier.EXTRA_IS_BATCH, false)
+        FileLogger.i(TAG, "通知栏授权动作: choice=$choice request=$requestId batch=$isBatch")
+        if (isBatch) toolPermissionManager.resolveBatch(requestId, choice)
+        else toolPermissionManager.resolve(requestId, choice)
     }
 
     private companion object {

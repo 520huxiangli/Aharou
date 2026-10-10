@@ -13,6 +13,7 @@ import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.session.SessionUseCase
+import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -50,8 +51,10 @@ class AgentPermissionNotifier @Inject constructor(
     /** 已在通知栏展示的通知：会话 id → 通知 id。 */
     private val shown = mutableMapOf<String, Int>()
 
-    /** 每个会话当前展示所需的请求与标题，供「直接回复」后重发以清空输入框。 */
-    private val cache = mutableMapOf<String, Pair<PendingToolPermission, String>>()
+    /** 每个会话当前展示所需的条目 id 与标题，供「直接回复」后重发以清空输入框。 */
+    private val cache = mutableMapOf<String, Cached>()
+
+    private data class Cached(val id: String, val title: String)
 
     /** 同步等待授权的会话集合：为每个会话展示/更新通知，撤下已解决会话的通知。 */
     suspend fun sync(sessionIds: Set<String>) {
@@ -63,22 +66,39 @@ class AgentPermissionNotifier @Inject constructor(
             cache.remove(sid)
         }
         active.forEach { sid ->
+            val batch = toolPermissionManager.pendingBatchForSession(sid)
+            if (batch != null) {
+                if (cache[sid]?.id == batch.id) return@forEach
+                shown.remove(sid)?.let { old ->
+                    runCatching { NotificationManagerCompat.from(context).cancel(old) }
+                }
+                val title = sessionTitle(sid)
+                cache[sid] = Cached(batch.id, title)
+                postBatch(sid, batch, title)
+                return@forEach
+            }
             val request = toolPermissionManager.pendingForSession(sid) ?: return@forEach
             // 请求未变化就不重发，避免其它会话进入等待时把已在展示的通知重复弹一次。
-            if (cache[sid]?.first?.id == request.id) return@forEach
+            if (cache[sid]?.id == request.id) return@forEach
             shown.remove(sid)?.let { old ->
                 runCatching { NotificationManagerCompat.from(context).cancel(old) }
             }
             val title = sessionTitle(sid)
-            cache[sid] = request to title
+            cache[sid] = Cached(request.id, title)
             post(sid, request, title)
         }
     }
 
     /** 通知栏「直接回复」提交后重发一次通知，清空输入框里残留的文本。 */
     fun refresh(sessionId: String) {
-        val entry = cache[sessionId] ?: return
-        post(sessionId, entry.first, entry.second)
+        val cached = cache[sessionId] ?: return
+        val batch = toolPermissionManager.pendingBatchForSession(sessionId)
+        if (batch != null && batch.id == cached.id) {
+            postBatch(sessionId, batch, cached.title)
+            return
+        }
+        val request = toolPermissionManager.pendingForSession(sessionId) ?: return
+        if (request.id == cached.id) post(sessionId, request, cached.title)
     }
 
     /** 通知栏「直接回复」的文本：由 receiver 投递，交给会话层消费。 */
@@ -120,6 +140,36 @@ class AgentPermissionNotifier @Inject constructor(
             .onFailure { FileLogger.w(TAG, "发送工具授权通知失败: sid=$sessionId") }
     }
 
+    /**
+     * 批量授权通知：文案改为「N 项待授权」，动作仍为允许/拒绝/直接回复；不渲染 diff（刻意取舍）。
+     * 允许/拒绝携带批次 id 与 isBatch 标记，receiver 据此走 [ToolPermissionManager.resolveBatch]。
+     */
+    private fun postBatch(sessionId: String, batch: PendingPermissionBatch, sessionTitle: String) {
+        val count = batch.items.size
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentTitle(context.getString(R.string.agent_perm_notification_batch_title, sessionTitle, count))
+            .setContentText(context.getString(R.string.agent_perm_notification_batch_text, count))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                batch.items.joinToString("\n") { "· ${it.toolName} · ${it.summary}" }
+            ))
+            .setContentIntent(openAppIntent())
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .addAction(replyAction(sessionId))
+            .addAction(rejectAction(sessionId, batch.id, isBatch = true))
+            .addAction(allowAction(sessionId, batch.id, isBatch = true))
+            .build()
+        val id = notificationId(sessionId, batch.id)
+        shown[sessionId] = id
+        runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
+            .onFailure { FileLogger.w(TAG, "发送工具授权通知失败: sid=$sessionId") }
+    }
+
     private fun openAppIntent(): PendingIntent = PendingIntent.getActivity(
         context,
         REQUEST_OPEN_APP,
@@ -129,30 +179,31 @@ class AgentPermissionNotifier @Inject constructor(
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
     )
 
-    private fun actionIntent(sessionId: String, requestId: String, action: String): Intent =
+    private fun actionIntent(sessionId: String, requestId: String, action: String, isBatch: Boolean): Intent =
         Intent(context, AgentPermissionActionReceiver::class.java)
             .setAction(action)
             .putExtra(EXTRA_SESSION_ID, sessionId)
             .putExtra(EXTRA_REQUEST_ID, requestId)
+            .putExtra(EXTRA_IS_BATCH, isBatch)
 
-    private fun allowAction(sessionId: String, requestId: String) = NotificationCompat.Action(
+    private fun allowAction(sessionId: String, requestId: String, isBatch: Boolean = false) = NotificationCompat.Action(
         android.R.drawable.ic_menu_save,
         context.getString(R.string.agent_perm_action_allow),
         PendingIntent.getBroadcast(
             context,
             requestCode(sessionId, requestId, ACTION_ALLOW),
-            actionIntent(sessionId, requestId, ACTION_ALLOW),
+            actionIntent(sessionId, requestId, ACTION_ALLOW, isBatch),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
     )
 
-    private fun rejectAction(sessionId: String, requestId: String) = NotificationCompat.Action(
+    private fun rejectAction(sessionId: String, requestId: String, isBatch: Boolean = false) = NotificationCompat.Action(
         android.R.drawable.ic_menu_close_clear_cancel,
         context.getString(R.string.agent_perm_action_reject),
         PendingIntent.getBroadcast(
             context,
             requestCode(sessionId, requestId, ACTION_REJECT),
-            actionIntent(sessionId, requestId, ACTION_REJECT),
+            actionIntent(sessionId, requestId, ACTION_REJECT, isBatch),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
     )
@@ -207,6 +258,7 @@ class AgentPermissionNotifier @Inject constructor(
         const val CHANNEL_ID = "agent_permission"
         const val EXTRA_SESSION_ID = "com.aharou.extra.PERMISSION_SESSION_ID"
         const val EXTRA_REQUEST_ID = "com.aharou.extra.PERMISSION_REQUEST_ID"
+        const val EXTRA_IS_BATCH = "com.aharou.extra.PERMISSION_IS_BATCH"
         const val ACTION_ALLOW = "com.aharou.action.PERMISSION_ALLOW"
         const val ACTION_REJECT = "com.aharou.action.PERMISSION_REJECT"
         const val ACTION_REPLY = "com.aharou.action.PERMISSION_REPLY"

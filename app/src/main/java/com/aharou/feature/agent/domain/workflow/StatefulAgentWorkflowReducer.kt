@@ -5,7 +5,6 @@ import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentAction
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentSessionState
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentSideEffect
-import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.ToolBatchResult
 
 /**
  * 核心 Reducer，接收旧状态与 Action，返回新状态以及触发的副作用列表 (纯函数)。
@@ -60,7 +59,7 @@ internal fun StatefulAgentWorkflow.reduce(
                 }
             } else {
                 // 本批多个 tool_call：全部进入待权限队列，逐个弹窗收集批准；
-                // 全部批准后才进入并行执行阶段（见 PermissionEvaluated / ToolBatchFinished）。
+                // 全部评估完成后才进入并行执行阶段（见 PermissionBatchEvaluated / ToolBatchFinished）。
                 val toolCalls = action.response.toolCalls.toList()
                 if (newState.totalToolCalls >= StatefulAgentWorkflow.MAX_TOTAL_TOOL_CALLS) {
                     // 到上限：不再执行，但要按 assistant(toolCalls) 的顺序补齐 tool 响应后收尾。
@@ -77,56 +76,31 @@ internal fun StatefulAgentWorkflow.reduce(
                         approvedToolCalls = emptyList(),
                         rejectedToolResults = emptyMap()
                     )
-                    effects.add(AgentSideEffect.RequestPermission(toolCalls.first()))
+                    effects.add(AgentSideEffect.RequestPermissionBatch(toolCalls))
                 }
             }
         }
         is AgentAction.LlmError -> {
             newState = state.copy(isFinished = true, error = action.error, errorCode = action.reasonCode)
         }
-        is AgentAction.PermissionEvaluated -> {
-            if (action.approved) {
-                // 批准：当前 toolCall 移入已批准集合；若还有待请求权限的则继续弹窗，否则开始并行执行。
-                val remaining = newState.pendingPermissionCalls.filterNot { it.id == action.toolCall.id }
-                val approved = newState.approvedToolCalls + action.toolCall
-                newState = newState.copy(
-                    pendingPermissionCalls = remaining,
-                    approvedToolCalls = approved
-                )
-                if (remaining.isNotEmpty()) {
-                    effects.add(AgentSideEffect.RequestPermission(remaining.first()))
-                } else {
-                    effects.add(AgentSideEffect.ExecuteToolBatch(approved))
-                }
-            } else {
-                if (action.errorCode == StatefulAgentWorkflow.USER_REJECTED_CODE) {
-                    // 模型一次可能返回多个 tool_calls。用户拒绝批次中任意一个 → 整批取消：
-                    // 按 batchToolCalls 原始顺序为所有调用补上 tool 响应（不重复不遗漏），
-                    // 否则 assistant(toolCalls=N) 后只有部分 tool 消息，OpenAI 会报 400
-                    // "insufficient tool messages following tool_calls"。
-                    effects.add(AgentSideEffect.RejectToolBatch(state.batchToolCalls,
-                        "用户拒绝了本轮工具调用，该调用未执行。", StatefulAgentWorkflow.USER_REJECTED_CODE, true, state.rejectedToolResults))
-                    return newState to effects
-                }
-                // 策略/系统拒绝（如 PLAN 模式禁止执行）：记录拒绝结果，继续收集后续权限。
-                val remaining = newState.pendingPermissionCalls.filterNot { it.id == action.toolCall.id }
-                newState = newState.copy(
-                    pendingPermissionCalls = remaining,
-                    rejectedToolResults = newState.rejectedToolResults + (
-                        action.toolCall.id to ToolBatchResult(
-                            id = action.toolCall.id,
-                            toolName = action.toolCall.name,
-                            result = action.result,
-                            isError = true
-                        )
-                    )
-                )
-                if (remaining.isNotEmpty()) {
-                    effects.add(AgentSideEffect.RequestPermission(remaining.first()))
-                } else {
-                    effects.add(AgentSideEffect.ExecuteToolBatch(newState.approvedToolCalls))
-                }
+        is AgentAction.PermissionBatchEvaluated -> {
+            if (action.userRejected) {
+                // 用户拒绝了本批（含「全部拒绝」）：整批取消，按 batchToolCalls 原始顺序为所有调用补上
+                // tool 响应（不重复不遗漏），否则 assistant(toolCalls=N) 后只有部分 tool 消息，OpenAI 会报 400
+                // "insufficient tool messages following tool_calls"。已先行被策略拒绝的项沿用其真实拒绝原因。
+                effects.add(AgentSideEffect.RejectToolBatch(state.batchToolCalls,
+                    "用户拒绝了本轮工具调用，该调用未执行。", StatefulAgentWorkflow.USER_REJECTED_CODE, true,
+                    action.rejectedResults))
+                return newState to effects
             }
+            // 批准集（含策略放行与用户放行）进入并行执行；策略拒绝项留在 rejectedResults，
+            // 由 ToolBatchFinished 按 batchToolCalls 原始顺序合并组装。
+            newState = state.copy(
+                approvedToolCalls = action.approved,
+                rejectedToolResults = action.rejectedResults,
+                pendingPermissionCalls = emptyList()
+            )
+            effects.add(AgentSideEffect.ExecuteToolBatch(action.approved))
         }
         is AgentAction.ToolBatchRejected -> {
             newState = state.copy(messages = state.messages + action.results.map {

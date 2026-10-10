@@ -73,6 +73,17 @@ enum class ToolCapability {
     EXTERNAL_TOOL
 }
 
+/**
+ * 授权弹窗里预览用的差异片段，与 editFile/writeFile 执行结果里的 hunks 同构
+ * （start_line/added/removed/diff），UI 可直接用 [com.aharou.feature.agent.presentation.component.DiffView] 渲染。
+ */
+data class ToolPermissionHunk(
+    val startLine: Int,
+    val added: Int,
+    val removed: Int,
+    val diff: String
+)
+
 data class PendingToolPermission(
     val id: String,
     val toolName: String,
@@ -89,7 +100,14 @@ data class PendingToolPermission(
     val rememberablePatterns: List<String> = emptyList(),
     val rememberDisabledReason: String? = null,
     /** 发起该授权请求的会话 id。多会话并行时用于在 UI 上区分弹窗归属、点亮侧边栏等待授权指示。 */
-    val sessionId: String = ""
+    val sessionId: String = "",
+    /**
+     * 写操作的真实「旧→新」差异预览（由 [AgentTool.buildPermissionPreview] 产出，当前仅 editFile/writeFile）。
+     * 为空表示无预览，UI 退回展示 [summary]/[details]。
+     */
+    val previewHunks: List<ToolPermissionHunk> = emptyList(),
+    /** 预览类型："edit" 时 UI 按文件差异渲染 [previewHunks]，其余按 [summary]/[details] 渲染。 */
+    val itemKind: String = "tool"
 )
 
 abstract class AgentTool {
@@ -140,6 +158,17 @@ abstract class AgentTool {
             argsPreview = argsPreview
         )
     }
+
+    /**
+     * 构建带真实差异预览的授权请求（不写盘），供批量审批面板渲染。默认无预览（返回 null），
+     * 由写文件类工具覆写；预览失败/超时也返回 null，调用方回退 [buildPermissionRequest]，
+     * 绝不让预览辅助步骤卡住审批。
+     */
+    open suspend fun buildPermissionPreview(
+        callId: String,
+        args: Map<String, JsonElement>,
+        context: com.aharou.feature.agent.domain.model.AgentContext
+    ): PendingToolPermission? = null
 
     /**
      * 生成符合 JSON Schema 的参数描述，用于真正传给大模型的 function-calling 接口

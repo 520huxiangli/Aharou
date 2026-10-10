@@ -51,6 +51,7 @@
 | 自定义提示词 | 覆盖与定制 AI 系统的提示词片段 → [文档](/guide/custom-prompts) |
 | 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md 项目规则 → [文档](/guide/memory) |
 | 共享知识库 | 从一个公开 Markdown 仓库同步资料到本地，AI 用 `knowledge_search` 检索 → [文档](/guide/knowledge-base) |
+| 依赖版本检查 | 让 AI 检查 Gradle 依赖是否有新版本，并给出「改哪一行、从什么改成什么」的建议 → [文档](/guide/dependency-check) |
 | 人格（Soul） | 助手的名字、图标、风格与人格正文，注入系统提示词 → [文档](/guide/soul) |
 
 ### 运行环境

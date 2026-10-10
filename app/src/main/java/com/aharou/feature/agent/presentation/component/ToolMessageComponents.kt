@@ -175,6 +175,9 @@ internal fun ToolMessageBody(
                     webSearch = if (message.toolName == "websearch" && !running && !message.isError) {
                         parseWebSearchResult(message.content)
                     } else null,
+                    dependencyReport = if (message.toolName == "check_dependencies" && !running && !message.isError) {
+                        parseDependencyReport(message.content)
+                    } else null,
                     notifications = if (!running) parseToolNotifications(message.content) else emptyList(),
                     filePath = extractFilePathArg(message.toolArgs),
                     browserUrl = if (message.toolName == "browser") {
@@ -193,6 +196,7 @@ internal fun ToolMessageBody(
     val argsFull = derived?.argsFull
     val todoData = derived?.todo
     val webSearchData = derived?.webSearch
+    val dependencyData = derived?.dependencyReport
     val notifications = derived?.notifications.orEmpty()
 
     // [Aharou] 工具消息互联入口：browser → 地球（围观该 URL）；Bash/terminal → 在终端中运行。
@@ -207,7 +211,8 @@ internal fun ToolMessageBody(
     val hasLiveOutput = !liveOutput.isNullOrBlank()
     // derived == null（解析中）时保持可展开，避免箭头先缺失后补上。
     val expandable = streaming || (!running && (derived == null || edit != null || !resultText.isNullOrBlank()
-            || !argsFull.isNullOrBlank() || (todoData != null && todoData.items.isNotEmpty()) || webSearchData != null))
+            || !argsFull.isNullOrBlank() || (todoData != null && todoData.items.isNotEmpty()) || webSearchData != null
+            || dependencyData != null))
     // 工具调用一律默认收起（差异卡、待办卡也不例外）：要不要看细节由用户点开，
     // 手动开关过（expandedOverride 非 null）就以用户的选择为准。展开态由宿主保管，
     // 因此滚出视口、切页返回都不会再丢。
@@ -410,6 +415,9 @@ internal fun ToolMessageBody(
                 } else if (webSearchData != null) {
                     Spacer(Modifier.height(Spacing.xs))
                     WebSearchResultCard(result = webSearchData)
+                } else if (dependencyData != null) {
+                    Spacer(Modifier.height(Spacing.xs))
+                    DependencyUpdateCard(report = dependencyData)
                 } else if (edit != null) {
                     // 差异卡：头部给路径与「复制」，页脚给增删统计（DSH 那块白底描边卡）
                     Spacer(Modifier.height(Spacing.xs))
@@ -463,6 +471,7 @@ private data class ToolMessageDerived(
     val argsFull: String?,
     val todo: ParsedTodoResult?,
     val webSearch: ParsedWebSearchResult?,
+    val dependencyReport: ParsedDependencyReport?,
     val notifications: List<ToolNotificationInfo>,
     val filePath: String?,
     val browserUrl: String?,
@@ -649,6 +658,7 @@ internal fun toolRunningLabelRes(toolName: String?): Int = when (toolName?.lower
     "todo" -> R.string.chat_status_updating_todo
     "task" -> R.string.chat_status_starting_subagent
     "memory" -> R.string.chat_status_reading_memory
+    "check_dependencies" -> R.string.chat_status_checking_dependencies
     else -> R.string.chat_status_calling_tool
 }
 

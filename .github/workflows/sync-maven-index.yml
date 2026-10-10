@@ -1,0 +1,35 @@
+name: Sync Maven Index
+
+on:
+  schedule:
+    # 每周一 UTC 04:20 自动执行（对应北京时间 12:20）。
+    # 依赖元数据（尤其是 BOM）更新不快，周更足够；要更勤就改这个 cron。
+    - cron: '20 4 * * 1'
+  workflow_dispatch: # 支持在 GitHub Actions 界面手动触发
+
+# 同一时刻只允许一次同步，避免两次运行撞车（上传是覆盖写，撞车会互相盖掉）。
+concurrency:
+  group: sync-maven-index
+  cancel-in-progress: false
+
+jobs:
+  sync-maven-index:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      # 抓取 + 打包 + 上传 cnb，全部在脚本里完成（脚本对 CNB_OWNER/CNB_REPO 用 `or` 兑默认值，
+      # 所以 vars 没配也能跑）。失败会非零退出，Actions 里能直接看到是哪些坐标没抓到。
+      - name: Fetch coordinate metadata and upload index to cnb
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          CNB_OWNER: ${{ vars.CNB_OWNER }}
+          CNB_REPO: ${{ vars.CNB_REPO }}
+        run: python3 scripts/sync-maven-index.py

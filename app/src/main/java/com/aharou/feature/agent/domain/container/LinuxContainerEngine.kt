@@ -777,6 +777,24 @@ class LinuxContainerEngine @Inject constructor(
         return pb.start()
     }
 
+    /** 同 [startStdioProcess]，额外把进程身份登记进 [RuntimeProcessStore]：App 被系统杀掉后，
+     *  残留的语言服务器进程才能被辨认回收；[tag] 写入账本，调用方按前缀区分归属。 */
+    fun startTrackedStdioProcess(
+        program: String,
+        programArgs: List<String>,
+        projectPath: String?,
+        tag: String,
+        extraEnv: Map<String, String> = emptyMap(),
+        profile: ContainerProfile = currentProfile
+    ): TrackedStdioProcess {
+        val childrenBefore = ProcessIdentity.childPids()
+        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, profile)
+        val identity = ProcessIdentity.capture(process)
+            ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
+        identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, tag) }
+        return TrackedStdioProcess(process, identity?.pid) { runtimeProcessStore.clear(it) }
+    }
+
     /**
      * 构造「在容器内直接 exec 某程序（保留分离流）」的 PRoot 调用。
      * 用 `sh -c 'exec "$0" "$@"' program arg1 arg2 …` 把参数原样交给 execvp，规避引号问题。

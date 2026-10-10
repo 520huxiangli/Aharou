@@ -16,6 +16,7 @@ import com.aharou.core.util.FileLogger
 import net.schmizz.sshj.common.SecurityUtils
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.mcp.McpManager
+import com.aharou.feature.editor.lsp.EditorLspManager
 import com.aharou.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aharou.feature.settings.data.repository.LanguageSettingsRepository
 import com.aharou.feature.settings.data.repository.LogSettingsRepository
@@ -136,6 +137,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** MCP 生命周期总管：启动即连接已配置的远程 server。 */
     @Inject
     lateinit var mcpManager: McpManager
+
+    /** 编辑器语言服务器管理器：冷启动时按进程账本清扫上次进程被杀后遗留的语言服务器。 */
+    @Inject
+    lateinit var editorLspManager: EditorLspManager
 
     /** 应用设置字段注册（语言等）：Agent 经配置通道即可改动，无需任何系统权限。 */
     @Inject
@@ -438,6 +443,12 @@ class AIEditorApp : Application(), Configuration.Provider {
         }
         // 连接已配置的 MCP server，把其工具注册进 ToolRegistry（内部自有 scope，失败不影响启动）。
         mcpManager.start()
+        // 语言服务器：App 被系统杀死时 stdio 进程拿不到旧句柄，会在容器里留成孤儿；
+        // 这里按进程账本清一次（账本只认自家遗留进程，不会误伤 MCP/终端）。失败只记日志。
+        appScope.launch {
+            runCatching { editorLspManager.reapOrphanServers() }
+                .onFailure { FileLogger.w("AIEditorApp", "清扫孤立语言服务器失败", it) }
+        }
         // 子代理任务状态机：启动即收尾上次进程遗留的「运行中」任务（标为中断并通知父会话），
         // 随后常驻订阅子代理事件写状态。走 IO 作用域，失败只记日志，不阻塞启动。
         subAgentTaskTracker.start(appScope)

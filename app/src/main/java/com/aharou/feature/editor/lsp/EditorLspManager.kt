@@ -2,13 +2,21 @@ package com.aharou.feature.editor.lsp
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
+import com.aharou.feature.agent.domain.container.RuntimeProcessStore
+import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
+import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import io.github.rosemoe.sora.lang.Language
 import io.github.rosemoe.sora.lsp.editor.LspEditor
 import io.github.rosemoe.sora.lsp.editor.LspProject
 import io.github.rosemoe.sora.widget.CodeEditor
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,7 +50,10 @@ data class DefinitionTarget(val path: String, val line: Int, val column: Int)
 class EditorLspManager @Inject constructor(
     private val engine: LinuxContainerEngine,
     private val installer: LanguageServerInstaller,
-    private val pathHomeResolver: PathHomeResolver
+    private val pathHomeResolver: PathHomeResolver,
+    private val runtimeProcessStore: RuntimeProcessStore,
+    private val workspaceRepository: WorkspaceRepository,
+    private val containerSettingsRepository: ContainerSettingsRepository
 ) {
 
     private companion object {
@@ -50,6 +61,29 @@ class EditorLspManager @Inject constructor(
 
         /** 查定义的最长等待：语言服务器没响应时不能把 UI 吊死，超时当没找到处理。 */
         const val DEFINITION_TIMEOUT_SECONDS = 5L
+
+        /** 语言服务器进程写在账本里的 tag 前缀（`lsp:<languageId>`）。 */
+        const val LSP_TAG_PREFIX = "lsp:"
+    }
+
+    /** 常驻订阅与「扫残留」用的独立作用域：不随任何页面/调用方取消而中断。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        // 容器 profile 变化：旧语言服务器钉在旧 rootfs 上，关掉，之后按需在新容器里重起。
+        scope.launch {
+            containerSettingsRepository.activeProfileIdFlow.drop(1).collect {
+                FileLogger.i(TAG, "容器 profile 变化，关闭语言服务器并清理残留")
+                closeAll()
+            }
+        }
+        // 工作区切换：语言服务器挂在项目根上，项目一变就得重建。
+        scope.launch {
+            workspaceRepository.current.drop(1).collectLatest {
+                FileLogger.i(TAG, "工作区切换，关闭语言服务器并清理残留")
+                closeAll()
+            }
+        }
     }
 
     /** 容器内项目根（LSP 的 rootUri）：`~/workspace` 展开成 `/root/workspace`。 */
@@ -77,6 +111,8 @@ class EditorLspManager @Inject constructor(
      * 绑定与 connect 会碰编辑器 View，需在主线程发起；连不上不致命，着色照旧。
      */
     suspend fun attach(editor: CodeEditor, containerFilePath: String, wrapper: Language): Boolean {
+        // 挂载前先异步扫一遍上次残留的语言服务器（失败不阻断本次挂载）。
+        scope.launch { runCatching { reapOrphanServers() } }
         val entry = LspServerCatalog.byPath(containerFilePath) ?: return false
         val cached = installer.cachedStatus(entry.extension)
         val status = cached ?: installer.probe(entry.extension)
@@ -178,5 +214,22 @@ class EditorLspManager @Inject constructor(
         projects.values.forEach { runCatching { it.closeAllEditors() } }
         projects.clear()
         editors.clear()
+        // 正常关闭后扫一遍残留：closeAllEditors 走 killProcessTree，个别子进程可能漏网。
+        scope.launch { runCatching { reapOrphanServers() } }
+    }
+
+    /**
+     * 清理上次运行遗留的语言服务器进程：只处理账本里 tag 为 [LSP_TAG_PREFIX] 前缀、且经
+     * [RuntimeProcessStore.stale] 强身份核验（同一次开机 + 启动时钟对得上 + 活跃 + 非本 session）
+     * 的残留，逐个终止。失败只记日志——漏杀可以靠用户手动清，错杀 MCP/终端进程代价更大。
+     */
+    suspend fun reapOrphanServers() = withContext(Dispatchers.IO) {
+        val orphans = runtimeProcessStore.stale().filter { it.command.startsWith(LSP_TAG_PREFIX) }
+        if (orphans.isEmpty()) return@withContext
+        FileLogger.i(TAG, "发现 ${orphans.size} 个残留语言服务器进程，逐个终止")
+        orphans.forEach { record ->
+            runCatching { runtimeProcessStore.terminate(record) }
+                .onFailure { FileLogger.w(TAG, "终止残留语言服务器失败: ${record.command}", it) }
+        }
     }
 }

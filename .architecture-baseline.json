@@ -3,21 +3,21 @@
   "fileLines": {
     "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3283,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3272,
-    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3140,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2059,
+    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3129,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2058,
     "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1913,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1736,
     "app/src/main/java/com/aharou/feature/pet/PetOverlay.kt": 1712,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatDrawer.kt": 1588,
-    "app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt": 1543,
+    "app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt": 1506,
     "app/src/main/java/com/aharou/feature/sandbox/FilePreviewScreen.kt": 1399,
     "app/src/main/java/com/aharou/MainActivity.kt": 1396,
     "app/src/main/java/com/aharou/feature/git/presentation/component/GitStatusTab.kt": 1223,
     "app/src/main/java/com/aharou/feature/browser/BrowserTabPool.kt": 1289,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ContainerSettingsSection.kt": 1259,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1265,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1266,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AdaptiveCardRenderer.kt": 1194,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 1094
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 1104
   },
   "bannedImports": {
     "androidx.compose.material3.ModalBottomSheet": [

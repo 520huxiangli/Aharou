@@ -691,6 +691,11 @@
     <string name="chat_perm_deny">Deny</string>
     <string name="chat_perm_always_allow">Always Allow</string>
     <string name="chat_perm_session_label">Session "%1$s"</string>
+    <string name="chat_perm_batch_title">Batch tool approval</string>
+    <string name="chat_perm_batch_count">%1$d items</string>
+    <string name="chat_perm_batch_deny_all">Deny All</string>
+    <string name="chat_perm_batch_always_all">Allow All &amp; Remember</string>
+    <string name="chat_perm_batch_allow_all">Allow All</string>
     <string name="chat_plan_completed">Plan completed</string>
     <string name="chat_continue_feedback">Continue feedback</string>
     <string name="chat_approve_and_implement">Approve and implement</string>
@@ -1420,6 +1425,8 @@
     <string name="agent_perm_channel_name">Tool approval</string>
     <string name="agent_perm_channel_desc">Notifications shown while a session waits for tool approval</string>
     <string name="agent_perm_notification_title">%1$s is requesting tool approval</string>
+    <string name="agent_perm_notification_batch_title">%1$s is requesting approval for %2$d tools</string>
+    <string name="agent_perm_notification_batch_text">%1$d items awaiting approval</string>
     <string name="agent_perm_session_fallback">AI session</string>
     <string name="agent_perm_action_allow">Allow</string>
     <string name="agent_perm_action_reject">Deny</string>
@@ -2564,4 +2571,10 @@
     <string name="knowledge_base_sync_failed">Sync failed, check your network and retry</string>
     <string name="knowledge_base_invalid_repo">That repository address is not recognised</string>
     <string name="knowledge_base_no_source">No knowledge base configured yet</string>
+    <string name="chat_status_checking_dependencies">Checking dependency versions</string>
+    <string name="dependency_check_title">Dependency version check</string>
+    <string name="dependency_check_updates_count">%1$d update(s) available</string>
+    <string name="dependency_check_network_failed">Couldn\'t reach repositories, versions may be stale</string>
+    <string name="dependency_check_all_up_to_date">All dependencies are up to date</string>
+    <string name="dependency_check_unparsed">%1$d declaration(s) couldn\'t be parsed</string>
 </resources>

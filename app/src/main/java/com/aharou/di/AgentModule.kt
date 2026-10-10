@@ -34,6 +34,7 @@ import com.aharou.feature.agent.domain.tool.file.GenerateImageTool
 import com.aharou.feature.agent.domain.tool.file.ViewImageTool
 import com.aharou.feature.agent.domain.tool.file.WriteFileTool
 import com.aharou.feature.agent.domain.tool.editor.EditFileTool
+import com.aharou.feature.agent.domain.tool.dependency.DependencyCheckTool
 import com.aharou.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aharou.feature.agent.domain.tool.container.TerminalSessionTool
 import com.aharou.feature.agent.domain.tool.explorer.ListFilesTool
@@ -412,7 +413,8 @@ object AgentModule {
         configTool: ConfigTool,
         vdTool: VdTool,
         a11yTool: A11yTool,
-        openAppTool: OpenAppTool
+        openAppTool: OpenAppTool,
+        dependencyCheckTool: DependencyCheckTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -444,6 +446,7 @@ object AgentModule {
             register("vscreen", vdTool)
             register("a11y", a11yTool)
             register("open_app", openAppTool)
+            register("check_dependencies", dependencyCheckTool)
         }
     }
 
