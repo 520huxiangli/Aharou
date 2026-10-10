@@ -45,6 +45,7 @@ import javax.inject.Inject
 
 /**
  * 生图工具：调用 OpenAI Images API（POST /v1/images/generations）按提示词生成位图。
+ * 供应商不提供该端点时（404/405/501）自动回落到 Chat Completions 出图，见 [ChatImageFallback]。
  *
  * 使用「设置 → 默认模型 → 生图模型」配置的 provider + 模型（如 gpt-image-1 / dall-e-3）；
  * 未配置时返回带设置指引的错误。生成的图片：
@@ -59,6 +60,7 @@ class GenerateImageTool @Inject constructor(
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val aiProviderRepository: AIProviderRepository,
     private val openAIApi: OpenAIApi,
+    private val chatImageFallback: ChatImageFallback,
     private val geminiApi: GeminiApi,
     private val httpClient: OkHttpClient,
     private val keyRotator: ProviderKeyRotator
@@ -192,9 +194,16 @@ class GenerateImageTool @Inject constructor(
             val isGptImage = model.startsWith("gpt-image", ignoreCase = true)
             val isDalle2 = model.equals("dall-e-2", ignoreCase = true)
             val isDalle3 = model.equals("dall-e-3", ignoreCase = true)
+            // 第三方生图模型（聚合网关上的非官方模型）不认 quality / background / style 这些 OpenAI
+            // 专有参数：直接忽略而不是报错——否则 AI 顺手带上 quality 就会把用户选好的模型挡在请求之外。
+            val officialParams = isGptImage || isDalle2 || isDalle3
             GenerateImageTool.validateImageParams(
-                model, isGptImage, isDalle2, isDalle3, n, quality,
-                background, moderation, style, outputFormat
+                model, isGptImage, isDalle2, isDalle3, n,
+                quality.takeIf { officialParams },
+                background.takeIf { officialParams },
+                moderation.takeIf { officialParams },
+                style.takeIf { officialParams },
+                outputFormat.takeIf { officialParams }
             )
 ?.let {
                 return@withContext ToolResult.Error(it, "INVALID_PARAMS")
@@ -211,7 +220,7 @@ class GenerateImageTool @Inject constructor(
                 prompt = prompt,
                 n = n,
                 size = size,
-                quality = quality,
+                quality = if (officialParams) quality else null,
                 response_format = if (!isGptImage) "b64_json" else null,
                 output_format = if (isGptImage) outputFormat else null,
                 background = if (isGptImage) background else null,
@@ -221,12 +230,29 @@ class GenerateImageTool @Inject constructor(
 
             seq = AILogger.logRequest(context.sessionId, provider.id, model, "POST", url, request)
 
-            val response = openAIApi.createImage(
-                url = url,
-                authorization = "Bearer $activeApiKey",
-                extraHeaders = resolveCustomHeaders(provider.customHeaders, context.sessionId, activeApiKey),
-                request = request
-            )
+            val extraHeaders = resolveCustomHeaders(provider.customHeaders, context.sessionId, activeApiKey)
+            var response = try {
+                openAIApi.createImage(
+                    url = url,
+                    authorization = "Bearer $activeApiKey",
+                    extraHeaders = extraHeaders,
+                    request = request
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val enriched = e.enrichWithHttpErrorBody()
+                // 部分中转站/网关不实现 Images 端点（一律 404/405/501），但能在 Chat Completions 里回图；
+                // 只有这类端点缺失才回落——鉴权、限流、超时、参数错误回落到 chat 同样无益。
+                if (provider.useFullUrl || !enriched.isImagesEndpointUnavailable()) throw enriched
+                FileLogger.i(TAG, "Images 端点不可用，回落 Chat Completions 出图")
+                chatImageFallback.generate(provider, activeApiKey, extraHeaders, prompt, context.sessionId)
+            }
+            // 端点存在但返回空数据（网关路由到默认处理器、模型静默拒答）时同样回落。
+            if (response.data.isEmpty() && !provider.useFullUrl) {
+                FileLogger.i(TAG, "Images 端点未返回图片，回落 Chat Completions 出图")
+                response = chatImageFallback.generate(provider, activeApiKey, extraHeaders, prompt, context.sessionId)
+            }
             AILogger.logResponse(context.sessionId, provider.id, response, seq)
             buildSuccess(access, response, n, outputPath, model)
         } catch (e: CancellationException) {
