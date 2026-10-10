@@ -313,7 +313,7 @@ internal fun buildChatItems(
     // 轮首之前的散消息（会话开头就出现的助手/工具输出，罕见）不折叠，原样常显。
     leading.forEach { items += messageRenderItems(it) }
     for (turn in turns) {
-        items += messageRenderItems(turn.userMessage)
+        items += messageRenderItems(turn.userMessage, showSoulHeader = true)
         val endAssistant = turn.messages.lastOrNull {
             it.role == MessageRole.ASSISTANT && !it.isPersistentInTurn()
         }

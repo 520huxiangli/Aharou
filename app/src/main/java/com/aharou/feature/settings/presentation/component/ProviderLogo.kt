@@ -1,10 +1,13 @@
 package com.aharou.feature.settings.presentation.component
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -12,8 +15,12 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.core.soul.SoulStore
 import com.aharou.core.theme.Brand
+import com.aharou.feature.account.data.remote.AharouAccountApi
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Cloud
@@ -146,6 +153,15 @@ fun ProviderLogoIcon(
     modifier: Modifier = Modifier,
     size: Dp = 22.dp
 ) {
+    // 自建的内置供应商后面就是小染本人，图标不套品牌 logo，跟着 SOUL.md 里的头像走。
+    if (provider != null && provider.baseUrl.startsWith(AharouAccountApi.BASE_URL)) {
+        val soul by SoulStore.cachedMetadata.collectAsStateWithLifecycle()
+        // 头像组件自身不带尺寸约束，交给容器居中：否则 emoji 按自身宽度贴左，跟右侧品牌图标对不齐。
+        Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {
+            SoulIconGlyph(icon = soul.icon, sizeDp = size, emojiSp = (size.value * 0.78f).sp)
+        }
+        return
+    }
     val res = providerLogoRes(provider)
     if (res != null) {
         val brandKey = providerBrandKey(provider)

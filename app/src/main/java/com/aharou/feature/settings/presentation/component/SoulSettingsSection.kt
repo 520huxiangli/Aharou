@@ -448,6 +448,8 @@ internal fun SoulIconGlyph(
     icon: String,
     sizeDp: Dp,
     emojiSp: TextUnit,
+    /** 未设置图标时的占位。默认是助手的 ✨；用户身份行要传自己的默认，免得分不清谁在说话。 */
+    fallbackEmoji: String = SoulMetadata.DISPLAY_EMOJI,
 ) {
     val bitmap = remember(icon) { SoulIcon.decode(icon) }
     when {
@@ -459,7 +461,7 @@ internal fun SoulIconGlyph(
                 .clip(RoundedCornerShape(sizeDp * SoulIcon.CORNER_RADIUS_FRACTION)),
         )
         icon.isNotEmpty() -> Text(text = icon, fontSize = emojiSp)
-        else -> Text(text = SoulMetadata.DISPLAY_EMOJI, fontSize = emojiSp)
+        else -> Text(text = fallbackEmoji, fontSize = emojiSp)
     }
 }
 
@@ -467,7 +469,7 @@ internal fun SoulIconGlyph(
 // AdaptiveModalBottomSheet 的签名暴露了实验类型 SheetState/ModalBottomSheetProperties，调用点需自带 OptIn
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SoulEmojiPickerSheet(
+internal fun SoulEmojiPickerSheet(
     current: String,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,

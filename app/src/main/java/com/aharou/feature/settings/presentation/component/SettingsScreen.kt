@@ -137,6 +137,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     General(R.string.settings_general),
     Theme(R.string.settings_theme_title),
     Providers(R.string.settings_providers),
+    BuiltinAi(R.string.account_entry_title),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
     Mcp(R.string.settings_mcp),
@@ -415,6 +416,7 @@ fun SettingsScreen(
         SettingsSection.ConfigAudit,
         SettingsSection.Memory,
         SettingsSection.Pet -> SettingsSection.AharouGroup
+        SettingsSection.BuiltinAi -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels,
         SettingsSection.Mcp, SettingsSection.Skills, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
@@ -978,6 +980,7 @@ fun SettingsScreen(
                     deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
                     onToggleDeleteExternalWorkspaceSessions = { viewModel.setDeleteExternalWorkspaceSessions(it) }
                 )
+                SettingsSection.BuiltinAi -> com.aharou.feature.account.presentation.BuiltinAiAccountScreen()
                 SettingsSection.Providers -> ProvidersSection(
                     providers = providers,
                     onEdit = {

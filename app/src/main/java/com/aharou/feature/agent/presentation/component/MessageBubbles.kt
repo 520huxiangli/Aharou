@@ -327,6 +327,10 @@ internal fun AgentMessageItem(
             // 每轮助手回复的首条渲染身份行（图标 + 名字，跟 SOUL.md 实时联动）
             SoulChatHeaderRow()
         }
+        if (showSoulHeader && isChunkHeader && message.role == MessageRole.USER) {
+            // 用户消息首条也带身份行，与助手那条对称（头像 + 名字，读本地用户身份）
+            UserChatHeaderRow()
+        }
         if (hasReasoning && isChunkHeader && reasoningVisible) {
             // 思考默认收起：折叠行只占一行（显示思考的第一行），要看全文手动点开
             ReasoningBubble(

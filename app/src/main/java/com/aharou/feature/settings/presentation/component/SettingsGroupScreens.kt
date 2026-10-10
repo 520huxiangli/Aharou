@@ -21,6 +21,7 @@ import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.terminal.data.repository.TerminalSettings
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.User
 import compose.icons.feathericons.BarChart2
 import compose.icons.feathericons.Book
 import compose.icons.feathericons.BookOpen
@@ -112,6 +113,13 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
     ) {
         SettingsGroupHeader(text = stringResource(R.string.settings_category_ai))
         SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.User,
+                title = stringResource(SettingsSection.BuiltinAi.titleRes),
+                subtitle = stringResource(R.string.account_entry_subtitle),
+                onClick = { onOpen(SettingsSection.BuiltinAi) }
+            )
+            SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Cloud,
                 title = stringResource(SettingsSection.Providers.titleRes),
