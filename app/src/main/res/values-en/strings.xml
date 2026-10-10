@@ -36,7 +36,7 @@
     <string name="settings_enter_to_send">Enter key sends message</string>
     <string name="settings_enter_to_send_desc">When off, Enter inserts a newline and you send with the button</string>
     <string name="settings_compaction_threshold">Auto-compaction threshold</string>
-    <string name="settings_compaction_threshold_desc">Auto-compact once the context reaches this share of the window (never later than 80%)</string>
+    <string name="settings_compaction_threshold_desc">Auto-compact once the context reaches this share of the window</string>
     <string name="settings_soft_compaction_threshold">Soft trim threshold</string>
     <string name="settings_soft_compaction_threshold_desc">Trim long tool outputs from history first once context reaches this share (without summarizing)</string>
     <string name="settings_percent_value">%1$d%%</string>
@@ -2544,6 +2544,15 @@
     <string name="knowledge_base_sync_all">Sync all</string>
     <string name="knowledge_base_sync_all_hint">Pull the latest docs from every source</string>
     <string name="knowledge_base_source_meta">%1$d docs · %2$s</string>
+    <string name="knowledge_base_doc_count">%1$d docs</string>
+    <string name="knowledge_base_install">Install</string>
+    <string name="knowledge_base_installing">Installing…</string>
+    <string name="knowledge_base_uninstall">Uninstall</string>
+    <string name="knowledge_base_installed_meta">Installed · %1$d docs</string>
+    <string name="knowledge_base_category_all">All</string>
+    <string name="knowledge_base_category_writing">Writing</string>
+    <string name="knowledge_base_category_ai">AI</string>
+    <string name="knowledge_base_category_coding">Coding</string>
     <string name="knowledge_base_sync">Sync</string>
     <string name="knowledge_base_remove">Remove</string>
     <string name="knowledge_base_add_source">Add a knowledge base</string>

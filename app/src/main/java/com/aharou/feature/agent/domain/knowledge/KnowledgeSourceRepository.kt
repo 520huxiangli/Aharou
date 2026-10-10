@@ -49,7 +49,7 @@ class KnowledgeSourceRepository @Inject constructor(
         runCatching {
             val target = file()
             target.parentFile?.mkdirs()
-            target.writeTextSafely(prettyJson.encodeToString(KnowledgeData(sources)), TAG)
+            target.writeTextSafely(prettyJson.encodeToString(KnowledgeData(sources = sources)), TAG)
         }.onFailure { FileLogger.e(TAG, "写入自定义知识库源失败", it) }
     }
 

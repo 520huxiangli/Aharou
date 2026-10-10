@@ -40,6 +40,18 @@ class KnowledgeRepository @Inject constructor(
 
     fun sourceDir(sourceId: String): File = File(rootDir(), sourceId)
 
+    /** 这个源是否已经装到本地（有目录且有文件）。 */
+    fun isInstalled(sourceId: String): Boolean {
+        val dir = sourceDir(sourceId)
+        return dir.isDirectory && dir.walkTopDown().any { it.isFile }
+    }
+
+    /** 卸载：只删本地副本，远端一点不动。 */
+    fun uninstall(sourceId: String): Boolean {
+        val dir = sourceDir(sourceId)
+        return dir.isDirectory && dir.deleteRecursively()
+    }
+
     /** 同步全部已配置的源；任一源失败只记日志，不影响其他源。 */
     suspend fun syncAll() {
         catalog.load().sources.keys.forEach { id ->
@@ -63,9 +75,13 @@ class KnowledgeRepository @Inject constructor(
             ?: return@withContext null
 
         val prefix = source.path.trim('/')
+        // 排除的目录名按路径段匹配：微软那几个教学仓带了上百种语言的 translations/，
+        // 不排除会把一次同步变成几千个文件。
+        val excludes = source.exclude.map { it.trim('/') }.filter { it.isNotEmpty() }
         val remoteFiles = tree
             .filter { it.endsWith(".md", ignoreCase = true) }
             .filter { prefix.isEmpty() || it.startsWith("$prefix/") }
+            .filter { excludes.none { name -> name in it.split('/') } }
 
         val dir = sourceDir(sourceId)
         val kept = HashSet<String>()

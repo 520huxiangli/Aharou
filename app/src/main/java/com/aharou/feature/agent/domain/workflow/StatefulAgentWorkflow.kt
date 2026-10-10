@@ -571,7 +571,7 @@ class StatefulAgentWorkflow @Inject constructor(
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
                 windowProvider = aiProvider, systemPrompt = systemPrompt, tools = currentTools,
-                currentInputTokens = predictedInput) { event ->
+                currentInputTokens = ContextTokenEstimator.forCompactionTrigger(estimate, budget.baselineEstimate, budget.baselineUsage)) { event ->
                 if (event is AgentEvent.CompactionFailed) budget.compactionAttemptFailed = true
                 emit(event)
             }

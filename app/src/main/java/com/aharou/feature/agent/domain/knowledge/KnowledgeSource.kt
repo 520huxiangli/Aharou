@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 /** 一份知识库源清单（远端 `data/knowledge.json` 与内置 assets 兜底一致）。 */
 @Serializable
 data class KnowledgeData(
+    val categories: Map<String, Map<String, String>> = emptyMap(),
     val sources: Map<String, KnowledgeSourceDef> = emptyMap()
 )
 
@@ -21,11 +22,19 @@ data class KnowledgeSourceDef(
     val branch: String = SkillRepoAccess.HEAD,
     val path: String = "",
     val host: String = SkillRepoAccess.GITHUB,
-    val name: Map<String, String> = emptyMap()
+    val name: Map<String, String> = emptyMap(),
+    val description: Map<String, String> = emptyMap(),
+    val category: String = "",
+    val cover: String = "",
+    val exclude: List<String> = emptyList()
 ) {
     /** 按当前界面语言取展示名；没有本地化名时退回任何一个，再退回仓库名。 */
     fun displayName(lang: String): String =
         name[lang] ?: name.values.firstOrNull() ?: repo
+
+    /** 按当前界面语言取一句描述；没有就空串，界面不显示那一行。 */
+    fun displayDescription(lang: String): String =
+        description[lang] ?: description.values.firstOrNull() ?: ""
 }
 
 /** 本地已同步的一篇文档。 */

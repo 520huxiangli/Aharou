@@ -36,7 +36,7 @@
     <string name="settings_enter_to_send">回车键发送消息</string>
     <string name="settings_enter_to_send_desc">关闭后回车换行，需点发送按钮发送</string>
     <string name="settings_compaction_threshold">自动压缩阈值</string>
-    <string name="settings_compaction_threshold_desc">上下文占用达到窗口的该比例时自动压缩（最多不超过窗口 80%）</string>
+    <string name="settings_compaction_threshold_desc">上下文占用达到窗口的该比例时自动压缩</string>
     <string name="settings_soft_compaction_threshold">软精简阈值</string>
     <string name="settings_soft_compaction_threshold_desc">上下文占用达到该比例时，先精简历史里的超长工具输出，暂不调用摘要模型</string>
     <string name="settings_percent_value">%1$d%%</string>
@@ -2544,6 +2544,15 @@
     <string name="knowledge_base_sync_all">同步全部</string>
     <string name="knowledge_base_sync_all_hint">从各源拉取最新文档到本机</string>
     <string name="knowledge_base_source_meta">%1$d 篇 · %2$s</string>
+    <string name="knowledge_base_doc_count">%1$d 篇</string>
+    <string name="knowledge_base_install">安装</string>
+    <string name="knowledge_base_installing">安装中…</string>
+    <string name="knowledge_base_uninstall">卸载</string>
+    <string name="knowledge_base_installed_meta">已安装 · %1$d 篇</string>
+    <string name="knowledge_base_category_all">全部</string>
+    <string name="knowledge_base_category_writing">写作</string>
+    <string name="knowledge_base_category_ai">AI</string>
+    <string name="knowledge_base_category_coding">编程</string>
     <string name="knowledge_base_sync">同步</string>
     <string name="knowledge_base_remove">移除</string>
     <string name="knowledge_base_add_source">添加知识库</string>

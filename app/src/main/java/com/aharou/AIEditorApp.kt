@@ -216,10 +216,6 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var knowledgeCatalog: com.aharou.feature.agent.domain.knowledge.KnowledgeCatalog
 
-    /** 共享知识库本地副本：启动即后台同步（失败静默，沿用上次同步到的内容）。 */
-    @Inject
-    lateinit var knowledgeRepository: com.aharou.feature.agent.domain.knowledge.KnowledgeRepository
-
     /** 定时任务调度：启动时按「有无启用任务」决定排周期检查还是取消，避免空转唤醒进程。 */
     @Inject
     lateinit var scheduledTaskScheduler: com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
@@ -382,7 +378,6 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 启动即刷新知识库源清单并同步本地副本（失败静默，沿用上次同步到的内容）。
         appScope.launch {
             knowledgeCatalog.refreshFromNetworkIfStale()
-            knowledgeRepository.syncAll()
         }
         // 启动即加载持久化等级，并随设置页改动实时生效（唯一同步点）。
         appScope.launch {
