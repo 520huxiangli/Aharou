@@ -101,7 +101,11 @@ class StatefulAgentWorkflowTest {
         memoryCurator = mockk(),
         fileAccess = mockk(),
         ocrEngine = mockk(),
-        vault = mockk()
+        // vault 在结果脱敏路径上会被调到；不打桩会抛 MockKException。原样返回/无占位符也贴近空库的真实行为。
+        vault = mockk {
+            every { redact(any()) } answers { firstArg<String>() }
+            every { hasPlaceholders(any()) } returns false
+        }
     ), recordPrivateCalls = true)
 
     private fun prepare(chunks: Flow<AIStreamChunk>) {
