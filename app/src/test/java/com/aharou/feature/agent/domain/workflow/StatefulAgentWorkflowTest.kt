@@ -100,7 +100,8 @@ class StatefulAgentWorkflowTest {
         eventInjector = mockk(),
         memoryCurator = mockk(),
         fileAccess = mockk(),
-        ocrEngine = mockk()
+        ocrEngine = mockk(),
+        vault = mockk()
     ), recordPrivateCalls = true)
 
     private fun prepare(chunks: Flow<AIStreamChunk>) {
