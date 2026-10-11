@@ -3,8 +3,8 @@ package com.aharou.feature.agent.domain.workflow
 import com.aharou.core.util.LineDiff
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.permission.ApprovalScope
 import com.aharou.feature.agent.domain.permission.PermissionChoice
-import com.aharou.feature.agent.domain.permission.PermissionScope
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
@@ -14,6 +14,7 @@ import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.file.runFileOpWithTimeout
 import com.aharou.feature.workspace.domain.FileAccessProvider
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -30,7 +31,10 @@ internal sealed interface PermissionVerdict {
     /** 需要用户确认；[request] 已带预览，[rememberablePatterns] 非空时「始终允许」可落库。 */
     data class Ask(
         val request: PendingToolPermission,
-        val rememberablePatterns: List<String>
+        val rememberablePatterns: List<String>,
+        /** 策略提供的风险档与出站目标，供审计补全。 */
+        val riskLevel: String? = null,
+        val egressTarget: String? = null
     ) : PermissionVerdict
 }
 
@@ -41,6 +45,10 @@ internal sealed interface PermissionVerdict {
  *
  * 批量路径先对整批 tool_call 逐条 [evaluate]，再对 ask 项统一等待，从而把「一个回合的多次工具调用」
  * 合并成「一次批量提案审批」。planMode 退出特例与 PLAN 模式写工具 DENY 仍逐条保留。
+ *
+ * 审批超时（[APPROVAL_TIMEOUT_MS]，默认 300 秒）视为拒绝：挂起超过时限仍无答复，整批按 REJECT
+ * 结束并回灌可读原因，避免请求永久阻塞 Agent 循环；与通知栏弹窗的交互由 [ToolPermissionManager]
+ * 在结算时统一收口，超时同样走它的「整批拒绝」路径。
  */
 internal class PermissionGate(
     private val policyEngine: ToolPermissionPolicyEngine,
@@ -64,7 +72,7 @@ internal class PermissionGate(
             if (action == "exit") return PermissionVerdict.Allow
         }
 
-        val eval = policyEngine.evaluate(tool, tool.name, arguments, mode, workspacePath)
+        val eval = policyEngine.evaluate(tool, tool.name, arguments, mode, workspacePath, sessionId)
         if (eval.verdict == ToolPermissionPolicyEngine.Verdict.DENY) {
             val reason = eval.denyReason ?: "该工具被项目安全规则策略禁止执行"
             val code = if (mode == AgentMode.PLAN) "PLAN_MODE_REJECTED" else "SYSTEM_DENIED"
@@ -87,24 +95,81 @@ internal class PermissionGate(
                     rememberDisabledReason = eval.rememberDisabledReason,
                     sessionId = sessionId.orEmpty()
                 )
-                PermissionVerdict.Ask(request, eval.rememberablePatterns)
+                PermissionVerdict.Ask(request, eval.rememberablePatterns, eval.riskLevel, eval.egressTarget)
             }
         }
     }
 
-    /** 一次挂起整个批次，等用户决定；返回「请求 id → 选择」。ALWAYS 且可记忆的项落库。 */
+    /**
+     * 一次挂起整个批次，等用户决定；返回「请求 id → 选择」。ALWAYS/SESSION/TIME_24H 且可记忆的项落库。
+     * 超过 [APPROVAL_TIMEOUT_MS] 未答复按「拒绝」处理（含「超时未答复」原因写入审计并回灌），避免永久阻塞。
+     *
+     * 返回类型保持 [Map]（调用方按逐项选择判定整批是否取消），超时信息不外露、仅在方法内用于审计与拒绝原因。
+     */
     suspend fun awaitBatch(
         batch: PendingPermissionBatch,
         asks: List<PermissionVerdict.Ask>,
         workspacePath: String
     ): Map<String, PermissionChoice> {
-        val decisions = permissionManager.awaitBatchApproval(batch)
+        val startedAt = System.currentTimeMillis()
+        val decisionsNullable = withTimeoutOrNull(APPROVAL_TIMEOUT_MS) {
+            permissionManager.awaitBatchApproval(batch)
+        }
+        val timedOut = decisionsNullable == null
+        // 超时：整批按拒绝，并显式唤醒管理器以撤下挂起的弹窗/通知（幂等，UI 已决时为空操作）。
+        val decisions = decisionsNullable ?: run {
+            permissionManager.resolveBatch(batch.id, PermissionChoice.REJECT)
+            batch.items.associate { it.id to PermissionChoice.REJECT }
+        }
+        val durationMs = System.currentTimeMillis() - startedAt
         asks.forEach { ask ->
-            if (decisions[ask.request.id] == PermissionChoice.ALWAYS && ask.rememberablePatterns.isNotEmpty()) {
-                policyEngine.remember(ask.request.toolName, ask.rememberablePatterns, PermissionScope.PROJECT, workspacePath)
+            val choice = decisions[ask.request.id] ?: PermissionChoice.REJECT
+            val scope = ApprovalScope.from(choice)
+            if (scope != ApprovalScope.ONCE && ask.rememberablePatterns.isNotEmpty()) {
+                policyEngine.remember(
+                    ask.request.toolName,
+                    ask.rememberablePatterns,
+                    scope,
+                    workspacePath,
+                    ask.request.sessionId
+                )
             }
+            auditResolution(ask, choice, scope, timedOut, durationMs)
         }
         return decisions
+    }
+
+    /** 记录用户对一次 ASK 的最终裁决（批准与否、授权档位、耗时）。超时以「超时未答复」为原因。 */
+    private fun auditResolution(
+        ask: PermissionVerdict.Ask,
+        choice: PermissionChoice,
+        scope: ApprovalScope,
+        timedOut: Boolean,
+        durationMs: Long
+    ) {
+        val approved = choice != PermissionChoice.REJECT
+        val decision = when {
+            timedOut -> "ask"
+            approved -> "allow"
+            else -> "deny"
+        }
+        val reasons = when {
+            timedOut -> listOf("审批超时未答复（${APPROVAL_TIMEOUT_MS / 1000} 秒），按拒绝处理")
+            approved -> emptyList()
+            else -> listOf("用户拒绝了本次调用")
+        }
+        policyEngine.auditResolution(
+            sessionId = ask.request.sessionId,
+            toolName = ask.request.toolName,
+            decision = decision,
+            riskLevel = ask.riskLevel,
+            reasons = reasons,
+            egressTarget = ask.egressTarget,
+            approved = approved,
+            approvalScope = scope.name.lowercase(),
+            durationMs = durationMs,
+            outputPreview = null
+        )
     }
 
     /**
@@ -164,5 +229,12 @@ internal class PermissionGate(
         /** 预览差异的大小上限，避免为算差异而读入/比对超大文件（与 writeFile 执行路径同量级）。 */
         const val PREVIEW_MAX_BYTES = 4L * 1024 * 1024
         const val PREVIEW_MAX_LINES = 2000
+
+        /**
+         * 审批超时（毫秒）：一条挂起的授权请求超过此时限仍无答复，按「拒绝」处理并回灌原因。
+         * 默认 300 秒（5 分钟）——比 nanoMuse 手机端默认 180 秒宽，给用户更充裕的决策时间；
+         * 服务端默认 1 小时的无人值守场景不适用本 App（有前台用户交互）。改这里即可调整。
+         */
+        const val APPROVAL_TIMEOUT_MS = 300_000L
     }
 }

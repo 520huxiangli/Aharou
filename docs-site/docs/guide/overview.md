@@ -45,12 +45,16 @@
 | AI 供应商 | 接入模型服务、管理模型列表、多 Key（v1.11.0-dev 起）、思考强度 → [文档](/guide/providers) |
 | 默认与专用模型 | 新会话默认模型，以及识图、压缩、标题总结、生图的专用模型 → [文档](/guide/default-models) |
 | MCP 服务器 | 接入外部工具，全局与项目两级配置 → [文档](/guide/mcp) |
+| 连接器 | 内置的远程 MCP 服务目录，一键接入并按需授权（OAuth / 密钥）→ [文档](/guide/connectors) |
+| 凭据库 | 集中存放 API Key / 令牌，加密保存、不回显明文，供连接器等引用 → [文档](/guide/vault) |
 | 技能 | 按需加载的专项能力扩展包 → [文档](/guide/skills) |
 | 子代理 | 派生独立会话并行执行任务，可在设置内新建、编辑与启停，支持自定义模型与工具集（v1.11.0-dev 起）→ [文档](/guide/subagent) |
 | 定时任务 | 按固定周期自动在指定会话里跑一条指令，可限次、错过不补跑（v2.8.2 起）→ [文档](/guide/scheduled-tasks) |
 | 自定义提示词 | 覆盖与定制 AI 系统的提示词片段 → [文档](/guide/custom-prompts) |
 | 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md 项目规则 → [文档](/guide/memory) |
 | 共享知识库 | 从一个公开 Markdown 仓库同步资料到本地，AI 用 `knowledge_search` 检索 → [文档](/guide/knowledge-base) |
+| Telegram 机器人 | 在 Telegram 里给机器人发消息，本机跑 AI 并流式回复，需先配对 → [文档](/guide/telegram-bot) |
+| 跨设备协作 | 本机作为局域网执行端，另一台 Aharou 配对后可请求读/写文件、执行命令、截图 → [文档](/guide/cross-device) |
 | 依赖版本检查 | 让 AI 检查 Gradle 依赖是否有新版本，并给出「改哪一行、从什么改成什么」的建议 → [文档](/guide/dependency-check) |
 | 人格（Soul） | 助手的名字、图标、风格与人格正文，注入系统提示词 → [文档](/guide/soul) |
 

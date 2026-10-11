@@ -118,6 +118,12 @@ abstract class AgentTool {
     open val capabilities: Set<ToolCapability> = emptySet()
 
     /**
+     * 是否接受 `{{vault:NAME}}` 密钥占位符：为真时由工作流在审批通过后、执行前解析为真值。
+     * 默认全 false——密钥只供给配置了它的连接器，工具（尤其命令/脚本类）一律不接受。
+     */
+    open val acceptsSecrets: Boolean = false
+
+    /**
      * 按运行模式解析实际权限策略；默认取 [permissionPolicy]，工具可覆盖。
      * 例：子代理派发（task）在非 PLAN 模式下免确认，PLAN 下仍弹窗。
      */
@@ -132,6 +138,15 @@ abstract class AgentTool {
     open fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         return capabilities
     }
+
+    /**
+     * 本次调用是否属于「敏感操作」：为真时策略引擎在读已记忆规则**之前**直接升为 ASK 且不可记忆，
+     * 用于屏幕敏感点按（支付/发送/删除等）这类需要逐次确认、不能被「始终允许」记忆绕过的场景。
+     *
+     * 默认 false；由具体工具根据参数判定（如 VdTool/A11yTool 按点击标签判定）。仅 BUILD（ask/strict）
+     * 生效：AUTO 维持全放行（用户已定，与 nanoMuse 不同），PLAN 写操作另有拦截。
+     */
+    open fun isCallSensitive(args: Map<String, JsonElement>): Boolean = false
 
     /**
      * 不带上下文的执行。只实现了 [executeWithContext] 的工具无需实现它——工具调用链统一走

@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.workflow
 
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentAction
@@ -15,14 +16,17 @@ import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentSideE
  */
 internal fun StatefulAgentWorkflow.reduce(
     state: AgentSessionState,
-    action: AgentAction
+    action: AgentAction,
+    stuckNudgeText: String = STUCK_NUDGE_TEXT
 ): Pair<AgentSessionState, List<AgentSideEffect>> {
     var newState = state
     val effects = mutableListOf<AgentSideEffect>()
 
     when (action) {
         is AgentAction.InitRequest -> {
-            newState = state.copy(messages = action.initialMessages)
+            // 恢复历史时补孤儿 tool call：assistant 声明了调用却没有结果（如审批等待期间进程被杀），
+            // OpenAI / Anthropic 会直接拒绝这类历史，故先补一条结果占位再进循环。
+            newState = state.copy(messages = repairDanglingToolCalls(action.initialMessages))
             effects.add(AgentSideEffect.CallLlm)
         }
         is AgentAction.LlmResponse -> {
@@ -135,9 +139,87 @@ internal fun StatefulAgentWorkflow.reduce(
                 rejectedToolResults = emptyMap(),
                 totalToolCalls = state.totalToolCalls + newState.batchToolCalls.size
             )
+            // 卡死探测（零额外模型调用）：最近 3 条 assistant 整体重复时注入一次提示让模型换招。
+            // 只在历史里还没有同一句提示时注入，避免每批都插、也避免重启后重复。
+            if (detectStuck(newState.messages) && !nudgedAlready(newState.messages, stuckNudgeText)) {
+                newState = newState.copy(messages = newState.messages + AgentMessage.UserMessage(content = stuckNudgeText))
+                FileLogger.i(StatefulAgentWorkflow.TAG, "检测到连续重复动作，注入卡死提示")
+            }
             effects.add(AgentSideEffect.CallLlm)
         }
     }
 
     return Pair(newState, effects)
+}
+
+/** 卡死判定窗口：取最近这么多条 assistant 消息做整体比对。 */
+private const val STUCK_WINDOW = 3
+
+/**
+ * 卡死提示的兜底文案：连续重复同一动作时注入给模型，让它停下换招或直接向用户求助。
+ *
+ * 正常路径由 `StatefulAgentWorkflow` 从 `assets/prompts/agent/stuck-nudge.md` 读入后传进 reduce
+ * （用户可改该文件定制）；reducer 是纯函数、不做文件读取，这里只留一份默认值供未传入时使用。
+ * 参考 nanomuse prompts.py 的 STUCK_PROMPT。
+ */
+internal const val STUCK_NUDGE_TEXT =
+    "你在重复同一个动作，停下来换个策略，或向用户提问。如果确实推进不下去，就直接向用户说明卡在哪里，不要继续重复。"
+
+/** 孤儿工具调用的结果占位文案。 */
+internal const val ORPHAN_TOOL_RESULT_TEXT = "(无结果：App 在这条调用完成前重启了)"
+
+/**
+ * 卡死探测：最近 [STUCK_WINDOW] 条 assistant 消息（文本 + 工具调用整体）完全相同即判定卡死。
+ * 参考 nanomuse core.py 的 _is_stuck()，零额外模型调用，纯本地判定。
+ */
+internal fun detectStuck(messages: List<AgentMessage>): Boolean {
+    val assistants = messages.filterIsInstance<AgentMessage.AssistantMessage>().takeLast(STUCK_WINDOW)
+    if (assistants.size < STUCK_WINDOW) return false
+    return assistants.map { it.stuckSignature() }.toSet().size == 1
+}
+
+/** 卡死提示只注入一次：历史里已存在同一句提示就不再注入。 */
+private fun nudgedAlready(messages: List<AgentMessage>, stuckNudgeText: String): Boolean =
+    messages.any { it is AgentMessage.UserMessage && it.content == stuckNudgeText }
+
+/** 一条 assistant 消息的稳定签名：文本 + 每个工具调用的名字与（按键排序的）参数。 */
+private fun AgentMessage.AssistantMessage.stuckSignature(): String = buildString {
+    append(content)
+    toolCalls.forEach { call ->
+        append('\u0000').append(call.name)
+        call.arguments.toSortedMap().forEach { (key, value) -> append('\u0001').append(key).append('=').append(value) }
+    }
+}
+
+/**
+ * 重启补孤儿 tool call：assistant 声明了 tool_calls 却缺少对应结果时（例如审批等待期间进程被杀），
+ * 给每个孤儿补一条结果占位，避免 OpenAI / Anthropic 拒绝这类历史。
+ * 参考 nanomuse core.py 的 _repair_dangling_tool_calls()，返回新列表、不改原对象；
+ * 无需修补时原样返回入参（省一次分配）。
+ */
+internal fun repairDanglingToolCalls(messages: List<AgentMessage>): List<AgentMessage> {
+    if (messages.isEmpty()) return messages
+    val repaired = ArrayList<AgentMessage>(messages.size + 1)
+    var index = 0
+    while (index < messages.size) {
+        val message = messages[index]
+        repaired.add(message)
+        index++
+        if (message !is AgentMessage.AssistantMessage || message.toolCalls.isEmpty()) continue
+        val answered = HashSet<String>()
+        while (index < messages.size && messages[index] is AgentMessage.ToolResultMessage) {
+            val result = messages[index] as AgentMessage.ToolResultMessage
+            repaired.add(result)
+            answered.add(result.id)
+            index++
+        }
+        message.toolCalls.forEach { call ->
+            if (call.id !in answered) {
+                repaired.add(
+                    AgentMessage.ToolResultMessage(id = call.id, toolName = call.name, result = ORPHAN_TOOL_RESULT_TEXT)
+                )
+            }
+        }
+    }
+    return if (repaired.size == messages.size) messages else repaired
 }

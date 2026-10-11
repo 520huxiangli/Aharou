@@ -114,6 +114,7 @@ import com.aharou.feature.settings.data.repository.ProviderKeyRotator
 import com.aharou.feature.settings.data.repository.TitleModelSettingsRepository
 import com.aharou.feature.workspace.data.local.dao.RemoteConnectionDao
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
+import com.aharou.feature.vault.VaultRepository
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -485,7 +486,8 @@ object AgentModule {
         eventInjector: AgentEventInjector,
         memoryCurator: MemoryCurator,
         fileAccess: FileAccessProvider,
-        ocrEngine: TesseractOcrEngine
+        ocrEngine: TesseractOcrEngine,
+        vault: VaultRepository
     ): AgentWorkflow {
         return StatefulAgentWorkflow(
             toolRegistry,
@@ -513,7 +515,8 @@ object AgentModule {
             eventInjector,
             memoryCurator,
             fileAccess,
-            ocrEngine
+            ocrEngine,
+            vault
         )
     }
 }

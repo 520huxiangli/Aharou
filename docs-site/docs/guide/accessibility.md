@@ -22,7 +22,9 @@ Android 不允许应用自行开启无障碍，必须你手动勾选：
 | 已开启 · 未连接（系统可能稍后重绑） | 系统认为开着，但服务还没绑上；等一会儿或重新勾选一次 |
 | 未开启 | 还没勾选 |
 
-Agent 用的工具是 `a11y`，动作有 `dump`（读界面元素树）、`find`、`tap`、`swipe`、`key`（支持 back / home / recents / notifications）、`shot`（系统截图，需要 **Android 11 及以上**）、`setText`、`windows`、`foreground`。默认**每次调用都会弹确认框**（「确认无障碍操作」），弹窗里有三个选择：拒绝 / 允许（仅本次）/ **始终允许**。点「始终允许」会在当前项目记住一条规则（整个 `a11y` 工具的调用都放行），之后就不再弹框。
+Agent 用的工具是 `a11y`，动作有 `dump`（读界面元素树）、`find`、`tap`、`swipe`、`key`（支持 back / home / recents / notifications）、`shot`（系统截图，需要 **Android 11 及以上**）、`setText`、`windows`、`foreground`。默认**每次调用都会弹确认框**（「确认无障碍操作」），你可以在弹窗里选「允许」（仅本次）、「本次会话」「24 小时」或「始终允许」（记成规则），详见[工具授权](/guide/permissions)。
+
+`tap` 与 `setText` 还可以带一个 `label`（手指下或目标元素的文字）：命中「确认支付」「发送」「删除」这类敏感词时，本次调用会提级为**敏感操作**，**必须逐次确认且不会被记忆**。详见[影子屏](/guide/shadow-screen)的「带 label 的敏感动作」。
 
 用的时候留意：
 

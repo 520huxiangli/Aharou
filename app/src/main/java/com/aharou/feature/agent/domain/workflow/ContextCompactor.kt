@@ -533,6 +533,44 @@ class ContextCompactor @Inject constructor(
     }
 }
 
+/** 默认保留的带图消息条数。 */
+internal const val DEFAULT_CONTEXT_IMAGES = 4
+private const val IMAGE_OMITTED_NOTE = "\n(较早的截图已省略)"
+
+/**
+ * 送模型前限制图片数量：只保留最新 [maxImages] 条带图消息参与本次请求，更早的图片换成一行占位说明，
+ * 消息里的文字仍保留。作用的是「送给模型的副本」，历史本体不动（[dropImages] 返回新对象）。
+ * 参考 nanomuse vision.py 的 keep_newest_images()：带图消息多为影子屏/浏览器截图，
+ * 每轮工具循环都会重发整段历史，不设预算会反复传输全部截图。
+ */
+internal fun keepNewestImages(messages: List<AgentMessage>, maxImages: Int = DEFAULT_CONTEXT_IMAGES): List<AgentMessage> {
+    if (maxImages <= 0) return messages
+    val imageIndices = messages.indices.filter { messages[it].imageCount() > 0 }
+    if (imageIndices.size <= maxImages) return messages
+    val keep = imageIndices.takeLast(maxImages).toSet()
+    return messages.mapIndexed { index, message ->
+        if (index in keep || message.imageCount() == 0) message else message.dropImages()
+    }
+}
+
+private fun AgentMessage.imageCount(): Int = when (this) {
+    is AgentMessage.UserMessage -> images.size
+    is AgentMessage.AssistantMessage -> images.size
+    is AgentMessage.ToolResultMessage -> images.size
+}
+
+/** 剥掉图片并补一行占位说明。工具结果的占位接在喂模型的 [AgentMessage.ToolResultMessage.modelResult] 上，不动 result。 */
+private fun AgentMessage.dropImages(): AgentMessage = when (this) {
+    is AgentMessage.UserMessage -> copy(images = emptyList(), content = content + IMAGE_OMITTED_NOTE)
+    is AgentMessage.AssistantMessage -> copy(images = emptyList(), content = content + IMAGE_OMITTED_NOTE)
+    is AgentMessage.ToolResultMessage -> copy(
+        images = emptyList(),
+        modelResult = (modelResult
+            ?: com.aharou.feature.agent.domain.tool.modelToolResultText(toolName, result)
+            ?: result) + IMAGE_OMITTED_NOTE
+    )
+}
+
 internal object CompactionText {
     private val dataUrl = Regex("data:(?:image|audio|video)/[^\\s;,]+;base64,[A-Za-z0-9+/=\\r\\n]+")
     fun tokens(text: String): Int = ModelContextPolicy.estimateTextTokens(text)
@@ -569,10 +607,37 @@ internal object CompactionText {
     fun adjustSplitIndex(messages: List<AgentMessage>, initial: Int): Int {
         var index = initial.coerceIn(0, messages.lastIndex)
         while (index > 0 && messages[index] is AgentMessage.ToolResultMessage) index--
+        // 绝不把一次工具交换拆成两半：切点仍落在「assistant 的 tool_call 与它的 result 之间」
+        //（tail 会以孤儿结果或未配对的调用开头）时，向后推进到下一条 user 消息为止，
+        // 参考 nanomuse context_messages()。常规情形（结果紧跟调用）已由上面回退处理。
+        if (messages[index] is AgentMessage.ToolResultMessage || messages[index].startsUnfinishedToolExchange(messages, index)) {
+            index = advanceToNextUser(messages, index)
+        }
         val previous = messages.getOrNull(index - 1)
         if (messages[index] is AgentMessage.AssistantMessage && previous is AgentMessage.UserMessage &&
             previous.content == CONTEXT_COMPACTION_MARKER) index--
         return index
+    }
+
+    /** 从 [from] 起找下一条 user 消息；后面没有 user 就不动，避免把 tail 削空。 */
+    private fun advanceToNextUser(messages: List<AgentMessage>, from: Int): Int {
+        var index = from
+        while (index < messages.size) {
+            if (messages[index] is AgentMessage.UserMessage) return index
+            index++
+        }
+        return from
+    }
+
+    /** 该位置会拆开一次工具交换：本身是孤儿结果，或是其 tool_calls 在后面找不到结果的 assistant。 */
+    private fun AgentMessage.startsUnfinishedToolExchange(messages: List<AgentMessage>, index: Int): Boolean {
+        if (this !is AgentMessage.AssistantMessage || toolCalls.isEmpty()) return false
+        val answered = HashSet<String>()
+        var next = index + 1
+        while (next < messages.size && messages[next] is AgentMessage.ToolResultMessage) {
+            answered.add((messages[next++] as AgentMessage.ToolResultMessage).id)
+        }
+        return toolCalls.any { it.id !in answered }
     }
 
     /** 未配对的工具调用所在的助手消息位置：切分点越过它，tail 里就会出现没有对应调用的工具结果。 */

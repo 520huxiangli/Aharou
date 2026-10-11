@@ -156,6 +156,31 @@
                 android:value="保持后台终端会话存活，避免容器进程被系统回收" />
         </service>
 
+        <!-- Telegram 机器人接入：前台服务持有 getUpdates 长轮询协程，把 Telegram 消息接进 agent。
+             同样用 specialUse（理由见服务类注释），通知栏提供「停止」按钮。 -->
+        <service
+            android:name=".feature.im.service.TelegramBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有 Telegram 长轮询连接，让用户能在 Telegram 里与本机 AI agent 对话" />
+        </service>
+
+        <!-- 跨设备协作：局域网内的 MCP Streamable HTTP 服务，把本机能力（读/写文件、受限 shell、截图）
+             暴露给已配对的设备调用；默认关闭，需用户在设置里手动开启，通知栏可一键停止。
+             同样用 specialUse（理由见服务类注释）——它既不是数据同步也不是媒体播放，属用户可见的自定义用途。 -->
+        <service
+            android:name=".feature.remotedevice.service.RemoteDeviceService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="在局域网内持有跨设备协作服务，让已配对设备请求本机执行动作（需本机用户逐次审批）" />
+        </service>
+
         <!-- 无障碍服务：让 Agent「看得懂、点得动」宿主屏幕（读节点树/手势/截图）。
              需用户在系统「无障碍」设置中手动开启（Android 禁止程序化开启）。 -->
         <service

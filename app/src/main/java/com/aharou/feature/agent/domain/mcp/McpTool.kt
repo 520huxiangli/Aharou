@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.mcp
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -95,7 +96,11 @@ class McpTool(
             if (call.isError) {
                 ToolResult.Error(call.text)
             } else {
-                ToolResult.Success(JsonPrimitive(call.text))
+                // 图片块（如远端设备的截图）随结果带回去，否则只能看到 "[image content]" 占位符。
+                ToolResult.Success(
+                    JsonPrimitive(call.text),
+                    images = call.images.map { AgentImage(mimeType = it.mimeType, base64Data = it.base64Data) }
+                )
             }
         } catch (e: McpException) {
             FileLogger.e(TAG, "MCP 工具调用失败: $name", e)

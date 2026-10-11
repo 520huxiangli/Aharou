@@ -18,9 +18,14 @@ enum class PermissionDecision { ALLOW, DENY }
  * 授权弹窗的用户选择。
  * - [REJECT]：拒绝本次调用，不记忆。
  * - [ONCE]：仅放行本次，不记忆。
- * - [ALWAYS]：放行并记忆为规则（弹窗路径固定写入当前项目 scope）。
+ * - [SESSION]：放行并在**本次会话**内有效（内存态，重启即失，随会话隔离）。
+ * - [TIME_24H]：放行并记忆为规则，24 小时后自动失效（规则带过期时间，加载时过滤）。
+ * - [ALWAYS]：放行并记忆为规则，长期有效（弹窗路径固定写入当前项目 scope）。
+ *
+ * 记忆的粒度是「工具 + 目标」（见 [GrantKey]）：ALWAYS/SESSION/TIME_24H 都不会放成
+ * 「这个工具随便用」，而是绑到本次调用覆盖到的目标（shell 程序名、网络主机等）。
  */
-enum class PermissionChoice { REJECT, ONCE, ALWAYS }
+enum class PermissionChoice { REJECT, ONCE, SESSION, TIME_24H, ALWAYS }
 
 /**
  * 一条工具授权规则。
@@ -30,31 +35,48 @@ enum class PermissionChoice { REJECT, ONCE, ALWAYS }
  *   `git pull`（仅命中 `git pull ...`，不命中 `git clone`），普通程序记 `cat`/`ls`（命中其所有调用）；
  *   对非 shell 工具是通配 `*`（整工具匹配）。
  * @param decision 判定方向，默认 [PermissionDecision.ALLOW]。
+ * @param expiresAt 规则的过期时刻（epoch 毫秒）。null 表示长期有效；非 null 且已过时刻的规则在
+ *   [PermissionRulesRepository.loadEffectiveFor] 加载时被过滤，用于 [PermissionChoice.TIME_24H] 的 24 小时时效。
+ *   编码进紧凑格式时不携带过期信息的老规则照旧（向后兼容）。
  */
 @Serializable
 data class PermissionRule(
     val toolName: String,
     val pattern: String,
-    val decision: PermissionDecision = PermissionDecision.ALLOW
+    val decision: PermissionDecision = PermissionDecision.ALLOW,
+    val expiresAt: Long? = null
 ) {
     companion object {
         /** 非 shell 工具的整工具匹配模式。 */
         const val WHOLE_TOOL = "*"
 
+        /** 过期时间后缀分隔符：`Bash(git)@1735689600000`；仅 [expiresAt] 非空时编码。 */
+        private const val EXPIRY_DELIMITER = '@'
+
         /** 从紧凑格式字符串解析为 PermissionRule。
          *  格式示例：
          *  - `"Bash"` → toolName=Bash, pattern=*, ALLOW
          *  - `"Bash(git pull)"` → toolName=Bash, pattern="git pull", ALLOW
+         *  - `"Bash(git)@1735689600000"` → 同上并带过期时刻
          */
         fun fromCompact(compact: String, decision: PermissionDecision = PermissionDecision.ALLOW): PermissionRule {
-            val parenIdx = compact.indexOf('(')
-            return if (parenIdx >= 0 && compact.endsWith(')')) {
-                val toolName = compact.substring(0, parenIdx)
-                val pattern = compact.substring(parenIdx + 1, compact.length - 1)
-                PermissionRule(toolName, pattern, decision)
+            val (body, expiresAt) = splitExpiry(compact)
+            val parenIdx = body.indexOf('(')
+            return if (parenIdx >= 0 && body.endsWith(')')) {
+                val toolName = body.substring(0, parenIdx)
+                val pattern = body.substring(parenIdx + 1, body.length - 1)
+                PermissionRule(toolName, pattern, decision, expiresAt)
             } else {
-                PermissionRule(compact, WHOLE_TOOL, decision)
+                PermissionRule(body, WHOLE_TOOL, decision, expiresAt)
             }
+        }
+
+        /** 拆掉尾部的 `@<epochMillis>` 过期后缀；没有或非法则原样返回、过期为空。 */
+        private fun splitExpiry(compact: String): Pair<String, Long?> {
+            val idx = compact.lastIndexOf(EXPIRY_DELIMITER)
+            if (idx < 0) return compact to null
+            val millis = compact.substring(idx + 1).toLongOrNull() ?: return compact to null
+            return compact.substring(0, idx) to millis
         }
     }
 
@@ -62,9 +84,16 @@ data class PermissionRule(
      *  示例：
      *  - toolName=Bash, pattern=* → `"Bash"`
      *  - toolName=Bash, pattern="git pull" → `"Bash(git pull)"`
+     *  - 带过期时刻时追加 `@<epochMillis>`
      */
-    fun toCompact(): String =
-        if (pattern == WHOLE_TOOL) toolName else "$toolName($pattern)"
+    fun toCompact(): String {
+        val body = if (pattern == WHOLE_TOOL) toolName else "$toolName($pattern)"
+        return if (expiresAt != null) "$body$EXPIRY_DELIMITER$expiresAt" else body
+    }
+
+    /** 该规则在当前时刻是否已过期（[expiresAt] 为空表示长期有效，永不过期）。 */
+    fun isExpired(now: Long = System.currentTimeMillis()): Boolean =
+        expiresAt != null && now >= expiresAt
 }
 
 // ── 权限文件顶层结构 ──────────────────────────────────────────────

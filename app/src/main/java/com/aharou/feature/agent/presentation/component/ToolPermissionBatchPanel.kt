@@ -209,8 +209,7 @@ internal fun ToolPermissionBatchPanel(
                     ) {
                         batch.items.forEach { item -> PermissionBatchItemCard(item) }
                     }
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Row(modifier = Modifier.padding(top = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                         AgentActionButton(
                             text = stringResource(R.string.chat_perm_batch_deny_all),
                             onClick = { onChoice(PermissionChoice.REJECT) },
@@ -218,17 +217,31 @@ internal fun ToolPermissionBatchPanel(
                             tone = AgentActionTone.Danger
                         )
                         AgentActionButton(
-                            text = stringResource(R.string.chat_perm_batch_always_all),
-                            onClick = { onChoice(PermissionChoice.ALWAYS) },
-                            modifier = Modifier.weight(1f),
-                            enabled = canRemember,
-                            tone = AgentActionTone.Neutral
-                        )
-                        AgentActionButton(
                             text = stringResource(R.string.chat_perm_batch_allow_all),
                             onClick = { onChoice(PermissionChoice.ONCE) },
                             modifier = Modifier.weight(1f),
                             tone = AgentActionTone.Success
+                        )
+                    }
+                    Row(modifier = Modifier.padding(top = Spacing.xs), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                        AgentActionButton(
+                            text = stringResource(R.string.chat_perm_scope_session),
+                            onClick = { onChoice(PermissionChoice.SESSION) },
+                            modifier = Modifier.weight(1f),
+                            tone = AgentActionTone.Neutral
+                        )
+                        AgentActionButton(
+                            text = stringResource(R.string.chat_perm_scope_24h),
+                            onClick = { onChoice(PermissionChoice.TIME_24H) },
+                            modifier = Modifier.weight(1f),
+                            tone = AgentActionTone.Neutral
+                        )
+                        AgentActionButton(
+                            text = stringResource(R.string.chat_perm_scope_always),
+                            onClick = { onChoice(PermissionChoice.ALWAYS) },
+                            modifier = Modifier.weight(1f),
+                            enabled = canRemember,
+                            tone = AgentActionTone.Neutral
                         )
                     }
                 }

@@ -130,6 +130,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var keepaliveSettings: KeepaliveSettingsRepository
 
+    /** 跨设备协作控制器：启动时按配置恢复前台服务（见 onCreate 的 startIfEnabled 调用）。 */
+    @Inject
+    lateinit var remoteDeviceController: com.aharou.feature.remotedevice.RemoteDeviceController
+
     /** WorkManager Worker 工厂：使 @HiltWorker（KeepaliveWorker）能注入依赖。 */
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
@@ -440,6 +444,11 @@ class AIEditorApp : Application(), Configuration.Provider {
                 }
                 last = enabled
             }
+        }
+        // 跨设备协作：配置里开着就恢复前台服务，否则不拉起（关着就不该占一条常驻通知）。
+        appScope.launch {
+            runCatching { remoteDeviceController.startIfEnabled() }
+                .onFailure { FileLogger.e(TAG, "恢复跨设备协作服务失败", it) }
         }
         // 连接已配置的 MCP server，把其工具注册进 ToolRegistry（内部自有 scope，失败不影响启动）。
         mcpManager.start()

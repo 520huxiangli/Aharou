@@ -43,6 +43,9 @@ import com.aharou.feature.agent.domain.tool.foldStoredToolResults
 import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.aharou.feature.agent.domain.tool.toTransportString
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.vault.VaultRepository
+import com.aharou.feature.vault.execArgs
+import com.aharou.feature.vault.redactWith
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
@@ -116,8 +119,12 @@ class StatefulAgentWorkflow @Inject constructor(
     private val eventInjector: AgentEventInjector,
     private val memoryCurator: MemoryCurator,
     private val fileAccess: FileAccessProvider,
-    private val ocrEngine: TesseractOcrEngine
+    private val ocrEngine: TesseractOcrEngine,
+    private val vault: VaultRepository
 ) : AgentWorkflow {
+
+    /** 卡死提示文案：从 prompts 文件读一次并缓存，用户可编辑该文件定制。 */
+    private val stuckNudgeText: String by lazy { promptProvider.resolvePrompt(STUCK_NUDGE_FILE) }
 
     internal companion object {
         const val TAG = "StatefulAgentWorkflow"
@@ -145,6 +152,8 @@ class StatefulAgentWorkflow @Inject constructor(
         /** 模式提醒提示词：复用 prompts 目录文件（用户可自定义覆盖），切换时随消息注入而非进 system。 */
         const val MODE_REMINDER_PLAN_FILE = "agent/plan-mode.md"
         const val MODE_REMINDER_AUTO_FILE = "agent/auto-mode.md"
+        /** 卡死提示：连续重复同一动作时注入给模型（用户可编辑该文件定制文案）。 */
+        const val STUCK_NUDGE_FILE = "agent/stuck-nudge.md"
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
         /** 模型直出图片落盘目录（与 GenerateImageTool 保持一致）。 */
         const val GENERATED_IMAGE_DIR = "~/.aharou/generated-images"
@@ -447,7 +456,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 break
             }
             val action = actionQueue.removeFirst()
-            val (newState, effects) = reduce(state, action)
+            val (newState, effects) = reduce(state, action, stuckNudgeText)
             state = newState
 
             for (effect in effects) {
@@ -650,7 +659,7 @@ class StatefulAgentWorkflow @Inject constructor(
             val supportsVision = activeModelSupportsVision(currentContext.sessionId)
             // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。
             val messagesToSend = foldStoredToolResults(
-                sanitizeImagesForModel(compactedMessages, supportsVision)
+                keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision))
             )
             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
             var samplingLoopCut = false
@@ -865,9 +874,13 @@ class StatefulAgentWorkflow @Inject constructor(
         toolCalls.forEach { toolCall ->
             val argsPreview = argsPreviews.getValue(toolCall.id)
             val tool = toolsByName[toolCall.name]
+            val vaultDenied = tool != null && !tool.acceptsSecrets && vault.hasPlaceholders(toolCall.arguments)
             val verdict = if (tool == null) {
                 // 不在允许清单里的调用：不问权限、也不执行，直接回一条错误结果。
                 PermissionVerdict.Deny("工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE)
+            } else if (vaultDenied) {
+                // 含密钥占位符但工具未 opt-in：绝不拿字面量去跑，直接拒绝并说明。
+                PermissionVerdict.Deny("工具「${toolCall.name}」的参数含密钥占位符，但该工具不接受密钥：密钥只供给配置了它的连接器，绝不给命令或脚本。请改用配置了该密钥的连接器。", "VAULT_PLACEHOLDER_REJECTED")
             } else {
                 gate.evaluate(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.mode,
                     currentContext.sessionId, currentContext.projectRoot, currentContext)
@@ -1078,7 +1091,7 @@ class StatefulAgentWorkflow @Inject constructor(
         toolCall.name + "\u0000" + JsonObject(toolCall.arguments).toString()
 
     private fun toolError(call: ToolCall, message: String, code: String): String = try {
-        toolOutputStore.process(call.name, call.id, ToolResult.Error(message, code)).toTransportString()
+        toolOutputStore.process(call.name, call.id, ToolResult.Error(message, code).redactWith(vault)).toTransportString()
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -1092,11 +1105,11 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         return try {
             withContext(Dispatchers.IO) {
-                val result = tool.executeWithContext(toolCall.arguments, context)
+                val result = tool.executeWithContext(vault.execArgs(tool.acceptsSecrets, toolCall.arguments), context)
                 val attachments = if (name == "sendFile" || name == "generateImage") extractAttachments(result) else emptyList()
                 val images = if (result is ToolResult.Success) result.images else emptyList()
                 val transportResult = if (attachments.isNotEmpty()) stripAttachments(result) else result
-                val processed = toolOutputStore.process(name, toolCall.id, transportResult)
+                val processed = toolOutputStore.process(name, toolCall.id, transportResult.redactWith(vault))
                 ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, attachments, images)
             }
         } catch (e: CancellationException) {
@@ -1317,7 +1330,7 @@ class StatefulAgentWorkflow @Inject constructor(
     }
 
     private suspend fun runToolStream(
-        tool: StreamingAgentTool, 
+        tool: AgentTool, 
         toolCall: ToolCall,
         context: AgentContext,
         onEvent: suspend (AgentEvent) -> Unit
@@ -1327,7 +1340,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 val live = StringBuilder()
                 var lastEmitMs = 0L
                 var finalResult: ToolResult? = null
-                tool.executeStream(toolCall.arguments, context).collect { ev ->
+                (tool as StreamingAgentTool).executeStream(vault.execArgs(tool.acceptsSecrets, toolCall.arguments), context).collect { ev ->
                     when (ev) {
                         is ToolStreamEvent.Progress -> {
                             live.append(ev.chunk).append('\n')
@@ -1344,7 +1357,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                 }
                 val result = finalResult ?: ToolResult.Error("流式工具未返回结果", "MISSING_STREAM_RESULT")
-                val processed = toolOutputStore.process(toolCall.name, toolCall.id, result)
+                val processed = toolOutputStore.process(toolCall.name, toolCall.id, result.redactWith(vault))
                 val images = if (result is ToolResult.Success) result.images else emptyList()
                 ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, images = images)
             }

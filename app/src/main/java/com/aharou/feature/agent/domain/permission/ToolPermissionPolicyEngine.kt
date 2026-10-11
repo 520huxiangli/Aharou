@@ -23,6 +23,12 @@ import javax.inject.Singleton
  *
  * [SHIZUKU_TOOL]（Shizuku）按高危处理：无论内置白名单或已记忆规则，一律 ASK 且不可记忆；
  * AUTO 模式也不自动放行（除非已开启「禁用安全拦截」）。
+ *
+ * 审批增强（移植自 nanoMuse，见各分支注释）：
+ *   - 敏感调用钩子 [AgentTool.isCallSensitive]：读取已记忆规则**之前**先判，为真直接 ASK 且不可记忆，
+ *     堵住「点过一次始终允许就把屏幕敏感点按放成免确认」的绕过；
+ *   - 污点追踪 + egress 白名单：会话读过私密数据后，任何发往非白名单主机的调用升 ASK 且翻不过；
+ *   - 每次裁决落一条 [DecisionAuditLog]。
  */
 @Singleton
 class ToolPermissionPolicyEngine @Inject constructor(
@@ -44,6 +50,16 @@ class ToolPermissionPolicyEngine @Inject constructor(
          * `send`/`read` 动作不承载命令，按整工具匹配。故在 [evaluate] 中按 action 路由。
          */
         const val TERMINAL_TOOL = "terminal"
+
+        /**
+         * 浏览器工具：navigate/click/fill/select/evaluate/dialog/back/forward/reload/newTab/closeTab/selectTab 为写操作（PLAN 拦截），
+         * getText/getHtml/getBackbone/screenshot/console/wait/listTabs 为只读（PLAN 放行）。
+         */
+        const val BROWSER_TOOL = "browser"
+        private val BROWSER_READ_ONLY_ACTIONS = setOf(
+            "screenshot", "get_text", "get_readable", "get_backbone", "get_page_info",
+            "find_elements", "list_tabs", "get_cookies", "fetch", "wait_for_dom_stable"
+        )
         const val TERMINAL_SHELL_ACTION = "start"
         val NON_REMEMBERABLE_CAPABILITIES = setOf(
             ToolCapability.MODIFY_AGENT_CONFIG,
@@ -56,16 +72,6 @@ class ToolPermissionPolicyEngine @Inject constructor(
          */
         const val TASK_TOOL = "task"
         private val TASK_AUTO_ACTIONS = setOf("read", "list", "send")
-
-        /**
-         * 浏览器工具：navigate/click/fill/select/evaluate/dialog/back/forward/reload/newTab/closeTab/selectTab 为写操作（PLAN 拦截），
-         * getText/getHtml/getBackbone/screenshot/console/wait/listTabs 为只读（PLAN 放行）。
-         */
-        const val BROWSER_TOOL = "browser"
-        private val BROWSER_READ_ONLY_ACTIONS = setOf(
-            "screenshot", "get_text", "get_readable", "get_backbone", "get_page_info",
-            "find_elements", "list_tabs", "get_cookies", "fetch", "wait_for_dom_stable"
-        )
 
         /**
          * 提权参数：非 AUTO 模式下，命令因内置安全防护（灾难性 rm）被拒时，
@@ -107,6 +113,30 @@ class ToolPermissionPolicyEngine @Inject constructor(
         val DESTRUCTIVE_PROGRAM = Regex(
             "(^|[\\s;&|()`<>])(rm|dd|shred|truncate|mkfs(?:\\.[a-z0-9]+)?|wipefs|fdisk|sfdisk|parted|mkswap|blkdiscard)([\\s;&|()`<>]|$)"
         )
+
+        /**
+         * 读取私密数据的工具：读它们会把当前会话标记为 tainted（[TaintTracker]）。
+         * 判定聚焦仓库里确实存在的「读外部私密数据」入口：记忆读取、读工作区外文件。屏幕/无障碍类
+         * 敏感点按由 [AgentTool.isCallSensitive] 钩子单独负责（其迁移不在本次范围内）。
+         */
+        const val MEMORY_TOOL = "memory"
+        private val MEMORY_READ_ACTIONS = setOf("read", "list", "search", "log", "fact", "mindstream", "core")
+        const val READ_FILE_TOOL = "readFile"
+        private val PRIVATE_READ_ACTIONS = mapOf(
+            MEMORY_TOOL to MEMORY_READ_ACTIONS
+        )
+
+        /** 工作区外文件读取的容器前缀（读这些路径算私密数据）。 */
+        val WORKSPACE_CONTAINER_PREFIX = "$HOME_DIR/workspace"
+
+        const val REASON_TAINT_EGRESS_PREFIX =
+            "本会话此前读过私密数据，本次调用可能把数据外发到非白名单主机（提示注入外泄防护），需要你确认"
+
+        const val REASON_SENSITIVE_CALL =
+            "该调用被工具标记为敏感操作，需逐次确认（不可记忆）"
+
+        /** 24 小时档的时效。 */
+        const val TIME_24H_MILLIS = 24L * 60 * 60 * 1000
     }
 
     enum class Verdict { ALLOW, DENY, ASK }
@@ -115,6 +145,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
      * @param verdict 评估结论。
      * @param rememberablePatterns 当 [verdict] 为 ASK 时，「始终允许」会记忆的模式；为空表示不可记忆
      *   （命令不可静态判定，只能单次放行）。
+     * @param riskLevel 风险档（safe/moderate/sensitive），供审计与埋点；由能力位与调用参数推导。
      */
     data class EvalResult(
         val verdict: Verdict,
@@ -122,7 +153,15 @@ class ToolPermissionPolicyEngine @Inject constructor(
         val denyReason: String? = null,
         val rememberDisabledReason: String? = null,
         /** ASK 时的弹窗标题覆盖；null 表示用工具默认标题。 */
-        val askTitle: String? = null
+        val askTitle: String? = null,
+        /** 非空表示本次 ASK 命中了敏感调用钩子（由 [AgentTool.isCallSensitive] 提供理由），不可记忆。 */
+        val sensitiveReason: String? = null,
+        /** 非空表示本次 ASK 源于污点追踪（读过私密数据后的出站），任何模式都翻不过（AUTO 除外，见实现）。 */
+        val taintedReason: String? = null,
+        /** 出站目标主机（用于审计与弹窗展示）；仅在出站调用时可能有值，未知为 null。 */
+        val egressTarget: String? = null,
+        /** 风险档，供审计。 */
+        val riskLevel: String? = null
     )
 
     /**
@@ -134,40 +173,82 @@ class ToolPermissionPolicyEngine @Inject constructor(
         toolName: String,
         args: Map<String, JsonElement>,
         mode: com.aharou.feature.agent.domain.model.AgentMode,
-        workspacePath: String
+        workspacePath: String,
+        sessionId: String? = null
     ): EvalResult {
         val capabilities = tool?.effectiveCapabilities(args).orEmpty()
+        val risk = riskLevelOf(toolName, capabilities)
         if (mode == com.aharou.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args, capabilities)) {
-            return EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。")
+            return audit(
+                EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。"),
+                sessionId, toolName, risk
+            )
         }
 
+        // ── AUTO 模式：放行所有权限 ─────────────────────────────────
+        // 用户已定：AUTO 维持全放行，新增的污点与敏感拦截均不生效（与 nanoMuse 不同，勿当 bug 修改）。
+        // 灾难性 rm 防护（根目录/系统目录删除）默认保留，可在「工具授权」设置中关闭（禁用安全拦截）。
         if (mode == com.aharou.feature.agent.domain.model.AgentMode.AUTO) {
-            // AUTO 模式放行所有权限；灾难性 rm 防护（根目录/系统目录删除）默认保留，
-            // 可在「工具授权」设置中关闭（禁用安全拦截）。遭遇拦截时仍可凭 elevate 参数提权重试。
             val safetyDisabled = toolSafetySettings.isSafetyInterceptionDisabled()
             if (!safetyDisabled && isShellTool(toolName, args)) {
                 val command = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
                 if (command != null) {
                     val analysis = ShellCommandParser.analyze(command)
-                    checkCatastrophicRm(analysis.segments)?.let { return elevationOrDeny(it, args) }
+                    checkCatastrophicRm(analysis.segments)?.let { return audit(elevationOrDeny(it, args), sessionId, toolName, risk) }
                     // 命令替换/子 shell/绝对路径重定向等无法静态判定的构造，删除目标不可知；
                     // 若同时疑似破坏性，宁可拦下（可提权），避免绕过安全防护。
                     if (!analysis.analyzable && looksDestructive(command)) {
-                        return elevationOrDeny(REASON_UNANALYZABLE_DESTRUCTIVE, args)
+                        return audit(elevationOrDeny(REASON_UNANALYZABLE_DESTRUCTIVE, args), sessionId, toolName, risk)
                     }
                 }
             }
             // Shizuku 直接操作宿主系统，AUTO 下也不自动放行，仍需逐次确认（除非已开启「禁用安全拦截」）。
             if (toolName == SHIZUKU_TOOL && !safetyDisabled) {
-                return EvalResult(Verdict.ASK, emptyList(), rememberDisabledReason = REASON_SHIZUKU)
+                return audit(EvalResult(Verdict.ASK, emptyList(), rememberDisabledReason = REASON_SHIZUKU), sessionId, toolName, risk)
             }
-            return EvalResult(Verdict.ALLOW, emptyList())
+            return audit(EvalResult(Verdict.ALLOW, emptyList()), sessionId, toolName, risk)
+        }
+
+        // ── 以下为非 AUTO（BUILD/PLAN 的后续）分支 ──────────────────
+        // 敏感调用钩子：读已记忆规则之前先判。为真直接 ASK 且不可记忆——堵住「点过一次始终允许，
+        // 之后屏幕敏感点按被直接放行」的绕过（旧顺序是「先匹配已记忆规则、再看能力位」）。
+        val sensitive = runCatching { tool?.isCallSensitive(args) == true }.getOrDefault(false)
+        if (sensitive) {
+            return audit(
+                EvalResult(
+                    Verdict.ASK,
+                    emptyList(),
+                    askTitle = "敏感操作确认",
+                    rememberDisabledReason = REASON_SENSITIVE_CALL,
+                    sensitiveReason = REASON_SENSITIVE_CALL
+                ),
+                sessionId, toolName, risk
+            )
+        }
+
+        // 污点追踪：只读/自动放行的工具也可能读私密数据（如 readFile/memory），故先于一切放行分支判定。
+        // 任何模式都翻不过（AUTO 已在上方提前返回，不在此列）。
+        if (isPrivateRead(toolName, args)) {
+            TaintTracker.taint(sessionId.orEmpty())
+        }
+        if (isTaintedEgress(sessionId, toolName, args, capabilities)) {
+            val target = EgressPolicy.egressTarget(args)
+            return audit(
+                EvalResult(
+                    Verdict.ASK,
+                    emptyList(),
+                    askTitle = "疑似数据外发确认",
+                    rememberDisabledReason = REASON_TAINT_EGRESS_PREFIX + if (target != null) "（目标：$target）" else "（目标未知）",
+                    taintedReason = REASON_TAINT_EGRESS_PREFIX,
+                    egressTarget = target
+                ),
+                sessionId, toolName, risk
+            )
         }
 
         if (capabilities == setOf(ToolCapability.READ_AGENT_CONFIG)) {
-            return EvalResult(Verdict.ALLOW, emptyList())
+            return audit(EvalResult(Verdict.ALLOW, emptyList()), sessionId, toolName, risk)
         }
-
         // task 只读动作（read/list）：不放行 DENY 规则，其余直接自动放行（不弹窗）。
         if (toolName == TASK_TOOL) {
             val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
@@ -175,20 +256,84 @@ class ToolPermissionPolicyEngine @Inject constructor(
                 val rules = rulesRepo.loadEffectiveFor(workspacePath).filter { it.toolName == toolName }
                 val whole = rules.filter { it.pattern == PermissionRule.WHOLE_TOOL }
                 if (whole.any { it.decision == PermissionDecision.DENY }) {
-                    return EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行")
+                    return audit(EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行"), sessionId, toolName, risk)
                 }
-                return EvalResult(Verdict.ALLOW, emptyList())
+                return audit(EvalResult(Verdict.ALLOW, emptyList()), sessionId, toolName, risk)
             }
         }
 
         val rules = rulesRepo.loadEffectiveFor(workspacePath).filter { it.toolName == toolName }
-        return if (isShellTool(toolName, args)) {
-            evaluateShell(rules, args, forceAsk = toolName == SHIZUKU_TOOL)
+        val result = if (isShellTool(toolName, args)) {
+            evaluateShell(rules, args, forceAsk = toolName == SHIZUKU_TOOL, sessionId = sessionId.orEmpty(), toolName = toolName)
         } else {
-            evaluateGeneric(rules, capabilities)
+            evaluateGeneric(rules, capabilities, targetsFor(toolName, args), sessionId.orEmpty(), toolName)
         }
+        val egressTarget = if (EgressPolicy.isEgress(toolName, args, capabilities)) EgressPolicy.egressTarget(args) else null
+        return audit(
+            if (result.egressTarget != null || egressTarget == null) result else result.copy(egressTarget = egressTarget),
+            sessionId, toolName, risk
+        )
     }
 
+    // ── 审计 ────────────────────────────────────────────────────
+
+    /** 记录一次裁决并原样返回结果，避免每个 return 点手写审计。 */
+    private fun audit(result: EvalResult, sessionId: String?, toolName: String, risk: String?): EvalResult {
+        val decision = when (result.verdict) {
+            Verdict.ALLOW -> "allow"
+            Verdict.DENY -> "deny"
+            Verdict.ASK -> "ask"
+        }
+        val reasons = buildList {
+            result.denyReason?.let { add(it) }
+            result.sensitiveReason?.let { add(it) }
+            result.taintedReason?.let { add(it) }
+        }
+        DecisionAuditLog.recordToolCall(
+            sessionId = sessionId,
+            toolName = toolName,
+            decision = decision,
+            riskLevel = risk,
+            reasons = reasons,
+            tainted = TaintTracker.isTainted(sessionId.orEmpty()),
+            egressTarget = result.egressTarget,
+            approved = null,
+            approvalScope = null,
+            durationMs = null,
+            outputPreview = null
+        )
+        return result
+    }
+
+    /** 记录一次「用户已决」的审计补全（批准与否、授权档位、耗时、输出预览），由审批层调用。 */
+    fun auditResolution(
+        sessionId: String?,
+        toolName: String,
+        decision: String,
+        riskLevel: String?,
+        reasons: List<String>,
+        egressTarget: String?,
+        approved: Boolean?,
+        approvalScope: String?,
+        durationMs: Long?,
+        outputPreview: String?
+    ) {
+        DecisionAuditLog.recordToolCall(
+            sessionId = sessionId,
+            toolName = toolName,
+            decision = decision,
+            riskLevel = riskLevel,
+            reasons = reasons,
+            tainted = TaintTracker.isTainted(sessionId.orEmpty()),
+            egressTarget = egressTarget,
+            approved = approved,
+            approvalScope = approvalScope,
+            durationMs = durationMs,
+            outputPreview = outputPreview
+        )
+    }
+
+    /** PLAN 模式下视为危险的工具：写工作区 / 执行命令 / 网络写 / 改配置 / 外部工具，以及写型的终端与浏览器动作。 */
     private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>, capabilities: Set<ToolCapability>): Boolean {
         val dangerousCapabilities = setOf(
             ToolCapability.WRITE_WORKSPACE,
@@ -220,6 +365,64 @@ class ToolPermissionPolicyEngine @Inject constructor(
         }
         return false
     }
+
+    /** 由工具名与能力位推导风险档（审计用）：执行/写工作区类为 sensitive，网络读写为 moderate，其余 safe。 */
+    private fun riskLevelOf(
+        toolName: String,
+        capabilities: Set<ToolCapability>
+    ): String {
+        return when {
+            capabilities.any {
+                it == ToolCapability.EXECUTE_COMMANDS || it == ToolCapability.WRITE_WORKSPACE ||
+                    it == ToolCapability.MODIFY_AGENT_CONFIG || it == ToolCapability.MODIFY_CONTAINER_ENV ||
+                    it == ToolCapability.EXTERNAL_TOOL
+            } -> "sensitive"
+            capabilities.any { it == ToolCapability.NETWORK_WRITE || it == ToolCapability.NETWORK_READ } -> "moderate"
+            toolName in setOf("webfetch", "websearch", "generateImage") -> "moderate"
+            else -> "safe"
+        }
+    }
+
+    // ── 污点 / 出站 ─────────────────────────────────────────────
+
+    /** 该调用是否读取私密数据（读后会把当前会话标记为 tainted）。 */
+    private fun isPrivateRead(toolName: String, args: Map<String, JsonElement>): Boolean {
+        PRIVATE_READ_ACTIONS[toolName]?.let { actions ->
+            val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: return false
+            return action in actions
+        }
+        if (toolName == READ_FILE_TOOL) {
+            return isOutsideWorkspace((args["path"] as? JsonPrimitive)?.content)
+        }
+        return false
+    }
+
+    /** 读工作区外的文件算私密数据；相对路径默认落在工作区内，不算。 */
+    private fun isOutsideWorkspace(rawPath: String?): Boolean {
+        val path = rawPath?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        if (!path.startsWith("/")) return false
+        val normalized = normalizePath(path)
+        return normalized != WORKSPACE_CONTAINER_PREFIX && !normalized.startsWith("$WORKSPACE_CONTAINER_PREFIX/")
+    }
+
+    /** 污点会话里的出站调用且目标是「非白名单主机或未知」→ 需确认。 */
+    private fun isTaintedEgress(
+        sessionId: String?,
+        toolName: String,
+        args: Map<String, JsonElement>,
+        capabilities: Set<ToolCapability>
+    ): Boolean {
+        if (!TaintTracker.isTainted(sessionId.orEmpty())) return false
+        if (!EgressPolicy.isEgress(toolName, args, capabilities)) return false
+        val target = EgressPolicy.egressTarget(args)
+        return !EgressPolicy.hostAllowed(target)
+    }
+
+    // ── 授权键（grant key）────────────────────────────────────────
+
+    /** 本次调用的可绑定目标（shell 程序名 / 网络主机 / 外发文件）。空表示按整工具授权。 */
+    private fun targetsFor(toolName: String, args: Map<String, JsonElement>): List<String> =
+        GrantKey.targetsFor(toolName, args)
 
     /** 是否按 shell 命令前缀匹配：[SHELL_TOOLS] 中的工具，或终端工具的 start/send 动作。 */
     private fun isShellTool(toolName: String, args: Map<String, JsonElement>): Boolean {
@@ -262,17 +465,78 @@ class ToolPermissionPolicyEngine @Inject constructor(
             )
         }
 
-    /** 把「始终允许」的选择落库为 ALLOW 规则（去重交给仓库）。[workspacePath] 见 [evaluate]。 */
-    suspend fun remember(toolName: String, patterns: List<String>, scope: PermissionScope, workspacePath: String) {
-        patterns.distinct().forEach { pattern ->
-            rulesRepo.add(scope, PermissionRule(toolName, pattern, PermissionDecision.ALLOW), workspacePath)
+    /**
+     * 把用户选择记忆下来：按档位落地。
+     * - [ApprovalScope.ALWAYS]：写长期 ALLOW 规则（无过期）；
+     * - [ApprovalScope.TIME_24H]：写带过期时刻的 ALLOW 规则（24 小时后加载即被过滤）；
+     * - [ApprovalScope.SESSION]：仅登记到内存 [SessionGrantStore]（按会话隔离，重启即失），不落盘；
+     * - [ApprovalScope.ONCE]：不记忆。
+     * [patterns] 为 [EvalResult.rememberablePatterns]，每条按「工具 + 目标」绑定；空则不记忆。
+     */
+    suspend fun remember(
+        toolName: String,
+        patterns: List<String>,
+        scope: ApprovalScope,
+        workspacePath: String,
+        sessionId: String? = null,
+        decision: PermissionDecision = PermissionDecision.ALLOW
+    ) {
+        if (scope == ApprovalScope.ONCE) return
+        if (patterns.isEmpty()) return
+        when (scope) {
+            ApprovalScope.SESSION -> patterns.distinct().forEach { pattern ->
+                SessionGrantStore.grant(sessionId.orEmpty(), GrantKey.of(toolName, pattern))
+            }
+            ApprovalScope.TIME_24H -> {
+                val expiresAt = System.currentTimeMillis() + TIME_24H_MILLIS
+                patterns.distinct().forEach { pattern ->
+                    rulesRepo.add(PermissionScope.PROJECT, PermissionRule(toolName, pattern, decision, expiresAt), workspacePath)
+                }
+            }
+            else -> patterns.distinct().forEach { pattern ->
+                rulesRepo.add(PermissionScope.PROJECT, PermissionRule(toolName, pattern, decision), workspacePath)
+            }
         }
     }
 
-    private fun evaluateGeneric(rules: List<PermissionRule>, capabilities: Set<ToolCapability>): EvalResult {
+    /**
+     * 兼容旧调用：给定 [PermissionScope] 落库位置（当前日期只区分项目/全局，均按长期档处理），
+     * 等价于持续有效。新调用点请用带 [ApprovalScope] 的重载以表达会话/24 小时档。
+     */
+    suspend fun remember(
+        toolName: String,
+        patterns: List<String>,
+        scope: PermissionScope,
+        workspacePath: String
+    ) {
+        remember(toolName, patterns, ApprovalScope.ALWAYS, workspacePath, null, PermissionDecision.ALLOW)
+    }
+
+    // ── 通用（非 shell）评估 ──────────────────────────────────────
+
+    private fun evaluateGeneric(
+        rules: List<PermissionRule>,
+        capabilities: Set<ToolCapability>,
+        targets: List<String>,
+        sessionId: String,
+        toolName: String
+    ): EvalResult {
         val whole = rules.filter { it.pattern == PermissionRule.WHOLE_TOOL }
         if (whole.any { it.decision == PermissionDecision.DENY }) return EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行")
         if (whole.any { it.decision == PermissionDecision.ALLOW }) return EvalResult(Verdict.ALLOW, emptyList())
+
+        // 工具 + 目标绑定：会话档内存授权命中，或规则里存在「按目标（host）前缀/相等」的 ALLOW。
+        if (targets.isNotEmpty()) {
+            val allTargets = targets.all { target ->
+                SessionGrantStore.covers(sessionId, GrantKey.of(toolName, target)) ||
+                    rules.any {
+                        it.decision == PermissionDecision.ALLOW &&
+                            (it.pattern == PermissionRule.WHOLE_TOOL || targetMatches(it.pattern, target))
+                    }
+            }
+            if (allTargets) return EvalResult(Verdict.ALLOW, emptyList())
+        }
+
         if (capabilities.any { it in NON_REMEMBERABLE_CAPABILITIES }) {
             return EvalResult(
                 Verdict.ASK,
@@ -280,8 +544,19 @@ class ToolPermissionPolicyEngine @Inject constructor(
                 rememberDisabledReason = "该工具会修改 Agent 配置、容器环境或调用外部动态工具，为降低误授权风险，仅支持单次放行"
             )
         }
-        return EvalResult(Verdict.ASK, listOf(PermissionRule.WHOLE_TOOL))
+        // 有可绑定目标时，「始终允许」记忆目标（host 等），否则退化为整工具。
+        return EvalResult(Verdict.ASK, if (targets.isNotEmpty()) targets else listOf(PermissionRule.WHOLE_TOOL))
     }
+
+    /** 规则的 host 模式是否能覆盖目标（`example.com` 覆盖 `www.example.com`；`*` 覆盖一切）。 */
+    private fun targetMatches(pattern: String, target: String): Boolean {
+        if (pattern == "*") return true
+        val p = pattern.lowercase()
+        val t = target.lowercase()
+        return t == p || t.endsWith(".$p") || (p.startsWith("*.") && t.endsWith(p.substring(1)))
+    }
+
+    // ── shell 评估 ──────────────────────────────────────────────
 
     private fun checkCatastrophicRm(segments: List<List<String>>): String? {
         for (seg in segments) {
@@ -346,7 +621,9 @@ class ToolPermissionPolicyEngine @Inject constructor(
     private fun evaluateShell(
         rules: List<PermissionRule>,
         args: Map<String, JsonElement>,
-        forceAsk: Boolean = false
+        forceAsk: Boolean = false,
+        sessionId: String = "",
+        toolName: String = ""
     ): EvalResult {
         val command = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
             ?: return EvalResult(Verdict.ASK, emptyList())
@@ -380,6 +657,15 @@ class ToolPermissionPolicyEngine @Inject constructor(
             analysis.segments.all { BuiltInSafeCommands.isSafe(it) }
         ) {
             return EvalResult(Verdict.ALLOW, emptyList())
+        }
+
+        // 4.5) 会话档授权（grant key）：每段的程序都被会话内「本次会话」授权覆盖 → 放行。
+        if (analysis.segments.isNotEmpty()) {
+            val allSessionGranted = analysis.segments.all { seg ->
+                val program = ShellCommandParser.rememberablePrefix(seg) ?: return@all false
+                SessionGrantStore.isGranted(sessionId, GrantKey.of(toolName, program))
+            }
+            if (allSessionGranted) return EvalResult(Verdict.ALLOW, emptyList())
         }
 
         // 5) 已记忆的 ALLOW：每段都命中 → 放行。

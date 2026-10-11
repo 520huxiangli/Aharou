@@ -179,12 +179,16 @@ export default defineConfig({
           text: '扩展能力',
           items: [
             { text: 'MCP 服务器', link: '/guide/mcp' },
+            { text: '连接器', link: '/guide/connectors' },
+            { text: '凭据库', link: '/guide/vault' },
             { text: '技能', link: '/guide/skills' },
             { text: '子代理', link: '/guide/subagent' },
             { text: '定时任务', link: '/guide/scheduled-tasks' },
             { text: '自定义提示词', link: '/guide/custom-prompts' },
             { text: '记忆与项目规则', link: '/guide/memory' },
             { text: '共享知识库', link: '/guide/knowledge-base' },
+            { text: 'Telegram 机器人', link: '/guide/telegram-bot' },
+            { text: '跨设备协作', link: '/guide/cross-device' },
             { text: '依赖版本检查', link: '/guide/dependency-check' },
             { text: '人格（Soul）', link: '/guide/soul' }
           ]

@@ -39,12 +39,14 @@ import compose.icons.feathericons.Info
 import compose.icons.feathericons.Key
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.MessageSquare
+import compose.icons.feathericons.MessageCircle
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Server
+import compose.icons.feathericons.Smartphone
 import compose.icons.feathericons.Shield
 import compose.icons.feathericons.Sliders
 import compose.icons.feathericons.Smile
@@ -137,6 +139,12 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.Box,
                 title = stringResource(SettingsSection.Mcp.titleRes),
                 onClick = { onOpen(SettingsSection.Mcp) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Globe,
+                title = stringResource(SettingsSection.Connectors.titleRes),
+                onClick = { onOpen(SettingsSection.Connectors) }
             )
             SettingsDivider()
             SettingsRow(
@@ -296,6 +304,12 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.MessageCircle,
+                title = stringResource(SettingsSection.TelegramBot.titleRes),
+                onClick = { onOpen(SettingsSection.TelegramBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.FileText,
                 title = stringResource(SettingsSection.Log.titleRes),
                 onClick = { onOpen(SettingsSection.Log) }
@@ -320,9 +334,21 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.Smartphone,
+                title = stringResource(SettingsSection.RemoteDevice.titleRes),
+                onClick = { onOpen(SettingsSection.RemoteDevice) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Key,
                 title = stringResource(SettingsSection.EnvVars.titleRes),
                 onClick = { onOpen(SettingsSection.EnvVars) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Lock,
+                title = stringResource(SettingsSection.Vault.titleRes),
+                onClick = { onOpen(SettingsSection.Vault) }
             )
             SettingsDivider()
             SettingsRow(

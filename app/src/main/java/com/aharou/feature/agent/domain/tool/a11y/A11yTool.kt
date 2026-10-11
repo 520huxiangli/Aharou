@@ -19,6 +19,7 @@ import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.tool.vdisplay.ScreenActionSemantics
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonObject
@@ -50,6 +51,9 @@ class A11yTool @Inject constructor(
 
         /** 会改变他人应用状态的写动作：有影子屏可用时必须走影子屏。 */
         val WRITE_ACTIONS = setOf("tap", "swipe", "key", "settext")
+
+        /** 有「手指下是什么」这回事、需要 label 的动作：语义风控只看这几个。 */
+        val LABEL_ACTIONS = setOf("tap", "settext")
     }
 
     override val name = "a11y"
@@ -82,7 +86,29 @@ class A11yTool @Inject constructor(
             "key", ParameterType.STRING, "key 专用：back / home / recents / notifications", false,
             enum = listOf("back", "home", "recents", "notifications"),
         ),
+        "label" to ToolParameter(
+            "label", ParameterType.STRING,
+            "tap / setText 专用：手指下或目标元素的文字（按钮、链接、输入框的标签），如「确认支付」。" +
+                "命中敏感词会把本次调用提级为敏感操作、逐次确认；tap/setText 不传会收到一条告警。",
+            false
+        ),
     )
+
+    /**
+     * 命中敏感词的 tap/setText 借用 NON_REMEMBERABLE_CAPABILITIES 里的能力位，让策略引擎把本次调用
+     * 判成「必问、不可记忆」——[com.aharou.feature.agent.domain.tool.AgentTool.effectiveCapabilities]
+     * 是工具侧唯一能影响引擎裁决的既有机制。
+     */
+    override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> =
+        if (assessArgs(args)?.isSensitive == true) capabilities + ToolCapability.MODIFY_AGENT_CONFIG
+        else capabilities
+
+    /** 仅对带 label 的动作做语义评估；其余动作没有「手指下是什么」这回事，返回 null。 */
+    private fun assessArgs(args: Map<String, JsonElement>): ScreenActionSemantics.Assessment? {
+        val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase() ?: return null
+        if (action !in LABEL_ACTIONS) return null
+        return ScreenActionSemantics.assess(args["label"]?.jsonPrimitive?.contentOrNull)
+    }
 
     override fun buildPermissionRequest(
         callId: String,
@@ -90,13 +116,22 @@ class A11yTool @Inject constructor(
         argsPreview: String,
     ): PendingToolPermission {
         val action = args["action"]?.jsonPrimitive?.contentOrNull ?: "?"
+        val label = args["label"]?.jsonPrimitive?.contentOrNull
+        val assessment = assessArgs(args)
+        val sensitive = assessment?.isSensitive == true
         return PendingToolPermission(
             id = callId,
             toolName = name,
-            title = "确认无障碍操作",
-            summary = "action = $action",
-            details = "将通过无障碍服务读取或操作屏幕（需已在系统中开启该服务）。",
+            title = if (sensitive) "敏感操作确认（不可记忆）" else "确认无障碍操作",
+            summary = if (label.isNullOrBlank()) "action = $action" else "action = $action\nlabel = $label",
+            details = buildString {
+                append("将通过无障碍服务读取或操作屏幕（需已在系统中开启该服务）。")
+                assessment?.warning?.let { append("\n\n").append(it) }
+            },
             argsPreview = argsPreview,
+            // 意图声明：真正的「不可记忆」由 effectiveCapabilities 触发的引擎裁决兜住，
+            // 引擎会用自身的 rememberDisabledReason 覆盖这一条（见 PermissionGate）。
+            rememberDisabledReason = assessment?.warning?.takeIf { sensitive },
         )
     }
 
@@ -190,10 +225,14 @@ class A11yTool @Inject constructor(
                     val shot = service.captureScreenshot()
                     val bitmap = shot.bitmap
                         ?: return ToolResult.Error("截图失败：${shot.errorCode} ${shot.errorMessage}", "SHOT_FAILED")
+                    val caption = buildShotCaption(service, bitmap)
                     val base64 = bitmapToJpegBase64(bitmap)
                     bitmap.recycle()
                     ToolResult.Success(
-                        buildJsonObject { put("message", "已截图（图片随结果返回）") },
+                        buildJsonObject {
+                            put("message", "已截图（图片随结果返回）")
+                            if (caption.isNotBlank()) put("caption", caption)
+                        },
                         if (base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = base64)) else emptyList(),
                     )
                 }
@@ -323,6 +362,39 @@ class A11yTool @Inject constructor(
             lineTo(x2.toFloat(), y2.toFloat())
         }
         return service.dispatchSimpleGesture(path, 0, durationMs.coerceIn(50, 5_000).toLong())
+    }
+
+    /** 截图 caption：前台 App/Activity、屏幕像素尺寸、键盘是否在（拿不到的字段略去）。 */
+    private fun buildShotCaption(service: AharouAccessibilityService, bitmap: Bitmap): String {
+        val (pkg, _) = service.foregroundPackage()
+        val keyboard = service.windowInfos().any { it["type"] == "input_method" }
+        return ScreenActionSemantics.caption(
+            appName = appLabel(pkg),
+            packageName = pkg,
+            activity = currentActivity(service),
+            width = bitmap.width,
+            height = bitmap.height,
+            keyboardShown = keyboard,
+        )
+    }
+
+    /** 最近的 WINDOW_STATE_CHANGED 事件给出真正的 Activity 类；拿不到再退回窗口根类（滤掉系统视图类）。 */
+    private fun currentActivity(service: AharouAccessibilityService): String? {
+        service.snapshotEvents()
+            .lastOrNull { it.type.contains("WINDOW_STATE_CHANGED") && !it.className.isNullOrBlank() }
+            ?.className
+            ?.let { return it }
+        val (_, cls) = service.foregroundPackage()
+        return cls?.takeIf { it.isNotBlank() && !it.startsWith("android.") && !it.startsWith("com.android.") }
+    }
+
+    /** 包名 → 桌面显示的应用名；查不到返回 null。 */
+    private fun appLabel(packageName: String?): String? {
+        val pkg = packageName?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return runCatching {
+            val info = context.packageManager.getApplicationInfo(pkg, 0)
+            context.packageManager.getApplicationLabel(info).toString()
+        }.getOrNull()
     }
 
     private fun bitmapToJpegBase64(bitmap: Bitmap): String {

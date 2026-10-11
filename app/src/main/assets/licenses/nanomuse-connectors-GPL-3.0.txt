@@ -1,0 +1,11 @@
+nanoMuse Connectors（内置于 assets/connectors.json 的远程 MCP 连接器目录）
+来源：https://github.com/nanomuse （文件 io.github.nanomuse.connectors/ConnectorsCatalogue，
+     原始路径 assets/nanomuse/connectors.json，共 75 条远程 MCP server 清单）
+作者：nanoMuse 项目作者
+许可：GNU General Public License v3.0（与 Aharou 本体同为 GPL-3.0）
+
+本目录数据由 nanoMuse 连接器清单移植而来，仅作了以下改动：
+- 顶层新增 `_source` / `_license` / `_note` 三个来源声明字段，连接器条目本身未改；
+- 接入逻辑在 Aharou 侧重新实现（feature/connectors）。
+
+GPL-3.0 许可证全文见本仓库根目录 LICENSE 文件。

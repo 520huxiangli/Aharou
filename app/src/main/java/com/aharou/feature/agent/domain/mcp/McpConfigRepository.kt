@@ -252,14 +252,17 @@ class McpConfigRepository @Inject constructor(
                         }
                         if (server.env.isNotEmpty()) {
                             putJsonObject("env") {
-                                server.env.forEach { (key, value) -> put(key, value) }
+                                // 与 headers 同理：env 也可能装密钥（如 MCP stdio 服务器的 TOKEN），落盘前一并加密。
+                                server.env.forEach { (key, value) -> put(key, encryptSensitive(key, value)) }
                             }
                         }
                     } else {
                         put("url", server.url ?: "")
                         if (server.headers.isNotEmpty()) {
                             putJsonObject("headers") {
-                                server.headers.forEach { (key, value) -> put(key, value) }
+                                // 敏感名（Authorization / 含 token·key·secret·password）落盘前加密：
+                                // 项目级配置在 <工作区>/.aharou/mcp.json 里可能被 git 追踪推走。
+                                server.headers.forEach { (key, value) -> put(key, encryptSensitive(key, value)) }
                             }
                         }
                         server.oauth?.let { oauth ->
@@ -315,7 +318,7 @@ class McpConfigRepository @Inject constructor(
                         (it as? JsonPrimitive)?.contentOrNull
                     } ?: emptyList()
                     val env = (obj["env"] as? JsonObject)?.mapNotNull { (k, v) ->
-                        (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
+                        (v as? JsonPrimitive)?.contentOrNull?.let { k to decryptSensitive(k, it) }
                     }?.toMap() ?: emptyMap()
                     McpServerConfig(
                         name = name,
@@ -328,7 +331,7 @@ class McpConfigRepository @Inject constructor(
                 }
                 !url.isNullOrBlank() -> {
                     val headers = (obj["headers"] as? JsonObject)?.mapNotNull { (k, v) ->
-                        (v as? JsonPrimitive)?.contentOrNull?.let { k to it }
+                        (v as? JsonPrimitive)?.contentOrNull?.let { k to decryptSensitive(k, it) }
                     }?.toMap() ?: emptyMap()
                     McpServerConfig(
                         name = name,
@@ -372,6 +375,27 @@ class McpConfigRepository @Inject constructor(
     /** 敏感字段落盘前确保为密文；已是密文则不重复加密。 */
     private fun encryptSecret(value: String): String =
         if (KeystoreCipher.isEncryptedString(value)) value else KeystoreCipher.encryptString(value)
+
+    /**
+     * 敏感 header 名：`Authorization`，或名字含 token / key / secret / password（大小写不敏感）。
+     * 值落盘前加密，避免项目级 mcp.json 被 git 追踪时把密钥随文件带出去。
+     */
+    private fun isSensitiveName(name: String): Boolean {
+        val n = name.lowercase()
+        return n == "authorization" || n.contains("token") || n.contains("key") ||
+            n.contains("secret") || n.contains("password")
+    }
+
+    /** 敏感 header 落盘前确保为密文；非敏感名原样返回。 */
+    private fun encryptSensitive(name: String, value: String): String =
+        if (isSensitiveName(name)) encryptSecret(value) else value
+
+    /**
+     * 敏感 header 读出时解密。向后兼容：旧明文值不是密文，[KeystoreCipher.decryptString] 对非密文
+     * 原样返回；解密失败（如换机丢 Keystore 密钥）也回退原文，不阻断配置加载。
+     */
+    private fun decryptSensitive(name: String, value: String): String =
+        if (isSensitiveName(name)) runCatching { KeystoreCipher.decryptString(value) }.getOrDefault(value) else value
 
     /** 按名称查找当前生效条目（含来源作用域）；不存在返回 null。 */
     suspend fun findEntry(name: String): McpServerEntry? =

@@ -1,0 +1,1221 @@
+{
+  "_source": "Adapted from nanoMuse (https://github.com/nanomuse), file io.github.nanomuse.connectors/ConnectorsCatalogue (assets/nanomuse/connectors.json).",
+  "_license": "GPL-3.0",
+  "_note": "Remote MCP connector catalogue. Fields: id/name/category/url/auth/docs/icon/color/about. Do not remove provenance.",
+  "categories": [
+    "work",
+    "talk",
+    "files",
+    "dev",
+    "data",
+    "design",
+    "money",
+    "search",
+    "misc"
+  ],
+  "connectors": [
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "work",
+      "url": "https://mcp.notion.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.notion.com/docs/mcp",
+      "icon": "notion",
+      "color": "#000000",
+      "about": {
+        "en": "Search, read and write your pages and databases.",
+        "zh": "搜索、阅读和编辑你的页面与数据库。"
+      }
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "category": "work",
+      "url": "https://mcp.linear.app/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://linear.app/docs/mcp",
+      "icon": "linear",
+      "color": "#5E6AD2",
+      "about": {
+        "en": "Issues, projects and cycles: find, create and update them.",
+        "zh": "查找、创建和更新 issue、项目与周期。"
+      }
+    },
+    {
+      "id": "atlassian",
+      "name": "Atlassian · Jira & Confluence",
+      "category": "work",
+      "url": "https://mcp.atlassian.com/v2/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://support.atlassian.com/rovo/docs/getting-started-with-the-atlassian-remote-mcp-server/",
+      "icon": "atlassian",
+      "color": "#0052CC",
+      "about": {
+        "en": "Jira issues and Confluence pages across your sites.",
+        "zh": "你各个站点里的 Jira 事项和 Confluence 页面。"
+      }
+    },
+    {
+      "id": "asana",
+      "name": "Asana",
+      "category": "work",
+      "url": "https://mcp.asana.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.asana.com/docs/using-asanas-model-control-protocol-mcp-server",
+      "icon": "asana",
+      "color": "#F06A6A",
+      "about": {
+        "en": "Tasks, projects and goals in your workspace.",
+        "zh": "你工作区里的任务、项目与目标。"
+      }
+    },
+    {
+      "id": "monday",
+      "name": "monday.com",
+      "category": "work",
+      "url": "https://mcp.monday.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.monday.com/apps/docs/mondaycom-mcp-integration",
+      "color": "#FF3D57",
+      "about": {
+        "en": "Boards, items and updates.",
+        "zh": "看板、条目与更新。"
+      }
+    },
+    {
+      "id": "clickup",
+      "name": "ClickUp",
+      "category": "work",
+      "url": "https://mcp.clickup.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.clickup.com/",
+      "icon": "clickup",
+      "color": "#7B68EE",
+      "about": {
+        "en": "Tasks, lists, docs and comments.",
+        "zh": "任务、清单、文档与评论。"
+      }
+    },
+    {
+      "id": "todoist",
+      "name": "Todoist",
+      "category": "work",
+      "url": "https://ai.todoist.net/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.todoist.com/api/v1/#tag/MCP-Server",
+      "icon": "todoist",
+      "color": "#E44332",
+      "about": {
+        "en": "Your to-dos and projects.",
+        "zh": "你的待办与项目。"
+      }
+    },
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "category": "work",
+      "url": "https://mcp.airtable.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://airtable.com/developers/web",
+      "icon": "airtable",
+      "color": "#18BFFF",
+      "about": {
+        "en": "Bases, tables and records.",
+        "zh": "数据库、表格与记录。"
+      }
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot",
+      "category": "work",
+      "url": "https://mcp.hubspot.com/",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://developers.hubspot.com/"
+      },
+      "docs": "https://developers.hubspot.com/mcp",
+      "icon": "hubspot",
+      "color": "#FF7A59",
+      "about": {
+        "en": "Contacts, companies, deals and tickets in your CRM.",
+        "zh": "CRM 里的联系人、公司、交易与工单。"
+      }
+    },
+    {
+      "id": "attio",
+      "name": "Attio",
+      "category": "work",
+      "url": "https://mcp.attio.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.attio.com/",
+      "color": "#1C1C1C",
+      "about": {
+        "en": "People, companies, deals and notes in your Attio CRM.",
+        "zh": "Attio CRM 里的人、公司、交易与笔记。"
+      }
+    },
+    {
+      "id": "close",
+      "name": "Close",
+      "category": "work",
+      "url": "https://mcp.close.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.close.com/mcp/",
+      "color": "#1463FF",
+      "about": {
+        "en": "Leads, opportunities and activities in Close CRM.",
+        "zh": "Close CRM 里的线索、商机与活动。"
+      }
+    },
+    {
+      "id": "intercom",
+      "name": "Intercom",
+      "category": "work",
+      "url": "https://mcp.intercom.com/mcp",
+      "auth": {
+        "kind": "auto"
+      },
+      "docs": "https://developers.intercom.com/docs/guides/mcp",
+      "icon": "intercom",
+      "color": "#6AFDEF",
+      "about": {
+        "en": "Conversations, contacts and help-centre articles.",
+        "zh": "对话、联系人与帮助中心文章。"
+      }
+    },
+    {
+      "id": "fireflies",
+      "name": "Fireflies.ai",
+      "category": "work",
+      "url": "https://api.fireflies.ai/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.fireflies.ai/mcp",
+      "color": "#7A3FF2",
+      "about": {
+        "en": "Meeting transcripts, summaries and action items.",
+        "zh": "会议转写、摘要与待办事项。"
+      }
+    },
+    {
+      "id": "calcom",
+      "name": "Cal.com",
+      "category": "work",
+      "url": "https://mcp.cal.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://cal.com/help/mcp",
+      "icon": "caldotcom",
+      "color": "#292929",
+      "about": {
+        "en": "Bookings, availability and event types.",
+        "zh": "预约、空闲时段与活动类型。"
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "talk",
+      "url": "https://mcp.slack.com/mcp",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://api.slack.com/apps"
+      },
+      "docs": "https://docs.slack.dev/ai/mcp-server/",
+      "color": "#4A154B",
+      "about": {
+        "en": "Search and read channels and messages in your workspace.",
+        "zh": "搜索和阅读你工作区里的频道与消息。"
+      }
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "talk",
+      "url": "https://mcp.discord.com/mcp",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://discord.com/developers/applications"
+      },
+      "docs": "https://discord.com/developers/docs/intro",
+      "icon": "discord",
+      "color": "#5865F2",
+      "about": {
+        "en": "Your servers and channels.",
+        "zh": "你的服务器与频道。"
+      }
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "category": "dev",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://github.com/settings/developers"
+      },
+      "docs": "https://github.com/github/github-mcp-server",
+      "icon": "github",
+      "color": "#181717",
+      "about": {
+        "en": "Repositories, issues, pull requests and code search.",
+        "zh": "仓库、issue、PR 与代码搜索。"
+      }
+    },
+    {
+      "id": "gitlab",
+      "name": "GitLab",
+      "category": "dev",
+      "url": "https://gitlab.com/api/v4/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.gitlab.com/user/gitlab_duo/model_context_protocol/mcp_server/",
+      "color": "#FC6D26",
+      "about": {
+        "en": "Projects, issues, merge requests and pipelines on gitlab.com.",
+        "zh": "gitlab.com 上的项目、议题、合并请求与流水线。"
+      }
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "category": "dev",
+      "url": "https://mcp.sentry.dev/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.sentry.io/product/sentry-mcp/",
+      "icon": "sentry",
+      "color": "#362D59",
+      "about": {
+        "en": "Errors, issues and performance data from your projects.",
+        "zh": "你项目里的错误、问题与性能数据。"
+      }
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "category": "dev",
+      "url": "https://mcp.vercel.com",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://vercel.com/docs/mcp/vercel-mcp",
+      "icon": "vercel",
+      "color": "#000000",
+      "about": {
+        "en": "Projects, deployments and logs.",
+        "zh": "项目、部署与日志。"
+      }
+    },
+    {
+      "id": "netlify",
+      "name": "Netlify",
+      "category": "dev",
+      "url": "https://netlify-mcp.netlify.app/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.netlify.com/build/build-with-ai/netlify-mcp-server/",
+      "icon": "netlify",
+      "color": "#00C7B7",
+      "about": {
+        "en": "Sites, deploys and environment variables.",
+        "zh": "站点、部署与环境变量。"
+      }
+    },
+    {
+      "id": "railway",
+      "name": "Railway",
+      "category": "dev",
+      "url": "https://mcp.railway.com/",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.railway.com/reference/mcp-server",
+      "icon": "railway",
+      "color": "#0B0D0E",
+      "about": {
+        "en": "Projects, services and deployments.",
+        "zh": "项目、服务与部署。"
+      }
+    },
+    {
+      "id": "render",
+      "name": "Render",
+      "category": "dev",
+      "url": "https://mcp.render.com/mcp",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://dashboard.render.com/"
+      },
+      "docs": "https://render.com/docs/mcp-server",
+      "icon": "render",
+      "color": "#46E3B7",
+      "about": {
+        "en": "Services, deploys, logs and databases on Render.",
+        "zh": "Render 上的服务、部署、日志与数据库。"
+      }
+    },
+    {
+      "id": "heroku",
+      "name": "Heroku",
+      "category": "dev",
+      "url": "https://mcp.heroku.com/mcp",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "Account settings → API Key"
+      },
+      "docs": "https://devcenter.heroku.com/articles/heroku-mcp-server",
+      "color": "#430098",
+      "about": {
+        "en": "Apps, dynos, add-ons and logs.",
+        "zh": "应用、dyno、插件与日志。"
+      }
+    },
+    {
+      "id": "digitalocean",
+      "name": "DigitalOcean",
+      "category": "dev",
+      "url": "https://mcp.digitalocean.com/mcp",
+      "auth": {
+        "kind": "auto"
+      },
+      "docs": "https://docs.digitalocean.com/reference/mcp/",
+      "icon": "digitalocean",
+      "color": "#0080FF",
+      "about": {
+        "en": "Droplets, apps and databases.",
+        "zh": "Droplet、应用与数据库。"
+      }
+    },
+    {
+      "id": "buildkite",
+      "name": "Buildkite",
+      "category": "dev",
+      "url": "https://mcp.buildkite.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://buildkite.com/docs/apis/mcp-server",
+      "icon": "buildkite",
+      "color": "#14CC80",
+      "about": {
+        "en": "Pipelines, builds and test results.",
+        "zh": "流水线、构建与测试结果。"
+      }
+    },
+    {
+      "id": "bitrise",
+      "name": "Bitrise",
+      "category": "dev",
+      "url": "https://mcp.bitrise.io/mcp",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://app.bitrise.io/"
+      },
+      "docs": "https://docs.bitrise.io/",
+      "icon": "bitrise",
+      "color": "#683D87",
+      "about": {
+        "en": "Apps, builds and artifacts.",
+        "zh": "应用、构建与产物。"
+      }
+    },
+    {
+      "id": "semgrep",
+      "name": "Semgrep",
+      "category": "dev",
+      "url": "https://mcp.semgrep.ai/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://semgrep.dev/docs/mcp",
+      "color": "#2ACFA6",
+      "about": {
+        "en": "Scan code for security findings.",
+        "zh": "扫描代码里的安全问题。"
+      }
+    },
+    {
+      "id": "postman",
+      "name": "Postman",
+      "category": "dev",
+      "url": "https://mcp.postman.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://learning.postman.com/docs/postman-ai-agent-builder/mcp-requests/overview/",
+      "icon": "postman",
+      "color": "#FF6C37",
+      "about": {
+        "en": "Collections, environments and requests.",
+        "zh": "集合、环境与请求。"
+      }
+    },
+    {
+      "id": "jam",
+      "name": "Jam",
+      "category": "dev",
+      "url": "https://mcp.jam.dev/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://jam.dev/docs/debug-a-jam/mcp",
+      "color": "#7C3AED",
+      "about": {
+        "en": "Bug reports with their console, network and video.",
+        "zh": "带控制台、网络和录屏的 bug 报告。"
+      }
+    },
+    {
+      "id": "stytch",
+      "name": "Stytch",
+      "category": "dev",
+      "url": "https://mcp.stytch.dev/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://stytch.com/docs/workspace-management/stytch-mcp",
+      "color": "#19303D",
+      "about": {
+        "en": "Your Stytch projects and their settings.",
+        "zh": "你的 Stytch 项目与设置。"
+      }
+    },
+    {
+      "id": "honeycomb",
+      "name": "Honeycomb",
+      "category": "dev",
+      "url": "https://mcp.honeycomb.io/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.honeycomb.io/integrations/mcp/",
+      "color": "#F6A914",
+      "about": {
+        "en": "Query your traces, metrics and triggers.",
+        "zh": "查询你的链路、指标与触发器。"
+      }
+    },
+    {
+      "id": "pagerduty",
+      "name": "PagerDuty",
+      "category": "dev",
+      "url": "https://mcp.pagerduty.com/mcp",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://developer.pagerduty.com/"
+      },
+      "docs": "https://developer.pagerduty.com/docs/mcp-server",
+      "icon": "pagerduty",
+      "color": "#06AC38",
+      "about": {
+        "en": "Incidents, services and who is on call.",
+        "zh": "事故、服务与当前值班。"
+      }
+    },
+    {
+      "id": "cf-bindings",
+      "name": "Cloudflare Workers",
+      "category": "dev",
+      "url": "https://bindings.mcp.cloudflare.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "icon": "cloudflare",
+      "color": "#F38020",
+      "about": {
+        "en": "Workers, KV, R2 and D1 in your account.",
+        "zh": "你账户里的 Workers、KV、R2 与 D1。"
+      }
+    },
+    {
+      "id": "cf-observability",
+      "name": "Cloudflare Observability",
+      "category": "dev",
+      "url": "https://observability.mcp.cloudflare.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "icon": "cloudflare",
+      "color": "#F38020",
+      "about": {
+        "en": "Logs and analytics of your Workers.",
+        "zh": "你的 Workers 的日志与分析。"
+      }
+    },
+    {
+      "id": "cf-radar",
+      "name": "Cloudflare Radar",
+      "category": "data",
+      "url": "https://radar.mcp.cloudflare.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "icon": "cloudflare",
+      "color": "#F38020",
+      "about": {
+        "en": "Internet traffic trends, outages and URL scans.",
+        "zh": "互联网流量趋势、故障与 URL 扫描。"
+      }
+    },
+    {
+      "id": "cf-browser",
+      "name": "Cloudflare Browser Rendering",
+      "category": "dev",
+      "url": "https://browser.mcp.cloudflare.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "icon": "cloudflare",
+      "color": "#F38020",
+      "about": {
+        "en": "Fetch pages, take screenshots, turn pages into Markdown.",
+        "zh": "抓取网页、截图、把页面转成 Markdown。"
+      }
+    },
+    {
+      "id": "cf-docs",
+      "name": "Cloudflare Docs",
+      "category": "dev",
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+      "icon": "cloudflare",
+      "color": "#F38020",
+      "about": {
+        "en": "Cloudflare's documentation, searchable.",
+        "zh": "Cloudflare 的文档，可搜索。"
+      }
+    },
+    {
+      "id": "mslearn",
+      "name": "Microsoft Learn",
+      "category": "dev",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://learn.microsoft.com/training/support/mcp",
+      "color": "#0078D4",
+      "about": {
+        "en": "Microsoft's documentation and code samples.",
+        "zh": "微软的文档与代码示例。"
+      }
+    },
+    {
+      "id": "deepwiki",
+      "name": "DeepWiki",
+      "category": "dev",
+      "url": "https://mcp.deepwiki.com/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+      "color": "#1D4ED8",
+      "about": {
+        "en": "Ask questions about any public GitHub repository.",
+        "zh": "就任何公开的 GitHub 仓库提问。"
+      }
+    },
+    {
+      "id": "context7",
+      "name": "Context7",
+      "category": "dev",
+      "url": "https://mcp.context7.com/mcp",
+      "auth": {
+        "kind": "auto"
+      },
+      "docs": "https://context7.com/docs",
+      "color": "#111827",
+      "about": {
+        "en": "Up-to-date documentation for libraries and frameworks.",
+        "zh": "各种库与框架的最新文档。"
+      }
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "category": "data",
+      "url": "https://mcp.supabase.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://supabase.com/docs/guides/getting-started/mcp",
+      "icon": "supabase",
+      "color": "#3FCF8E",
+      "about": {
+        "en": "Projects, tables, SQL and edge functions.",
+        "zh": "项目、表、SQL 与边缘函数。"
+      }
+    },
+    {
+      "id": "neon",
+      "name": "Neon",
+      "category": "data",
+      "url": "https://mcp.neon.tech/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://neon.com/docs/ai/neon-mcp-server",
+      "icon": "neon",
+      "color": "#00E599",
+      "about": {
+        "en": "Postgres projects, branches and queries.",
+        "zh": "Postgres 项目、分支与查询。"
+      }
+    },
+    {
+      "id": "prisma",
+      "name": "Prisma Postgres",
+      "category": "data",
+      "url": "https://mcp.prisma.io/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.prisma.io/docs/postgres/integrations/mcp-server",
+      "icon": "prisma",
+      "color": "#2D3748",
+      "about": {
+        "en": "Your Prisma Postgres databases.",
+        "zh": "你的 Prisma Postgres 数据库。"
+      }
+    },
+    {
+      "id": "algolia",
+      "name": "Algolia",
+      "category": "data",
+      "url": "https://mcp.algolia.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.algolia.com/doc/",
+      "icon": "algolia",
+      "color": "#003DFF",
+      "about": {
+        "en": "Indices, records and search analytics.",
+        "zh": "索引、记录与搜索分析。"
+      }
+    },
+    {
+      "id": "octagon",
+      "name": "Octagon",
+      "category": "data",
+      "url": "https://mcp.octagonagents.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.octagonagents.com/guide/mcp-server.html",
+      "color": "#0F172A",
+      "about": {
+        "en": "Financial filings, earnings and market research.",
+        "zh": "财报、公告与市场研究。"
+      }
+    },
+    {
+      "id": "audioscrape",
+      "name": "Audioscrape",
+      "category": "data",
+      "url": "https://mcp.audioscrape.com",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.audioscrape.com/mcp",
+      "color": "#0EA5E9",
+      "about": {
+        "en": "Search what was said in podcasts and public meetings.",
+        "zh": "搜索播客和公开会议里说过的话。"
+      }
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "category": "design",
+      "url": "https://mcp.figma.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://help.figma.com/hc/en-us/articles/32132100833559",
+      "icon": "figma",
+      "color": "#F24E1E",
+      "about": {
+        "en": "Design files, frames and their code context.",
+        "zh": "设计文件、画板与它们的代码上下文。"
+      }
+    },
+    {
+      "id": "miro",
+      "name": "Miro",
+      "category": "design",
+      "url": "https://mcp.miro.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.miro.com/docs/miro-mcp",
+      "color": "#FFD02F",
+      "about": {
+        "en": "Your boards: read, add and arrange what is on them.",
+        "zh": "你的白板：读取、添加和整理上面的内容。"
+      }
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "category": "design",
+      "url": "https://mcp.canva.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.canva.dev/docs/connect/canva-mcp-server-setup/",
+      "color": "#00C4CC",
+      "about": {
+        "en": "Create, search and export designs.",
+        "zh": "创建、搜索和导出设计。"
+      }
+    },
+    {
+      "id": "webflow",
+      "name": "Webflow",
+      "category": "design",
+      "url": "https://mcp.webflow.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.webflow.com/data/docs/ai-tools",
+      "icon": "webflow",
+      "color": "#146EF5",
+      "about": {
+        "en": "Sites, pages and CMS collections.",
+        "zh": "站点、页面与 CMS 集合。"
+      }
+    },
+    {
+      "id": "wix",
+      "name": "Wix",
+      "category": "design",
+      "url": "https://mcp.wix.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.wix.com/studio/developers/mcp-server",
+      "icon": "wix",
+      "color": "#0C6EFC",
+      "about": {
+        "en": "Your Wix sites and their business data.",
+        "zh": "你的 Wix 站点及其业务数据。"
+      }
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "category": "money",
+      "url": "https://mcp.stripe.com",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.stripe.com/mcp",
+      "icon": "stripe",
+      "color": "#635BFF",
+      "about": {
+        "en": "Customers, payments, invoices and subscriptions.",
+        "zh": "客户、付款、账单与订阅。"
+      }
+    },
+    {
+      "id": "quickbooks",
+      "name": "QuickBooks",
+      "category": "money",
+      "url": "https://mcp.quickbooks.intuit.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.intuit.com/",
+      "color": "#2CA01C",
+      "about": {
+        "en": "Invoices, customers, expenses and reports in your books.",
+        "zh": "账本里的发票、客户、支出与报表。"
+      }
+    },
+    {
+      "id": "ynab",
+      "name": "YNAB",
+      "category": "money",
+      "url": "https://api.ynab.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://api.ynab.com/",
+      "color": "#3B5BDB",
+      "about": {
+        "en": "Your budgets, accounts and transactions.",
+        "zh": "你的预算、账户与交易记录。"
+      }
+    },
+    {
+      "id": "paypal",
+      "name": "PayPal",
+      "category": "money",
+      "url": "https://mcp.paypal.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.paypal.com/tools/mcp-server/",
+      "icon": "paypal",
+      "color": "#003087",
+      "about": {
+        "en": "Invoices, orders, subscriptions and disputes.",
+        "zh": "账单、订单、订阅与争议。"
+      }
+    },
+    {
+      "id": "square",
+      "name": "Square",
+      "category": "money",
+      "url": "https://mcp.squareup.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developer.squareup.com/docs/mcp",
+      "icon": "square",
+      "color": "#3E4348",
+      "about": {
+        "en": "Payments, orders, catalog and customers.",
+        "zh": "收款、订单、商品目录与顾客。"
+      }
+    },
+    {
+      "id": "dodo",
+      "name": "Dodo Payments",
+      "category": "money",
+      "url": "https://mcp.dodopayments.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.dodopayments.com/developer-resources/mcp-server",
+      "color": "#FF6B35",
+      "about": {
+        "en": "Products, payments and subscriptions.",
+        "zh": "商品、付款与订阅。"
+      }
+    },
+    {
+      "id": "dropbox",
+      "name": "Dropbox",
+      "category": "files",
+      "url": "https://mcp.dropbox.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://www.dropbox.com/developers",
+      "icon": "dropbox",
+      "color": "#0061FF",
+      "about": {
+        "en": "Search and read the files in your Dropbox.",
+        "zh": "搜索和阅读 Dropbox 里的文件。"
+      }
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "category": "files",
+      "url": "https://mcp.box.com",
+      "auth": {
+        "kind": "oauth",
+        "clientIdRequired": true,
+        "developer": "https://app.box.com/developers/console"
+      },
+      "docs": "https://developer.box.com/guides/box-mcp/remote/",
+      "icon": "box",
+      "color": "#0061D5",
+      "about": {
+        "en": "Files, folders and their contents in Box.",
+        "zh": "Box 里的文件、文件夹与内容。"
+      }
+    },
+    {
+      "id": "egnyte",
+      "name": "Egnyte",
+      "category": "files",
+      "url": "https://mcp-server.egnyte.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://developers.egnyte.com/docs/mcp",
+      "color": "#00A0DF",
+      "about": {
+        "en": "Search, read and upload in your Egnyte.",
+        "zh": "在 Egnyte 里搜索、阅读和上传。"
+      }
+    },
+    {
+      "id": "exa",
+      "name": "Exa",
+      "category": "search",
+      "url": "https://mcp.exa.ai/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://docs.exa.ai/reference/exa-mcp",
+      "color": "#1F2937",
+      "about": {
+        "en": "Web search and page contents built for agents.",
+        "zh": "面向智能体的网页搜索与正文抓取。"
+      }
+    },
+    {
+      "id": "tavily",
+      "name": "Tavily",
+      "category": "search",
+      "url": "https://mcp.tavily.com/mcp/",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://docs.tavily.com/documentation/mcp",
+      "color": "#0F766E",
+      "about": {
+        "en": "Search, extract and crawl the web.",
+        "zh": "搜索、提取与爬取网页。"
+      }
+    },
+    {
+      "id": "firecrawl",
+      "name": "Firecrawl",
+      "category": "search",
+      "url": "https://mcp.firecrawl.dev/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://docs.firecrawl.dev/mcp-server",
+      "color": "#FF6A00",
+      "about": {
+        "en": "Scrape and crawl sites into clean text.",
+        "zh": "把网站抓取、爬取成干净的文本。"
+      }
+    },
+    {
+      "id": "apify",
+      "name": "Apify",
+      "category": "search",
+      "url": "https://mcp.apify.com/",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "Console → Settings → API & Integrations"
+      },
+      "docs": "https://docs.apify.com/platform/integrations/mcp",
+      "color": "#FF9012",
+      "about": {
+        "en": "Thousands of scrapers and automations as tools.",
+        "zh": "上千个抓取器与自动化，作为工具使用。"
+      }
+    },
+    {
+      "id": "simplescraper",
+      "name": "Simplescraper",
+      "category": "search",
+      "url": "https://mcp.simplescraper.io/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://simplescraper.io/docs/mcp",
+      "color": "#2563EB",
+      "about": {
+        "en": "Scrape pages and run your saved recipes.",
+        "zh": "抓取页面并运行你保存的抓取方案。"
+      }
+    },
+    {
+      "id": "globalping",
+      "name": "Globalping",
+      "category": "search",
+      "url": "https://mcp.globalping.dev/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://github.com/jsdelivr/globalping-mcp-server",
+      "color": "#17D4A7",
+      "about": {
+        "en": "Ping, traceroute and DNS from probes around the world.",
+        "zh": "从世界各地的探针发起 ping、traceroute 与 DNS 查询。"
+      }
+    },
+    {
+      "id": "huggingface",
+      "name": "Hugging Face",
+      "category": "search",
+      "url": "https://huggingface.co/mcp",
+      "auth": {
+        "kind": "none"
+      },
+      "docs": "https://huggingface.co/settings/mcp",
+      "icon": "huggingface",
+      "color": "#FFD21E",
+      "about": {
+        "en": "Models, datasets, papers and Spaces on the Hub.",
+        "zh": "Hub 上的模型、数据集、论文与 Spaces。"
+      }
+    },
+    {
+      "id": "amap",
+      "name": "高德地图 Amap",
+      "category": "search",
+      "url": "https://mcp.amap.com/mcp",
+      "auth": {
+        "kind": "key",
+        "query": "key",
+        "where": "console.amap.com → 应用管理 → Web服务 Key"
+      },
+      "docs": "https://lbs.amap.com/api/mcp-server/summary",
+      "color": "#1E88E5",
+      "about": {
+        "en": "Places, routes, geocoding and weather in China.",
+        "zh": "地点、路线、地理编码与天气。"
+      }
+    },
+    {
+      "id": "zhipu-search",
+      "name": "智谱 Web Search",
+      "category": "search",
+      "url": "https://open.bigmodel.cn/api/mcp/web_search/mcp",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "open.bigmodel.cn → API Keys"
+      },
+      "docs": "https://docs.bigmodel.cn/cn/guide/tools/web-search",
+      "color": "#3859FF",
+      "about": {
+        "en": "Web search through Zhipu's search tool.",
+        "zh": "通过智谱的搜索工具搜索网页。"
+      }
+    },
+    {
+      "id": "telnyx",
+      "name": "Telnyx",
+      "category": "talk",
+      "url": "https://api.telnyx.com/v2/mcp",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "Mission Control → API Keys"
+      },
+      "docs": "https://developers.telnyx.com/development/mcp",
+      "color": "#00C08B",
+      "about": {
+        "en": "Numbers, messaging and calls on Telnyx.",
+        "zh": "Telnyx 上的号码、短信与通话。"
+      }
+    },
+    {
+      "id": "turkish-airlines",
+      "name": "Turkish Airlines",
+      "category": "misc",
+      "url": "https://mcp.turkishtechlab.com/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://mcp.turkishtechlab.com/",
+      "icon": "turkishairlines",
+      "color": "#C70A0C",
+      "about": {
+        "en": "Flights, bookings and Miles&Smiles.",
+        "zh": "航班、订票与 Miles&Smiles。"
+      }
+    },
+    {
+      "id": "oura",
+      "name": "Oura",
+      "category": "misc",
+      "url": "https://api.ouraring.com/v2/mcp",
+      "auth": {
+        "kind": "oauth"
+      },
+      "docs": "https://cloud.ouraring.com/docs/",
+      "color": "#2D2D2D",
+      "about": {
+        "en": "Your sleep, readiness and activity from the ring.",
+        "zh": "来自戒指的睡眠、恢复与活动数据。"
+      }
+    },
+    {
+      "id": "mercadopago",
+      "name": "Mercado Pago",
+      "category": "money",
+      "url": "https://mcp.mercadopago.com/mcp",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "Your Developers panel → Credentials → Access token"
+      },
+      "docs": "https://www.mercadopago.com/developers/en/docs/mcp-server",
+      "icon": "mercadopago",
+      "color": "#009EE3",
+      "about": {
+        "en": "Payments and the developer documentation.",
+        "zh": "收款与开发者文档。"
+      }
+    },
+    {
+      "id": "mercadolibre",
+      "name": "Mercado Libre",
+      "category": "money",
+      "url": "https://mcp.mercadolibre.com/mcp",
+      "auth": {
+        "kind": "key",
+        "header": "Authorization",
+        "prefix": "Bearer ",
+        "where": "Developers panel → Access token"
+      },
+      "docs": "https://developers.mercadolibre.com/en_us/mcp-server",
+      "color": "#FFE600",
+      "about": {
+        "en": "Listings, orders and the developer documentation.",
+        "zh": "商品、订单与开发者文档。"
+      }
+    }
+  ]
+}

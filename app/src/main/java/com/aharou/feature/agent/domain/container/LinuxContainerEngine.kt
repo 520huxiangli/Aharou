@@ -67,10 +67,10 @@ data class ProotInvocation(
      * 因此 proot 能拿到 ANDROID_ROOT/ANDROID_DATA/LD_LIBRARY_PATH 等系统变量；但
      * TerminalSession 接收的是「完整、不继承父进程」的环境数组，只喂 [env] 会让 proot
      * 这个动态链接的 Android 可执行文件因缺系统环境而 exec 失败、瞬间退出（终端表现为
-     * 「会话已结束」而日志无其他报错）。故在此显式合并父进程环境，复刻 ProcessBuilder 语义。
+     * 「会话已结束」而日志无其他报错）。故在此显式合并父进程环境（先经 [ContainerEnvSanitizer] 清洗）后叠加 [env]。
      */
     val ptyEnvArray: Array<String>
-        get() = (System.getenv() + env).map { "${it.key}=${it.value}" }.toTypedArray()
+        get() = (ContainerEnvSanitizer.scrubbedSystemEnv() + env).map { "${it.key}=${it.value}" }.toTypedArray()
 }
 
 @Singleton
@@ -984,7 +984,7 @@ class LinuxContainerEngine @Inject constructor(
 
     private fun buildProcessBuilder(invocation: ProotInvocation): ProcessBuilder {
         val processBuilder = ProcessBuilder(invocation.argv)
-        processBuilder.environment().putAll(invocation.env)
+        processBuilder.environment().apply { ContainerEnvSanitizer.scrubInherited(this); putAll(invocation.env) }
         return processBuilder
     }
 

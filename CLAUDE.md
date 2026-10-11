@@ -23,7 +23,9 @@
 
 ## 构建与验证
 
-**改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。** 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
+**先问再编（硬规则，本节第一优先，高于下面所有内容）**：任何 `./gradlew` 构建 / 单测 / 打包之前，都必须先问一句「改完了，要不要编译？」并等用户回答。**多批次任务、多个子代理的任务都不是例外**——子代理交付后只做只读核实（读文件、抽查它自报的 file:line、跑 `python3 scripts/check_architecture.py`），不要顺手起构建。同一个任务里的多处改动要攒齐一次再编，不要做一个功能编一个功能。构建命令后面不要接 `| tail` / `| grep`（管道会把 Gradle 的失败退出码吃掉），要截输出就用 `2>&1 | tee /tmp/build.log | tail -5`，判断成功与否一律看日志里的 `BUILD SUCCESSFUL` / `BUILD FAILED`。
+
+**经用户同意后**，改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
 
 单元测试（`:app:testUniversalDebugUnitTest` / `:app:testArmsoloDebugUnitTest`——两个 flavor 各一个任务名，**没有** `testDebugUnitTest`）在容器里可能根本跑不动：项目用 Robolectric，首次要下对应 SDK 的 `android-all-instrumented`（约 190 MB，**不走 Gradle 镜像**，流量网络下会永久 hang：worker `wchan=futex_wait`、CPU 近 0、daemon 日志停写）。**跑不动就跳过交给 CI** —— `.github/workflows/android-release.yml` 在构建前会跑同一套单测，失败会拦住发版。
 

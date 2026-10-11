@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
+import com.aharou.feature.vault.VaultRepository
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -47,7 +48,8 @@ class McpManager @Inject constructor(
     @Named("Mcp") private val okHttpClient: OkHttpClient,
     private val containerEngine: LinuxContainerEngine,
     private val workspaceRepository: WorkspaceRepository,
-    private val containerSettingsRepository: ContainerSettingsRepository
+    private val containerSettingsRepository: ContainerSettingsRepository,
+    private val vault: VaultRepository
 ) {
     private companion object {
         const val TAG = "McpManager"
@@ -166,9 +168,12 @@ class McpManager @Inject constructor(
                 )
             } else {
                 StreamableHttpTransport(
-                    endpoint = cfg.url.orEmpty(),
+                    // 连接器把密钥写成 `{{vault:NAME}}` 占位符，这里必须换成真值——且要在传输层
+                    // 内部解析 URL（HttpUrl）之前，query 形态的 URL 才能拼对。strict=false：密钥
+                    // 被删时保留占位符、由连接以 401 暴露问题，比 connectOne 直接抛异常更好排查。
+                    endpoint = vault.resolve(cfg.url.orEmpty(), strict = false),
                     client = okHttpClient,
-                    extraHeaders = cfg.headers,
+                    extraHeaders = cfg.headers.mapValues { (_, v) -> vault.resolve(v, strict = false) },
                     // 配了 oauth 块的 server 由提供者在每次请求前注入/刷新 Bearer 令牌。
                     authProvider = if (cfg.oauth != null) oauthClient.bearerProvider(cfg.name) else null
                 )

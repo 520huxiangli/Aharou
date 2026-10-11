@@ -79,6 +79,9 @@ import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
 import com.aharou.feature.agent.presentation.component.MarkdownContent
 import com.aharou.feature.agent.presentation.component.MarkdownRenderCache
 import com.aharou.feature.backup.presentation.BackupSection
+import com.aharou.feature.connectors.presentation.ConnectorsSection
+import com.aharou.feature.remotedevice.presentation.RemoteDeviceSection
+import com.aharou.feature.vault.presentation.VaultSection
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.presentation.PromptsViewModel
@@ -131,6 +134,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ConfigAudit(R.string.config_audit_title),
     ShadowScreen(R.string.vd_settings_title),
     EnvVars(R.string.envvars_title),
+    Vault(R.string.settings_vault),
     Accessibility(R.string.a11y_settings_title),
     Pet(R.string.pet_title),
     Memory(R.string.memory_settings_title),
@@ -141,7 +145,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
     Mcp(R.string.settings_mcp),
-    McpDirectory(R.string.mcp_directory_title),
+    Connectors(R.string.settings_connectors),
     Skills(R.string.settings_skills),
     SkillDetail(R.string.settings_skills),
     SkillEditor(R.string.settings_skills),
@@ -158,11 +162,13 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Container(R.string.settings_container),
     ContainerDownloads(R.string.container_download_image),
     Proxy(R.string.proxy_title),
+    TelegramBot(R.string.settings_telegram_bot),
     Log(R.string.settings_log),
     Permissions(R.string.settings_permissions),
     AppPermissions(R.string.settings_app_permissions),
     BackgroundRun(R.string.settings_category_background),
     RemoteServers(R.string.settings_remote_servers),
+    RemoteDevice(R.string.settings_remote_device_title),
     Storage(R.string.settings_storage),
     TokenStats(R.string.settings_token_stats_title),
     Backup(R.string.settings_backup),
@@ -189,7 +195,6 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SubAgentEditor,
     SettingsSection.PromptEditor -> 3
     SettingsSection.ProviderEditor,
-    SettingsSection.McpDirectory,
     SettingsSection.SkillDetail,
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
@@ -418,7 +423,7 @@ fun SettingsScreen(
         SettingsSection.Pet -> SettingsSection.AharouGroup
         SettingsSection.BuiltinAi -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels,
-        SettingsSection.Mcp, SettingsSection.Skills, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
+        SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
         SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
@@ -427,17 +432,19 @@ fun SettingsScreen(
         SettingsSection.BackgroundRun -> SettingsSection.PermissionsGroup
         SettingsSection.Container,
         SettingsSection.Proxy,
+        SettingsSection.TelegramBot,
         SettingsSection.ShadowScreen,
         SettingsSection.SubAgents,
         SettingsSection.RemoteServers,
+        SettingsSection.RemoteDevice,
         SettingsSection.EnvVars,
+        SettingsSection.Vault,
         SettingsSection.Storage,
         SettingsSection.TokenStats,
         SettingsSection.Backup -> SettingsSection.MoreGroup
         SettingsSection.About -> SettingsSection.HelpGroup
         SettingsSection.Prompts -> SettingsSection.AharouGroup
         SettingsSection.ProviderEditor -> SettingsSection.Providers
-        SettingsSection.McpDirectory -> SettingsSection.Mcp
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail -> SettingsSection.Skills
         SettingsSection.SkillMarket -> SettingsSection.Skills
@@ -941,6 +948,7 @@ fun SettingsScreen(
                 SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.ShadowScreen -> ShadowScreenSection()
                 SettingsSection.EnvVars -> EnvVarsSection()
+                SettingsSection.Vault -> VaultSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
@@ -1075,12 +1083,10 @@ fun SettingsScreen(
                     onToggle = { name, enabled, scope -> viewModel.setMcpServerEnabled(name, enabled, scope) },
                     onEdit = { mcpDialogRequest = McpDialogRequest(editing = it, prefill = null) },
                     onDelete = { name, scope -> viewModel.deleteMcpServer(name, scope) },
-                    onBrowseDirectory = { section = SettingsSection.McpDirectory }
+                    onBrowseDirectory = { section = SettingsSection.Connectors }
                 )
-                SettingsSection.McpDirectory -> McpDirectorySection(
-                    languageTag = languageTag,
-                    onPick = { prefill -> mcpDialogRequest = McpDialogRequest(editing = null, prefill = prefill) }
-                )
+                SettingsSection.Connectors -> ConnectorsSection(languageTag = languageTag)
+                SettingsSection.RemoteDevice -> RemoteDeviceSection()
                 SettingsSection.Skills -> SkillsSection(
                     projectName = currentProjectName,
                     entries = skills,
@@ -1258,6 +1264,7 @@ fun SettingsScreen(
                     onSetPassword = viewModel::setProxyPassword,
                     onSetNoProxy = viewModel::setProxyNoProxy
                 )
+                SettingsSection.TelegramBot -> TelegramBotSection()
                 SettingsSection.Log -> LogSection(
                     current = logLevel,
                     onSelect = { viewModel.setLogLevel(it) },

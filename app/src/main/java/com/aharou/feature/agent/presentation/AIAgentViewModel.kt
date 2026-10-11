@@ -50,6 +50,8 @@ import com.aharou.feature.agent.domain.notification.AgentNotificationKind
 import com.aharou.feature.agent.domain.notification.NotificationOutcome
 import com.aharou.feature.agent.domain.notification.PendingNotification
 import com.aharou.feature.agent.domain.permission.PermissionChoice
+import com.aharou.feature.agent.domain.permission.SessionGrantStore
+import com.aharou.feature.agent.domain.permission.TaintTracker
 import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
@@ -2430,6 +2432,12 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
+    /** 会话被删除时清掉与它绑定的内存态：污点标记、会话级授权。 */
+    private fun clearSessionRuntimeState(sessionId: String) {
+        TaintTracker.clear(sessionId)
+        SessionGrantStore.clearSession(sessionId)
+    }
+
     /** 停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启。 */
     private fun releaseStoppedSubAgent(sessionId: String) {
         // TaskTool 的 stop/del 已在 emit(STOPPED) 时释放过，那条路径下 release 返回 false，不会重复通知。
@@ -2728,6 +2736,7 @@ class AIAgentViewModel @Inject constructor(
         }
 
         allDeletedIds.forEach { sid ->
+            clearSessionRuntimeState(sid)
             subAgentEventBus.release(sid)
             sessionJobs[sid]?.cancel()
             sessionJobs.remove(sid)
@@ -2768,6 +2777,7 @@ class AIAgentViewModel @Inject constructor(
         val deletedIds = sessionUseCase.deleteSession(id)
 
         deletedIds.forEach { sid ->
+            clearSessionRuntimeState(sid)
             subAgentEventBus.release(sid)
             sessionJobs[sid]?.cancel()
             sessionJobs.remove(sid)

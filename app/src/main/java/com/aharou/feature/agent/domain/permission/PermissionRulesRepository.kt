@@ -92,6 +92,8 @@ class PermissionRulesRepository @Inject constructor(
      * 保持常驻订阅是因为 AI 权限评估随时要读到最新规则（不像纯 UI 列表可以暂停刷新）。
      */
     fun startWatching() {
+        // 权限决策审计（JSONL）与本仓储同域，借此处一次初始化落盘目录（幂等；依赖 App 已 FileLogger.init）。
+        DecisionAuditLog.init(context)
         watchScope.launch {
             merge(
                 fileChangeHub.watchAicode(),
@@ -151,6 +153,8 @@ class PermissionRulesRepository @Inject constructor(
             if (!file.isFile) return@withContext emptyList()
             runCatching {
                 JSON.decodeFromString<PermissionFile>(file.readText()).toRuleList()
+                    // 过滤已过期规则（如 24 小时档）：过期即视为不存在，评估与 UI 都不再看到它。
+                    .filterNot { it.isExpired() }
             }.getOrElse {
                 FileLogger.w(TAG, "读取 ${file.path} 失败: ${it.message}")
                 emptyList()

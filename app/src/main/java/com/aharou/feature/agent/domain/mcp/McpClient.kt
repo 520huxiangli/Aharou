@@ -87,10 +87,31 @@ class McpClient(
 
         val isError = (result["isError"] as? JsonPrimitive)?.contentOrNull == "true"
         val text = flattenContent(result["content"])
-        return McpCallResult(text, isError)
+        return McpCallResult(text, isError, extractImages(result["content"]))
     }
 
-    /** 把 content 数组里的块转成纯文本：text 块取 text；其它块给类型占位。 */
+    /**
+     * 把 content 数组里的 image 块抽出来（MCP 图片块：{type:"image", data:base64, mimeType}），
+     * 供上层转成应用内的图片附件——否则远端截图只能落到 [flattenContent] 的 "[image content]" 占位符。
+     */
+    private fun extractImages(content: kotlinx.serialization.json.JsonElement?): List<McpContentImage> {
+        val array = content as? JsonArray ?: return emptyList()
+        return array.mapNotNull { block ->
+            val obj = block as? JsonObject ?: return@mapNotNull null
+            if ((obj["type"] as? JsonPrimitive)?.contentOrNull != "image") return@mapNotNull null
+            val data = (obj["data"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            if (data.isBlank()) return@mapNotNull null
+            McpContentImage(
+                mimeType = (obj["mimeType"] as? JsonPrimitive)?.contentOrNull ?: "image/jpeg",
+                base64Data = data
+            )
+        }
+    }
+
+    /**
+     * 把 content 数组里的块转成纯文本：text 块取 text；其它块给类型占位
+     * （image 块的原始数据另由 [extractImages] 取走，这里只留一行占位说明）。
+     */
     private fun flattenContent(content: kotlinx.serialization.json.JsonElement?): String {
         val array = content as? JsonArray ?: return ""
         val sb = StringBuilder()
@@ -113,5 +134,12 @@ class McpClient(
     val isAlive: Boolean get() = transport.isAlive
 }
 
-/** 一次 `tools/call` 的结果：扁平化文本 + 是否报错（源自 MCP 结果的 `isError` 字段）。 */
-data class McpCallResult(val text: String, val isError: Boolean)
+/** 一次 `tools/call` 的结果：扁平化文本 + 是否报错（源自 MCP 结果的 `isError` 字段）+ 图片块。 */
+data class McpCallResult(
+    val text: String,
+    val isError: Boolean,
+    val images: List<McpContentImage> = emptyList()
+)
+
+/** MCP 结果里的一张图片（base64 + MIME）；由 [McpTool] 转成应用内的 [com.aharou.feature.agent.domain.model.AgentImage]。 */
+data class McpContentImage(val mimeType: String, val base64Data: String)
