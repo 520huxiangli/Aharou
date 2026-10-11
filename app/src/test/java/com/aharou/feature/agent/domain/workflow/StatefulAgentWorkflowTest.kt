@@ -367,7 +367,10 @@ class StatefulAgentWorkflowTest {
     private suspend fun verifyManualToolFiltering(parentId: String?, expectedNames: List<String>) {
         prepare(flow {})
         val allTools = listOf("readFile", "task", "messageParent").map { toolName ->
-            mockk<AgentTool> { every { name } returns toolName }.also { registry.register(toolName, it) }
+            mockk<AgentTool> {
+                every { name } returns toolName
+                every { deferredLoading } returns false
+            }.also { registry.register(toolName, it) }
         }
         coEvery { sessions.getSessionById("session") } returns ChatSessionEntity("session", "Session", 0, 0,
             workspacePath = "/workspace", providerId = "provider", model = "model", parentId = parentId)
@@ -386,8 +389,14 @@ class StatefulAgentWorkflowTest {
     fun manualCompactionRestoresDisabledSubagentDefinitionModeAndFilteredTools() = runTest {
         prepare(flow {})
         val definition = mockk<AgentDefinition>()
-        val readTool = mockk<AgentTool> { every { name } returns "readFile" }
-        val taskTool = mockk<AgentTool> { every { name } returns "task" }
+        val readTool = mockk<AgentTool> {
+            every { name } returns "readFile"
+            every { deferredLoading } returns false
+        }
+        val taskTool = mockk<AgentTool> {
+            every { name } returns "task"
+            every { deferredLoading } returns false
+        }
         registry.register("readFile", readTool)
         registry.register("task", taskTool)
         coEvery { sessions.getSessionById("session") } returns ChatSessionEntity("session", "Session", 0, 0,
