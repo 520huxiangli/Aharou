@@ -77,12 +77,13 @@ private fun AppSkinTokens.asDarkVariant(): AppSkinTokens {
     val textHue = text.hue()
     val textSat = text.saturation()
     val primaryLightness = (primary.lightness() + 0.14f).coerceAtMost(0.78f)
+    val primaryColor = primary.withLightness(primaryLightness)
     return copy(
-        primary = primary.withLightness(primaryLightness),
-        primaryPressed = primary.withLightness((primaryLightness + 0.08f).coerceAtMost(0.88f)),
+        primary = primaryColor,
+        primaryPressed = primaryColor.withLightness((primaryLightness + 0.08f).coerceAtMost(0.88f)),
         primarySoft = primary.copy(alpha = 0.16f),
         primarySoftPressed = primary.copy(alpha = 0.26f),
-        onPrimary = hslColor(primary.hue(), min(primary.saturation(), 0.5f), 0.10f),
+        onPrimary = readableOn(primaryColor),
         pageBackground = hslColor(pageHue, pageSat * 0.50f, 0.065f),
         card = hslColor(pageHue, pageSat * 0.45f, 0.105f),
         cardMuted = hslColor(pageHue, pageSat * 0.42f, 0.145f),
@@ -113,10 +114,11 @@ private fun AppSkinTokens.asLightVariant(): AppSkinTokens {
     val textHue = text.hue()
     val textSat = text.saturation()
     val primaryLightness = (primary.lightness() - 0.16f).coerceAtLeast(0.34f)
+    val primaryColor = primary.withLightness(primaryLightness)
     return copy(
-        primary = primary.withLightness(primaryLightness),
-        primaryPressed = primary.withLightness((primaryLightness - 0.07f).coerceAtLeast(0.26f)),
-        onPrimary = Color.White,
+        primary = primaryColor,
+        primaryPressed = primaryColor.withLightness((primaryLightness - 0.07f).coerceAtLeast(0.26f)),
+        onPrimary = readableOn(primaryColor),
         primarySoft = primary.copy(alpha = 0.14f).compositeOver(Color.White),
         primarySoftPressed = primary.copy(alpha = 0.22f).compositeOver(Color.White),
         pageBackground = hslColor(pageHue, pageSat * 0.28f, 0.955f),
