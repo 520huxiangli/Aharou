@@ -80,7 +80,7 @@ class OpenAppTool @Inject constructor(
         val target = args["target"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (target.isEmpty()) return ToolResult.Error("缺少 target", "MISSING_TARGET")
 
-        if (hostShell.mode.value == HostShellMode.UNAVAILABLE) {
+        if (hostShell.ensureMode() == HostShellMode.UNAVAILABLE) {
             return ToolResult.Error(
                 "宿主命令通道不可用：${hostShell.shizukuState.value.hint()}。" +
                     "请先安装并启动 Shizuku、在 Shizuku 里授权本应用，或给本应用 root 权限，然后重试。",

@@ -359,7 +359,7 @@ class BackupManagerImpl @Inject constructor(
         maxNetworkRetries = if (options.appSettings) generalSettingsRepository.maxNetworkRetriesSnapshot() else 6,
         enterToSend = if (options.appSettings) generalSettingsRepository.enterToSendSnapshot() else false,
         compactionThresholdPercent = if (options.appSettings) generalSettingsRepository.compactionThresholdPercentSnapshot() else 90,
-        softCompactionThresholdPercent = if (options.appSettings) generalSettingsRepository.softCompactionThresholdPercentSnapshot() else 60,
+        softCompactionThresholdPercent = if (options.appSettings) generalSettingsRepository.softCompactionThresholdPercentSnapshot() else 55,
         sendFileMaxSizeMb = if (options.appSettings) generalSettingsRepository.sendFileMaxSizeMbSnapshot() else 100,
         deleteExternalWorkspaceSessions = if (options.appSettings) generalSettingsRepository.deleteExternalWorkspaceSessionsSnapshot() else false,
         logLevel = if (options.appSettings) logSettingsRepository.snapshot() else null,

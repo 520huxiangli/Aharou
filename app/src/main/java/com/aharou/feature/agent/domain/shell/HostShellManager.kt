@@ -63,6 +63,18 @@ class HostShellManager @Inject constructor(
         shizukuManager.refreshState()
     }
 
+    /**
+     * 执行前的通道判定：root 尚未探测时先探测一次再判定。
+     *
+     * [mode] 经 combine + stateIn 异步发布，而 root 的探测结论初始为 null（未探测）；直接读
+     * `mode.value` 会把「还没探过」误当成 [HostShellMode.UNAVAILABLE]——在有 root、未装 Shizuku
+     * 的设备上，工具会据此报「未安装 Shizuku」并放弃执行，root 通道永远走不到。这里就地探测并即时判定。
+     */
+    suspend fun ensureMode(): HostShellMode {
+        if (rootShell.available.value == null) rootShell.refresh()
+        return resolve(rootShell.available.value, shizukuManager.state.value)
+    }
+
     /** 执行命令。[HostShellMode.UNAVAILABLE] 时抛异常。 */
     suspend fun run(command: String, timeoutMs: Long): ShellCommandResult {
         if (rootShell.available.value == null) rootShell.refresh()

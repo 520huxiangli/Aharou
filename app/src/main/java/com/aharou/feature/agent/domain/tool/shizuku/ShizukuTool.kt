@@ -89,7 +89,7 @@ class ShizukuTool @Inject constructor(
         val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
 
-        if (hostShell.mode.value == HostShellMode.UNAVAILABLE) {
+        if (hostShell.ensureMode() == HostShellMode.UNAVAILABLE) {
             val state = hostShell.shizukuState.value
             return ToolResult.Error(
                 "宿主命令通道不可用：${stateHint(state)}；也可以给本应用授予 root 权限后重试",

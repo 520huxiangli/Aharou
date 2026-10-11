@@ -102,6 +102,7 @@ import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.domain.tool.mode.PlanModeTool
 import com.aharou.feature.agent.domain.tool.search.WebFetchTool
 import com.aharou.feature.agent.domain.tool.search.WebSearchTool
+import com.aharou.feature.agent.domain.tool.session.SessionTool
 import com.aharou.feature.browser.BrowserTool
 import com.aharou.feature.agent.domain.workflow.ContextCompactor
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
@@ -414,7 +415,8 @@ object AgentModule {
         vdTool: VdTool,
         a11yTool: A11yTool,
         openAppTool: OpenAppTool,
-        dependencyCheckTool: DependencyCheckTool
+        dependencyCheckTool: DependencyCheckTool,
+        sessionTool: SessionTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -447,6 +449,7 @@ object AgentModule {
             register("a11y", a11yTool)
             register("open_app", openAppTool)
             register("check_dependencies", dependencyCheckTool)
+            register("sessions", sessionTool)
         }
     }
 

@@ -770,7 +770,7 @@ class SettingsViewModel @Inject constructor(
     private val _compactionThresholdPercent = MutableStateFlow(90)
     val compactionThresholdPercent: StateFlow<Int> = _compactionThresholdPercent.asStateFlow()
 
-    private val _softCompactionThresholdPercent = MutableStateFlow(60)
+    private val _softCompactionThresholdPercent = MutableStateFlow(55)
     val softCompactionThresholdPercent: StateFlow<Int> = _softCompactionThresholdPercent.asStateFlow()
 
     private val _sendFileMaxSizeMb = MutableStateFlow(100)

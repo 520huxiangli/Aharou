@@ -54,10 +54,15 @@ data class AgentTurnRequest(
     val projectRoot: String = "",
     val inputImages: List<AgentImage> = emptyList(),
     val inputAttachments: List<AgentAttachment> = emptyList(),
-    /** 非用户手打的请求（斜杠命令、后台通知合并等）：不落用户消息、不动标题。 */
+    /** 非用户手打的请求（斜杠命令、定时任务、后台通知合并等）：落 [text]、不动标题。 */
     val isAutoTrigger: Boolean = false,
     /** 子代理等场景已预设标题，跳过首条消息的标题推导与生成。 */
     val skipTitleUpdate: Boolean = false,
+    /**
+     * 自动轮（[isAutoTrigger]=true）是否落库用户消息，默认 true；手打轮次永远落库。
+     * 置 false 用于「调用方已先落过一条可见命令文本（如 /init）」的场景，避免同一轮落出两条用户消息。
+     */
+    val persistUserMessage: Boolean = true,
 )
 
 /**
@@ -168,11 +173,12 @@ class AgentTurnRunner @Inject constructor(
                     }
                 }
             }
-        } else {
+        } else if (turn.persistUserMessage) {
+            // 落用户可见文本（如 `/技能名 参数`）而非 modelRequest：技能正文只喂模型，不进聊天/历史。
             messagePersistenceUseCase.persist(
                 sessionId,
                 MessageRole.USER,
-                turn.modelRequest,
+                turn.text,
                 id = userMsgId,
                 attachments = turn.inputAttachments,
             )

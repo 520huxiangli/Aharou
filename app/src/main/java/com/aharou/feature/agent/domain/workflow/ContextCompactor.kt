@@ -59,7 +59,8 @@ class ContextCompactor @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val pathHomeResolver: PathHomeResolver
 ) {
-    private val failedMaterials = LinkedHashSet<String>()
+    // 失败材料拉黑表：key = 材料指纹，value = 最近一次失败时间。带有效期，过期后允许重试。
+    private val failedMaterials = LinkedHashMap<String, Long>()
 
     /**
      * 压缩主体（组装、token 估算、分块切分）跑的调度器。默认挑到后台，避免长历史在主线程上掉帧；
@@ -68,6 +69,9 @@ class ContextCompactor @Inject constructor(
     internal var backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default
     internal companion object {
         const val TAG = "ContextCompactor"
+
+        /** 失败材料拉黑的有效期：过期后允许对同一段历史重试，避免一次失败把这段历史长期钉死。 */
+        const val FAILED_MATERIAL_TTL_MS = 10 * 60_000L
         const val MAX_SUMMARY_BLOCKS = 32
 
         /**
@@ -272,7 +276,10 @@ class ContextCompactor @Inject constructor(
                 summaryStarted = true
                 onEvent(AgentEvent.CompactionStarted(currentTokens))
                 materialKey = materialFingerprint(sessionId, aiProvider, head)
-                check(synchronized(failedMaterials) { materialKey !in failedMaterials }) {
+                check(synchronized(failedMaterials) {
+                    val failedAt = failedMaterials[materialKey]
+                    failedAt == null || System.currentTimeMillis() - failedAt > FAILED_MATERIAL_TTL_MS
+                }) {
                     "This historical material already failed compaction; retain it without summarizing again"
                 }
                 check(CompactionText.estimateRequest(systemPrompt, tools, tail) < targetTokens) {
@@ -359,8 +366,8 @@ class ContextCompactor @Inject constructor(
             throw e
         } catch (e: Exception) {
             materialKey?.let { key -> synchronized(failedMaterials) {
-                failedMaterials.add(key)
-                if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.first())
+                failedMaterials[key] = System.currentTimeMillis()
+                if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.keys.first())
             } }
             FileLogger.e(TAG, "压缩上下文失败，保留原历史", e)
             onEvent(AgentEvent.CompactionFailed(friendlyReason(e)))

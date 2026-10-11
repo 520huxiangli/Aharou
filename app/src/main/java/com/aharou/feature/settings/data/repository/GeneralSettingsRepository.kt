@@ -61,11 +61,11 @@ class GeneralSettingsRepository @Inject constructor(
         /** 网络重试次数默认 6，与原硬编码值一致。 */
         const val DEFAULT_MAX_NETWORK_RETRIES = 6
 
-        /** 自动压缩阈值默认 95%，让大窗口模型在大多数情况下不会过早触发压缩。 */
-        const val DEFAULT_COMPACTION_THRESHOLD_PERCENT = 95
+        /** 自动压缩阈值默认 90%：早一点触发，避免晚于上游窗口溢出、落到强制恢复路径。 */
+        const val DEFAULT_COMPACTION_THRESHOLD_PERCENT = 90
 
-        /** 软精简阈值默认 60%：达到即先精简历史里的超长工具输出，不调用摘要模型。 */
-        const val DEFAULT_SOFT_COMPACTION_THRESHOLD_PERCENT = 60
+        /** 软精简阈值默认 55%：达到即先精简历史里的超长工具输出，不调用摘要模型。 */
+        const val DEFAULT_SOFT_COMPACTION_THRESHOLD_PERCENT = 55
 
         /** sendFile 单个文件大小上限默认 100MB，与原硬编码值一致。 */
         const val DEFAULT_SENDFILE_MAX_SIZE_MB = 100

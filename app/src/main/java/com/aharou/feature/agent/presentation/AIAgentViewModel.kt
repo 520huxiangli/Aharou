@@ -1939,18 +1939,21 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 执行斜杠命令：先把命令文本作为用户消息落库（进入对话上下文），再按类型派发——
-     * 内置命令走本地动作，技能则把其正文作为本轮指令触发 agent 回合。
+     * 执行斜杠命令：按类型派发——内置命令先把命令文本落库再走本地动作；
+     * 技能则触发 agent 回合，用户消息由本轮 runner 统一落库（只落 `/技能名 参数`，正文仅喂模型）。
      * 执行期间标记为命令占用（防新消息并行执行），结束后接续队列中排队的下一条。
      */
     private fun runResolvedCommand(resolved: ResolvedCommand, input: String, sessionId: String) {
         viewModelScope.launch {
             _runningCommandSessions.value = _runningCommandSessions.value + sessionId
             try {
-                messagePersistenceUseCase.persist(sessionId, MessageRole.USER, input)
-                sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
                 when (resolved) {
-                    is ResolvedCommand.Action -> resolved.handler.execute(this@AIAgentViewModel, resolved.args)
+                    is ResolvedCommand.Action -> {
+                        messagePersistenceUseCase.persist(sessionId, MessageRole.USER, input)
+                        sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
+                        resolved.handler.execute(this@AIAgentViewModel, resolved.args)
+                    }
+                    // 技能：用户消息由 runSkill 触发的本轮 runner 落库，此处不再预先落库，避免出现两条。
                     is ResolvedCommand.SkillCommand -> runSkill(resolved.skill, resolved.args)
                 }
             } finally {
@@ -1971,7 +1974,11 @@ class AIAgentViewModel @Inject constructor(
         targetSessionId: String? = null,
         isAutoTrigger: Boolean = false,
         /** 子代理等场景：已预设会话标题，跳过首条消息的标题推导/生成，保留预设标题。 */
-        skipTitleUpdate: Boolean = false
+        skipTitleUpdate: Boolean = false,
+        /** 技能等场景：request 以 `/` 开头但已由调用方处理，跳过斜杠命令再派发，避免重入死循环。 */
+        skipCommandDispatch: Boolean = false,
+        /** /init 等场景：调用方已先落过命令文本，这轮不再落用户消息，避免落出两条。 */
+        persistUserMessage: Boolean = true
     ): Job = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
         val sessionId = targetSessionId ?: ensureSession()
         if (sessionId.isBlank()) {
@@ -1986,7 +1993,7 @@ class AIAgentViewModel @Inject constructor(
                 if (previousJob == null || previousJob === currentJob || previousJob.isCompleted) break
                 previousJob.join()
             }
-            if (request.startsWith("/")) {
+            if (!skipCommandDispatch && request.startsWith("/")) {
                 slashCommandRegistry.resolve(request)?.let { command ->
                     runResolvedCommand(command, request, sessionId)
                     return@launch
@@ -2033,7 +2040,8 @@ class AIAgentViewModel @Inject constructor(
                     inputImages = inputImages,
                     inputAttachments = inputAttachments,
                     isAutoTrigger = isAutoTrigger,
-                    skipTitleUpdate = skipTitleUpdate
+                    skipTitleUpdate = skipTitleUpdate,
+                    persistUserMessage = persistUserMessage
                 )
             ).collect { event ->
                 if (sessionJobs[sessionId] !== currentJob) return@collect
@@ -2551,20 +2559,23 @@ class AIAgentViewModel @Inject constructor(
                 request = prompt,
                 projectRoot = workspaceOf(sid),
                 targetSessionId = sid,
-                isAutoTrigger = true
+                isAutoTrigger = true,
+                persistUserMessage = false
             )
         }
     }
 
-    /** 技能触发 —— 把技能正文作为本轮指令执行。 */
+    /** 技能触发 —— 技能正文仅作为模型输入，聊天里只留 `/技能名 参数`。 */
     override fun runSkill(skill: Skill, args: String) {
         val sid = _currentSessionId.value ?: return
         viewModelScope.launch {
             executeAgentRequestStream(
-                request = SlashCommandRegistry.buildSkillPrompt(skill, args),
+                request = "/${skill.name} ${args}".trim(),
+                modelRequest = SlashCommandRegistry.buildSkillPrompt(skill, args),
                 projectRoot = workspaceOf(sid),
                 targetSessionId = sid,
-                isAutoTrigger = true
+                isAutoTrigger = true,
+                skipCommandDispatch = true
             )
         }
     }

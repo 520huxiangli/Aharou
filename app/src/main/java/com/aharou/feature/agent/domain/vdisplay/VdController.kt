@@ -97,12 +97,10 @@ class VdController @Inject constructor(
     private val shotOutFile: File
         get() = File(runnerShotPath)
 
-    private val hostReady: Boolean
-        get() = hostShell.mode.value != HostShellMode.UNAVAILABLE
-
     private suspend fun exec(command: String, timeoutMs: Long = 60_000L): ShellCommandResult {
-        check(hostReady) {
-            "影子屏需要 root 或 Shizuku 就绪（当前通道：${hostShell.mode.value}，Shizuku: ${hostShell.shizukuState.value}）"
+        val mode = hostShell.ensureMode()
+        check(mode != HostShellMode.UNAVAILABLE) {
+            "影子屏需要 root 或 Shizuku 就绪（当前通道：$mode，Shizuku: ${hostShell.shizukuState.value}）"
         }
         return hostShell.run(command, timeoutMs)
     }
@@ -183,7 +181,7 @@ class VdController @Inject constructor(
 
     /** 刷新当前状态；未运行返回 null。 */
     suspend fun refresh(): VdInfo? {
-        if (!hostReady) {
+        if (hostShell.ensureMode() == HostShellMode.UNAVAILABLE) {
             _state.value = null
             return null
         }

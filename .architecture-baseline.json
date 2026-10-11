@@ -3,7 +3,7 @@
   "fileLines": {
     "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3283,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3272,
-    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3129,
+    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3140,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2058,
     "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1913,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1760,

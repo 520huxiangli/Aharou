@@ -111,7 +111,7 @@ class A11yTool @Inject constructor(
 
         // 写动作不碰用户主屏上的第三方 App：有影子屏可用就让它去影子屏。
         // 但宿主通道不可用时影子屏根本起不来，这时无障碍是唯一可行路径，放行。
-        if (action in WRITE_ACTIONS && hostShell.mode.value != HostShellMode.UNAVAILABLE) {
+        if (action in WRITE_ACTIONS && hostShell.ensureMode() != HostShellMode.UNAVAILABLE) {
             val (foregroundPkg, _) = service.foregroundPackage()
             if (foregroundPkg != null && !foregroundPkg.startsWith(context.packageName)) {
                 return ToolResult.Error(
