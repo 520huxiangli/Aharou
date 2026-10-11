@@ -10,7 +10,7 @@
 # 修改包清单/安装逻辑/镜像源后，需同步在 LinuxContainerEngine.PROVISION_VERSION 上 +1 触发存量设备重跑。
 # 注意：apk 源分支 v3.24 需与 assets 内 alpine-rootfs 版本（ContainerInstaller.INSTALL_VERSION）保持一致。
 
-PROVISION_VERSION="provision-script-v10"
+PROVISION_VERSION="provision-script-v12"
 PROVISION_SKIPPED="provision-script-skipped"
 MARKER="/.provisioned"
 
@@ -140,6 +140,12 @@ sed -i '/^gid_/d' /etc/group 2>/dev/null
 for g in $(id -G 2>/dev/null); do
     grep -q ":x:$g:" /etc/group 2>/dev/null || echo "gid_$g:x:$g:" >> /etc/group 2>/dev/null
 done
+
+# ── 基础依赖兜底：无论用户当初选了哪种初始化方式（自动 / 自定义 / 手动安装 / 退出），
+# 这里都检测一次——基础工具缺哪个补哪个，Node.js 缺了才装；全部在位则零动作（不联网）。
+# 静默失败，不阻塞进入 shell。放在 MARKER 检查之前，手动安装的设备也会被兜到。──
+ensure_base_tools || true
+ensure_runtime node node || true
 
 # 已按当前版本完成或用户选择手动安装（跳过）则直接退出
 if [ -f "$MARKER" ]; then

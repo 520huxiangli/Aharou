@@ -18,6 +18,10 @@ MIRROR=""
 # 所以由 base_pkgs() 按包管理器补——写错会让整条 install 失败（2026-09-27 真实踩过：apt 容器里装 bind-tools 直接报错）。
 BASE_PKGS="bash curl wget jq rsync git ripgrep net-tools netcat-openbsd less file"
 
+# ── 基础工具检测表：包名:可执行名（有的包名与命令名不同，如 net-tools→netstat、ripgrep→rg）。
+# 用于每次进终端时检测哪些基础工具缺失、缺了才补装。──
+BASE_TOOL_BINS="bash:bash curl:curl wget:wget jq:jq rsync:rsync git:git ripgrep:rg less:less file:file net-tools:netstat netcat-openbsd:nc"
+
 # 按当前包管理器返回完整基础包清单（含发行版专有包名的那些）。
 base_pkgs() {
     case "$PMGR" in
@@ -287,6 +291,31 @@ runtime_install() {
     else
         pkg_for "$1"
     fi
+}
+
+# ── 检测并补齐缺失的基础工具：缺哪个装哪个，全部在位时零动作（不联网、不升级已有版本）──
+ensure_base_tools() {
+    [ -z "$PMGR" ] && return 1
+    ebt_missing=""
+    for ebt_entry in $BASE_TOOL_BINS; do
+        ebt_bin="${ebt_entry##*:}"
+        command -v "$ebt_bin" >/dev/null 2>&1 || ebt_missing="$ebt_missing ${ebt_entry%%:*}"
+    done
+    [ -z "$ebt_missing" ] && return 0
+    echo "  · 检测到缺失的基础工具，正在补齐：$ebt_missing"
+    pkg_update >/dev/null 2>&1
+    pkg_add $ebt_missing
+}
+
+# ── 确保某个运行时在位：已有就跳过，缺了才装（静默补装，基础依赖兜底用）──
+# 用法：ensure_runtime <运行时名> <可执行文件名>；返回 0=已在位或补装成功，1=补装失败。
+ensure_runtime() {
+    er_runtime="$1"
+    er_bin="$2"
+    command -v "$er_bin" >/dev/null 2>&1 && return 0
+    [ -z "$PMGR" ] && return 1
+    echo "  · 未检测到 $er_bin，正在补装（$(runtime_install "$er_runtime")）..."
+    pkg_add "$(runtime_install "$er_runtime")" >/dev/null 2>&1
 }
 
 # ── 安装清单一行：名称 → 包列表（v版本，探测得到时；显示去掉 apk 的 -rN 后缀）──
@@ -762,6 +791,12 @@ install_scenario() {
 #    返回：0=完成 1=安装失败 2=用户取消（未确认清单）
 install_light_runtimes() {
     runtimes="$1"
+    # Node.js 是沙箱基础依赖（AI 引擎与 MCP 工具链要用）：无论哪个场景都装上，
+    # 场景清单里已经写了就不重复加。
+    case " $runtimes " in
+        *" node "*) ;;
+        *) runtimes="$runtimes node" ;;
+    esac
     ask_mirror
     echo ""
     echo "正在更新软件包列表..."
