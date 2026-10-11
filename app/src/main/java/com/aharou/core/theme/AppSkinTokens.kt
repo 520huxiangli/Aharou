@@ -210,6 +210,22 @@ private fun hslColor(hue: Float, saturation: Float, lightness: Float, alpha: Flo
     )
 }
 
+/** 该底色上取对比度更高的文字色（近黑或白），保证按钮文字在任意主色上都能看清。 */
+private fun readableOn(background: Color): Color {
+    val dark = hslColor(background.hue(), 0.35f, 0.10f)
+    return if (contrastRatio(Color.White, background) >= contrastRatio(dark, background)) {
+        Color.White
+    } else {
+        dark
+    }
+}
+
+private fun contrastRatio(a: Color, b: Color): Float {
+    val first = a.luminance() + 0.05f
+    val second = b.luminance() + 0.05f
+    return if (first > second) first / second else second / first
+}
+
 /**
  * 自定义皮肤：用户只给一个主色（可再给一个辅色），其余长相由这里生成。
  *
@@ -235,11 +251,7 @@ fun customSkinTokens(primary: Color, accent: Color? = null): AppSkinTokens {
         ),
         primarySoft = hslColor(hue, neutralChroma(0.55f, 0.50f), 0.945f),
         primarySoftPressed = hslColor(hue, neutralChroma(0.70f, 0.60f), 0.885f),
-        onPrimary = if (readablePrimary.luminance() > 0.45f) {
-            hslColor(hue, min(saturationValue, 0.4f), 0.12f)
-        } else {
-            Color.White
-        },
+        onPrimary = readableOn(readablePrimary),
         pageBackground = hslColor(hue, neutralChroma(0.18f, 0.12f), 0.965f),
         card = hslColor(hue, neutralChroma(0.12f, 0.08f), 0.995f),
         cardMuted = hslColor(hue, neutralChroma(0.16f, 0.10f), 0.970f),

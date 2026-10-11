@@ -104,7 +104,8 @@ object AppSkins {
             primaryPressed = Color(0xFF0CA673),
             primarySoft = Color(0xFFE5F7EF),
             primarySoftPressed = Color(0xFFD3F0E3),
-            onPrimary = Color(0xFFFFFFFF),
+            // 规范给的白字在 #10B981 上对比只有 2.5:1，低于规范自己要求的 3:1，改用深色字保证读得清。
+            onPrimary = Color(0xFF06281C),
             pageBackground = Color(0xFFF2F6F3),
             card = Color(0xFFFFFFFF),
             cardMuted = Color(0xFFF4F9F6),
