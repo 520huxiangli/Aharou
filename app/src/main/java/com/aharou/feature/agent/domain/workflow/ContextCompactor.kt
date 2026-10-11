@@ -15,6 +15,7 @@ import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.tool.AgentTool
+import com.aharou.feature.agent.domain.tool.foldStoredToolResults
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
@@ -70,8 +71,11 @@ class ContextCompactor @Inject constructor(
     internal companion object {
         const val TAG = "ContextCompactor"
 
-        /** 失败材料拉黑的有效期：过期后允许对同一段历史重试，避免一次失败把这段历史长期钉死。 */
-        const val FAILED_MATERIAL_TTL_MS = 10 * 60_000L
+        /**
+         * 失败材料拉黑的有效期：过期后允许对同一段历史重试。失败多源于固定开销或某条超长输出，
+         * 拉黑只是免得每轮白跑一次摘要；窗口期太长会把恢复路径一起堵死（用户连点重试也始终失败）。
+         */
+        const val FAILED_MATERIAL_TTL_MS = 2 * 60_000L
         const val MAX_SUMMARY_BLOCKS = 32
 
         /**
@@ -102,9 +106,9 @@ class ContextCompactor @Inject constructor(
          * 分别对应：不可压缩的开销占满目标、必须保留的内容本身超标、压缩后仍不达标、这段历史刚失败过。
          */
         const val OVERHEAD_REASON =
-            "系统提示与工具定义本身就占满了压缩目标，压缩无法达标。关掉不用的工具或插件后重试，或新建会话。"
+            "系统提示与工具定义就占满了压缩目标，没给历史留出空间。请关掉不用的 MCP 连接器或技能后重试，或换成上下文窗口更大的模型。"
         const val RETAINED_REASON =
-            "必须保留的近期内容本身就超过了压缩目标（例如一条超长消息或工具输出）。请新建会话，或删掉那条超长内容后重试。"
+            "能压缩的内容都压完了，最近这段（多为刚跑完的工具输出或图片）仍然装不下。可以新建会话接着聊，或换成上下文窗口更大的模型。"
         const val NOT_SMALLER_REASON =
             "摘要加上必须保留的内容仍装不进压缩目标。请重试，或新建会话。"
         const val ALREADY_FAILED_REASON =
@@ -258,14 +262,6 @@ class ContextCompactor @Inject constructor(
                 }
                 if (!force && !reachedHard) return@withTimeoutOrNull PreparationResult(null)
                 yield()
-                var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
-                if (force && splitIndex <= 0) splitIndex = messages.lastIndex
-                splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
-                if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
-                val head = messages.take(splitIndex)
-                val tail = messages.drop(splitIndex)
-                val material = removeCompactionPairs(head)
-                if (material.isEmpty()) return@withTimeoutOrNull PreparationResult(null)
                 // 系统提示与工具定义压不掉：它们自己就占满目标时压缩不可能达标，
                 // 直接给可操作原因，不调摘要模型，也不把这份历史记进失败名单（关掉工具后还能重试）。
                 val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
@@ -273,6 +269,28 @@ class ContextCompactor @Inject constructor(
                     onEvent(AgentEvent.CompactionFailed(OVERHEAD_REASON))
                     return@withTimeoutOrNull PreparationResult(null)
                 }
+                val tailBudget = targetTokens - fixedOverhead
+                var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
+                if (force && splitIndex <= 0) splitIndex = messages.lastIndex
+                splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
+                if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
+                // 保留段装不下时不要把整份历史判死：先把其中已落盘的超长工具输出折成引用
+                // （原件在盘上，模型能 readFile 取回），仍装不下再把切分点往后推、多交给摘要。
+                // 未配对的工具调用批次是硬边界，越过会让 tail 出现没有对应调用的工具结果。
+                var tail = messages.drop(splitIndex)
+                if (CompactionText.tokensOf(tail) >= tailBudget) {
+                    val fitted = CompactionText.fitSplitIndex(messages, splitIndex,
+                        CompactionText.unmatchedToolBatchStart(messages), tailBudget)
+                    if (fitted > splitIndex) {
+                        splitIndex = CompactionText.adjustSplitIndex(messages, fitted)
+                        if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
+                        tail = messages.drop(splitIndex)
+                    }
+                    tail = withContext(Dispatchers.IO) { foldStoredToolResults(tail, keepRecent = 0) }
+                }
+                val head = messages.take(splitIndex)
+                val material = removeCompactionPairs(head)
+                if (material.isEmpty()) return@withTimeoutOrNull PreparationResult(null)
                 summaryStarted = true
                 onEvent(AgentEvent.CompactionStarted(currentTokens))
                 materialKey = materialFingerprint(sessionId, aiProvider, head)
@@ -282,7 +300,7 @@ class ContextCompactor @Inject constructor(
                 }) {
                     "This historical material already failed compaction; retain it without summarizing again"
                 }
-                check(CompactionText.estimateRequest(systemPrompt, tools, tail) < targetTokens) {
+                check(fixedOverhead + CompactionText.tokensOf(tail) < targetTokens) {
                     "Recent task material and request overhead exceed the compaction target"
                 }
                 val headIds = head.map { it.id }.filter { it.isNotBlank() }.distinct()
@@ -557,8 +575,9 @@ internal object CompactionText {
         return index
     }
 
-    fun protectedToolBatchStart(messages: List<AgentMessage>): Int {
-        var protected = messages.size
+    /** 未配对的工具调用所在的助手消息位置：切分点越过它，tail 里就会出现没有对应调用的工具结果。 */
+    fun unmatchedToolBatchStart(messages: List<AgentMessage>): Int {
+        var start = messages.size
         messages.forEachIndexed { index, message ->
             if (message is AgentMessage.AssistantMessage && message.toolCalls.isNotEmpty()) {
                 val results = HashSet<String>()
@@ -566,14 +585,45 @@ internal object CompactionText {
                 while (next < messages.size && messages[next] is AgentMessage.ToolResultMessage) {
                     results.add((messages[next++] as AgentMessage.ToolResultMessage).id)
                 }
-                if (message.toolCalls.any { it.id !in results }) protected = minOf(protected, index)
+                if (message.toolCalls.any { it.id !in results }) start = minOf(start, index)
             }
         }
+        return start
+    }
+
+    /**
+     * 尽量多留的切分点：保留最近一批工具调用与最后一段工具结果。
+     * 只是偏好——装不下时 [fitSplitIndex] 允许越过它，只受 [unmatchedToolBatchStart] 约束。
+     */
+    fun protectedToolBatchStart(messages: List<AgentMessage>): Int {
+        var protected = unmatchedToolBatchStart(messages)
         val latest = messages.indexOfLast { it is AgentMessage.AssistantMessage && it.toolCalls.isNotEmpty() }
         if (latest >= 0) protected = minOf(protected, latest)
         val latestResult = messages.indexOfLast { it is AgentMessage.ToolResultMessage }
         if (latestResult >= 0) protected = minOf(protected, adjustSplitIndex(messages, latestResult))
         return protected
+    }
+
+    /** 纯消息内容的估算（不含系统提示与工具定义）。 */
+    fun tokensOf(messages: List<AgentMessage>): Int = ContextTokenEstimator.estimate("", messages, emptyList())
+
+    /**
+     * 装得进 [tailBudget] 的切分点：把更多内容交给摘要直到装得下，但推不过 [hard]，
+     * 也不会把 tail 削到只剩最后一条消息。装得下时原样返回 [preferred]。
+     */
+    fun fitSplitIndex(messages: List<AgentMessage>, preferred: Int, hard: Int, tailBudget: Int): Int {
+        var total = 0L
+        var index = messages.size
+        for (i in messages.indices.reversed()) {
+            val next = estimateMessage(messages[i])
+            if (total + next > tailBudget && index < messages.size) break
+            total += next
+            index = i
+        }
+        var fitted = maxOf(index, preferred).coerceAtMost(minOf(hard, messages.lastIndex))
+        // tail 以工具结果开头会带着一个已被摘要掉的调用，往后挪一格。
+        while (fitted < messages.lastIndex && messages[fitted] is AgentMessage.ToolResultMessage) fitted++
+        return fitted
     }
 
     fun outputPath(raw: String): String? {

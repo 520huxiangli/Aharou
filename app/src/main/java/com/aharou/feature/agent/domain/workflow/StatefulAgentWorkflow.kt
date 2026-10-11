@@ -300,7 +300,7 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
         val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
-            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context) }, tools = tools, onEvent = onEvent)
+            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context) }, tools = requestTools(tools), onEvent = onEvent)
         return result.compacted
     }
 
@@ -429,7 +429,7 @@ class StatefulAgentWorkflow @Inject constructor(
         // 让该分支抽成独立函数后不必在主循环里再留 4 个跨挂起点局部变量。
         val llmBudget = LlmCallBudgetState(
             baselineEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt,
-                currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), currentTools) },
+                currentContext.history.take(lastAssistantIndex.coerceAtLeast(0)), requestTools(currentTools)) },
             baselineUsage = if (currentContext.lastInputTokens > 0 && lastAssistantIndex >= 0) {
                 (currentContext.history[lastAssistantIndex] as AgentMessage.AssistantMessage).inputTokens
             } else 0
@@ -534,6 +534,9 @@ class StatefulAgentWorkflow @Inject constructor(
      * 会话是否收到了「用户打断」：peek 到就打勾并 ack 掉（一次性消费），
      * 供主循环与流式收集两处判断「用户按了停止」。
      */
+    /** 随请求发送的工具（延迟加载的 MCP 工具要 tool_search 展开过）；压缩与预算估算共用此口径。 */
+    private fun requestTools(tools: List<AgentTool>) = tools.filter { !it.deferredLoading || toolRegistry.isActivated(it.name) }
+
     private fun consumeUserInterrupt(sessionId: String?): Boolean {
         if (sessionId == null) return false
         val hits = agentNotificationCenter.peek(sessionId)
@@ -557,15 +560,16 @@ class StatefulAgentWorkflow @Inject constructor(
     ): AgentSessionState {
         var state = initialState
         val providerInUse = aiProvider
+        val promptTools = requestTools(currentTools)
         // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
         var compactedMessages = state.messages
         if (!budget.compactionAttemptFailed) {
             telemetry.compactionStart()
-            val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, state.messages, currentTools) }
+            val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, state.messages, promptTools) }
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
-                windowProvider = aiProvider, systemPrompt = systemPrompt, tools = currentTools,
+                windowProvider = aiProvider, systemPrompt = systemPrompt, tools = promptTools,
                 currentInputTokens = ContextTokenEstimator.forCompactionTrigger(estimate, budget.baselineEstimate, budget.baselineUsage)) { event ->
                 if (event is AgentEvent.CompactionFailed) budget.compactionAttemptFailed = true
                 emit(event)
@@ -578,7 +582,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.baselineEstimate = 0
             }
         }
-        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, compactedMessages, currentTools) }
+        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, compactedMessages, promptTools) }
         val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
         emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
         if (predictedInput >= inputBudget) {
@@ -652,11 +656,6 @@ class StatefulAgentWorkflow @Inject constructor(
             var samplingLoopCut = false
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。
             var userInterruptCut = false
-            // 延迟加载的工具（MCP）只有被 tool_search 展开过才进 tools 数组：
-            // 每轮重新过滤，命中之后下一轮就能直接调用。
-            val promptTools = currentTools.filter {
-                !it.deferredLoading || toolRegistry.isActivated(it.name)
-            }
             callId = telemetry.llmRequest(providerInUse.providerId, providerInUse.model, messagesToSend.size, promptTools.size, predictedInput)
             providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
                 .takeWhile { !samplingLoopCut && !userInterruptCut }
@@ -739,7 +738,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.overflowRecoveryAttempted = true
                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
                     currentContext.sessionId, force = true, windowProvider = aiProvider,
-                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { emit(it) }
+                    systemPrompt = systemPrompt, tools = promptTools, currentInputTokens = predictedInput) { emit(it) }
                 if (recovery.compacted) {
                     state = state.copy(messages = recovery.messages)
                     budget.baselineUsage = 0
@@ -771,7 +770,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.overflowRecoveryAttempted = true
                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
                     currentContext.sessionId, force = true, windowProvider = aiProvider,
-                    systemPrompt = systemPrompt, tools = currentTools, currentInputTokens = predictedInput) { emit(it) }
+                    systemPrompt = systemPrompt, tools = promptTools, currentInputTokens = predictedInput) { emit(it) }
                 if (recovery.compacted) {
                     state = state.copy(messages = recovery.messages)
                     budget.baselineUsage = 0

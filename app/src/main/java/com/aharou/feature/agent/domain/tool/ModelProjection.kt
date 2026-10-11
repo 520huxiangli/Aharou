@@ -22,10 +22,10 @@ private const val KEEP_RECENT_TOOL_RESULTS = 8
  * 模型需要内容时能自己 readFile 取回来，语义不丢；没落盘（本来就不长）的保持原样。
  * 结果里已无 `output_path` 的条目不会被重复折叠，所以每轮调用是幂等的。
  */
-fun foldStoredToolResults(messages: List<AgentMessage>): List<AgentMessage> {
+fun foldStoredToolResults(messages: List<AgentMessage>, keepRecent: Int = KEEP_RECENT_TOOL_RESULTS): List<AgentMessage> {
     val toolIndexes = messages.indices.filter { messages[it] is AgentMessage.ToolResultMessage }
-    if (toolIndexes.size <= KEEP_RECENT_TOOL_RESULTS) return messages
-    val foldable = toolIndexes.dropLast(KEEP_RECENT_TOOL_RESULTS).toHashSet()
+    if (toolIndexes.size <= keepRecent) return messages
+    val foldable = toolIndexes.dropLast(keepRecent).toHashSet()
     var changed = false
     val folded = messages.mapIndexed { index, message ->
         if (index !in foldable) return@mapIndexed message
