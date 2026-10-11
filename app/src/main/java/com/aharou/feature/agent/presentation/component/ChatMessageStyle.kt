@@ -25,11 +25,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.platform.ClipEntry
@@ -43,6 +45,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.feature.agent.data.repository.ChatAppearance
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
@@ -85,13 +88,67 @@ internal object ChatStyle {
     val rowIconSize = 16.dp
 }
 
-/** 用户消息底色：浅色主题下即主题容器色（默认蓝即参考图那种淡蓝），深色下自动变深。 */
-@Composable
-internal fun chatUserBubbleColor(): Color = MaterialTheme.colorScheme.primaryContainer
+/** 聊天气泡外观由上层下发，避免每个消息行各自去读一遍偏好。 */
+val LocalChatAppearance = staticCompositionLocalOf { ChatAppearance() }
 
-/** 用户消息文字：压在浅药丸上的深色文字，不再用白字反白。 */
+/** 底色之上取对比色：亮度阈值法，用户选任何颜色文字都读得清。 */
+private fun bubbleContentColor(background: Color): Color =
+    if (background.luminance() > 0.5f) Color.Black.copy(alpha = 0.87f) else Color.White
+
+private fun customBubbleColor(
+    followsSkin: Boolean,
+    color: Long?,
+    alpha: Float
+): Color? = color?.takeIf { !followsSkin }?.let { Color(it).copy(alpha = alpha) }
+
+/** 用户消息底色：跟随皮肤时用主题容器色（默认蓝那种淡蓝，深色下自动变深），自定义时用选定的颜色与不透明度。 */
 @Composable
-internal fun chatUserBubbleTextColor(): Color = MaterialTheme.colorScheme.onPrimaryContainer
+internal fun chatUserBubbleColor(): Color {
+    val appearance = LocalChatAppearance.current
+    return customBubbleColor(
+        appearance.userBubbleFollowsSkin,
+        appearance.userBubbleColor,
+        appearance.userBubbleAlpha
+    ) ?: MaterialTheme.colorScheme.primaryContainer
+}
+
+/** 用户消息文字：压在浅药丸上的深色文字，不再用白字反白；自定义底色时自动按亮度取对比色。 */
+@Composable
+internal fun chatUserBubbleTextColor(): Color {
+    val appearance = LocalChatAppearance.current
+    return appearance.userBubbleColor
+        ?.takeIf { !appearance.userBubbleFollowsSkin }
+        ?.let { bubbleContentColor(Color(it)) }
+        ?: MaterialTheme.colorScheme.onPrimaryContainer
+}
+
+/** 助手是否也套气泡：默认关，保持扁平的文档流观感。 */
+@Composable
+internal fun chatAssistantBubbleEnabled(): Boolean = LocalChatAppearance.current.assistantBubbleEnabled
+
+/** 助手消息底色：跟随皮肤时用轻微凹陷的表面色。 */
+@Composable
+internal fun chatAssistantBubbleColor(): Color {
+    val appearance = LocalChatAppearance.current
+    return customBubbleColor(
+        appearance.assistantBubbleFollowsSkin,
+        appearance.assistantBubbleColor,
+        appearance.assistantBubbleAlpha
+    ) ?: MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+}
+
+@Composable
+internal fun chatAssistantBubbleTextColor(): Color {
+    val appearance = LocalChatAppearance.current
+    return appearance.assistantBubbleColor
+        ?.takeIf { !appearance.assistantBubbleFollowsSkin }
+        ?.let { bubbleContentColor(Color(it)) }
+        ?: MaterialTheme.colorScheme.onSurface
+}
+
+/** 气泡圆角：用户与助手共用同一个值，改一处两边同步。 */
+@Composable
+internal fun chatBubbleCorner(): Dp = LocalChatAppearance.current.bubbleCornerDp.dp
 
 /** 1px 细线：扁平风格里唯一的分组手段。 */
 @Composable

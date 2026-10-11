@@ -370,7 +370,7 @@ internal fun AgentMessageItem(
                         } else if (isUser) {
                             // 用户消息：右对齐浅色药丸 + 深色文字（不再整块主题色反白）。
                             Surface(
-                                shape = RoundedCornerShape(ChatStyle.bubbleCorner),
+                                shape = RoundedCornerShape(chatBubbleCorner()),
                                 color = chatUserBubbleColor(),
                                 modifier = Modifier.widthIn(max = maxUserBubbleWidth)
                             ) {
@@ -386,6 +386,32 @@ internal fun AgentMessageItem(
                                             color = chatUserBubbleTextColor(),
                                             style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
                                             modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)
+                                        )
+                                    }
+                                }
+                            }
+                        } else if (chatAssistantBubbleEnabled()) {
+                            // 打开「助手气泡」后，助手正文也套一层药丸，与用户消息对称。
+                            Surface(
+                                shape = RoundedCornerShape(chatBubbleCorner()),
+                                color = chatAssistantBubbleColor(),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                SelectionContainer {
+                                    CompositionLocalProvider(
+                                        LocalTextSelectionColors provides TextSelectionColors(
+                                            handleColor = MaterialTheme.colorScheme.primary,
+                                            backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                        )
+                                    ) {
+                                        MarkdownContent(
+                                            text = contentSlice ?: message.content,
+                                            color = chatAssistantBubbleTextColor(),
+                                            modifier = Modifier.padding(
+                                                horizontal = Spacing.md,
+                                                vertical = Spacing.sm
+                                            ),
+                                            cache = markdownCache,
                                         )
                                     }
                                 }

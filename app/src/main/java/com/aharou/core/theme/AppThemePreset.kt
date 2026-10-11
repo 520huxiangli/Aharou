@@ -20,7 +20,7 @@ data class AppThemeColors(
  * 推导整套配色所需的最小种子集。
  *
  * 只描述"这套主题长什么样"的 10 个关键色，其余 Material 槽位与 [AppSemanticColors]
- * 的 23 个语义色全部由 [deriveThemeColors] 推导，新增主题不必逐个手调。
+ * 的 23 个语义色全部由 [deriveDynamicThemeColors] 推导，供系统莫奈取色使用。
  */
 data class AppThemeSeed(
     val primary: Color,
@@ -36,137 +36,83 @@ data class AppThemeSeed(
 )
 
 /**
- * 可选的应用配色主题。
+ * 可选的应用皮肤：由 [AppSkinDefinition] 展开成浅色与深色两版。
  *
- * [DEFAULT] 直接沿用手调的品牌蓝配色，其余主题由种子推导——保证升级后默认观感不变。
+ * 皮肤自带明暗（[brightness]），另一侧按需派生——所以用户既能直接用皮肤自带的那一版，
+ * 也能用手动明暗开关取另一版。
  */
 data class AppThemePreset(
     val id: String,
     @param:StringRes val nameRes: Int,
+    /** 自定义皮肤的名字；预设为 null，显示时走 [nameRes]。 */
+    val customName: String? = null,
+    val brightness: SkinBrightness,
+    val lightSkin: AppSkinTokens,
+    val darkSkin: AppSkinTokens,
     val light: AppThemeColors,
     val dark: AppThemeColors
 ) {
     /** 选择器色块预览：主色与页面底色。 */
     fun previewColors(dark: Boolean): Pair<Color, Color> {
-        val colors = if (dark) this.dark else this.light
-        return colors.colorScheme.primary to colors.semanticColors.pageBackground
+        val skin = if (dark) darkSkin else lightSkin
+        return skin.primary to skin.pageBackground
     }
 
     companion object {
-        /** 品牌蓝：历史默认配色，颜色值逐个手调，不走推导。 */
-        val DEFAULT = AppThemePreset(
-            id = "default",
-            nameRes = R.string.theme_preset_default,
-            light = AppThemeColors(LightColorScheme, LightSemanticColors),
-            dark = AppThemeColors(DarkColorScheme, DarkSemanticColors)
-        )
+        val ALL_PRESETS: List<AppThemePreset> = AppSkins.all.map { fromDefinition(it) }
 
-        /** 咖啡：暖赤陶 + 米白纸感，取自 Anthropic 品牌色。 */
-        val COFFEE = fromSeeds(
-            id = "coffee",
-            nameRes = R.string.theme_preset_coffee,
-            lightSeed = AppThemeSeed(
-                primary = Color(0xFFC15F3C),
-                secondary = Color(0xFF6A9BCC),
-                tertiary = Color(0xFF788C5D),
-                background = Color(0xFFF5F3EC),
-                surface = Color(0xFFFCFBF7),
-                surfaceVariant = Color(0xFFEDEAE0),
-                onSurface = Color(0xFF141413),
-                onSurfaceVariant = Color(0xFF6B6761),
-                outline = Color(0xFFB0AEA5),
-                outlineVariant = Color(0xFFE4E0D4)
-            ),
-            darkSeed = AppThemeSeed(
-                primary = Color(0xFFE08A6B),
-                secondary = Color(0xFF8FB4DB),
-                tertiary = Color(0xFF9AAF7C),
-                background = Color(0xFF1A1917),
-                surface = Color(0xFF232220),
-                surfaceVariant = Color(0xFF2E2C29),
-                onSurface = Color(0xFFFAF9F5),
-                onSurfaceVariant = Color(0xFFB0AEA5),
-                outline = Color(0xFF6B6862),
-                outlineVariant = Color(0xFF373734)
+        val DEFAULT: AppThemePreset = findById(null)
+
+        fun findById(id: String?): AppThemePreset {
+            val definition = AppSkins.findByIdOrNull(id) ?: AppSkins.Default
+            return ALL_PRESETS.first { it.id == definition.id }
+        }
+
+        /** 预设与用户自定义皮肤统一查找；都找不到时回退默认皮肤。 */
+        fun findById(id: String?, customSkins: List<CustomSkin>): AppThemePreset =
+            customSkins.firstOrNull { it.id == id }?.toThemePreset() ?: findById(id)
+
+        /** 自定义皮肤走这里构造，与预设共用同一套明暗展开逻辑。 */
+        internal fun custom(id: String, name: String, skin: AppSkinTokens): AppThemePreset =
+            fromTokens(
+                id = id,
+                nameRes = R.string.skin_custom,
+                customName = name,
+                brightness = SkinBrightness.LIGHT,
+                tokens = skin
             )
-        )
 
-        /** 石墨：中性冷灰，弱化色彩干扰。 */
-        val GRAPHITE = fromSeeds(
-            id = "graphite",
-            nameRes = R.string.theme_preset_graphite,
-            lightSeed = AppThemeSeed(
-                primary = Color(0xFF3F4650),
-                secondary = Color(0xFF6B7280),
-                tertiary = Color(0xFF0E7490),
-                background = Color(0xFFF2F3F5),
-                surface = Color(0xFFFBFBFC),
-                surfaceVariant = Color(0xFFE9EAED),
-                onSurface = Color(0xFF17191C),
-                onSurfaceVariant = Color(0xFF5C6169),
-                outline = Color(0xFFA6ABB3),
-                outlineVariant = Color(0xFFDFE1E5)
-            ),
-            darkSeed = AppThemeSeed(
-                primary = Color(0xFFB9C0CC),
-                secondary = Color(0xFF8B93A0),
-                tertiary = Color(0xFF22D3EE),
-                background = Color(0xFF101114),
-                surface = Color(0xFF191B1F),
-                surfaceVariant = Color(0xFF23262B),
-                onSurface = Color(0xFFECEDEF),
-                onSurfaceVariant = Color(0xFF9BA1AA),
-                outline = Color(0xFF5E646D),
-                outlineVariant = Color(0xFF2F333A)
+        private fun fromDefinition(definition: AppSkinDefinition): AppThemePreset =
+            fromTokens(
+                id = definition.id,
+                nameRes = definition.nameRes,
+                customName = null,
+                brightness = definition.brightness,
+                tokens = definition.tokens
             )
-        )
 
-        /** 森林：低饱和绿，长时间阅读代码不刺眼。 */
-        val FOREST = fromSeeds(
-            id = "forest",
-            nameRes = R.string.theme_preset_forest,
-            lightSeed = AppThemeSeed(
-                primary = Color(0xFF15803D),
-                secondary = Color(0xFF0F766E),
-                tertiary = Color(0xFFB45309),
-                background = Color(0xFFF1F7F2),
-                surface = Color(0xFFFBFDFB),
-                surfaceVariant = Color(0xFFE3EFE5),
-                onSurface = Color(0xFF12211A),
-                onSurfaceVariant = Color(0xFF4F6357),
-                outline = Color(0xFF9CB4A3),
-                outlineVariant = Color(0xFFD8E7DB)
-            ),
-            darkSeed = AppThemeSeed(
-                primary = Color(0xFF4ADE80),
-                secondary = Color(0xFF2DD4BF),
-                tertiary = Color(0xFFFBBF24),
-                background = Color(0xFF0A1410),
-                surface = Color(0xFF12201A),
-                surfaceVariant = Color(0xFF1B2E24),
-                onSurface = Color(0xFFE6F2E9),
-                onSurfaceVariant = Color(0xFF9CB8A6),
-                outline = Color(0xFF567A63),
-                outlineVariant = Color(0xFF263B2F)
-            )
-        )
-
-        val ALL_PRESETS = listOf(DEFAULT, COFFEE, GRAPHITE, FOREST)
-
-        fun findById(id: String?): AppThemePreset =
-            ALL_PRESETS.firstOrNull { it.id == id } ?: DEFAULT
-
-        private fun fromSeeds(
+        /** 把「皮肤自带明暗的那一版」展开成浅色与深色两套配色。 */
+        private fun fromTokens(
             id: String,
             @StringRes nameRes: Int,
-            lightSeed: AppThemeSeed,
-            darkSeed: AppThemeSeed
-        ) = AppThemePreset(
-            id = id,
-            nameRes = nameRes,
-            light = deriveThemeColors(lightSeed, dark = false),
-            dark = deriveThemeColors(darkSeed, dark = true)
-        )
+            customName: String?,
+            brightness: SkinBrightness,
+            tokens: AppSkinTokens
+        ): AppThemePreset {
+            val isLightSkin = brightness == SkinBrightness.LIGHT
+            val lightSkin = if (isLightSkin) tokens else tokens.oppositeVariant(brightness)
+            val darkSkin = if (isLightSkin) tokens.oppositeVariant(brightness) else tokens
+            return AppThemePreset(
+                id = id,
+                nameRes = nameRes,
+                customName = customName,
+                brightness = brightness,
+                lightSkin = lightSkin,
+                darkSkin = darkSkin,
+                light = lightSkin.toThemeColors(dark = false),
+                dark = darkSkin.toThemeColors(dark = true)
+            )
+        }
     }
 }
 
@@ -186,13 +132,6 @@ private object FunctionalHues {
     val DarkInfo = Color(0xFF38BDF8)
     val DarkError = Color(0xFFF87171)
 }
-
-/** 由种子推导完整的 Material 槽位与语义色。 */
-fun deriveThemeColors(seed: AppThemeSeed, dark: Boolean): AppThemeColors =
-    AppThemeColors(
-        colorScheme = deriveColorScheme(seed, dark),
-        semanticColors = deriveSemanticColors(seed, dark)
-    )
 
 /**
  * 莫奈取色：系统只提供 Material 槽位，语义色需要从中反推，否则会出现

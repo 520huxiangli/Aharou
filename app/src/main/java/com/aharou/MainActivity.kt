@@ -13,7 +13,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -71,8 +70,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.aharou.core.theme.AIEditorTheme
-import com.aharou.core.theme.AppThemePreset
 import com.aharou.core.ui.BetaWatermark
 import com.aharou.core.ui.ImageSource
 import com.aharou.core.ui.ImageViewerHost
@@ -108,7 +105,6 @@ import com.aharou.feature.onboarding.presentation.OnboardingTargetRegistry
 import com.aharou.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceWakeSettingsRepository
 import com.aharou.feature.voice.call.VoiceCallService
-import com.aharou.feature.settings.data.repository.AppThemeMode
 import com.aharou.feature.settings.data.repository.BackgroundSettingsRepository
 import com.aharou.feature.settings.data.repository.ScreenOnSettingsRepository
 import com.aharou.feature.settings.data.repository.ThemeSettingsRepository
@@ -116,7 +112,9 @@ import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.presentation.UpdateCheckUiState
 import com.aharou.feature.settings.presentation.component.githubReleaseUrl
 import com.aharou.feature.settings.presentation.component.installDownloadedApk
+import com.aharou.feature.settings.presentation.component.AppThemeHost
 import com.aharou.feature.settings.presentation.component.SettingsScreen
+import com.aharou.feature.settings.presentation.component.rememberAppAppearance
 import com.aharou.feature.settings.presentation.component.UpdateCheckDialog
 import com.aharou.feature.settings.presentation.component.decodeBackgroundBitmap
 import com.aharou.feature.settings.presentation.component.openUrl
@@ -360,27 +358,15 @@ class MainActivity : ComponentActivity() {
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         }
         setContent {
-            val themeMode by themeSettings.themeModeFlow.collectAsStateWithLifecycle(initialValue = AppThemeMode.AUTO)
-            val themePresetId by themeSettings.themePresetIdFlow.collectAsStateWithLifecycle(initialValue = null)
-            val dynamicColor by themeSettings.dynamicColorFlow.collectAsStateWithLifecycle(initialValue = false)
-            val systemDarkTheme = isSystemInDarkTheme()
-            val darkTheme = when (themeMode) {
-                AppThemeMode.AUTO -> systemDarkTheme
-                AppThemeMode.DARK -> true
-                AppThemeMode.LIGHT -> false
-            }
+            val appearance = rememberAppAppearance(themeSettings)
             val view = LocalView.current
             SideEffect {
                 val controller = WindowCompat.getInsetsController(window, view)
-                controller.isAppearanceLightStatusBars = !darkTheme
-                controller.isAppearanceLightNavigationBars = !darkTheme
+                controller.isAppearanceLightStatusBars = !appearance.darkTheme
+                controller.isAppearanceLightNavigationBars = !appearance.darkTheme
             }
 
-            AIEditorTheme(
-                darkTheme = darkTheme,
-                preset = AppThemePreset.findById(themePresetId),
-                dynamicColor = dynamicColor
-            ) {
+            AppThemeHost(appearance) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

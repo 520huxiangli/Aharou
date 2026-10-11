@@ -40,10 +40,27 @@ import com.aharou.core.theme.AppThemePreset
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.isDynamicColorSupported
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aharou.core.theme.CustomSkin
 import com.aharou.core.ui.AppSwitch
+import com.aharou.feature.agent.data.repository.ChatAppearance
+import com.aharou.feature.agent.data.repository.ChatAppearanceRepository
 import com.aharou.feature.settings.data.repository.AppThemeMode
+import com.aharou.feature.settings.data.repository.ThemeSettingsRepository
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
+import compose.icons.feathericons.Plus
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.launch
 
 /**
  * 外观主题页：明暗模式、配色方案、莫奈取色与背景图。
@@ -64,7 +81,21 @@ internal fun ThemeSettingsSection(
     onRemoveBackgroundImage: () -> Unit
 ) {
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val activePreset = AppThemePreset.findById(selectedPresetId)
+    val context = LocalContext.current
+    val entryPoint = remember(context) {
+        EntryPointAccessors.fromApplication(context.applicationContext, ThemeSkinEntryPoint::class.java)
+    }
+    val repository = entryPoint.themeSettingsRepository()
+    val chatRepository = entryPoint.chatAppearanceRepository()
+    val customSkins by repository.customSkinsFlow
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val chatAppearance by chatRepository.settingsFlow
+        .collectAsStateWithLifecycle(initialValue = ChatAppearance())
+    val activePreset = AppThemePreset.findById(selectedPresetId, customSkins)
+    val scope = rememberCoroutineScope()
+    var editorVisible by remember { mutableStateOf(false) }
+    var editorTarget by remember { mutableStateOf<CustomSkin?>(null) }
+    var chatSheetVisible by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -123,12 +154,67 @@ internal fun ThemeSettingsSection(
             AppThemePreset.ALL_PRESETS.forEach { preset ->
                 PresetChip(
                     preset = preset,
+                    label = stringResource(preset.nameRes),
                     darkTheme = isDarkTheme,
                     isSelected = preset.id == activePreset.id,
                     enabled = !dynamicColorEnabled,
                     onSelect = { onPresetSelected(preset.id) }
                 )
             }
+            customSkins.forEach { custom ->
+                val customPreset = remember(custom) { custom.toThemePreset() }
+                val isCustomSelected = customPreset.id == activePreset.id
+                PresetChip(
+                    preset = customPreset,
+                    label = custom.name.ifBlank { stringResource(R.string.skin_custom) },
+                    darkTheme = isDarkTheme,
+                    isSelected = isCustomSelected,
+                    enabled = !dynamicColorEnabled,
+                    // 已选中的自定义皮肤再点一次就进编辑器，省得在窄 chip 上再塞一个编辑图标。
+                    onSelect = {
+                        if (isCustomSelected) {
+                            editorTarget = custom
+                            editorVisible = true
+                        } else {
+                            onPresetSelected(customPreset.id)
+                        }
+                    }
+                )
+            }
+            AddCustomSkinChip(
+                enabled = !dynamicColorEnabled,
+                onClick = {
+                    editorTarget = null
+                    editorVisible = true
+                }
+            )
+        }
+
+        Spacer(Modifier.height(Spacing.sm))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !dynamicColorEnabled) { chatSheetVisible = true }
+                .padding(horizontal = Spacing.lg, vertical = Spacing.md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.chat_appearance_title),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = if (chatAppearance.userBubbleFollowsSkin && !chatAppearance.assistantBubbleEnabled) {
+                    stringResource(R.string.chat_appearance_follow_skin)
+                } else {
+                    stringResource(R.string.skin_custom)
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         Spacer(Modifier.height(Spacing.lg))
@@ -177,6 +263,32 @@ internal fun ThemeSettingsSection(
             onAlphaChange = onBackgroundAlphaChange,
             onRemove = onRemoveBackgroundImage
         )
+
+        if (editorVisible) {
+            SkinEditorSheet(
+                editing = editorTarget,
+                onDismiss = { editorVisible = false },
+                onSave = { skin ->
+                    scope.launch { repository.upsertCustomSkin(skin) }
+                    editorVisible = false
+                },
+                onDelete = { id ->
+                    scope.launch { repository.deleteCustomSkin(id) }
+                    editorVisible = false
+                }
+            )
+        }
+
+        if (chatSheetVisible) {
+            ChatAppearanceSheet(
+                current = chatAppearance,
+                onDismiss = { chatSheetVisible = false },
+                onSave = { next ->
+                    scope.launch { chatRepository.update { next } }
+                    chatSheetVisible = false
+                }
+            )
+        }
     }
 }
 
@@ -198,6 +310,7 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun PresetChip(
     preset: AppThemePreset,
+    label: String,
     darkTheme: Boolean,
     isSelected: Boolean,
     enabled: Boolean,
@@ -248,11 +361,46 @@ private fun PresetChip(
             }
             Spacer(Modifier.width(Spacing.sm))
             Text(
-                text = stringResource(preset.nameRes),
+                text = label,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
             )
         }
     }
+}
+
+/** 「＋ 自定义皮肤」入口：点开就是取色编辑器。 */
+@Composable
+private fun AddCustomSkinChip(enabled: Boolean, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(Radius.pill)
+    Row(
+        modifier = Modifier
+            .clip(shape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), shape)
+            .padding(horizontal = Spacing.md, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = FeatherIcons.Plus,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.width(Spacing.xs))
+        Text(
+            text = stringResource(R.string.skin_custom_add),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+/** 主题页直读仓库：这条链路不经过行数已满的 SettingsViewModel。 */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ThemeSkinEntryPoint {
+    fun themeSettingsRepository(): ThemeSettingsRepository
+    fun chatAppearanceRepository(): ChatAppearanceRepository
 }

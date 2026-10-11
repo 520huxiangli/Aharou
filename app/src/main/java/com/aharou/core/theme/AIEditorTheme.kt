@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -29,14 +30,58 @@ object Spacing {
     val xxl = 32.dp
 }
 
+/** 圆角档位集合。圆角是皮肤的性格参数，整套一起平移，禁止与别的皮肤混搭。 */
+data class AppRadiusSet(
+    val xs: Dp,
+    val sm: Dp,
+    val md: Dp,
+    val mdLarge: Dp,
+    val lg: Dp,
+    val xl: Dp
+) {
+    companion object {
+        /** 规范青蓝基准（8 / 12 / 16）折算到本项目既有档位后的取值。 */
+        val Base = AppRadiusSet(
+            xs = 4.dp,
+            sm = 8.dp,
+            md = 10.dp,
+            mdLarge = 12.dp,
+            lg = 14.dp,
+            xl = 16.dp
+        )
+
+        fun scaled(scale: Float): AppRadiusSet {
+            if (scale == 1f) return Base
+            fun step(value: Float) = (value * scale).dp
+            return AppRadiusSet(
+                xs = step(4f),
+                sm = step(8f),
+                md = step(10f),
+                mdLarge = step(12f),
+                lg = step(14f),
+                xl = step(16f)
+            )
+        }
+    }
+}
+
+val LocalAppRadius = staticCompositionLocalOf { AppRadiusSet.Base }
+
+/** 圆角随当前皮肤缩放；pill 是完整胶囊，不参与缩放。 */
 object Radius {
-    val xs = 4.dp
-    val sm = 8.dp
-    val md = 10.dp
-    val mdLarge = 12.dp
-    val lg = 14.dp
-    val xl = 16.dp
-    val pill = 999.dp
+    val xs: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.xs
+    val sm: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.sm
+    val md: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.md
+    val mdLarge: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.mdLarge
+    val lg: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.lg
+    val xl: Dp
+        @Composable @ReadOnlyComposable get() = LocalAppRadius.current.xl
+    val pill: Dp get() = 999.dp
 }
 
 object Brand {
@@ -131,6 +176,14 @@ val MaterialTheme.semanticColors: AppSemanticColors
     @Composable
     @ReadOnlyComposable
     get() = LocalAppSemanticColors.current
+
+/** 当前皮肤的长相参数，供需要 token 原值（光晕、渐变、投影）的组件直接取用。 */
+val LocalAppSkin = staticCompositionLocalOf { AppSkins.Default.tokens }
+
+val MaterialTheme.appSkin: AppSkinTokens
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalAppSkin.current
 
 /** Git 模块统一 8 色泳道调色板 */
 object GitLanePalette {
@@ -297,7 +350,17 @@ fun AIEditorTheme(
         }
     }
 
-    CompositionLocalProvider(LocalAppSemanticColors provides themeColors.semanticColors) {
+    // 莫奈取色只改颜色，皮肤仍负责圆角性格与光晕质感，所以这里始终取当前预设的皮肤。
+    val skin = if (darkTheme) preset.darkSkin else preset.lightSkin
+    val radius = remember(skin) { AppRadiusSet.scaled(skin.radiusScale) }
+    val motion = rememberAppMotion()
+
+    CompositionLocalProvider(
+        LocalAppSemanticColors provides themeColors.semanticColors,
+        LocalAppSkin provides skin,
+        LocalAppRadius provides radius,
+        LocalAppMotion provides motion
+    ) {
         MaterialTheme(
             colorScheme = themeColors.colorScheme,
             typography = AppTypography,
