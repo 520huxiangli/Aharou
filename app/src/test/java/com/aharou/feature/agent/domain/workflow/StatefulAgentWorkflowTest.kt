@@ -101,10 +101,10 @@ class StatefulAgentWorkflowTest {
         memoryCurator = mockk(),
         fileAccess = mockk(),
         ocrEngine = mockk(),
-        // vault 在结果脱敏路径上会被调到；不打桩会抛 MockKException。原样返回/无占位符也贴近空库的真实行为。
-        vault = mockk {
+        // vault 在结果脱敏与占位符把关路径上会被调到。用 relaxed mock 兜住全部方法（未打桩的
+        // hasPlaceholders 默认即 false），只把 redact 显式打桩成原样返回 —— 等价于空库的真实行为。
+        vault = mockk(relaxed = true) {
             every { redact(any()) } answers { firstArg<String>() }
-            every { hasPlaceholders(any()) } returns false
         }
     ), recordPrivateCalls = true)
 
@@ -118,6 +118,8 @@ class StatefulAgentWorkflowTest {
         every { provider.model } returns "model"
         every { provider.completeStream(any(), any(), any(), any()) } returns chunks
         every { prompts.build(any()) } returns "system"
+        // 卡死提示改为文件驱动后，workflow 首次用到时会 resolvePrompt；不打桩会抛 MockKException。
+        every { prompts.resolvePrompt(any()) } returns "（测试）你在重复同一个动作"
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata("model", contextTokens = 100_000, supportsVision = true)
         coEvery { compactor.compactIfNeeded(any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             CompactionResult(firstArg(), false)
