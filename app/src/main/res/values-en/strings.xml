@@ -2608,6 +2608,14 @@
     <string name="settings_remote_device_port">Port</string>
     <string name="settings_remote_device_port_invalid">Port must be between 1024 and 65535</string>
     <string name="settings_remote_device_always_ask">Always confirm remote actions</string>
+    <string name="settings_remote_device_allow_public">Allow public peers (cross-network)</string>
+    <string name="settings_remote_device_allow_public_hint">Off: same LAN only. On: accept cross-network peers (e.g. IPv6). Inbound access then relies on the pairing code alone</string>
+    <string name="settings_remote_device_pair_no_expiry">This code does not expire; a new one is issued after each successful pairing</string>
+    <string name="settings_remote_device_assist_address">Assist address (send to the helper)</string>
+    <string name="settings_remote_device_copy">Copy</string>
+    <string name="settings_remote_device_assist_title">Accept assistance</string>
+    <string name="settings_remote_device_accept_assist">Connect to another device</string>
+    <string name="settings_remote_device_accept_assist_hint">Enter the assist address and 6-digit code from the other device</string>
     <string name="settings_remote_device_pair_code">Generate pairing code</string>
     <string name="settings_remote_device_pair_hint">Enter this 6-digit code in Aharou on the other device to pair</string>
     <string name="settings_remote_device_pair_remaining">Expires in %1$s</string>

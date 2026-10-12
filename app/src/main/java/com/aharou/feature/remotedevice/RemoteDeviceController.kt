@@ -3,6 +3,7 @@ package com.aharou.feature.remotedevice
 import android.content.Context
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
+import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.remotedevice.domain.RemoteActionCatalog
 import com.aharou.feature.remotedevice.domain.RemoteDeviceConfig
 import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
@@ -11,12 +12,23 @@ import com.aharou.feature.remotedevice.domain.RemotePairingStore
 import com.aharou.feature.remotedevice.server.RemoteMcpServer
 import com.aharou.feature.remotedevice.server.RemoteServerState
 import com.aharou.feature.remotedevice.server.localIpv4Addresses
+import com.aharou.feature.remotedevice.server.localIpv6Addresses
 import com.aharou.feature.remotedevice.service.RemoteDeviceService
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.net.HttpURLConnection
+import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /** 设置页要展示的一份状态快照。 */
 data class RemoteDeviceUiState(
@@ -46,11 +58,16 @@ class RemoteDeviceController @Inject constructor(
     private val settings: RemoteDeviceSettings,
     private val pairing: RemotePairingStore,
     private val server: RemoteMcpServer,
-    private val catalog: RemoteActionCatalog
+    private val catalog: RemoteActionCatalog,
+    private val mcpConfigRepository: McpConfigRepository
 ) {
     private companion object {
         const val TAG = "RemoteDeviceController"
+        const val CONNECT_TIMEOUT_MS = 8_000
+        const val READ_TIMEOUT_MS = 8_000
     }
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     val state: Flow<RemoteDeviceUiState> = combine(settings.config, server.state) { config, serverState ->
         RemoteDeviceUiState(
@@ -74,11 +91,11 @@ class RemoteDeviceController @Inject constructor(
         if (enabled) {
             RemoteDeviceService.start(context)
         } else {
-            // 关服务即关掉全部入口，同时清掉已授权与待用配对码：
-            // 「关掉开关」在用户心里就是「谁也别再连我」，留着 token 会与这个预期不符。
+            // 关开关 = 停掉服务（谁也连不上），但**不撤销已授权设备**：
+            // 协助是长期关系，关一下就要求对端重新配对会让功能没法用。真要断掉某台设备，
+            // 走设置页的「撤销」（[revoke]）。
             server.stop()
             RemoteDeviceService.stop(context)
-            pairing.revokeAll()
         }
     }
 
@@ -91,10 +108,12 @@ class RemoteDeviceController @Inject constructor(
 
     suspend fun setAlwaysAskRemote(value: Boolean) = settings.setAlwaysAskRemote(value)
 
-    /** 生成（或复用有效期内）一枚 6 位配对码，对端在 5 分钟内用它换长期 token。 */
+    suspend fun setAllowPublicPeer(value: Boolean) = settings.setAllowPublicPeer(value)
+
+    /** 生成（或复用）一枚 6 位配对码；**不过期**，对端拿它换长期 token，配对成功后自动换新。 */
     suspend fun pairingCode(): String = pairing.issueCode()
 
-    /** 当前仍在有效期内的配对码与到期时刻；无有效码返回 null。 */
+    /** 当前待用的配对码与到期时刻（固定 0，表示不过期）。 */
     suspend fun livePairingCode(): Pair<String, Long>? = pairing.liveCode()
 
     suspend fun devices(): List<RemotePairedDevice> = pairing.devices()
@@ -105,7 +124,83 @@ class RemoteDeviceController @Inject constructor(
 
     private fun endpointsFor(port: Int, serverState: RemoteServerState): List<String> {
         if (serverState is RemoteServerState.Running && serverState.urls.isNotEmpty()) return serverState.urls
-        return localIpv4Addresses().map { "http://$it:$port${RemoteMcpServer.MCP_PATH}" }
+        // 服务没跑时的兵底：只列本机地址，供界面先把地址展示出来。
+        return localIpv6Addresses().map { "http://[$it]:$port${RemoteMcpServer.MCP_PATH}" } +
+            localIpv4Addresses().map { "http://$it:$port${RemoteMcpServer.MCP_PATH}" }
+    }
+
+    /** 接受协助的结果。 */
+    sealed interface AssistOutcome {
+        /** 配对成功且已登记为 MCP 服务器。 */
+        data class Ok(val serverName: String) : AssistOutcome
+
+        /** 连上了但被拒（码不对、太频繁等）。 */
+        data class Rejected(val reason: String) : AssistOutcome
+
+        /** 根本没连上（地址/端口不对，或对方没开服务）。 */
+        data class Unreachable(val reason: String) : AssistOutcome
+    }
+
+    /**
+     * 接受另一台设备的协助：用对方给的「地址 + 6 位配对码」换长期 token，
+     * 并把对端登记成一个 MCP 服务器——之后本机 agent 就能调用它的
+     * `info` / `read_file` / `write_file` / `shell` / `screenshot`。
+     */
+    suspend fun acceptAssistance(host: String, port: Int, code: String): AssistOutcome {
+        val target = host.trim()
+            .removePrefix("https://").removePrefix("http://")
+            .substringBefore('/')
+        if (target.isBlank() || code.isBlank()) return AssistOutcome.Unreachable("地址或配对码为空")
+
+        val endpoint = "http://$target:$port${RemoteMcpServer.PAIR_PATH}"
+        val payload = buildJsonObject {
+            put("code", code.trim().uppercase())
+            put("name", settings.displayName())
+            put("device_id", settings.installId())
+        }.toString()
+
+        val http: Pair<Int, String>? = withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                connection.disconnect()
+                status to body
+            }.getOrNull()
+        }
+        if (http == null) {
+            return AssistOutcome.Unreachable("连不上 $endpoint：检查地址与端口，或确认对方已开启协作")
+        }
+
+        val (status, body) = http
+        if (status !in 200..299) {
+            return AssistOutcome.Rejected(
+                when (status) {
+                    403 -> "配对码不对，或已被用过（一枚码只能配一台设备）"
+                    429 -> "尝试次数过多，稍后再试"
+                    else -> "对端返回 HTTP $status"
+                }
+            )
+        }
+
+        val token = runCatching {
+            json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull().orEmpty()
+        if (token.isBlank()) return AssistOutcome.Rejected("对端没有返回 token")
+
+        val serverName = "远端设备 ${if (target.length > 24) target.take(24) + "…" else target}"
+        val config = mcpConfigFor(serverName, target, port, token)
+        val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
+        mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
+        return AssistOutcome.Ok(serverName)
     }
 
     /**

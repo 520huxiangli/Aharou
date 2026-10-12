@@ -107,6 +107,7 @@ import com.aharou.feature.browser.BrowserTool
 import com.aharou.feature.agent.domain.workflow.ContextCompactor
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow
+import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
@@ -468,6 +469,7 @@ object AgentModule {
         geminiApi: GeminiApi,
         promptProvider: SystemPromptProvider,
         permissionManager: ToolPermissionManager,
+        remoteDeviceSettings: RemoteDeviceSettings,
         policyEngine: ToolPermissionPolicyEngine,
         contextCompactor: ContextCompactor,
         planApprovalManager: PlanApprovalManager,
@@ -497,6 +499,7 @@ object AgentModule {
             geminiApi,
             promptProvider,
             permissionManager,
+            remoteDeviceSettings,
             policyEngine,
             contextCompactor,
             planApprovalManager,

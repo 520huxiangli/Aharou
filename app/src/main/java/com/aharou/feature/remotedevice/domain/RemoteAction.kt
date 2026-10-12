@@ -3,6 +3,7 @@ package com.aharou.feature.remotedevice.domain
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
+import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolRegistry
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -42,7 +44,14 @@ data class RemoteAction(
      * 引擎判定自动放行时，是否仍升级为一次审批（远端来源默认升级，见 [RemoteDeviceConfig.alwaysAskRemote]）。
      * info 不升级：它只回设备名/版本/能力清单，不含任何用户数据。
      */
-    val escalateWhenAllowed: Boolean = true
+    val escalateWhenAllowed: Boolean = true,
+    /**
+     * 内置动作（没有对应本机工具）自带的参数声明。
+     *
+     * 参数 schema 平时从本机工具的 `parameters` 过滤而来；内置动作没有那个来源，
+     * 少了这份声明，对端看到的 schema 会是空对象、连 path 都传不进来。
+     */
+    val inlineParams: Map<String, ToolParameter> = emptyMap()
 )
 
 /** 动作的能力位：写进 info 的能力清单，也用于审计时区分「这条远端调用动到了什么」。 */
@@ -73,6 +82,8 @@ class RemoteActionCatalog @Inject constructor(
         const val ACTION_WRITE_FILE = "write_file"
         const val ACTION_SHELL = "shell"
         const val ACTION_SCREENSHOT = "screenshot"
+        const val ACTION_FETCH_FILE = "fetch_file"
+        const val ACTION_PUSH_FILE = "push_file"
 
         /** 远端 shell 单次执行上限（秒）：留出审批时间，避免超过调用方 120 秒的 callTimeout。 */
         const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 60L
@@ -127,6 +138,40 @@ class RemoteActionCatalog @Inject constructor(
             toolName = TOOL_A11Y,
             allowedArgs = emptySet(),
             forcedArgs = mapOf("action" to "shot")
+        ),
+        RemoteAction(
+            name = ACTION_FETCH_FILE,
+            kind = RemoteActionKind.READ_FILE,
+            description = "取回本机的**整个文件**：返回一条一次性下载链接，用它对本机发 HTTP GET 即可拿到原文件。" +
+                "二进制安全、**不设大小上限**（不走 JSON，所以不受 MCP 正文限制），适合 APK / 图片 / 压缩包这类" +
+                "用 read_file 读不出来的东西。路径写法与越界校验同 read_file。",
+            toolName = null,
+            allowedArgs = setOf("path"),
+            inlineParams = mapOf(
+                "path" to ToolParameter(
+                    name = "path",
+                    type = ParameterType.STRING,
+                    description = "要取回的文件路径，写法与 read_file 一致（~/workspace/... 或绝对路径）",
+                    required = true
+                )
+            )
+        ),
+        RemoteAction(
+            name = ACTION_PUSH_FILE,
+            kind = RemoteActionKind.WRITE_FILE,
+            description = "往本机放一个**完整文件**：返回一条一次性上传链接，把文件原始字节 POST 上去即可。" +
+                "二进制安全、**不设大小上限**（不走 JSON），适合 APK / 图片 / 压缩包这类不适合用 write_file 写的内容。" +
+                "路径写法与越界校验同 write_file。",
+            toolName = null,
+            allowedArgs = setOf("path"),
+            inlineParams = mapOf(
+                "path" to ToolParameter(
+                    name = "path",
+                    type = ParameterType.STRING,
+                    description = "要写入的文件路径，写法与 write_file 一致；文件不存在时自动创建（含父目录）",
+                    required = true
+                )
+            )
         )
     )
 
@@ -139,8 +184,9 @@ class RemoteActionCatalog @Inject constructor(
 
     /** 该动作的入参 JSON Schema：从本机工具参数过滤白名单而来；工具暂不可用时回退为空对象 schema。 */
     fun inputSchema(action: RemoteAction): JsonObject {
-        val tool = resolveTool(action)
-        val params = tool?.parameters.orEmpty().filterKeys { it in action.allowedArgs }
+        val declared = action.inlineParams.takeIf { it.isNotEmpty() }
+            ?: resolveTool(action)?.parameters.orEmpty()
+        val params = declared.filterKeys { it in action.allowedArgs }
         return buildJsonObject {
             put("type", "object")
             putJsonObject("properties") {
@@ -194,4 +240,67 @@ class RemoteInfoTool(
 
     override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
         ToolResult.Success(payload())
+}
+
+/**
+ * `fetch_file` 动作的载体：签一张下载票据并回链接。
+ *
+ * 文件本体不走 MCP —— 那要过 JSON 与 256 KB 正文上限，几十 MB 的东西根本过不去。
+ * 这里只换一张一次性票据，真正的字节由原生 HTTP 流搬（无大小上限、不吃内存）。
+ */
+class RemoteFetchFileTool(
+    private val issueTicket: suspend (String) -> String
+) : AgentTool() {
+    override val name = "remote_fetch_file"
+    override val description = "取回本机文件，返回一次性下载链接（二进制、无大小上限）"
+    override val parameters: Map<String, ToolParameter> = mapOf(
+        "path" to ToolParameter(
+            name = "path",
+            type = ParameterType.STRING,
+            description = "要取回的文件路径",
+            required = true
+        )
+    )
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.READ_WORKSPACE)
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val path = (args["path"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (path.isEmpty()) return ToolResult.Error("缺少参数: path", "MISSING_PATH")
+        return ToolResult.Success(
+            buildJsonObject {
+                put("url", issueTicket(path))
+                put("hint", "用 HTTP GET 请求这条路径即可下载原文件；链接一次性、15 分钟内有效")
+            }
+        )
+    }
+}
+
+/** `push_file` 动作的载体：签一张上传票据并回链接（与 [RemoteFetchFileTool] 同理，本体不走 MCP）。 */
+class RemotePushFileTool(
+    private val issueTicket: suspend (String) -> String
+) : AgentTool() {
+    override val name = "remote_push_file"
+    override val description = "往本机放一个文件，返回一次性上传链接（二进制、无大小上限）"
+    override val parameters: Map<String, ToolParameter> = mapOf(
+        "path" to ToolParameter(
+            name = "path",
+            type = ParameterType.STRING,
+            description = "要写入的文件路径",
+            required = true
+        )
+    )
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.WRITE_WORKSPACE)
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val path = (args["path"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (path.isEmpty()) return ToolResult.Error("缺少参数: path", "MISSING_PATH")
+        return ToolResult.Success(
+            buildJsonObject {
+                put("url", issueTicket(path))
+                put("hint", "把文件原始字节 POST 到这条路径即可（Content-Type 任意）；链接一次性、15 分钟内有效")
+            }
+        )
+    }
 }

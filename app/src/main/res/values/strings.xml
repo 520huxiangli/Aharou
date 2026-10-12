@@ -2608,6 +2608,14 @@
     <string name="settings_remote_device_port">端口</string>
     <string name="settings_remote_device_port_invalid">端口需在 1024–65535 之间</string>
     <string name="settings_remote_device_always_ask">远端动作每次都需确认</string>
+    <string name="settings_remote_device_allow_public">允许公网对端（跨网络协助）</string>
+    <string name="settings_remote_device_allow_public_hint">关闭时只接受同一局域网；开启后接受跨网络来源（如 IPv6）。开启后能进来的就只剩配对码</string>
+    <string name="settings_remote_device_pair_no_expiry">这枚码一直有效，配对成功后会自动换新的一枚</string>
+    <string name="settings_remote_device_assist_address">协助地址（发给协助你的人）</string>
+    <string name="settings_remote_device_copy">复制</string>
+    <string name="settings_remote_device_assist_title">接受协助</string>
+    <string name="settings_remote_device_accept_assist">连接到另一台设备</string>
+    <string name="settings_remote_device_accept_assist_hint">输入对方给的协助地址与 6 位码</string>
     <string name="settings_remote_device_pair_code">生成配对码</string>
     <string name="settings_remote_device_pair_hint">在另一台设备的 Aharou 里输入这枚 6 位码完成配对</string>
     <string name="settings_remote_device_pair_remaining">剩余 %1$s</string>

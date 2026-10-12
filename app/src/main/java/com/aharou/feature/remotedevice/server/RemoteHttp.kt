@@ -22,6 +22,52 @@ internal class HttpRequest(
 }
 
 /**
+ * 只读「请求行 + 头部」的结果：正文留给调用方自己决定怎么消费。
+ *
+ * 文件上传的正文可能是几百 MB 二进制，先按 [readHttpRequest] 读成 String 既撑内存又损坏数据，
+ * 所以那条路径必须能看到裸输入流。
+ */
+internal class HttpHead(
+    val method: String,
+    val target: String,
+    val headers: Map<String, String>
+) {
+    /** 去掉查询串的路径。 */
+    val path: String get() = target.substringBefore('?')
+
+    fun header(name: String): String? = headers[name.lowercase()]
+
+    val contentLength: Long get() = headers["content-length"]?.toLongOrNull() ?: 0L
+}
+
+/** 读到空行为止；调用后输入流停在正文起点。 */
+internal fun readHttpHead(input: InputStream): HttpHead? {
+    val requestLine = readLine(input) ?: return null
+    if (requestLine.isBlank()) return null
+    val parts = requestLine.split(" ")
+    if (parts.size < 3) return null
+    val headers = LinkedHashMap<String, String>()
+    while (true) {
+        val line = readLine(input) ?: break
+        if (line.isEmpty()) break
+        val idx = line.indexOf(':')
+        if (idx <= 0) continue
+        headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+    }
+    return HttpHead(parts[0], parts[1], headers)
+}
+
+/** 按 Content-Length 把正文读成字符串（JSON 路由用）。 */
+internal fun readHttpBody(input: InputStream, head: HttpHead, maxBodyBytes: Int): String {
+    val length = head.contentLength
+    if (length > maxBodyBytes) throw HttpBodyTooLarge()
+    if (length <= 0L) return ""
+    val buf = ByteArray(length.toInt())
+    readFully(input, buf)
+    return String(buf, StandardCharsets.UTF_8)
+}
+
+/**
  * 极简 HTTP/1.1 读取：请求行 + 头部 + 按 Content-Length 的正文。
  * 与 `debugmcp/DebugMcpServer.kt` 同思路（不引第三方 HTTP server），差别只在多了正文上限。
  * 不支持 `Transfer-Encoding: chunked`——本服务的调用方是 Aharou 自己的 OkHttp 客户端，
@@ -119,4 +165,16 @@ private fun reason(status: Int): String = when (status) {
 internal fun isPrivatePeer(address: InetAddress?): Boolean {
     if (address == null) return false
     return address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress
+}
+
+/**
+ * 是否放行该对端。
+ *
+ * 默认沿用 [isPrivatePeer]；开启跨设备协作的「允许公网对端」后放行任意来源——跨网络协助时对端
+ * 必然是公网地址（IPv6 全球单播，或经组网工具的地址），不放开就永远只能在同一 WiFi 里用。
+ * 放开的代价：准入只剩配对码与试错节流，所以该开关默认关、由用户按需开。
+ */
+internal fun isAllowedPeer(address: InetAddress?, allowPublicPeer: Boolean): Boolean {
+    if (address == null) return false
+    return allowPublicPeer || isPrivatePeer(address)
 }

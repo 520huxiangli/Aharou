@@ -53,6 +53,7 @@ import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.ProviderKeyRotator
 import com.aharou.feature.settings.data.repository.TitleModelSettingsRepository
 import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
 import com.aharou.feature.agent.domain.provider.AnthropicAdapter
 import com.aharou.feature.agent.domain.provider.fixedTemperature
 import com.aharou.feature.agent.domain.provider.GeminiAdapter
@@ -103,6 +104,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private val geminiApi: GeminiApi,
     private val promptProvider: SystemPromptProvider,
     private val permissionManager: ToolPermissionManager,
+    private val remoteDeviceSettings: RemoteDeviceSettings,
     private val policyEngine: ToolPermissionPolicyEngine,
     private val contextCompactor: ContextCompactor,
     private val planApprovalManager: PlanApprovalManager,
@@ -867,7 +869,7 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue: ArrayDeque<AgentAction>,
         emit: suspend (AgentEvent) -> Unit
     ) {
-        val gate = PermissionGate(policyEngine, permissionManager, fileAccess)
+        val gate = PermissionGate(policyEngine, permissionManager, fileAccess) { remoteDeviceSettings.current().enabled }
         val approved = mutableListOf<ToolCall>()
         val rejectedResults = mutableMapOf<String, ToolBatchResult>()
         val asks = mutableListOf<Pair<ToolCall, PermissionVerdict.Ask>>()

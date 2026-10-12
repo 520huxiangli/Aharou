@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-/** 一条待使用的配对码（短 TTL，一次性）。 */
+/** 一条待使用的配对码（一次性消费；不设过期）。 */
 @Serializable
 internal data class PendingCodeEntry(
     val createdAt: Long = 0L,
@@ -69,7 +69,7 @@ sealed interface PairOutcome {
  *
  * 两条安全约定：
  *  - 只存 token 的 SHA-256，不存明文——文件即使被读走也无法直接拿去调用本机服务；
- *  - 配对码 5 分钟 TTL、一次性消费，连续试错 5 次锁 60 秒，挡暴力枚举（6 位码空间有限，必须节流）。
+ *  - 配对码一次性消费、不设过期，连续试错 5 次锁 60 秒，挡暴力枚举（6 位码空间有限，必须节流）。
  */
 @Singleton
 class RemotePairingStore @Inject constructor(
@@ -88,26 +88,24 @@ class RemotePairingStore @Inject constructor(
     private var failedAttempts = 0
     private var lockedUntil = 0L
 
-    /** 生成或复用在有效期内的一次性配对码（6 位，去掉易混字符）。 */
+    /** 生成或复用当前的一次性配对码（6 位，去掉易混字符）。码不过期，配对成功后自动换新。 */
     suspend fun issueCode(): String = mutex.withLock {
         val data = read()
         val now = System.currentTimeMillis()
-        data.pending.entries.firstOrNull { it.value.expiresAt > now }?.let { return it.key }
+        data.pending.entries.firstOrNull()?.let { return it.key }
         var code = newCode()
         while (data.pending.containsKey(code)) code = newCode()
         val pending = data.pending.toMutableMap()
         // 只保留最新一枚码：多枚并存会让用户不知道该念哪枚。
         pending.clear()
-        pending[code] = PendingCodeEntry(createdAt = now, expiresAt = now + CODE_TTL_MS)
+        pending[code] = PendingCodeEntry(createdAt = now, expiresAt = NO_EXPIRY)
         write(data.copy(pending = pending))
         code
     }
 
-    /** 当前仍在有效期内的配对码（设置页展示用）。 */
+    /** 当前待用的配对码；到期时刻固定为 0，表示不过期，界面据此不显示倒计时。 */
     suspend fun liveCode(): Pair<String, Long>? = mutex.withLock {
-        val now = System.currentTimeMillis()
-        read().pending.entries.firstOrNull { it.value.expiresAt > now }
-            ?.let { it.key to it.value.expiresAt }
+        read().pending.entries.firstOrNull()?.let { it.key to 0L }
     }
 
     /** 用配对码换长期 token；成功后码立即作废。 */
@@ -117,7 +115,7 @@ class RemotePairingStore @Inject constructor(
 
         val data = read()
         val key = code.trim().uppercase()
-        val entry = data.pending[key]?.takeIf { it.expiresAt > now }
+        val entry = data.pending[key]
         if (entry == null) {
             failedAttempts++
             if (failedAttempts >= MAX_FAILED_ATTEMPTS) {
@@ -184,14 +182,14 @@ class RemotePairingStore @Inject constructor(
         write(PairingFile())
     }
 
-    /** 读取并顺手清理过期配对码。 */
+    /** 读取并顺手清理「旧版遗留的已过期码」；新版码（[NO_EXPIRY]）永远保留。 */
     private fun read(): PairingFile {
         if (!file.exists()) return PairingFile()
         val loaded = runCatching {
             json.decodeFromString(PairingFile.serializer(), file.readText())
         }.onFailure { FileLogger.w(TAG, "读取配对文件失败", it) }.getOrNull() ?: PairingFile()
         val now = System.currentTimeMillis()
-        val alive = loaded.pending.filterValues { it.expiresAt > now }
+        val alive = loaded.pending.filterValues { it.expiresAt == NO_EXPIRY || it.expiresAt > now }
         return if (alive.size == loaded.pending.size) loaded else loaded.copy(pending = alive)
     }
 
@@ -224,8 +222,11 @@ class RemotePairingStore @Inject constructor(
     companion object {
         private const val TAG = "RemotePairingStore"
 
-        /** 配对码有效 5 分钟：够从一台手机走过去敲进另一台，又不给枚举留时间窗。 */
-        private const val CODE_TTL_MS = 5 * 60 * 1000L
+        /**
+         * 配对码不设过期：协助是长期关系，每次都要重新生成会把功能用废。
+         * 枚举风险由试错节流兜底（[MAX_FAILED_ATTEMPTS] 次锁 [LOCK_MS]），配对成功即作废换新。
+         */
+        private const val NO_EXPIRY = Long.MAX_VALUE
         private const val CODE_LENGTH = 6
 
         /** 去掉易混的 0/O/1/I：码要念出来或照屏幕敲。 */

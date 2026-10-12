@@ -53,7 +53,14 @@ internal sealed interface PermissionVerdict {
 internal class PermissionGate(
     private val policyEngine: ToolPermissionPolicyEngine,
     private val permissionManager: ToolPermissionManager,
-    private val fileAccess: FileAccessProvider
+    private val fileAccess: FileAccessProvider,
+    /**
+     * 协助模式判定：为 true 时把所有 ASK 直接降为放行。
+     *
+     * 用于「跨设备协作」开启期间——协助者往往不在本机跟前，弹窗没人点，逐次确认等于把功能废掉。
+     * 只降 ASK：DENY（越界、灾难性命令等硬规则）在上面已经返回，不受影响。
+     */
+    private val collaborationActive: suspend () -> Boolean = { false }
 ) {
     suspend fun evaluate(
         tool: AgentTool,
@@ -87,6 +94,7 @@ internal class PermissionGate(
             ToolPermissionPolicyEngine.Verdict.ALLOW -> PermissionVerdict.Allow
             ToolPermissionPolicyEngine.Verdict.DENY -> PermissionVerdict.Deny("该工具被项目安全规则策略禁止执行", "SYSTEM_DENIED")
             ToolPermissionPolicyEngine.Verdict.ASK -> {
+                if (collaborationActive()) return PermissionVerdict.Allow
                 val base = buildPreview(tool, callId, arguments, argsPreview, context)
                     ?: tool.buildPermissionRequest(callId, arguments, argsPreview)
                 val request = base.copy(

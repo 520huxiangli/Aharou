@@ -27,7 +27,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -76,11 +78,13 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
     val state by viewModel.state.collectAsStateWithLifecycle()
     val devices by viewModel.devices.collectAsStateWithLifecycle()
     val pairing by viewModel.pairing.collectAsStateWithLifecycle()
+    val assist by viewModel.assist.collectAsStateWithLifecycle()
     val config = state.config
 
     var showNameSheet by remember { mutableStateOf(false) }
     var showPortSheet by remember { mutableStateOf(false) }
     var showPairSheet by remember { mutableStateOf(false) }
+    var showAssistDialog by remember { mutableStateOf(false) }
     var revokeTarget by remember { mutableStateOf<RemotePairedDevice?>(null) }
     // ifBlank 的 lambda 不是 composable 上下文，默认名必须先在这一层取好。
     val defaultDeviceName = stringResource(R.string.settings_remote_device_name_default)
@@ -139,6 +143,29 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                         onCheckedChange = { viewModel.setAlwaysAskRemote(it) }
                     )
                 }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Share2,
+                title = stringResource(R.string.settings_remote_device_allow_public),
+                subtitle = stringResource(R.string.settings_remote_device_allow_public_hint),
+                trailing = {
+                    AppSwitch(
+                        checked = config.allowPublicPeer,
+                        onCheckedChange = { viewModel.setAllowPublicPeer(it) }
+                    )
+                }
+            )
+        }
+
+        // 接受协助：作为协助方连到别人的 Aharou——与本机开服务是两件事，所以不放在 enabled 分支里。
+        SettingsGroupHeader(text = stringResource(R.string.settings_remote_device_assist_title))
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.Share2,
+                title = stringResource(R.string.settings_remote_device_accept_assist),
+                subtitle = stringResource(R.string.settings_remote_device_accept_assist_hint),
+                onClick = { showAssistDialog = true }
             )
         }
 
@@ -204,11 +231,22 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
         )
     }
 
+    if (showAssistDialog) {
+        AcceptAssistDialog(
+            state = assist,
+            onConfirm = { host, port, code -> viewModel.acceptAssistance(host, port, code) },
+            onDismiss = {
+                showAssistDialog = false
+                viewModel.clearAssist()
+            }
+        )
+    }
+
     if (showPairSheet) {
         LaunchedEffect(Unit) { viewModel.generatePairingCode() }
         PairingCodeSheet(
             pairing = pairing,
-            onRegenerate = { viewModel.generatePairingCode() },
+            endpoints = state.endpoints,
             onDismiss = {
                 showPairSheet = false
                 viewModel.clearPairing()
@@ -359,25 +397,15 @@ private fun ValueEditSheet(
     }
 }
 
-/** 配对码弹层：大号展示 6 位码并倒计时，过期后给「重新生成」。 */
+/** 配对码弹层：大号展示 6 位码与协助地址。码不过期，配对成功后自动换新。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PairingCodeSheet(
     pairing: RemotePairingUi?,
-    onRegenerate: () -> Unit,
+    endpoints: List<String>,
     onDismiss: () -> Unit
 ) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(pairing?.expiresAt) {
-        val expiresAt = pairing?.expiresAt ?: return@LaunchedEffect
-        while (true) {
-            now = System.currentTimeMillis()
-            if (now >= expiresAt) break
-            delay(500)
-        }
-    }
-    val remainingMs = pairing?.let { (it.expiresAt - now).coerceAtLeast(0L) } ?: 0L
-    val expired = pairing == null || remainingMs <= 0L
+    val clipboard = LocalClipboardManager.current
 
     AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -394,24 +422,37 @@ private fun PairingCodeSheet(
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = if (expired) "------" else pairing?.code.orEmpty(),
+                text = pairing?.code.orEmpty(),
                 fontSize = 34.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 8.sp,
-                color = if (expired) MaterialTheme.semanticColors.subtleText
-                else MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
-                text = if (expired) {
-                    stringResource(R.string.settings_remote_device_pair_expired)
-                } else {
-                    stringResource(R.string.settings_remote_device_pair_remaining, countdownText(remainingMs))
-                },
+                text = stringResource(R.string.settings_remote_device_pair_no_expiry),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            if (endpoints.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.settings_remote_device_assist_address),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                endpoints.forEach { url ->
+                    Text(
+                        text = url,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.semanticColors.subtleText,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(endpoints.joinToString("\n")))
+                }) { Text(stringResource(R.string.settings_remote_device_copy)) }
+            }
             Text(
                 text = stringResource(R.string.settings_remote_device_pair_hint),
                 style = MaterialTheme.typography.bodyMedium,
@@ -423,21 +464,62 @@ private fun PairingCodeSheet(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_ok)) }
-                if (expired) {
-                    TextButton(onClick = onRegenerate) {
-                        Text(stringResource(R.string.settings_remote_device_pair_regen))
-                    }
-                }
             }
         }
     }
 }
 
-/** 剩余毫秒转 mm:ss。 */
-private fun countdownText(remainingMs: Long): String {
-    val totalSeconds = remainingMs / 1000
-    return String.format(Locale.US, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+/** 接受协助：输入对方给的地址与 6 位码，配对成功后自动登记为本机的一个 MCP 服务器。 */
+@Composable
+private fun AcceptAssistDialog(
+    state: AssistUiState,
+    onConfirm: (host: String, port: Int, code: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var host by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf(RemoteDeviceConfig.DEFAULT_PORT.toString()) }
+    var code by remember { mutableStateOf("") }
+    val working = state is AssistUiState.Working
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_remote_device_accept_assist)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                AppTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = stringResource(R.string.settings_remote_device_assist_address),
+                    singleLine = true
+                )
+                AppTextField(
+                    value = code,
+                    onValueChange = { code = it.uppercase().take(6) },
+                    label = stringResource(R.string.settings_remote_device_pair_code),
+                    singleLine = true
+                )
+                if (state is AssistUiState.Done) {
+                    Text(
+                        text = state.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (state.ok) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !working && host.isNotBlank() && code.length == 6,
+                onClick = { onConfirm(host, port.toIntOrNull() ?: RemoteDeviceConfig.DEFAULT_PORT, code) }
+            ) { Text(stringResource(R.string.common_ok)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        }
+    )
 }
 
+/** 时间戳转 yyyy-MM-dd HH:mm。 */
 private fun formatTimestamp(epochMs: Long): String =
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(epochMs))

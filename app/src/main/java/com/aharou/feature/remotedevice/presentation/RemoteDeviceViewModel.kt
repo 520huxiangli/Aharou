@@ -20,6 +20,15 @@ import kotlinx.coroutines.launch
 /** 配对码弹层的数据：6 位码 + 到期时刻（毫秒）。 */
 data class RemotePairingUi(val code: String, val expiresAt: Long)
 
+/** 接受协助的界面状态。 */
+sealed interface AssistUiState {
+    data object Idle : AssistUiState
+    data object Working : AssistUiState
+
+    /** 结果提示；[ok] 决定用正色还是警示色。 */
+    data class Done(val message: String, val ok: Boolean) : AssistUiState
+}
+
 /**
  * 「跨设备协作」设置页的 ViewModel：把 [RemoteDeviceController] 的状态与动作转成 UI 可直接消费的流。
  *
@@ -48,6 +57,9 @@ class RemoteDeviceViewModel @Inject constructor(
     private val _pairing = MutableStateFlow<RemotePairingUi?>(null)
     val pairing: StateFlow<RemotePairingUi?> = _pairing.asStateFlow()
 
+    private val _assist = MutableStateFlow<AssistUiState>(AssistUiState.Idle)
+    val assist: StateFlow<AssistUiState> = _assist.asStateFlow()
+
     init {
         refreshDevices()
     }
@@ -58,7 +70,7 @@ class RemoteDeviceViewModel @Inject constructor(
 
     fun setEnabled(enabled: Boolean) = viewModelScope.launch(Dispatchers.IO) {
         controller.setEnabled(enabled)
-        // 关闭会清空全部授权，列表得跟着刷新，否则关掉开关后旧记录还挂在页面上。
+        // 关开关不再清空授权（只停服务），但仍刷新一次列表，让「最后活跃」这类字段跟上。
         _devices.value = controller.devices()
     }
 
@@ -70,12 +82,30 @@ class RemoteDeviceViewModel @Inject constructor(
         controller.setAlwaysAskRemote(value)
     }
 
+    fun setAllowPublicPeer(value: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        controller.setAllowPublicPeer(value)
+    }
+
+    fun acceptAssistance(host: String, port: Int, code: String) = viewModelScope.launch(Dispatchers.IO) {
+        _assist.value = AssistUiState.Working
+        _assist.value = when (val outcome = controller.acceptAssistance(host, port, code)) {
+            is RemoteDeviceController.AssistOutcome.Ok ->
+                AssistUiState.Done("配对成功，已登记为 MCP 服务器「${outcome.serverName}」", ok = true)
+            is RemoteDeviceController.AssistOutcome.Rejected -> AssistUiState.Done(outcome.reason, ok = false)
+            is RemoteDeviceController.AssistOutcome.Unreachable -> AssistUiState.Done(outcome.reason, ok = false)
+        }
+    }
+
+    fun clearAssist() {
+        _assist.value = AssistUiState.Idle
+    }
+
     fun revoke(deviceId: String) = viewModelScope.launch(Dispatchers.IO) {
         controller.revoke(deviceId)
         _devices.value = controller.devices()
     }
 
-    /** 生成（或复用有效期内）一枚配对码，并取回到期时刻供弹层倒计时。 */
+    /** 生成（或复用）一枚配对码。码不过期，界面无需倒计时。 */
     fun generatePairingCode() = viewModelScope.launch(Dispatchers.IO) {
         controller.pairingCode()
         controller.livePairingCode()?.let { (code, expiresAt) ->

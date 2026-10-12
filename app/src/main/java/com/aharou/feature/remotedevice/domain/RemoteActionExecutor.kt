@@ -16,8 +16,12 @@ import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.workflow.PermissionGate
 import com.aharou.feature.agent.domain.workflow.PermissionVerdict
 import com.aharou.feature.agent.presentation.notification.AgentPermissionNotifier
+import com.aharou.feature.remotedevice.server.RemoteFileTicketStore
+import com.aharou.feature.remotedevice.server.RemoteMcpServer
+import com.aharou.feature.remotedevice.server.TransferDirection
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.FileAccessProvider
+import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -74,6 +78,8 @@ class RemoteActionExecutor @Inject constructor(
     private val workspaceRepository: WorkspaceRepository,
     private val notifier: AgentPermissionNotifier,
     private val settings: RemoteDeviceSettings,
+    private val tickets: RemoteFileTicketStore,
+    private val pathMapper: WorkspacePathMapper,
     @param:ApplicationContext private val context: Context
 ) {
     private companion object {
@@ -97,6 +103,15 @@ class RemoteActionExecutor @Inject constructor(
     /** 每台设备一把锁：同一台设备的动作串行执行，避免多张审批同时挂起把用户淹没。 */
     private val deviceLocks = ConcurrentHashMap<String, Mutex>()
 
+    /**
+     * 把对端给的路径解析成本机绝对路径。
+     *
+     * 传文件绕不开「从哪儿读、往哪儿写」，这里复用与本机文件工具同一套解析与越界校验
+     * （[WorkspacePathMapper.toHostFile]），越界会直接抛异常、由上层按失败返回。
+     */
+    private suspend fun resolveTransferPath(path: String): String =
+        pathMapper.toHostFile(path, workspaceRepository.currentPath()).absolutePath
+
     suspend fun execute(
         action: RemoteAction,
         rawArgs: Map<String, JsonElement>,
@@ -118,7 +133,15 @@ class RemoteActionExecutor @Inject constructor(
     ): RemoteActionResult {
         val args = buildArgs(action, rawArgs)
         val tool = if (action.toolName == null) {
-            RemoteInfoTool { deviceInfo(caller) }
+            when (action.name) {
+                RemoteActionCatalog.ACTION_FETCH_FILE -> RemoteFetchFileTool { path ->
+                    "${RemoteMcpServer.FILE_PATH}/${tickets.issue(resolveTransferPath(path), TransferDirection.DOWNLOAD).id}"
+                }
+                RemoteActionCatalog.ACTION_PUSH_FILE -> RemotePushFileTool { path ->
+                    "${RemoteMcpServer.UPLOAD_PATH}/${tickets.issue(resolveTransferPath(path), TransferDirection.UPLOAD).id}"
+                }
+                else -> RemoteInfoTool { deviceInfo(caller) }
+            }
         } else {
             catalog.resolveTool(action)
                 ?: return RemoteActionResult("本机未提供能力：${action.name}", isError = true)

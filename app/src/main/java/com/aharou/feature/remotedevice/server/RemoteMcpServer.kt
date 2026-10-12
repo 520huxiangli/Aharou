@@ -11,11 +11,16 @@ import com.aharou.feature.remotedevice.domain.RemotePairedDevice
 import com.aharou.feature.remotedevice.domain.RemotePairingStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.BufferedInputStream
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -59,7 +64,8 @@ sealed interface RemoteServerState {
  * 通知回 202、协议版本 `2025-06-18`）——不另造协议，对端用现成 MCP 客户端即可接入。
  *
  * 与 debug 实现的三处产品化差别：
- *  1. 绑 `0.0.0.0`（debug 只绑回环），因此多了两层准入：对端必须是私网地址（[isPrivatePeer]）、
+ *  1. 绑 IPv6 通配（回退 `0.0.0.0`；debug 只绑回环），因此多了两层准入：对端须过 [isAllowedPeer]
+ *     （默认只放私网，开了「允许公网对端」才放行跨网络来源）、
  *     请求必须带已配对的 Bearer token；
  *  2. 多了 `/pair`（配对码换 token）与 `/health`（无鉴权探活，只回服务名与版本）；
  *  3. 正文大小、并发连接与每台设备的动作并发都设了上限，避免被一个局域网对端拖垮。
@@ -72,6 +78,7 @@ class RemoteMcpServer @Inject constructor(
     private val pairing: RemotePairingStore,
     private val catalog: RemoteActionCatalog,
     private val executor: RemoteActionExecutor,
+    private val tickets: RemoteFileTicketStore,
     @param:ApplicationContext private val context: Context
 ) {
     companion object {
@@ -79,11 +86,19 @@ class RemoteMcpServer @Inject constructor(
         const val MCP_PATH = "/mcp"
         const val PAIR_PATH = "/pair"
         const val HEALTH_PATH = "/health"
+
+        /** 文件下载/上传的路径前缀，后面接一次性票据 id（见 [RemoteFileTicketStore]）。 */
+        const val FILE_PATH = "/file"
+        const val UPLOAD_PATH = "/upload"
         private const val PROTOCOL_VERSION = "2025-06-18"
         private const val SERVER_NAME = "aharou-remote-device"
 
         /** 单条连接的请求读取超时：只覆盖「读一条请求」，执行耗时不受它限制。 */
         private const val SOCKET_TIMEOUT_MS = 15_000
+
+        /** 文件传输路由的读/写超时：默认的 15 秒对大文件远远不够，且它是空闲超时而非总时长。 */
+        private const val FILE_TRANSFER_TIMEOUT_MS = 10 * 60 * 1000
+        private const val COPY_BUFFER_BYTES = 64 * 1024
         private const val MAX_BODY_BYTES = 256 * 1024
         private const val MAX_CONNECTIONS = 8
         private const val SERVER_BACKLOG = 16
@@ -127,17 +142,26 @@ class RemoteMcpServer @Inject constructor(
     private suspend fun runServer() {
         val config = settings.current()
         val port = config.port
+        // 绑 IPv6 通配符（Linux 默认双栈，同一个 socket 同时收 IPv4 与 IPv6）——这是跨网络直连的前提：
+        // 运营商给手机的 IPv6 通常是全球单播，不经 NAT，对端拿到地址就能直连。
         val socket = try {
-            ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName("0.0.0.0"))
+            ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName("::"))
         } catch (e: Exception) {
-            FileLogger.e(TAG, "无法绑定 0.0.0.0:$port", e)
-            _state.value = RemoteServerState.Failed(e.message ?: e.javaClass.simpleName)
-            return
+            FileLogger.w(TAG, "IPv6 绑定失败，回退 IPv4 通配: ${e.message}")
+            try {
+                ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName("0.0.0.0"))
+            } catch (e2: Exception) {
+                FileLogger.e(TAG, "无法绑定端口 $port", e2)
+                _state.value = RemoteServerState.Failed(e2.message ?: e2.javaClass.simpleName)
+                return
+            }
         }
         serverSocket = socket
-        val urls = localIpv4Addresses().map { "http://$it:$port$MCP_PATH" }
+        // 全球 IPv6 排在前面：跨网络协助优先用它，局域网地址作兼底。
+        val urls = localIpv6Addresses().map { "http://[$it]:$port$MCP_PATH" } +
+            localIpv4Addresses().map { "http://$it:$port$MCP_PATH" }
         _state.value = RemoteServerState.Running(port, urls)
-        FileLogger.i(TAG, "远端协作服务已监听 0.0.0.0:$port$MCP_PATH（局域网可达）")
+        FileLogger.i(TAG, "远端协作服务已监听端口 $port（IPv6 全球单播 ${urls.count { it.contains("[") }} 条）")
 
         while (scope.isActive && !socket.isClosed) {
             val client = try {
@@ -166,18 +190,36 @@ class RemoteMcpServer @Inject constructor(
         try {
             socket.soTimeout = SOCKET_TIMEOUT_MS
             val peer = socket.inetAddress
-            if (!isPrivatePeer(peer)) {
-                FileLogger.w(TAG, "拒绝非私网对端: ${peer?.hostAddress}")
+            // 是否接受公网对端由配置决定：关闭时只放行同一局域网，开启后才允许跨网络直连。
+            val allowPublicPeer = settings.current().allowPublicPeer
+            if (!isAllowedPeer(peer, allowPublicPeer)) {
+                FileLogger.w(TAG, "拒绝对端（allowPublic=$allowPublicPeer）: ${peer?.hostAddress}")
                 writeHttpResponse(socket.getOutputStream(), 403, """{"error":"forbidden"}""")
                 return
             }
+            val input = BufferedInputStream(socket.getInputStream())
             val out = socket.getOutputStream()
+            val head = readHttpHead(input) ?: return
+
+            // 文件传输的正文/响应是裸字节流：既不能按 JSON 读成 String，也不吃 256 KB 正文上限，
+            // 大文件还会远超默认的 15 秒——所以这两条路由先挑出来单独处理。
+            if (head.method == "POST" && head.path.startsWith("$UPLOAD_PATH/")) {
+                socket.soTimeout = FILE_TRANSFER_TIMEOUT_MS
+                handleUpload(head, input, out)
+                return
+            }
+            if (head.method == "GET" && head.path.startsWith("$FILE_PATH/")) {
+                socket.soTimeout = FILE_TRANSFER_TIMEOUT_MS
+                handleDownload(head, out)
+                return
+            }
+
             val request = try {
-                readHttpRequest(BufferedInputStream(socket.getInputStream()), MAX_BODY_BYTES)
+                HttpRequest(head.method, head.target, head.headers, readHttpBody(input, head, MAX_BODY_BYTES))
             } catch (e: HttpBodyTooLarge) {
                 writeHttpResponse(out, 413, """{"error":"payload_too_large"}""")
                 return
-            } ?: return
+            }
 
             when {
                 request.path == HEALTH_PATH && request.method == "GET" ->
@@ -198,6 +240,67 @@ class RemoteMcpServer @Inject constructor(
         } finally {
             runCatching { socket.close() }
         }
+    }
+
+    // ── 文件传输（原生 HTTP 流） ────────────────────────────────
+
+    /** `GET /file/<ticket>`：把票据指向的文件原样流回去。票据一次性、15 分钟时效，不设大小上限。 */
+    private fun handleDownload(head: HttpHead, out: OutputStream) {
+        val ticket = tickets.consume(head.path.removePrefix("$FILE_PATH/"), TransferDirection.DOWNLOAD)
+        if (ticket == null) {
+            writeHttpResponse(out, 403, """{"error":"invalid_ticket"}""")
+            return
+        }
+        val file = File(ticket.path)
+        if (!file.isFile) {
+            writeHttpResponse(out, 404, """{"error":"not_found"}""")
+            return
+        }
+        val header = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: application/octet-stream\r\n")
+            append("Content-Disposition: attachment; filename=\"").append(file.name).append("\"\r\n")
+            append("Content-Length: ").append(file.length()).append("\r\n")
+            append("Connection: close\r\n\r\n")
+        }
+        out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
+        file.inputStream().use { it.copyTo(out, COPY_BUFFER_BYTES) }
+        out.flush()
+        FileLogger.i(TAG, "已发送文件 ${file.name}（${file.length()} 字节）")
+    }
+
+    /** `POST /upload/<ticket>`：按 Content-Length 把请求体原样落成文件。 */
+    private fun handleUpload(head: HttpHead, input: InputStream, out: OutputStream) {
+        val ticket = tickets.consume(head.path.removePrefix("$UPLOAD_PATH/"), TransferDirection.UPLOAD)
+        if (ticket == null) {
+            writeHttpResponse(out, 403, """{"error":"invalid_ticket"}""")
+            return
+        }
+        if (head.contentLength <= 0L) {
+            writeHttpResponse(out, 400, """{"error":"missing_content_length"}""")
+            return
+        }
+        val file = File(ticket.path)
+        val written = runCatching {
+            file.parentFile?.mkdirs()
+            file.outputStream().use { sink ->
+                var remaining = head.contentLength
+                val buf = ByteArray(COPY_BUFFER_BYTES)
+                while (remaining > 0L) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+                    if (n <= 0) break
+                    sink.write(buf, 0, n)
+                    remaining -= n
+                }
+                head.contentLength - remaining
+            }
+        }.getOrNull()
+        if (written == null) {
+            writeHttpResponse(out, 500, """{"error":"write_failed"}""")
+            return
+        }
+        writeHttpResponse(out, 200, """{"written":$written}""")
+        FileLogger.i(TAG, "已接收文件 ${file.name}（$written 字节）")
     }
 
     // ── 配对 ──────────────────────────────────────────────────────
@@ -385,4 +488,37 @@ internal fun localIpv4Addresses(): List<String> {
         }
     }
     return result.distinct()
+}
+
+/**
+ * 本机可被**跨网络**直接抵达的全局 IPv6 地址。
+ *
+ * 与 IPv4 不同，运营商给手机的 IPv6 通常是全球单播（不经 NAT），所以把地址交给对端就能直连，
+ * 不需要中间服务器。只取全球单播：回环、链路本地（fe80::/10）与唯一本地地址（fc00::/7）对外都不可达。
+ */
+internal fun localIpv6Addresses(): List<String> {
+    val result = mutableListOf<String>()
+    runCatching {
+        val interfaces = NetworkInterface.getNetworkInterfaces() ?: return@runCatching
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            if (networkInterface.isLoopback || !networkInterface.isUp) continue
+            val addresses = networkInterface.inetAddresses
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
+                if (address !is Inet6Address) continue
+                if (address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress) continue
+                if (address.isUniqueLocalV6()) continue
+                // hostAddress 对 IPv6 会带 `%wlan0` 这样的 scope 后缀，写进 URL 会让对端解析失败。
+                address.hostAddress?.substringBefore('%')?.takeIf { it.isNotBlank() }?.let { result.add(it) }
+            }
+        }
+    }
+    return result.distinct()
+}
+
+/** 唯一本地地址（fc00::/7）：Java 的 isSiteLocalAddress 只覆盖已废弃的 fec0::/10，这里单独挡掉。 */
+private fun Inet6Address.isUniqueLocalV6(): Boolean {
+    val bytes = address
+    return bytes.size == 16 && (bytes[0].toInt() and 0xFE) == 0xFC
 }
