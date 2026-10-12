@@ -151,7 +151,10 @@ class RemoteActionExecutor @Inject constructor(
         val approvalSessionId = APPROVAL_SESSION_PREFIX + deviceKey(caller).take(12)
         val workspacePath = workspaceRepository.currentPath()
         val argsPreview = JsonObject(args).toString().take(PREVIEW_LIMIT)
-        val gate = PermissionGate(policyEngine, permissionManager, fileAccess)
+        // 协作开启即免逐次审批：协助者往往不在这台手机上，弹窗等于把功能用废。
+        // 与本机 agent 同一套语义——PermissionGate 只降 ASK，DENY（越界、灾难性命令）照旧直接拒。
+        val collaborationActive = settings.current().enabled
+        val gate = PermissionGate(policyEngine, permissionManager, fileAccess) { collaborationActive }
         val verdict = gate.evaluate(
             tool = tool,
             callId = callId,
