@@ -3,6 +3,8 @@ package com.aharou.feature.agent.domain.memory
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.common.Frontmatter
 import java.io.File
+import java.time.LocalDate
+import java.time.ZoneId
 
 object MemoryParser {
     private const val TAG = "MemoryParser"
@@ -47,7 +49,8 @@ object MemoryParser {
             file = file,
             content = content,
             type = type,
-            keywords = keywords
+            keywords = keywords,
+            expiresAt = parseExpiresAt(frontmatter["expires_at"])
         )
     }
 
@@ -56,16 +59,35 @@ object MemoryParser {
         description: String,
         content: String,
         type: MemoryType? = null,
-        keywords: List<String> = emptyList()
+        keywords: List<String> = emptyList(),
+        expiresAt: Long? = null
     ): String {
         val safeName = yamlScalar(name)
         val safeDesc = yamlScalar(description)
         val head = StringBuilder("---\nname: $safeName\ndescription: $safeDesc\n")
         type?.let { head.append("type: ${it.key}\n") }
         if (keywords.isNotEmpty()) head.append("keywords: ${yamlScalar(keywords.joinToString(", "))}\n")
+        expiresAt?.takeIf { it > 0L }?.let { head.append("expires_at: ${formatExpiresAt(it)}\n") }
         head.append("---\n")
         return head.toString() + content
     }
+
+    /**
+     * 解析 `expires_at`：兼容 `yyyy-MM-dd`（当天 23:59:59 到期）与 epoch 毫秒两种写法。
+     * 格式不合法时返回 null（当不过期），不因一个字段把整条记忆解析失败。
+     */
+    private fun parseExpiresAt(raw: Any?): Long? {
+        val text = raw?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        text.toLongOrNull()?.let { return it.takeIf { v -> v > 0L } }
+        return runCatching {
+            LocalDate.parse(text).atTime(23, 59, 59)
+                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }.getOrNull()
+    }
+
+    /** 写出人可读的日期，便于直接看文件判断什么时候过期。 */
+    private fun formatExpiresAt(epochMillis: Long): String =
+        java.time.Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
     /**
      * 老条目没有 `type` 字段时的启发式判定。

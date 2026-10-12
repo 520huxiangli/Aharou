@@ -37,7 +37,7 @@ interface MemorySource {
     fun loadContent(name: String): String?
 
     /** 保存一条记忆（创建或覆盖） */
-    fun saveMemory(name: String, description: String, content: String): Boolean
+    fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null): Boolean
 
     /**
      * 对已有记忆的正文做局部编辑（old_string/new_string 精确匹配），语义与 editFile 一致。

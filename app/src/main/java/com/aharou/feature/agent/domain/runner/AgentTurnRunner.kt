@@ -8,6 +8,7 @@ import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.model.ModelIdentity
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
@@ -215,6 +216,9 @@ class AgentTurnRunner @Inject constructor(
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
+            // 模型身份：会话上就存着 provider / model，顺手带进上下文，供系统提示词注入。
+            modelIdentity = sessionEntity?.model?.takeIf { it.isNotBlank() }
+                ?.let { ModelIdentity(modelId = it, providerId = sessionEntity.providerId) },
         )
 
         val allTools = toolRegistry.getAvailableTools()

@@ -91,5 +91,10 @@ data class AgentContext(
      * 子代理写路径租约：null 表示不受限（主会话，或派发时未声明）；
      * 空集表示只读；非空时写文件类工具只允许命中其中的路径。
      */
-    val writePaths: Set<String>? = null
+    val writePaths: Set<String>? = null,
+    /**
+     * 本轮实际运行的模型身份；null 时不注入「当前模型身份」段。
+     * 有了它，模型自报能力时有据可依，不必靠翻记忆或调 config 工具。
+     */
+    val modelIdentity: ModelIdentity? = null
 )

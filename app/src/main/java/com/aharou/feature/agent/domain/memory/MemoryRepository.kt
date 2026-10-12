@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.memory
 
+import com.aharou.core.memory.MemoryUsageStore
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
@@ -11,7 +12,8 @@ class MemoryRepository @Inject constructor(
     private val globalMemorySource: GlobalMemorySource,
     private val executionModeHolder: ExecutionModeHolder,
     private val containerInstaller: ContainerInstaller,
-    private val projectAicodeRoot: ProjectAharouRoot
+    private val projectAicodeRoot: ProjectAharouRoot,
+    private val memoryUsageStore: MemoryUsageStore
 ) {
     /** 按当前会话 projectRoot 创建项目级数据源（内部按执行模式决定存储位置）。 */
     private fun projectSource(projectRoot: String) =
@@ -65,6 +67,8 @@ class MemoryRepository @Inject constructor(
             // 事件类（某次测试结果、某天的排查记录）只留档：它们不是跨会话仍成立的知识，
             // 留在清单里只会把真正该被记住的东西挤淡。需要时靠 memory(action=search/read) 取回。
             .filter { it.type.injected }
+            // 短期记忆过期即不再进清单：文件留着，需要时仍可 read/edit，不必人工清理。
+            .filterNot { isExpired(it) }
             // 没有一句话摘要的条目不算「摘要式记忆」：注入它的名字等于白占一行，
             // 使用者看到名字也无从判断要不要读。
             // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
@@ -83,6 +87,14 @@ class MemoryRepository @Inject constructor(
     }
 
     /**
+     * 短期记忆是否已过期。取不到过期时间时视为永久——宁可多注入也不能把长期知识误判成过期。
+     */
+    private fun isExpired(memory: Memory): Boolean {
+        val at = memory.expiresAt ?: return false
+        return at > 0L && System.currentTimeMillis() > at
+    }
+
+    /**
      * 判定一条记忆是否已「遗忘」（长期未改动）。
      *
      * 核心档案（名字含 CORE / GLOBAL）永远保留——它们承载的正是「长期不变的约定」，
@@ -91,9 +103,14 @@ class MemoryRepository @Inject constructor(
      */
     private fun isStale(memory: Memory): Boolean {
         if (isCoreArchiveName(memory.name)) return false
+        // 长期约定类（type: identity）与核心档案同理：长期不动是正常状态，
+        // 被降级等于用户丢了自己的约定，也与 MemoryType.IDENTITY「永远保留」的语义相符。
+        if (memory.type == MemoryType.IDENTITY) return false
         val lastModified = memory.file?.lastModified() ?: return false
         if (lastModified <= 0L) return false
-        return System.currentTimeMillis() - lastModified > STALE_MEMORY_MILLIS
+        // 被频繁取用、只是内容没改的条目不算陈旧：判断依据取「修改」与「取用」中更近的一次。
+        val lastUsed = memoryUsageStore.lastUsedAt(memory.scope.name, memory.name)
+        return System.currentTimeMillis() - maxOf(lastModified, lastUsed) > STALE_MEMORY_MILLIS
     }
 
     /**
@@ -216,15 +233,31 @@ class MemoryRepository @Inject constructor(
         return globalMemorySource.loadContent(name)
     }
 
-    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?): Boolean {
+    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null): Boolean {
+        val existing = existingMemoryOf(name, scope, projectRoot)
+        // 未显式指定的字段沿用原值：否则覆盖 / 合并一条 identity 记忆会抹掉它的 type，
+        // 重写一条短期记忆也会把它变成永久（反过来同理）。
+        val effectiveType = type ?: existing?.type
+        val effectiveExpiresAt = expiresAt ?: existing?.expiresAt
         return when (scope) {
-            MemoryScope.GLOBAL -> globalMemorySource.saveMemory(name, description, content)
+            MemoryScope.GLOBAL ->
+                globalMemorySource.saveMemory(name, description, content, effectiveType, effectiveExpiresAt)
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) false
-                else projectSource(projectRoot).saveMemory(name, description, content)
+                else projectSource(projectRoot).saveMemory(name, description, content, effectiveType, effectiveExpiresAt)
             }
         }
     }
+
+    /** 记一次记忆取用（read 成功时调用）：遗忘判定与「这条到底用过没」的事实依据。 */
+    fun recordUsage(name: String, scope: MemoryScope) {
+        runCatching { memoryUsageStore.record(scope.name, name) }
+    }
+
+    /** 已存在条目的分类；不存在时返回 null（新建交给 MemoryParser 的启发式推断）。 */
+    private fun existingMemoryOf(name: String, scope: MemoryScope, projectRoot: String?): Memory? =
+        listMemories(projectRoot)
+            .firstOrNull { it.scope == scope && it.name.equals(name, ignoreCase = true) }
 
     fun editMemory(name: String, edits: List<MemoryEdit>, scope: MemoryScope, projectRoot: String?): MemoryEditResult {
         return when (scope) {

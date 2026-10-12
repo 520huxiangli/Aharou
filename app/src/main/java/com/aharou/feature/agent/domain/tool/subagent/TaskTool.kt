@@ -16,6 +16,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
+import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -27,8 +28,10 @@ import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -79,6 +82,9 @@ class TaskTool @Inject constructor(
         const val ROLE_LIST_LIMIT = 30
         /** `roles` 里每条描述的截断长度。 */
         const val ROLE_DESCRIPTION_MAX = 160
+
+        /** 流水线等待子代理的时长上限：超了就带着「仍在运行」的结论返回，不让工具调用无限挂住。 */
+        const val PIPELINE_WAIT_TIMEOUT_MS = 30L * 60L * 1000L
         /** 能改文件/落盘的工具：出现在角色白名单里就说明它不是只读角色。 */
         val WRITE_TOOLS = setOf("writeFile", "editFile", "generateImage")
         /** 能跑命令或操作设备的工具：用在「能不能执行命令」的提示上。 */
@@ -155,6 +161,35 @@ class TaskTool @Inject constructor(
             required = false,
             itemsSchema = mapOf("type" to "string")
         ),
+        "pipeline" to ToolParameter(
+            name = "pipeline",
+            type = ParameterType.ARRAY,
+            description = "流水线任务列表（action=pipeline 必填）。每项：{id, description, prompt, dependsOn?, writePaths?, agent? / department?+agentQuery?}。" +
+                "无依赖的任务同层并发跑；有依赖的等上游全部完成后才跑，且上游产出会自动接在它的 prompt 前面。" +
+                "同一层任务的 writePaths 不得相交（含目录与其中文件的关系）。",
+            required = false,
+            itemsSchema = mapOf(
+                "type" to "object",
+                "properties" to mapOf(
+                    "id" to mapOf("type" to "string", "description" to "本流水线内唯一的任务 id"),
+                    "description" to mapOf("type" to "string", "description" to "短标题"),
+                    "prompt" to mapOf("type" to "string", "description" to "完整任务指令"),
+                    "dependsOn" to mapOf(
+                        "type" to "array",
+                        "items" to mapOf("type" to "string"),
+                        "description" to "依赖的任务 id 列表"
+                    ),
+                    "writePaths" to mapOf(
+                        "type" to "array",
+                        "items" to mapOf("type" to "string"),
+                        "description" to "允许写入的路径；[] 表示只读，省略表示不限制"
+                    ),
+                    "agent" to mapOf("type" to "string"),
+                    "department" to mapOf("type" to "string"),
+                    "agentQuery" to mapOf("type" to "string")
+                )
+            )
+        ),
         "message" to ToolParameter(
             name = "message",
             type = ParameterType.STRING,
@@ -167,15 +202,227 @@ class TaskTool @Inject constructor(
         val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
         return when (action) {
             "create" -> createSubagent(args, context)
+            "pipeline" -> runPipeline(args, context)
             "send" -> sendToSubagent(args, context)
             "read" -> readSubagent(args, context)
             "stop" -> stopSubagent(args, context)
             "del" -> deleteSubagent(args, context)
             "list" -> listSubagents(context)
             "roles" -> listRoles(args)
-            else -> ToolResult.Error("未知 action: $action，支持：create / send / read / stop / del / list / roles", "INVALID_ARGS")
+            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles", "INVALID_ARGS")
         }
     }
+
+    /**
+     * 依赖流水线：一次调用把整张 DAG 交出去。
+     *
+     * 分层（拓扑排序）后逐层执行：层内并发派发，层间串行等待。上游任务的产出会自动接在
+     * 下游 prompt 前面，下游不必再自己去读一遍上游做过什么。价值在于主模型不必
+     * 「派一批 → 等 → 再派下一批」地串行驱动链式任务。
+     *
+     * 同层任务的写范围必须互不相交（借用 [WriteLease.overlaps]，与单任务 create 同一套判定）。
+     */
+    private suspend fun runPipeline(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
+
+        val raw = args["pipeline"] as? JsonArray
+            ?: return ToolResult.Error("pipeline 必须是数组（每项至少要有 id 与 prompt）", "INVALID_ARGS")
+
+        val tasks = raw.mapNotNull { it as? JsonObject }.mapNotNull { obj ->
+            val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            val prompt = (obj["prompt"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            if (id.isEmpty() || prompt.isEmpty()) {
+                null
+            } else {
+                PipelineTask(
+                    id = id,
+                    prompt = prompt,
+                    description = (obj["description"] as? JsonPrimitive)?.contentOrNull?.trim()
+                        ?.replace(Regex("\\s+"), " ")?.take(TASK_DESCRIPTION_MAX)?.takeIf { it.isNotBlank() } ?: id,
+                    dependsOn = stringSetOf(obj["dependsOn"]).orEmpty(),
+                    writePaths = stringSetOf(obj["writePaths"]),
+                    agent = (obj["agent"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
+                    department = (obj["department"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
+                    agentQuery = (obj["agentQuery"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+                )
+            }
+        }
+        if (tasks.isEmpty()) {
+            return ToolResult.Error("pipeline 里没有有效任务：每项至少要给 id 与 prompt", "INVALID_ARGS")
+        }
+        val knownIds = tasks.map { it.id }.toSet()
+        if (knownIds.size != tasks.size) {
+            return ToolResult.Error("pipeline 里存在重复的 id", "INVALID_ARGS")
+        }
+        tasks.forEach { task ->
+            val missing = task.dependsOn - knownIds
+            if (missing.isNotEmpty()) {
+                return ToolResult.Error("任务「${task.id}」依赖了不存在的 id：${missing.joinToString("、")}", "INVALID_ARGS")
+            }
+        }
+
+        val layers = try {
+            pipelineLayers(tasks)
+        } catch (e: IllegalStateException) {
+            return ToolResult.Error("pipeline 的依赖关系无法排序：${e.message}", "INVALID_ARGS")
+        }
+
+        val outputs = mutableMapOf<String, String>()
+        val report = mutableListOf<String>()
+
+        for ((layerIndex, layer) in layers.withIndex()) {
+            overlappingPair(layer)?.let { (a, b) ->
+                return ToolResult.Error(
+                    "同一层的「${a.id}」与「${b.id}」写范围相交，并发会互相踩：" +
+                        "把其中一个改成只读（writePaths=[]），或用 dependsOn 把它们串到不同层",
+                    "WRITE_CONFLICT"
+                )
+            }
+            if (layer.size > SubAgentEventBus.MAX_RUNNING) {
+                return ToolResult.Error(
+                    "第 ${layerIndex + 1} 层有 ${layer.size} 个任务，超过并发上限 ${SubAgentEventBus.MAX_RUNNING}：" +
+                        "拆成多层（用 dependsOn 串起来）或减少同层任务数",
+                    "TOO_MANY_IN_LAYER"
+                )
+            }
+
+            val spawned = mutableMapOf<String, String>()
+            for (task in layer) {
+                val upstream = task.dependsOn.mapNotNull { dep ->
+                    outputs[dep]?.takeIf { it.isNotBlank() }?.let { "## 上游任务「$dep」的产出\n$it" }
+                }.joinToString("\n\n")
+                val fullPrompt = if (upstream.isEmpty()) task.prompt else "$upstream\n\n---\n\n${task.prompt}"
+
+                val createArgs = buildJsonObject {
+                    put("action", "create")
+                    put("prompt", fullPrompt)
+                    put("description", task.description)
+                    task.agent?.let { put("agent", it) }
+                    task.department?.let { put("department", it) }
+                    task.agentQuery?.let { put("agentQuery", it) }
+                    task.writePaths?.let { paths ->
+                        put("writePaths", buildJsonArray { paths.forEach { add(JsonPrimitive(it)) } })
+                    }
+                }
+                val created = createSubagent(createArgs, context)
+                if (created is ToolResult.Error) {
+                    outputs[task.id] = ""
+                    report += "- ${task.id}：派发失败（${created.code}）${created.message}"
+                    continue
+                }
+                val subId = ((created as? ToolResult.Success)?.data as? JsonObject)
+                    ?.get("id")?.let { (it as? JsonPrimitive)?.contentOrNull }
+                if (subId.isNullOrBlank()) {
+                    outputs[task.id] = ""
+                    report += "- ${task.id}：派发后没拿到子会话 id"
+                } else {
+                    spawned[task.id] = subId
+                }
+            }
+            if (spawned.isEmpty()) continue
+
+            val finished = awaitSubAgents(spawned.values.toSet())
+            for ((taskId, subId) in spawned) {
+                val event = finished[subId]
+                outputs[taskId] = readSubagentOutput(subId, context)
+                val verdict = when {
+                    event == null -> "仍在运行（等待超时）"
+                    event.type == SubAgentEventType.FAILED -> "失败"
+                    event.accepted == false -> "完成但未通过交付判定"
+                    else -> "完成"
+                }
+                report += "- $taskId：$verdict（子会话 $subId）"
+            }
+        }
+
+        val summary = report.joinToString("\n")
+        return ToolResult.Success(
+            buildJsonObject {
+                put("state", "done")
+                put("layers", layers.size)
+                put("report", summary)
+                put(
+                    "message",
+                    "流水线已跑完（共 ${tasks.size} 个任务、${layers.size} 层）：\n$summary\n" +
+                        "各任务产出已按依赖自动传给下游；要看某个任务的完整输出用 task(action=\"read\", id=<子会话 id>)。"
+                )
+            }
+        )
+    }
+
+    /** 等这些子代理全部跑到终态；超时则返回已收到的部分（缺失即「仍在运行」）。 */
+    private suspend fun awaitSubAgents(ids: Set<String>): Map<String, SubAgentEvent> =
+        withTimeoutOrNull(PIPELINE_WAIT_TIMEOUT_MS) {
+            val done = mutableMapOf<String, SubAgentEvent>()
+            val remaining = ids.toMutableSet()
+            while (remaining.isNotEmpty()) {
+                val event = eventBus.events.first { it.subSessionId in remaining && it.type.isTerminal() }
+                remaining.remove(event.subSessionId)
+                done[event.subSessionId] = event
+            }
+            done
+        } ?: emptyMap()
+
+    private fun SubAgentEventType.isTerminal(): Boolean =
+        this == SubAgentEventType.COMPLETED || this == SubAgentEventType.FAILED || this == SubAgentEventType.STOPPED
+
+    /** 读子代理最后输出；复用 read 路径，保证与手动 read 拿到的是同一份结论。 */
+    private suspend fun readSubagentOutput(subSessionId: String, context: AgentContext): String {
+        val readArgs = buildJsonObject {
+            put("action", "read")
+            put("id", subSessionId)
+        }
+        val result = readSubagent(readArgs, context)
+        return ((result as? ToolResult.Success)?.data as? JsonPrimitive)?.contentOrNull.orEmpty()
+    }
+
+    /** 拓扑分层：同层任务互不依赖（可并发）；依赖成环时抛 IllegalStateException。 */
+    private fun pipelineLayers(tasks: List<PipelineTask>): List<List<PipelineTask>> {
+        val byId = tasks.associateBy { it.id }
+        val depth = mutableMapOf<String, Int>()
+        val visiting = mutableSetOf<String>()
+        fun depthOf(id: String): Int {
+            depth[id]?.let { return it }
+            if (!visiting.add(id)) throw IllegalStateException("任务「$id」形成依赖环")
+            val task = byId.getValue(id)
+            val value = if (task.dependsOn.isEmpty()) 0 else task.dependsOn.maxOf { depthOf(it) } + 1
+            visiting.remove(id)
+            depth[id] = value
+            return value
+        }
+        return tasks.groupBy { depthOf(it.id) }.toSortedMap().values.toList()
+    }
+
+    /** 同层里第一对写范围相交的任务；没有则返回 null。 */
+    private fun overlappingPair(layer: List<PipelineTask>): Pair<PipelineTask, PipelineTask>? {
+        for (i in layer.indices) {
+            val a = layer[i].writePaths ?: continue
+            for (j in i + 1 until layer.size) {
+                val b = layer[j].writePaths ?: continue
+                if (WriteLease.overlaps(a, b)) return layer[i] to layer[j]
+            }
+        }
+        return null
+    }
+
+    /** 把 JSON 数组参数读成字符串集合；非数组返回 null（表示「未声明」，与 create 的语义一致）。 */
+    private fun stringSetOf(element: JsonElement?): Set<String>? {
+        val array = element as? JsonArray ?: return null
+        return array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+    }
+
+    private data class PipelineTask(
+        val id: String,
+        val prompt: String,
+        val description: String,
+        val dependsOn: Set<String>,
+        val writePaths: Set<String>?,
+        val agent: String?,
+        val department: String?,
+        val agentQuery: String?
+    )
 
     /** 解析 writePaths 参数；未提供返回 null（不登记租约 = 不限制）。 */
     private fun parseWritePaths(args: Map<String, JsonElement>): Set<String>? {

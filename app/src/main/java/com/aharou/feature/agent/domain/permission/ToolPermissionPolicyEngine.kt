@@ -79,6 +79,12 @@ class ToolPermissionPolicyEngine @Inject constructor(
          */
         const val ELEVATE_ARG = "elevate"
 
+        /** 提权时必须附带的理由参数名（与工具参数表一致）。 */
+        const val ELEVATE_REASON_ARG = "reason"
+
+        /** 弹窗标题里理由的截断长度：标题不是正文，放得下要点即可。 */
+        const val ASK_TITLE_REASON_CHARS = 120
+
         /** 容器内 `~` 展开目标（PRoot 以 root 运行）。 */
         const val HOME_DIR = "/root"
         const val HOME_TOKEN = "\$HOME"
@@ -451,10 +457,13 @@ class ToolPermissionPolicyEngine @Inject constructor(
      */
     private fun elevationOrDeny(catastrophicReason: String, args: Map<String, JsonElement>): EvalResult =
         if (isElevationRequested(args)) {
+            // 提权理由一并带进弹窗标题：让用户看到的是「为什么非做不可」，而不是一串命令。
+            val reason = (args[ELEVATE_REASON_ARG] as? JsonPrimitive)?.content?.trim().orEmpty()
             EvalResult(
                 verdict = Verdict.ASK,
                 rememberablePatterns = emptyList(),
-                askTitle = "高危操作提权确认",
+                askTitle = if (reason.isEmpty()) "高危操作提权确认"
+                else "高危操作提权确认：${reason.take(ASK_TITLE_REASON_CHARS)}",
                 rememberDisabledReason = "命令命中内置安全防护，提权仅支持单次放行，不可记忆"
             )
         } else {

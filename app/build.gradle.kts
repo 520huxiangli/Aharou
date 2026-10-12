@@ -255,9 +255,12 @@ android {
         }
     }
 
-    // Tesseract 语言包本身已是压缩包格式，再压一遍几无收益，却要在读取时多一次解压。
+    // mp4 必须保持不压缩：PetVideoView 用 `assets.openFd()` 取文件描述符交给 MediaPlayer，
+    // 压缩过的 asset 拿不到 fd（会直接抛 FileNotFoundException）。
+    // 语言包（traineddata）不在此列：TesseractOcrEngine 用 `assets.open()` 流式读、首次使用解压到
+    // 私有目录，不依赖 fd；实测 deflate 还能压掉四成多（6.3 MB → 3.5 MB），故不再排除。
     androidResources {
-        noCompress += listOf("mvn", "traineddata", "mp4")
+        noCompress += listOf("mvn", "mp4")
     }
 
     // 关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，

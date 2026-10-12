@@ -28,11 +28,11 @@ class GlobalMemorySource @Inject constructor(
             ?.content
     }
 
-    override fun saveMemory(name: String, description: String, content: String): Boolean {
+    override fun saveMemory(name: String, description: String, content: String, type: MemoryType?, expiresAt: Long?): Boolean {
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
             val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-            val payload = MemoryParser.format(MemorySource.sanitizeName(name), description, content)
+            val payload = MemoryParser.format(MemorySource.sanitizeName(name), description, content, type, expiresAt = expiresAt)
             // 内容一字未变就不重写：mtime 既参与注入排序，又是「长期未改动就静默遗忘」的判据，
             // 无谓刷新会让陈旧条目永远显得新鲜，也会白白抖动 KV Cache。
             if (file.isFile && file.readText() == payload) return true

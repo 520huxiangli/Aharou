@@ -150,7 +150,7 @@ class MemoryCurator @Inject constructor(
                             memoryRepository.archiveContent(
                                 similar.name, similar.description, similar.content, similar.scope, projectRoot
                             )
-                            if (memoryRepository.saveMemory(c.name, c.description, c.content, effectiveScope, projectRoot)) saved++
+                            if (memoryRepository.saveMemory(c.name, c.description, c.content, effectiveScope, projectRoot, c.type)) saved++
                             FileLogger.i(TAG, "记忆「${similar.name}」被新事实推翻，旧版已归档")
                             memoryTrace.record(
                                 source = MemoryTraceLog.SOURCE_CURATOR,
@@ -173,7 +173,8 @@ class MemoryCurator @Inject constructor(
                 description = c.description,
                 content = c.content,
                 scope = effectiveScope,
-                projectRoot = projectRoot
+                projectRoot = projectRoot,
+                type = c.type
             )
             if (ok) {
                 saved++
@@ -267,12 +268,14 @@ class MemoryCurator @Inject constructor(
                     val body = obj["content"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                     val isProject = obj["scope"]?.jsonPrimitive?.contentOrNull?.trim()
                         ?.equals("project", ignoreCase = true) == true
+                    val type = MemoryType.from(obj["type"]?.jsonPrimitive?.contentOrNull?.trim())
                     if (name.isEmpty() || body.isEmpty() || description.isEmpty()) return@runCatching null
                     Candidate(
                         name = name,
                         description = description.take(200),
                         content = body.take(2000),
-                        scope = if (isProject) MemoryScope.PROJECT else MemoryScope.GLOBAL
+                        scope = if (isProject) MemoryScope.PROJECT else MemoryScope.GLOBAL,
+                        type = type
                     )
                 }.getOrNull()
             }
@@ -285,7 +288,9 @@ class MemoryCurator @Inject constructor(
         val name: String,
         val description: String,
         val content: String,
-        val scope: MemoryScope
+        val scope: MemoryScope,
+        /** 抽取器声明的分类；null 时交给 MemoryParser 启发式推断。 */
+        val type: MemoryType? = null
     )
 
     private companion object {

@@ -13,6 +13,8 @@ import java.io.File
  * @param type 记忆分类，决定是否进注入清单（见 [MemoryType]）
  * @param keywords 检索关键词：只用于 `memory(action=search)` 匹配，**不进清单**，
  *   避免为了提升检索命中率反而把注入撑肥。
+ * @param expiresAt 短期记忆的过期时刻（epoch millis）；null 表示不过期。
+ *   过期后不再进注入清单（文件保留，仍可 read / edit），无需人工清理。
  */
 data class Memory(
     val name: String,
@@ -21,7 +23,8 @@ data class Memory(
     val file: File? = null,
     val content: String,
     val type: MemoryType = MemoryType.FACT,
-    val keywords: List<String> = emptyList()
+    val keywords: List<String> = emptyList(),
+    val expiresAt: Long? = null
 )
 
 enum class MemoryScope {

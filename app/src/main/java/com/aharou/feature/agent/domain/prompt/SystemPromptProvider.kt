@@ -248,6 +248,31 @@ class SystemPromptProvider @Inject constructor(
         override fun build(ctx: AgentContext): String = "[System] 当前本地时间: ${currentDate()}"
     }
 
+    /**
+     * 当前模型身份。
+     *
+     * 没有这一段时，模型只能靠记忆条目里那句「按当前实际配置答」或临时调 config 工具才能自报身份，
+     * 很容易滑回训练默认身份。这里每轮直接给到它真正在跑的模型与供应商。
+     */
+    private inner class ModelIdentitySource : PromptSource {
+        override fun build(ctx: AgentContext): String? {
+            val identity = ctx.modelIdentity ?: return null
+            return buildString {
+                append("## 当前模型身份\n")
+                append("你本轮实际运行在模型 `").append(identity.modelId).append('`')
+                identity.providerId?.takeIf { it.isNotBlank() }?.let {
+                    append("（供应商 ID：").append(it).append('）')
+                }
+                append("。\n")
+                if (identity.contextTokens > 0) {
+                    append("上下文窗口约 ").append(identity.contextTokens).append(" tokens。\n")
+                }
+                append("被问及自身能力、版本、上下文长度、是否支持工具或图片时，以上述信息为准；")
+                append("不确定的能力边界直接说「不确定」，不要编造版本号或窗口大小。")
+            }
+        }
+    }
+
     private inner class MemoryListSource : PromptSource {
         // 会话级缓存：同一 (sessionId, projectRoot) 内只读一次盘，保持 system prompt 稳定以命中 KV 缓存；
         // 新开会话 / 切换工作区 / 重启 App 时缓存自然失效重建。空内容用 "" 占位以区分"未缓存"。
@@ -299,6 +324,7 @@ class SystemPromptProvider @Inject constructor(
     private val workspaceTypeSource = WorkspaceTypeSource()
     private val workspaceSource = WorkspaceSource()
     private val currentTimeSource = CurrentTimeSource()
+    private val modelIdentitySource = ModelIdentitySource()
 
     private val soulSource = SoulSource()
 
@@ -346,6 +372,7 @@ class SystemPromptProvider @Inject constructor(
         val projectRules = projectRuleSource.build(agentContext)
         val rulesContent = availableRulesSource.build(agentContext)
         val workspaceTypeContent = workspaceTypeSource.build(agentContext)
+        val modelIdentityContent = modelIdentitySource.build(agentContext)
 
         // 2. Workspace 上下文固定输出（内容已精简，无需快照占位）
         val effectiveWorkspaceContent = workspaceSource.build(agentContext)
@@ -383,6 +410,8 @@ class SystemPromptProvider @Inject constructor(
             }
             rulesContent?.let { append("\n\n"); append(it) }
             workspaceTypeContent?.let { append("\n\n"); append(it) }
+            // 模型身份放在变化区末尾：会话内稳定，但切模型时会变，不放在 KV Cache 前缀里。
+            modelIdentityContent?.let { if (it.isNotEmpty()) { append("\n\n"); append(it) } }
             if (DATE_VAR !in rawStatic) {
                 append("\n\n")
                 append(timeContent)

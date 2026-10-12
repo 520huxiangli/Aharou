@@ -79,7 +79,14 @@ class ExecuteCommandTool @Inject constructor(
         "elevate" to ToolParameter(
             name = "elevate",
             type = ParameterType.BOOLEAN,
-            description = "提权重试：命令因内置安全防护（灾难性删除等）被拒且确有必要时，置为 true 重试，会弹窗请用户一次性授权（不可记忆）。PLAN 模式下无效。",
+            description = "提权重试：命令因内置安全防护（灾难性删除等）被拒且确有必要时，置为 true 重试，会弹窗请用户一次性授权（不可记忆）。置 true 时必须同时给 reason。PLAN 模式下无效。",
+            required = false
+        ),
+        "reason" to ToolParameter(
+            name = "reason",
+            type = ParameterType.STRING,
+            description = "提权理由：elevate=true 时必填。写清这次为什么非执行不可（影响什么、不做会怎样），" +
+                "会连同命令一起展示给用户确认。不要写「因为需要」这类空话。",
             required = false
         )
     )
@@ -92,6 +99,9 @@ class ExecuteCommandTool @Inject constructor(
 
     private fun isBackground(args: Map<String, JsonElement>): Boolean =
         args["background"]?.jsonPrimitive?.booleanOrNull ?: false
+
+    private fun isElevation(args: Map<String, JsonElement>): Boolean =
+        args["elevate"]?.jsonPrimitive?.booleanOrNull ?: false
 
     /**
      * 把命令提交到常驻后台终端（[TerminalSessionProvider]）并立即返回 tab 号。
@@ -153,6 +163,15 @@ class ExecuteCommandTool @Inject constructor(
     ): ToolResult {
         val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
+
+        // 提权必须说明理由：理由会随命令一起进确认弹窗，避免「反正能提权就先试一下」的随手重试。
+        val elevateReason = args["reason"]?.jsonPrimitive?.contentOrNull?.trim()
+        if (isElevation(args) && elevateReason.isNullOrEmpty()) {
+            return ToolResult.Error(
+                "提权必须说明理由：在 reason 参数里写清这次为什么非执行不可（会展示给用户确认）。",
+                "ELEVATE_REASON_REQUIRED"
+            )
+        }
 
         if (isBackground(args)) return startBackground(command, args, context)
 

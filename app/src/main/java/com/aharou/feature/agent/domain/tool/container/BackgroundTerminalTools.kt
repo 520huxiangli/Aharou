@@ -145,7 +145,13 @@ class TerminalSessionTool @Inject constructor(
         "elevate" to ToolParameter(
             name = "elevate",
             type = ParameterType.BOOLEAN,
-            description = "提权重试：start/send 的命令因内置安全防护（灾难性删除等）被拒且确有必要时，置为 true 重试，会弹窗请用户一次性授权（不可记忆）。PLAN 模式下无效。",
+            description = "提权重试：start/send 的命令因内置安全防护（灾难性删除等）被拒且确有必要时，置为 true 重试，会弹窗请用户一次性授权（不可记忆）。置 true 时必须同时给 reason。PLAN 模式下无效。",
+            required = false
+        ),
+        "reason" to ToolParameter(
+            name = "reason",
+            type = ParameterType.STRING,
+            description = "提权理由：elevate=true 时必填。写清这次为什么非执行不可，会连同命令一起展示给用户确认。",
             required = false
         )
     )
@@ -226,7 +232,17 @@ class TerminalSessionTool @Inject constructor(
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,
         context: com.aharou.feature.agent.domain.model.AgentContext
-    ): ToolResult = execute(args, context)
+    ): ToolResult {
+        // 与 Bash 工具同规矩：提权必须说明理由，理由随命令一起进确认弹窗。
+        val elevating = args["elevate"]?.asPlainString()?.trim()?.lowercase() == "true"
+        if (elevating && args["reason"]?.asPlainString()?.trim().isNullOrEmpty()) {
+            return ToolResult.Error(
+                "提权必须说明理由：在 reason 参数里写清这次为什么非执行不可（会展示给用户确认）。",
+                "ELEVATE_REASON_REQUIRED"
+            )
+        }
+        return execute(args, context)
+    }
 
     private suspend fun execute(
         args: Map<String, JsonElement>,

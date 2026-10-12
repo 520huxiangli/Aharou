@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
@@ -107,6 +108,22 @@ class MemoryTool @Inject constructor(
             description = "作用域：project=当前项目专属；global=跨项目通用。默认为 project。",
             enum = listOf("project", "global"),
             required = false
+        ),
+        "type" to ToolParameter(
+            name = "type",
+            type = ParameterType.STRING,
+            description = "记忆分类：identity=长期约定与红线（正文会在下一次会话直接进系统提示词常驻）；" +
+                "preference=用户偏好；workflow=做事方式 / 流程约定；fact=一般事实（默认）；" +
+                "event=一次性事件（只留档，不进注入清单）。只在值得跨会话反复引用时才用 identity。",
+            enum = listOf("identity", "preference", "workflow", "fact", "event"),
+            required = false
+        ),
+        "ttl_days" to ToolParameter(
+            name = "ttl_days",
+            type = ParameterType.INTEGER,
+            description = "短期记忆的有效天数（正整数）。填了就是短期记忆：到期后自动不再进注入清单，" +
+                "文件保留、仍可 read，无需人工清理。只在「当前任务 / 阶段临时有效」时填，长期知识别填。",
+            required = false
         )
     )
 
@@ -133,7 +150,7 @@ class MemoryTool @Inject constructor(
             when (action) {
                 "list" -> handleList(context.projectRoot)
                 "search" -> handleSearch(args, context.projectRoot)
-                "read" -> handleRead(memoryName, context.projectRoot)
+                "read" -> handleRead(memoryName, scope, context.projectRoot)
                 "save" -> handleSave(args, memoryName, scope, context.projectRoot, context.sessionId)
                 "edit" -> handleEdit(args, memoryName, scope, context.projectRoot, context.sessionId)
                 "delete" -> handleDelete(memoryName, scope, context.projectRoot, context.sessionId)
@@ -204,10 +221,11 @@ class MemoryTool @Inject constructor(
         )
     }
 
-    private fun handleRead(name: String?, projectRoot: String?): ToolResult {
+    private fun handleRead(name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("read 操作需要 name 参数", "MISSING_NAME")
         val content = memoryRepository.loadContent(name, projectRoot)
             ?: return ToolResult.Error("未找到记忆「$name」", "MEMORY_NOT_FOUND")
+        memoryRepository.recordUsage(name, scope)
         return ToolResult.Success(JsonPrimitive(content))
     }
 
@@ -228,8 +246,12 @@ class MemoryTool @Inject constructor(
             return ToolResult.Error("当前未选择工作区，无法保存项目级记忆。请改用 scope=global", "NO_WORKSPACE")
         }
 
+        val type = MemoryType.from(args["type"]?.jsonPrimitive?.contentOrNull)
+        val ttlDays = args["ttl_days"]?.jsonPrimitive?.contentOrNull?.trim()?.toIntOrNull()
+        val expiresAt = ttlDays?.takeIf { it > 0 }
+            ?.let { System.currentTimeMillis() + it * 24L * 60L * 60L * 1_000L }
         val existed = memoryRepository.loadContent(name, projectRoot) != null
-        val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot)
+        val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot, type, expiresAt)
         if (!success) return ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
 
         // 重名（意同）是记忆库最大的噪声来源：同一条事实被不同名字反复记下，检索时互相抢位。
@@ -255,9 +277,14 @@ class MemoryTool @Inject constructor(
                 similar.joinToString("、") { "「${it.name}」（${it.description}）" } +
                 "。若这次写的是同一条事实，请改用 action=edit 就地修改，别再新建条目。"
         }
+        val typeNote = when (type) {
+            MemoryType.IDENTITY -> "它属于长期约定，正文会在下一次会话启动时直接进系统提示词常驻（无需再 read）。"
+            MemoryType.EVENT -> "它被标为一次性事件：只留档，不进注入清单，需要时用 search / read 取回。"
+            else -> "它将在下一次会话启动时自动注入摘要。"
+        }
         return ToolResult.Success(
             JsonPrimitive(
-                "已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。它将在下一次会话启动时自动注入摘要。" +
+                "已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。$typeNote" +
                     "当前会话若需立即使用，请通过 read 操作读取。$hint"
             )
         )
