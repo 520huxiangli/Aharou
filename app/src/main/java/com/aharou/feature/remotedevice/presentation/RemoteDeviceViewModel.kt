@@ -86,6 +86,10 @@ class RemoteDeviceViewModel @Inject constructor(
         controller.setAllowPublicPeer(value)
     }
 
+    fun setAutoPairBack(value: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        controller.setAutoPairBack(value)
+    }
+
     fun acceptAssistance(host: String, port: Int, code: String) = viewModelScope.launch(Dispatchers.IO) {
         _assist.value = AssistUiState.Working
         _assist.value = when (val outcome = controller.acceptAssistance(host, port, code)) {

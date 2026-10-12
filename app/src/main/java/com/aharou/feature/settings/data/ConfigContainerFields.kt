@@ -1,19 +1,32 @@
 package com.aharou.feature.settings.data
 
 import android.content.Context
+import com.aharou.core.config.ConfigCollection
+import com.aharou.core.config.ConfigError
+import com.aharou.core.config.ConfigField
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigRisk
+import com.aharou.core.config.ConfigSchema
+import com.aharou.core.config.ConfigValue
+import com.aharou.core.config.fields.ClosureField
 import com.aharou.core.config.fields.DataStoreStrField
+import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.domain.container.ContainerProfile
+import com.aharou.feature.agent.domain.container.RootfsSource
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
+import com.aharou.feature.settings.data.repository.ExecutionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * 容器设置 → 配置通道。
  *
- * 只接「选哪个容器」这类标量；自定义 profile 本体是结构化的镜像定义，走
- * [com.aharou.core.config.ConfigCollection] 增删（见后续批次），不在这里展开成字段。
+ * 标量接「选哪个容器」；结构化部分 [ProfileCollection] 把自定义 / 远程 SSH profile 列表
+ * （`container.profiles.<id>.*`）做成集合，增删走 [ContainerSettingsRepository] 既有方法。
  */
 @Singleton
 class ConfigContainerFields @Inject constructor(
@@ -42,5 +55,231 @@ class ConfigContainerFields @Inject constructor(
                 setter = { containerSettings.setDefaultContainerId(it) },
             ),
         )
+
+        registry.register(ProfileCollection())
+    }
+
+    private fun profiles(): List<ContainerProfile> =
+        runBlocking { containerSettings.customProfilesFlow.first() }
+
+    private fun profile(id: String): ContainerProfile? = profiles().firstOrNull { it.id == id }
+
+    private fun require(id: String): ContainerProfile =
+        profile(id) ?: throw ConfigError.InvalidValue("容器 profile 不存在：$id")
+
+    private fun mutate(id: String, transform: (ContainerProfile) -> ContainerProfile) {
+        runBlocking { containerSettings.upsertCustomProfile(transform(require(id))) }
+    }
+
+    private fun strOf(v: ConfigValue): String =
+        (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+
+    /** 把一串字符串数组读成 [ConfigValue.Arr]，逐项要求是字符串。 */
+    private fun stringListOf(v: ConfigValue): List<String> {
+        val arr = (v as? ConfigValue.Arr)?.value ?: throw ConfigError.TypeMismatch("array")
+        return arr.map { (it as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string") }
+    }
+
+    /** 容器 profile 列表（含内置 Alpine）。子字段按 [ContainerProfile] 真实结构给出。 */
+    private inner class ProfileCollection : ConfigCollection {
+        override val basePath = "container.profiles"
+        override val displayName = "容器 profile"
+        override val description =
+            "自定义容器 / 远程 SSH 容器列表（含内置 Alpine）。子字段：name / mode / rootfs_kind / " +
+                "rootfs_source / shell_path / extra_bindings / extra_args / env / is_builtin / created_at；" +
+                "add 建一个新 profile、remove 删掉列表中的一项（分别走 upsertCustomProfile / deleteCustomProfile）。"
+
+        override fun childIds(): List<String> = profiles().map { it.id }
+
+        override fun fields(forId: String): List<ConfigField> {
+            val p = profile(forId) ?: return emptyList()
+            return listOf(
+                ReadOnlyField(
+                    "$basePath.$forId.id", "id（$forId）", "profile 唯一标识，即集合子项 id。",
+                    ConfigSchema.Str(),
+                ) { ConfigValue.Str(p.id) },
+
+                ClosureField(
+                    path = "$basePath.$forId.name",
+                    displayName = "名称（$forId）",
+                    description = "容器在列表 / 设置页里的显示名。",
+                    valueSchema = ConfigSchema.Str(maxLength = 120),
+                    revertable = true,
+                    reader = { ConfigValue.Str(p.name) },
+                    writer = { v -> mutate(forId) { it.copy(name = strOf(v)) } },
+                ),
+
+                ReadOnlyField(
+                    "$basePath.$forId.mode", "执行模式（$forId）",
+                    "local_proot=本地 PRoot 容器 / remote_ssh=远程 SSH；由 profile 创建时选定，与 rootfs 来源绑定，只读。",
+                    ConfigSchema.StrEnum(listOf("local_proot", "remote_ssh")),
+                ) { ConfigValue.Str(p.mode.name.lowercase()) },
+
+                ReadOnlyField(
+                    "$basePath.$forId.rootfs_kind", "镜像来源类型（$forId）",
+                    "asset=内置 assets / local_file=导入的 tar.gz / remote_ssh=远程 SSH 通道；只读。",
+                    ConfigSchema.StrEnum(listOf("asset", "local_file", "remote_ssh")),
+                ) {
+                    ConfigValue.Str(
+                        when (p.rootfsSource) {
+                            is RootfsSource.Asset -> "asset"
+                            is RootfsSource.LocalFile -> "local_file"
+                            is RootfsSource.RemoteSsh -> "remote_ssh"
+                        },
+                    )
+                },
+
+                ReadOnlyField(
+                    "$basePath.$forId.rootfs_source", "镜像来源（$forId）",
+                    "asset=assets 内路径 / local_file=content uri / remote_ssh=「连接 id:远程工作区路径」；只读。",
+                    ConfigSchema.Str(),
+                ) {
+                    ConfigValue.Str(
+                        when (val s = p.rootfsSource) {
+                            is RootfsSource.Asset -> s.path
+                            is RootfsSource.LocalFile -> s.uri
+                            is RootfsSource.RemoteSsh -> "${s.connectionId}:${s.remoteWorkspacePath}"
+                        },
+                    )
+                },
+
+                ClosureField(
+                    path = "$basePath.$forId.shell_path",
+                    displayName = "Shell 路径（$forId）",
+                    description = "自定义镜像用的 shell（如 /bin/sh、/bin/bash）；留空 = 按 provision 状态自动选择。",
+                    valueSchema = ConfigSchema.Str(maxLength = 256),
+                    revertable = true,
+                    reader = { ConfigValue.Str(p.shellPath.orEmpty()) },
+                    writer = { v -> mutate(forId) { it.copy(shellPath = strOf(v).ifBlank { null }) } },
+                ),
+
+                ClosureField(
+                    path = "$basePath.$forId.extra_bindings",
+                    displayName = "额外挂载（$forId）",
+                    description = "额外的 -b 绑定列表，每项形如「宿主路径:容器路径」（都须为绝对路径）。",
+                    valueSchema = ConfigSchema.Array(ConfigSchema.Str()),
+                    revertable = true,
+                    reader = { ConfigValue.Arr(p.extraBindings.map { ConfigValue.Str(it) }) },
+                    writer = { v ->
+                        val bindings = stringListOf(v)
+                        bindings.forEach { b ->
+                            ContainerProfile.validateBinding(b)?.let { reason ->
+                                throw ConfigError.InvalidValue("挂载不合法（$b）：$reason")
+                            }
+                        }
+                        mutate(forId) { it.copy(extraBindings = bindings) }
+                    },
+                ),
+
+                ClosureField(
+                    path = "$basePath.$forId.extra_args",
+                    displayName = "额外 proot 参数（$forId）",
+                    description = "追加到 proot 命令行的参数列表，如 [\"--link2symlink\", \"--kill-on-exit\"]。" +
+                        "删掉默认项可能导致容器启动异常。",
+                    valueSchema = ConfigSchema.Array(ConfigSchema.Str()),
+                    revertable = true,
+                    reader = { ConfigValue.Arr(p.extraArgs.map { ConfigValue.Str(it) }) },
+                    writer = { v -> mutate(forId) { it.copy(extraArgs = stringListOf(v)) } },
+                ),
+
+                ClosureField(
+                    path = "$basePath.$forId.env",
+                    displayName = "环境变量（$forId）",
+                    description = "注入容器内进程的键值对（JSON 对象，值须为字符串），同名默认值被覆盖。",
+                    valueSchema = ConfigSchema.Json,
+                    risk = ConfigRisk.SENSITIVE,
+                    revertable = true,
+                    reader = { ConfigValue.Obj(p.env.mapValues { ConfigValue.Str(it.value) }) },
+                    writer = { v ->
+                        val obj = (v as? ConfigValue.Obj)?.value
+                            ?: throw ConfigError.TypeMismatch("object")
+                        val env = obj.mapValues { (k, value) ->
+                            (value as? ConfigValue.Str)?.value
+                                ?: throw ConfigError.TypeMismatch("string（$k 的值）")
+                        }
+                        mutate(forId) { it.copy(env = env) }
+                    },
+                ),
+
+                ReadOnlyField(
+                    "$basePath.$forId.is_builtin", "是否内置（$forId）",
+                    "内置 Alpine 为 true，其余为 false；只读。",
+                    ConfigSchema.Bool,
+                ) { ConfigValue.Bool(p.isBuiltin) },
+
+                ReadOnlyField(
+                    "$basePath.$forId.created_at", "添加时间（$forId）",
+                    "epoch 毫秒；旧数据 / 内置默认可能为 0（列表排最后）；只读。",
+                    ConfigSchema.Str(),
+                ) { ConfigValue.Str(p.createdAt.toString()) },
+            )
+        }
+
+        override fun add(payload: ConfigValue): String {
+            val obj = (payload as? ConfigValue.Obj)?.value
+                ?: throw ConfigError.InvalidValue("container.profiles 的新项需为 JSON 对象")
+            val name = (obj["name"] as? ConfigValue.Str)?.value?.trim().orEmpty()
+            if (name.isBlank()) throw ConfigError.InvalidValue("缺少 name")
+
+            val connectionId = (obj["connection_id"] as? ConfigValue.Str)?.value?.takeIf { it.isNotBlank() }
+            val remotePath = (obj["remote_workspace_path"] as? ConfigValue.Str)?.value?.trim().orEmpty()
+            val rootfsUri = (obj["rootfs_uri"] as? ConfigValue.Str)?.value?.takeIf { it.isNotBlank() }
+
+            val source: RootfsSource = when {
+                connectionId != null -> {
+                    if (remotePath.isBlank()) {
+                        throw ConfigError.InvalidValue("远程 SSH profile 需要 remote_workspace_path")
+                    }
+                    RootfsSource.RemoteSsh(connectionId, remotePath)
+                }
+                rootfsUri != null -> RootfsSource.LocalFile(rootfsUri)
+                else -> throw ConfigError.InvalidValue("缺少镜像来源：需提供 rootfs_uri（本地 tar.gz）或 connection_id（远程 SSH）")
+            }
+            val mode = if (source is RootfsSource.RemoteSsh) {
+                ExecutionMode.REMOTE_SSH
+            } else {
+                ExecutionMode.LOCAL_PROOT
+            }
+
+            val bindings = (obj["extra_bindings"] as? ConfigValue.Arr)?.value
+                ?.map { (it as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string") }
+                .orEmpty()
+            bindings.forEach { b ->
+                ContainerProfile.validateBinding(b)?.let { reason ->
+                    throw ConfigError.InvalidValue("挂载不合法（$b）：$reason")
+                }
+            }
+
+            val args = (obj["extra_args"] as? ConfigValue.Arr)?.value
+                ?.map { (it as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string") }
+                ?.takeIf { it.isNotEmpty() }
+                ?: (if (source is RootfsSource.LocalFile) ContainerProfile.DEFAULT_PROOT_ARGS else emptyList())
+
+            val env = (obj["env"] as? ConfigValue.Obj)?.value
+                ?.mapValues { (k, value) ->
+                    (value as? ConfigValue.Str)?.value
+                        ?: throw ConfigError.TypeMismatch("string（$k 的值）")
+                }
+                .orEmpty()
+
+            val profile = ContainerProfile(
+                id = "custom-" + UUID.randomUUID().toString(),
+                name = name,
+                rootfsSource = source,
+                shellPath = (obj["shell_path"] as? ConfigValue.Str)?.value?.takeIf { it.isNotBlank() },
+                extraBindings = bindings,
+                extraArgs = args,
+                env = env,
+                isBuiltin = false,
+                mode = mode,
+            )
+            runBlocking { containerSettings.upsertCustomProfile(profile) }
+            return profile.id
+        }
+
+        override fun remove(id: String) {
+            require(id)
+            runBlocking { containerSettings.deleteCustomProfile(id) }
+        }
     }
 }

@@ -2,6 +2,8 @@ package com.aharou.feature.remotedevice.server
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.mcp.McpConfigRepository
+import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.remotedevice.domain.PairOutcome
 import com.aharou.feature.remotedevice.domain.RemoteActionCatalog
@@ -14,12 +16,14 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import javax.inject.Inject
@@ -35,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -43,6 +48,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
@@ -79,6 +86,7 @@ class RemoteMcpServer @Inject constructor(
     private val catalog: RemoteActionCatalog,
     private val executor: RemoteActionExecutor,
     private val tickets: RemoteFileTicketStore,
+    private val mcpConfigRepository: McpConfigRepository,
     @param:ApplicationContext private val context: Context
 ) {
     companion object {
@@ -100,6 +108,9 @@ class RemoteMcpServer @Inject constructor(
         private const val FILE_TRANSFER_TIMEOUT_MS = 10 * 60 * 1000
         private const val COPY_BUFFER_BYTES = 64 * 1024
         private const val MAX_BODY_BYTES = 256 * 1024
+
+        /** 反向配对（一次配对即互通）的回连超时：对端应当就在线，超时短一点不拖住本机。 */
+        private const val PAIR_BACK_TIMEOUT_MS = 8_000
         private const val MAX_CONNECTIONS = 8
         private const val SERVER_BACKLOG = 16
     }
@@ -225,7 +236,7 @@ class RemoteMcpServer @Inject constructor(
                 request.path == HEALTH_PATH && request.method == "GET" ->
                     writeHttpResponse(out, 200, healthBody())
                 request.path == PAIR_PATH && request.method == "POST" ->
-                    handlePair(request, out)
+                    handlePair(request, out, peer)
                 request.path == MCP_PATH && request.method == "POST" ->
                     handleMcp(request, out)
                 request.path == MCP_PATH ->
@@ -305,11 +316,15 @@ class RemoteMcpServer @Inject constructor(
 
     // ── 配对 ──────────────────────────────────────────────────────
 
-    private suspend fun handlePair(request: HttpRequest, out: java.io.OutputStream) {
+    private suspend fun handlePair(request: HttpRequest, out: java.io.OutputStream, peer: InetAddress?) {
         val obj = runCatching { json.parseToJsonElement(request.body) as? JsonObject }.getOrNull()
         val code = (obj?.get("code") as? JsonPrimitive)?.contentOrNull.orEmpty()
         val deviceName = (obj?.get("name") as? JsonPrimitive)?.contentOrNull.orEmpty()
         val deviceId = (obj?.get("device_id") as? JsonPrimitive)?.contentOrNull.orEmpty()
+        // 一次配对即互通：对端顺带把自己的协作端点与一枚码带了过来，配对成功后本机回连一次，
+        // 把对方也登记成本机的 MCP 服务器——否则两边各要配一次。缺任一字段则跟老版本一样只开单向。
+        val peerEndpoint = (obj?.get("peer_endpoint") as? JsonPrimitive)?.contentOrNull.orEmpty()
+        val peerCode = (obj?.get("peer_code") as? JsonPrimitive)?.contentOrNull.orEmpty()
         when (val outcome = pairing.pair(code, deviceName, deviceId)) {
             is PairOutcome.Ok -> {
                 val body = buildJsonObject {
@@ -320,6 +335,13 @@ class RemoteMcpServer @Inject constructor(
                     put("path", MCP_PATH)
                 }.toString()
                 writeHttpResponse(out, 200, body)
+                // 先把 token 交给对端再回连：回连失败只影响反向那一段，不影响本次配对结果。
+                if (peer != null && peerEndpoint.isNotBlank() && peerCode.isNotBlank() &&
+                    settings.current().autoPairBack
+                ) {
+                    runCatching { pairBack(peer, peerEndpoint, peerCode) }
+                        .onFailure { FileLogger.w(TAG, "反向配对失败: ${it.message}") }
+                }
             }
             PairOutcome.InvalidCode ->
                 writeHttpResponse(out, 403, """{"error":"invalid_code"}""")
@@ -337,6 +359,60 @@ class RemoteMcpServer @Inject constructor(
         put("protocol_version", PROTOCOL_VERSION)
         put("version", appVersion())
     }.toString()
+
+    /**
+     * 回连对端完成反向配对：拿对端给的码换它的 token，并把对端登记成本机的一条 MCP 服务器。
+     *
+     * 地址只认**请求来源 IP**，对端在参数里写的地址不参——它最多能影响端口。这样「配对」就不会
+     * 被当成打任意主机的跳板（否则一个掌上有码的人就能让本机去打内网其它机器）。
+     */
+    private suspend fun pairBack(peer: InetAddress, peerEndpoint: String, peerCode: String) {
+        val port = Regex(":(\\d+)").find(peerEndpoint)?.groupValues?.get(1)?.toIntOrNull()
+            ?: settings.current().port
+        val host = peer.hostAddress ?: return
+        val literal = if (host.contains(':')) "[$host]" else host
+        val endpoint = "http://$literal:$port$PAIR_PATH"
+        val payload = buildJsonObject {
+            put("code", peerCode.trim().uppercase())
+            put("name", settings.displayName())
+            put("device_id", settings.installId())
+        }.toString()
+        val http = withContext(Dispatchers.IO) {
+            runCatching {
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = PAIR_BACK_TIMEOUT_MS
+                    readTimeout = PAIR_BACK_TIMEOUT_MS
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                connection.disconnect()
+                status to body
+            }.getOrNull()
+        } ?: return
+        val (status, body) = http
+        if (status !in 200..299) {
+            FileLogger.w(TAG, "反向配对被拒（HTTP $status）: $endpoint")
+            return
+        }
+        val token = runCatching {
+            json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.contentOrNull
+        }.getOrNull().orEmpty()
+        if (token.isBlank()) return
+        val serverName = "远端设备 ${if (literal.length > 24) literal.take(24) + "…" else literal}"
+        val config = McpServerConfig(
+            name = serverName,
+            url = "http://$literal:$port$MCP_PATH",
+            headers = mapOf("Authorization" to "Bearer $token")
+        )
+        val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
+        mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
+        FileLogger.i(TAG, "已与对端互通，登记 MCP 服务器「$serverName」")
+    }
 
     // ── MCP（Streamable HTTP） ────────────────────────────────────
 

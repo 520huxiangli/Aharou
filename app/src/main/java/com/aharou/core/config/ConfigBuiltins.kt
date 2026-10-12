@@ -2,11 +2,14 @@ package com.aharou.core.config
 
 import android.content.Context
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.DataStoreStrField
+import com.aharou.core.identity.UserIdentityStore
 import com.aharou.core.soul.SoulBodyLimitCheck
 import com.aharou.core.soul.SoulFile
 import com.aharou.core.soul.SoulMetadata
 import com.aharou.core.soul.SoulStore
 import com.aharou.core.soul.SystemPromptBuilder
+import kotlinx.coroutines.flow.map
 
 /**
  * 内置配置字段注册（自 上游项目 移植 · 分批扩充）。
@@ -133,6 +136,45 @@ object ConfigBuiltins {
                     val text = (v as? ConfigValue.Str)?.value
                         ?: throw ConfigError.TypeMismatch("string")
                     memoryStore.writeCore(text)
+                },
+            ),
+        )
+
+        registry.register(
+            DataStoreStrField(
+                path = "identity.display_name",
+                displayName = "我的昵称",
+                description = "聊天里显示的你自己（用户）的名字，≤40 字；空 = 不显示昵称。",
+                flow = UserIdentityStore.observe(appContext).map { it.name },
+                setter = { UserIdentityStore.setName(appContext, it) },
+                maxLength = 40,
+            ),
+        )
+
+        registry.register(
+            DataStoreStrField(
+                path = "identity.icon",
+                displayName = "我的头像",
+                description = "用户头像：emoji 字面量或 data:image/…;base64,…；空 = 默认头像。",
+                flow = UserIdentityStore.observe(appContext).map { it.icon },
+                setter = { UserIdentityStore.setIcon(appContext, it) },
+                maxLength = 200000,
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "memory.enabled",
+                displayName = "启用记忆",
+                description = "记忆总开关。关闭后提示词不再注入核心档案与每日日志（记忆文件仍保留，可随时再打开）。默认开启。",
+                valueSchema = ConfigSchema.Bool,
+                access = ConfigAccess.READWRITE,
+                revertable = true,
+                reader = { ConfigValue.Bool(memoryStore.isMemoryEnabled()) },
+                writer = { v ->
+                    val on = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("boolean")
+                    memoryStore.setMemoryEnabled(on)
                 },
             ),
         )

@@ -3,6 +3,7 @@ package com.aharou.feature.settings.data
 import android.content.Context
 import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
@@ -12,6 +13,9 @@ import com.aharou.core.config.fields.DataStoreIntField
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.LanguageSettingsRepository
 import com.aharou.feature.settings.data.repository.StartupSessionMode
+import com.aharou.feature.settings.data.repository.ToolSafetySettingsRepository
+import com.aharou.feature.settings.data.repository.UpdateChannel
+import com.aharou.feature.settings.data.repository.UpdateCheckSettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
@@ -32,6 +36,8 @@ class ConfigAppFields @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val languageSettings: LanguageSettingsRepository,
     private val generalSettings: GeneralSettingsRepository,
+    private val updateCheckSettings: UpdateCheckSettingsRepository,
+    private val toolSafetySettings: ToolSafetySettingsRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -77,8 +83,8 @@ class ConfigAppFields @Inject constructor(
                 path = "app.startup_session_mode",
                 displayName = "启动进入的会话",
                 description = "App 启动（含切换工作区）时进入哪个会话：new_session=复用当前工作区里未发过消息的空会话，否则新建；recent_session=直接打开最近更新的会话。",
-                flow = generalSettings.startupSessionModeFlow.map { it.name },
-                setter = { generalSettings.setStartupSessionMode(StartupSessionMode.valueOf(it)) },
+                flow = generalSettings.startupSessionModeFlow.map { it.name.lowercase() },
+                setter = { generalSettings.setStartupSessionMode(StartupSessionMode.valueOf(it.uppercase())) },
                 cases = listOf("new_session", "recent_session"),
             ),
         )
@@ -87,7 +93,7 @@ class ConfigAppFields @Inject constructor(
             DataStoreIntField(
                 path = "app.first_byte_timeout_sec",
                 displayName = "首字超时（秒）",
-                description = "发出请求后等待模型返回第一个字的时间上限，超过即判失败。默认 300 秒。",
+                description = "发出请求后等待模型返回第一个字的时间上限，超过即判失败。默认 120 秒。",
                 flow = generalSettings.firstByteTimeoutSecFlow,
                 setter = { generalSettings.setFirstByteTimeoutSec(it) },
             ),
@@ -97,7 +103,7 @@ class ConfigAppFields @Inject constructor(
             DataStoreIntField(
                 path = "app.stream_idle_timeout_sec",
                 displayName = "数据块间隔超时（秒）",
-                description = "流式输出期间，两个数据块之间的最长等待时间，超过即判失败。默认 300 秒。",
+                description = "流式输出期间，两个数据块之间的最长等待时间，超过即判失败。默认 120 秒。",
                 flow = generalSettings.streamIdleTimeoutSecFlow,
                 setter = { generalSettings.setStreamIdleTimeoutSec(it) },
             ),
@@ -150,6 +156,88 @@ class ConfigAppFields @Inject constructor(
                 description = "移除外部本地工作区时，是否一并删除它的聊天记录。默认关闭（保留记录）。",
                 flow = generalSettings.deleteExternalWorkspaceSessionsFlow,
                 setter = { generalSettings.setDeleteExternalWorkspaceSessions(it) },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "app.auto_check_update",
+                displayName = "自动检查更新",
+                description = "启动时自动检查有没有新版本。默认开启。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(updateCheckSettings.autoCheckEnabled) },
+                writer = { v ->
+                    updateCheckSettings.autoCheckEnabled =
+                        (v as? ConfigValue.Bool)?.value ?: throw ConfigError.TypeMismatch("boolean")
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "app.update_channel",
+                displayName = "更新通道",
+                description = "更新走哪条通道：stable=仅正式版 / latest=含测试版（beta 与 RC）。默认 stable。",
+                valueSchema = ConfigSchema.StrEnum(listOf("stable", "latest")),
+                revertable = true,
+                reader = { ConfigValue.Str(updateCheckSettings.channel.name.lowercase()) },
+                writer = { v ->
+                    val tag = (v as? ConfigValue.Str)?.value
+                        ?: throw ConfigError.TypeMismatch("string")
+                    updateCheckSettings.channel = UpdateChannel.valueOf(tag.uppercase())
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "app.auto_download_update",
+                displayName = "自动下载更新包",
+                description = "检测到新版本后在后台自动下好，用户只需点一下安装。默认开启。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(updateCheckSettings.autoDownloadEnabled) },
+                writer = { v ->
+                    updateCheckSettings.autoDownloadEnabled =
+                        (v as? ConfigValue.Bool)?.value ?: throw ConfigError.TypeMismatch("boolean")
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "app.auto_install_update",
+                displayName = "自动安装更新",
+                description = "更新包下载完就自动静默安装（需 Shizuku 授权）。覆盖安装会重启 App，且无法回退到旧版。默认关闭。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(updateCheckSettings.autoInstallEnabled) },
+                writer = { v ->
+                    updateCheckSettings.autoInstallEnabled =
+                        (v as? ConfigValue.Bool)?.value ?: throw ConfigError.TypeMismatch("boolean")
+                },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "app.soft_compaction_threshold_percent",
+                displayName = "软精简阈值（%）",
+                description = "上下文用量达到该百分比时先精简历史里的超长工具输出，不调用摘要模型。默认 55。",
+                flow = generalSettings.softCompactionThresholdPercentFlow,
+                setter = { generalSettings.setSoftCompactionThresholdPercent(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "app.disable_safety_interception",
+                displayName = "禁用安全拦截",
+                description = "开启后 AUTO 模式下灾难性删除不再拦截、Shizuku 也不再逐次弹窗确认；仅作用于 AUTO 模式。默认关闭。",
+                flow = toolSafetySettings.disableSafetyInterceptionFlow,
+                setter = { toolSafetySettings.setDisableSafetyInterception(it) },
+                risk = ConfigRisk.SENSITIVE,
             ),
         )
     }

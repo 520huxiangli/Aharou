@@ -298,10 +298,10 @@ class AIAgentViewModel @Inject constructor(
     private fun describeFailure(event: AgentEvent.Failed): String {
         val localized = when (event.reasonCode) {
             // Gemini 的 finishReason 全大写，这几种与 Anthropic 的 refusal 同义（内容策略拦截）。
-            "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII" ->
-                context.getString(R.string.agent_stop_refusal)
+            "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII" -> context.getString(R.string.agent_stop_refusal)
             "model_context_window_exceeded" -> context.getString(R.string.agent_stop_context_exceeded)
             "input_budget_exceeded" -> context.getString(R.string.agent_input_budget_exceeded)
+            "empty_response" -> context.getString(R.string.agent_stop_empty_response)
             else -> null
         } ?: return event.error
         return if (event.error.isBlank()) localized else "$localized\n${event.error}"

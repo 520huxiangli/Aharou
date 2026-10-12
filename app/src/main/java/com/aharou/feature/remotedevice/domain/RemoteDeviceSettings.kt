@@ -50,7 +50,12 @@ data class RemoteDeviceConfig(
      * 关闭时只放行私网/回环/链路本地地址（即同一局域网）；开启后才能接受跨网络对端
      * （IPv6 全球单播或经组网工具的地址）。开启后准入只剩配对码，默认关。
      */
-    val allowPublicPeer: Boolean = false
+    val allowPublicPeer: Boolean = false,
+    /**
+     * 一次配对即互通：对端用配对码连上本机时，本机顺带回连一次、把对端也登记成本机的 MCP 服务器，
+     * 省掉「反向再配一次」。关闭后每次配对只开通一个方向。默认开。
+     */
+    val autoPairBack: Boolean = true
 ) {
     companion object {
         /** 默认端口：避开 debug 变体内置 MCP server 的 47821，两者可同机共存。 */
@@ -74,6 +79,7 @@ class RemoteDeviceSettings @Inject constructor(
         val NAME = stringPreferencesKey("remote_device_name")
         val ALWAYS_ASK = booleanPreferencesKey("remote_device_always_ask")
         val ALLOW_PUBLIC = booleanPreferencesKey("remote_device_allow_public")
+        val AUTO_PAIR_BACK = booleanPreferencesKey("remote_device_auto_pair_back")
     }
 
     val config: Flow<RemoteDeviceConfig> = context.remoteDeviceDataStore.data.map { prefs ->
@@ -82,7 +88,8 @@ class RemoteDeviceSettings @Inject constructor(
             port = prefs[PORT] ?: RemoteDeviceConfig.DEFAULT_PORT,
             deviceName = prefs[NAME].orEmpty(),
             alwaysAskRemote = prefs[ALWAYS_ASK] ?: false,
-            allowPublicPeer = prefs[ALLOW_PUBLIC] ?: false
+            allowPublicPeer = prefs[ALLOW_PUBLIC] ?: false,
+            autoPairBack = prefs[AUTO_PAIR_BACK] ?: true
         )
     }
 
@@ -108,6 +115,10 @@ class RemoteDeviceSettings @Inject constructor(
 
     suspend fun setAllowPublicPeer(value: Boolean) {
         context.remoteDeviceDataStore.edit { it[ALLOW_PUBLIC] = value }
+    }
+
+    suspend fun setAutoPairBack(value: Boolean) {
+        context.remoteDeviceDataStore.edit { it[AUTO_PAIR_BACK] = value }
     }
 
     /** 对端看到的设备名：用户自定义优先，否则回退机型。 */

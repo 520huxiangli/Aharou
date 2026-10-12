@@ -86,7 +86,7 @@ class McpManager @Inject constructor(
         // 配置文件被外部（容器内/手工）直接编辑：数秒内自动重载，使新增/删除/启停即时生效。
         scope.launch {
             configRepository.externalChanges.collect {
-                FileLogger.i(TAG, "检测到 MCP 配置文件外部变更，自动重载")
+                FileLogger.i(TAG, "检测到 MCP 配置变更，自动重载")
                 reload()
             }
         }

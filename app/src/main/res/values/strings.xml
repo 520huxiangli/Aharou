@@ -455,6 +455,7 @@
     <string name="agent_stop_refusal">模型基于内容安全策略拒绝了本次回答。</string>
     <string name="agent_stop_context_exceeded">本次输入超出模型上下文窗口，请先压缩上下文或新建会话。</string>
     <string name="agent_input_budget_exceeded">上下文超过当前模型的可用输入预算，请缩短输入或减少工具定义。</string>
+    <string name="agent_stop_empty_response">模型返回了空响应，既没有正文也没有工具调用。可能是上游网关异常或上下文过长，可重试一次，或先压缩上下文再试。</string>
     <string name="chat_context_usage_estimated">预计占可用输入预算 %1$d%%</string>    <string name="agent_context_no_compaction">当前上下文无需压缩（消息过少）</string>
     <string name="agent_compaction_failed">压缩失败：%1$s</string>
     <!-- About -->
@@ -2617,6 +2618,9 @@
     <string name="settings_remote_device_accept_assist">连接到另一台设备</string>
     <string name="settings_remote_device_accept_assist_hint">输入对方给的协助地址与 6 位码</string>
     <string name="settings_remote_device_pair_code">生成配对码</string>
+    <string name="remote_device_message_title">来自 %1$s 的消息</string>
+    <string name="settings_remote_device_auto_pair_back">一次配对即互通</string>
+    <string name="settings_remote_device_auto_pair_back_hint">对端配对成功后，本机顺带回连一次、双方各多一条授权，不用反向再配一次；回连只认对方的来源地址。默认开启。</string>
     <string name="settings_remote_device_pair_hint">在另一台设备的 Aharou 里输入这枚 6 位码完成配对</string>
     <string name="settings_remote_device_pair_remaining">剩余 %1$s</string>
     <string name="settings_remote_device_pair_expired">配对码已过期</string>

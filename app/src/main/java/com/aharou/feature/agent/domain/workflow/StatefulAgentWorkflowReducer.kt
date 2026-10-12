@@ -58,6 +58,13 @@ internal fun StatefulAgentWorkflow.reduce(
                     newState = newState.copy(messages = newState.messages + continuation)
                     effects.add(AgentSideEffect.PersistUser(continuation))
                     effects.add(AgentSideEffect.CallLlm)
+                } else if (action.response.content.isBlank() &&
+                    action.response.reasoning.isNullOrBlank() &&
+                    action.response.images.isEmpty()
+                ) {
+                    // 空响应（无正文、无思考、无图）：静默收尾会让用户只看到一张空白气泡，
+                    // 与「模型真的答完了」无法区分；交给 UI 按 errorCode 展示原因并允许重试。
+                    newState = newState.copy(isFinished = true, error = "", errorCode = "empty_response")
                 } else {
                     newState = newState.copy(isFinished = true)
                 }

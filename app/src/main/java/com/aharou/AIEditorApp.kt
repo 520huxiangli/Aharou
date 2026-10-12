@@ -185,6 +185,38 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configVoiceFields: com.aharou.feature.settings.data.ConfigVoiceFields
 
+    /** 聊天气泡外观字段注册。 */
+    @Inject
+    lateinit var configChatFields: com.aharou.feature.agent.data.ConfigChatFields
+
+    /** 浏览器偏好（UA / 视口 / 标签回收 / 页内开发者工具）字段注册。 */
+    @Inject
+    lateinit var configBrowserFields: com.aharou.feature.browser.data.ConfigBrowserFields
+
+    /** Telegram 机器人字段注册。 */
+    @Inject
+    lateinit var configImFields: com.aharou.feature.im.data.ConfigImFields
+
+    /** 桌面伙伴「小染」字段注册。 */
+    @Inject
+    lateinit var configPetFields: com.aharou.feature.pet.data.ConfigPetFields
+
+    /** 跨设备协作字段注册（开关/端口/配对码/已配对设备）。 */
+    @Inject
+    lateinit var configRemoteDeviceFields: com.aharou.feature.remotedevice.data.ConfigRemoteDeviceFields
+
+    /** 凭据类字段注册（GitHub 令牌 / 自动注入 / SSH 登录密钥 / 凭据库）。 */
+    @Inject
+    lateinit var configCredentialFields: com.aharou.feature.settings.data.ConfigCredentialFields
+
+    /** 备份导出范围字段注册。 */
+    @Inject
+    lateinit var configBackupFields: com.aharou.feature.settings.data.ConfigBackupFields
+
+    /** FTP 服务器字段注册。 */
+    @Inject
+    lateinit var configFtpFields: com.aharou.feature.settings.data.ConfigFtpFields
+
     /** 记忆的 AI 蒸馏：启动时后台判一次「是否到点」，到点才调模型。 */
     @Inject
     lateinit var memoryDistiller: com.aharou.feature.agent.domain.memory.MemoryDistiller
@@ -320,6 +352,14 @@ class AIEditorApp : Application(), Configuration.Provider {
         configSkillFields.registerInto(configRegistry)
         configSkillMarketFields.registerInto(configRegistry)
         configVoiceFields.registerInto(configRegistry)
+        configChatFields.registerInto(configRegistry)
+        configBrowserFields.registerInto(configRegistry)
+        configImFields.registerInto(configRegistry)
+        configPetFields.registerInto(configRegistry)
+        configRemoteDeviceFields.registerInto(configRegistry)
+        configCredentialFields.registerInto(configRegistry)
+        configBackupFields.registerInto(configRegistry)
+        configFtpFields.registerInto(configRegistry)
         // 工作区项目级 .aicode 目录 → .aharou 一次性迁移（只搬不删）
         com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this)
         com.aharou.core.config.audit.ConfigAuditLog.init(this)

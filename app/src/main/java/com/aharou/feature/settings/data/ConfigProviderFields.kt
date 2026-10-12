@@ -9,8 +9,14 @@ import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.settings.domain.model.DEFAULT_KEY_WEIGHT
+import com.aharou.feature.settings.domain.model.KeyRotationStrategy
+import com.aharou.feature.settings.domain.model.MAX_KEY_WEIGHT
+import com.aharou.feature.settings.domain.model.ProviderKey
 import com.aharou.feature.settings.domain.model.ProviderType
+import com.aharou.feature.settings.domain.model.ProxyType
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.first
@@ -45,11 +51,38 @@ class ConfigProviderFields @Inject constructor(
     private fun save(updated: AIProviderConfig) =
         runBlocking { providers.saveProvider(updated) }
 
+    /** 解析多 Key 串：每行 `值|权重`，与 AIProviderRepositoryImpl 的存储格式一致。 */
+    private fun parseProviderKeys(text: String): List<ProviderKey> =
+        text.split('\n').mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty()) return@mapNotNull null
+            val sep = trimmed.lastIndexOf('|')
+            if (sep < 0) return@mapNotNull ProviderKey(trimmed)
+            val value = trimmed.substring(0, sep).trim()
+            if (value.isEmpty()) return@mapNotNull null
+            val weight = trimmed.substring(sep + 1).trim().toIntOrNull() ?: DEFAULT_KEY_WEIGHT
+            ProviderKey(value, weight.coerceIn(0, MAX_KEY_WEIGHT))
+        }
+
+    /** 解析「名: 值」逐行的键值对，忽略空行与没有冒号的行。 */
+    private fun parsePairs(text: String): Map<String, String> =
+        text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it.contains(':') }
+            .associate { line ->
+                val sep = line.indexOf(':')
+                line.substring(0, sep).trim() to line.substring(sep + 1).trim()
+            }
+
     private inner class ProviderCollection : ConfigCollection {
         override val basePath = "providers"
         override val displayName = "AI 供应商"
         override val description =
-            "已配置的供应商列表。子字段：name / baseUrl / apiKey / defaultModel / selectedModel / panelScript / enabled。"
+            "已配置的供应商列表。子字段：name / baseUrl / apiKey / defaultModel / selectedModel / " +
+                "panelScript / enabled / multiKeyEnabled / apiKeys / keyRotationStrategy / " +
+                "keyCooldownMinutes / keySwitchStatusCodes / proxyEnabled / proxyType / proxyHost / " +
+                "proxyPort / proxyUsername / proxyPassword / useFullUrl / useResponseApi / customHeaders / " +
+                "sortOrder（只读）/ dashboardRefreshInterval / anthropicCacheBreakpoints / openaiChatCacheKey。"
 
         override fun childIds(): List<String> =
             runBlocking { providers.getAllProviders().first() }.map { it.id }
@@ -70,6 +103,69 @@ class ConfigProviderFields @Inject constructor(
                 description = desc,
                 valueSchema = schema,
                 risk = risk,
+                revertable = true,
+                reader = { ConfigValue.Str(snapshot(forId)?.let(read).orEmpty()) },
+                writer = { v ->
+                    val s = (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+                    val current = snapshot(forId) ?: throw ConfigError.InvalidValue("供应商不存在：$forId")
+                    save(write(current, s))
+                },
+            )
+
+            fun bool(
+                field: String,
+                name: String,
+                desc: String,
+                read: (AIProviderConfig) -> Boolean,
+                write: (AIProviderConfig, Boolean) -> AIProviderConfig,
+            ) = ClosureField(
+                path = "$basePath.$forId.$field",
+                displayName = "$name（$forId）",
+                description = desc,
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(snapshot(forId)?.let(read) ?: false) },
+                writer = { v ->
+                    val b = (v as? ConfigValue.Bool)?.value ?: throw ConfigError.TypeMismatch("boolean")
+                    val current = snapshot(forId) ?: throw ConfigError.InvalidValue("供应商不存在：$forId")
+                    save(write(current, b))
+                },
+            )
+
+            fun int(
+                field: String,
+                name: String,
+                desc: String,
+                min: Int? = null,
+                max: Int? = null,
+                read: (AIProviderConfig) -> Int,
+                write: (AIProviderConfig, Int) -> AIProviderConfig,
+            ) = ClosureField(
+                path = "$basePath.$forId.$field",
+                displayName = "$name（$forId）",
+                description = desc,
+                valueSchema = ConfigSchema.Int(min = min, max = max),
+                revertable = true,
+                reader = { ConfigValue.Int(snapshot(forId)?.let(read) ?: 0) },
+                writer = { v ->
+                    val i = (v as? ConfigValue.Int)?.value ?: throw ConfigError.TypeMismatch("integer")
+                    val current = snapshot(forId) ?: throw ConfigError.InvalidValue("供应商不存在：$forId")
+                    save(write(current, i))
+                },
+            )
+
+            fun enumField(
+                field: String,
+                name: String,
+                desc: String,
+                cases: List<String>,
+                read: (AIProviderConfig) -> String,
+                write: (AIProviderConfig, String) -> AIProviderConfig,
+            ) = ClosureField(
+                path = "$basePath.$forId.$field",
+                displayName = "$name（$forId）",
+                description = desc,
+                valueSchema = ConfigSchema.StrEnum(cases),
                 revertable = true,
                 reader = { ConfigValue.Str(snapshot(forId)?.let(read).orEmpty()) },
                 writer = { v ->
@@ -136,6 +232,149 @@ class ConfigProviderFields @Inject constructor(
                         val b = (v as? ConfigValue.Bool)?.value ?: throw ConfigError.TypeMismatch("boolean")
                         runBlocking { providers.setProviderEnabled(forId, b) }
                     },
+                ),
+                bool(
+                    field = "multi_key_enabled",
+                    name = "多 Key 模式",
+                    desc = "开启后从 apiKeys 轮换取用，关闭时只用 apiKey。默认关闭。",
+                    read = { it.multiKeyEnabled },
+                    write = { p, b -> p.copy(multiKeyEnabled = b) },
+                ),
+                str(
+                    field = "api_keys",
+                    name = "多 Key 列表",
+                    desc = "多 Key 模式下的候选 Key，每行一个「Key|权重」（权重省略取默认 1，≤0 表示暂不参与调度）。与库内存储同格式。",
+                    risk = ConfigRisk.SENSITIVE,
+                    read = { it.apiKeys.joinToString("\n") { k -> "${k.value}|${k.weight}" } },
+                    write = { p, s -> p.copy(apiKeys = parseProviderKeys(s)) },
+                ),
+                enumField(
+                    field = "key_rotation_strategy",
+                    name = "多 Key 策略",
+                    desc = "sequential=顺序（失败才切，默认）/ round_robin=轮询（新会话轮流起步）。",
+                    cases = listOf("sequential", "round_robin"),
+                    read = { it.keyRotationStrategy.name.lowercase() },
+                    write = { p, s ->
+                        p.copy(keyRotationStrategy = KeyRotationStrategy.valueOf(s.uppercase()))
+                    },
+                ),
+                int(
+                    field = "key_cooldown_minutes",
+                    name = "Key 冷却分钟",
+                    desc = "被切走的 Key 冷却多少分钟后重新纳入候选；0 表示不冷却。默认 5。",
+                    min = 0,
+                    read = { it.keyCooldownMinutes },
+                    write = { p, i -> p.copy(keyCooldownMinutes = i) },
+                ),
+                str(
+                    field = "key_switch_status_codes",
+                    name = "Key 切换状态码",
+                    desc = "命中即触发多 Key 自动切换的 HTTP 状态码，逗号分隔（如 401,402,403,429）；留空回退默认集合。",
+                    read = { it.keySwitchStatusCodes.joinToString(",") },
+                    write = { p, s ->
+                        p.copy(
+                            keySwitchStatusCodes = s.split(',')
+                                .mapNotNull { it.trim().toIntOrNull() }
+                                .filter { it in 100..599 }
+                                .distinct(),
+                        )
+                    },
+                ),
+                bool(
+                    field = "proxy_enabled",
+                    name = "独立代理",
+                    desc = "单独为该供应商启用代理；关闭时跟随全局代理设置。默认关闭。",
+                    read = { it.proxyEnabled },
+                    write = { p, b -> p.copy(proxyEnabled = b) },
+                ),
+                enumField(
+                    field = "proxy_type",
+                    name = "代理协议",
+                    desc = "http=CONNECT 隧道（可代理全部 http/https）/ socks5=TCP 级转发。默认 http。",
+                    cases = listOf("http", "socks5"),
+                    read = { it.proxyType.name.lowercase() },
+                    write = { p, s -> p.copy(proxyType = ProxyType.valueOf(s.uppercase())) },
+                ),
+                str(
+                    field = "proxy_host",
+                    name = "代理主机",
+                    desc = "代理服务器地址或域名；代理关闭时留空即可。",
+                    read = { it.proxyHost },
+                    write = { p, s -> p.copy(proxyHost = s) },
+                ),
+                int(
+                    field = "proxy_port",
+                    name = "代理端口",
+                    desc = "代理端口，最大 65535；0 表示未设置。",
+                    min = 0,
+                    max = 65535,
+                    read = { it.proxyPort },
+                    write = { p, i -> p.copy(proxyPort = i) },
+                ),
+                str(
+                    field = "proxy_username",
+                    name = "代理用户名",
+                    desc = "代理认证用户名；无认证时留空。",
+                    read = { it.proxyUsername },
+                    write = { p, s -> p.copy(proxyUsername = s) },
+                ),
+                str(
+                    field = "proxy_password",
+                    name = "代理密码",
+                    desc = "代理认证密码；无认证时留空。",
+                    risk = ConfigRisk.SENSITIVE,
+                    read = { it.proxyPassword },
+                    write = { p, s -> p.copy(proxyPassword = s) },
+                ),
+                bool(
+                    field = "use_full_url",
+                    name = "完整地址",
+                    desc = "开启后 baseUrl 直接作为完整请求地址使用（不再拼接默认路径）。默认关闭。",
+                    read = { it.useFullUrl },
+                    write = { p, b -> p.copy(useFullUrl = b) },
+                ),
+                bool(
+                    field = "use_response_api",
+                    name = "Response API",
+                    desc = "OpenAI 类型改用 Response API 端点。默认关闭。",
+                    read = { it.useResponseApi },
+                    write = { p, b -> p.copy(useResponseApi = b) },
+                ),
+                str(
+                    field = "custom_headers",
+                    name = "自定义请求头",
+                    desc = "覆盖同名默认请求头，每行一个「名: 值」；值支持 {{SESSION_ID}} / {{API_KEY}} 占位符。留空表示不加。",
+                    read = { it.customHeaders.entries.joinToString("\n") { (k, v) -> "$k: $v" } },
+                    write = { p, s -> p.copy(customHeaders = parsePairs(s)) },
+                ),
+                ReadOnlyField(
+                    path = "$basePath.$forId.sort_order",
+                    displayName = "排序序号（$forId）",
+                    description = "列表排序序号，越小越靠前；由仓库按保存时的当前顺序维护，配置通道只读。",
+                    valueSchema = ConfigSchema.Int(),
+                    reader = { ConfigValue.Int(snapshot(forId)?.sortOrder ?: -1) },
+                ),
+                int(
+                    field = "dashboard_refresh_interval",
+                    name = "面板刷新间隔",
+                    desc = "自定义面板自动刷新间隔（分钟），0 表示仅进入/手动刷新。默认 5。",
+                    min = 0,
+                    read = { it.dashboardRefreshInterval },
+                    write = { p, i -> p.copy(dashboardRefreshInterval = i) },
+                ),
+                bool(
+                    field = "anthropic_cache_breakpoints",
+                    name = "Anthropic 缓存断点",
+                    desc = "发送显式 cache_control 断点；仅 ANTHROPIC 类型生效。默认开启。",
+                    read = { it.anthropicCacheBreakpoints },
+                    write = { p, b -> p.copy(anthropicCacheBreakpoints = b) },
+                ),
+                bool(
+                    field = "openai_chat_cache_key",
+                    name = "OpenAI 缓存 Key",
+                    desc = "Chat Completion 请求发送 prompt_cache_key（分片路由）；仅 OPENAI 类型生效。默认关闭。",
+                    read = { it.openaiChatCacheKey },
+                    write = { p, b -> p.copy(openaiChatCacheKey = b) },
                 ),
             )
         }

@@ -60,7 +60,8 @@ enum class RemoteActionKind(val capability: String) {
     READ_FILE("read"),
     WRITE_FILE("write"),
     EXECUTE_COMMAND("exec"),
-    SCREENSHOT("screen")
+    SCREENSHOT("screen"),
+    MESSAGE("message")
 }
 
 /**
@@ -84,6 +85,7 @@ class RemoteActionCatalog @Inject constructor(
         const val ACTION_SCREENSHOT = "screenshot"
         const val ACTION_FETCH_FILE = "fetch_file"
         const val ACTION_PUSH_FILE = "push_file"
+        const val ACTION_SEND_MESSAGE = "send_message"
 
         /** 远端 shell 单次执行上限（秒）：留出审批时间，避免超过调用方 120 秒的 callTimeout。 */
         const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 60L
@@ -169,6 +171,22 @@ class RemoteActionCatalog @Inject constructor(
                     name = "path",
                     type = ParameterType.STRING,
                     description = "要写入的文件路径，写法与 write_file 一致；文件不存在时自动创建（含父目录）",
+                    required = true
+                )
+            )
+        ),
+        RemoteAction(
+            name = ACTION_SEND_MESSAGE,
+            kind = RemoteActionKind.MESSAGE,
+            description = "给这台设备的 Aharou 投一条**聊天消息**：直接出现在其当前会话里，并弹一条系统通知" +
+                "（不是写文件——用户打开 App 就能看到）。参数 text 为纯文本正文。",
+            toolName = null,
+            allowedArgs = setOf("text"),
+            inlineParams = mapOf(
+                "text" to ToolParameter(
+                    name = "text",
+                    type = ParameterType.STRING,
+                    description = "消息正文（纯文本，建议一两句话以内）",
                     required = true
                 )
             )
@@ -302,5 +320,33 @@ class RemotePushFileTool(
                 put("hint", "把文件原始字节 POST 到这条路径即可（Content-Type 任意）；链接一次性、15 分钟内有效")
             }
         )
+    }
+}
+
+/**
+ * `send_message` 动作的载体：把对端给的正文投进本机 Aharou 的当前会话。
+ *
+ * 与其它动作的区别在于它不碰文件系统——落到的是会话消息与一条系统通知，用户打开 App 就能在聊天里看到。
+ */
+class RemoteSendMessageTool(
+    private val deliver: suspend (String) -> String
+) : AgentTool() {
+    override val name = "remote_send_message"
+    override val description = "给本机 Aharou 的当前会话投一条消息（会出现在聊天里并弹通知）"
+    override val parameters: Map<String, ToolParameter> = mapOf(
+        "text" to ToolParameter(
+            name = "text",
+            type = ParameterType.STRING,
+            description = "消息正文",
+            required = true
+        )
+    )
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.MODIFY_SESSION_STATE, ToolCapability.USER_INTERACTION)
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val text = (args["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (text.isEmpty()) return ToolResult.Error("缺少参数: text", "MISSING_TEXT")
+        return ToolResult.Success(buildJsonObject { put("delivered", deliver(text)) })
     }
 }

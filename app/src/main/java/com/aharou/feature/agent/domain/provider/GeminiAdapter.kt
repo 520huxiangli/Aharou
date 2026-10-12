@@ -245,6 +245,19 @@ class GeminiAdapter @Inject constructor(
                             val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                             
                             try {
+                                // 上游把错误塞在 HTTP 200 的流里（网关超限、配额耗尽最常见）；不解析就会被当
+                                // 正常流走完 —— 表现为「回复为空」且没有任何错误线索。
+                                obj.getAsJsonObject("error")?.let { err ->
+                                    val status = err.get("status")?.takeIf { !it.isJsonNull }?.asString
+                                    val code = err.get("code")?.takeIf { !it.isJsonNull }?.asString
+                                    val message = err.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                                    // Gemini 的 status 是大写宏，与 RetryPolicy 判定的全小写错误码不同名；
+                                    // RESOURCE_EXHAUSTED（配额/限流耗尽）归一后才会交给多 Key 切换而不是空转重试。
+                                    throw StreamApiException(
+                                        if (status == "RESOURCE_EXHAUSTED") "rate_limit_exceeded" else status ?: code,
+                                        message,
+                                    )
+                                }
                                 obj.get("usageMetadata")?.takeIf { it.isJsonObject }?.asJsonObject?.let { um ->
                                     streamInputTokens = um.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
                                     // 思考 token 不在 candidatesTokenCount 里，但按输出价计费，两者相加才是真实输出量。
@@ -306,6 +319,8 @@ class GeminiAdapter @Inject constructor(
                                 }
                                 if (currentFinishReason != null) break
                             } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: StreamApiException) {
                                 throw e
                             } catch (e: Exception) {
                                 coroutineContext.ensureActive()

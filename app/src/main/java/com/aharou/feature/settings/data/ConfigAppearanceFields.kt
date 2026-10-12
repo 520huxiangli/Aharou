@@ -2,13 +2,20 @@ package com.aharou.feature.settings.data
 
 import android.content.Context
 import android.net.Uri
+import com.aharou.core.config.ConfigCollection
 import com.aharou.core.config.ConfigError
+import com.aharou.core.config.ConfigField
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigSchema
+import com.aharou.core.config.ConfigValue
+import com.aharou.core.config.fields.ClosureField
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreDoubleField
 import com.aharou.core.config.fields.DataStoreEnumField
 import com.aharou.core.config.fields.DataStoreIntField
 import com.aharou.core.config.fields.DataStoreStrField
+import com.aharou.core.config.fields.ReadOnlyField
+import com.aharou.core.theme.CustomSkin
 import com.aharou.core.util.LogLevel
 import com.aharou.feature.editor.data.EditorSettingsRepository
 import com.aharou.feature.settings.data.repository.AgentSoundSettingsRepository
@@ -20,7 +27,10 @@ import com.aharou.feature.settings.data.repository.ScreenOnSettingsRepository
 import com.aharou.feature.settings.data.repository.ThemeSettingsRepository
 import com.aharou.feature.terminal.data.repository.TerminalSettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.UUID
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -232,5 +242,121 @@ class ConfigAppearanceFields @Inject constructor(
                 cases = listOf("verbose", "debug", "info", "warn", "error", "none"),
             ),
         )
+
+        registry.register(SkinCollection())
+    }
+
+    private fun skins(): List<CustomSkin> = runBlocking { themeSettings.customSkinsFlow.first() }
+
+    private fun skin(id: String): CustomSkin? = skins().firstOrNull { it.id == id }
+
+    private fun strOf(v: ConfigValue): String =
+        (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+
+    /** `#RRGGBB` / `#AARRGGBB`（# 可省）→ ARGB Long；格式或进制不合法时抛 [ConfigError.InvalidValue]。 */
+    private fun parseArgb(hex: String, field: String): Long {
+        val cleaned = hex.trim().removePrefix("#")
+        val parsed = runCatching {
+            when (cleaned.length) {
+                6 -> 0xFF000000L or cleaned.toLong(16)
+                8 -> cleaned.toLong(16)
+                else -> null
+            }
+        }.getOrNull()
+        return parsed ?: throw ConfigError.InvalidValue("$field 需为 #RRGGBB 或 #AARRGGBB：$hex")
+    }
+
+    private fun formatArgb(argb: Long): String = "#" + argb.toString(16).uppercase().padStart(8, '0')
+
+    /**
+     * 自定义皮肤列表（`appearance.skins.<id>.*`）。
+     *
+     * 只存「主色 +（可选）辅色 + 名字」，其余长相由 [com.aharou.core.theme.customSkinTokens]
+     * 现算，所以字段就是这四个。写回一律走 [ThemeSettingsRepository] 既有方法：
+     * `upsertCustomSkin` 会顺带把该皮肤设为**当前皮肤**（仓库既有行为），改任一字段都会切到这套皮肤。
+     */
+    private inner class SkinCollection : ConfigCollection {
+        override val basePath = "appearance.skins"
+        override val displayName = "自定义皮肤"
+        override val description =
+            "用户自己调色的皮肤（主色 + 可选辅色 + 名字）。子字段：name / primary_argb / accent_argb；" +
+                "add 新建并选中、remove 删除（正被选中时回退默认皮肤）。保存任一字段会同时把该皮肤设为当前皮肤。"
+
+        override fun childIds(): List<String> = skins().map { it.id }
+
+        override fun fields(forId: String): List<ConfigField> {
+            val s = skin(forId) ?: return emptyList()
+            return listOf(
+                ReadOnlyField(
+                    "$basePath.$forId.id", "id（$forId）", "皮肤唯一标识，即集合子项 id；只读。",
+                    ConfigSchema.Str(),
+                ) { ConfigValue.Str(s.id) },
+
+                ClosureField(
+                    path = "$basePath.$forId.name",
+                    displayName = "名称（$forId）",
+                    description = "皮肤在列表里的显示名。",
+                    valueSchema = ConfigSchema.Str(maxLength = 60),
+                    revertable = true,
+                    reader = { ConfigValue.Str(s.name) },
+                    writer = { v ->
+                        val name = strOf(v)
+                        runBlocking { themeSettings.upsertCustomSkin(s.copy(name = name)) }
+                    },
+                ),
+
+                ClosureField(
+                    path = "$basePath.$forId.primary_argb",
+                    displayName = "主色（$forId）",
+                    description = "主色，十六进制 #RRGGBB 或 #AARRGGBB（# 可省）。",
+                    valueSchema = ConfigSchema.Str(regex = "^#?[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"),
+                    revertable = true,
+                    reader = { ConfigValue.Str(formatArgb(s.primaryArgb)) },
+                    writer = { v ->
+                        val argb = parseArgb(strOf(v), "主色")
+                        runBlocking { themeSettings.upsertCustomSkin(s.copy(primaryArgb = argb)) }
+                    },
+                ),
+
+                ClosureField(
+                    path = "$basePath.$forId.accent_argb",
+                    displayName = "辅色（$forId）",
+                    description = "可选辅色，十六进制 #RRGGBB 或 #AARRGGBB；空串 = 无辅色。",
+                    valueSchema = ConfigSchema.Str(regex = "^$|^#?[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"),
+                    revertable = true,
+                    reader = { ConfigValue.Str(s.accentArgb?.let { formatArgb(it) }.orEmpty()) },
+                    writer = { v ->
+                        val raw = strOf(v).trim()
+                        val accent = raw.ifBlank { null }?.let { parseArgb(it, "辅色") }
+                        runBlocking { themeSettings.upsertCustomSkin(s.copy(accentArgb = accent)) }
+                    },
+                ),
+            )
+        }
+
+        override fun add(payload: ConfigValue): String {
+            val obj = (payload as? ConfigValue.Obj)?.value
+                ?: throw ConfigError.InvalidValue("appearance.skins 的新项需为 JSON 对象")
+            val name = (obj["name"] as? ConfigValue.Str)?.value?.trim().orEmpty()
+            if (name.isBlank()) throw ConfigError.InvalidValue("缺少 name")
+            val primary = (obj["primary_argb"] as? ConfigValue.Str)?.value
+                ?.let { parseArgb(it, "主色") }
+                ?: 0xFF4F8CFFL
+            val accent = (obj["accent_argb"] as? ConfigValue.Str)?.value?.trim()?.ifBlank { null }
+                ?.let { parseArgb(it, "辅色") }
+            val skin = CustomSkin(
+                id = "custom-" + UUID.randomUUID().toString(),
+                name = name,
+                primaryArgb = primary,
+                accentArgb = accent,
+            )
+            runBlocking { themeSettings.upsertCustomSkin(skin) }
+            return skin.id
+        }
+
+        override fun remove(id: String) {
+            if (skin(id) == null) throw ConfigError.InvalidValue("皮肤不存在：$id")
+            runBlocking { themeSettings.deleteCustomSkin(id) }
+        }
     }
 }

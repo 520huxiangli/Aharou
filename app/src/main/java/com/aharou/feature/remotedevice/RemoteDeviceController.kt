@@ -110,6 +110,8 @@ class RemoteDeviceController @Inject constructor(
 
     suspend fun setAllowPublicPeer(value: Boolean) = settings.setAllowPublicPeer(value)
 
+    suspend fun setAutoPairBack(value: Boolean) = settings.setAutoPairBack(value)
+
     /** 生成（或复用）一枚 6 位配对码；**不过期**，对端拿它换长期 token，配对成功后自动换新。 */
     suspend fun pairingCode(): String = pairing.issueCode()
 
@@ -157,6 +159,10 @@ class RemoteDeviceController @Inject constructor(
             put("code", code.trim().uppercase())
             put("name", settings.displayName())
             put("device_id", settings.installId())
+            // 一次配对即互通：顺带把自己的协作端点与一枚码发过去，对端配对成功后会回连登记，
+            // 省掉「反向再配一次」。老版本对端会忽略这两个字段，行为不变。
+            put("peer_endpoint", endpointsFor(settings.current().port, server.state.value).firstOrNull().orEmpty())
+            put("peer_code", pairing.issueCode())
         }.toString()
 
         val http: Pair<Int, String>? = withContext(Dispatchers.IO) {

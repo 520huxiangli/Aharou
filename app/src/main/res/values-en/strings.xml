@@ -455,6 +455,7 @@
     <string name="agent_stop_refusal">The model declined to answer under its content safety policy.</string>
     <string name="agent_stop_context_exceeded">This request exceeds the model\'s context window. Compact the context or start a new session.</string>
     <string name="agent_input_budget_exceeded">Context exceeds the model input budget. Shorten the input or reduce tool definitions.</string>
+    <string name="agent_stop_empty_response">The model returned an empty response with no text and no tool calls. This can be an upstream gateway glitch or an over-long context; retry once, or compact the context first.</string>
     <string name="chat_context_usage_estimated">Estimated input budget usage: %1$d%%</string>    <string name="agent_context_no_compaction">No compaction needed (too few messages)</string>
     <string name="agent_compaction_failed">Compaction failed: %1$s</string>
     <!-- About -->
@@ -2617,6 +2618,9 @@
     <string name="settings_remote_device_accept_assist">Connect to another device</string>
     <string name="settings_remote_device_accept_assist_hint">Enter the assist address and 6-digit code from the other device</string>
     <string name="settings_remote_device_pair_code">Generate pairing code</string>
+    <string name="remote_device_message_title">Message from %1$s</string>
+    <string name="settings_remote_device_auto_pair_back">One pairing, both directions</string>
+    <string name="settings_remote_device_auto_pair_back_hint">After a peer pairs, this device dials back once so both sides get access — no second pairing needed. The callback only uses the peer\'s actual source address. On by default.</string>
     <string name="settings_remote_device_pair_hint">Enter this 6-digit code in Aharou on the other device to pair</string>
     <string name="settings_remote_device_pair_remaining">Expires in %1$s</string>
     <string name="settings_remote_device_pair_expired">Pairing code expired</string>

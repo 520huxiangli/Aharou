@@ -12,8 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
@@ -97,19 +99,31 @@ class McpConfigRepository @Inject constructor(
     private val watchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 配置被外部修改（内容与缓存不一致）时广播一次。订阅驱动：只在有订阅者（McpManager）期间
+     * 本进程写入配置后的广播。
+     *
+     * 文件监听只认「外部改动」：本进程写完会把缓存同步成同一份内容，[reloadFromDisk] 比对下来是
+     * 「没变」，于是不广播——新增的 server 便一直连不上（用户看到的是「配置在了但工具没出来」）。
+     * 所以写入路径自己喊一声。
+     */
+    private val selfChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
+
+    /**
+     * 配置发生实际变化（外部改动或本进程写入）时广播一次。订阅驱动：只在有订阅者（McpManager）期间
      * 才由 [FileChangeHub] 监听两个配置文件所在目录，无人订阅时零开销。
      */
     val externalChanges: SharedFlow<Unit> = merge(
-        fileChangeHub.watchAicode(),
-        fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR_NAME")
-    ).mapNotNull { batch ->
-        val globalPath = globalFile.absolutePath
-        val projectPath = projectFileForPath(workspaceRepository.currentPath()).absolutePath
-        val touched = batch.changes.any { it.hostPath == globalPath || it.hostPath == projectPath }
-        // 同目录下其它文件的变更（如 skills.json）不触发重连；内容没真变（如 touch）也不触发。
-        if (!touched) null else if (reloadFromDisk()) Unit else null
-    }.shareIn(watchScope, SharingStarted.WhileSubscribed(), replay = 0)
+        merge(
+            fileChangeHub.watchAicode(),
+            fileChangeHub.watchWorkspace("${FileChangeHub.CONTAINER_ROOT}/$AHAROU_DIR_NAME")
+        ).mapNotNull { batch ->
+            val globalPath = globalFile.absolutePath
+            val projectPath = projectFileForPath(workspaceRepository.currentPath()).absolutePath
+            val touched = batch.changes.any { it.hostPath == globalPath || it.hostPath == projectPath }
+            // 同目录下其它文件的变更（如 skills.json）不触发重连；内容没真变（如 touch）也不触发。
+            if (!touched) null else if (reloadFromDisk()) Unit else null
+        },
+        selfChanges.asSharedFlow()
+    ).shareIn(watchScope, SharingStarted.WhileSubscribed(), replay = 0)
 
     /**
      * 外部变更后按磁盘现状刷新缓存，内容确实变化时返回 true。项目级只处理当前工作区；
@@ -208,6 +222,7 @@ class McpConfigRepository @Inject constructor(
             val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
                 globalState.value = json
+                selfChanges.tryEmit(Unit)
             } else {
                 FileLogger.w(TAG, "全局 MCP 配置未能落盘，保持原状态")
             }
@@ -220,6 +235,7 @@ class McpConfigRepository @Inject constructor(
             val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(path), json) }) {
                 getProjectState(path).value = json
+                selfChanges.tryEmit(Unit)
             } else {
                 FileLogger.w(TAG, "项目 MCP 配置未能落盘，保持原状态")
             }

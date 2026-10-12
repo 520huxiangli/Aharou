@@ -156,6 +156,18 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Share2,
+                title = stringResource(R.string.settings_remote_device_auto_pair_back),
+                subtitle = stringResource(R.string.settings_remote_device_auto_pair_back_hint),
+                trailing = {
+                    AppSwitch(
+                        checked = config.autoPairBack,
+                        onCheckedChange = { viewModel.setAutoPairBack(it) }
+                    )
+                }
+            )
         }
 
         // 接受协助：作为协助方连到别人的 Aharou——与本机开服务是两件事，所以不放在 enabled 分支里。

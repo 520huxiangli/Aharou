@@ -13,9 +13,13 @@ import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.workflow.PermissionGate
 import com.aharou.feature.agent.domain.workflow.PermissionVerdict
+import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.notification.AgentPermissionNotifier
+import com.aharou.feature.remotedevice.RemoteMessageNotifier
 import com.aharou.feature.remotedevice.server.RemoteFileTicketStore
 import com.aharou.feature.remotedevice.server.RemoteMcpServer
 import com.aharou.feature.remotedevice.server.TransferDirection
@@ -80,6 +84,9 @@ class RemoteActionExecutor @Inject constructor(
     private val settings: RemoteDeviceSettings,
     private val tickets: RemoteFileTicketStore,
     private val pathMapper: WorkspacePathMapper,
+    private val messages: MessagePersistenceUseCase,
+    private val sessions: SessionUseCase,
+    private val messageNotifier: RemoteMessageNotifier,
     @param:ApplicationContext private val context: Context
 ) {
     private companion object {
@@ -139,6 +146,9 @@ class RemoteActionExecutor @Inject constructor(
                 }
                 RemoteActionCatalog.ACTION_PUSH_FILE -> RemotePushFileTool { path ->
                     "${RemoteMcpServer.UPLOAD_PATH}/${tickets.issue(resolveTransferPath(path), TransferDirection.UPLOAD).id}"
+                }
+                RemoteActionCatalog.ACTION_SEND_MESSAGE -> RemoteSendMessageTool { text ->
+                    deliverMessage(text, caller)
                 }
                 else -> RemoteInfoTool { deviceInfo(caller) }
             }
@@ -218,6 +228,29 @@ class RemoteActionExecutor @Inject constructor(
     }
 
     // ── 审批 ──────────────────────────────────────────────────────
+
+    /**
+     * 把对端的传话投到本机「当前会话」：取该工作区最近更新的会话（服务端看不到 UI 当前的会话，
+     * 最近更新的是最接近的一个）；一个会话都没有时新建。
+     *
+     * 消息以 assistant 身份落库并标 `isContextExcluded`——它只是「收到一条」，不该混进本机 AI
+     * 的上下文回放，免得模型把自己没说过的话当成自己说过的。返回落库的会话 id。
+     */
+    private suspend fun deliverMessage(text: String, caller: RemotePairedDevice): String {
+        val workspacePath = workspaceRepository.currentPath()
+        val sessionId = sessions.getMostRecentSessionOfWorkspace(workspacePath)?.id
+            ?: sessions.newSessionEntity(workspacePath).also { sessions.upsertSession(it) }.id
+        val from = caller.deviceName.ifBlank { caller.deviceId }
+        messages.persist(
+            sessionId = sessionId,
+            role = MessageRole.ASSISTANT,
+            content = "【来自「$from」的传话】\n$text",
+            isContextExcluded = true
+        )
+        sessions.touch(sessionId, System.currentTimeMillis())
+        messageNotifier.notify(from, text)
+        return sessionId
+    }
 
     /**
      * 挂起一次审批并等待用户决定。同时驱动通知栏：
