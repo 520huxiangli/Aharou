@@ -23,6 +23,7 @@ import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -367,8 +368,10 @@ class RemoteMcpServer @Inject constructor(
      * 被当成打任意主机的跳板（否则一个掌上有码的人就能让本机去打内网其它机器）。
      */
     private suspend fun pairBack(peer: InetAddress, peerEndpoint: String, peerCode: String) {
-        val port = Regex(":(\\d+)").find(peerEndpoint)?.groupValues?.get(1)?.toIntOrNull()
-            ?: settings.current().port
+        // 用 URI 解端口：对端给的端点大概率是 IPv6（http://[240e:...]:47822/mcp），拿「第一个 :数字」
+        // 的正则会先撞上 IPv6 里的段（如 :2001），从而回连到完全无关的端口。
+        val port = runCatching { URI(peerEndpoint).port }.getOrNull()
+            ?.takeIf { it in 1..65535 } ?: settings.current().port
         val host = peer.hostAddress ?: return
         val literal = if (host.contains(':')) "[$host]" else host
         val endpoint = "http://$literal:$port$PAIR_PATH"
@@ -392,7 +395,11 @@ class RemoteMcpServer @Inject constructor(
                     ?.bufferedReader()?.use { it.readText() }.orEmpty()
                 connection.disconnect()
                 status to body
-            }.getOrNull()
+            }.getOrElse {
+                // 连接失败不能静默返回：这条分支没日志的话，反向没生效会看着像「根本没执行」。
+                FileLogger.w(TAG, "反向配对连不上 $endpoint：${it.javaClass.simpleName}: ${it.message}")
+                null
+            }
         } ?: return
         val (status, body) = http
         if (status !in 200..299) {
@@ -586,7 +593,11 @@ internal fun localIpv6Addresses(): List<String> {
                 if (address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress) continue
                 if (address.isUniqueLocalV6()) continue
                 // hostAddress 对 IPv6 会带 `%wlan0` 这样的 scope 后缀，写进 URL 会让对端解析失败。
-                address.hostAddress?.substringBefore('%')?.takeIf { it.isNotBlank() }?.let { result.add(it) }
+                val literal = address.hostAddress?.substringBefore('%').orEmpty()
+                // 2001:db8::/32 是 RFC 3849 的文档专用段，永远不可路由（虚拟网卡/测试接口常挂它）——
+                // 列进协助地址只会让对端白连一次。
+                if (literal.startsWith("2001:db8:") || literal.startsWith("2001:0db8:")) continue
+                if (literal.isNotBlank()) result.add(literal)
             }
         }
     }

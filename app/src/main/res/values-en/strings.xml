@@ -2614,6 +2614,7 @@
     <string name="settings_remote_device_pair_no_expiry">This code does not expire; a new one is issued after each successful pairing</string>
     <string name="settings_remote_device_assist_address">Assist address (send to the helper)</string>
     <string name="settings_remote_device_copy">Copy</string>
+    <string name="settings_remote_device_copy_pairing">Copy pairing info</string>
     <string name="settings_remote_device_assist_title">Accept assistance</string>
     <string name="settings_remote_device_accept_assist">Connect to another device</string>
     <string name="settings_remote_device_accept_assist_hint">Enter the assist address and 6-digit code from the other device</string>

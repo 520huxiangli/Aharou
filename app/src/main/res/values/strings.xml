@@ -2614,6 +2614,7 @@
     <string name="settings_remote_device_pair_no_expiry">这枚码一直有效，配对成功后会自动换新的一枚</string>
     <string name="settings_remote_device_assist_address">协助地址（发给协助你的人）</string>
     <string name="settings_remote_device_copy">复制</string>
+    <string name="settings_remote_device_copy_pairing">复制配对信息</string>
     <string name="settings_remote_device_assist_title">接受协助</string>
     <string name="settings_remote_device_accept_assist">连接到另一台设备</string>
     <string name="settings_remote_device_accept_assist_hint">输入对方给的协助地址与 6 位码</string>

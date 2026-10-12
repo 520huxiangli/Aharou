@@ -462,8 +462,18 @@ private fun PairingCodeSheet(
                     )
                 }
                 TextButton(onClick = {
-                    clipboard.setText(AnnotatedString(endpoints.joinToString("\n")))
-                }) { Text(stringResource(R.string.settings_remote_device_copy)) }
+                    // 一段带走三样：对端把它粘进「协助地址」即自动拆填，省掉手抄地址与端口。
+                    val uri = endpoints.firstOrNull()?.let { runCatching { java.net.URI(it) }.getOrNull() }
+                    val shortHost = uri?.host?.removeSurrounding("[", "]")
+                    val parsedPort = uri?.port?.takeIf { it in RemoteDeviceConfig.MIN_PORT..RemoteDeviceConfig.MAX_PORT }
+                    val codeText = pairing?.code.orEmpty()
+                    val payload = if (!shortHost.isNullOrBlank() && parsedPort != null && codeText.isNotBlank()) {
+                        "aharou://pair?host=$shortHost&port=$parsedPort&code=$codeText"
+                    } else {
+                        endpoints.joinToString("\n")
+                    }
+                    clipboard.setText(AnnotatedString(payload))
+                }) { Text(stringResource(R.string.settings_remote_device_copy_pairing)) }
             }
             Text(
                 text = stringResource(R.string.settings_remote_device_pair_hint),
@@ -500,8 +510,28 @@ private fun AcceptAssistDialog(
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                 AppTextField(
                     value = host,
-                    onValueChange = { host = it },
+                    onValueChange = { raw ->
+                        // 粘贴一整条配对信息（aharou://pair?host=…&port=…&code=…）就地拆填；
+                        // 手输也认 [ipv6]:port / host:port——端口填错是这一步最容易翻车的地方。
+                        val parsed = parsePairingInput(raw)
+                        if (parsed != null) {
+                            host = parsed.first
+                            parsed.second
+                                ?.takeIf { it in RemoteDeviceConfig.MIN_PORT..RemoteDeviceConfig.MAX_PORT }
+                                ?.let { port = it.toString() }
+                            if (parsed.third.isNotBlank()) code = parsed.third
+                        } else {
+                            host = raw
+                        }
+                    },
                     label = stringResource(R.string.settings_remote_device_assist_address),
+                    singleLine = true
+                )
+                AppTextField(
+                    value = port,
+                    onValueChange = { port = it.filter(Char::isDigit).take(5) },
+                    label = stringResource(R.string.settings_remote_device_port),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true
                 )
                 AppTextField(
@@ -530,6 +560,39 @@ private fun AcceptAssistDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
+}
+
+/**
+ * 解析一条「配对信息」。既认复制来的深链 `aharou://pair?host=…&port=…&code=…`，
+ * 也认手输的 `[ipv6]:port` / `host:port`。
+ *
+ * 裸 IPv6（`240e:473:…`）里的冒号是地址本身的一部分，不当端口分隔符拆——拆了必错。
+ * 不是配对信息时返回 null，调用方按普通输入处理。
+ */
+private fun parsePairingInput(raw: String): Triple<String, Int?, String>? {
+    val text = raw.trim()
+    if (text.isEmpty()) return null
+    if (text.startsWith("aharou://", ignoreCase = true) || text.contains("host=")) {
+        val query = text.substringAfter('?', text)
+        val params = query.split('&').mapNotNull { pair ->
+            val idx = pair.indexOf('=')
+            if (idx <= 0) null else pair.substring(0, idx) to pair.substring(idx + 1)
+        }.toMap()
+        val parsedHost = params["host"]?.trim()?.removeSurrounding("[", "]")?.takeIf { it.isNotBlank() }
+            ?: return null
+        return Triple(parsedHost, params["port"]?.toIntOrNull(), params["code"].orEmpty().uppercase())
+    }
+    val bracketed = text.startsWith("[") && text.contains("]:")
+    val plainHostPort = !bracketed && text.count { it == ':' } == 1 &&
+        text.substringAfterLast(':').all { it.isDigit() }
+    if (bracketed || plainHostPort) {
+        val parsedHost = if (bracketed) text.substringAfter('[').substringBefore(']')
+        else text.substringBeforeLast(':')
+        val portText = if (bracketed) text.substringAfter("]:").substringBefore('/')
+        else text.substringAfterLast(':')
+        return Triple(parsedHost, portText.toIntOrNull(), "")
+    }
+    return null
 }
 
 /** 时间戳转 yyyy-MM-dd HH:mm。 */

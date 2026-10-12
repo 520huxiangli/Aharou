@@ -154,7 +154,7 @@ class RemoteDeviceController @Inject constructor(
             .substringBefore('/')
         if (target.isBlank() || code.isBlank()) return AssistOutcome.Unreachable("地址或配对码为空")
 
-        val endpoint = "http://$target:$port${RemoteMcpServer.PAIR_PATH}"
+        val endpoint = "http://${hostLiteral(target)}:$port${RemoteMcpServer.PAIR_PATH}"
         val payload = buildJsonObject {
             put("code", code.trim().uppercase())
             put("name", settings.displayName())
@@ -221,7 +221,18 @@ class RemoteDeviceController @Inject constructor(
         token: String
     ): McpServerConfig = McpServerConfig(
         name = name,
-        url = "http://$host:$port${RemoteMcpServer.MCP_PATH}",
+        url = "http://${hostLiteral(host)}:$port${RemoteMcpServer.MCP_PATH}",
         headers = mapOf("Authorization" to "Bearer $token")
     )
+
+    /**
+     * 规范成 URL 里合法的主机字面量：IPv6 必须裹方括号。
+     *
+     * 裸着拼（`http://240e:473:…:47822/pair`）会被 URL 解析成 host=240e、port=473 之类，必失败——
+     * 对端给的多半就是 IPv6，手输也一样。
+     */
+    private fun hostLiteral(host: String): String {
+        val bare = host.trim().removePrefix("[").removeSuffix("]")
+        return if (bare.contains(':')) "[$bare]" else bare
+    }
 }
