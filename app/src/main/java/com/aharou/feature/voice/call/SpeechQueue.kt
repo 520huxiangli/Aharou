@@ -5,6 +5,7 @@ import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.voice.data.CloudSpeechClient
 import com.aharou.feature.voice.data.SystemTtsPlayer
+import com.aharou.feature.voice.data.TtsCache
 import com.aharou.feature.voice.data.TtsPlayer
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -37,6 +38,7 @@ internal class SpeechQueue @Inject constructor(
     private val cloudSpeech: CloudSpeechClient,
     private val player: TtsPlayer,
     private val systemTts: SystemTtsPlayer,
+    private val ttsCache: TtsCache,
     private val ttsSettings: VoiceTtsSettingsRepository,
     private val providerRepository: AIProviderRepository,
 ) {
@@ -156,15 +158,26 @@ internal class SpeechQueue @Inject constructor(
         val provider = runCatching { providerRepository.getProviderById(providerId) }.getOrNull() ?: return null
         val key = provider.firstUsableApiKey
         if (key.isBlank()) return null
-        return runCatching {
+        val voice = ttsSettings.getVoice()
+        val cacheKey = TtsCache.key(text, voice, model, provider.baseUrl)
+        // 命中缓存就直接复用本地音频，省一次云端往返
+        ttsCache.get(cacheKey)?.let { file ->
+            runCatching { file.readBytes() }
+                .getOrNull()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { return it }
+        }
+        val bytes = runCatching {
             cloudSpeech.synthesize(
                 baseUrl = provider.baseUrl,
                 apiKey = key,
                 model = model,
                 text = text,
-                voice = ttsSettings.getVoice(),
+                voice = voice,
             )
-        }.onFailure { FileLogger.w(TAG, "语音合成失败：$text", it) }.getOrNull()
+        }.onFailure { FileLogger.w(TAG, "语音合成失败：$text", it) }.getOrNull() ?: return null
+        ttsCache.put(cacheKey, bytes)
+        return bytes
     }
 
     internal companion object {

@@ -16,8 +16,10 @@ import com.aharou.feature.agent.domain.tool.ToolStreamEvent
 import com.aharou.feature.terminal.domain.TerminalSessionProvider
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -116,12 +118,16 @@ class ExecuteCommandTool @Inject constructor(
     ): ToolResult =
         try {
             // 工作区按发起会话给：后台标签的 proot 挂载在启动那刻写死，不能用全局当前工作区。
-            val tabId = terminalSessionProvider.startBackgroundCommand(
-                command = command,
-                title = command.take(40),
-                notify = true,
-                workspacePath = context.projectRoot
-            )
+            // TerminalSession 构造时内部会 new Handler()（绑当前线程 Looper），必须在有 Looper 的
+            // 线程（主线程）构造，否则在协程后台线程上会抛 "Can't create handler..."。
+            val tabId = withContext(Dispatchers.Main) {
+                terminalSessionProvider.startBackgroundCommand(
+                    command = command,
+                    title = command.take(40),
+                    notify = true,
+                    workspacePath = context.projectRoot
+                )
+            }
             FileLogger.i(TAG, "已提交后台任务 tab=$tabId: $command")
             ToolResult.Success(
                 JsonPrimitive(

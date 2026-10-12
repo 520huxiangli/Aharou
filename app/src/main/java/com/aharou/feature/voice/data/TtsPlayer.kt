@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 @Singleton
 internal class TtsPlayer @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val audioSession: VoiceAudioSession,
 ) {
 
     private var player: MediaPlayer? = null
@@ -59,6 +60,9 @@ internal class TtsPlayer @Inject constructor(
                 runCatching { file.delete() }
                 return@withContext false
             }
+        // 播放期持有音频焦点；被别的 App 抢占或输出设备被切走时停掉当前这段
+        audioSession.onInterrupted = { stop() }
+        audioSession.requestFocus()
         try {
             val mp = MediaPlayer().apply {
                 setAudioAttributes(
@@ -86,6 +90,7 @@ internal class TtsPlayer @Inject constructor(
         } catch (e: Exception) {
             FileLogger.e(TAG, "朗读播放失败", e)
             runCatching { file.delete() }
+            audioSession.abandonFocus()
             false
         }
     }
@@ -99,6 +104,7 @@ internal class TtsPlayer @Inject constructor(
         releasePlayer()
         runCatching { file.delete() }
         currentFile = null
+        audioSession.abandonFocus()
         onCompletion()
     }
 
@@ -127,6 +133,7 @@ internal class TtsPlayer @Inject constructor(
         currentFile = null
         pendingCompletion?.complete(Unit)
         pendingCompletion = null
+        audioSession.abandonFocus()
     }
 
     private fun releasePlayer() {

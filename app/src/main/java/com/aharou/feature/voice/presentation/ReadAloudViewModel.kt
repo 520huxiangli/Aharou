@@ -10,9 +10,11 @@ import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.voice.call.SpeechQueue
 import com.aharou.feature.voice.data.CloudSpeechClient
 import com.aharou.feature.voice.data.SystemTtsPlayer
+import com.aharou.feature.voice.data.TtsCache
 import com.aharou.feature.voice.data.TtsPlayer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 朗读状态，驱动按钮外观。 */
 internal sealed interface ReadAloudState {
@@ -42,6 +45,7 @@ internal class ReadAloudViewModel @Inject constructor(
     private val player: TtsPlayer,
     private val systemTts: SystemTtsPlayer,
     private val speechQueue: SpeechQueue,
+    private val ttsCache: TtsCache,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<ReadAloudState>(ReadAloudState.Idle)
@@ -132,13 +136,21 @@ internal class ReadAloudViewModel @Inject constructor(
                     }
                     return@launch
                 }
-                val audio = cloudSpeech.synthesize(
-                    baseUrl = provider.baseUrl,
-                    apiKey = provider.firstUsableApiKey,
-                    model = model,
-                    text = text,
-                    voice = ttsSettings.getVoice(),
-                )
+                val voice = ttsSettings.getVoice()
+                val cacheKey = TtsCache.key(text, voice, model, provider.baseUrl)
+                // 命中缓存直接读本地音频，省一次云端往返
+                val cached = ttsCache.get(cacheKey)
+                val audio = if (cached != null) {
+                    withContext(Dispatchers.IO) { cached.readBytes() }
+                } else {
+                    cloudSpeech.synthesize(
+                        baseUrl = provider.baseUrl,
+                        apiKey = provider.firstUsableApiKey,
+                        model = model,
+                        text = text,
+                        voice = voice,
+                    ).also { ttsCache.put(cacheKey, it) }
+                }
                 _state.value = ReadAloudState.Playing
                 player.play(audio) {
                     // 自然播完：回到空闲。在 IO 线程回调，切回主线程改状态

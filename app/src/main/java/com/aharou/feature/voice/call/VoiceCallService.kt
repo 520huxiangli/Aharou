@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.voice.data.VoiceAudioSession
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -109,6 +110,9 @@ internal class VoiceCallService : Service() {
     @Inject
     lateinit var session: VoiceCallSession
 
+    @Inject
+    lateinit var audioSession: VoiceAudioSession
+
     /** 只用于监听会话状态：会话回到空闲就把服务停掉，免得卡在「服务在跑、其实没人听」。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -151,6 +155,7 @@ internal class VoiceCallService : Service() {
             watchSessionIdle()
             // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
             // 径向菜单里的麦克风开关通话，这里只管通话本身
+            audioSession.enterCommunicationMode()
             session.start("", wakeMode = wakeMode)
             notificationManager().notify(NOTIFICATION_ID, buildNotification())
         }
@@ -183,6 +188,7 @@ internal class VoiceCallService : Service() {
         _running.value = false
         _wakeMode.value = false
         session.stop()
+        audioSession.exitCommunicationMode()
         super.onDestroy()
     }
 

@@ -11,6 +11,7 @@ import com.aharou.feature.voice.data.OfflineAsrEngine
 import com.aharou.feature.voice.data.RecordStartResult
 import com.aharou.feature.voice.data.StreamingAsrEngine
 import com.aharou.feature.voice.data.VoiceRecorder
+import com.aharou.feature.voice.data.VoiceSoundEffects
 import com.aharou.feature.voice.data.WakeWordEngine
 import com.aharou.feature.voice.domain.VoiceModelManager
 import com.aharou.feature.voice.domain.VoiceModels
@@ -53,6 +54,7 @@ internal class VoiceCallSession @Inject constructor(
     private val wakeEngine: WakeWordEngine,
     private val modelManager: VoiceModelManager,
     private val recorder: VoiceRecorder,
+    private val soundEffects: VoiceSoundEffects,
     @param:ApplicationContext private val context: Context,
 ) {
 
@@ -101,6 +103,9 @@ internal class VoiceCallSession @Inject constructor(
     /** 唤醒监听模式：一回合结束后回到听唤醒词，而不是继续收音。 */
     private var wakeMode = false
 
+    /** 整场通话只响一次「接通」音，避免每回合重听都响。 */
+    private var connectTonePlayed = false
+
     /**
      * 滚动缓冲：唤醒词命中前的最后一段音频。
      *
@@ -137,6 +142,7 @@ internal class VoiceCallSession @Inject constructor(
     fun start(workspacePath: String, wakeMode: Boolean = false) {
         if (_state.value != State.Idle) return
         this.wakeMode = wakeMode
+        connectTonePlayed = false
         _error.value = null
         scope.launch {
             val path = workspacePath.ifBlank { agentTurnRunner.currentWorkspacePath() }
@@ -182,11 +188,15 @@ internal class VoiceCallSession @Inject constructor(
 
     /** 挂断：收掉录音、播报、识别，回到空闲。 */
     fun stop() {
+        val wasActive = _state.value != State.Idle
         teardown()
         _error.value = null
+        // 只有真在通话中挂断才响，会话自行回到空闲（超时/失败）时不响
+        if (wasActive) soundEffects.play(VoiceSoundEffects.Effect.HANGUP)
     }
 
     private fun teardown(stopSpeech: Boolean = true) {
+        connectTonePlayed = false
         synchronized(audioLock) {
             ongoingTurn?.cancel()
             ongoingTurn = null
@@ -224,6 +234,13 @@ internal class VoiceCallSession @Inject constructor(
     fun triggerListen() {
         if (_state.value != State.WakeListening) return
         onWakeDetected()
+    }
+
+    /** 整场通话只响一次「接通」音，由首次进入聆听时触发。 */
+    private fun playConnectToneOnce() {
+        if (connectTonePlayed) return
+        connectTonePlayed = true
+        soundEffects.play(VoiceSoundEffects.Effect.CONNECT)
     }
 
     /**
@@ -270,6 +287,7 @@ internal class VoiceCallSession @Inject constructor(
                 RecordStartResult.Failed -> fail("RECORD_FAILED")
             }
         }
+        if (_state.value == State.WakeListening) playConnectToneOnce()
     }
 
     private suspend fun beginListening() {
@@ -306,6 +324,7 @@ internal class VoiceCallSession @Inject constructor(
                 RecordStartResult.Failed -> fail("RECORD_FAILED")
             }
         }
+        if (_state.value == State.Listening) playConnectToneOnce()
         // 补喂唤醒词之后、识别引擎启动之前那段音频。
         // 必须和音频回调一样拿锁：录音线程没停（这就是不回退录音的代价），
         // 不拿锁两边会同时 feed 同一个 native stream/recognizer，直接 abort
@@ -333,6 +352,7 @@ internal class VoiceCallSession @Inject constructor(
     private fun onWakeDetected() {
         if (_state.value != State.WakeListening) return
         FileLogger.i(TAG, "唤醒词命中")
+        soundEffects.play(VoiceSoundEffects.Effect.WAKE)
         onWakeDetected?.invoke()
         // 注意：这里不能 release 掉 wakeSession——beginListening 会在锁里接手，
         // 顺手把 KWS session 释放掉。在这里释放会和音频回调撞车（见 audioLock 注释）。
