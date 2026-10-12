@@ -78,12 +78,14 @@ class MemoryPromptRendererTest {
         val output = MemoryPromptRenderer.render(regular + core + identity)
 
         assertTrue(output.contains("- CORE: core index"))
-        // identity 类走常驻正文段（见 MemoryPromptRenderer.INLINE_HEADER），正文还在、但不再占索引条目。
+        // identity 类走常驻正文段（名字、描述、正文都在），不再占索引条目。
         assertTrue(output.contains("identity index"))
         assertFalse(output.contains("- identity-note:"))
         assertTrue(output.indexOf("- regular-0:") < output.indexOf("- CORE:"))
+        // 以下断的是索引预算：普通条目被吃满后末尾被省略，核心档案不受影响。
+        // 整体长度不在这里断——render 返回的是「常驻正文段 + 摘要索引」，内联段另有预算
+        // （MAX_INLINE_CHARS 为 private），索引部分由 exactlyAtBudgetDoesNotOmit 盯着。
         assertFalse(output.contains("- regular-19:"))
-        assertTrue(output.length <= MemoryPromptRenderer.MAX_INDEX_CHARS)
     }
 
     @Test
