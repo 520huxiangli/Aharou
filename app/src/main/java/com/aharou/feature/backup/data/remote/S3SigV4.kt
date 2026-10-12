@@ -28,7 +28,11 @@ object S3SigV4 {
 
     private const val HMAC_ALGORITHM = "HmacSHA256"
     private const val SHA256_ALGORITHM = "SHA-256"
-    private val HEX = "0123456789ABCDEF".toCharArray()
+    /** 摘要与签名的十六进制用小写（AWS 的 signature / x-amz-content-sha256 都是小写）。 */
+    private val HEX = "0123456789abcdef".toCharArray()
+
+    /** URI 百分号编码用大写十六进制（AWS SigV4 要求，如 `%2F`）。 */
+    private val HEX_UPPER = "0123456789ABCDEF".toCharArray()
 
     private val AMZ_DATE_FORMAT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC)
@@ -64,7 +68,7 @@ object S3SigV4 {
 
                 else -> {
                     val v = byte.toInt() and 0xFF
-                    sb.append('%').append(HEX[v shr 4]).append(HEX[v and 0x0F])
+                    sb.append('%').append(HEX_UPPER[v shr 4]).append(HEX_UPPER[v and 0x0F])
                 }
             }
         }
