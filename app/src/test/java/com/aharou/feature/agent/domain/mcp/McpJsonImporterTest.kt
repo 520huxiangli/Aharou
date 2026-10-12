@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.mcp
 
+import com.aharou.core.watch.FileChangeBatch
 import com.aharou.core.watch.FileChangeHub
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -27,9 +28,9 @@ class McpJsonImporterTest {
         containerInstaller = mockk(relaxed = true),
         workspaceRepository = mockk(relaxed = true),
         projectAicodeRoot = mockk(relaxed = true),
-        fileChangeHub = mockk(relaxed = true).also { hub ->
-            every { hub.watchAicode() } returns emptyFlow()
-            every { hub.watchWorkspace(any()) } returns emptyFlow()
+        fileChangeHub = mockk<FileChangeHub>(relaxed = true).also { hub ->
+            every { hub.watchAicode() } returns emptyFlow<FileChangeBatch>()
+            every { hub.watchWorkspace(any()) } returns emptyFlow<FileChangeBatch>()
         }
     )
 
