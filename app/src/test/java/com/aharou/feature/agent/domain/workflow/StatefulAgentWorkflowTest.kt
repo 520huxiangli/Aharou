@@ -105,7 +105,9 @@ class StatefulAgentWorkflowTest {
         // hasPlaceholders 默认即 false），只把 redact 显式打桩成原样返回 —— 等价于空库的真实行为。
         vault = mockk(relaxed = true) {
             every { redact(any()) } answers { firstArg<String>() }
-        }
+        },
+        // 协作开关：这些用例不碰跨设备协作，relaxed mock 下 current().enabled 为 false（等价关闭）。
+        remoteDeviceSettings = mockk(relaxed = true)
     ), recordPrivateCalls = true)
 
     private fun prepare(chunks: Flow<AIStreamChunk>) {

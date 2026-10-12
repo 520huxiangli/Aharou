@@ -78,9 +78,10 @@ class MemoryPromptRendererTest {
         val output = MemoryPromptRenderer.render(regular + core + identity)
 
         assertTrue(output.contains("- CORE: core index"))
-        assertTrue(output.contains("- identity-note: identity index"))
-        assertTrue(output.indexOf("- regular-0:") < output.indexOf("- identity-note:"))
-        assertTrue(output.indexOf("- identity-note:") < output.indexOf("- CORE:"))
+        // identity 类走常驻正文段（见 MemoryPromptRenderer.INLINE_HEADER），正文还在、但不再占索引条目。
+        assertTrue(output.contains("identity index"))
+        assertFalse(output.contains("- identity-note:"))
+        assertTrue(output.indexOf("- regular-0:") < output.indexOf("- CORE:"))
         assertFalse(output.contains("- regular-19:"))
         assertTrue(output.length <= MemoryPromptRenderer.MAX_INDEX_CHARS)
     }
