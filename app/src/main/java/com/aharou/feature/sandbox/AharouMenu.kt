@@ -12,18 +12,13 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuDefaults
-import androidx.compose.material3.MenuItemColors
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -42,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.aharou.core.ui.ChatColors
 
 /**
  * App-wide popup menu with a unified look: softer rounded corners, a lifted
@@ -200,49 +196,4 @@ fun AharouMenu(
             }
         }
     }
-}
-
-/**
- * Subtle inset divider for grouping items inside a [AharouMenu]. T289:
- * `outlineVariant×0.35 + 0.5dp` was effectively invisible on the light
- * surface — the divider lines between sections looked like nothing was
- * there. Bumped to `Color.Black/White × 0.12 + 1.dp` so the rule is
- * legible without feeling heavy. Theme-aware so dark mode uses
- * white instead of black for contrast against the dark surface.
- */
-@Composable
-fun AharouMenuDivider(modifier: Modifier = Modifier) {
-    val tint = if (ChatColors.isDark) Color.White else Color.Black
-    HorizontalDivider(
-        modifier = modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-        thickness = 1.dp,
-        color = tint.copy(alpha = 0.12f),
-    )
-}
-
-/**
- * Consistent row padding + colors for menu items. Use this to tighten the
- * default Material3 48dp row to 44dp and give the leading icon breathing room
- * that matches the iOS context-menu look.
- */
-object AharouMenuDefaults {
-    val ItemPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
-
-    @Composable
-    fun itemColors(
-        textColor: Color = MaterialTheme.colorScheme.onSurface,
-        leadingIconColor: Color = MaterialTheme.colorScheme.primary,
-        trailingIconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    ): MenuItemColors = MenuDefaults.itemColors(
-        textColor = textColor,
-        leadingIconColor = leadingIconColor,
-        trailingIconColor = trailingIconColor,
-    )
-
-    @Composable
-    fun destructiveItemColors(): MenuItemColors = MenuDefaults.itemColors(
-        textColor = MaterialTheme.colorScheme.error,
-        leadingIconColor = MaterialTheme.colorScheme.error,
-        trailingIconColor = MaterialTheme.colorScheme.error,
-    )
 }

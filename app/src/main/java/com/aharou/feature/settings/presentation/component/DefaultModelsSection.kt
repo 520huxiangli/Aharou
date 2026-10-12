@@ -791,9 +791,6 @@ private fun formatTokenLimit(tokens: Int): String =
         else -> tokens.toString()
     }
 
-private fun String.trimDecimal(): String =
-    replace(Regex("(\\.\\d)\\d+"), "$1").removeSuffix(".0")
-
 /**
  * 判断模型名是否属于「语音模型」（语音转文字 / 文字转语音）。
  *

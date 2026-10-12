@@ -23,9 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolDefinition
 import com.aharou.feature.agent.data.remote.openai.OpenAIFunctionDefinition
@@ -185,6 +183,8 @@ class OpenAIAdapter @Inject constructor(
         val isDeepSeek = model.contains("deepseek", ignoreCase = true)
         val request = mutableMapOf<String, Any?>(
             "model" to model,
+            // 官方 Responses 默认会在服务端留存会话上下文；显式关掉，避免服务端存储对话。
+            "store" to false,
             "input" to buildResponsesInput(
                 systemPrompt = systemPrompt,
                 systemRole = systemRoleForModel(),
@@ -261,6 +261,7 @@ class OpenAIAdapter @Inject constructor(
             inputTokens = usage.inputTokens,
             outputTokens = usage.outputTokens,
             cachedInputTokens = usage.cachedInputTokens,
+            cacheCreationTokens = usage.cacheCreationTokens,
             images = parsed.images
         ))
     }
@@ -805,9 +806,7 @@ class OpenAIAdapter @Inject constructor(
     }
 
     private fun convertToToolCall(openAIToolCall: OpenAIToolCall): ToolCall {
-        val argumentsJson = runCatching {
-            Json.parseToJsonElement(openAIToolCall.function.arguments).jsonObject
-        }.getOrElse { JsonObject(emptyMap()) }
+        val argumentsJson = parseToolArguments(openAIToolCall.function.arguments)
         return ToolCall(
             id = openAIToolCall.id,
             name = openAIToolCall.function.name,

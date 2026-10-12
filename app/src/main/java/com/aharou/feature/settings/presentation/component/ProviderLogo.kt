@@ -20,7 +20,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.soul.SoulStore
 import com.aharou.core.theme.Brand
-import com.aharou.feature.account.data.remote.AharouAccountApi
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Cloud
@@ -147,14 +146,17 @@ private fun modelLogoTint(): Color {
 /**
  * 渲染品牌 logo 图标；若未匹配或 provider 为 null，则显示默认 Cpu 图标。
  */
+/** 历史「内置AI」后端地址前缀：账号功能已下线，仅用于识别存量 provider 的图标。 */
+private const val LEGACY_BUILTIN_AI_BASE_URL = "http://1.117.60.254"
+
 @Composable
 fun ProviderLogoIcon(
     provider: AIProviderConfig?,
     modifier: Modifier = Modifier,
     size: Dp = 22.dp
 ) {
-    // 自建的内置供应商后面就是小染本人，图标不套品牌 logo，跟着 SOUL.md 里的头像走。
-    if (provider != null && provider.baseUrl.startsWith(AharouAccountApi.BASE_URL)) {
+    // 曾由「内置AI」账号页自动配置的供应商（该功能已下线，但历史 provider 仍在），图标跟 SOUL.md 头像走。
+    if (provider != null && provider.baseUrl.startsWith(LEGACY_BUILTIN_AI_BASE_URL)) {
         val soul by SoulStore.cachedMetadata.collectAsStateWithLifecycle()
         // 头像组件自身不带尺寸约束，交给容器居中：否则 emoji 按自身宽度贴左，跟右侧品牌图标对不齐。
         Box(modifier = modifier.size(size), contentAlignment = Alignment.Center) {

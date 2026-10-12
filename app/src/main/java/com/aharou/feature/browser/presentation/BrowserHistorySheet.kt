@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aharou.core.ui.MinisTextButton
 import com.aharou.feature.browser.BrowserHistoryStore
 import java.text.SimpleDateFormat
 import java.util.Date

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -86,6 +87,7 @@ fun CredentialScreen(
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val quickLoginState by viewModel.quickLogin.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // 每次进入重新读署名：用户可能在终端改过项目级/全局署名，避免回显陈旧空值。
@@ -112,6 +114,7 @@ fun CredentialScreen(
     // editingCredential != null -> 编辑现有；editingCredential == null && isAddingCredential -> 新增；否则列表态。
     var editingCredential by remember { mutableStateOf<GitCredential?>(null) }
     var isAddingCredential by remember { mutableStateOf(false) }
+    var showAddSheet by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = settingsPageBackground(),
@@ -128,7 +131,7 @@ fun CredentialScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { isAddingCredential = true }) {
+                    IconButton(onClick = { showAddSheet = true }) {
                         Icon(FeatherIcons.Plus, contentDescription = stringResource(R.string.credential_add))
                     }
                 }
@@ -176,18 +179,46 @@ fun CredentialScreen(
                         }
                     }
                     1 -> if (state.credentials.isEmpty()) {
-                        Box(
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(Spacing.lg),
-                            contentAlignment = Alignment.Center
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
+                            Text(
+                                text = stringResource(R.string.credential_empty_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(Spacing.sm))
                             Text(
                                 text = stringResource(R.string.credential_empty_hint),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
+                            Spacer(Modifier.height(Spacing.lg))
+                            Button(
+                                onClick = { viewModel.startGitHubLogin() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp),
+                                shape = RoundedCornerShape(Radius.mdLarge)
+                            ) {
+                                Icon(FeatherIcons.Github, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(Spacing.sm))
+                                Text(stringResource(R.string.credential_add_method_github))
+                            }
+                            Spacer(Modifier.height(Spacing.sm))
+                            TextButton(
+                                onClick = { isAddingCredential = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(FeatherIcons.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(Spacing.sm))
+                                Text(stringResource(R.string.credential_add_method_manual))
+                            }
                         }
                     } else {
                         LazyColumn(
@@ -243,6 +274,34 @@ fun CredentialScreen(
             initial = null,
             onDismiss = { isAddingCredential = false },
             onSave = { viewModel.saveCredential(it); isAddingCredential = false }
+        )
+    }
+
+    if (showAddSheet) {
+        CredentialAddSheet(
+            onDismiss = { showAddSheet = false },
+            onGitHubLogin = {
+                showAddSheet = false
+                viewModel.startGitHubLogin()
+            },
+            onManualAdd = {
+                showAddSheet = false
+                isAddingCredential = true
+            }
+        )
+    }
+
+    if (quickLoginState != CredentialViewModel.QuickLoginUiState.Idle) {
+        GitHubDeviceFlowSheet(
+            state = quickLoginState,
+            onRetry = { viewModel.startGitHubLogin() },
+            onDismiss = {
+                when (quickLoginState) {
+                    is CredentialViewModel.QuickLoginUiState.Success,
+                    is CredentialViewModel.QuickLoginUiState.Failed -> viewModel.consumeQuickLoginResult()
+                    else -> viewModel.cancelQuickLogin()
+                }
+            }
         )
     }
 

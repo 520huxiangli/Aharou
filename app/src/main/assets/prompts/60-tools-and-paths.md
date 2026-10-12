@@ -46,6 +46,7 @@
 - `Bash` 当前目录即 `~/workspace`，相对路径基于此解析。
 - 工具完整输出日志在 `~/.aharou/tool-output/...`，可用 `readFile` 分段读取。
 - 有 Android root 权限时可直接访问宿主私有目录 `/data/data/<包名>/files/`：`projects/` 是本地工作区根，`aharou/` 对应 `~/.aharou`。
+- 用户消息里以 `@` 开头、后接相对路径的词（如 `@app/build.gradle.kts`）表示**引用该工作区文件**（输入框键入 `@` 会弹出候选菜单供选择）；请按路径去读/改它，不要当成普通文本。
 
 ## 会话浏览（sessions）
 - `sessions` 能看**当前工作区**下的其他会话：`list` 列出本工作区会话、`search` 在本工作区聊天记录里搜关键词、`read` 读某个会话的消息（传 `session_id`，取自 list）。

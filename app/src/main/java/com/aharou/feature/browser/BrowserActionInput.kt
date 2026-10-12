@@ -33,8 +33,16 @@ data class BrowserActionInput(
     val itemSelector: String? = null,
     /** Scroll iterations for scroll_and_collect. */
     val scrollCount: Int? = null,
-    /** Milliseconds to wait (wait_for_dom_stable). */
+    /** Milliseconds to wait (wait_for_dom_stable / wait). */
     val timeoutMs: Int? = null,
+    /** wait：等待条件（selector= / text= / text*= / domStable），缺省回落 selector / text。 */
+    val condition: String? = null,
+    /** press：按键名（Enter / Escape / Tab / 方向键 / Backspace / Delete / 空格）。 */
+    val key: String? = null,
+    /** console：日志级别过滤（error / warning / debug / log）。 */
+    val level: String? = null,
+    /** console：读取后是否清空缓冲。 */
+    val clearConsole: Boolean = false,
     /** When true on screenshot, stretch viewport to full document.scrollHeight before capture. */
     val fullPage: Boolean = false,
     /**
@@ -75,6 +83,10 @@ data class BrowserActionInput(
                     itemSelector = obj.optString("item_selector").ifEmpty { null },
                     scrollCount = if (obj.has("scroll_count")) obj.optInt("scroll_count") else null,
                     timeoutMs = if (obj.has("timeout")) obj.optInt("timeout") else null,
+                    condition = obj.optString("condition").ifEmpty { null },
+                    key = obj.optString("key").ifEmpty { null },
+                    level = obj.optString("level").ifEmpty { null },
+                    clearConsole = obj.optBoolean("clear", false),
                     fullPage = obj.optBoolean("full_page", false),
                     cookies = parseCookies(obj),
                 )

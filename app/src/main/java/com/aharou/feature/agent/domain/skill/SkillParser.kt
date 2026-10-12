@@ -1,8 +1,8 @@
 package com.aharou.feature.agent.domain.skill
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.common.Frontmatter
 import com.aharou.feature.workspace.domain.FileAccessProvider
-import org.yaml.snakeyaml.Yaml
 
 object SkillParser {
     private const val TAG = "SkillParser"
@@ -42,7 +42,7 @@ object SkillParser {
      * 原字段——导入路径要原样写回 frontmatter，不能被译文顶掉原文。
      */
     fun parseText(text: String, fallbackName: String, lang: String? = null): Skill {
-        val (frontmatter, body) = splitAndParseFrontmatter(text)
+        val (frontmatter, body) = Frontmatter.splitAndParse(text, TAG, "解析 YAML 失败")
 
         // name 优先取 frontmatter，缺省回退到兜底名
         val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() } ?: fallbackName
@@ -63,32 +63,6 @@ object SkillParser {
             dirPath = null,
             instructions = body.trim()
         )
-    }
-
-    /**
-     * 利用 SnakeYAML 切分并解析 YAML frontmatter。
-     * @return (frontmatter 键值对, 正文)
-     */
-    private fun splitAndParseFrontmatter(text: String): Pair<Map<String, Any>, String> {
-        val normalized = text.replace("\r\n", "\n")
-        if (!normalized.startsWith("---\n")) return emptyMap<String, Any>() to normalized
-
-        val end = normalized.indexOf("\n---", startIndex = 3)
-        if (end < 0) return emptyMap<String, Any>() to normalized
-
-        val block = normalized.substring(4, end)
-        val rest = normalized.substring(end + 4).removePrefix("\n")
-        
-        val map = try {
-            val yaml = Yaml()
-            val loaded = yaml.load<Map<String, Any>>(block)
-            loaded ?: emptyMap()
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "解析 YAML 失败", e)
-            emptyMap()
-        }
-        
-        return map to rest
     }
 
     /** 按界面语言挑描述：中文优先 `description_zh`，其它语言优先 `description_en`，都缺再退通用字段。 */
@@ -118,19 +92,10 @@ object SkillParser {
         instructions: String
     ): String = buildString {
         appendLine("---")
-        appendLine("name: ${quote(name)}")
-        appendLine("description: ${quote(description)}")
+        appendLine("name: ${Frontmatter.quote(name)}")
+        appendLine("description: ${Frontmatter.quote(description)}")
         if (requiredTools.isNotEmpty()) appendLine("required_tools: [${requiredTools.joinToString(", ")}]")
         appendLine("---")
         appendLine(instructions.trim())
-    }
-
-    /** frontmatter 字符串值：双引号包裹，转义反斜杠与引号，换行压成空格保证单行。 */
-    private fun quote(value: String): String {
-        val escaped = value.replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace(Regex("\\s*\\n\\s*"), " ")
-            .trim()
-        return "\"$escaped\""
     }
 }

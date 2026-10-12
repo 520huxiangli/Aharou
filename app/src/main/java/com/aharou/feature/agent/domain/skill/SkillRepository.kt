@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.skill
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.common.NameValidation
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import java.io.InputStream
 import javax.inject.Inject
@@ -213,14 +214,9 @@ class SkillRepository @Inject constructor(
         private const val INSTRUCTION_FILE = "SKILL.md"
 
         /** 名称同时用作目录名，禁掉路径分隔符与保留字符；长度上限防止极端目录名。 */
-        internal fun isValidName(name: String): Boolean {
-            if (name.isBlank() || name.length > MAX_NAME_LENGTH) return false
-            if (name == "." || name == "..") return false
-            return name.none { it in ILLEGAL_NAME_CHARS || it.isISOControl() }
-        }
+        internal fun isValidName(name: String): Boolean = NameValidation.isValid(name, MAX_NAME_LENGTH)
 
         private const val MAX_NAME_LENGTH = 64
-        private val ILLEGAL_NAME_CHARS = charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
 
         /** 目录里已有的指令文件完整路径：SKILL.md 优先，其次 CLAUDE.md（与 [SkillParser.parse] 同一套回退）。 */
         internal fun instructionFile(provider: FileAccessProvider, dirPath: String): String? {

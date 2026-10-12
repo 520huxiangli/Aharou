@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.aharou.R
+import com.aharou.core.ui.MinisTextButton
 import com.aharou.feature.browser.BrowserTabPool
 
 /**

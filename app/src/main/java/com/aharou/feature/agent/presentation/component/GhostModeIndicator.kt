@@ -24,14 +24,12 @@ import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
-import com.aharou.core.ui.AppSwitch
 
 /**
  * 隐身对话（Ghost mode）的可见标识与开关。
  *
- * 三个入口按位置任选：[GhostModeBanner] 常驻聊天页顶部提示当前处于隐身；
- * [GhostModeIndicator] 是紧凑胶囊标识（可点击切换），放工具条/标题栏；
- * [GhostModeToggleRow] 是设置风格的整行开关（标题 + 说明 + [AppSwitch]）。
+ * 两个入口按位置任选：[GhostModeBanner] 常驻聊天页顶部提示当前处于隐身；
+ * [GhostModeIndicator] 是紧凑胶囊标识（可点击切换），放工具条/标题栏。
  *
  * 本文件只负责展示与回调，不持有任何状态——开关值由调用方（当前会话的 ghostMode）传入。
  */
@@ -101,35 +99,5 @@ fun GhostModeIndicator(
             style = MaterialTheme.typography.labelMedium,
             color = content
         )
-    }
-}
-
-/** 设置风格整行开关：左侧标题与说明，右侧 [AppSwitch]。 */
-@Composable
-fun GhostModeToggleRow(
-    isGhost: Boolean,
-    onToggle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = Spacing.lg, vertical = Spacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.lg)
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.ghost_mode_label),
-                style = MaterialTheme.typography.bodyLarge
-            )
-            Text(
-                text = stringResource(R.string.ghost_mode_banner_message),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.semanticColors.subtleText
-            )
-        }
-        AppSwitch(checked = isGhost, onCheckedChange = { onToggle(it) }, enabled = enabled)
     }
 }

@@ -23,9 +23,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import com.aharou.core.ui.AppSwitch
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.aharou.core.ui.AppTextField
+import com.aharou.core.ui.SegmentedTabs
+import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.core.ui.dialogTextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -46,14 +50,21 @@ import com.aharou.feature.backup.domain.BackupOptions
 import com.aharou.feature.backup.domain.ProviderConflict
 import com.aharou.feature.backup.domain.ProviderConflictStrategy
 import com.aharou.feature.backup.domain.WorkspaceBackupMeta
+import com.aharou.feature.backup.domain.remote.BackupTarget
+import com.aharou.feature.backup.domain.remote.BackupTargetType
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.SettingsGroupHeader
 import com.aharou.feature.settings.presentation.component.SettingsRow
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
+import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Download
+import compose.icons.feathericons.Edit2
+import compose.icons.feathericons.Plus
+import compose.icons.feathericons.Server
 import compose.icons.feathericons.Upload
+import compose.icons.feathericons.Zap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,7 +82,13 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     var pendingImportUri by remember { mutableStateOf<Uri?>(null) }
     var pendingExportPassword by remember { mutableStateOf("") }
     var pendingExportOptions by remember { mutableStateOf(BackupOptions()) }
+    var tab by remember { mutableStateOf(0) }
+    var showTargetSheet by remember { mutableStateOf(false) }
+    var editingTarget by remember { mutableStateOf<BackupTarget?>(null) }
+    var networkAction by remember { mutableStateOf<NetworkAction?>(null) }
     val exportOptions by viewModel.exportOptions.collectAsStateWithLifecycle()
+    val targets by viewModel.targets.collectAsStateWithLifecycle()
+    val networkState by viewModel.networkState.collectAsStateWithLifecycle()
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -110,6 +127,17 @@ internal fun BackupSection(viewModel: BackupViewModel) {
             .padding(horizontal = Spacing.lg)
             .padding(bottom = Spacing.xl)
     ) {
+        SegmentedTabs(
+            selected = tab,
+            labels = listOf(
+                stringResource(R.string.backup_net_tab_local),
+                stringResource(R.string.backup_net_tab_network)
+            ),
+            onSelect = { tab = it }
+        )
+        Spacer(Modifier.height(Spacing.sm))
+
+        if (tab == 0) {
         // 导出数据范围：开关即持久化
         SettingsGroupHeader(text = stringResource(R.string.backup_select_data))
         SettingsGroup {
@@ -216,6 +244,82 @@ internal fun BackupSection(viewModel: BackupViewModel) {
                 }
             )
         }
+        } else {
+            NetworkBackupContent(
+                targets = targets,
+                onAdd = {
+                    editingTarget = null
+                    showTargetSheet = true
+                },
+                onEdit = {
+                    editingTarget = it
+                    showTargetSheet = true
+                },
+                onBrowse = { viewModel.loadRemoteBackups(it.id) },
+                onTest = { viewModel.testTarget(it.id) },
+                onDelete = { viewModel.deleteTarget(it.id) }
+            )
+        }
+    }
+
+    if (showTargetSheet) {
+        BackupTargetSheet(
+            initial = editingTarget,
+            onDismiss = {
+                showTargetSheet = false
+                editingTarget = null
+            },
+            onSave = {
+                viewModel.saveTarget(it)
+                showTargetSheet = false
+                editingTarget = null
+            }
+        )
+    }
+
+    if (networkAction != null) {
+        PasswordDialog(
+            title = stringResource(R.string.backup_net_password_action),
+            subtitle = stringResource(R.string.backup_password_optional_hint),
+            confirmText = stringResource(R.string.common_ok),
+            password = password,
+            onPasswordChange = { password = it },
+            onConfirm = {
+                val action = networkAction
+                val pw = password
+                password = ""
+                networkAction = null
+                when (action) {
+                    is NetworkAction.Upload -> viewModel.uploadToTarget(action.targetId, pw)
+                    is NetworkAction.Restore -> viewModel.restoreFromRemote(action.targetId, action.name, pw)
+                    null -> {}
+                }
+            },
+            onDismiss = {
+                password = ""
+                networkAction = null
+            }
+        )
+    }
+
+    LaunchedEffect(networkState) {
+        val notice = networkState as? NetworkBackupState.Notice ?: return@LaunchedEffect
+        Toast.makeText(context, context.getString(notice.messageRes), Toast.LENGTH_LONG).show()
+        viewModel.dismissNetworkState()
+    }
+
+    val remoteList = networkState as? NetworkBackupState.RemoteList
+    if (remoteList != null) {
+        RemoteBackupDialog(
+            targetName = remoteList.targetName,
+            items = remoteList.items,
+            busy = false,
+            onUpload = { networkAction = NetworkAction.Upload(remoteList.targetId) },
+            onRefresh = { viewModel.loadRemoteBackups(remoteList.targetId) },
+            onRestore = { networkAction = NetworkAction.Restore(remoteList.targetId, it.name) },
+            onDelete = { viewModel.deleteRemoteBackup(remoteList.targetId, it.name) },
+            onDismiss = { viewModel.dismissNetworkState() }
+        )
     }
 
     // 导出：输口令（可留空）
@@ -272,7 +376,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
         }
     }
 
-    if (state is BackupState.Working) {
+    if (state is BackupState.Working || networkState is NetworkBackupState.Working) {
         ProgressDialog()
     }
 
@@ -523,4 +627,63 @@ private fun buildImportSummary(context: android.content.Context, stats: com.ahar
     if (stats.workspaceFiles > 0) appendLine(context.getString(R.string.backup_stat_workspace_files, stats.workspaceFiles))
     if (stats.memoryFiles > 0) appendLine(context.getString(R.string.backup_stat_memory_files, stats.memoryFiles))
     if (stats.appSettingsRestored) append(context.getString(R.string.backup_settings_covered))
+}
+
+/** 网络 tab 的内容：目标列表（左滑删除）+ 添加入口。 */
+@Composable
+private fun NetworkBackupContent(
+    targets: List<BackupTarget>,
+    onAdd: () -> Unit,
+    onEdit: (BackupTarget) -> Unit,
+    onBrowse: (BackupTarget) -> Unit,
+    onTest: (BackupTarget) -> Unit,
+    onDelete: (BackupTarget) -> Unit
+) {
+    SettingsGroupHeader(text = stringResource(R.string.backup_net_targets_header))
+    SettingsGroup {
+        if (targets.isEmpty()) {
+            SettingsRow(title = stringResource(R.string.backup_net_empty), enabled = false)
+            SettingsDivider()
+        } else {
+            targets.forEachIndexed { index, target ->
+                if (index > 0) SettingsDivider()
+                SwipeToDeleteRow(onDelete = { onDelete(target) }) {
+                    SettingsRow(
+                        icon = if (target.type == BackupTargetType.S3) FeatherIcons.Cloud else FeatherIcons.Server,
+                        title = target.name,
+                        subtitle = targetSubtitle(target),
+                        onClick = { onBrowse(target) },
+                        trailing = {
+                            IconButton(onClick = { onTest(target) }) {
+                                Icon(FeatherIcons.Zap, contentDescription = stringResource(R.string.backup_net_test))
+                            }
+                            IconButton(onClick = { onEdit(target) }) {
+                                Icon(FeatherIcons.Edit2, contentDescription = stringResource(R.string.common_edit))
+                            }
+                        }
+                    )
+                }
+            }
+            SettingsDivider()
+        }
+        SettingsRow(
+            icon = FeatherIcons.Plus,
+            title = stringResource(R.string.backup_net_add_target),
+            onClick = onAdd
+        )
+    }
+}
+
+/** 目标副标题：WebDAV 显示服务地址，S3 显示桶名与区域（纯数据，不是需要翻译的文案）。 */
+private fun targetSubtitle(target: BackupTarget): String = when (target.type) {
+    BackupTargetType.WEBDAV -> target.endpoint
+    BackupTargetType.S3 -> listOf(target.bucket, target.region.ifBlank { "us-east-1" })
+        .filter { it.isNotBlank() }
+        .joinToString(" · ")
+}
+
+/** 网络 tab 里需要口令确认的两类动作。 */
+private sealed interface NetworkAction {
+    data class Upload(val targetId: String) : NetworkAction
+    data class Restore(val targetId: String, val name: String) : NetworkAction
 }

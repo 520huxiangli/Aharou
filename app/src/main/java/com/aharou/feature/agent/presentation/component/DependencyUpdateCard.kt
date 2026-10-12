@@ -31,7 +31,6 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Package
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -39,7 +38,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 internal data class ParsedDependencyUpdate(
@@ -62,7 +60,7 @@ internal data class ParsedDependencyReport(
 /** 解析 `check_dependencies` 工具结果 JSON；不是该工具的结果时返回 null。 */
 internal fun parseDependencyReport(content: String): ParsedDependencyReport? {
     return runCatching {
-        val data = extractDependencyReportData(content) ?: return null
+        val data = extractToolResultData(content) ?: return null
         if (!data.containsKey("updates")) return null
         val updates = data["updates"]?.jsonArray?.mapNotNull { parseDependencyUpdate(it) }.orEmpty()
         ParsedDependencyReport(
@@ -72,19 +70,6 @@ internal fun parseDependencyReport(content: String): ParsedDependencyReport? {
             unparsedCount = data["unparsed_count"]?.jsonPrimitive?.intOrNull ?: 0
         )
     }.getOrNull()
-}
-
-private fun extractDependencyReportData(content: String): JsonObject? {
-    val s = content.withoutToolStatusPrefix()
-    val outer = Json.parseToJsonElement(s).jsonObject
-    if (outer["status"]?.jsonPrimitive?.contentOrNull !in setOf("success", "partial")) return null
-    return when (val data = outer["data"]) {
-        is JsonObject -> data
-        is JsonPrimitive -> data.contentOrNull
-            ?.takeIf(String::isNotBlank)
-            ?.let { Json.parseToJsonElement(it).jsonObject }
-        else -> null
-    }
 }
 
 private fun parseDependencyUpdate(element: JsonElement): ParsedDependencyUpdate? {

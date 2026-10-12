@@ -1,9 +1,9 @@
 package com.aharou.feature.agent.domain.subagent
 
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.writeTextSafely
 import com.aharou.core.watch.FileChange
 import com.aharou.core.watch.FileChangeHub
+import com.aharou.feature.agent.domain.common.DisabledNamesStore
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
@@ -18,15 +18,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.shareIn
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.putJsonArray
 
 /**
  * 子代理启停配置持久化，与技能的 `skills.json` 同一套约定，支持全局 + 项目级两级：
@@ -108,42 +99,13 @@ class AgentDefinitionConfigRepository @Inject constructor(
         private const val GLOBAL_CONFIG_PATH = "~/.aharou/$CONFIG_FILE"
         private const val AHAROU_DIR = ".aharou"
         private const val AGENTS_DIR = "agents"
-        private val JSON = Json { ignoreUnknownKeys = true; isLenient = true }
-        private val PRETTY_JSON = Json { prettyPrint = true }
 
-        internal fun parseDisabled(raw: String): Set<String> {
-            val root = runCatching { JSON.parseToJsonElement(raw).jsonObject }.getOrElse {
-                FileLogger.w(TAG, "子代理配置 JSON 解析失败: ${it.message}")
-                return emptySet()
-            }
-            return (root["disabled"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                ?.toSet()
-                ?: emptySet()
-        }
+        internal fun parseDisabled(raw: String): Set<String> = DisabledNamesStore.parse(raw, TAG, "子代理配置")
 
-        internal fun serializeDisabled(names: Set<String>): String {
-            val root = buildJsonObject {
-                putJsonArray("disabled") { names.sorted().forEach { add(it) } }
-            }
-            return PRETTY_JSON.encodeToString(JsonObject.serializer(), root)
-        }
+        internal fun serializeDisabled(names: Set<String>): String = DisabledNamesStore.serialize(names)
 
-        private fun readDisabled(file: File): Set<String> {
-            if (!file.isFile) return emptySet()
-            return runCatching { parseDisabled(file.readText()) }.getOrElse {
-                FileLogger.w(TAG, "读取 ${file.name} 失败: ${it.message}")
-                emptySet()
-            }
-        }
+        private fun readDisabled(file: File): Set<String> = DisabledNamesStore.read(file, TAG, "子代理配置")
 
-        private fun writeDisabled(file: File, names: Set<String>) {
-            file.parentFile?.mkdirs()
-            val json = serializeDisabled(names)
-            // 临时文件 + rename 原子落盘，避免写一半崩溃损坏配置
-            val tmp = File(file.parentFile, "${file.name}.tmp")
-            tmp.writeTextSafely(json, TAG)
-            if (!tmp.renameTo(file)) file.writeTextSafely(json, TAG)
-        }
+        private fun writeDisabled(file: File, names: Set<String>) = DisabledNamesStore.write(file, names, TAG)
     }
 }

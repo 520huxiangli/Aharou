@@ -15,7 +15,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -24,7 +23,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -38,11 +36,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -60,8 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -72,7 +65,6 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.pageEnter
 import com.aharou.core.ui.pageExit
-import com.aharou.core.util.LogLevel
 import com.aharou.R
 import com.aharou.feature.agent.domain.prompt.PromptFragment
 import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
@@ -83,7 +75,6 @@ import com.aharou.feature.connectors.presentation.ConnectorsSection
 import com.aharou.feature.remotedevice.presentation.RemoteDeviceSection
 import com.aharou.feature.vault.presentation.VaultSection
 import com.aharou.feature.settings.domain.model.AIProviderConfig
-import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.presentation.PromptsViewModel
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.presentation.ShizukuViewModel
@@ -141,7 +132,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     General(R.string.settings_general),
     Theme(R.string.settings_theme_title),
     Providers(R.string.settings_providers),
-    BuiltinAi(R.string.account_entry_title),
+    AccountCenter(R.string.account_entry_title),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
     Mcp(R.string.settings_mcp),
@@ -312,6 +303,7 @@ fun SettingsScreen(
     var showAddProviderSheet by remember { mutableStateOf(false) }
     var providerPresetPrefill by remember { mutableStateOf<ProviderPreset?>(null) }
     var mcpDialogRequest by remember { mutableStateOf<McpDialogRequest?>(null) }
+    var showMcpImportSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(onboardingStep) {
         when (onboardingStep) {
@@ -421,7 +413,7 @@ fun SettingsScreen(
         SettingsSection.ConfigAudit,
         SettingsSection.Memory,
         SettingsSection.Pet -> SettingsSection.AharouGroup
-        SettingsSection.BuiltinAi -> SettingsSection.AiGroup
+        SettingsSection.AccountCenter -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels,
         SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
@@ -988,7 +980,7 @@ fun SettingsScreen(
                     deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
                     onToggleDeleteExternalWorkspaceSessions = { viewModel.setDeleteExternalWorkspaceSessions(it) }
                 )
-                SettingsSection.BuiltinAi -> com.aharou.feature.account.presentation.BuiltinAiAccountScreen()
+                SettingsSection.AccountCenter -> com.aharou.feature.account.presentation.AccountCenterScreen()
                 SettingsSection.Providers -> ProvidersSection(
                     providers = providers,
                     onEdit = {
@@ -1083,7 +1075,8 @@ fun SettingsScreen(
                     onToggle = { name, enabled, scope -> viewModel.setMcpServerEnabled(name, enabled, scope) },
                     onEdit = { mcpDialogRequest = McpDialogRequest(editing = it, prefill = null) },
                     onDelete = { name, scope -> viewModel.deleteMcpServer(name, scope) },
-                    onBrowseDirectory = { section = SettingsSection.Connectors }
+                    onBrowseDirectory = { section = SettingsSection.Connectors },
+                    onImportJson = { showMcpImportSheet = true }
                 )
                 SettingsSection.Connectors -> ConnectorsSection(languageTag = languageTag)
                 SettingsSection.RemoteDevice -> RemoteDeviceSection()
@@ -1362,6 +1355,13 @@ fun SettingsScreen(
                 viewModel.refreshLogs(filterServerName = name)
                 section = SettingsSection.Log
             }
+        )
+    }
+
+    if (showMcpImportSheet) {
+        McpJsonImportSheet(
+            onDismiss = { showMcpImportSheet = false },
+            onImported = { viewModel.reloadMcp() }
         )
     }
 

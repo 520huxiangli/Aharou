@@ -34,8 +34,10 @@ class BrowserTool @Inject constructor(
         "控制内置浏览器（最多 3 个标签页，与 原版 的 browser_use 同引擎、同语义）。" +
             "action 取值：navigate/screenshot/click/type/get_text/scroll/get_page_info/execute_js/" +
             "find_elements/hover/get_readable/set_user_agent/set_viewport/get_backbone/fetch/" +
-            "new_tab/close_tab/list_tabs/get_cookies/set_cookies/scroll_and_collect/wait_for_dom_stable。" +
-            "交互类动作用 selector；需要看到页面视觉内容时显式调用 action=screenshot（会作为图片返回）；" +
+            "new_tab/close_tab/list_tabs/get_cookies/set_cookies/scroll_and_collect/wait_for_dom_stable/" +
+            "console/wait/press/select。" +
+            "交互类动作用 selector（支持 CSS、text=、text*=、role=、ref=、xpath=，ref= 来自 get_backbone 的节点 ref）；" +
+            "需要看到页面视觉内容时显式调用 action=screenshot（会作为图片返回）；" +
             "多标签操作可带 tab_id（缺省作用于当前激活标签）。"
 
     override val capabilities = setOf(ToolCapability.NETWORK_READ, ToolCapability.NETWORK_WRITE)
@@ -45,8 +47,8 @@ class BrowserTool @Inject constructor(
             enum = BrowserAction.allValues),
         "url" to ToolParameter("url", ParameterType.STRING, "navigate/fetch/new_tab 的目标 URL", false),
         "selector" to ToolParameter("selector", ParameterType.STRING,
-            "click/type/hover/find_elements/get_text/scroll 的元素选择器（CSS）", false),
-        "text" to ToolParameter("text", ParameterType.STRING, "type：要输入的文本", false),
+            "click/type/hover/find_elements/get_text/scroll/select/wait 的元素选择器（支持 CSS、text=、text*=、role=、ref=、xpath=）", false),
+        "text" to ToolParameter("text", ParameterType.STRING, "type：要输入的文本；select：要选中的 option 的 value 或文本", false),
         "coordinate_x" to ToolParameter("coordinate_x", ParameterType.INTEGER, "click：按坐标点击的 X", false),
         "coordinate_y" to ToolParameter("coordinate_y", ParameterType.INTEGER, "click：按坐标点击的 Y", false),
         "direction" to ToolParameter("direction", ParameterType.STRING, "scroll 方向", false,
@@ -55,7 +57,7 @@ class BrowserTool @Inject constructor(
         "script" to ToolParameter("script", ParameterType.STRING,
             "execute_js：JS 代码（支持 await / 顶层 return）", false),
         "user_agent" to ToolParameter("user_agent", ParameterType.STRING, "set_user_agent：UA 档位", false,
-            enum = listOf("desktop_chrome", "mobile_chrome")),
+            enum = UserAgentProfile.entries.map { it.value }),
         "max_depth" to ToolParameter("max_depth", ParameterType.INTEGER, "get_backbone：DOM 树深度（默认 5）", false),
         "tab_id" to ToolParameter("tab_id", ParameterType.INTEGER, "目标标签页 ID", false),
         "full_page" to ToolParameter("full_page", ParameterType.BOOLEAN, "screenshot：整页截图（默认 false）", false),
@@ -67,7 +69,14 @@ class BrowserTool @Inject constructor(
         "fuzzy" to ToolParameter("fuzzy", ParameterType.BOOLEAN, "get_cookies：模糊匹配（默认 false）", false),
         "item_selector" to ToolParameter("item_selector", ParameterType.STRING, "scroll_and_collect：条目选择器", false),
         "scroll_count" to ToolParameter("scroll_count", ParameterType.INTEGER, "scroll_and_collect：滚动次数（默认 10）", false),
-        "timeout" to ToolParameter("timeout", ParameterType.INTEGER, "wait_for_dom_stable：超时毫秒", false),
+        "timeout" to ToolParameter("timeout", ParameterType.INTEGER, "wait_for_dom_stable/wait：超时毫秒", false),
+        "condition" to ToolParameter("condition", ParameterType.STRING,
+            "wait：等待条件（selector=元素 / text=精确文本 / text*=包含文本 / domStable）", false),
+        "key" to ToolParameter("key", ParameterType.STRING,
+            "press：按键名（Enter/Escape/Tab/ArrowUp/ArrowDown/ArrowLeft/ArrowRight/Backspace/Delete/空格）", false),
+        "level" to ToolParameter("level", ParameterType.STRING, "console：日志级别过滤", false,
+            enum = listOf("error", "warning", "debug", "log")),
+        "clear" to ToolParameter("clear", ParameterType.BOOLEAN, "console：读取后清空缓冲（默认 false）", false),
     )
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {

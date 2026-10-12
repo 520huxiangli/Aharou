@@ -16,17 +16,11 @@ enum class DeclarationType {
     /** `[plugins]` 条目自带内联版本。 */
     CATALOG_PLUGIN,
 
-    /** `[bundles]` 里的成员（仅展开记录，版本仍由其引用的 library 条目承载）。 */
-    BUNDLE_MEMBER,
-
     /** 构建脚本里的内联坐标字符串（`implementation("g:a:v")`）。 */
     BUILD_STRING,
 
     /** 构建脚本里被坐标字符串引用的版本变量（`val ver = "1.2.3"`）。 */
     BUILD_STRING_VAR,
-
-    /** 构建脚本里的 `libs.foo` 别名引用（版本在 catalog 里，不在此处编辑）。 */
-    BUILD_ALIAS,
 
     /** 构建脚本里的 `id("x") version "1.2.3"`。 */
     PLUGIN_ID_VERSION,

@@ -188,6 +188,7 @@ internal class ResponsesStreamAccumulator {
                 val delta = event.str("delta").orEmpty()
                 if (delta.isEmpty()) return null
                 budget.add(delta)
+                receivedContent = true
                 text.append(delta)
                 return ResponsesDelta.Text(delta)
             }
@@ -196,6 +197,7 @@ internal class ResponsesStreamAccumulator {
                 val delta = event.str("delta").orEmpty()
                 if (delta.isEmpty()) return null
                 budget.add(delta)
+                receivedContent = true
                 reasoning.append(delta)
                 return ResponsesDelta.Reasoning(delta)
             }
@@ -239,6 +241,7 @@ internal class ResponsesStreamAccumulator {
                 val delta = event.str("delta").orEmpty()
                 if (delta.isEmpty()) return null
                 budget.add(delta)
+                receivedContent = true
                 calls.getOrPut(event.callKey()) { CallAcc() }.args.append(delta)
             }
 

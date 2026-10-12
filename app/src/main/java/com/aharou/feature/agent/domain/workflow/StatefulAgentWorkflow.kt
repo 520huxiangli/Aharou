@@ -75,6 +75,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -958,6 +960,7 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
 
+        val pathLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>() // 同批内写同一文件的调用按 path 取锁串行化，避免并行互相干扰
         val runResults = if (toolCalls.isEmpty()) {
             emptyList()
         } else {
@@ -972,14 +975,13 @@ class StatefulAgentWorkflow @Inject constructor(
                             )
                         } else {
                             val tool = toolsByName[toolCall.name]
-                            when {
-                                tool == null -> ToolRunResult(
-                                    toolError(toolCall, "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE),
-                                    true
-                                )
+                            val execute: suspend () -> ToolRunResult = { when {
+                                tool == null -> ToolRunResult(toolError(toolCall, "工具「${toolCall.name}」在当前会话不可用（不在允许的工具清单内）。", TOOL_NOT_ALLOWED_CODE), true)
                                 tool is StreamingAgentTool -> runToolStream(tool, toolCall, currentContext) { emit(it) }
                                 else -> runToolSync(tool, toolCall, currentContext)
-                            }
+                            } }
+                            val lock = (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { pathLocks.computeIfAbsent(it) { Mutex() } }
+                            if (lock == null) execute() else lock.withLock { execute() }
                         }
                     }
                 }.awaitAll()

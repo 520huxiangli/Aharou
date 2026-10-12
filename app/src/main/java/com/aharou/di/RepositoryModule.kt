@@ -1,7 +1,5 @@
 package com.aharou.di
 
-import com.aharou.feature.account.data.repository.AccountRepositoryImpl
-import com.aharou.feature.account.domain.repository.AccountRepository
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.settings.data.repository.AIProviderRepositoryImpl
 import com.aharou.feature.credentials.domain.repository.CredentialRepository
@@ -15,12 +13,6 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 abstract class RepositoryModule {
-
-    @Binds
-    @Singleton
-    abstract fun bindAccountRepository(
-        accountRepositoryImpl: AccountRepositoryImpl
-    ): AccountRepository
 
     @Binds
     @Singleton

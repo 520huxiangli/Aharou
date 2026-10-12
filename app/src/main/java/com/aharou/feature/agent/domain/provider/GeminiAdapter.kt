@@ -19,8 +19,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
 import java.io.IOException
 
 class GeminiAdapter @Inject constructor(
@@ -134,7 +132,7 @@ class GeminiAdapter @Inject constructor(
                         // 并行调用时服务端会给 id；缺失才退回用函数名（同名工具调两次会撞 id）。
                         val callId = fnCall?.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
                         val argsStr = fnCall?.get("args")?.takeIf { it.isJsonObject }?.asJsonObject?.toString() ?: "{}"
-                        val argsJson = parseArgs(argsStr)
+                        val argsJson = parseToolArguments(argsStr)
                         toolCalls.add(ToolCall(id = callId, name = name, arguments = argsJson))
                     }
                 }
@@ -301,7 +299,7 @@ class GeminiAdapter @Inject constructor(
                                             if (name.isNotEmpty()) emit(AIStreamChunk.ToolCallDeclared(name))
                                             val callId = fnCall.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
                                             val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
-                                            val argsJson = parseArgs(argsStr)
+                                            val argsJson = parseToolArguments(argsStr)
                                             toolCalls.add(ToolCall(id = callId, name = name, arguments = argsJson))
                                         }
                                     }
@@ -676,12 +674,6 @@ class GeminiAdapter @Inject constructor(
             }
             mapOf("thinkingBudget" to budget, "includeThoughts" to true)
         }
-    }
-
-    private fun parseArgs(raw: String): kotlinx.serialization.json.JsonObject {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return kotlinx.serialization.json.JsonObject(emptyMap())
-        return runCatching { Json.parseToJsonElement(trimmed).jsonObject }.getOrElse { kotlinx.serialization.json.JsonObject(emptyMap()) }
     }
 
     private fun convertToGeminiContents(messages: List<AgentMessage>): List<Map<String, Any>> {

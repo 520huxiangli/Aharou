@@ -51,9 +51,6 @@ internal object WidgetActions {
     fun openSession(context: Context, appWidgetId: Int, slot: Int, sessionId: String): PendingIntent =
         pending(context, requestCode(appWidgetId, SLOT_SESSION_BASE + slot), ACTION_OPEN_CHAT, sessionId)
 
-    /** MainActivity 侧判定：该 Intent 是否为「打开指定会话」。 */
-    fun isOpenChat(intent: Intent?): Boolean = intent?.action == ACTION_OPEN_CHAT
-
     /** MainActivity 侧读取会话 id；缺失或空白时返回 null。 */
     fun sessionId(intent: Intent?): String? =
         intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() }

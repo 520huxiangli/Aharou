@@ -115,7 +115,6 @@
     <string name="settings_token_stats_recent_calls">调用记录</string>
     <string name="settings_token_stats_unknown">未知</string>
     <string name="settings_token_stats_no_data">暂无数据</string>
-    <string name="settings_token_stats_calls_suffix">次调用</string>
     <string name="settings_token_stats_calls_suffix2">%1$d 次调用</string>
     <string name="settings_token_stats_col_model">模型</string>
     <string name="settings_token_stats_col_reasoning_effort">思考强度</string>
@@ -131,7 +130,6 @@
     <string name="settings_token_stats_col_status">状态</string>
     <string name="settings_token_stats_col_cost">费用</string>
     <string name="settings_token_stats_page">第 %1$d / %2$d 页</string>
-    <string name="settings_token_stats_retries">重试 %1$d 次</string>
     <string name="settings_token_stats_reset">重置</string>
     <string name="settings_token_stats_reset_title">重置 Token 统计</string>
     <string name="settings_token_stats_reset_confirm">将清空全部调用记录，此操作不可恢复。确定重置？</string>
@@ -145,26 +143,11 @@
 
     <!-- 存储空间页 -->
     <string name="settings_storage">存储空间</string>
-    <string name="performance_collecting">正在采集…</string>
-    <string name="performance_app_cpu">本应用 CPU</string>
-    <string name="performance_cores">共 %1$d 核，已按核心数归一</string>
-    <string name="performance_device_cpu">整机 CPU</string>
-    <string name="performance_threads">线程数</string>
-    <string name="performance_app_memory">本应用内存（PSS）</string>
-    <string name="performance_device_memory">设备内存</string>
-    <string name="performance_device_memory_detail">共 %1$d MB，可用 %2$d MB</string>
-    <string name="performance_network_app">本应用流量</string>
-    <string name="performance_network_app_note">按 UID 统计，含容器等子进程</string>
-    <string name="performance_network_device">整机流量</string>
-    <string name="performance_network_device_note">所有应用的收发总量</string>
-    <string name="performance_rx">下行</string>
-    <string name="performance_tx">上行</string>
     <string name="storage_refresh">重新统计</string>
     <string name="storage_total_title">应用占用</string>
     <string name="storage_scanning">统计中…</string>
     <string name="storage_device_free">设备可用 %1$s / 共 %2$s</string>
     <string name="storage_section_breakdown">占用明细</string>
-    <string name="storage_section_reclaimable">可释放空间</string>
     <string name="storage_breakdown_note">点击带箭头的分类可展开明细。删会话可减小聊天记录，容器与工作区请在各自的页面重置或删除；外部目录工作区位于设备存储，未计入。</string>
     <string name="storage_freed">已释放 %1$s</string>
     <string name="storage_clean">清理</string>
@@ -220,10 +203,6 @@
     <string name="theme_light">浅色</string>
     <string name="theme_mode_section">明暗模式</string>
     <string name="theme_preset_section">配色方案</string>
-    <string name="theme_preset_default">默认蓝</string>
-    <string name="theme_preset_coffee">咖啡</string>
-    <string name="theme_preset_graphite">石墨</string>
-    <string name="theme_preset_forest">森林</string>
     <string name="skin_qinglan">青蓝</string>
     <string name="skin_mohei">夜墨</string>
     <string name="skin_songlv">松绿</string>
@@ -232,7 +211,6 @@
     <string name="skin_xuanqing">玄青</string>
     <string name="skin_custom">自定义</string>
     <string name="skin_custom_add">自定义皮肤</string>
-    <string name="skin_custom_color">自定义颜色</string>
     <string name="skin_editor_title">自定义皮肤</string>
     <string name="skin_editor_primary">主色</string>
     <string name="skin_editor_accent">辅色</string>
@@ -257,7 +235,6 @@
     <string name="theme_dynamic_color_desc">从系统壁纸提取配色，开启后配色方案不再生效</string>
     <string name="theme_dynamic_color_unsupported">需要 Android 12 及以上系统</string>
     <string name="settings_background_image">背景图</string>
-    <string name="settings_background_image_none">未设置</string>
     <string name="settings_background_image_alpha">透明度</string>
     <string name="settings_background_image_pick">选择图片</string>
     <string name="settings_background_image_remove">移除背景</string>
@@ -311,7 +288,6 @@
     <string name="provider_script_params_count">已配置 %1$d 个参数</string>
     <string name="provider_add_sheet_title">添加供应商</string>
     <string name="provider_custom">自定义供应商</string>
-    <string name="provider_preset_loading">正在加载预设库…</string>
     <string name="provider_preset_empty">未找到匹配的预设</string>
     <string name="provider_register_now">立即注册</string>
     <string name="settings_keepalive_title">后台运行保活</string>
@@ -363,7 +339,6 @@
     <string name="common_copy">复制</string>
     <string name="common_copy_success">已复制到剪贴板</string>
     <string name="common_cut">剪切</string>
-    <string name="common_paste">粘贴</string>
     <string name="common_allow">允许</string>
     <string name="common_close">关闭</string>
     <string name="common_clear">清除</string>
@@ -437,14 +412,11 @@
     <string name="chat_attachment_uploaded_partial">已上传 %1$s 个附件，部分附件未加入</string>
     <string name="chat_image_too_large">图片超过 %1$s，请压缩后重试</string>
     <string name="chat_attachment_uploading">正在上传 %1$d 个文件…</string>
-    <string name="chat_uploaded_to">已上传到 %1$s</string>
     <string name="chat_select_workspace_first">请先选择工作区</string>
     <string name="chat_read_file_failed">无法读取所选文件</string>
     <string name="chat_camera_file_failed">无法创建拍照临时文件</string>
-    <string name="chat_workspace_unavailable">工作区不可用</string>
     <string name="chat_upload_failed">上传失败</string>
     <string name="chat_unsupported_image_type">无法识别图片类型，仅支持 jpg/png/gif/webp</string>
-    <string name="chat_new_session_btn">新会话</string>
     <string name="chat_open_sidebar">打开侧边栏</string>
     <string name="chat_add_attachment">添加附件</string>
     <string name="chat_take_photo">拍照</string>
@@ -462,7 +434,6 @@
     <string name="chat_open_apk_permission">安装应用需要授权，请在跳转的设置中允许来自此来源的应用</string>
     <string name="chat_attachment_preview">预览 %1$s</string>
     <string name="chat_attachment_open">打开 %1$s</string>
-    <string name="chat_no_model_selected">未选择模型</string>
     <string name="chat_open_git">打开 Git</string>
     <string name="chat_open_terminal">打开终端</string>
     <string name="chat_open_browser">打开浏览器</string>
@@ -486,7 +457,6 @@
     <string name="agent_input_budget_exceeded">上下文超过当前模型的可用输入预算，请缩短输入或减少工具定义。</string>
     <string name="chat_context_usage_estimated">预计占可用输入预算 %1$d%%</string>    <string name="agent_context_no_compaction">当前上下文无需压缩（消息过少）</string>
     <string name="agent_compaction_failed">压缩失败：%1$s</string>
-    <string name="agent_model_not_selected">未选择</string>
     <!-- About -->
     <string name="about_version">版本</string>
     <string name="about_github_repo">GitHub 仓库</string>
@@ -497,7 +467,6 @@
     <string name="about_up_to_date">已经是最新版本</string>
     <string name="about_up_to_date_detail">当前版本 v%1$s，已是 GitHub 上最新的 Release。</string>
     <string name="about_new_version_found">发现新版本</string>
-    <string name="about_download">前往下载</string>
     <string name="about_download_and_install">下载并安装</string>
     <string name="about_download_resolving">正在选择下载源…</string>
     <string name="about_downloading_from">正在下载（%1$s）</string>
@@ -602,21 +571,13 @@
     <string name="backup_error_unknown_exception">未知异常</string>
 
     <!-- Chat Drawer -->
-    <string name="chat_history">历史记录</string>
     <string name="chat_no_sessions_hint">暂无会话</string>
     <string name="chat_search_hint">搜索聊天记录</string>
     <string name="chat_search_no_result">未找到匹配的聊天记录</string>
-    <string name="chat_search_clear">清除</string>
     <string name="drawer_file_search_hint">搜索文件名或内容</string>
     <string name="drawer_file_search_no_result">没有匹配的文件或内容</string>
     <string name="drawer_file_search_summary">%1$d 个文件 · %2$d 处命中</string>
     <string name="drawer_file_search_truncated">结果过多，仅显示前 %1$d 条</string>
-    <string name="session_group_today">今天</string>
-    <string name="session_group_yesterday">昨天</string>
-    <string name="session_group_last_7_days">7天内</string>
-    <string name="session_group_last_30_days">30天内</string>
-    <string name="session_group_pinned">置顶</string>
-    <string name="session_group_month_format">yyyy年M月</string>
     <string name="chat_settings">设置</string>
     <string name="chat_pin_session">置顶</string>
     <string name="chat_unpin_session">取消置顶</string>
@@ -632,8 +593,6 @@
     <string name="drawer_tab_files">文件</string>
     <string name="drawer_expand_subagents">展开子代理</string>
     <string name="drawer_collapse_subagents">收起子代理</string>
-    <string name="file_browser_up">上一级</string>
-    <string name="file_browser_empty">空目录</string>
     <string name="file_browser_error">读取目录失败</string>
     <string name="file_browser_refresh">刷新</string>
     <string name="file_browser_expand">展开</string>
@@ -660,7 +619,6 @@
     <string name="editor_save_failed">保存失败</string>
     <string name="editor_unsaved_title">未保存的修改</string>
     <string name="editor_unsaved_message">当前文件有未保存的修改，是否保存？</string>
-    <string name="editor_discard">放弃</string>
     <string name="editor_save_and_exit">保存并退出</string>
     <string name="editor_dont_save">不保存</string>
     <string name="editor_close_tab">关闭标签页</string>
@@ -701,6 +659,11 @@
     <string name="chat_queue_hint">AI 正在处理中，回车发送将自动排队</string>
     <string name="chat_input_expand">展开输入框</string>
     <string name="chat_input_fullscreen_title">全屏输入</string>
+    <!-- @ 引用工作区文件 -->
+    <string name="chat_mention_files_title">引用工作区文件</string>
+    <string name="chat_mention_files_hint">输入文件名筛选</string>
+    <string name="chat_mention_files_loading">正在读取工作区文件…</string>
+    <string name="chat_mention_files_empty">没有匹配的文件</string>
     <string name="chat_queue_title">待发送队列（%1$d）</string>
     <string name="chat_queue_remove">移除排队消息</string>
     <string name="chat_queue_drag">拖拽排序</string>
@@ -711,7 +674,6 @@
     <string name="chat_upload_file">上传文件</string>
     <string name="chat_upload_image">上传图片</string>
     <string name="chat_remove_attachment">移除附件</string>    <string name="chat_no_models_hint">暂无可用模型，请在「AI 供应商」中添加</string>
-    <string name="chat_stop">停止</string>
     <string name="chat_stop_long_press_hint">停止（长按强制打断）</string>
     <string name="chat_send">发送</string>
     <string name="chat_perm_single_use_desc">含命令替换/管道/重定向，无法记住，仅可单次放行</string>
@@ -767,7 +729,6 @@
     <string name="chat_compaction_failed">上下文压缩失败</string>
     <string name="chat_sampling_loop_stopped">检测到模型在重复输出同一段内容，已截断并中止本次回复</string>
     <string name="chat_compressing_context">正在压缩上下文</string>
-    <string name="chat_retrying">正在重试 %1$s/%2$s</string>
     <string name="chat_key_switched">已切换到第 %1$d/%2$d 个 Key</string>
     <string name="chat_retry_badge">%1$d/%2$d</string>
     <string name="chat_retry_badge_desc">自动重试第 %1$d 次，共 %2$d 次</string>
@@ -788,7 +749,6 @@
     <string name="retry_error_ssl">SSL 握手失败</string>
     <string name="retry_error_unknown">网络异常</string>
     <string name="retry_error_with_code">%1$s (%2$d)</string>
-    <string name="chat_thinking_process">思考过程</string>
     <string name="chat_thinking_running_time">正在思考（耗时 %1$s 秒）</string>
     <string name="chat_thinking_done_time">思考完成（耗时 %1$s 秒）</string>
     <string name="chat_thinking_done">思考完成</string>
@@ -822,7 +782,6 @@
     <string name="container_health_attention_count">%1$d 项待处理</string>
     <string name="container_health_tools_missing_names">缺少：%1$s</string>
     <string name="container_health_run">开始体检</string>
-    <string name="container_health_running">体检中…</string>
     <string name="container_health_rerun">重新体检</string>
     <string name="container_health_title_storage">共享存储访问权限</string>
     <string name="container_health_storage_ok">已授予</string>
@@ -832,7 +791,6 @@
     <string name="container_health_tools_missing">缺少 git / curl / tar / xz 中的一项</string>
     <string name="container_health_tools_missing_detail">可在容器环境安装里补装基础依赖</string>
     <string name="container_health_tools_ready">已就绪 %1$d/%2$d</string>
-    <string name="container_health_tools_partial_detail">缺少的项会让对应功能不可用，可在容器环境安装里补装</string>
     <string name="container_health_tools_install">安装</string>
     <string name="container_health_tools_installing">正在安装…</string>
     <string name="container_health_tools_install_scope">装在当前容器，重建镜像后需重装</string>
@@ -922,6 +880,36 @@
     <string name="credential_prompt_desc">填完即保存并自动重试。该凭据同时会保存到容器内 git，终端与 AI 执行裸 git 命令时也可直接使用。</string>
     <string name="credential_save_and_retry">保存并重试</string>
 
+    <!-- Credential Add / GitHub Quick Login -->
+    <string name="credential_add_title">添加凭据</string>
+    <string name="credential_add_method_github">GitHub 快捷登录</string>
+    <string name="credential_add_method_github_desc">用设备码授权，自动获取并保存令牌</string>
+    <string name="credential_add_method_manual">手动添加</string>
+    <string name="credential_add_method_manual_desc">填写主机、用户名与访问令牌</string>
+    <string name="credential_quick_login_title">GitHub 快捷登录</string>
+    <string name="credential_quick_login_requesting">正在申请设备码…</string>
+    <string name="credential_quick_login_awaiting_title">在浏览器中完成授权</string>
+    <string name="credential_quick_login_awaiting_desc">在 GitHub 打开下面的设备码并确认授权：</string>
+    <string name="credential_quick_login_copy_and_open">复制并前往授权</string>
+    <string name="credential_quick_login_copied_and_opened">设备码已复制，请在浏览器中粘贴</string>
+    <string name="credential_quick_login_awaiting_hint">授权完成后本页会自动继续，请保持打开。</string>
+    <string name="credential_quick_login_expire_hint">设备码约 15 分钟内有效，超时请重新获取。</string>
+    <string name="credential_quick_login_success_title">登录成功</string>
+    <string name="credential_quick_login_success_body">已以 %1$s 的身份添加 GitHub 凭据。</string>
+    <string name="credential_quick_login_success_toast">GitHub 快捷登录成功</string>
+    <string name="credential_quick_login_install_title">还需安装 Aharou 应用</string>
+    <string name="credential_quick_login_install_body">令牌已获取，但该账号尚未安装 Aharou 应用。安装后才能对仓库读写。</string>
+    <string name="credential_quick_login_install_action">前往安装</string>
+    <string name="credential_quick_login_install_skip">稍后再说</string>
+    <string name="credential_quick_login_token_expiry_note">GitHub App 令牌约 8 小时后过期，过期后重新快捷登录即可继续推送。</string>
+    <string name="credential_quick_login_failed_title">登录失败</string>
+    <string name="credential_quick_login_retry">重试</string>
+    <string name="credential_quick_login_failed_expired">设备码已过期，请重新登录。</string>
+    <string name="credential_quick_login_failed_denied">授权被拒绝。</string>
+    <string name="credential_quick_login_failed_network">网络异常，请检查网络或代理后重试。</string>
+    <string name="credential_quick_login_failed_unknown">登录失败：%1$s</string>
+    <string name="credential_empty_title">尚未添加凭据</string>
+
     <!-- Diff Viewer -->
     <string name="diff_no_changes">无差异</string>
     <string name="diff_binary_file">二进制文件，不支持文本差异对比</string>
@@ -958,7 +946,6 @@
     <string name="git_modified_label">已修改</string>
     <string name="git_untracked_label">未跟踪</string>
     <string name="git_commit_changes">提交更改</string>
-    <string name="git_no_identity">未配置署名，无法提交。请在「凭据」页填写 user.name / user.email。</string>
     <string name="git_stage_all">暂存全部</string>
     <string name="git_pull">拉取</string>
     <string name="git_push">推送</string>
@@ -993,10 +980,6 @@
     <string name="git_credentials_count">凭据 (%1$d)</string>
     <string name="git_load_more_commits">上拉加载更早提交</string>
     <string name="git_no_more_commits">没有更多了</string>
-    <string name="git_latest_commit">最新提交</string>
-    <string name="git_recent_commit">最近提交</string>
-    <string name="git_expanded">已展开</string>
-    <string name="git_latest_date">最新日期</string>
     <string name="git_files_changed">%1$s 个文件改动</string>
     <string name="git_no_files_changed">该提交无文件改动</string>
     <string name="git_loading_files">正在加载改动文件…</string>
@@ -1071,7 +1054,6 @@
 
     <!-- Git Merge -->
     <string name="git_action_merge">合并分支</string>
-    <string name="git_merge_into">合并到 %1$s</string>
     <string name="git_merge_confirm">确定将分支 %1$s 合并到当前分支（%2$s）吗？</string>
     <string name="git_merge_no_ff">创建合并提交（--no-ff）</string>
 
@@ -1123,13 +1105,11 @@
     <string name="git_ignore_file">忽略此文件 (%1$s)</string>
     <string name="git_ignore_dir">忽略整个目录 (%1$s/)</string>
     <string name="git_ignore_extension">忽略同类型文件 (*.%1$s)</string>
-    <string name="git_toast_added_to_gitignore">已添加到 .gitignore</string>
 
     <!-- Git Identity -->
     <string name="git_tab_identity">署名</string>
     <string name="git_tab_credentials">凭据</string>
     <string name="git_identity_title">提交署名</string>
-    <string name="git_identity_desc">用于每次提交的 author。容器全局生效，所有工作区共用。</string>
     <string name="git_repo_url_title">仓库地址</string>
     <string name="git_remote_url">remote.origin.url</string>
     <!-- Main Activity -->
@@ -1182,7 +1162,6 @@
     <string name="skills_no_project_skills">当前项目暂无技能</string>
     <string name="skills_no_global_skills">暂无全局技能</string>
     <string name="skills_builtin">内置</string>
-    <string name="skills_no_builtin_skills">暂无内置技能</string>
     <string name="skills_editor_error_read_only">内置技能不可修改</string>
     <string name="skills_market">技能市场</string>
     <string name="skills_market_install">安装</string>
@@ -1395,15 +1374,18 @@
     <string name="mcp_add_env_var">添加环境变量</string>
     <string name="mcp_browse_directory">浏览连接器</string>
     <string name="mcp_browse_directory_hint">从常用远程 MCP 服务器中一键添加</string>
-    <string name="mcp_directory_title">连接器目录</string>
-    <string name="mcp_directory_search_hint">搜索连接器</string>
-    <string name="mcp_directory_empty">没有匹配的连接器</string>
-    <string name="mcp_directory_docs">查看文档</string>
-    <string name="mcp_directory_all">全部</string>
-    <string name="mcp_auth_none">无需授权</string>
-    <string name="mcp_auth_optional">可选授权</string>
-    <string name="mcp_auth_token">需填令牌</string>
-    <string name="mcp_auth_oauth">需 OAuth</string>
+    <string name="mcp_import_json">从 JSON 导入</string>
+    <string name="mcp_import_json_hint">粘贴标准 mcpServers 配置一键添加</string>
+    <string name="mcp_import_json_title">导入 MCP 配置</string>
+    <string name="mcp_import_json_placeholder">{ "mcpServers": { "name": { "command": "npx", "args": ["-y", "..."] } } }</string>
+    <string name="mcp_import_json_action">导入</string>
+    <string name="mcp_import_json_preview">将导入 %1$d 个服务器</string>
+    <string name="mcp_import_json_success">已导入 %1$d 个服务器</string>
+    <string name="mcp_import_json_skipped">跳过 %1$d 个名称不合规的服务器</string>
+    <string name="mcp_import_json_error_not_json">不是合法的 JSON</string>
+    <string name="mcp_import_json_error_missing_servers">缺少 mcpServers 字段</string>
+    <string name="mcp_import_json_error_empty_servers">mcpServers 为空</string>
+    <string name="mcp_import_json_error_invalid_entries">没有可识别的服务器条目</string>
     <string name="mcp_auth_section">鉴权</string>
     <string name="mcp_bearer_token">Bearer 令牌</string>
     <string name="mcp_bearer_token_hint">粘贴访问令牌，将作为 Authorization: Bearer 请求头发送</string>
@@ -1524,7 +1506,6 @@
     <string name="provider_fetch_http_error">HTTP %1$d · %2$dms</string>
     <string name="provider_test_success">连接正常 · %1$dms</string>
     <string name="common_error">错误</string>
-    <string name="common_select">选择</string>
     <string name="provider_model_context_total">总上下文窗口 (Token)</string>
     <string name="provider_model_window_invalid">请输入有效的正整数，或留空使用自动识别值</string>
     <string name="provider_model_context_input">输入窗口 (Token)</string>
@@ -1576,7 +1557,6 @@
     <string name="provider_model_capability_tools">工具调用</string>
     <string name="provider_model_capability_reasoning">推理能力</string>
     <string name="provider_filter_models_hint">输入模型名称筛选</string>
-    <string name="provider_fetch_failed">拉取失败：%1$s</string>
     <string name="provider_no_matching_models">没有匹配的模型</string>
     <string name="provider_models_aligned_removed">已移除 %1$d 个远端已不存在的模型</string>
     <string name="provider_please_wait">请稍候…</string>
@@ -1584,7 +1564,7 @@
 
     <!-- Provider Logo -->
     <string name="provider_brand_doubao">豆包</string>
-    <string name="provider_brand_zhipu">智谱</string>    <string name="provider_brand_tongyi_qianwen">通义千问</string>
+    <string name="provider_brand_zhipu">智谱</string>
     <string name="provider_brand_hunyuan">混元</string>
     <string name="provider_brand_siliconflow">硅基流动</string>
     <string name="provider_model_icon">模型图标</string>
@@ -1656,7 +1636,6 @@
     <string name="remote_tab_connections">连接配置</string>
     <string name="remote_tab_mounts">挂载目录</string>
     <string name="remote_tab_ftp">内置FTP</string>
-    <string name="remote_tab_sync">同步设置</string>
     <string name="remote_no_connections">暂无连接配置</string>
     <string name="remote_no_connections_desc">添加 SFTP / FTP 连接</string>
     <string name="remote_no_workspaces">暂无挂载目录</string>
@@ -1701,12 +1680,10 @@
     <string name="ssh_host_key_changed_title">SSH 主机密钥已变化</string>
     <string name="ssh_host_key_trust">信任并连接</string>
     <string name="ssh_host_key_reject">拒绝</string>
-    <string name="ssh_host_key_settings_desc">已确认的主机指纹会用于阻止中间人攻击。服务器重装或密钥变化后，请先核实再重新确认。</string>
     <string name="ssh_host_key_empty">暂无已保存的主机指纹</string>
     <string name="ssh_host_key_fingerprint_value">指纹：%1$s</string>
     <string name="ssh_host_key_global_hint">信任后远程连接即可恢复。请先与你服务器的指纹核对一致再信任。</string>
     <string name="ssh_host_key_trusted_toast">已信任该主机指纹，重试刚才的操作即可</string>
-    <string name="ssh_host_key_remove">删除指纹</string>
     <string name="ssh_host_key_detail">已保存的服务器主机指纹：\n%1$s</string>
 
     <!-- Remote Sync -->
@@ -1759,7 +1736,6 @@
     <string name="terminal_font_builtin">JetBrains Mono</string>
     <string name="terminal_font_delete">删除该字体</string>
     <string name="terminal_font_import_failed">导入失败，请选择有效的 ttf / otf / ttc 字体文件</string>
-    <string name="terminal_preview_text">终端预览</string>
     <string name="terminal_theme_termius_dark">Termius Dark</string>
     <string name="terminal_theme_dracula">Dracula</string>
     <string name="terminal_theme_one_dark">One Dark</string>
@@ -1797,8 +1773,6 @@
     <string name="web_search_warning">警告：%1$s</string>
 
     <!-- Workspace Picker -->
-    <string name="workspace_select">选择工作区</string>
-    <string name="workspace_switch">切换工作区</string>
     <string name="workspace_open">打开工作区</string>
     <string name="workspace_new">新建</string>
     <string name="workspace_empty_hint">暂无工作区，点击「新建」创建一个</string>
@@ -1960,21 +1934,16 @@
     <string name="provider_multi_key_cooldown_off">不冷却</string>
     <string name="proxy_test_url_label">测试地址</string>
     <string name="proxy_test_url_placeholder">https://www.google.com</string>
-    <string name="proxy_server">代理服务器</string>
     <string name="proxy_host">服务器地址</string>
     <string name="proxy_host_placeholder">如 127.0.0.1</string>
     <string name="proxy_port">端口</string>
     <string name="proxy_port_placeholder">如 7890</string>
-    <string name="proxy_auth">认证（可选）</string>
     <string name="proxy_username">账号（可选）</string>
     <string name="proxy_password">密码（可选）</string>
     <string name="proxy_no_proxy">不走代理的地址</string>
     <string name="proxy_no_proxy_hint">逗号分隔；支持通配符 *、host:port、CIDR 网段</string>
 
     <!-- 供应商编辑：代理（可选） -->
-    <string name="provider_proxy_section">代理（可选）</string>
-    <string name="provider_proxy_enable">为该供应商单独配置代理</string>
-    <string name="provider_proxy_enable_desc">开启后该供应商的请求走专属代理；关闭则跟随全局代理</string>
 
     <!-- 首次启动引导 -->
     <string name="onboarding_skip">跳过</string>
@@ -2004,19 +1973,18 @@
 
     <!-- Browser -->
     <string name="browser_title">浏览器</string>
-    <string name="browser_address_hint">输入网址或搜索</string>
-    <string name="browser_back">后退</string>
-    <string name="browser_forward">前进</string>
     <string name="browser_reload">刷新</string>
-    <string name="browser_not_ready">浏览器未就绪，请在地址栏输入网址开始浏览</string>
     <string name="browser_new_tab">新建标签页</string>
     <string name="browser_close_tab">关闭标签页</string>
-    <string name="browser_tab_default_title">新标签页</string>
-    <string name="browser_tabs_count">标签页 (%1$d)</string>
-    <string name="browser_empty_hint">在上方地址栏输入网址开始浏览</string>
-    <string name="browser_tabs_manage">标签页管理</string>
-    <string name="browser_empty_click_hint">点击上方输入网址开始浏览</string>
     <string name="browser_devtools">开发者工具</string>
+    <string name="browser_devtools_desc">在页面内注入 Eruda，提供控制台、元素检查与网络面板</string>
+    <string name="browser_find_in_page">页内查找</string>
+    <string name="browser_find_placeholder">在页面中查找</string>
+    <string name="browser_find_prev">上一个匹配</string>
+    <string name="browser_find_next">下一个匹配</string>
+    <string name="browser_find_close">关闭查找</string>
+    <string name="browser_find_no_matches">无匹配</string>
+    <string name="browser_find_matches">%1$d/%2$d</string>
     <!-- Browser（自 OpenMinis 移植）-->
 <string name="browser_downloads_cancel">取消下载</string>
 <string name="browser_downloads_clear">清除</string>
@@ -2121,43 +2089,6 @@
 <string name="image_saved_to_album_toast">已保存到相册</string>
 <string name="image_share_chooser_title">分享图片</string>
 <string name="image_share_failed_toast">分享失败：%1$s</string>
-<string name="mirror_back">返回</string>
-<string name="mirror_current_section">当前</string>
-<string name="mirror_detect_fast_label">检测最快镜像</string>
-<string name="mirror_mirrors_section">镜像</string>
-<string name="mirror_official_badge">官方</string>
-<string name="mirror_official_default">官方（默认）</string>
-<string name="mirror_speed_test_results_section">速度测试结果</string>
-<string name="mirror_test_speed_label">测速</string>
-<string name="mirror_test_speed_testing">测试中…</string>
-<string name="mirror_timeout_label">超时</string>
-<string name="mirror_use_mirror_toggle">使用镜像</string>
-<string name="rootfs_about_title">关于 Rootfs</string>
-<string name="rootfs_actions_section">操作</string>
-<string name="rootfs_browse_files_label">浏览文件</string>
-<string name="rootfs_browse_section">浏览</string>
-<string name="rootfs_info_section">信息</string>
-<string name="rootfs_install_label">安装 Rootfs</string>
-<string name="rootfs_installed_label">已安装</string>
-<string name="rootfs_management_title">Rootfs 管理</string>
-<string name="rootfs_mirrors_section">镜像</string>
-<string name="rootfs_path_label">路径</string>
-<string name="rootfs_progress_section">进度</string>
-<string name="rootfs_reset_backup_confirm_button">重置并备份</string>
-<string name="rootfs_reset_backup_confirm_message">这将备份您的 /root 目录，然后重置 rootfs。您可以稍后恢复备份。</string>
-<string name="rootfs_reset_backup_confirm_title">备份并重置？</string>
-<string name="rootfs_reset_backup_description">重置前保存 /root</string>
-<string name="rootfs_reset_backup_label">重置并备份用户数据</string>
-<string name="rootfs_reset_confirm_message">这将删除整个 rootfs。所有数据将丢失。</string>
-<string name="rootfs_reset_confirm_title">重置 Rootfs？</string>
-<string name="rootfs_reset_description">删除全部并重新安装</string>
-<string name="rootfs_reset_label">重置 Rootfs</string>
-<string name="rootfs_restore_description">恢复之前备份的 /root</string>
-<string name="rootfs_restore_label">恢复用户数据</string>
-<string name="rootfs_result_section">结果</string>
-<string name="rootfs_size_label">大小</string>
-<string name="rootfs_status_section">状态</string>
-<string name="webapp_add_to_home">添加到桌面</string>
     <!-- ── Aharou 人格（Soul） + 配置审计 ── -->
     <string name="settings_category_aharou">Aharou 助手</string>
     <string name="soul_settings_title">人格 (Soul)</string>
@@ -2210,7 +2141,6 @@
     <string name="config_audit_clear_confirm_title">清空全部记录？</string>
     <string name="config_audit_clear_confirm_body">%1$d 条记录会被永久删除，不影响已生效的配置。</string>
     <string name="config_audit_revert_confirm_title">撤销这次变更？</string>
-    <string name="config_audit_revert_confirm_body">会把这个字段改回旧值，并记一条撤销记录。</string>
     <string name="config_audit_revert_success_title">已撤销</string>
     <string name="config_audit_revert_success_body">字段已改回旧值。</string>
     <string name="config_audit_revert_failed_title">撤销失败</string>
@@ -2457,42 +2387,26 @@
     <string name="memory_trace_action_unknown">操作</string>
 
     <!-- 语音输入 -->
-    <string name="voice_input_hold">按住说话</string>
-    <string name="voice_input_recording">松手识别</string>
-    <string name="voice_model_downloading">下载语音模型…</string>
     <string name="voice_model_extracting">解压语音模型…</string>
-    <string name="voice_model_failed">语音模型准备失败</string>
-    <string name="voice_record_failed">无法启动录音</string>
-    <string name="voice_permission_required">需要录音权限，去设置里开启</string>
     <string name="voice_call_toggle_start">点一下开始语音通话（一路听你说，再点一下停）</string>
     <string name="voice_call_toggle_stop">语音通话中，点一下结束</string>
-    <string name="voice_not_heard">没听清，再说一次</string>
     <string name="voice_tts_not_configured">手机上也没有可用的语音引擎：装一个，或者去「设置 → 默认模型」配置云端合成</string>
     <string name="voice_tts_failed">朗读失败，检查一下合成模型配置</string>
     <string name="voice_read_aloud">朗读</string>
     <string name="voice_stop_read_aloud">停止朗读</string>
 
     <!-- 语音通话 -->
-    <string name="voice_call_title">语音通话</string>
     <string name="voice_call_state_preparing">准备中…</string>
     <string name="voice_call_state_idle">未在听</string>
     <string name="voice_call_state_listening">正在听…</string>
     <string name="voice_call_state_thinking">思考中…</string>
     <string name="voice_call_state_speaking">正在说…</string>
-    <string name="voice_call_end">挂断</string>
-    <string name="voice_call_expand">全屏</string>
-    <string name="voice_call_collapse">收起</string>
-    <string name="voice_call_interrupt">打断</string>
-    <string name="voice_call_no_workspace">先打开一个工作区再通话</string>
-    <string name="voice_call_failed">通话启动失败</string>
     <string name="voice_call_notification_title">语音通话中</string>
     <string name="voice_call_notification_text">点按返回 Aharou</string>
     <string name="voice_wake_ack">我在，有什么需要我做的吗？</string>
     <string name="voice_wake_title">语音唤醒</string>
     <string name="voice_wake_summary">喊「小染小染」直接开始对话</string>
-    <string name="voice_wake_desc">开启后麦克风会常驻监听唤醒词，状态栏会一直显示录音指示，耗电也会增加。建议同时允许本应用自启动与后台运行。</string>
     <string name="voice_wake_on">正在听「小染小染」</string>
-    <string name="voice_wake_off">已关闭</string>
     <string name="voice_wake_mic_hint">唤醒常驻中，点一下直接说话</string>
     <string name="voice_err_mic_permission">我拿不到麦克风权限，去系统设置里允许我录音好不好？</string>
     <string name="voice_err_model">语音模型还没下载好，去「设置 → 默认模型 → 离线语音模型」点一下「下载」。</string>
@@ -2575,27 +2489,14 @@
 
     <!-- 共享知识库 -->
     <string name="settings_knowledge_base">共享知识库</string>
-    <string name="knowledge_base_sync_all">同步全部</string>
-    <string name="knowledge_base_sync_all_hint">从各源拉取最新文档到本机</string>
-    <string name="knowledge_base_source_meta">%1$d 篇 · %2$s</string>
-    <string name="knowledge_base_doc_count">%1$d 篇</string>
     <string name="knowledge_base_install">安装</string>
     <string name="knowledge_base_installing">安装中…</string>
     <string name="knowledge_base_uninstall">卸载</string>
     <string name="knowledge_base_installed_meta">已安装 · %1$d 篇</string>
     <string name="knowledge_base_category_all">全部</string>
-    <string name="knowledge_base_category_writing">写作</string>
-    <string name="knowledge_base_category_ai">AI</string>
-    <string name="knowledge_base_category_coding">编程</string>
-    <string name="knowledge_base_sync">同步</string>
     <string name="knowledge_base_remove">移除</string>
-    <string name="knowledge_base_add_source">添加知识库</string>
-    <string name="knowledge_base_add_source_label">仓库地址</string>
     <string name="knowledge_base_add_source_hint">如 owner/repo，或完整的仓库链接</string>
     <string name="knowledge_base_add">添加</string>
-    <string name="knowledge_base_syncing">正在同步…</string>
-    <string name="knowledge_base_synced">同步完成</string>
-    <string name="knowledge_base_sync_failed">同步失败，检查网络后重试</string>
     <string name="knowledge_base_invalid_repo">认不出这个仓库地址</string>
     <string name="knowledge_base_no_source">还没有配置任何知识库</string>
     <string name="chat_status_checking_dependencies">正在检查依赖版本</string>
@@ -2604,46 +2505,7 @@
     <string name="dependency_check_network_failed">网络不可用，未能获取最新版本</string>
     <string name="dependency_check_all_up_to_date">所有依赖均为最新版本</string>
     <string name="dependency_check_unparsed">%1$d 行无法解析</string>
-    <!-- 内置AI 账号（自建后端会话与充值） -->
-    <string name="account_error_no_session">登录状态已失效，请重新登录</string>
-    <string name="account_error_not_logged_in">请先登录账号</string>
-    <string name="account_error_token_missing">未能获取 API Key，请稍后重试</string>
-    <string name="account_redeem_failed">兑换失败，请检查兑换码是否正确</string>
-    <string name="account_code_sent">验证码已发送，请查收邮箱</string>
-    <string name="account_login_success">登录成功</string>
-    <string name="account_logged_out">已退出登录</string>
-    <string name="account_redeem_success">兑换成功，到账 ¥%1$s</string>
-    <string name="account_provider_ready">内置AI 已配置好，可直接使用</string>
-    <string name="account_error_generic">操作失败</string>
     <string name="account_entry_title">个人中心</string>
-    <string name="account_sign_in_title">登录 / 注册</string>
-    <string name="account_entry_subtitle">登录 · 兑换码充值 · 余额</string>
-    <string name="account_sign_in_hint">登录后会自动为你配置好 API Key，不用手动填写。</string>
-    <string name="account_email_label">邮箱</string>
-    <string name="account_email_placeholder">你的邮箱</string>
-    <string name="account_code_label">验证码</string>
-    <string name="account_code_placeholder">邮箱收到的验证码</string>
-    <string name="account_password_label">密码</string>
-    <string name="account_password_placeholder">至少 8 位</string>
-    <string name="account_send_code">发送验证码</string>
-    <string name="account_register">注册</string>
-    <string name="account_login">登录</string>
-    <string name="account_switch_to_login">已有账号？去登录</string>
-    <string name="account_switch_to_register">没有账号？去注册</string>
-    <string name="account_profile_title">账户</string>
-    <string name="account_balance">余额</string>
-    <string name="account_used">已用</string>
-    <string name="account_requests">请求次数</string>
-    <string name="account_redeem_title">兑换码充值</string>
-    <string name="account_redeem_label">兑换码</string>
-    <string name="account_redeem_placeholder">粘贴兑换码</string>
-    <string name="account_redeem_action">兑换</string>
-    <string name="account_actions_title">操作</string>
-    <string name="account_provision">重新配置内置AI</string>
-    <string name="account_provision_subtitle">更新 API Key 并刷新模型</string>
-    <string name="account_logout">退出登录</string>
-    <string name="account_value_unknown">—</string>
-    <string name="account_value_cny">¥%1$s</string>
     <string name="chat_user_default_name">我</string>
     <string name="account_identity_title">我的身份</string>
     <string name="account_avatar">头像</string>
@@ -2653,9 +2515,6 @@
     <string name="account_name_placeholder">聊天里显示的名字</string>
     <string name="account_avatar_error_unreadable">这张图读不出来，换一张试试</string>
     <string name="account_avatar_error_too_large">图片太大了，换张小一点的</string>
-    <string name="account_recharge_title">充值</string>
-    <string name="account_recharge_now">立即充值</string>
-    <string name="account_recharge_hint">去店铺买一张兑换码，回到底下兑换就到账了</string>
     <string name="settings_telegram_bot">Telegram 机器人</string>
     <string name="im_telegram_pairing_prompt">这个聊天还没有和 Aharou 配对。配对码：%1$s\n在 App 的「设置 → Telegram 机器人」里通过。10 分钟内有效。</string>
     <string name="im_telegram_tool_running">正在使用 %1$s…</string>
@@ -2770,4 +2629,64 @@
     <string name="remote_device_service_stop">停止</string>
     <string name="remote_device_perm_title">远端设备请求执行动作</string>
     <string name="remote_device_perm_timeout">远端请求审批超时未答复（90 秒），按拒绝处理</string>
+    <string name="backup_net_tab_local">本地</string>
+    <string name="backup_net_tab_network">网络</string>
+    <string name="backup_net_targets_header">网络备份目标</string>
+    <string name="backup_net_add_target">添加备份目标</string>
+    <string name="backup_net_empty">还没有网络备份目标</string>
+    <string name="backup_net_new_target">新建备份目标</string>
+    <string name="backup_net_edit_target">编辑备份目标</string>
+    <string name="backup_net_name">名称</string>
+    <string name="backup_net_endpoint">服务地址</string>
+    <string name="backup_net_endpoint_hint">例如 https://dav.example.com/remote.php/dav/files/user/</string>
+    <string name="backup_net_endpoint_optional_hint">留空使用 AWS 官方地址</string>
+    <string name="backup_net_base_path">目录前缀（可选）</string>
+    <string name="backup_net_object_prefix">对象键前缀（可选）</string>
+    <string name="backup_net_username">用户名</string>
+    <string name="backup_net_password">密码</string>
+    <string name="backup_net_bucket">存储桶</string>
+    <string name="backup_net_region">区域</string>
+    <string name="backup_net_access_key">Access Key</string>
+    <string name="backup_net_secret_key">Secret Key</string>
+    <string name="backup_net_session_token">会话令牌（可选）</string>
+    <string name="backup_net_path_style">路径式寻址</string>
+    <string name="backup_net_path_style_hint">自建服务（MinIO、R2 等）通常需要开启</string>
+    <string name="backup_net_required_hint">请填写必填项</string>
+    <string name="backup_net_test">测试连接</string>
+    <string name="backup_net_test_ok">连接成功</string>
+    <string name="backup_net_upload">上传备份</string>
+    <string name="backup_net_upload_ok">已上传到网络存储</string>
+    <string name="backup_net_restore">恢复</string>
+    <string name="backup_net_remote_title">远端备份</string>
+    <string name="backup_net_empty_remote">远端暂无备份</string>
+    <string name="backup_net_refresh">刷新</string>
+    <string name="backup_net_save_failed">保存失败</string>
+    <string name="backup_net_target_missing">备份目标不存在</string>
+    <string name="backup_net_password_action">备份口令</string>
+    <string name="backup_net_error_config">配置不完整，请补全必填项</string>
+    <string name="backup_net_error_auth">认证失败，请检查用户名或密钥</string>
+    <string name="backup_net_error_not_found">目标不存在，请检查地址或存储桶</string>
+    <string name="backup_net_error_http">服务返回错误</string>
+    <string name="backup_net_error_network">网络连接失败</string>
+    <string name="backup_net_error_unknown">发生未知错误</string>
+    <string name="browser_ua_default">系统默认</string>
+    <string name="browser_ua_default_desc">沿用设备原生 WebView 标识</string>
+    <string name="browser_ua_android_phone">安卓手机</string>
+    <string name="browser_ua_android_phone_desc">Chrome Mobile (Android)</string>
+    <string name="browser_ua_android_tablet">安卓平板</string>
+    <string name="browser_ua_android_tablet_desc">Chrome Tablet (Android)</string>
+    <string name="browser_ua_desktop_pc">桌面电脑</string>
+    <string name="browser_ua_desktop_pc_desc">Chrome Desktop (Windows PC)</string>
+    <string name="browser_ua_iphone">苹果 iPhone</string>
+    <string name="browser_ua_iphone_desc">Mobile Safari (iOS)</string>
+    <string name="browser_ua_ipad">苹果 iPad</string>
+    <string name="browser_ua_ipad_desc">Tablet Safari (iPadOS)</string>
+    <string name="browser_ua_custom_desc">手动指定 User-Agent 字符串</string>
+    <string name="browser_ua_mobile_chrome_desc">Chrome Mobile (Android)（旧档位）</string>
+    <string name="browser_ua_desktop_chrome_desc">Chrome Desktop (Linux)（旧档位）</string>
+    <string name="browser_menu">更多</string>
+    <string name="browser_menu_title">浏览器设置与工具</string>
+    <string name="browser_dialog_alert_title">网页提示</string>
+    <string name="browser_dialog_confirm_title">网页确认</string>
+    <string name="browser_dialog_prompt_title">网页输入</string>
 </resources>

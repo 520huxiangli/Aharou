@@ -22,11 +22,138 @@ object BrowserUseJS {
         }
     }
 
+    /**
+     * 扩展选择器解析器，以 `__resolveSelector` 形式 prepend 到需要选择器的 JS 中。
+     * 支持 ref=（get_backbone 注册的引用）、text=（精确文本）、text*=（包含文本）、
+     * role=（ARIA role，可带 [name="..."]）、xpath=，其余按 CSS 走 document.querySelector。
+     */
+    val selectorHelper: String = """
+        function __resolveSelector(selector){
+            if(selector.startsWith('ref=')){
+                var id=selector.substring(4);
+                var reg=window.__aharouRefs||{};
+                var el=reg[id];
+                return (el && el.isConnected) ? el : null;
+            }
+            if(selector.startsWith('text=')){
+                var t=selector.substring(5);
+                var els=document.querySelectorAll('*');
+                for(var i=els.length-1;i>=0;i--){
+                    var own=els[i].childNodes;
+                    for(var j=0;j<own.length;j++){
+                        if(own[j].nodeType===3&&own[j].textContent.trim()===t)return els[i];
+                    }
+                }
+                for(var i=0;i<els.length;i++){
+                    if(els[i].textContent.trim()===t)return els[i];
+                }
+                return null;
+            }
+            if(selector.startsWith('text*=')){
+                var t=selector.substring(6);
+                var els=document.querySelectorAll('*');
+                var best=null,bestLen=Infinity;
+                for(var i=0;i<els.length;i++){
+                    var tag=els[i].tagName;
+                    if(tag==='HTML'||tag==='BODY'||tag==='HEAD'||tag==='SCRIPT'||tag==='STYLE')continue;
+                    var text=els[i].textContent||'';
+                    if(text.includes(t)&&text.length<bestLen){ best=els[i];bestLen=text.length; }
+                }
+                return best;
+            }
+            if(selector.startsWith('role=')){
+                var m=selector.match(/^role=(\w+)(?:\[name="(.+)"\])?$/);
+                if(!m)return null;
+                var role=m[1],name=m[2];
+                var els=document.querySelectorAll('[role="'+role+'"]');
+                if(name){
+                    for(var i=0;i<els.length;i++){ if(els[i].textContent.includes(name))return els[i]; }
+                    return null;
+                }
+                return els[0]||null;
+            }
+            if(selector.startsWith('xpath=')){
+                var x=selector.substring(6);
+                return document.evaluate(x,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
+            }
+            return document.querySelector(selector);
+        }
+    """.trimIndent()
+
+    // -- Press Key --
+
+    fun press(key: String): String = """
+        (function() {
+            var key = '${jsQuote(key)}';
+            var keyMap = {
+                'Enter': {key:'Enter',code:'Enter',keyCode:13},
+                'Escape': {key:'Escape',code:'Escape',keyCode:27},
+                'Tab': {key:'Tab',code:'Tab',keyCode:9},
+                'ArrowUp': {key:'ArrowUp',code:'ArrowUp',keyCode:38},
+                'ArrowDown': {key:'ArrowDown',code:'ArrowDown',keyCode:40},
+                'ArrowLeft': {key:'ArrowLeft',code:'ArrowLeft',keyCode:37},
+                'ArrowRight': {key:'ArrowRight',code:'ArrowRight',keyCode:39},
+                'Backspace': {key:'Backspace',code:'Backspace',keyCode:8},
+                'Delete': {key:'Delete',code:'Delete',keyCode:46},
+                ' ': {key:' ',code:'Space',keyCode:32}
+            };
+            var k = keyMap[key] || {key:key,code:key,keyCode:key.charCodeAt(0)};
+            var target = document.activeElement || document.body;
+            ['keydown','keypress','keyup'].forEach(function(type){
+                target.dispatchEvent(new KeyboardEvent(type, {
+                    key: k.key, code: k.code, keyCode: k.keyCode,
+                    bubbles: true, cancelable: true
+                }));
+            });
+            return true;
+        })()
+    """.trimIndent()
+
+    // -- Select Option --
+
+    fun selectOption(selector: String, value: String): String = """
+        $selectorHelper
+        (function() {
+            var el = __resolveSelector('${jsQuote(selector)}');
+            if(!el) return JSON.stringify({matched:false, reason:'not-found'});
+            if(el.tagName !== 'SELECT') return JSON.stringify({matched:false, reason:'not-select'});
+            var val = '${jsQuote(value)}';
+            var opt = null;
+            for(var i=0;i<el.options.length;i++){
+                var o = el.options[i];
+                if(o.value === val || (o.textContent||'').trim() === val){ opt = o; break; }
+            }
+            if(!opt) return JSON.stringify({matched:false, reason:'option-not-found'});
+            el.value = opt.value;
+            el.dispatchEvent(new Event('input', {bubbles:true}));
+            el.dispatchEvent(new Event('change', {bubbles:true}));
+            return JSON.stringify({matched:true, tag:'select', value: el.value, text: (opt.textContent||'').trim()});
+        })()
+    """.trimIndent()
+
+    // -- Wait Condition --
+
+    /**
+     * 把 wait 条件编译成 `waitForCondition` 轮询的函数体（含 return）。
+     * 形式：domStable 由调用方另行处理；text= / text*= / selector= / 裸选择器。
+     */
+    fun waitCondition(condition: String): String = when {
+        condition.startsWith("text*=") ->
+            "return !!(document.body && document.body.innerText.includes(${jsQuote(condition.substring(6))}));"
+        condition.startsWith("text=") ->
+            "var __t=${jsQuote(condition.substring(5))};var __els=document.querySelectorAll('*');" +
+                "for(var i=0;i<__els.length;i++){if(__els[i].textContent.trim()===__t)return true;}return false;"
+        condition.startsWith("selector=") ->
+            "$selectorHelper\nreturn !!__resolveSelector(${jsQuote(condition.substring(9))});"
+        else -> "$selectorHelper\nreturn !!__resolveSelector(${jsQuote(condition)});"
+    }
+
     // -- Click --
 
     fun click(selector: String): String = """
+        $selectorHelper
         (function() {
-            var el = document.querySelector('${jsQuote(selector)}');
+            var el = __resolveSelector('${jsQuote(selector)}');
             if (!el) return JSON.stringify({error: 'Element not found: ${jsQuote(selector)}'});
             if (el.disabled) return JSON.stringify({error: 'Element is disabled', tag: el.tagName});
             var bOpts = {bubbles: true, cancelable: true, view: window};
@@ -65,8 +192,9 @@ object BrowserUseJS {
     // -- Type --
 
     fun type(selector: String, text: String): String = """
+        $selectorHelper
         (function() {
-            var el = document.querySelector('${jsQuote(selector)}');
+            var el = __resolveSelector('${jsQuote(selector)}');
             if (!el) return JSON.stringify({error: 'Element not found: ${jsQuote(selector)}'});
             el.focus();
             if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
@@ -115,8 +243,9 @@ object BrowserUseJS {
         if (selector != null) {
             val sel = jsQuote(selector)
             return """
+                $selectorHelper
                 (function() {
-                    var el = document.querySelector('$sel');
+                    var el = __resolveSelector('$sel');
                     if (!el) return JSON.stringify({error: 'Element not found: $sel'});
                     var innerTextVal = el.innerText || '';
                     var textContentVal = el.textContent || '';
@@ -165,12 +294,13 @@ object BrowserUseJS {
         val dir = direction.value
         val selectorJS = if (selector != null) "'${jsQuote(selector)}'" else "null"
         return """
+            $selectorHelper
             (function() {
                 var targetSelector = $selectorJS;
                 var target = null;
                 var scrolledElement = 'window';
                 if (targetSelector) {
-                    target = document.querySelector(targetSelector);
+                    target = __resolveSelector(targetSelector);
                     if (!target) return JSON.stringify({error: 'Element not found: ' + targetSelector});
                 } else {
                     var beforeY = window.scrollY;
@@ -214,8 +344,9 @@ object BrowserUseJS {
     // -- Hover --
 
     fun hover(selector: String): String = """
+        $selectorHelper
         (function() {
-            var el = document.querySelector('${jsQuote(selector)}');
+            var el = __resolveSelector('${jsQuote(selector)}');
             if (!el) return JSON.stringify({error: 'Element not found: ${jsQuote(selector)}'});
             el.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
             el.dispatchEvent(new MouseEvent('mouseover', {bubbles: true}));
@@ -226,8 +357,16 @@ object BrowserUseJS {
     // -- Find Elements --
 
     fun findElements(selector: String): String = """
+        $selectorHelper
         (function() {
-            var els = document.querySelectorAll('${jsQuote(selector)}');
+            var sel = '${jsQuote(selector)}';
+            var els;
+            if (/^(ref=|text=|text\*=|role=|xpath=)/.test(sel)) {
+                var one = __resolveSelector(sel);
+                els = one ? [one] : [];
+            } else {
+                els = Array.prototype.slice.call(document.querySelectorAll(sel));
+            }
             var results = [];
             var limit = Math.min(els.length, 20);
             var scrollX = window.scrollX || window.pageXOffset || 0;
@@ -366,6 +505,8 @@ object BrowserUseJS {
                 if (count >= 2 && !seen.has(el) && isVisible(el)) { seen.add(el); groupNodes.push(el); }
             });
             var allReps = representatives.concat(groupNodes);
+            var __refSeq = 0;
+            var __refs = {};
             var nodes = allReps.map(function(el) {
                 var r = el.getBoundingClientRect();
                 var info = {el: el, tag: el.tagName, rect: {x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)}, area: r.width * r.height, children: [], isGroup: groupNodes.indexOf(el) >= 0};
@@ -380,6 +521,8 @@ object BrowserUseJS {
                 }
                 if (['INPUT','TEXTAREA','SELECT'].indexOf(el.tagName) >= 0) { info.inputType = el.type || null; if (el.value) info.value = el.value.substring(0, 60); if (el.placeholder) info.placeholder = el.placeholder.substring(0, 60); }
                 var role = el.getAttribute('role'); if (role) info.role = role;
+                info.ref = 'e' + (++__refSeq);
+                __refs[info.ref] = el;
                 return info;
             });
             nodes.sort(function(a, b) { return b.area - a.area; });
@@ -401,6 +544,7 @@ object BrowserUseJS {
                     if (child.href && !node.href) node.href = child.href;
                     if (child.src) { node.src = child.src; node.imgSize = child.imgSize; }
                     if (!node.id && child.id) node.id = child.id;
+                    if (!node.ref && child.ref) node.ref = child.ref;
                     node.tag = child.tag; node.selector = child.selector; node.isGroup = false;
                 }
                 node.children = node.children.filter(function(c) { return !(c.isGroup && c.children.length === 0 && !c.text); });
@@ -418,6 +562,7 @@ object BrowserUseJS {
                 if (node.id) o.id = node.id;
                 if (node.className) o.cls = node.className;
                 o.sel = node.selector;
+                if (node.ref) o.ref = node.ref;
                 if (node.role) o.role = node.role;
                 if (node.text) o.text = node.text;
                 if (node.href) o.href = node.href;
@@ -428,6 +573,7 @@ object BrowserUseJS {
                 if (node.children.length > 0) o.children = node.children.map(function(c) { return ser(c, depth + 1); });
                 return o;
             }
+            window.__aharouRefs = __refs;
             var tree = roots.map(function(r) { return ser(r, 1); });
             return JSON.stringify({backbone: tree, nodeCount: totalNodes, depth: maxD, merged: mergedCount});
         })()

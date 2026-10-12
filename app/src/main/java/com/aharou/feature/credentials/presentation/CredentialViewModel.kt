@@ -7,15 +7,21 @@ import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.credentials.data.CredentialInjectSettingsRepository
+import com.aharou.feature.credentials.data.remote.GitHubDeviceFlowClient
+import com.aharou.feature.credentials.data.remote.GitHubTokenPollResult
 import com.aharou.feature.credentials.domain.model.GitCredential
 import com.aharou.feature.credentials.domain.repository.CredentialRepository
 import com.aharou.feature.git.domain.GitRepository
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -37,10 +43,24 @@ class CredentialViewModel @Inject constructor(
     private val injectSettings: CredentialInjectSettingsRepository,
     private val remoteSshConnection: RemoteSshConnection,
     private val workspaceRepository: WorkspaceRepository,
+    private val deviceFlowClient: GitHubDeviceFlowClient,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private companion object { const val TAG = "CredentialViewModel" }
+    private companion object {
+        const val TAG = "CredentialViewModel"
+        const val GITHUB_HOST = "github.com"
+        const val DEFAULT_GITHUB_LOGIN = "GitHub"
+    }
+
+    /** GitHub 设备码快捷登录的 UI 状态机。 */
+    sealed interface QuickLoginUiState {
+        data object Idle : QuickLoginUiState
+        data object RequestingCode : QuickLoginUiState
+        data class Awaiting(val userCode: String, val verificationUri: String) : QuickLoginUiState
+        data class Success(val username: String, val needsInstall: Boolean) : QuickLoginUiState
+        data class Failed(val message: String) : QuickLoginUiState
+    }
 
     data class UiState(
         val credentials: List<GitCredential> = emptyList(),
@@ -88,6 +108,12 @@ class CredentialViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
+    private val _quickLogin = MutableStateFlow<QuickLoginUiState>(QuickLoginUiState.Idle)
+    val quickLogin: StateFlow<QuickLoginUiState> = _quickLogin.asStateFlow()
+
+    /** 正在进行的设备码轮询任务；重开或取消时先取消它。 */
+    private var quickLoginJob: Job? = null
+
     init {
         refreshIdentity()
         refreshAutoInjectState()
@@ -128,6 +154,103 @@ class CredentialViewModel @Inject constructor(
             syncInjectionIfEnabled() // 删凭据后从远程注入文件移除，否则远程仍能用旧凭据
             toast(context.getString(R.string.credential_toast_deleted))
         }
+    }
+
+    // ---------- GitHub 设备码快捷登录 ----------
+
+    /** 申请设备码并开始轮询：授权成功后把 token 写进 git 凭据（容器 git 与 PR/CI 自动复用）。 */
+    fun startGitHubLogin() {
+        quickLoginJob?.cancel()
+        quickLoginJob = viewModelScope.launch {
+            _quickLogin.value = QuickLoginUiState.RequestingCode
+            val device = try {
+                deviceFlowClient.requestDeviceCode()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "申请设备码失败: ${e.message}")
+                _quickLogin.value = QuickLoginUiState.Failed(
+                    context.getString(R.string.credential_quick_login_failed_network)
+                )
+                return@launch
+            }
+
+            _quickLogin.value = QuickLoginUiState.Awaiting(device.userCode, device.verificationUri)
+            var intervalMs = device.intervalSeconds.coerceAtLeast(1) * 1000L
+            val deadlineMs = System.currentTimeMillis() + device.expiresInSeconds.coerceAtLeast(60) * 1000L
+            while (true) {
+                delay(intervalMs)
+                if (System.currentTimeMillis() > deadlineMs) {
+                    _quickLogin.value = QuickLoginUiState.Failed(
+                        context.getString(R.string.credential_quick_login_failed_expired)
+                    )
+                    return@launch
+                }
+                val result = try {
+                    deviceFlowClient.pollAccessToken(device.deviceCode)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // 网络瞬时异常：吞掉后继续轮询，直到 deadline 或用户取消。
+                    FileLogger.w(TAG, "轮询 token 异常，稍后重试: ${e.message}")
+                    continue
+                }
+                when (result) {
+                    is GitHubTokenPollResult.Success -> {
+                        completeGitHubLogin(result.accessToken)
+                        return@launch
+                    }
+                    GitHubTokenPollResult.Pending -> Unit
+                    GitHubTokenPollResult.SlowDown -> intervalMs += 5000L
+                    GitHubTokenPollResult.Expired -> {
+                        _quickLogin.value = QuickLoginUiState.Failed(
+                            context.getString(R.string.credential_quick_login_failed_expired)
+                        )
+                        return@launch
+                    }
+                    GitHubTokenPollResult.Denied -> {
+                        _quickLogin.value = QuickLoginUiState.Failed(
+                            context.getString(R.string.credential_quick_login_failed_denied)
+                        )
+                        return@launch
+                    }
+                    is GitHubTokenPollResult.Error -> {
+                        _quickLogin.value = QuickLoginUiState.Failed(
+                            context.getString(R.string.credential_quick_login_failed_unknown, result.code)
+                        )
+                        return@launch
+                    }
+                }
+            }
+        }
+    }
+
+    /** 取消进行中的快捷登录（用户在弹层点了取消 / 关闭）。 */
+    fun cancelQuickLogin() {
+        quickLoginJob?.cancel()
+        quickLoginJob = null
+        _quickLogin.value = QuickLoginUiState.Idle
+    }
+
+    /** 消费掉终态（成功 / 失败）弹层，回到 Idle。 */
+    fun consumeQuickLoginResult() {
+        quickLoginJob = null
+        _quickLogin.value = QuickLoginUiState.Idle
+    }
+
+    /** 拿到 token 后取登录名、判断是否已安装 App，并写入 git 凭据。 */
+    private suspend fun completeGitHubLogin(token: String) {
+        val login = runCatching { deviceFlowClient.fetchUserLogin(token) }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_GITHUB_LOGIN
+        // 查询失败时默认视为已安装，避免因接口异常误导用户去装 App。
+        val installed = runCatching { deviceFlowClient.isAppInstalled(token) }.getOrDefault(true)
+        credentialRepository.save(
+            GitCredential(id = GITHUB_HOST, host = GITHUB_HOST, username = login, token = token)
+        )
+        syncInjectionIfEnabled()
+        toast(context.getString(R.string.credential_quick_login_success_toast))
+        _quickLogin.value = QuickLoginUiState.Success(login, needsInstall = !installed)
     }
 
     // ---------- 远程自动注入开关 ----------
@@ -188,6 +311,11 @@ class CredentialViewModel @Inject constructor(
     private suspend fun syncInjectionIfEnabled() {
         val key = currentServerKey() ?: return
         if (injectSettings.isAutoInjectEnabled(key)) applyInjection(key, true)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        quickLoginJob?.cancel()
     }
 
     /** 保存提交署名与仓库地址：跑 `git config` 写入对应 key 真源 + 刷新回显。UI 与命令行同一文件。 */

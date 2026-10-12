@@ -12,10 +12,9 @@ import kotlinx.coroutines.runBlocking
 /**
  * DataStore 支撑的设置字段。
  *
- * 与 [PrefsBoolField] 等（SharedPreferences 后端）互补：本 App 的设置绝大多数存在
- * DataStore 里，而 [ConfigField.read] 是同步接口。app.language 的做法是额外维护一份
- * SharedPreferences 镜像供同步读；这里不为每个设置都做镜像（几十个字段、每加一个都要
- * 双写），直接 runBlocking 取一次，写入同理。
+ * [ConfigField.read] 是同步接口，而本 App 的设置绝大多数存在 DataStore 里。
+ * app.language 的做法是额外维护一份 SharedPreferences 镜像供同步读；这里不为每个
+ * 设置都做镜像（几十个字段、每加一个都要双写），直接 runBlocking 取一次，写入同理。
  */
 
 class DataStoreBoolField(

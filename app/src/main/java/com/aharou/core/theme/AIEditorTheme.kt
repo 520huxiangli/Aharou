@@ -3,10 +3,8 @@ package com.aharou.core.theme
 import android.os.Build
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -144,32 +142,6 @@ val LightSemanticColors = AppSemanticColors(
     buttonMutedBg = Color(0xFFF0F2F5)
 )
 
-val DarkSemanticColors = AppSemanticColors(
-    success = Color(0xFF4ADE80),
-    onSuccess = Color(0xFF052E16),
-    successContainer = Color(0x59052E16),
-    onSuccessContainer = Color(0xFFBBF7D0),
-    warning = Color(0xFFFBBF24),
-    onWarning = Color(0xFF78350F),
-    warningContainer = Color(0x5978350F),
-    onWarningContainer = Color(0xFFFDE68A),
-    info = Color(0xFF38BDF8),
-    onInfo = Color(0xFF0C4A6E),
-    infoContainer = Color(0x590C4A6E),
-    onInfoContainer = Color(0xFFBAE6FD),
-    diffAdd = Color(0xFF4ADE80),
-    diffAddBg = Color(0x334ADE80),
-    diffRemove = Color(0xFFF87171),
-    diffRemoveBg = Color(0x33F87171),
-    subtleText = Color(0xFF94A3B8),
-    subtleBorder = Color(0xFF2A3F56),
-    cardSurface = Color(0xFF0D1B2E),
-    pageBackground = Color(0xFF07111F),
-    mutedSurface = Color(0xFF13273F),
-    capsuleSurface = Color(0xFF1E293B),
-    buttonMutedBg = Color(0xFF1E293B)
-)
-
 val LocalAppSemanticColors = staticCompositionLocalOf { LightSemanticColors }
 
 val MaterialTheme.semanticColors: AppSemanticColors
@@ -245,75 +217,6 @@ object StorageUsagePalette {
     val OtherData = Color(0xFFCBD5E1)
     val Apk = Color(0xFF64748B)
 }
-
-internal val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFF60A5FA),
-    onPrimary = Color(0xFF082F49),
-    primaryContainer = Color(0xFF0F3A63),
-    onPrimaryContainer = Color(0xFFDBEAFE),
-    secondary = Color(0xFF7DD3FC),
-    onSecondary = Color(0xFF082F49),
-    secondaryContainer = Color(0xFF0C4A6E),
-    onSecondaryContainer = Color(0xFFBAE6FD),
-    tertiary = Color(0xFF22C55E),
-    tertiaryContainer = Color(0xFF14532D),
-    onTertiaryContainer = Color(0xFFBBF7D0),
-    background = Color(0xFF07111F),
-    onBackground = Color(0xFFEAF2FF),
-    surface = Color(0xFF0D1B2E),
-    onSurface = Color(0xFFEAF2FF),
-    surfaceVariant = Color(0xFF13273F),
-    onSurfaceVariant = Color(0xFFB8C7DA),
-    surfaceTint = Color.Transparent,
-    surfaceContainerLowest = Color(0xFF050C17),
-    surfaceContainerLow = Color(0xFF07111F),
-    surfaceContainer = Color(0xFF0D1B2E),
-    surfaceContainerHigh = Color(0xFF13273F),
-    surfaceContainerHighest = Color(0xFF1B3350),
-    surfaceBright = Color(0xFF24405F),
-    surfaceDim = Color(0xFF07111F),
-    outline = Color(0xFF64748B),
-    outlineVariant = Color(0xFF334155),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF450A0A),
-    errorContainer = Color(0xFF7F1D1D),
-    onErrorContainer = Color(0xFFFECACA)
-)
-
-internal val LightColorScheme = lightColorScheme(
-    primary = Brand.Blue,
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFDBEAFE),
-    onPrimaryContainer = Color(0xFF0B3B76),
-    secondary = Color(0xFF0284C7),
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFE0F2FE),
-    onSecondaryContainer = Color(0xFF075985),
-    tertiary = Color(0xFF16A34A),
-    tertiaryContainer = Color(0xFFDCFCE7),
-    onTertiaryContainer = Color(0xFF15803D),
-    background = Color(0xFFFFFFFF),
-    onBackground = Color(0xFF0F172A),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFEAF4FF),
-    onSurfaceVariant = Color(0xFF475569),
-    surfaceTint = Color.White,
-    surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFAFCFF),
-    surfaceContainer = Color(0xFFF4F9FF),
-    surfaceContainerHigh = Color(0xFFEAF4FF),
-    surfaceContainerHighest = Color(0xFFE0EDFA),
-    surfaceBright = Color(0xFFFFFFFF),
-    surfaceDim = Color(0xFFE8EEF6),
-    outline = Color(0xFFD1D1D6),
-    outlineVariant = Color(0xFFE5E5EA),
-    error = Color(0xFFDC2626),
-
-    onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFEE2E2),
-    onErrorContainer = Color(0xFF7F1D1D)
-)
 
 private val AppTypography = Typography().run {
     copy(

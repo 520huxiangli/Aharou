@@ -740,12 +740,18 @@ fun AppNavigation(
 
     // Aharou：工具消息两个互联入口的实现
     val browserOpener: (String) -> Unit = { url ->
-        runCatching {
-            if (url.isNotBlank()) agentViewModel.browserTabPool.selectOrCreateTabForURL(url)
+        // 非 http(s) 协议（tel: / mailto: / market:// / intent: 等）得在 loadUrl 之前分流：
+        // loadUrl 不触发 shouldOverrideUrlLoading，直接塞进 WebView 只会得到 ERR_UNKNOWN_URL_SCHEME。
+        if (com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler.shouldHandleExternally(url)) {
+            com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler.handle(context, url)
+        } else {
+            runCatching {
+                if (url.isNotBlank()) agentViewModel.browserTabPool.selectOrCreateTabForURL(url)
+            }
+            // 右栏已经是浏览器时不再叠一层 sheet —— 同一个 WebView 被两个宿主同时挂载
+            // 会互相抢（BrowserWebView.update 里的 re-parent），输的那个容器空着就是白屏。
+            if (paneKind != WorkbenchPaneKind.BROWSER) browserSheetOpen = true
         }
-        // 右栏已经是浏览器时不再叠一层 sheet —— 同一个 WebView 被两个宿主同时挂载
-        // 会互相抢（BrowserWebView.update 里的 re-parent），输的那个容器空着就是白屏。
-        if (paneKind != WorkbenchPaneKind.BROWSER) browserSheetOpen = true
     }
     val terminalOpener: (String) -> Unit = { cmd ->
         terminalInitCommand = cmd

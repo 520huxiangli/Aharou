@@ -611,7 +611,7 @@ private fun formatTokenLimit(tokens: Int): String =
         else -> tokens.toString()
     }
 
-private fun String.trimDecimal(): String =
+internal fun String.trimDecimal(): String =
     replace(Regex("(\\.\\d)\\d+"), "$1").removeSuffix(".0")
 
 @Composable

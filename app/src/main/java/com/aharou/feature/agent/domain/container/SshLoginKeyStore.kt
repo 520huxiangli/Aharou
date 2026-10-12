@@ -48,6 +48,7 @@ class SharedPrefsSshLoginKeyStore @Inject constructor(
                 val path = preferences.getString(pathKey(id), null) ?: return@mapNotNull null
                 val passphrase = preferences.getString(passphraseKey(id), null)
                     ?.let { runCatching { KeystoreCipher.decryptString(it) }.getOrNull() }
+                    ?.takeIf { it.isNotEmpty() }
                 SshLoginKey(
                     id = id,
                     name = name,

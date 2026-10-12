@@ -47,6 +47,8 @@ object AILogger {
     private const val TAG = "AILogger"
     private const val MAX_AGE_DAYS = 7
     private const val MAX_FILE_BYTES = 20 * 1024 * 1024 // 单会话文件上限 20MB（每轮重发完整历史，增长快）
+    /** 单会话日志滚动归档的保留份数（.1/.2/…），连同当前文件最多 [MAX_ARCHIVE_FILES] + 1 份。 */
+    private const val MAX_ARCHIVE_FILES = 3
     /** 原始 SSE 分批落盘的缓冲阈值（字符）：累积到该量即落盘，避免整段响应驻留内存。 */
     private const val SSE_FLUSH_CHARS = 64 * 1024
     /** 字段名提示为 base64 承载时，值超过该长度即视为媒体数据。 */
@@ -301,7 +303,7 @@ object AILogger {
         this in 'A'..'Z' || this in 'a'..'z' || this in '0'..'9' ||
             this == '+' || this == '/' || this == '=' || this == '_' || this == '-'
 
-    /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先重置。 */
+    /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先滚动归档。 */
     private fun appendToSession(sessionId: String?, block: (Writer) -> Unit) {
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
         val safeId = (sessionId ?: "unknown").replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -309,8 +311,14 @@ object AILogger {
             runCatching {
                 val file = File(dir, "session-$safeId.log")
                 if (file.length() > MAX_FILE_BYTES) {
-                    // 超上限则截断重开，避免单文件无限增长。
-                    file.writeText("--- AI 会话日志超过 ${MAX_FILE_BYTES / 1024 / 1024}MB 已重置 ---\n")
+                    // 滚动归档：session-<id>.log → .1 → .2 … 保留最近 MAX_ARCHIVE_FILES 份、删最旧，
+                    // 不再整文件清零，超出上限的历史仍可回溯（原文件改名后，后续 append 会新建空文件）。
+                    for (index in MAX_ARCHIVE_FILES downTo 1) {
+                        val target = File(dir, "session-$safeId.log.$index")
+                        if (index == MAX_ARCHIVE_FILES) runCatching { target.delete() }
+                        val source = if (index == 1) file else File(dir, "session-$safeId.log.${index - 1}")
+                        if (source.exists()) runCatching { source.renameTo(target) }
+                    }
                 }
                 BufferedWriter(OutputStreamWriter(FileOutputStream(file, true), Charsets.UTF_8)).use { w ->
                     block(w)

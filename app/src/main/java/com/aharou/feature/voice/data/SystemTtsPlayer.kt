@@ -32,9 +32,6 @@ internal class SystemTtsPlayer @Inject constructor(
     /** 当前这段念白的完成句柄；[stop] 要主动完成它，等待方才能醒过来。 */
     private var speaking: CompletableDeferred<Unit>? = null
 
-    /** 系统里有没有可用的 TTS 引擎（首次调用会触发引擎初始化）。 */
-    suspend fun isAvailable(): Boolean = ensureEngine()
-
     /**
      * 念一段文字并等它念完。返回 false 表示系统没有可用引擎。
      */

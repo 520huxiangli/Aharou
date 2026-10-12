@@ -53,6 +53,9 @@ import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.SessionGrantStore
 import com.aharou.feature.agent.domain.permission.TaintTracker
 import com.aharou.feature.agent.domain.mcp.McpManager
+import com.aharou.feature.agent.domain.mention.FileMentionController
+import com.aharou.feature.agent.domain.mention.FileMentionState
+import com.aharou.feature.agent.domain.mention.fileMentionQuery
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
@@ -171,6 +174,7 @@ class AIAgentViewModel @Inject constructor(
     private val planApprovalManager: PlanApprovalManager,
     private val terminalSessionManager: TerminalSessionManager,
     private val slashCommandRegistry: SlashCommandRegistry,
+    private val fileMentionController: FileMentionController,
     private val checkpointManager: CheckpointManager,
     private val checkpointDao: CheckpointDao,
     private val backupManager: BackupManager,
@@ -347,6 +351,21 @@ class AIAgentViewModel @Inject constructor(
         // 哨兵键一并清：发送后再有会话落定，不能把刚发出去的正文又当未归属草稿迁回来。
         _inputDrafts.value = _inputDrafts.value - id - PENDING_DRAFT_KEY
         draftPrefs.edit().remove(id).remove(PENDING_DRAFT_KEY).apply()
+    }
+
+    // ── 输入框「@ 引用工作区文件」：薄转发，逻辑在 FileMentionController ──
+    val fileMentionState: StateFlow<FileMentionState> = fileMentionController.state
+    fun requestFileMention(text: String) {
+        fileMentionController.onInputChanged(text, currentSessionWorkspace.value, viewModelScope)
+    }
+    fun dismissFileMention() = fileMentionController.dismiss()
+    fun matchFileMentions(query: String): List<String> = fileMentionController.match(query)
+    /** 选中候选：把 `@查询词` 整段替换成 `@相对路径 `（带尾空格，避免继续被当查询词过滤）。 */
+    fun applyFileMention(relativePath: String) {
+        val text = inputDraft.value
+        val at = fileMentionQuery(text)?.let { text.lastIndexOf("@$it") } ?: -1
+        dismissFileMention()
+        updateInputDraft(if (at >= 0) text.substring(0, at) + "@$relativePath " else "$text@$relativePath ")
     }
 
     /**
@@ -667,6 +686,7 @@ class AIAgentViewModel @Inject constructor(
     fun setWorkspace(path: String) {
         if (path.isBlank() || _currentWorkspace.value == path) return
         _currentWorkspace.value = path
+        fileMentionController.dismiss()  // 切工作区：@ 候选菜单先收起（清单按工作区惰性失效）
         // 切到新工作区：恢复该工作区上次持久化的展开状态（无记录则只展开根）。
         _expandedPaths.value = loadExpansion(path)
         // 搜索限定当前工作区，切区后旧结果无意义，一并清空。

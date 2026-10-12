@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
@@ -223,6 +224,30 @@ internal fun SettingsDivider() {
         thickness = 0.5.dp,
         color = MaterialTheme.semanticColors.subtleBorder
     )
+}
+
+/** 键值行：左标签右值，值过长时换行。 */
+@Composable
+internal fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.lg, vertical = 12.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.width(Spacing.md))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.End,
+            modifier = Modifier.weight(1f)
+        )
+    }
 }
 
 /** iOS 风格搜索框：浅灰胶囊背景、无边框，与设置页分组风格一致。

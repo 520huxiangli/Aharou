@@ -69,7 +69,7 @@ class MemoryRepository @Inject constructor(
             // 使用者看到名字也无从判断要不要读。
             // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
             // frontmatter，若一并滤掉等于把全局约定和身份直接从提示词里除名。
-            .filter { it.description.isNotBlank() || isCoreArchive(it.name) }
+            .filter { it.description.isNotBlank() || isCoreArchiveName(it.name) }
             .filterNot { isStale(it) }
             // 先算一次分再排序：写在 comparator 里会随比较次数反复重算、反复切词。
             .map { memory -> memory to relevanceScore(memory, normalizedQuery) }
@@ -90,21 +90,10 @@ class MemoryRepository @Inject constructor(
      * 取不到文件或时间戳时保守保留，宁可多注入也不误伤。
      */
     private fun isStale(memory: Memory): Boolean {
-        if (isCoreArchive(memory.name)) return false
+        if (isCoreArchiveName(memory.name)) return false
         val lastModified = memory.file?.lastModified() ?: return false
         if (lastModified <= 0L) return false
         return System.currentTimeMillis() - lastModified > STALE_MEMORY_MILLIS
-    }
-
-    /**
-     * 核心档案：按文件名直接读、不写 frontmatter 的那几份，如 CORE / GLOBAL / SOUL / OPS /
-     * PROFILE / SECRETS / LIFE / L0_AGENT / L1_MAP。它们的共同特征是**基名全大写**。
-     *
-     * 判定不能只认 CORE / GLOBAL：漏掉 SOUL、OPS 就等于把身份与运维约定从提示词里除名。
-     */
-    private fun isCoreArchive(name: String): Boolean {
-        val base = name.substringBeforeLast('.').uppercase()
-        return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 
     /**

@@ -11,7 +11,7 @@ App 内置了一个 WebView 浏览器，支持 AI 自动化操作网页。AI 可
 
 ## 手动浏览
 
-在地址栏输入网址按回车即可导航。地址栏右侧提供开发者工具开关与刷新按钮，下方底栏包含后退、前进、新建标签页与多标签管理。页面加载时地址栏下方显示线性进度条。
+在地址栏输入网址按回车即可导航，加载时地址栏右侧显示停止按钮。顶栏标签行两端分别是「新建标签页」与「历史记录」，左上角图标随当前浏览器标识（UA）档位变化，点击进入浏览器设置。底部工具栏包含后退、前进、下载（有下载记录时出现）、刷新/停止、页内查找，以及「更多」菜单。页面加载时地址栏下方显示线性进度条。
 
 ## 本地文件预览
 
@@ -24,12 +24,33 @@ AI 也可通过 `browser` 工具的 `navigate` 打开本地页面并截图分析
 
 **注意**：远程工作区模式下工作区文件在远端，只能加载页面本身，HTML 引用的相对资源（CSS/JS/图片）会失效；本地工作区不受影响。
 
-## 开发者工具
+## 浏览器标识（User-Agent）
 
-点击地址栏右侧的 `</>`（代码图标）可随时开启或收起移动端开发者工具（基于 Eruda）：
-- **全功能控制台**：包含 Console（查看日志与执行 JavaScript 代码）、Elements（查看与实时编辑 DOM 树和 CSS 样式）、Network（抓包网络请求与响应）、Resources（查看 LocalStorage、Cookie 等数据）、Sources 等。
-- **即点即用**：开启后页面右下角显示浮动齿轮图标，点击即可展开完整控制台面板；再次点击地址栏的开发工具按钮可彻底关闭并移除悬浮球。
-- **电脑端调试联动**：开启时同步启用 Chromium 的 `WebContentsDebugging`，支持通过 USB 连接电脑并在 Chrome 浏览器访问 `chrome://inspect` 进行桌面级远程审查。
+顶栏左上角图标随当前 UA 档位变化，点击进入浏览器设置；底部工具栏的「更多」菜单也聚合了同一组 UA 切换入口。可选档位：
+
+| 档位 | 说明 |
+| --- | --- |
+| 系统默认 | 沿用设备原生 WebView 标识（可随时切回） |
+| 安卓手机 | Chrome Mobile (Android) |
+| 安卓平板 | Chrome Tablet (Android) |
+| 桌面电脑 | Chrome Desktop (Windows PC) |
+| 苹果 iPhone | Mobile Safari (iOS) |
+| 苹果 iPad | Tablet Safari (iPadOS) |
+| 自定义 | 手动填写完整 User-Agent 字符串 |
+
+切换档位后页面会重新加载，并按该档位的默认视口尺寸渲染（可在浏览器设置里用 Web Viewport 覆盖）。
+
+浏览器设置里还可调整空闲标签页回收时长，以及查看/清除 Cookie 与网站数据。
+
+> **说明**：内置浏览器目前不提供夜间模式。
+
+## 页内查找
+
+底部工具栏的放大镜按钮打开页内查找条，输入关键词即可在当前页面高亮匹配，用上/下箭头在结果间跳转，右侧显示「当前/总数」，点关闭结束查找。
+
+## 开发者工具（Eruda）
+
+「更多」菜单里可开关「开发者工具」。开启后会在页面内注入 Eruda（控制台、元素检查、网络面板），并持久保存该开关；之后每个新加载的页面都会自动带上它，关闭即从当前页面移除。适合排查网页报错与查看页面结构。
 
 ## AI 自动化操作
 
@@ -50,7 +71,7 @@ AI 可通过 `browser` 工具控制浏览器执行以下操作：
 | `find_elements` | 按选择器批量查找元素，返回位置与可见性 |
 | `hover` | 悬停元素（派发 mouseenter/over，可展开下拉菜单） |
 | `get_readable` | 提取页面的可读正文（去掉导航、广告与脚本） |
-| `set_user_agent` | 切换 UA 档位（`desktop_chrome` / `mobile_chrome`） |
+| `set_user_agent` | 切换 UA 档位（`default` / `android_phone` / `android_tablet` / `desktop_pc` / `iphone` / `ipad` / `custom`；另兼容旧的 `mobile_chrome` / `desktop_chrome`） |
 | `set_viewport` | 设置视口尺寸（`viewport_width` / `viewport_height`，`reset` 清除会话级覆盖） |
 | `get_backbone` | 提取页面几何树（字段与截断规则见下） |
 | `fetch` | 直接发起 HTTP 请求取回内容，不经过页面渲染 |
@@ -59,18 +80,33 @@ AI 可通过 `browser` 工具控制浏览器执行以下操作：
 | `set_cookies` | 写入 Cookie |
 | `scroll_and_collect` | 滚动若干次并收集条目（`item_selector`、`scroll_count`、`keywords`） |
 | `wait_for_dom_stable` | 等待 DOM 稳定（`timeout` 毫秒） |
+| `wait` | 等待条件成立（`condition=selector=元素` / `text=` / `text*=` / `domStable`，也可直接用 `selector` / `text` 参数；`timeout` 毫秒） |
+| `press` | 向当前焦点元素派发按键（`key`：Enter / Escape / Tab / ArrowUp / ArrowDown / ArrowLeft / ArrowRight / Backspace / Delete / 空格） |
+| `select` | 选中 `<select>` 的 option（`selector` 定位下拉，`text` 给 option 的 value 或文本），并派发 change |
+| `console` | 读取页面控制台日志（`level` 过滤 error/warning/debug/log，`clear` 读取后清空缓冲） |
 
 **交互与导航类动作会自动附截图**：`navigate`、`click`、`scroll`、`hover`、`type` 成功后，结果里会带上当时的页面截图（走图像通道返回），所以不用每次都额外调一次。其余动作用完想确认视觉状态时，再显式调 `screenshot`。
 
 ## 选择器格式
 
-`click`、`type`、`hover`、`find_elements`、`get_text`、`scroll` 的选择器只支持 **CSS 选择器**（`#id`、`.class`、`a[href=...]`、`div > span` 等），按 `document.querySelector` / `querySelectorAll` 语义匹配。`ref=`、`text=`、`text*=`、`role=`、`xpath=` 这类写法不识别，写了会按 CSS 解析从而找不到元素。
+`click`、`type`、`hover`、`find_elements`、`get_text`、`scroll`、`select`、`wait` 的选择器支持以下形式：
 
-`get_backbone` 返回的是**几何树**：在可见元素上按页面结构建树，每个节点形如 `{tag,id,cls,sel,role?,text,href,img,input,rect,pageXY,children}`——`tag` 是标签名，`sel` 是可直接回填到选择器的 CSS 选择器，`role`/`text`/`href` 按元素实际情况出现，`img` 是图片尺寸与地址，`input` 是输入框类型（含已有值与占位符），`rect`（视口坐标）与 `pageXY`（文档坐标）是位置尺寸。树里**没有** `name` / `ref` / `url` / `value` 字段，需要交互时用 `sel` 回填 CSS 选择器。已过滤 `script`/`style` 与不可见元素，超出 `max_depth`（默认 5）的层级会被裁掉，只留到该深度为止。
+| 形式 | 含义 |
+| --- | --- |
+| CSS | `#id`、`.class`、`a[href=...]`、`div > span` 等，按 `document.querySelector` 语义匹配 |
+| `text=` | 精确文本匹配（元素直接文本等于给定值） |
+| `text*=` | 包含文本匹配（取命中且文本最短的元素，避免命中整页） |
+| `role=` | ARIA role 匹配，如 `role=button`；可加名称，如 `role=button[name="提交"]` |
+| `ref=` | 引用 `get_backbone` 节点返回的 `ref`（形如 `e12`） |
+| `xpath=` | XPath 表达式 |
+
+`find_elements` 对 CSS 返回全部匹配；对扩展形式（`text=` / `role=` / `ref=` 等）返回解析到的单个元素。
+
+`get_backbone` 返回的是**几何树**：在可见元素上按页面结构建树，每个节点形如 `{tag,id,cls,sel,ref,role?,text,href,img,input,rect,pageXY,children}`——`tag` 是标签名，`sel` 是可直接回填到选择器的 CSS 选择器，`ref` 是可直接用 `ref=` 选择器引用的引用 id，`role`/`text`/`href` 按元素实际情况出现，`img` 是图片尺寸与地址，`input` 是输入框类型（含已有值与占位符），`rect`（视口坐标）与 `pageXY`（文档坐标）是位置尺寸。树里**没有** `name` / `url` / `value` 字段，需要交互时用 `sel` 或 `ref` 回填。已过滤 `script`/`style` 与不可见元素，超出 `max_depth`（默认 5）的层级会被裁掉，只留到该深度为止。
 
 ## 后台运行
 
-AI 可在后台操作浏览器，无需先打开面板。WebView 由 BrowserManager 管理，独立于 UI 生命周期；截图同样可在后台完成。
+AI 可在后台操作浏览器，无需先打开面板。WebView 由单一的浏览器标签池（BrowserTabPool）管理，独立于 UI 生命周期；截图同样可在后台完成。
 
 ## 接管
 

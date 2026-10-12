@@ -115,7 +115,6 @@
     <string name="settings_token_stats_recent_calls">Call records</string>
     <string name="settings_token_stats_unknown">Unknown</string>
     <string name="settings_token_stats_no_data">No data</string>
-    <string name="settings_token_stats_calls_suffix">calls</string>
     <string name="settings_token_stats_calls_suffix2">%1$d calls</string>
     <string name="settings_token_stats_col_model">Model</string>
     <string name="settings_token_stats_col_reasoning_effort">Effort</string>
@@ -131,7 +130,6 @@
     <string name="settings_token_stats_col_status">Status</string>
     <string name="settings_token_stats_col_cost">Cost</string>
     <string name="settings_token_stats_page">Page %1$d of %2$d</string>
-    <string name="settings_token_stats_retries">%1$d retries</string>
     <string name="settings_token_stats_reset">Reset</string>
     <string name="settings_token_stats_reset_title">Reset token stats</string>
     <string name="settings_token_stats_reset_confirm">All call records will be permanently deleted. Reset?</string>
@@ -145,26 +143,11 @@
 
     <!-- Storage page -->
     <string name="settings_storage">Storage</string>
-    <string name="performance_collecting">Collecting…</string>
-    <string name="performance_app_cpu">App CPU</string>
-    <string name="performance_cores">%1$d cores, normalized by core count</string>
-    <string name="performance_device_cpu">Device CPU</string>
-    <string name="performance_threads">Threads</string>
-    <string name="performance_app_memory">App memory (PSS)</string>
-    <string name="performance_device_memory">Device memory</string>
-    <string name="performance_device_memory_detail">Total %1$d MB, available %2$d MB</string>
-    <string name="performance_network_app">App traffic</string>
-    <string name="performance_network_app_note">Counted by UID, includes the container and child processes</string>
-    <string name="performance_network_device">Device traffic</string>
-    <string name="performance_network_device_note">Total across all apps</string>
-    <string name="performance_rx">Down</string>
-    <string name="performance_tx">Up</string>
     <string name="storage_refresh">Rescan</string>
     <string name="storage_total_title">Used by Aharou</string>
     <string name="storage_scanning">Calculating…</string>
     <string name="storage_device_free">%1$s free of %2$s</string>
     <string name="storage_section_breakdown">Breakdown</string>
-    <string name="storage_section_reclaimable">Reclaimable space</string>
     <string name="storage_breakdown_note">Tap a category with an arrow to expand details. Delete sessions to shrink chat history; reset or remove containers and workspaces from their own pages. External folder workspaces live on device storage and are not counted.</string>
     <string name="storage_freed">Freed %1$s</string>
     <string name="storage_clean">Clean</string>
@@ -220,10 +203,6 @@
     <string name="theme_light">Light</string>
     <string name="theme_mode_section">Appearance mode</string>
     <string name="theme_preset_section">Color theme</string>
-    <string name="theme_preset_default">Default Blue</string>
-    <string name="theme_preset_coffee">Coffee</string>
-    <string name="theme_preset_graphite">Graphite</string>
-    <string name="theme_preset_forest">Forest</string>
     <string name="skin_qinglan">Azure</string>
     <string name="skin_mohei">Ink</string>
     <string name="skin_songlv">Pine</string>
@@ -232,7 +211,6 @@
     <string name="skin_xuanqing">Obsidian</string>
     <string name="skin_custom">Custom</string>
     <string name="skin_custom_add">Custom skin</string>
-    <string name="skin_custom_color">Custom color</string>
     <string name="skin_editor_title">Custom skin</string>
     <string name="skin_editor_primary">Primary</string>
     <string name="skin_editor_accent">Accent</string>
@@ -257,7 +235,6 @@
     <string name="theme_dynamic_color_desc">Derive colors from your wallpaper. Overrides the color theme above.</string>
     <string name="theme_dynamic_color_unsupported">Requires Android 12 or newer</string>
     <string name="settings_background_image">Background image</string>
-    <string name="settings_background_image_none">None</string>
     <string name="settings_background_image_alpha">Opacity</string>
     <string name="settings_background_image_pick">Pick image</string>
     <string name="settings_background_image_remove">Remove background</string>
@@ -311,7 +288,6 @@
     <string name="provider_script_params_count">%1$d parameters configured</string>
     <string name="provider_add_sheet_title">Add Vendor</string>
     <string name="provider_custom">Custom Vendor</string>
-    <string name="provider_preset_loading">Loading presets…</string>
     <string name="provider_preset_empty">No matching presets</string>
     <string name="provider_register_now">Register</string>
     <string name="settings_keepalive_title">Background keepalive</string>
@@ -363,7 +339,6 @@
     <string name="common_copy">Copy</string>
     <string name="common_copy_success">Copied to clipboard</string>
     <string name="common_cut">Cut</string>
-    <string name="common_paste">Paste</string>
     <string name="common_allow">Allow</string>
     <string name="common_close">Close</string>
     <string name="common_clear">Clear</string>
@@ -437,14 +412,11 @@
     <string name="chat_attachment_uploaded_partial">%1$s attachments uploaded, some were not added</string>
     <string name="chat_image_too_large">Image exceeds %1$s, please compress and retry</string>
     <string name="chat_attachment_uploading">Uploading %1$d files…</string>
-    <string name="chat_uploaded_to">Uploaded to %1$s</string>
     <string name="chat_select_workspace_first">Please select a workspace first</string>
     <string name="chat_read_file_failed">Cannot read the selected file</string>
     <string name="chat_camera_file_failed">Cannot create camera file</string>
-    <string name="chat_workspace_unavailable">Workspace unavailable</string>
     <string name="chat_upload_failed">Upload failed</string>
     <string name="chat_unsupported_image_type">Unrecognized image type, only jpg/png/gif/webp supported</string>
-    <string name="chat_new_session_btn">New Chat</string>
     <string name="chat_open_sidebar">Open sidebar</string>
     <string name="chat_add_attachment">Add attachment</string>
     <string name="chat_take_photo">Take photo</string>
@@ -462,7 +434,6 @@
     <string name="chat_open_apk_permission">Installing apps requires permission. Allow installs from this source in the settings that just opened</string>
     <string name="chat_attachment_preview">Preview %1$s</string>
     <string name="chat_attachment_open">Open %1$s</string>
-    <string name="chat_no_model_selected">No model selected</string>
     <string name="chat_open_git">Open Git</string>
     <string name="chat_open_terminal">Open terminal</string>
     <string name="chat_open_browser">Open browser</string>
@@ -486,7 +457,6 @@
     <string name="agent_input_budget_exceeded">Context exceeds the model input budget. Shorten the input or reduce tool definitions.</string>
     <string name="chat_context_usage_estimated">Estimated input budget usage: %1$d%%</string>    <string name="agent_context_no_compaction">No compaction needed (too few messages)</string>
     <string name="agent_compaction_failed">Compaction failed: %1$s</string>
-    <string name="agent_model_not_selected">Not selected</string>
     <!-- About -->
     <string name="about_version">Version</string>
     <string name="about_github_repo">GitHub Repository</string>
@@ -497,7 +467,6 @@
     <string name="about_up_to_date">Already up to date</string>
     <string name="about_up_to_date_detail">Current version v%1$s, already the latest Release on GitHub.</string>
     <string name="about_new_version_found">New version available</string>
-    <string name="about_download">Download</string>
     <string name="about_download_and_install">Download and install</string>
     <string name="about_download_resolving">Choosing a download source…</string>
     <string name="about_downloading_from">Downloading from %1$s</string>
@@ -602,21 +571,13 @@
     <string name="backup_error_unknown_exception">Unknown error</string>
 
     <!-- Chat Drawer -->
-    <string name="chat_history">History</string>
     <string name="chat_no_sessions_hint">No sessions yet</string>
     <string name="chat_search_hint">Search chats</string>
     <string name="chat_search_no_result">No matching messages</string>
-    <string name="chat_search_clear">Clear</string>
     <string name="drawer_file_search_hint">Search file names or content</string>
     <string name="drawer_file_search_no_result">No matching files or content</string>
     <string name="drawer_file_search_summary">%1$d files · %2$d matches</string>
     <string name="drawer_file_search_truncated">Too many results, showing the first %1$d</string>
-    <string name="session_group_today">Today</string>
-    <string name="session_group_yesterday">Yesterday</string>
-    <string name="session_group_last_7_days">Last 7 Days</string>
-    <string name="session_group_last_30_days">Last 30 Days</string>
-    <string name="session_group_pinned">Pinned</string>
-    <string name="session_group_month_format">MMMM yyyy</string>
     <string name="chat_settings">Settings</string>
     <string name="chat_pin_session">Pin to Top</string>
     <string name="chat_unpin_session">Unpin</string>
@@ -637,8 +598,6 @@
     <string name="drawer_tab_files">Files</string>
     <string name="drawer_expand_subagents">Expand subagents</string>
     <string name="drawer_collapse_subagents">Collapse subagents</string>
-    <string name="file_browser_up">Up one level</string>
-    <string name="file_browser_empty">Empty folder</string>
     <string name="file_browser_error">Failed to read folder</string>
     <string name="file_browser_refresh">Refresh</string>
     <string name="file_browser_expand">Expand</string>
@@ -665,7 +624,6 @@
     <string name="editor_save_failed">Save failed</string>
     <string name="editor_unsaved_title">Unsaved changes</string>
     <string name="editor_unsaved_message">This file has unsaved changes. Save them?</string>
-    <string name="editor_discard">Discard</string>
     <string name="editor_save_and_exit">Save and exit</string>
     <string name="editor_dont_save">Don\'t save</string>
     <string name="editor_close_tab">Close tab</string>
@@ -701,6 +659,11 @@
     <string name="chat_queue_hint">AI is busy, press enter to queue the message</string>
     <string name="chat_input_expand">Expand input box</string>
     <string name="chat_input_fullscreen_title">Full-screen input</string>
+    <!-- @ reference workspace file -->
+    <string name="chat_mention_files_title">Reference workspace file</string>
+    <string name="chat_mention_files_hint">Type a file name to filter</string>
+    <string name="chat_mention_files_loading">Loading workspace files…</string>
+    <string name="chat_mention_files_empty">No matching files</string>
     <string name="chat_queue_title">Queue (%1$d)</string>
     <string name="chat_queue_remove">Remove from queue</string>
     <string name="chat_queue_drag">Drag to reorder</string>
@@ -711,7 +674,6 @@
     <string name="chat_upload_file">Upload File</string>
     <string name="chat_upload_image">Upload Image</string>
     <string name="chat_remove_attachment">Remove attachment</string>    <string name="chat_no_models_hint">No models available, add one in "AI Vendors"</string>
-    <string name="chat_stop">Stop</string>
     <string name="chat_stop_long_press_hint">Stop (long press to force interrupt)</string>
     <string name="chat_send">Send</string>
     <string name="chat_perm_single_use_desc">Contains command substitution/pipes/redirects, cannot be remembered, single-use only</string>
@@ -767,7 +729,6 @@
     <string name="chat_compaction_failed">Context compaction failed</string>
     <string name="chat_sampling_loop_stopped">The model was repeating the same content, so this reply was truncated and stopped</string>
     <string name="chat_compressing_context">Compressing context</string>
-    <string name="chat_retrying">Retrying %1$s/%2$s</string>
     <string name="chat_key_switched">Switched to key %1$d of %2$d</string>
     <string name="chat_retry_badge">%1$d/%2$d</string>
     <string name="chat_retry_badge_desc">Auto retry %1$d of %2$d</string>
@@ -788,7 +749,6 @@
     <string name="retry_error_ssl">SSL handshake failed</string>
     <string name="retry_error_unknown">Network error</string>
     <string name="retry_error_with_code">%1$s (%2$d)</string>
-    <string name="chat_thinking_process">Thinking process</string>
     <string name="chat_thinking_running_time">Thinking (%1$ss)</string>
     <string name="chat_thinking_done_time">Thought for %1$ss</string>
     <string name="chat_thinking_done">Thought</string>
@@ -822,7 +782,6 @@
     <string name="container_health_attention_count">%1$d item(s) need attention</string>
     <string name="container_health_tools_missing_names">Missing: %1$s</string>
     <string name="container_health_run">Run Check</string>
-    <string name="container_health_running">Checking…</string>
     <string name="container_health_rerun">Run Check Again</string>
     <string name="container_health_title_storage">Shared storage access</string>
     <string name="container_health_storage_ok">Granted</string>
@@ -832,7 +791,6 @@
     <string name="container_health_tools_missing">Missing one of git / curl / tar / xz</string>
     <string name="container_health_tools_missing_detail">Install the missing basics from the container environment installer</string>
     <string name="container_health_tools_ready">Ready %1$d/%2$d</string>
-    <string name="container_health_tools_partial_detail">Missing tools disable the features that need them. Install them from the container environment installer</string>
     <string name="container_health_tools_install">Install</string>
     <string name="container_health_tools_installing">Installing…</string>
     <string name="container_health_tools_install_scope">Installs into the running container; lost when the image is rebuilt</string>
@@ -922,6 +880,36 @@
     <string name="credential_prompt_desc">Once filled, it will be saved and retried automatically. The credential is also saved to git inside the container, so terminal and AI can use it directly for bare git commands.</string>
     <string name="credential_save_and_retry">Save and Retry</string>
 
+    <!-- Credential Add / GitHub Quick Login -->
+    <string name="credential_add_title">Add Credential</string>
+    <string name="credential_add_method_github">Sign in with GitHub</string>
+    <string name="credential_add_method_github_desc">Authorize with a device code and save the token automatically</string>
+    <string name="credential_add_method_manual">Add manually</string>
+    <string name="credential_add_method_manual_desc">Enter host, username and access token</string>
+    <string name="credential_quick_login_title">GitHub Quick Login</string>
+    <string name="credential_quick_login_requesting">Requesting device code...</string>
+    <string name="credential_quick_login_awaiting_title">Authorize in your browser</string>
+    <string name="credential_quick_login_awaiting_desc">Open GitHub and enter this device code to authorize:</string>
+    <string name="credential_quick_login_copy_and_open">Copy &amp; open GitHub</string>
+    <string name="credential_quick_login_copied_and_opened">Code copied - paste it in the browser</string>
+    <string name="credential_quick_login_awaiting_hint">This sheet continues automatically after you authorize; keep it open.</string>
+    <string name="credential_quick_login_expire_hint">The device code is valid for about 15 minutes; request a new one if it expires.</string>
+    <string name="credential_quick_login_success_title">Signed in</string>
+    <string name="credential_quick_login_success_body">Added a GitHub credential as %1$s.</string>
+    <string name="credential_quick_login_success_toast">GitHub quick login succeeded</string>
+    <string name="credential_quick_login_install_title">Install the Aharou app</string>
+    <string name="credential_quick_login_install_body">Token acquired, but the Aharou app is not installed on this account yet. Install it to read and write repositories.</string>
+    <string name="credential_quick_login_install_action">Install now</string>
+    <string name="credential_quick_login_install_skip">Later</string>
+    <string name="credential_quick_login_token_expiry_note">GitHub App tokens expire after about 8 hours; sign in again to keep pushing.</string>
+    <string name="credential_quick_login_failed_title">Login failed</string>
+    <string name="credential_quick_login_retry">Retry</string>
+    <string name="credential_quick_login_failed_expired">The device code expired; please sign in again.</string>
+    <string name="credential_quick_login_failed_denied">Authorization was denied.</string>
+    <string name="credential_quick_login_failed_network">Network error; check your network or proxy and retry.</string>
+    <string name="credential_quick_login_failed_unknown">Login failed: %1$s</string>
+    <string name="credential_empty_title">No credentials yet</string>
+
     <!-- Diff Viewer -->
     <string name="diff_no_changes">No differences</string>
     <string name="diff_binary_file">Binary file, text diff not supported</string>
@@ -958,7 +946,6 @@
     <string name="git_modified_label">Modified</string>
     <string name="git_untracked_label">Untracked</string>
     <string name="git_commit_changes">Commit Changes</string>
-    <string name="git_no_identity">No identity configured, cannot commit. Please fill in user.name / user.email in the "Credentials" page.</string>
     <string name="git_stage_all">Stage All</string>
     <string name="git_pull">Pull</string>
     <string name="git_push">Push</string>
@@ -993,10 +980,6 @@
     <string name="git_credentials_count">Credentials (%1$d)</string>
     <string name="git_load_more_commits">Pull up to load more commits</string>
     <string name="git_no_more_commits">No more commits</string>
-    <string name="git_latest_commit">Latest commit</string>
-    <string name="git_recent_commit">Recent commit</string>
-    <string name="git_expanded">Expanded</string>
-    <string name="git_latest_date">Latest date</string>
     <string name="git_files_changed">%1$s files changed</string>
     <string name="git_no_files_changed">No files changed in this commit</string>
     <string name="git_loading_files">Loading changed files...</string>
@@ -1071,7 +1054,6 @@
 
     <!-- Git Merge -->
     <string name="git_action_merge">Merge Branch</string>
-    <string name="git_merge_into">Merge into %1$s</string>
     <string name="git_merge_confirm">Merge branch %1$s into current branch (%2$s)?</string>
     <string name="git_merge_no_ff">Create a merge commit (--no-ff)</string>
 
@@ -1123,13 +1105,11 @@
     <string name="git_ignore_file">Ignore this file (%1$s)</string>
     <string name="git_ignore_dir">Ignore directory (%1$s/)</string>
     <string name="git_ignore_extension">Ignore same extension (*.%1$s)</string>
-    <string name="git_toast_added_to_gitignore">Added to .gitignore</string>
 
     <!-- Git Identity -->
     <string name="git_tab_identity">Identity</string>
     <string name="git_tab_credentials">Credentials</string>
     <string name="git_identity_title">Commit Identity</string>
-    <string name="git_identity_desc">Used as author for every commit. Applies globally in the container, shared across all workspaces.</string>
     <string name="git_repo_url_title">Repository URL</string>
     <string name="git_remote_url">remote.origin.url</string>
     <!-- Main Activity -->
@@ -1182,7 +1162,6 @@
     <string name="skills_no_project_skills">No skills for the current project</string>
     <string name="skills_no_global_skills">No global skills</string>
     <string name="skills_builtin">Built-in</string>
-    <string name="skills_no_builtin_skills">No built-in skills</string>
     <string name="skills_editor_error_read_only">Built-in skills cannot be modified</string>
     <string name="skills_market">Skill Market</string>
     <string name="skills_market_install">Install</string>
@@ -1395,15 +1374,18 @@
     <string name="mcp_add_env_var">Add Environment Variable</string>
     <string name="mcp_browse_directory">Browse connectors</string>
     <string name="mcp_browse_directory_hint">Add popular remote MCP servers in one tap</string>
-    <string name="mcp_directory_title">Connector directory</string>
-    <string name="mcp_directory_search_hint">Search connectors</string>
-    <string name="mcp_directory_empty">No matching connectors</string>
-    <string name="mcp_directory_docs">View docs</string>
-    <string name="mcp_directory_all">All</string>
-    <string name="mcp_auth_none">No auth</string>
-    <string name="mcp_auth_optional">Auth optional</string>
-    <string name="mcp_auth_token">Token required</string>
-    <string name="mcp_auth_oauth">OAuth required</string>
+    <string name="mcp_import_json">Import from JSON</string>
+    <string name="mcp_import_json_hint">Paste a standard mcpServers config to add servers</string>
+    <string name="mcp_import_json_title">Import MCP config</string>
+    <string name="mcp_import_json_placeholder">{ "mcpServers": { "name": { "command": "npx", "args": ["-y", "..."] } } }</string>
+    <string name="mcp_import_json_action">Import</string>
+    <string name="mcp_import_json_preview">Will import %1$d server(s)</string>
+    <string name="mcp_import_json_success">Imported %1$d server(s)</string>
+    <string name="mcp_import_json_skipped">Skipped %1$d server(s) with invalid names</string>
+    <string name="mcp_import_json_error_not_json">Not valid JSON</string>
+    <string name="mcp_import_json_error_missing_servers">Missing mcpServers field</string>
+    <string name="mcp_import_json_error_empty_servers">mcpServers is empty</string>
+    <string name="mcp_import_json_error_invalid_entries">No recognizable server entries</string>
     <string name="mcp_auth_section">Authentication</string>
     <string name="mcp_bearer_token">Bearer token</string>
     <string name="mcp_bearer_token_hint">Paste an access token; sent as the Authorization: Bearer header</string>
@@ -1524,7 +1506,6 @@
     <string name="provider_fetch_http_error">HTTP %1$d · %2$dms</string>
     <string name="provider_test_success">Connected · %1$dms</string>
     <string name="common_error">Error</string>
-    <string name="common_select">Select</string>
     <string name="provider_model_context_total">Total Context Window (tokens)</string>
     <string name="provider_model_window_invalid">Enter a valid positive integer, or leave blank to use the automatically detected value</string>
     <string name="provider_model_context_input">Input Window (tokens)</string>
@@ -1576,7 +1557,6 @@
     <string name="provider_model_capability_tools">Tool Calling</string>
     <string name="provider_model_capability_reasoning">Reasoning</string>
     <string name="provider_filter_models_hint">Filter models by name</string>
-    <string name="provider_fetch_failed">Fetch failed: %1$s</string>
     <string name="provider_no_matching_models">No matching models</string>
     <string name="provider_models_aligned_removed">Removed %1$d model(s) no longer offered by the vendor</string>
     <string name="provider_please_wait">Please wait…</string>
@@ -1584,7 +1564,7 @@
 
     <!-- Provider Logo -->
     <string name="provider_brand_doubao">Doubao</string>
-    <string name="provider_brand_zhipu">Zhipu</string>    <string name="provider_brand_tongyi_qianwen">Tongyi Qianwen</string>
+    <string name="provider_brand_zhipu">Zhipu</string>
     <string name="provider_brand_hunyuan">Hunyuan</string>
     <string name="provider_brand_siliconflow">SiliconFlow</string>
     <string name="provider_model_icon">Model icon</string>
@@ -1656,7 +1636,6 @@
     <string name="remote_tab_connections">Connections</string>
     <string name="remote_tab_mounts">Mounted Directories</string>
     <string name="remote_tab_ftp">Built-in FTP</string>
-    <string name="remote_tab_sync">Sync Settings</string>
     <string name="remote_no_connections">No connections yet</string>
     <string name="remote_no_connections_desc">Add an SFTP / FTP connection</string>
     <string name="remote_no_workspaces">No mounted directories yet</string>
@@ -1701,12 +1680,10 @@
     <string name="ssh_host_key_changed_title">SSH Host Key Changed</string>
     <string name="ssh_host_key_trust">Trust and connect</string>
     <string name="ssh_host_key_reject">Reject</string>
-    <string name="ssh_host_key_settings_desc">Confirmed host fingerprints help prevent man-in-the-middle attacks. Verify a server after reinstalling it or rotating its key before confirming again.</string>
     <string name="ssh_host_key_empty">No saved host fingerprints</string>
     <string name="ssh_host_key_fingerprint_value">Fingerprint: %1$s</string>
     <string name="ssh_host_key_global_hint">Trusting this key restores the remote connection. Verify the fingerprint against your server before trusting.</string>
     <string name="ssh_host_key_trusted_toast">Host key trusted — retry your last action</string>
-    <string name="ssh_host_key_remove">Remove fingerprint</string>
     <string name="ssh_host_key_detail">Saved server host fingerprint:\n%1$s</string>
 
     <!-- Remote Sync -->
@@ -1759,7 +1736,6 @@
     <string name="terminal_font_builtin">JetBrains Mono</string>
     <string name="terminal_font_delete">Delete this font</string>
     <string name="terminal_font_import_failed">Import failed. Please pick a valid ttf / otf / ttc font file</string>
-    <string name="terminal_preview_text">Terminal Preview</string>
     <string name="terminal_theme_termius_dark">Termius Dark</string>
     <string name="terminal_theme_dracula">Dracula</string>
     <string name="terminal_theme_one_dark">One Dark</string>
@@ -1797,8 +1773,6 @@
     <string name="web_search_warning">Warning: %1$s</string>
 
     <!-- Workspace Picker -->
-    <string name="workspace_select">Select Workspace</string>
-    <string name="workspace_switch">Switch Workspace</string>
     <string name="workspace_open">Open Workspace</string>
     <string name="workspace_new">New</string>
     <string name="workspace_empty_hint">No workspaces, tap "New" to create one</string>
@@ -1960,21 +1934,16 @@
     <string name="provider_multi_key_cooldown_off">None</string>
     <string name="proxy_test_url_label">Test URL</string>
     <string name="proxy_test_url_placeholder">https://www.google.com</string>
-    <string name="proxy_server">Proxy server</string>
     <string name="proxy_host">Server address</string>
     <string name="proxy_host_placeholder">e.g. 127.0.0.1</string>
     <string name="proxy_port">Port</string>
     <string name="proxy_port_placeholder">e.g. 7890</string>
-    <string name="proxy_auth">Authentication (optional)</string>
     <string name="proxy_username">Account (optional)</string>
     <string name="proxy_password">Password (optional)</string>
     <string name="proxy_no_proxy">No-proxy addresses</string>
     <string name="proxy_no_proxy_hint">Comma-separated; supports wildcards, host:port and CIDR ranges</string>
 
     <!-- Provider editor: proxy (optional) -->
-    <string name="provider_proxy_section">Proxy (optional)</string>
-    <string name="provider_proxy_enable">Configure a dedicated proxy for this vendor</string>
-    <string name="provider_proxy_enable_desc">When enabled, requests to this vendor use its own proxy; otherwise the global proxy applies</string>
 
     <!-- First-run onboarding -->
     <string name="onboarding_skip">Skip</string>
@@ -2004,19 +1973,18 @@
 
     <!-- Browser -->
     <string name="browser_title">Browser</string>
-    <string name="browser_address_hint">Enter URL or search</string>
-    <string name="browser_back">Back</string>
-    <string name="browser_forward">Forward</string>
     <string name="browser_reload">Reload</string>
-    <string name="browser_not_ready">Browser not ready. Enter a URL in the address bar to start browsing.</string>
     <string name="browser_new_tab">New tab</string>
     <string name="browser_close_tab">Close tab</string>
-    <string name="browser_tab_default_title">New Tab</string>
-    <string name="browser_tabs_count">Tabs (%1$d)</string>
-    <string name="browser_empty_hint">Enter a URL in the address bar above to start browsing</string>
-    <string name="browser_tabs_manage">Manage Tabs</string>
-    <string name="browser_empty_click_hint">Tap above to enter a URL and start browsing</string>
     <string name="browser_devtools">Developer tools</string>
+    <string name="browser_devtools_desc">Inject Eruda into the page for console, element inspector and network panels</string>
+    <string name="browser_find_in_page">Find in page</string>
+    <string name="browser_find_placeholder">Find on page</string>
+    <string name="browser_find_prev">Previous match</string>
+    <string name="browser_find_next">Next match</string>
+    <string name="browser_find_close">Close find bar</string>
+    <string name="browser_find_no_matches">No matches</string>
+    <string name="browser_find_matches">%1$d/%2$d</string>
     <!-- Browser（自 OpenMinis 移植）-->
 <string name="browser_downloads_cancel">Cancel download</string>
 <string name="browser_downloads_clear">Clear</string>
@@ -2121,43 +2089,6 @@
 <string name="image_saved_to_album_toast">Saved to album</string>
 <string name="image_share_chooser_title">Share image</string>
 <string name="image_share_failed_toast">Share failed: %1$s</string>
-<string name="mirror_back">Back</string>
-<string name="mirror_current_section">Current</string>
-<string name="mirror_detect_fast_label">Detect Fast Mirrors</string>
-<string name="mirror_mirrors_section">Mirrors</string>
-<string name="mirror_official_badge">Official</string>
-<string name="mirror_official_default">Official (default)</string>
-<string name="mirror_speed_test_results_section">Speed Test Results</string>
-<string name="mirror_test_speed_label">Test Speed</string>
-<string name="mirror_test_speed_testing">Testing…</string>
-<string name="mirror_timeout_label">Timeout</string>
-<string name="mirror_use_mirror_toggle">Use Mirror</string>
-<string name="rootfs_about_title">About Rootfs</string>
-<string name="rootfs_actions_section">Actions</string>
-<string name="rootfs_browse_files_label">Browse Files</string>
-<string name="rootfs_browse_section">Browse</string>
-<string name="rootfs_info_section">Info</string>
-<string name="rootfs_install_label">Install Rootfs</string>
-<string name="rootfs_installed_label">Installed</string>
-<string name="rootfs_management_title">Rootfs Management</string>
-<string name="rootfs_mirrors_section">Mirrors</string>
-<string name="rootfs_path_label">Path</string>
-<string name="rootfs_progress_section">Progress</string>
-<string name="rootfs_reset_backup_confirm_button">Reset &amp; Backup</string>
-<string name="rootfs_reset_backup_confirm_message">This will backup your /root directory, then reset the rootfs. You can restore the backup later.</string>
-<string name="rootfs_reset_backup_confirm_title">Reset with Backup?</string>
-<string name="rootfs_reset_backup_description">Save /root before resetting</string>
-<string name="rootfs_reset_backup_label">Reset &amp; Backup User Data</string>
-<string name="rootfs_reset_confirm_message">This will delete the entire rootfs. All data will be lost.</string>
-<string name="rootfs_reset_confirm_title">Reset Rootfs?</string>
-<string name="rootfs_reset_description">Delete everything and reinstall</string>
-<string name="rootfs_reset_label">Reset Rootfs</string>
-<string name="rootfs_restore_description">Restore previously backed up /root</string>
-<string name="rootfs_restore_label">Restore User Data</string>
-<string name="rootfs_result_section">Result</string>
-<string name="rootfs_size_label">Size</string>
-<string name="rootfs_status_section">Status</string>
-<string name="webapp_add_to_home">Add to Home Screen</string>
     <!-- ── Aharou Soul + Config Audit ── -->
     <string name="settings_category_aharou">Aharou</string>
     <string name="soul_settings_title">Personality (Soul)</string>
@@ -2210,7 +2141,6 @@
     <string name="config_audit_clear_confirm_title">Clear all entries?</string>
     <string name="config_audit_clear_confirm_body">%1$d entries will be permanently deleted. Applied settings are unaffected.</string>
     <string name="config_audit_revert_confirm_title">Revert this change?</string>
-    <string name="config_audit_revert_confirm_body">Writes the old value back and records a revert entry.</string>
     <string name="config_audit_revert_success_title">Reverted</string>
     <string name="config_audit_revert_success_body">The field was set back to its old value.</string>
     <string name="config_audit_revert_failed_title">Revert failed</string>
@@ -2457,42 +2387,26 @@
     <string name="memory_trace_action_unknown">Action</string>
 
     <!-- Voice input -->
-    <string name="voice_input_hold">Hold to talk</string>
-    <string name="voice_input_recording">Release to transcribe</string>
-    <string name="voice_model_downloading">Downloading voice model…</string>
     <string name="voice_model_extracting">Extracting voice model…</string>
-    <string name="voice_model_failed">Failed to prepare voice model</string>
-    <string name="voice_record_failed">Could not start recording</string>
-    <string name="voice_permission_required">Microphone permission needed, enable it in Settings</string>
     <string name="voice_call_toggle_start">Tap to start a voice call (hands-free) — tap again to stop</string>
     <string name="voice_call_toggle_stop">Voice call running — tap to stop</string>
-    <string name="voice_not_heard">Didn\'t catch that, try again</string>
     <string name="voice_tts_not_configured">No speech engine available on this device — install one, or configure cloud synthesis in Settings → Default Models</string>
     <string name="voice_tts_failed">Read aloud failed, check the synthesis model config</string>
     <string name="voice_read_aloud">Read aloud</string>
     <string name="voice_stop_read_aloud">Stop reading</string>
 
     <!-- Voice call -->
-    <string name="voice_call_title">Voice call</string>
     <string name="voice_call_state_preparing">Preparing…</string>
     <string name="voice_call_state_idle">Not listening</string>
     <string name="voice_call_state_listening">Listening…</string>
     <string name="voice_call_state_thinking">Thinking…</string>
     <string name="voice_call_state_speaking">Speaking…</string>
-    <string name="voice_call_end">Hang up</string>
-    <string name="voice_call_expand">Expand</string>
-    <string name="voice_call_collapse">Collapse</string>
-    <string name="voice_call_interrupt">Interrupt</string>
-    <string name="voice_call_no_workspace">Open a workspace first</string>
-    <string name="voice_call_failed">Couldn\'t start the call</string>
     <string name="voice_call_notification_title">Voice call in progress</string>
     <string name="voice_call_notification_text">Tap to return to Aharou</string>
     <string name="voice_wake_ack">I\'m here. What do you need?</string>
     <string name="voice_wake_title">Voice wake word</string>
     <string name="voice_wake_summary">Say "Xiaoran Xiaoran" to start talking</string>
-    <string name="voice_wake_desc">The microphone stays on to listen for the wake word. The recording indicator will remain visible and battery use will increase. We recommend allowing autostart and background running for this app.</string>
     <string name="voice_wake_on">Listening for "Xiaoran Xiaoran"</string>
-    <string name="voice_wake_off">Off</string>
     <string name="voice_wake_mic_hint">Wake word is on — tap to speak</string>
     <string name="voice_err_mic_permission">I don\'t have microphone permission. Please allow recording for me in system settings.</string>
     <string name="voice_err_model">The voice models aren\'t downloaded yet. Go to Settings → Default models → Offline voice model and tap \"Download\".</string>
@@ -2575,27 +2489,14 @@
 
     <!-- Shared knowledge base -->
     <string name="settings_knowledge_base">Knowledge Base</string>
-    <string name="knowledge_base_sync_all">Sync all</string>
-    <string name="knowledge_base_sync_all_hint">Pull the latest docs from every source</string>
-    <string name="knowledge_base_source_meta">%1$d docs · %2$s</string>
-    <string name="knowledge_base_doc_count">%1$d docs</string>
     <string name="knowledge_base_install">Install</string>
     <string name="knowledge_base_installing">Installing…</string>
     <string name="knowledge_base_uninstall">Uninstall</string>
     <string name="knowledge_base_installed_meta">Installed · %1$d docs</string>
     <string name="knowledge_base_category_all">All</string>
-    <string name="knowledge_base_category_writing">Writing</string>
-    <string name="knowledge_base_category_ai">AI</string>
-    <string name="knowledge_base_category_coding">Coding</string>
-    <string name="knowledge_base_sync">Sync</string>
     <string name="knowledge_base_remove">Remove</string>
-    <string name="knowledge_base_add_source">Add a knowledge base</string>
-    <string name="knowledge_base_add_source_label">Repository</string>
     <string name="knowledge_base_add_source_hint">e.g. owner/repo, or a full repo URL</string>
     <string name="knowledge_base_add">Add</string>
-    <string name="knowledge_base_syncing">Syncing…</string>
-    <string name="knowledge_base_synced">Synced</string>
-    <string name="knowledge_base_sync_failed">Sync failed, check your network and retry</string>
     <string name="knowledge_base_invalid_repo">That repository address is not recognised</string>
     <string name="knowledge_base_no_source">No knowledge base configured yet</string>
     <string name="chat_status_checking_dependencies">Checking dependency versions</string>
@@ -2604,46 +2505,7 @@
     <string name="dependency_check_network_failed">Couldn\'t reach repositories, versions may be stale</string>
     <string name="dependency_check_all_up_to_date">All dependencies are up to date</string>
     <string name="dependency_check_unparsed">%1$d declaration(s) couldn\'t be parsed</string>
-    <!-- Built-in AI account (self-hosted backend session and top-up) -->
-    <string name="account_error_no_session">Sign-in expired, please sign in again</string>
-    <string name="account_error_not_logged_in">Please sign in first</string>
-    <string name="account_error_token_missing">Could not obtain the API key, please try again later</string>
-    <string name="account_redeem_failed">Redemption failed, please check the code</string>
-    <string name="account_code_sent">Verification code sent, please check your email</string>
-    <string name="account_login_success">Signed in</string>
-    <string name="account_logged_out">Signed out</string>
-    <string name="account_redeem_success">Redeemed ¥%1$s</string>
-    <string name="account_provider_ready">Built-in AI is ready to use</string>
-    <string name="account_error_generic">Operation failed</string>
     <string name="account_entry_title">Personal Center</string>
-    <string name="account_sign_in_title">Sign in / Register</string>
-    <string name="account_entry_subtitle">Sign in · Redeem a code · Balance</string>
-    <string name="account_sign_in_hint">After signing in, the API key is configured for you automatically.</string>
-    <string name="account_email_label">Email</string>
-    <string name="account_email_placeholder">Your email</string>
-    <string name="account_code_label">Verification code</string>
-    <string name="account_code_placeholder">Code from your email</string>
-    <string name="account_password_label">Password</string>
-    <string name="account_password_placeholder">At least 8 characters</string>
-    <string name="account_send_code">Send code</string>
-    <string name="account_register">Register</string>
-    <string name="account_login">Sign in</string>
-    <string name="account_switch_to_login">Already have an account? Sign in</string>
-    <string name="account_switch_to_register">No account yet? Register</string>
-    <string name="account_profile_title">Account</string>
-    <string name="account_balance">Balance</string>
-    <string name="account_used">Used</string>
-    <string name="account_requests">Requests</string>
-    <string name="account_redeem_title">Redeem a code</string>
-    <string name="account_redeem_label">Redemption code</string>
-    <string name="account_redeem_placeholder">Paste your code</string>
-    <string name="account_redeem_action">Redeem</string>
-    <string name="account_actions_title">Actions</string>
-    <string name="account_provision">Reconfigure built-in AI</string>
-    <string name="account_provision_subtitle">Refresh the API key and model list</string>
-    <string name="account_logout">Sign out</string>
-    <string name="account_value_unknown">—</string>
-    <string name="account_value_cny">¥%1$s</string>
     <string name="chat_user_default_name">You</string>
     <string name="account_identity_title">My identity</string>
     <string name="account_avatar">Avatar</string>
@@ -2653,9 +2515,6 @@
     <string name="account_name_placeholder">Name shown in chat</string>
     <string name="account_avatar_error_unreadable">Could not read that image, try another one</string>
     <string name="account_avatar_error_too_large">Image is too large, try a smaller one</string>
-    <string name="account_recharge_title">Recharge</string>
-    <string name="account_recharge_now">Recharge now</string>
-    <string name="account_recharge_hint">Buy a code in the shop, then redeem it below</string>
     <string name="settings_telegram_bot">Telegram bot</string>
     <string name="im_telegram_pairing_prompt">This chat is not paired with Aharou yet. Pairing code: %1$s\nApprove it in the app under Settings → Telegram bot. The code is good for 10 minutes.</string>
     <string name="im_telegram_tool_running">Using %1$s…</string>
@@ -2770,4 +2629,64 @@
     <string name="remote_device_service_stop">Stop</string>
     <string name="remote_device_perm_title">Remote device requests to run an action</string>
     <string name="remote_device_perm_timeout">Remote action approval timed out (90 s), treated as denied</string>
+    <string name="backup_net_tab_local">Local</string>
+    <string name="backup_net_tab_network">Network</string>
+    <string name="backup_net_targets_header">Network backup targets</string>
+    <string name="backup_net_add_target">Add backup target</string>
+    <string name="backup_net_empty">No network backup targets yet</string>
+    <string name="backup_net_new_target">New backup target</string>
+    <string name="backup_net_edit_target">Edit backup target</string>
+    <string name="backup_net_name">Name</string>
+    <string name="backup_net_endpoint">Endpoint</string>
+    <string name="backup_net_endpoint_hint">e.g. https://dav.example.com/remote.php/dav/files/user/</string>
+    <string name="backup_net_endpoint_optional_hint">Leave blank to use the default AWS endpoint</string>
+    <string name="backup_net_base_path">Folder prefix (optional)</string>
+    <string name="backup_net_object_prefix">Object key prefix (optional)</string>
+    <string name="backup_net_username">Username</string>
+    <string name="backup_net_password">Password</string>
+    <string name="backup_net_bucket">Bucket</string>
+    <string name="backup_net_region">Region</string>
+    <string name="backup_net_access_key">Access Key</string>
+    <string name="backup_net_secret_key">Secret Key</string>
+    <string name="backup_net_session_token">Session token (optional)</string>
+    <string name="backup_net_path_style">Path-style addressing</string>
+    <string name="backup_net_path_style_hint">Usually required for self-hosted services such as MinIO or R2</string>
+    <string name="backup_net_required_hint">Please fill in the required fields</string>
+    <string name="backup_net_test">Test connection</string>
+    <string name="backup_net_test_ok">Connection succeeded</string>
+    <string name="backup_net_upload">Upload backup</string>
+    <string name="backup_net_upload_ok">Uploaded to network storage</string>
+    <string name="backup_net_restore">Restore</string>
+    <string name="backup_net_remote_title">Remote backups</string>
+    <string name="backup_net_empty_remote">No backups on the remote yet</string>
+    <string name="backup_net_refresh">Refresh</string>
+    <string name="backup_net_save_failed">Failed to save</string>
+    <string name="backup_net_target_missing">Backup target not found</string>
+    <string name="backup_net_password_action">Backup password</string>
+    <string name="backup_net_error_config">Incomplete configuration. Fill in the required fields.</string>
+    <string name="backup_net_error_auth">Authentication failed. Check your credentials.</string>
+    <string name="backup_net_error_not_found">Not found. Check the endpoint or bucket.</string>
+    <string name="backup_net_error_http">The service returned an error.</string>
+    <string name="backup_net_error_network">Network connection failed.</string>
+    <string name="backup_net_error_unknown">An unknown error occurred.</string>
+    <string name="browser_ua_default">System default</string>
+    <string name="browser_ua_default_desc">Use the native WebView identity</string>
+    <string name="browser_ua_android_phone">Android phone</string>
+    <string name="browser_ua_android_phone_desc">Chrome Mobile (Android)</string>
+    <string name="browser_ua_android_tablet">Android tablet</string>
+    <string name="browser_ua_android_tablet_desc">Chrome Tablet (Android)</string>
+    <string name="browser_ua_desktop_pc">Desktop PC</string>
+    <string name="browser_ua_desktop_pc_desc">Chrome Desktop (Windows PC)</string>
+    <string name="browser_ua_iphone">Apple iPhone</string>
+    <string name="browser_ua_iphone_desc">Mobile Safari (iOS)</string>
+    <string name="browser_ua_ipad">Apple iPad</string>
+    <string name="browser_ua_ipad_desc">Tablet Safari (iPadOS)</string>
+    <string name="browser_ua_custom_desc">Set a custom User-Agent string</string>
+    <string name="browser_ua_mobile_chrome_desc">Chrome Mobile (Android) (legacy)</string>
+    <string name="browser_ua_desktop_chrome_desc">Chrome Desktop (Linux) (legacy)</string>
+    <string name="browser_menu">More</string>
+    <string name="browser_menu_title">Browser settings and tools</string>
+    <string name="browser_dialog_alert_title">Page alert</string>
+    <string name="browser_dialog_confirm_title">Page confirm</string>
+    <string name="browser_dialog_prompt_title">Page input</string>
 </resources>

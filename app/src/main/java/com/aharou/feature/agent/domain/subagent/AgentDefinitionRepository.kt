@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.subagent
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.common.NameValidation
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -128,14 +129,9 @@ class AgentDefinitionRepository @Inject constructor(
         private const val TAG = "AgentDefinitionRepository"
 
         /** 名称同时用作文件名，禁掉路径分隔符与保留字符；长度上限防止极端文件名。 */
-        internal fun isValidName(name: String): Boolean {
-            if (name.isBlank() || name.length > MAX_NAME_LENGTH) return false
-            if (name == "." || name == "..") return false
-            return name.none { it in ILLEGAL_NAME_CHARS || it.isISOControl() }
-        }
+        internal fun isValidName(name: String): Boolean = NameValidation.isValid(name, MAX_NAME_LENGTH)
 
         private const val MAX_NAME_LENGTH = 40
-        private val ILLEGAL_NAME_CHARS = charArrayOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
 
         /** 合并两级来源：同名项目级覆盖全局，按名称排序。 */
         internal fun mergeAll(

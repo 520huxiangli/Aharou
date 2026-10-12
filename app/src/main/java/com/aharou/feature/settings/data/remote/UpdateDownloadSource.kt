@@ -15,9 +15,6 @@ object UpdateDownloadSource {
     const val GITHUB_OWNER = "520huxiangli"
     const val GITHUB_REPO = "Aharou"
 
-    /** 本仓库发版资产名的统一前缀。 */
-    const val ASSET_PREFIX = "Aharou-"
-
     private const val GITHUB_BASE = "https://github.com/$GITHUB_OWNER/$GITHUB_REPO"
 
     /**

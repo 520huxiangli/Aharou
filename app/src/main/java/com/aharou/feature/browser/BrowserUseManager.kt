@@ -8,6 +8,7 @@ import android.os.Looper
 import android.os.Message
 import android.util.Base64
 import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -19,6 +20,7 @@ import android.webkit.WebViewClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +30,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import kotlin.coroutines.resume
 
 /**
  * Manages a single Android WebView for browser automation.
@@ -55,6 +58,11 @@ class BrowserUseManager(
         private const val SCREENSHOT_QUALITY = 80        // Explicit screenshot action (iOS: 0.8)
         private const val SNAPSHOT_QUALITY = 70          // Auto-snapshot after visual-change actions (iOS: 0.7)
         private const val DEFAULT_DOM_STABLE_TIMEOUT_MS = 5_000
+        /** 截图前等待页面加载结束的上限；到点即放弃等待，保证不无限挂起。 */
+        private const val SCREENSHOT_LOAD_TIMEOUT_MS = 10_000L
+        /** 导航刚被触发时 _isLoading 可能还没置位，先让出这一小段再轮询。 */
+        private const val SCREENSHOT_SETTLE_MS = 250L
+        private const val SCREENSHOT_POLL_MS = 100L
 
         /**
          * Cap full_page screenshot stretched viewport at 32768 px. Above this,
@@ -143,6 +151,20 @@ class BrowserUseManager(
      */
     private val dialogQueue = InterceptedDialogQueue()
 
+    /** [T-android-js-dialogs-256] 面板可见时把 alert/confirm/prompt 交给用户处理，
+     *  离屏时沿用保守默认应答并记账。见 [JsDialogController]。 */
+    private val jsDialogs = JsDialogController(
+        isUiVisible = { BrowserUiSession.isAttached },
+        record = { kind, message, defaultText, defaultResponse ->
+            val url = _currentURL.value
+            dialogQueue.record(kind, message, defaultText, url.ifEmpty { null }, defaultResponse)
+            Log.i(TAG, "[JSDialog] intercepted $kind on $url — answered $defaultResponse")
+        },
+    )
+
+    /** 面板可见时等待用户在面板内处理的网页对话框；否则为 null。 */
+    val pendingDialog: StateFlow<PendingJsDialog?> get() = jsDialogs.pending
+
     private val _pageTitle = MutableStateFlow("")
     val pageTitle: StateFlow<String> = _pageTitle.asStateFlow()
 
@@ -156,6 +178,12 @@ class BrowserUseManager(
     val canGoForward: StateFlow<Boolean> = _canGoForward.asStateFlow()
 
     private var currentProfile: UserAgentProfile = profile
+
+    /**
+     * [T-android-browser-ua-default] 设备原始系统 UA。字段声明的初始化早于 init 块里的
+     * [configureWebView] 改写，因此这里拿到的就是 WebView 默认 UA；DEFAULT 档位切回时还原它。
+     */
+    private val systemUserAgent: String = webView.settings.userAgentString
 
     /** Callback for window.open / target="_blank" — TabPool hooks this. */
     var onNewWindow: ((Message) -> Unit)? = null
@@ -409,6 +437,7 @@ class BrowserUseManager(
                         "window.dispatchEvent(new Event('resize'));", null,
                     )
                 }, 80)
+                BrowserEruda.onPageFinished(view)
             }
 
             override fun onReceivedError(
@@ -563,92 +592,23 @@ class BrowserUseManager(
                 onCloseWindow?.invoke()
             }
 
-            // [T-android-js-dialogs-256] Answer JS dialogs with a conservative
-            // default INSTEAD of showing them, and record what happened.
-            //
-            // This is unattended automation: showing a modal would block the
-            // page's JS thread on a human who isn't there, wedging the agent
-            // loop until the action dead-timeout fires. So the page is always
-            // answered immediately and never actually blocks — the only change
-            // versus the old silent-swallow behaviour is that the model now
-            // finds out it happened (see drainInterceptedDialogReport).
-            //
-            // confirm() answers false and prompt() answers null deliberately:
-            // the agent must not silently consent on the user's behalf to
-            // whatever was asked. The user-facing web preview does the exact
-            // opposite and shows real dialogs; see WebViewHolder.
-            //
-            // Returning true is what claims the dialog. Returning false (the
-            // WebChromeClient default) would let WebView apply the same default
-            // itself, but with no record — which is exactly the bug.
-
-            override fun onJsAlert(
-                view: WebView?,
-                url: String?,
-                message: String?,
-                result: android.webkit.JsResult?,
-            ): Boolean {
-                recordInterceptedDialog(
-                    kind = "alert",
-                    message = message.orEmpty(),
-                    defaultText = null,
-                    defaultResponse = "(dismissed)",
-                )
-                result?.confirm()
+            override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                BrowserConsoleStore.record(webView, msg)
                 return true
             }
 
-            override fun onJsConfirm(
-                view: WebView?,
-                url: String?,
-                message: String?,
-                result: android.webkit.JsResult?,
-            ): Boolean {
-                recordInterceptedDialog(
-                    kind = "confirm",
-                    message = message.orEmpty(),
-                    defaultText = null,
-                    defaultResponse = "false",
-                )
-                result?.cancel()
-                return true
-            }
+            // [T-android-js-dialogs-256] 面板可见时交给用户在面板内处理；离屏（AI 后台）时
+            // 沿用保守默认应答并记账。返回 true 表示已认领该对话框（返回 false 会让 WebView
+            // 用同样的默认值自行应答，但没有记账——正是原来的 bug）。见 [JsDialogController]。
+            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean =
+                jsDialogs.alert(message.orEmpty(), result)
 
-            override fun onJsPrompt(
-                view: WebView?,
-                url: String?,
-                message: String?,
-                defaultValue: String?,
-                result: android.webkit.JsPromptResult?,
-            ): Boolean {
-                recordInterceptedDialog(
-                    kind = "prompt",
-                    message = message.orEmpty(),
-                    defaultText = defaultValue,
-                    defaultResponse = "null",
-                )
-                result?.cancel()
-                return true
-            }
+            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: android.webkit.JsResult?): Boolean =
+                jsDialogs.confirm(message.orEmpty(), result)
+
+            override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: android.webkit.JsPromptResult?): Boolean =
+                jsDialogs.prompt(message.orEmpty(), defaultValue, result)
         }
-    }
-
-    /** [T-android-js-dialogs-256] Record an intercepted dialog for the model. */
-    private fun recordInterceptedDialog(
-        kind: String,
-        message: String,
-        defaultText: String?,
-        defaultResponse: String,
-    ) {
-        val url = _currentURL.value
-        dialogQueue.record(
-            kind = kind,
-            message = message,
-            defaultText = defaultText,
-            pageURL = url.ifEmpty { null },
-            defaultResponse = defaultResponse,
-        )
-        Log.i(TAG, "[JSDialog] intercepted $kind on $url — answered $defaultResponse")
     }
 
     /**
@@ -657,6 +617,9 @@ class BrowserUseManager(
      * reported exactly once. Called by [BrowserTabPool] on the next tool result.
      */
     fun drainInterceptedDialogReport(): String? = dialogQueue.drainReport()
+
+    /** [T-android-js-dialogs-256] 面板侧处理用户对挂起网页对话框的选择。 */
+    fun resolvePendingJsDialog(accept: Boolean, text: String?) = jsDialogs.resolve(accept, text)
 
     // -- Execute Action --
 
@@ -685,6 +648,8 @@ class BrowserUseManager(
                 input.scrollCount, input.itemSelector, input.keywords,
             )
             BrowserAction.WAIT_FOR_DOM_STABLE -> return waitForDomStable(input.timeoutMs)
+            BrowserAction.CONSOLE, BrowserAction.WAIT, BrowserAction.PRESS, BrowserAction.SELECT ->
+                return BrowserExtras.run(webView, input)
             BrowserAction.NEW_TAB, BrowserAction.CLOSE_TAB, BrowserAction.LIST_TABS ->
                 return BrowserActionResult.error("Tab management actions must be routed through BrowserTabPool")
         }
@@ -813,6 +778,8 @@ class BrowserUseManager(
     // -- Screenshot --
 
     private suspend fun screenshot(fullPage: Boolean = false): BrowserActionResult {
+        // [T-android-screenshot-stability] 导航进行中 WebView 呈现的仍是上一个页面，先等加载结束。
+        awaitPageSettled()
         var truncated = false
         var originalHeightPx = 0
         var didStretch = false
@@ -952,9 +919,9 @@ class BrowserUseManager(
      * that don't save an imageFilePath (get_readable, get_text, execute_js, etc.).
      * [maxW]/[maxH] 是预览帧的物理像素上限，超过则等比缩放后绘制；0 = 原尺寸。
      */
-    suspend fun captureLiveSnapshot(maxW: Int, maxH: Int): Bitmap? = captureWebViewBitmap(maxW, maxH)
+    suspend fun captureLiveSnapshot(maxW: Int, maxH: Int): Bitmap? = captureWebViewBitmap(maxW, maxH, awaitVisual = false)
 
-    private suspend fun captureWebViewBitmap(maxW: Int = 0, maxH: Int = 0): Bitmap? = withContext(Dispatchers.Main) {
+    private suspend fun captureWebViewBitmap(maxW: Int = 0, maxH: Int = 0, awaitVisual: Boolean = true): Bitmap? = withContext(Dispatchers.Main) {
         try {
             // WebView may be detached (pool-owned, never added to a window), so
             // width/height can be 0. Ensure it has a layout box matching the
@@ -985,6 +952,9 @@ class BrowserUseManager(
             } else {
                 val scale = if (maxW > 0 && maxH > 0) minOf(maxW.toFloat() / w, maxH.toFloat() / h, 1f) else 1f
                 val bitmap = Bitmap.createBitmap((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+                // [T-android-screenshot-stability] 切层/重绘会滞后一帧，等一次视觉状态提交再绘制。
+                // 实时预览（captureLiveSnapshot）跳过此等待，避免定时截图每次都被挂起。
+                if (awaitVisual) waitForVisualState()
                 webView.draw(Canvas(bitmap).apply { scale(scale, scale) })
                 Log.d(TAG, "captureWebViewBitmap ${w}x$h scale=$scale")
                 bitmap
@@ -996,6 +966,32 @@ class BrowserUseManager(
             // 注意：w/h 是 try 内的局部变量，catch 块里不可见，这里取 webView 自身尺寸。
             Log.e(TAG, "captureWebViewBitmap OOM（${webView.width}x${webView.height}）")
             null
+        }
+    }
+
+    /**
+     * [T-android-screenshot-stability] 截图前等待页面加载结束：导航进行中 WebView 呈现的仍是
+     * 上一个页面，直接绘制会截到旧帧。导航刚被触发时 `_isLoading` 可能还没置位，先让出一小段
+     * 再轮询。[timeoutMs] 到点即放弃（截图仍会产出，只是可能不完整），保证工具不因卡住的页面永久挂起。
+     */
+    private suspend fun awaitPageSettled(timeoutMs: Long = SCREENSHOT_LOAD_TIMEOUT_MS) {
+        delay(SCREENSHOT_SETTLE_MS)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (_isLoading.value && System.currentTimeMillis() < deadline) delay(SCREENSHOT_POLL_MS)
+    }
+
+    /**
+     * [T-android-screenshot-stability] 等一次视觉状态提交（postVisualStateCallback）再绘制，
+     * 避免截到切换层/重绘前的旧帧。WebView 离屏持有（未挂窗口）时该回调可能不触发，
+     * [timeoutMs] 到点即继续。
+     */
+    private suspend fun waitForVisualState(timeoutMs: Long = 1_000L) = withTimeoutOrNull(timeoutMs) {
+        suspendCancellableCoroutine { cont ->
+            webView.postVisualStateCallback(1L, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    if (cont.isActive) cont.resume(Unit)
+                }
+            })
         }
     }
 
@@ -1230,8 +1226,11 @@ class BrowserUseManager(
     /** Set user agent from UI settings (public, non-result). */
     fun setUserAgent(profile: UserAgentProfile, customUA: String? = null) {
         currentProfile = profile
-        val ua = if (profile == UserAgentProfile.CUSTOM && !customUA.isNullOrEmpty()) customUA
-            else profile.userAgentString
+        val ua = when {
+            profile == UserAgentProfile.CUSTOM -> customUA?.takeIf { it.isNotEmpty() }
+            profile == UserAgentProfile.DEFAULT -> systemUserAgent
+            else -> profile.userAgentString
+        }
         if (ua != null) {
             webView.settings.userAgentString = ua
         }
@@ -1294,7 +1293,7 @@ class BrowserUseManager(
     private suspend fun setUserAgent(profile: UserAgentProfile?): BrowserActionResult {
         val newProfile = profile ?: UserAgentProfile.MOBILE_CHROME
         currentProfile = newProfile
-        val ua = newProfile.userAgentString
+        val ua = if (newProfile == UserAgentProfile.DEFAULT) systemUserAgent else newProfile.userAgentString
         // Every WebView method must be called on the main thread, but the
         // offload handler's `runBlocking { ... execute(...) }` dispatches on
         // a worker. `applyViewport(...)` measures/layouts the detached
@@ -1564,7 +1563,7 @@ class BrowserUseManager(
             if (cls.isNotEmpty()) append(" .${cls.replace(" ", ".")}")
             val role = node.optString("role", "")
             if (role.isNotEmpty()) append(" [$role]")
-            append(" | $sel | $rect")
+            append(" | $sel | $rect" + if (node.has("ref")) " | ref=${node.optString("ref")}" else "")
         }
         sb.appendLine(header)
 

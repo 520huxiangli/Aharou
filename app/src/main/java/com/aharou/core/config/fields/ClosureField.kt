@@ -55,26 +55,3 @@ class ReadOnlyField(
         throw ConfigError.PermissionDenied("Read-only")
     }
 }
-
-/**
- * A field that exists purely to be hidden. The registry keeps it
- * around so the bridge can return a precise `permission_denied` rather
- * than leaking implementation details with `unknown_path`.
- */
-class HiddenField(
-    override val path: String,
-    override val displayName: String,
-    override val description: String,
-    private val reason: String,
-) : ConfigField {
-    override val valueSchema: ConfigSchema get() = ConfigSchema.Json
-    override val access: ConfigAccess get() = ConfigAccess.HIDDEN
-    override val risk: ConfigRisk get() = ConfigRisk.DESTRUCTIVE
-    override val revertable: Boolean get() = false
-    override fun read(): ConfigValue {
-        throw ConfigError.PermissionDenied(reason)
-    }
-    override fun write(value: ConfigValue) {
-        throw ConfigError.PermissionDenied(reason)
-    }
-}

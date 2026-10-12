@@ -65,7 +65,6 @@ internal class VoiceCallSession @Inject constructor(
 
     /** 边说边出的实时识别文本，供界面显示；不在收音时为空串。 */
     private val _liveText = MutableStateFlow("")
-    val liveText: StateFlow<String> = _liveText.asStateFlow()
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()

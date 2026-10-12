@@ -48,6 +48,7 @@ import dagger.hilt.android.EntryPointAccessors
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Box
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Download
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Terminal
 import com.aharou.R
@@ -65,7 +66,8 @@ internal fun McpSection(
     onToggle: (String, Boolean, McpScope) -> Unit,
     onEdit: (McpServerEntry) -> Unit,
     onDelete: (String, McpScope) -> Unit,
-    onBrowseDirectory: () -> Unit
+    onBrowseDirectory: () -> Unit,
+    onImportJson: () -> Unit
 ) {
     val context = LocalContext.current
     val oauthController = remember(context) {
@@ -87,6 +89,13 @@ internal fun McpSection(
                 title = stringResource(R.string.mcp_browse_directory),
                 subtitle = stringResource(R.string.mcp_browse_directory_hint),
                 onClick = onBrowseDirectory
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Download,
+                title = stringResource(R.string.mcp_import_json),
+                subtitle = stringResource(R.string.mcp_import_json_hint),
+                onClick = onImportJson
             )
         }
 

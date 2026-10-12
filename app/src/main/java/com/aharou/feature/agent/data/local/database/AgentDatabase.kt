@@ -17,6 +17,8 @@ import com.aharou.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.data.local.entity.TodoItemEntity
+import com.aharou.feature.backup.data.local.dao.BackupTargetDao
+import com.aharou.feature.backup.data.local.entity.BackupTargetEntity
 import com.aharou.feature.settings.data.local.dao.AIProviderDao
 import com.aharou.feature.settings.data.local.entity.AIProviderEntity
 import com.aharou.feature.workspace.data.local.dao.RemoteConnectionDao
@@ -24,7 +26,7 @@ import com.aharou.feature.workspace.data.local.entity.RemoteConnectionEntity
 import com.aharou.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
-    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class],
+    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class, BackupTargetEntity::class],
     version = AgentDatabase.SCHEMA_VERSION,
     exportSchema = true
 )
@@ -38,9 +40,10 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun todoItemDao(): TodoItemDao
     abstract fun checkpointDao(): CheckpointDao
     abstract fun llmCallRecordDao(): LlmCallRecordDao
+    abstract fun backupTargetDao(): BackupTargetDao
 
     companion object {
-        const val SCHEMA_VERSION = 68
+        const val SCHEMA_VERSION = 69
 
         /** 数据库文件名（落在 `databases/` 下，另有 Room 默认 WAL 模式产生的 `-wal`/`-shm`）。 */
         const val DATABASE_NAME = "aicode_agent_db"

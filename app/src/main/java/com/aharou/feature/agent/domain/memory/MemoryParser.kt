@@ -1,7 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
-import org.yaml.snakeyaml.Yaml
+import com.aharou.feature.agent.domain.common.Frontmatter
 import java.io.File
 
 object MemoryParser {
@@ -28,7 +28,7 @@ object MemoryParser {
             return null
         }
 
-        val (frontmatter, body) = splitAndParseFrontmatter(text)
+        val (frontmatter, body) = Frontmatter.splitAndParse(text, TAG, "解析 YAML 失败")
 
         val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension
         val description = (frontmatter["description"]?.toString() ?: "").take(MAX_DESC_CHARS)
@@ -74,20 +74,11 @@ object MemoryParser {
      * 其余一律当普通事实，宁可多注入一点也不要误把长期知识标成事件而丢出清单。
      */
     private fun inferType(name: String): MemoryType {
-        if (isCoreName(name)) return MemoryType.IDENTITY
+        if (isCoreArchiveName(name)) return MemoryType.IDENTITY
         if (DATE_SUFFIX.containsMatchIn(name)) return MemoryType.EVENT
         val lower = name.lowercase()
         if (EVENT_MARKERS.any { lower.contains(it) }) return MemoryType.EVENT
         return MemoryType.FACT
-    }
-
-    /**
-     * 核心档案：基名全大写（CORE / GLOBAL / SOUL / OPS / PROFILE / SECRETS / LIFE / L0_AGENT …）。
-     * 与 MemoryRepository 的判定保持一致：这些是身份与长期约定，永远算 identity、永远不遗忘。
-     */
-    private fun isCoreName(name: String): Boolean {
-        val base = name.substringBeforeLast('.').uppercase()
-        return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 
     /** 解析显式声明的 `keywords`，兼容 YAML 列表与逗号串两种写法。 */
@@ -131,27 +122,5 @@ object MemoryParser {
         } else {
             value
         }
-    }
-
-    private fun splitAndParseFrontmatter(text: String): Pair<Map<String, Any>, String> {
-        val normalized = text.replace("\r\n", "\n")
-        if (!normalized.startsWith("---\n")) return emptyMap<String, Any>() to normalized
-
-        val end = normalized.indexOf("\n---", startIndex = 3)
-        if (end < 0) return emptyMap<String, Any>() to normalized
-
-        val block = normalized.substring(4, end)
-        val rest = normalized.substring(end + 4).removePrefix("\n")
-
-        val map = try {
-            val yaml = Yaml()
-            val loaded = yaml.load<Map<String, Any>>(block)
-            loaded ?: emptyMap()
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "解析 YAML 失败", e)
-            emptyMap()
-        }
-
-        return map to rest
     }
 }

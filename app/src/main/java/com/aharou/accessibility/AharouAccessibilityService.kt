@@ -102,14 +102,6 @@ class AharouAccessibilityService : AccessibilityService() {
 
     fun snapshotEvents(): List<RecordedEvent> = eventRing.toList()
 
-    fun addEventListener(listener: (RecordedEvent) -> Unit) {
-        eventListeners.add(listener)
-    }
-
-    fun removeEventListener(listener: (RecordedEvent) -> Unit) {
-        eventListeners.remove(listener)
-    }
-
     fun rootNodes(): List<AccessibilityNodeInfo> {
         val out = ArrayList<AccessibilityNodeInfo>()
         try {
@@ -202,47 +194,6 @@ class AharouAccessibilityService : AccessibilityService() {
         }
         Handler(Looper.getMainLooper()).post { dispatchGesture(gesture, callback, null) }
         return done.await(timeoutMs, TimeUnit.MILLISECONDS) && ok[0]
-    }
-
-    fun dispatchPinch(cx: Float, cy: Float, scale: Float, durationMs: Long): Boolean {
-        val initialOffset = 200f
-        val finalOffset = (initialOffset * scale).coerceAtLeast(20f)
-        val (s0, e0) = if (scale > 1f) {
-            (cx - finalOffset to cy) to (cx - initialOffset to cy)
-        } else {
-            (cx - initialOffset to cy) to (cx - finalOffset to cy)
-        }
-        val (s1, e1) = if (scale > 1f) {
-            (cx + finalOffset to cy) to (cx + initialOffset to cy)
-        } else {
-            (cx + initialOffset to cy) to (cx + finalOffset to cy)
-        }
-        val p0 = Path().apply { moveTo(s0.first, s0.second); lineTo(e0.first, e0.second) }
-        val p1 = Path().apply { moveTo(s1.first, s1.second); lineTo(e1.first, e1.second) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(p0, 0, durationMs))
-            .addStroke(GestureDescription.StrokeDescription(p1, 0, durationMs))
-            .build()
-        val done = CountDownLatch(1)
-        val ok = booleanArrayOf(false)
-        Handler(Looper.getMainLooper()).post {
-            dispatchGesture(
-                gesture,
-                object : GestureResultCallback() {
-                    override fun onCompleted(g: GestureDescription?) {
-                        ok[0] = true
-                        done.countDown()
-                    }
-
-                    override fun onCancelled(g: GestureDescription?) {
-                        ok[0] = false
-                        done.countDown()
-                    }
-                },
-                null,
-            )
-        }
-        return done.await(durationMs + 2000, TimeUnit.MILLISECONDS) && ok[0]
     }
 
     /** 截图结果；成功时 [bitmap] 非空，调用方负责 recycle。 */

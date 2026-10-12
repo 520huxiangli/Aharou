@@ -1,7 +1,6 @@
 package com.aharou.feature.voice.data
 
 import com.aharou.core.net.AppProxy
-import com.aharou.core.util.FileLogger
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -9,14 +8,13 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
- * 云端语音服务客户端：走 OpenAI 兼容的 `/audio/transcriptions`（识别）与 `/audio/speech`（合成）。
+ * 云端语音服务客户端：走 OpenAI 兼容的 `/audio/speech`（合成）。
  *
  * 之所以只做这一套协议：它是事实标准，OpenAI、Groq、硅基流动、阿里百炼、各类中转站都兼容或近似兼容，
  * 用户填 baseUrl + key + 模型名即可，无需为每家写一套签名适配（讯飞/百度那种私有鉴权不在范围内）。
@@ -32,50 +30,6 @@ internal class CloudSpeechClient @Inject constructor() {
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS)
             .build()
-    }
-
-    /**
-     * 云端语音识别。
-     *
-     * @param baseUrl 服务商地址，可带或不带 `/v1`（自动补全）
-     * @return 识别文本
-     * @throws IOException 网络或服务端错误
-     */
-    suspend fun transcribe(
-        baseUrl: String,
-        apiKey: String,
-        model: String,
-        samples: FloatArray,
-        sampleRate: Int,
-        language: String? = null,
-    ): String = withContext(Dispatchers.IO) {
-        val wav = WavEncoder.encode(samples, sampleRate)
-        val builder = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "file", "audio.wav",
-                wav.toRequestBody("audio/wav".toMediaType())
-            )
-            .addFormDataPart("model", model)
-            .addFormDataPart("response_format", "json")
-        language?.takeIf { it.isNotBlank() }?.let { builder.addFormDataPart("language", it) }
-
-        val request = Request.Builder()
-            .url(endpoint(baseUrl, "audio/transcriptions"))
-            .header("Authorization", "Bearer $apiKey")
-            .post(builder.build())
-            .build()
-
-        client.newCall(request).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                throw IOException("转录失败 HTTP ${resp.code}：${body.take(200)}")
-            }
-            // 标准返回 {"text": "..."}；个别服务包一层 {"data":{"text":...}} 或直接给纯文本
-            runCatching { JSONObject(body).optString("text") }.getOrNull()?.takeIf { it.isNotBlank() }
-                ?: runCatching { JSONObject(body).optJSONObject("data")?.optString("text") }.getOrNull()
-                    ?.takeIf { it.isNotBlank() }
-                ?: body.trim().takeIf { !it.startsWith("{") }.orEmpty()
-        }
     }
 
     /**
@@ -129,9 +83,5 @@ internal class CloudSpeechClient @Inject constructor() {
         if (base.contains("/audio/")) return base
         if (!base.endsWith("/v1")) base += "/v1"
         return "$base/$path"
-    }
-
-    private companion object {
-        const val TAG = "CloudSpeechClient"
     }
 }

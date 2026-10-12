@@ -117,13 +117,10 @@ import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.X
 import androidx.compose.ui.res.stringResource
 import com.aharou.R
-import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.delay
 
 /**
@@ -1517,19 +1514,6 @@ internal fun sessionGroupKey(updatedAt: Long, now: Long): String {
         days <= 30L -> "30d"
         else -> YearMonth.from(day).toString()
     }
-}
-
-@Composable
-private fun sessionGroupLabel(groupKey: String, anchorSession: ChatSession): String = when (groupKey) {
-    "pinned" -> stringResource(R.string.session_group_pinned)
-    "today" -> stringResource(R.string.session_group_today)
-    "yesterday" -> stringResource(R.string.session_group_yesterday)
-    "7d" -> stringResource(R.string.session_group_last_7_days)
-    "30d" -> stringResource(R.string.session_group_last_30_days)
-    else -> SimpleDateFormat(
-        stringResource(R.string.session_group_month_format),
-        Locale.getDefault()
-    ).format(Date(anchorSession.updatedAt))
 }
 
 /**

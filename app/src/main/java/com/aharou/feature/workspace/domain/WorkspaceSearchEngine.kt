@@ -108,6 +108,35 @@ class WorkspaceSearchEngine @Inject constructor(
         return searchWithRipgrep(query) ?: searchByWalking(query)
     }
 
+    /**
+     * 列出当前工作区内的文件相对路径（供输入框 @ 引用等只需文件清单的场景）。
+     * 与 [search] 同一套获取方式：优先容器内 `rg --files`，不可用再回退 App 内遍历；
+     * 工作区未就绪或两条路都拿不到时返回 null。
+     */
+    suspend fun listWorkspaceFiles(): List<String>? {
+        val projectPath = workspaceRepository.currentPath().takeIf { it.isNotBlank() } ?: return null
+
+        val listed = commandEngine.runCommandSyncIfReady(
+            command = "rg --files --no-config --hidden . | head -n $MAX_LISTED_FILES",
+            projectPath = projectPath,
+            timeoutMs = SEARCH_TIMEOUT_MS
+        )
+        if (listed != null && !isRgMissing(listed.output)) {
+            return listed.output.lineSequence()
+                .filter { it.isNotBlank() }
+                .map { it.removePrefix("./") }
+                .toList()
+        }
+
+        return runCatching {
+            fileAccess.listFilesRecursive(WorkspacePathMapper.CONTAINER_ROOT, FALLBACK_MAX_DEPTH)
+                .filterNot { rel -> rel.split('/').any { it == ".git" } }
+        }.getOrElse { error ->
+            FileLogger.w(TAG, "遍历工作区失败", error)
+            null
+        }
+    }
+
     // ── 主路径：容器内 ripgrep ──
 
     private suspend fun searchWithRipgrep(query: String): WorkspaceSearchResult? {

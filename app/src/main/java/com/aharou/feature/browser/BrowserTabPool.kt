@@ -151,7 +151,6 @@ class BrowserTabPool(private val context: Context) {
         }
 
     private val _userAgentProfile = MutableStateFlow(UserAgentProfile.MOBILE_CHROME)
-    val currentUserAgentProfile: StateFlow<UserAgentProfile> = _userAgentProfile.asStateFlow()
     private var userAgentProfile: UserAgentProfile
         get() = _userAgentProfile.value
         set(value) { _userAgentProfile.value = value }
@@ -253,6 +252,7 @@ class BrowserTabPool(private val context: Context) {
         this.sessionId = sessionId
         loadSavedState()
     }
+    fun setUiAttached(uiContext: Context?) = BrowserUiSession.setUiAttached(uiContext)
 
     // -- Downloads --
 
@@ -507,8 +507,7 @@ class BrowserTabPool(private val context: Context) {
 
     /**
      * Execute a browser action. Routes to the correct tab, acquires it, and executes.
-     */
-    /**
+     *
      * @param singleTab [T-browser-readaction-follow-tab-and-yolo-android] YOLO
      *   mode: when true, ALL tab-less actions (including navigate) bypass the
      *   implicit-tab fan-out and target [selectedTabId] serially. This is the
@@ -794,7 +793,7 @@ class BrowserTabPool(private val context: Context) {
         if (tabs.size >= MAX_TABS) return null
 
         val id = nextTabId++
-        val webView = WebView(context)
+        val webView = WebView(BrowserUiSession.webViewContext(context))
         // [T-android-minis-url-session-scope] Hand the manager a LIVE reader of
         // this pool's session id (set later via setSession) plus a context, so
         // `aharou://workspace/...` resolves against this chat's sandbox instead
@@ -921,7 +920,7 @@ class BrowserTabPool(private val context: Context) {
             return
         }
         val id = nextTabId++
-        val newWebView = WebView(context)
+        val newWebView = WebView(BrowserUiSession.webViewContext(context))
         val manager = BrowserUseManager(
             newWebView,
             userAgentProfile,
@@ -1127,11 +1126,6 @@ class BrowserTabPool(private val context: Context) {
         }
         return userAgentProfile.viewportSize
     }
-
-    /** True if a session or global custom viewport is active. */
-    fun hasCustomViewport(): Boolean =
-        (_sessionViewportWidth.value > 0 && _sessionViewportHeight.value > 0) ||
-            (_customViewportWidth.value > 0 && _customViewportHeight.value > 0)
 
     /**
      * Set the app-wide custom viewport. Persists to SharedPreferences so it

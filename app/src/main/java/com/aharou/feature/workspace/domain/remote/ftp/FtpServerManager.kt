@@ -165,11 +165,6 @@ class FtpServerManager @Inject constructor(
         startServerInternal()
     }
 
-    suspend fun stopServer() = withContext(Dispatchers.IO) {
-        if (!_isRunning.value) return@withContext
-        stopServerInternal()
-    }
-
     private fun startServerInternal(): Boolean {
         try {
             _errorMessage.value = null

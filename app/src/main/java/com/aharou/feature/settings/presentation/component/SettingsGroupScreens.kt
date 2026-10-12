@@ -117,9 +117,8 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
         SettingsGroup {
             SettingsRow(
                 icon = FeatherIcons.User,
-                title = stringResource(SettingsSection.BuiltinAi.titleRes),
-                subtitle = stringResource(R.string.account_entry_subtitle),
-                onClick = { onOpen(SettingsSection.BuiltinAi) }
+                title = stringResource(SettingsSection.AccountCenter.titleRes),
+                onClick = { onOpen(SettingsSection.AccountCenter) }
             )
             SettingsDivider()
             SettingsRow(

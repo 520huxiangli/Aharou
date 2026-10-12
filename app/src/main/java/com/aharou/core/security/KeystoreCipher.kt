@@ -2,6 +2,8 @@ package com.aharou.core.security
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
+import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.util.Base64
 import javax.crypto.Cipher
@@ -19,6 +21,7 @@ import javax.crypto.spec.GCMParameterSpec
  * 明文兼容：解密入口对非密文输入原样返回，便于旧明文数据的平滑迁移。
  */
 object KeystoreCipher {
+    private const val TAG = "KeystoreCipher"
     private const val PROVIDER = "AndroidKeyStore"
     private const val ALIAS = "aicode_secret_v1"
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -64,11 +67,18 @@ object KeystoreCipher {
 
     fun decryptBytes(encrypted: ByteArray): ByteArray {
         require(isEncryptedBytes(encrypted)) { "不是加密数据" }
-        val iv = encrypted.copyOfRange(BYTE_MAGIC.size, BYTE_MAGIC.size + IV_LEN)
-        val ciphertext = encrypted.copyOfRange(BYTE_MAGIC.size + IV_LEN, encrypted.size)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-        return cipher.doFinal(ciphertext)
+        return try {
+            val iv = encrypted.copyOfRange(BYTE_MAGIC.size, BYTE_MAGIC.size + IV_LEN)
+            val ciphertext = encrypted.copyOfRange(BYTE_MAGIC.size + IV_LEN, encrypted.size)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.doFinal(ciphertext)
+        } catch (e: GeneralSecurityException) {
+            // 密钥与密文不匹配（换机、清数据后 Keystore 重建、字段被截断）时返回空数据而非抛出，
+            // 避免单个坏字段把整条读取流程带崩。
+            Log.w(TAG, "密文解密失败，按空数据降级", e)
+            ByteArray(0)
+        }
     }
 
     fun isEncryptedString(value: String?): Boolean = value != null && value.startsWith(STRING_PREFIX)
@@ -82,7 +92,13 @@ object KeystoreCipher {
     /** 解密字符串；非密文（旧明文）原样返回。 */
     fun decryptString(value: String): String {
         if (!isEncryptedString(value)) return value
-        val body = Base64.getDecoder().decode(value.removePrefix(STRING_PREFIX))
-        return String(decryptBytes(body), Charsets.UTF_8)
+        return try {
+            val body = Base64.getDecoder().decode(value.removePrefix(STRING_PREFIX))
+            String(decryptBytes(body), Charsets.UTF_8)
+        } catch (e: IllegalArgumentException) {
+            // 密文结构损坏（坏 base64、被截断）时按空串降级。
+            Log.w(TAG, "密文字符串格式不合法，按空值降级", e)
+            ""
+        }
     }
 }

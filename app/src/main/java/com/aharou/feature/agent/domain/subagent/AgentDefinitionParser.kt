@@ -1,10 +1,10 @@
 package com.aharou.feature.agent.domain.subagent
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.common.Frontmatter
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.workspace.domain.FileAccessProvider
-import org.yaml.snakeyaml.Yaml
 
 /**
  * 解析单个子代理定义文件（`agents/<name>.md`）：YAML frontmatter 为配置，正文为 agent 提示词。
@@ -21,7 +21,7 @@ object AgentDefinitionParser {
             return null
         }
 
-        val (frontmatter, body) = splitAndParseFrontmatter(text)
+        val (frontmatter, body) = Frontmatter.splitAndParse(text, TAG, "解析子代理定义 YAML 失败")
         val prompt = body.trim()
         if (prompt.isEmpty()) return null
 
@@ -71,25 +71,6 @@ object AgentDefinitionParser {
         return parsed.ifEmpty { AgentDefinition.DEFAULT_INJECT }
     }
 
-    private fun splitAndParseFrontmatter(text: String): Pair<Map<String, Any>, String> {
-        val normalized = text.replace("\r\n", "\n")
-        if (!normalized.startsWith("---\n")) return emptyMap<String, Any>() to normalized
-
-        val end = normalized.indexOf("\n---", startIndex = 3)
-        if (end < 0) return emptyMap<String, Any>() to normalized
-
-        val block = normalized.substring(4, end)
-        val rest = normalized.substring(end + 4).removePrefix("\n")
-
-        val map = try {
-            Yaml().load<Map<String, Any>>(block) ?: emptyMap()
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "解析子代理定义 YAML 失败", e)
-            emptyMap()
-        }
-        return map to rest
-    }
-
     private val VALID_EFFORTS = ReasoningEffort.entries.mapNotNull { it.apiValue }.toSet()
 
     /**
@@ -111,10 +92,10 @@ object AgentDefinitionParser {
         prompt: String
     ): String = buildString {
         appendLine("---")
-        appendLine("name: ${quote(name)}")
-        appendLine("description: ${quote(description)}")
-        providerId?.takeIf { it.isNotBlank() }?.let { appendLine("provider: ${quote(it)}") }
-        model?.takeIf { it.isNotBlank() }?.let { appendLine("model: ${quote(it)}") }
+        appendLine("name: ${Frontmatter.quote(name)}")
+        appendLine("description: ${Frontmatter.quote(description)}")
+        providerId?.takeIf { it.isNotBlank() }?.let { appendLine("provider: ${Frontmatter.quote(it)}") }
+        model?.takeIf { it.isNotBlank() }?.let { appendLine("model: ${Frontmatter.quote(it)}") }
         reasoningEffort?.takeIf { it in VALID_EFFORTS }?.let { appendLine("reasoningEffort: $it") }
         mode?.let { appendLine("mode: ${it.name.lowercase()}") }
         if (allowedTools.isNotEmpty()) appendLine("tools: [${allowedTools.joinToString(", ")}]")
@@ -128,14 +109,5 @@ object AgentDefinitionParser {
         appendLine("inject: [$injectTokens]")
         appendLine("---")
         appendLine(prompt.trim())
-    }
-
-    /** frontmatter 字符串值：双引号包裹，转义反斜杠与引号，换行压成空格保证单行。 */
-    private fun quote(value: String): String {
-        val escaped = value.replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace(Regex("\\s*\\n\\s*"), " ")
-            .trim()
-        return "\"$escaped\""
     }
 }

@@ -57,60 +57,11 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.HardDrive
-import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Trash2
 import androidx.compose.ui.res.stringResource
 import android.widget.Toast
 import com.aharou.R
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun WorkspaceChip(
-    viewModel: WorkspaceViewModel,
-    onStopCurrentSessions: () -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    val current by viewModel.current.collectAsStateWithLifecycle()
-    var showSheet by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(Radius.pill))
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable { showSheet = true }
-            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            FeatherIcons.Folder,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(Modifier.width(Spacing.xs))
-        Text(
-            text = current?.name ?: stringResource(R.string.workspace_select),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Icon(
-            FeatherIcons.MoreHorizontal,
-            contentDescription = stringResource(R.string.workspace_switch),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp)
-        )
-    }
-
-    WorkspaceSelectionHost(
-        visible = showSheet,
-        onDismiss = { showSheet = false },
-        viewModel = viewModel,
-        onStopCurrentSessions = onStopCurrentSessions
-    )
-}
 
 /**
  * 顶栏的工作区选择图标按钮：点击弹出选择/新建/删除面板。
@@ -154,7 +105,7 @@ fun WorkspaceIconButton(
     )
 }
 
-/** 工作区选择面板的公共宿主：Chip 与 IconButton 两个入口共用。 */
+/** 工作区选择面板的公共宿主：由 WorkspaceIconButton 入口调用。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspaceSelectionHost(

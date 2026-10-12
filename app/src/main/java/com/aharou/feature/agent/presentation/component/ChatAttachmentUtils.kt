@@ -158,9 +158,6 @@ internal fun hasAttachmentSlots(currentCount: Int): Boolean =
 private fun imageLimitError(context: Context): String =
     context.getString(R.string.chat_image_too_large, formatBytes(MAX_IMAGE_UPLOAD_BYTES))
 
-private fun pickedFileToastPath(context: Context, path: String): String =
-    context.getString(R.string.chat_uploaded_to, path)
-
 internal fun emptyWorkspaceMessage(context: Context): String =
     context.getString(R.string.chat_select_workspace_first)
 

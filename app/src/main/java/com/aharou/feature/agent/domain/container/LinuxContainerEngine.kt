@@ -164,7 +164,7 @@ class LinuxContainerEngine @Inject constructor(
         private const val TAG = "LinuxContainerEngine"
 
         /** 容器内 PATH，与 [buildContainerEnv] 注入的那份保持同源（改这里一处即可）。 */
-        private const val CONTAINER_PATH = "/root/.aharou/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        private const val CONTAINER_PATH = "/root/.aharou/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
         /** PATH 中来自 aharou 目录绑定的那一段，物理上不在 rootfs 下。 */
         private const val AHAROU_BIN_DIR = "/root/.aharou/bin"

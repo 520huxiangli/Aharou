@@ -75,6 +75,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.platform.LocalContext
+import com.aharou.feature.agent.presentation.component.FileMentionMenu
 import com.aharou.feature.agent.presentation.SharedIntakeEntryPoint
 import dagger.hilt.android.EntryPointAccessors
 import androidx.compose.ui.platform.LocalDensity
@@ -597,9 +598,11 @@ fun AIChatPanel(
     }
     // 输入草稿只认 ViewModel 这一份：本地 remember 活不过切页，双份必然对不上。
     val inputText by viewModel.inputDraft.collectAsStateWithLifecycle()
+    val fileMentionState by viewModel.fileMentionState.collectAsStateWithLifecycle()
     // 输入 "/" 打开命令菜单时重扫技能，反映磁盘上技能的增删改。
     LaunchedEffect(inputText) {
         if (inputText == "/") viewModel.refreshSlashCommands()
+        viewModel.requestFileMention(inputText)
     }
     // 附件状态由 ViewModel 持有：分享文件是跨 Activity 投递的，而 remember 局部状态
     // 活不过面板的重组窗口（冷启动时 _currentSessionId 还没就绪），表现为「点了插入，
@@ -991,6 +994,15 @@ fun AIChatPanel(
         if (sr != null && sr.hasVisibleContent()) {
             retainedStreamingReasoning = sr
         } else if (isAssistantSettled) {
+            retainedStreamingReasoning = null
+        }
+    }
+
+    // 兜底收尾：整轮结束（isBusy 变 false）或末尾已是 TOOL 行时清空 retained，避免停止生成后思考气泡残留。
+    val lastMessageRole = messages.lastOrNull()?.role
+    LaunchedEffect(isBusy, lastMessageRole) {
+        if (!isBusy || lastMessageRole == MessageRole.TOOL) {
+            retainedStreamingText = null
             retainedStreamingReasoning = null
         }
     }
@@ -1700,6 +1712,10 @@ fun AIChatPanel(
                 }
             }
 
+            FileMentionMenu(
+                state = fileMentionState, busy = isBusy,
+                onSelect = { viewModel.applyFileMention(it) }
+            )
             ChatInputBar(
                 value = inputText,
                 onValueChange = viewModel::updateInputDraft,

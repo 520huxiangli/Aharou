@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
+import com.aharou.core.ui.ChatColors
 
 /**
  * Standardized half-screen modal sheet used by every popup launched from the

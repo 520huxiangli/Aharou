@@ -37,13 +37,11 @@ import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.ExternalLink
 import compose.icons.feathericons.Search
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.URI
 import androidx.compose.ui.platform.LocalContext
@@ -74,7 +72,7 @@ internal data class ParsedWebSearchUsage(
 
 internal fun parseWebSearchResult(content: String): ParsedWebSearchResult? {
     return runCatching {
-        val data = extractWebSearchData(content) ?: return null
+        val data = extractToolResultData(content) ?: return null
         val results = data["results"]?.jsonArray?.mapNotNull { parseWebSearchItem(it) }.orEmpty()
         if (results.isEmpty()) return null
         ParsedWebSearchResult(
@@ -85,19 +83,6 @@ internal fun parseWebSearchResult(content: String): ParsedWebSearchResult? {
             sessionId = data["session_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         )
     }.getOrNull()
-}
-
-private fun extractWebSearchData(content: String): JsonObject? {
-    val s = content.withoutToolStatusPrefix()
-    val outer = Json.parseToJsonElement(s).jsonObject
-    if (outer["status"]?.jsonPrimitive?.contentOrNull !in setOf("success", "partial")) return null
-    return when (val data = outer["data"]) {
-        is JsonObject -> data
-        is JsonPrimitive -> data.contentOrNull
-            ?.takeIf(String::isNotBlank)
-            ?.let { Json.parseToJsonElement(it).jsonObject }
-        else -> null
-    }
 }
 
 private fun parseWebSearchItem(element: JsonElement): ParsedWebSearchItem? {

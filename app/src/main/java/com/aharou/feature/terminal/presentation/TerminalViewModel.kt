@@ -127,11 +127,6 @@ class TerminalViewModel @Inject constructor(
 
     fun closeTab(id: String) = if (isRemote()) remoteManager.closeTab(id) else localManager.closeTab(id)
 
-    /** 关闭所有终端标签（切换工作区前调用）。 */
-    fun closeAllTabs() {
-        (if (isRemote()) remoteManager.tabs else localManager.tabs).value.map { it.id }.forEach { closeTab(it) }
-    }
-
     /** 向当前活动标签写入文本（额外按键行：方向键/Tab 等）。 */
     fun write(text: String) = if (isRemote()) remoteManager.writeToActive(text) else localManager.writeToActive(text)
 

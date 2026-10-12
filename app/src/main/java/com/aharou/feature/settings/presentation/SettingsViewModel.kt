@@ -988,7 +988,6 @@ class SettingsViewModel @Inject constructor(
 
     /** Token 统计：当前选中的统计周期。 */
     private val _tokenStatsPeriod = MutableStateFlow(TokenStatsPeriod.LAST_7_DAYS)
-    val tokenStatsPeriod: StateFlow<TokenStatsPeriod> = _tokenStatsPeriod.asStateFlow()
 
     /** Token 统计：周期内汇总、趋势、渠道、模型、明细的组合状态。 */
     private val _tokenStats = MutableStateFlow(TokenStatsUiState())
@@ -1852,10 +1851,6 @@ class SettingsViewModel @Inject constructor(
                 ?.takeIf { it.ui.skill == skill }
                 ?.copy(loading = false, detail = detail)
         }
-    }
-
-    fun closeMarketDetail() {
-        _marketDetail.value = null
     }
 
     /** 从市场安装（已存在则覆盖更新）一个技能到指定作用域，完成后刷新市场与本地列表。 */
@@ -3231,12 +3226,6 @@ class SettingsViewModel @Inject constructor(
                     // 且此处位于 launch{} 内，this 已变为 CoroutineScope，必须用类标签限定
                     _providerDashboards.update { it + (provider.id to ProviderDashboardState.Error(error.message ?: this@SettingsViewModel.context.getString(R.string.dashboard_query_failed))) }
                 }
-        }
-    }
-
-    fun selectModel(providerId: String, model: String) {
-        viewModelScope.launch {
-            repository.setSelectedModel(providerId, model)
         }
     }
 

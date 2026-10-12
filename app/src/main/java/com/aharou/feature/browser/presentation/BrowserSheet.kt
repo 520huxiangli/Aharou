@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -35,13 +37,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +54,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,7 +81,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.feature.browser.BrowserHistoryStore
 import com.aharou.feature.browser.BrowserTabPool
-import com.aharou.feature.browser.UserAgentProfile
+import com.aharou.core.ui.ChatColors
+import com.aharou.feature.browser.BrowserUiSession
 import kotlinx.coroutines.launch
 
 /**
@@ -104,13 +108,15 @@ fun BrowserSheet(
     val canGoBack = selectedTab?.manager?.canGoBack?.collectAsState()?.value ?: false
     val canGoForward = selectedTab?.manager?.canGoForward?.collectAsState()?.value ?: false
     val isAgentBusy = tabPool.isAgentBusy
-    val userAgentProfile = tabPool.currentUserAgentProfile.collectAsState().value
+    val pendingJsDialog = selectedTab?.manager?.pendingDialog?.collectAsState()?.value
 
     var urlInput by remember(currentURL) { mutableStateOf(currentURL) }
     var showHistory by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     // [T-android-browser-download-ux] Downloads panel + badge state.
     var showDownloads by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showFind by remember { mutableStateOf(false) }
     val downloadEntries by tabPool.downloads.collectAsState()
 
     val accent = MaterialTheme.colorScheme.primary
@@ -135,19 +141,21 @@ fun BrowserSheet(
         }
     }
 
+    // [T-android-browser-ui-context] 面板可见性钩子：可见时把池内 WebView 的 context 基座切到
+    // Activity（<select> 下拉等依赖窗口的能力才生效），离屏时退回 Application；同时驱动网页
+    // 对话框分流（面板可见时交给用户处理）。
+    DisposableEffect(Unit) {
+        tabPool.setUiAttached(context)
+        onDispose { tabPool.setUiAttached(null) }
+    }
+
     BrowserFullScreenHost(
         title = pageTitle.ifEmpty { stringResource(R.string.browser_title) },
         onDismiss = onDismiss,
         leadingAction = {
-            // UA-profile icon doubles as the entry point to settings, matching
-            // the prior centered-title-with-icon affordance.
             IconButton(onClick = { showSettings = true }) {
                 Icon(
-                    when (userAgentProfile) {
-                        UserAgentProfile.MOBILE_CHROME -> Icons.Default.PhoneAndroid
-                        UserAgentProfile.DESKTOP_CHROME -> Icons.Default.Computer
-                        UserAgentProfile.CUSTOM -> Icons.Default.Edit
-                    },
+                    Icons.Default.Settings,
                     contentDescription = stringResource(R.string.browser_settings_title),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -299,6 +307,11 @@ fun BrowserSheet(
                 )
             }
 
+            val findWebView = selectedTab?.manager?.webView
+            if (showFind && findWebView != null) {
+                BrowserFindInPageBar(webView = findWebView, onClose = { showFind = false })
+            }
+
             // ── WebView + overlays ──
             Box(
                 modifier = Modifier
@@ -437,6 +450,18 @@ fun BrowserSheet(
                         onClick = { selectedTab?.manager?.reload() },
                     )
                 }
+                ToolbarIcon(
+                    icon = Icons.Default.Search,
+                    contentDesc = stringResource(R.string.browser_find_in_page),
+                    enabled = selectedTab != null,
+                    onClick = { showFind = !showFind },
+                )
+                ToolbarIcon(
+                    icon = Icons.Default.MoreVert,
+                    contentDesc = stringResource(R.string.browser_menu),
+                    enabled = true,
+                    onClick = { showMenu = true },
+                )
             }
         }
     }
@@ -470,6 +495,21 @@ fun BrowserSheet(
         BrowserSettingsSheet(
             tabPool = tabPool,
             onDismiss = { showSettings = false },
+        )
+    }
+
+    if (showMenu) {
+        BrowserMenuSheet(
+            tabPool = tabPool,
+            onDismiss = { showMenu = false },
+            onOpenSettings = { showSettings = true },
+        )
+    }
+
+    pendingJsDialog?.let { dialog ->
+        BrowserJsDialogHost(
+            dialog = dialog,
+            onResolve = { accept, text -> selectedTab?.manager?.resolvePendingJsDialog(accept, text) },
         )
     }
 }
@@ -657,7 +697,13 @@ private fun BrowserFullScreenHost(
             .fillMaxSize()
             .background(ChatColors.background),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // 面板自绘顶栏与底栏：分别避开状态栏/挖孔与系统导航栏，否则两头的按钮都会被系统栏压住。
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
             StandardChatSheetHeader(
                 title = title,
                 onDismiss = onDismiss,

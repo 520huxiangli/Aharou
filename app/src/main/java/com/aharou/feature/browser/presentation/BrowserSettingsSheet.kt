@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.feature.browser.BrowserTabPool
 import com.aharou.feature.browser.UserAgentProfile
+import com.aharou.core.ui.MinisTextButton
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.launch
 
@@ -76,7 +77,8 @@ fun BrowserSettingsSheet(
         mutableStateOf(
             prefs.getString("user_agent_profile", "MOBILE_CHROME")
                 ?.let { try { UserAgentProfile.valueOf(it) } catch (_: Exception) { null } }
-                ?: UserAgentProfile.MOBILE_CHROME
+                ?.let { UserAgentProfile.migratedForUi(it) }
+                ?: UserAgentProfile.ANDROID_PHONE
         )
     }
     var customUA by remember { mutableStateOf(prefs.getString("custom_user_agent", "") ?: "") }
@@ -160,13 +162,13 @@ fun BrowserSettingsSheet(
             Spacer(Modifier.height(8.dp))
 
             val notSetPlaceholder = stringResource(R.string.browser_settings_ua_not_set)
-            for (profile in UserAgentProfile.entries) {
-                val label = stringResource(when (profile) {
-                    UserAgentProfile.MOBILE_CHROME -> R.string.browser_settings_ua_mobile_chrome
-                    UserAgentProfile.DESKTOP_CHROME -> R.string.browser_settings_ua_desktop_chrome
-                    UserAgentProfile.CUSTOM -> R.string.browser_settings_ua_custom
-                })
-                val uaSubtitle = displayUA(profile, customUA, notSetPlaceholder)
+            for (profile in UserAgentProfile.selectableProfiles) {
+                val label = stringResource(profile.labelRes)
+                val uaSubtitle = if (profile == UserAgentProfile.DEFAULT) {
+                    stringResource(profile.descRes)
+                } else {
+                    displayUA(profile, customUA, notSetPlaceholder)
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -650,17 +652,12 @@ private fun ViewportSection(
 private fun uaMismatchWarning(profile: UserAgentProfile, widthText: String): String? {
     val width = widthText.toIntOrNull() ?: return null
     if (width <= 0) return null
-    return when (profile) {
-        UserAgentProfile.MOBILE_CHROME, UserAgentProfile.CUSTOM -> {
-            if (width >= VIEWPORT_UA_BREAKPOINT) {
-                "Viewport ≥${VIEWPORT_UA_BREAKPOINT}px while UA is Mobile — sites may serve a desktop layout that renders awkwardly. Consider switching UA to Desktop."
-            } else null
-        }
-        UserAgentProfile.DESKTOP_CHROME -> {
-            if (width < VIEWPORT_UA_BREAKPOINT) {
-                "Viewport <${VIEWPORT_UA_BREAKPOINT}px while UA is Desktop — sites may serve a mobile layout that renders awkwardly. Consider switching UA to Mobile."
-            } else null
-        }
+    return when {
+        !profile.isDesktop && width >= VIEWPORT_UA_BREAKPOINT ->
+            "Viewport ≥${VIEWPORT_UA_BREAKPOINT}px while UA is Mobile — sites may serve a desktop layout that renders awkwardly. Consider switching UA to Desktop."
+        profile.isDesktop && width < VIEWPORT_UA_BREAKPOINT ->
+            "Viewport <${VIEWPORT_UA_BREAKPOINT}px while UA is Desktop — sites may serve a mobile layout that renders awkwardly. Consider switching UA to Mobile."
+        else -> null
     }
 }
 

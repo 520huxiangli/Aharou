@@ -8,16 +8,7 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonParser
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
-
-/** 把模型给出的工具入参 JSON 字符串解析为 JsonObject；为空或非法时回退为空对象。 */
-internal fun parseToolArguments(raw: String): JsonObject {
-    val trimmed = raw.trim()
-    if (trimmed.isEmpty()) return JsonObject(emptyMap())
-    return runCatching { Json.parseToJsonElement(trimmed).jsonObject }.getOrElse { JsonObject(emptyMap()) }
-}
 
 /**
  * 输出被 token 上限截断（[AIResponse.isTruncated]）时，本轮的 tool_call 参数 JSON 很可能只传了一半，

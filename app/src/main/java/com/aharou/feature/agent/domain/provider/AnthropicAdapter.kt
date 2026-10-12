@@ -26,11 +26,9 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 
 class AnthropicAdapter @Inject constructor(
     private val api: AnthropicApi
@@ -372,7 +370,7 @@ class AnthropicAdapter @Inject constructor(
             }
 
             val toolCalls = toolBlocks.values.map { acc ->
-                ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString()))
+                ToolCall(id = acc.id, name = acc.name, arguments = parseToolArguments(acc.args.toString()))
             }
             emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, stopDetail = stopDetail, signature = signature, thinkingBlocksJson = encodeThinkingBlocks(thinkingBlocks.values.map { it.toBlock() }), inputTokens = totalInputTokens(streamInputTokens, streamCachedInputTokens, streamCacheCreationTokens), outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens))))
                     }
@@ -463,13 +461,6 @@ class AnthropicAdapter @Inject constructor(
         val major = m?.groupValues?.get(1)?.toIntOrNull() ?: return false
         val minor = m?.groupValues?.get(2)?.toIntOrNull()
         return major >= 5 || (major == 4 && (minor ?: 0) >= 6)
-    }
-
-    /** 把累积的工具入参 JSON 字符串解析为 JsonObject；为空或非法时回退为空对象。 */
-    private fun parseArgs(raw: String): JsonObject {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return JsonObject(emptyMap())
-        return runCatching { Json.parseToJsonElement(trimmed).jsonObject }.getOrElse { JsonObject(emptyMap()) }
     }
 
     private fun convertToAnthropicMessages(messages: List<AgentMessage>, addMessageBreakpoint: Boolean): MutableList<AnthropicMessage> {
