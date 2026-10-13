@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.provider
 
+import com.aharou.core.net.NetworkStatus
 import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import kotlinx.coroutines.CancellationException
@@ -11,6 +12,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import retrofit2.HttpException
 import retrofit2.await
 import java.io.IOException
@@ -33,6 +35,9 @@ private const val TAG = "RetryPolicy"
 
 // 对应 opencode 的 attempts = 3（最多 2 次重试）→ 提升至 6 次重试以应对不稳定网络
 const val MAX_NETWORK_RETRIES = 6
+
+/** 网络不可用时单次等待恢复的上限；超时后照常重试，交由重试逻辑自行失败。 */
+private const val NETWORK_WAIT_TIMEOUT_MS = 30_000L
 
 /**
  * 每次流式尝试从发起请求到首个有效内容的等待上限，包含等待响应头。
@@ -173,6 +178,17 @@ fun exponentialDelayMillis(retryIndex: Int): Long {
     val maxDelay = 10000L
     val wait = (delay * factor.pow(retryIndex)).toLong()
     return min(wait, maxDelay)
+}
+
+/**
+ * 网络不可用时先等待恢复（最长 [NETWORK_WAIT_TIMEOUT_MS]），避免把有限的重试次数消耗在
+ * 完全断网的窗口内（如切后台后网络被系统短暂收回）。超时后照常继续，交由重试逻辑自行失败。
+ */
+private suspend fun awaitNetworkIfOffline() {
+    if (NetworkStatus.isOnline) return
+    withTimeoutOrNull(NETWORK_WAIT_TIMEOUT_MS) {
+        while (!NetworkStatus.isOnline) delay(500)
+    }
 }
 
 /**
@@ -435,6 +451,7 @@ suspend fun <T> retryStaircase(
                 if (!isRateLimitError(e)) throw e
             }
             if (attempt >= maxRetries) throw e
+            awaitNetworkIfOffline()
             val wait = retryDelayMillis(attempt, e)
             FileLogger.w(TAG, "网络请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.describeForRetryLog()}")
             onRetry?.invoke(attempt + 1, maxRetries, e.toRetryErrorInfo())
@@ -481,6 +498,7 @@ suspend fun streamWithStaircaseRetry(
                 if (!isRateLimitError(e) || receivedContent) throw e
             }
             if (attempt >= maxRetries) throw e
+            awaitNetworkIfOffline()
             val wait = retryDelayMillis(attempt, e)
             FileLogger.w(TAG, "流式请求失败，第 ${attempt + 1}/$maxRetries 次重试（等待 ${wait}ms）: ${e.describeForRetryLog()}")
             onRetry?.invoke(attempt + 1, maxRetries, e.toRetryErrorInfo())

@@ -1,6 +1,7 @@
 package com.aharou.di
 
 import android.content.Context
+import com.aharou.core.net.applyTcpKeepAlive
 import androidx.room.Room
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
@@ -254,6 +255,8 @@ object AgentModule {
                         connectionId = Integer.toHexString(System.identityHashCode(connection))
                         protocol = connection.protocol().toString()
                         lastStage = "connectionAcquired"
+                        // 长连接在后台空闲时会被 NAT/路由器回收，缩短 keepalive 探测间隔以维持映射。
+                        connection.socket().applyTcpKeepAlive()
                     }
 
                     override fun requestHeadersEnd(call: Call, request: Request) {

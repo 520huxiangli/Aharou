@@ -14,11 +14,14 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -437,6 +440,7 @@ internal fun BackgroundRunSection(
     var showNotificationDeniedDialog by remember { mutableStateOf(false) }
     // 通知权限申请成功后要打开的目标开关回调。
     var pendingNotificationToggle by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
+    var showNetworkGuide by remember { mutableStateOf(false) }
 
     // Android 13 起通知是运行时权限：被拒（含永久拒绝、系统不再弹框）时只能引导去系统设置手动开启。
     val notificationLauncher = rememberLauncherForActivityResult(
@@ -508,7 +512,18 @@ internal fun BackgroundRunSection(
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
+                title = stringResource(R.string.settings_network_guide_title),
+                subtitle = stringResource(R.string.settings_network_guide_subtitle),
+                onClick = { showNetworkGuide = true }
+            )
         }
+    }
+
+    if (showNetworkGuide) {
+        NetworkGuideSheet(onDismiss = { showNetworkGuide = false })
     }
 
     if (showNotificationDeniedDialog) {
@@ -621,3 +636,45 @@ private data class RuntimePermRow(
     @StringRes val descRes: Int,
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
 )
+
+/** 「后台断网排查」指引：列出保活三件事与常见品牌的后台/省电设置路径。 */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun NetworkGuideSheet(onDismiss: () -> Unit) {
+    AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Text(
+                text = stringResource(R.string.settings_network_guide_title),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = stringResource(R.string.settings_network_guide_intro),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            listOf(
+                R.string.settings_network_guide_step_keepalive,
+                R.string.settings_network_guide_step_lock,
+                R.string.settings_network_guide_step_battery,
+                R.string.settings_network_guide_brand_huawei,
+                R.string.settings_network_guide_brand_xiaomi,
+                R.string.settings_network_guide_brand_oppo,
+                R.string.settings_network_guide_brand_vivo,
+                R.string.settings_network_guide_brand_samsung,
+                R.string.settings_network_guide_more
+            ).forEach { res ->
+                Text(
+                    text = stringResource(res),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}

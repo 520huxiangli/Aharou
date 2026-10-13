@@ -71,6 +71,7 @@ import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.terminal.domain.TabFinishedEvent
 import com.aharou.feature.terminal.domain.TerminalKeepaliveService
 import com.aharou.feature.terminal.domain.TerminalSessionManager
+import com.aharou.feature.terminal.domain.renewWakeLockUntilIdle
 import com.aharou.feature.terminal.domain.takeTailLines
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.FileEntry
@@ -234,6 +235,9 @@ class AIAgentViewModel @Inject constructor(
     /** 设置里用户手动开启的常驻保活；agent 任务收尾时不能把它一并关掉。 */
     @Volatile
     private var userKeepaliveEnabled = false
+
+    /** WakeLock 续期协程：单次 acquire 的超时覆盖不了超长任务，需在到期前重新续上。 */
+    private var wakeLockRenewJob: Job? = null
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
@@ -1408,13 +1412,16 @@ class AIAgentViewModel @Inject constructor(
     /** 任务开始：拿 CPU 唤醒锁并拉起前台保活通知，避免熄屏或切后台时进程被挂起、回收。 */
     private fun acquireKeepalive() {
         TerminalKeepaliveService.enablePersistent(context)
-        if (wakeLock.isHeld) return
         runCatching { wakeLock.acquire(KEEPALIVE_TIMEOUT_MS) }
             .onFailure { FileLogger.e(TAG, "acquire wakeLock failed", it) }
+        if (wakeLockRenewJob?.isActive != true) wakeLockRenewJob = viewModelScope.launch {
+            renewWakeLockUntilIdle(wakeLock, KEEPALIVE_TIMEOUT_MS, WAKE_LOCK_RENEW_MARGIN_MS, TAG) { hasRunningSessionsInCurrentWorkspace() }
+        }
     }
 
     /** 任务收尾：释放唤醒锁；仅当既无后台终端任务、用户也没手动开保活时才停前台服务。 */
     private fun releaseKeepalive() {
+        wakeLockRenewJob?.cancel().also { wakeLockRenewJob = null }
         if (wakeLock.isHeld) {
             runCatching { wakeLock.release() }
                 .onFailure { FileLogger.e(TAG, "release wakeLock failed", it) }
@@ -1463,6 +1470,7 @@ class AIAgentViewModel @Inject constructor(
         const val MEMORY_CURATE_INTERVAL_MS = 10 * 60 * 1000L
         /** wakeLock 超时保险：构建、装依赖类工具动辄十几分钟，给足 60 分钟；任务正常结束会主动释放。 */
         const val KEEPALIVE_TIMEOUT_MS = 60 * 60 * 1000L
+        private const val WAKE_LOCK_RENEW_MARGIN_MS = 10 * 60 * 1000L
         /** 从后台任务通知文本中提取 <title> 内容，供系统通知正文展示。 */
         val TASK_NOTIFICATION_TITLE_REGEX = Regex("<title>([^<]+)</title>")
         /** 文件浏览排序：目录在前，同类按名称不区分大小写。 */

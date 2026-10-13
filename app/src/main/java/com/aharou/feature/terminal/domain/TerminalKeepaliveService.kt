@@ -6,8 +6,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.aharou.MainActivity
@@ -19,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -34,6 +38,10 @@ class TerminalKeepaliveService : Service() {
     lateinit var keepaliveSettings: KeepaliveSettingsRepository
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** 前台保活期间持有的 Wi-Fi 锁：避免切后台/息屏后 Wi-Fi 进入省电使长连接被回收。 */
+    private val wifiLocks = mutableListOf<WifiManager.WifiLock>()
+    private var wifiLocksInitialized = false
 
     inner class LocalBinder : Binder() {
         fun getService(): TerminalKeepaliveService = this@TerminalKeepaliveService
@@ -55,6 +63,7 @@ class TerminalKeepaliveService : Service() {
 
     override fun onDestroy() {
         serviceScope.cancel()
+        releaseWifiLocks()
         super.onDestroy()
     }
 
@@ -157,7 +166,34 @@ class TerminalKeepaliveService : Service() {
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             )
-        }.onFailure { FileLogger.e(TAG, "startForeground failed", it) }
+        }.onSuccess { acquireWifiLocks() }
+            .onFailure { FileLogger.e(TAG, "startForeground failed", it) }
+    }
+
+    /**
+     * 获取 Wi-Fi 锁，尽量保持 Wi-Fi 不休眠。延后到首次进入前台时惰性创建：只有真正保活期间
+     * 才需要，避免无谓占用。API 29+ 同时持低延迟锁（前台亮屏时生效）与兼容锁（后台/息屏时生效）。
+     */
+    private fun acquireWifiLocks() {
+        runCatching {
+            if (!wifiLocksInitialized) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    wifiLocks += wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "Aharou:Keepalive:low-latency")
+                }
+                @Suppress("DEPRECATION")
+                wifiLocks += wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Aharou:Keepalive")
+                wifiLocks.forEach { it.setReferenceCounted(false) }
+                wifiLocksInitialized = true
+            }
+            wifiLocks.forEach { lock -> if (!lock.isHeld) lock.acquire() }
+        }.onFailure { FileLogger.w(TAG, "acquireWifiLock failed", it) }
+    }
+
+    private fun releaseWifiLocks() {
+        wifiLocks.forEach { lock ->
+            runCatching { if (lock.isHeld) lock.release() }
+        }
     }
 
     companion object {
@@ -195,6 +231,24 @@ class TerminalKeepaliveService : Service() {
                 .onFailure { FileLogger.e(TAG, "disablePersistent startService failed", it) }
         }
 
+        /** 登记一个后台会话（不改变用户常驻开关）。由调用方按状态迁移保证不重复计数。 */
+        fun startSession(context: Context) {
+            val intent = Intent(context, TerminalKeepaliveService::class.java).apply {
+                action = ACTION_START_SESSION
+            }
+            runCatching { context.startService(intent) }
+                .onFailure { FileLogger.e(TAG, "startSession startService failed", it) }
+        }
+
+        /** 结束一个后台会话。 */
+        fun stopSession(context: Context) {
+            val intent = Intent(context, TerminalKeepaliveService::class.java).apply {
+                action = ACTION_STOP_SESSION
+            }
+            runCatching { context.startService(intent) }
+                .onFailure { FileLogger.e(TAG, "stopSession startService failed", it) }
+        }
+
         /** 判断保活服务当前是否在运行。WorkManager 兜底拉起前先探测，避免反复 startService。 */
         @Suppress("DEPRECATION")
         fun isRunning(context: Context): Boolean {
@@ -203,5 +257,25 @@ class TerminalKeepaliveService : Service() {
             return am.getRunningServices(Int.MAX_VALUE)
                 .any { it.service.packageName == context.packageName && it.service.className == serviceName }
         }
+    }
+}
+
+/**
+ * 在 [wakeLock] 到期前持续续期，直到 [shouldContinue] 返回 false（无运行中任务时收尾）。
+ * 单次 acquire 的超时覆盖不了超长任务（子代理串行执行可超过一小时），过期后 CPU 可休眠、
+ * 后台收包会停摆；调用方需自行取消返回协程以结束续期。
+ */
+internal suspend fun renewWakeLockUntilIdle(
+    wakeLock: PowerManager.WakeLock,
+    timeoutMs: Long,
+    marginMs: Long,
+    tag: String,
+    shouldContinue: () -> Boolean
+) {
+    while (true) {
+        delay(timeoutMs - marginMs)
+        if (!shouldContinue()) break
+        runCatching { wakeLock.acquire(timeoutMs) }
+            .onFailure { FileLogger.e(tag, "renew wakeLock failed", it) }
     }
 }
