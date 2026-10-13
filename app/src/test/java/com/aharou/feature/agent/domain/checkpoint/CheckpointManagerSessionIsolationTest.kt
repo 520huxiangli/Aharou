@@ -6,6 +6,7 @@ import com.aharou.feature.agent.data.local.entity.CheckpointEntity
 import com.aharou.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.FileEntry
+import com.aharou.feature.workspace.domain.sha256Fingerprint
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -189,6 +190,12 @@ class CheckpointManagerSessionIsolationTest {
         override fun isFile(path: String): Boolean = throw UnsupportedOperationException()
         override fun fileSize(path: String): Long = throw UnsupportedOperationException()
         override fun lastModified(path: String): Long = throw UnsupportedOperationException()
+        override fun fingerprint(path: String): String? {
+            val file = File(path)
+            if (!file.isFile) return null
+            return sha256Fingerprint(file.readBytes())
+        }
+
         override fun permissions(path: String): String = throw UnsupportedOperationException()
         override fun listFiles(path: String): List<FileEntry> = throw UnsupportedOperationException()
         override fun readBytes(path: String): ByteArray = throw UnsupportedOperationException()

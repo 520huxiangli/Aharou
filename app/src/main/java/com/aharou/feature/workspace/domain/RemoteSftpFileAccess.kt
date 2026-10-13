@@ -150,6 +150,26 @@ class RemoteSftpFileAccess @Inject constructor(
     override fun lastModified(path: String): Long =
         withSftp { (it.statExistence(toRemotePath(path))?.mtime ?: 0L) * 1000L }
 
+    /**
+     * 远端内容指纹。**必须按内容哈希而非 mtime**：SFTP 的 mtime 只到秒（[lastModified] 就是把秒乘
+     * 1000），同一秒内的两次写入无法区分，会让并发校验漏判。
+     * 复用 [readAll]，因此受同一 8MB 上限约束——超限时抛 [RemoteOutputTooLargeException]，由调用方
+     * 决定是放行还是报错。
+     */
+    override fun fingerprint(path: String): String? {
+        val remote = toRemotePath(path)
+        return withSftp { sftp ->
+            val attrs = sftp.statExistence(remote) ?: return@withSftp null
+            if (attrs.type != FileMode.Type.REGULAR) return@withSftp null
+            if (attrs.size > MAX_REMOTE_READ_BYTES) {
+                throw RemoteOutputTooLargeException(
+                    "远程文件超过 ${MAX_REMOTE_READ_BYTES / 1024 / 1024}MB，无法计算内容指纹"
+                )
+            }
+            sftp.open(remote).use { rf -> sha256Fingerprint(readFully(rf)) }
+        }
+    }
+
     override fun permissions(path: String): String =
         withSftp { it.statExistence(toRemotePath(path))?.permissions?.let(::formatPermissions) ?: "---" }
 
@@ -197,19 +217,44 @@ class RemoteSftpFileAccess @Inject constructor(
 
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
         val remote = toRemotePath(path)
+        // 与 writeStream 同构：先写 .aicode-part 再改名，避免原地 TRUNC 让并发读者看到半截内容，
+        // 也避免中途断开时在目标位置留下半个文件。
+        val tmp = tmpPathFor(remote)
         withSftp { sftp ->
             if (sftp.statExistence(remote) != null && !overwrite) throw FileAlreadyExistsException(File(remote))
             ensureParent(sftp, remote)
-            sftp.open(remote, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { rf ->
-                writeAll(rf, bytes)
+            try {
+                sftp.open(tmp, EnumSet.of(OpenMode.WRITE, OpenMode.CREAT, OpenMode.TRUNC)).use { rf ->
+                    writeAll(rf, bytes)
+                }
+                replaceVia(sftp, tmp, remote)
+            } catch (e: Exception) {
+                runCatching { sftp.rm(tmp) }
+                throw e
             }
         }
+    }
+
+    /**
+     * 用 [tmp] 原子替换 [remote]。优先直接 rename（多数 SFTP 服务器支持覆盖式 rename，这才是真正的
+     * 原子替换）；仅当服务器拒绝覆盖时才退化为「先删目标再改名」——后者存在极小的丢失窗口，但好过
+     * 所有服务器都退化。
+     */
+    private fun replaceVia(sftp: SFTPClient, tmp: String, remote: String) {
+        if (sftp.statExistence(remote) == null) {
+            sftp.rename(tmp, remote)
+            return
+        }
+        val renamed = runCatching { sftp.rename(tmp, remote) }.isSuccess
+        if (renamed) return
+        runCatching { sftp.rm(remote) }
+        sftp.rename(tmp, remote)
     }
 
     override fun writeStream(path: String, input: InputStream, overwrite: Boolean): Long {
         val remote = toRemotePath(path)
         // 先落到 .aicode-part 再改名：传输中途断开时不会在目标位置留下半截文件
-        val tmp = "$remote.aicode-part"
+        val tmp = tmpPathFor(remote)
         return withSftp { sftp ->
             if (sftp.statExistence(remote) != null && !overwrite) throw FileAlreadyExistsException(File(remote))
             ensureParent(sftp, remote)
@@ -230,9 +275,8 @@ class RemoteSftpFileAccess @Inject constructor(
                 runCatching { sftp.rm(tmp) }
                 throw e
             }
-            // 目标已存在时先删再改名（SFTP v3 无跨平台可靠的「覆盖改名」）
-            if (sftp.statExistence(remote) != null) runCatching { sftp.rm(remote) }
-            sftp.rename(tmp, remote)
+            // 目标已存在时先尝试直接覆盖改名，失败再删目标改名（见 replaceVia）。
+            replaceVia(sftp, tmp, remote)
             written
         }
     }
@@ -403,6 +447,17 @@ class RemoteSftpFileAccess @Inject constructor(
     private fun ensureParent(sftp: SFTPClient, remote: String) {
         val parent = remote.substringBeforeLast('/', "")
         if (parent.isNotEmpty()) sftp.mkdirs(parent)
+    }
+
+    /**
+     * 原子写的临时文件路径。与 [LocalFileAccess] 的 `.aicode-tmp-*` 命名区分开：远端只能在目标旁生成
+     * 名字，所以用「目标名 + 后缀」的形式，且固定后缀便于异常残留时被识别清理。
+     */
+    private fun tmpPathFor(remote: String) = "$remote$TMP_FILE_SUFFIX"
+
+    private companion object {
+        /** 原子写临时文件后缀（远端用「目标名 + 后缀」，与本地 `File.createTempFile` 策略不同）。 */
+        const val TMP_FILE_SUFFIX = ".aicode-part"
     }
 }
 

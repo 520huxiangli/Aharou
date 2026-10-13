@@ -48,6 +48,7 @@ class ListFilesToolTest {
         override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) = throw UnsupportedOperationException()
         override fun fileSize(path: String): Long = throw UnsupportedOperationException()
         override fun lastModified(path: String): Long = throw UnsupportedOperationException()
+        override fun fingerprint(path: String): String? = null
         override fun permissions(path: String): String = throw UnsupportedOperationException()
         override fun readBytes(path: String): ByteArray = throw UnsupportedOperationException()
         override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) = throw UnsupportedOperationException()

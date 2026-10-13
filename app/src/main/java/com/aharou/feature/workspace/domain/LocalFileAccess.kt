@@ -7,8 +7,11 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.nio.charset.Charset
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
 import java.nio.file.NoSuchFileException
+import java.nio.file.StandardCopyOption
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -50,21 +53,7 @@ class LocalFileAccess @Inject constructor(
     override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) {
         val file = resolve(path)
         if (file.exists() && !overwrite) throw FileAlreadyExistsException(file)
-        file.parentFile?.mkdirs()
-        val bytes = content.toByteArray(encoding)
-        // fsync + 回读长度校验：writeText 只写入 page cache，延迟分配下的写回错误
-        // （磁盘已满 ENOSPC、存储异常）不会报给调用方，会变成“工具返回 success 但文件没变”。
-        // sync 把错误提前成 IOException，让工具报真实失败，而不是静默丢掉改动。
-        FileOutputStream(file).use { out ->
-            out.write(bytes)
-            out.flush()
-            out.fd.sync()
-        }
-        val actual = file.length()
-        if (actual != bytes.size.toLong()) {
-            throw IOException("write verification failed: ${file.absolutePath} expected ${bytes.size} bytes, found $actual")
-        }
-        FileLogger.i(TAG, "写入: '$path' -> ${file.absolutePath} (${bytes.size} 字节)")
+        writeAtomically(file, content.toByteArray(encoding), path)
     }
 
     override fun exists(path: String): Boolean = resolve(path).exists()
@@ -76,6 +65,13 @@ class LocalFileAccess @Inject constructor(
     override fun fileSize(path: String): Long = resolve(path).length()
 
     override fun lastModified(path: String): Long = resolve(path).lastModified()
+
+    override fun fingerprint(path: String): String? {
+        val file = resolve(path)
+        // 目录等非普通文件没有「内容版本」可言，返回 null 让调用方放行。
+        if (!file.isFile) return null
+        return sha256Fingerprint(file.readBytes())
+    }
 
     override fun permissions(path: String): String {
         val file = resolve(path)
@@ -122,18 +118,69 @@ class LocalFileAccess @Inject constructor(
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
         val file = resolve(path)
         if (file.exists() && !overwrite) throw FileAlreadyExistsException(file)
-        file.parentFile?.mkdirs()
-        // 与 writeFile 相同的 fsync + 回读长度校验，避免“报告成功但文件没写全”。
-        FileOutputStream(file).use { out ->
-            out.write(bytes)
-            out.flush()
-            out.fd.sync()
+        writeAtomically(file, bytes, path)
+    }
+
+    /**
+     * 原子写：同目录临时文件 → 写入 → fsync → 回读长度校验 → 原子替换目标。
+     *
+     * 为什么不再直接写目标文件：
+     * - **读侧一致性**：原地 TRUNC 写会让并发的读者看到半截内容（多会话/编辑器同时读同一文件时是真实现象）；
+     * - **失败不留半个文件**：中途失败（ENOSPC、进程被杀）时目标文件保持原内容，而不是半个文件；
+     * - 替换本身原子，目标要么是旧内容、要么是新内容，不存在中间态。
+     *
+     * 保留原有的 fsync + 长度回读校验：`writeText` 只写 page cache，延迟分配下的写回错误
+     * （磁盘已满 ENOSPC、存储异常）不会报给调用方，会变成「工具返回 success 但文件没变」。
+     * `fd.sync()` 把错误提前成 IOException，让工具报真实失败而不是静默丢掉改动。
+     *
+     * 临时文件必须与目标**同目录**（同一文件系统）才能原子替换；放系统临时目录会退化成跨设备复制。
+     */
+    private fun writeAtomically(file: File, bytes: ByteArray, displayPath: String) {
+        val parent = file.parentFile
+        parent?.mkdirs()
+
+        val tmp = File.createTempFile(TMP_FILE_PREFIX, TMP_FILE_SUFFIX, parent)
+        // 本函数所有退出路径都会显式清理或改名，不依赖 JVM 退出时的 deleteOnExit。
+        tmp.deleteOnExit()
+        try {
+            FileOutputStream(tmp).use { out ->
+                out.write(bytes)
+                out.flush()
+                out.fd.sync()
+            }
+            val actual = tmp.length()
+            if (actual != bytes.size.toLong()) {
+                throw IOException("write verification failed: ${file.absolutePath} expected ${bytes.size} bytes, found $actual")
+            }
+            replaceTarget(tmp, file)
+            FileLogger.i(TAG, "写入: '$displayPath' -> ${file.absolutePath} (${bytes.size} 字节)")
+        } finally {
+            // 替换成功后 tmp 已不存在，这里是失败路径与异常路径的兜底清理。
+            if (tmp.exists()) tmp.delete()
         }
-        val actual = file.length()
-        if (actual != bytes.size.toLong()) {
-            throw IOException("write verification failed: ${file.absolutePath} expected ${bytes.size} bytes, found $actual")
+    }
+
+    /**
+     * 用 [tmp] 替换 [file]。真正的替换逻辑在 [moveReplacing] 里，此处只负责提供文件系统操作与降级日志。
+     */
+    private fun replaceTarget(tmp: File, file: File) {
+        try {
+            Files.move(
+                tmp.toPath(),
+                file.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING
+            )
+        } catch (e: AtomicMoveNotSupportedException) {
+            FileLogger.w(TAG, "文件系统不支持原子替换，退化为删除后改名: ${file.absolutePath}", e)
+            moveReplacing(
+                exists = { file.exists() },
+                delete = { file.delete() },
+                move = { from, to -> from.renameTo(to) },
+                tmp = tmp,
+                target = file
+            )
         }
-        FileLogger.i(TAG, "写入: '$path' -> ${file.absolutePath} (${bytes.size} 字节)")
     }
 
     override fun writeStream(path: String, input: InputStream, overwrite: Boolean): Long {
@@ -237,5 +284,47 @@ class LocalFileAccess @Inject constructor(
 
     private companion object {
         const val TAG = "LocalFileAccess"
+
+        /**
+         * 原子写临时文件前缀。带 `.aicode-` 前缀便于在异常残留时被用户与清理逻辑识别；
+         * `File.createTempFile` 要求前缀至少 3 字符。
+         */
+        const val TMP_FILE_PREFIX = ".aicode-tmp-"
+
+        /** 临时文件后缀。与 [TMP_FILE_PREFIX] 一起把临时文件与正常文件区分开。 */
+        const val TMP_FILE_SUFFIX = ".part"
+    }
+}
+
+/**
+ * 原子替换的**降级路径**：文件系统不支持 `ATOMIC_MOVE` 时，先删目标再改名。
+ *
+ * 抽成顶层函数并让文件操作以参数传入，是为了让「目标删不掉」与「改名失败」这两条异常路径能被单测
+ * 直接覆盖——它们用真实文件系统很难稳定触发（尤其在 Windows 上）。调用方负责日志。
+ *
+ * 语义要点：
+ * - 目标不存在时直接改名，不做多余的删除；
+ * - **删不掉目标就抛错，绝不继续改名**：继续改会在目标仍存在时失败，反而把"目标完好"这个较好的结果弄坏；
+ * - 改名失败时把 [tmp] 删掉，不给用户留下垃圾文件。
+ *
+ * @param exists 目标是否存在
+ * @param delete 删除目标，成功返回 true
+ * @param move 把 [tmp] 改名到 [target]，成功返回 true
+ * @throws IOException 目标删不掉或改名失败
+ */
+internal fun moveReplacing(
+    exists: () -> Boolean,
+    delete: () -> Boolean,
+    move: (from: File, to: File) -> Boolean,
+    tmp: File,
+    target: File
+) {
+    if (exists() && !delete()) {
+        tmp.delete()
+        throw IOException("atomic replace failed to clear target: ${target.absolutePath}")
+    }
+    if (!move(tmp, target)) {
+        tmp.delete()
+        throw IOException("atomic replace failed: ${tmp.absolutePath} -> ${target.absolutePath}")
     }
 }

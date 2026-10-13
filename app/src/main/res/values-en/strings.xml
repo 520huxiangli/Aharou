@@ -2718,4 +2718,22 @@
     <string name="browser_dialog_alert_title">Page alert</string>
     <string name="browser_dialog_confirm_title">Page confirm</string>
     <string name="browser_dialog_prompt_title">Page input</string>
+    <string name="settings_network_guide_title">Background network troubleshooting</string>
+    <string name="settings_network_guide_subtitle">Connection dropping in background? Check these</string>
+    <string name="settings_network_guide_intro">If you see "Network connection lost" after switching to the background, set up in this order:</string>
+    <string name="settings_network_guide_step_keepalive">1. Turn on "Background keepalive" above and keep its notification</string>
+    <string name="settings_network_guide_step_lock">2. Lock this app in the Recents screen instead of swiping it away</string>
+    <string name="settings_network_guide_step_battery">3. In system settings, set this app\'s battery policy to "Unrestricted / Don\'t optimize" and allow auto-launch</string>
+    <string name="settings_network_guide_brand_huawei">Huawei / Honor: App launch → Manage manually → Auto-launch, Associated launch, Run in background</string>
+    <string name="settings_network_guide_brand_xiaomi">Xiaomi / Redmi: Battery and performance → App battery saver → No restrictions</string>
+    <string name="settings_network_guide_brand_oppo">OPPO / OnePlus / realme: App management → Battery usage → Allow background activity; Battery → More settings → Optimize battery use → Don\'t optimize</string>
+    <string name="settings_network_guide_brand_vivo">vivo / iQOO: Battery → Background power consumption management → Allow high background power; Apps and permissions → Auto-start</string>
+    <string name="settings_network_guide_brand_samsung">Samsung: Battery and device care → Battery → Background usage limits → Never sleeping apps; Apps → Battery → Unrestricted</string>
+    <string name="settings_network_guide_more">See the online docs for more devices and details</string>
+    <string name="container_sort_long_press">Long press to reorder</string>
+    <string name="remote_connection_sort_long_press">Long press to reorder</string>
+    <string name="editor_save_conflict_title">Save conflict</string>
+    <string name="editor_save_conflict_message">The file was changed elsewhere (possibly by an AI session). Choose which version to keep:</string>
+    <string name="editor_save_conflict_overwrite">Overwrite</string>
+    <string name="editor_save_conflict_discard">Discard my changes</string>
 </resources>

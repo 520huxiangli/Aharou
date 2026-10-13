@@ -61,6 +61,8 @@ class DelegatingFileAccess private constructor(
 
     override fun lastModified(path: String): Long = delegate().lastModified(path)
 
+    override fun fingerprint(path: String): String? = delegate().fingerprint(path)
+
     override fun permissions(path: String): String = delegate().permissions(path)
 
     override fun listFiles(path: String): List<FileEntry> = delegate().listFiles(path)

@@ -7,8 +7,12 @@ import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolCapability
+import com.aharou.feature.agent.domain.tool.FileVersionRegistry
+import com.aharou.feature.agent.domain.tool.STALE_FILE_CODE
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.tool.WorkspaceFileLock
+import com.aharou.feature.agent.domain.tool.staleFileMessage
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LineDiff
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -73,7 +77,8 @@ private fun String.utf8ByteLength(): Long {
 }
 
 class ReadFileTool @Inject constructor(
-    private val fileAccess: FileAccessProvider
+    private val fileAccess: FileAccessProvider,
+    private val versions: FileVersionRegistry
 ) : AgentTool() {
     override val name = "readFile"
     override val description = "读取文件内容（工作区文件或容器绝对路径的系统文件）。单次读取有行数与字节上限，超出可用 start_line 分段续读。"
@@ -89,7 +94,30 @@ class ReadFileTool @Inject constructor(
         context: AgentContext
     ): ToolResult {
         // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
-        val access = (fileAccess).forWorkspace(context.projectRoot)
+        val access = fileAccess.forWorkspace(context.projectRoot)
+        val result = performRead(access, args)
+        // 只有成功读取才登记版本；读失败（文件不存在/过大）时没有可信基线，登记反而会让后续写入被误判为过期。
+        if (result is ToolResult.Success) {
+            args["path"]?.jsonPrimitive?.contentOrNull?.let { path ->
+                recordVersion(access, path, context.sessionId)
+            }
+        }
+        return result
+    }
+
+    /**
+     * 登记读到的版本。失败一律忽略——这里只是为后续写入建立基线，登记不上最多退化成「没读过就写」的
+     * 放行语义，不应让一次成功的读取因为登记失败而报错。
+     */
+    private suspend fun recordVersion(access: FileAccessProvider, path: String, sessionId: String?) {
+        runCatching { runFileOpWithTimeout { access.fingerprint(path) } }
+            .onFailure { FileLogger.w(TAG, "read_file 登记版本失败: $path", it) }
+            .getOrNull()
+            ?.let { versions.record(sessionId, access.toDisplayPath(path), it) }
+    }
+
+    /** 真正的读取逻辑（不涉及版本登记）；成功时由调用方登记版本来建立后续写入的基线。 */
+    private suspend fun performRead(access: FileAccessProvider, args: Map<String, JsonElement>): ToolResult {
         return try {
             val path = args["path"]?.jsonPrimitive?.contentOrNull ?: run {
                 FileLogger.w(TAG, "read_file 缺少 path 参数")
@@ -211,9 +239,17 @@ class ReadFileTool @Inject constructor(
  *
  * 通过 overwrite 参数吸收了旧 create_file 的「不覆盖已有文件」语义：
  * overwrite=false 且目标已存在时报错，可用于安全地新建文件。
+ *
+ * ### 并发保护
+ *
+ * 覆盖已有文件时做写前版本校验（[FileVersionRegistry]）：若模型上次读到的内容与磁盘当前内容不一致，
+ * 说明文件已被其他会话或用户改过，**拒绝覆盖**并提示重新读取。新建文件不做校验（没有可比较的旧版本）。
+ * 校验与写入都在 [WorkspaceFileLock] 内进行。
  */
 class WriteFileTool @Inject constructor(
-    private val fileAccess: FileAccessProvider
+    private val fileAccess: FileAccessProvider,
+    private val fileLock: WorkspaceFileLock,
+    private val versions: FileVersionRegistry
 ) : AgentTool() {
     override val name = "writeFile"
     override val description = "写入完整文件内容，文件不存在时自动创建（含父目录）。局部修改请用 editFile。"
@@ -248,13 +284,81 @@ class WriteFileTool @Inject constructor(
         context: AgentContext
     ): ToolResult {
         // 会话绑定的工作区：本会话的文件操作只落在自己的工作区，不跟着全局切换走
-        val access = (fileAccess).forWorkspace(context.projectRoot)
-        return try {
-            val path = args["path"]?.jsonPrimitive?.contentOrNull ?: run {
-                FileLogger.w(TAG, "write_file 缺少 path 参数")
-                return ToolResult.Error("路径参数缺失", "MISSING_PATH")
+        val access = fileAccess.forWorkspace(context.projectRoot)
+        val path = args["path"]?.jsonPrimitive?.contentOrNull ?: run {
+            FileLogger.w(TAG, "write_file 缺少 path 参数")
+            return ToolResult.Error("路径参数缺失", "MISSING_PATH")
+        }
+        return withWriteGuards(access, path, context.sessionId) {
+            performWrite(access, path, args, context.writePaths)
+        }
+    }
+
+    /**
+     * 并发保护外壳：版本预检 → 加路径锁 → 锁内复检并执行 → 更新登记。
+     * 新建文件（existedBefore=false）无旧版本可比，校验直接放行。
+     */
+    private suspend fun withWriteGuards(
+        access: FileAccessProvider,
+        path: String,
+        sessionId: String?,
+        block: suspend () -> ToolResult
+    ): ToolResult {
+        val key = access.toDisplayPath(path)
+        val existedBefore = access.exists(path)
+        checkVersion(access, path, key, sessionId, existedBefore)?.let { return it }
+
+        return fileLock.withLock(key) {
+            checkVersion(access, path, key, sessionId, existedBefore)?.let { return@withLock it }
+            val result = block()
+            // 写成功后登记新版本；登记失败不能把已成功的写入报成失败（写已落盘，最坏只是退化成未登记）。
+            if (result is ToolResult.Success) {
+                recordVersion(access, path, key, sessionId)
             }
-            WriteLease.denialReason(context.writePaths, path)?.let { reason ->
+            result
+        }
+    }
+
+    /**
+     * 版本比对。返回 null 表示可以继续，返回 Error 表示内容已过期、拒绝写入。
+     *
+     * [existed] 为 false（新建文件）时直接放行：没有旧版本可比较，登记表里的任何记录也不代表
+     * "这个文件曾经存在过"。**fail-open**：拿不到当前指纹时放行并记日志。
+     */
+    private suspend fun checkVersion(
+        access: FileAccessProvider,
+        path: String,
+        key: String,
+        sessionId: String?,
+        existed: Boolean
+    ): ToolResult? {
+        if (!existed) return null
+        val recorded = versions.get(sessionId, key) ?: return null
+        val current = runCatching { runFileOpWithTimeout { access.fingerprint(path) } }
+            .onFailure { FileLogger.w(TAG, "write_file 无法计算当前指纹，跳过版本校验: $key", it) }
+            .getOrNull() ?: return null
+        if (recorded == current) return null
+        FileLogger.w(TAG, "write_file 拒绝过期写: $key（记录版本与当前不一致）")
+        return ToolResult.Error(staleFileMessage(key), STALE_FILE_CODE)
+    }
+
+    /** 写成功后登记新指纹。登记失败只记日志，不改变写入结果。 */
+    private suspend fun recordVersion(access: FileAccessProvider, path: String, key: String, sessionId: String?) {
+        runCatching { runFileOpWithTimeout { access.fingerprint(path) } }
+            .onFailure { FileLogger.w(TAG, "write_file 写后登记版本失败: $key", it) }
+            .getOrNull()
+            ?.let { versions.record(sessionId, key, it) }
+    }
+
+    /** 真正的写入逻辑：不涉及锁与版本，纯粹按 [args] 完成一次整文件写。 */
+    private suspend fun performWrite(
+        access: FileAccessProvider,
+        path: String,
+        args: Map<String, JsonElement>,
+        writePaths: Set<String>?
+    ): ToolResult {
+        return try {
+            WriteLease.denialReason(writePaths, path)?.let { reason ->
                 FileLogger.w(TAG, "write_file 被写路径租约拒绝: $path ($reason)")
                 return ToolResult.Error("${WriteLease.DENIAL_PREFIX}：$reason", "WRITE_LEASE_DENIED")
             }

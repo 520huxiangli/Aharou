@@ -2718,4 +2718,22 @@
     <string name="browser_dialog_alert_title">网页提示</string>
     <string name="browser_dialog_confirm_title">网页确认</string>
     <string name="browser_dialog_prompt_title">网页输入</string>
+    <string name="settings_network_guide_title">后台断网排查</string>
+    <string name="settings_network_guide_subtitle">切到后台后断网？按这里逐项检查</string>
+    <string name="settings_network_guide_intro">若切到后台后出现「网络连接断开」，请按以下顺序设置：</string>
+    <string name="settings_network_guide_step_keepalive">1. 打开上方「后台运行保活」，并保留通知栏的常驻通知</string>
+    <string name="settings_network_guide_step_lock">2. 在多任务界面给本应用加锁，不要直接划掉</string>
+    <string name="settings_network_guide_step_battery">3. 在系统设置里把本应用的省电策略设为「无限制 / 不优化」，并允许自启动</string>
+    <string name="settings_network_guide_brand_huawei">华为 / 荣耀：应用启动管理 → 手动管理 → 允许自启动、关联启动、后台活动</string>
+    <string name="settings_network_guide_brand_xiaomi">小米 / Redmi：省电与电池 → 应用智能省电 → 无限制</string>
+    <string name="settings_network_guide_brand_oppo">OPPO / 一加 / realme：应用管理 → 电池使用 → 允许后台活动；电池 → 更多设置 → 优化电池使用 → 不优化</string>
+    <string name="settings_network_guide_brand_vivo">vivo / iQOO：电池 → 后台耗电管理 → 允许后台高耗电；应用与权限 → 自启动</string>
+    <string name="settings_network_guide_brand_samsung">三星：电池和设备维护 → 电池 → 后台使用限制 → 加入「从不休眠」；应用 → 电池 → 不受限制</string>
+    <string name="settings_network_guide_more">更多机型与详细说明见官网文档</string>
+    <string name="container_sort_long_press">长按拖动排序</string>
+    <string name="remote_connection_sort_long_press">长按拖动排序</string>
+    <string name="editor_save_conflict_title">保存冲突</string>
+    <string name="editor_save_conflict_message">文件已被其他地方修改（可能是 AI 会话），请选择保留哪一份：</string>
+    <string name="editor_save_conflict_overwrite">覆盖磁盘</string>
+    <string name="editor_save_conflict_discard">放弃我的修改</string>
 </resources>

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.tool.FileVersionRegistry
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.data.EditorSettingsRepository
 import com.aharou.feature.editor.lsp.DefinitionTarget
@@ -38,6 +39,13 @@ sealed interface EditorUiState {
 /** 保存结果，一次性事件，经 [CodeEditorViewModel.saveEvents] 下发；带 path 以便标签页分辨来源。 */
 sealed interface SaveResult {
     data class Success(val path: String) : SaveResult
+
+    /**
+     * 磁盘内容在编辑器打开之后被改过（多半是 AI 会话写的），本次保存**未写入**。
+     * 携带磁盘当前内容供 UI 展示差异，由用户决定覆盖磁盘还是放弃自己的编辑，不静默覆盖也不静默丢弃。
+     */
+    data class Conflict(val path: String, val diskContent: String) : SaveResult
+
     data class Error(val path: String, val detail: String?) : SaveResult
 }
 
@@ -46,7 +54,8 @@ class CodeEditorViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val fileAccess: FileAccessProvider,
     private val editorSettings: EditorSettingsRepository,
-    private val editorLspManager: EditorLspManager
+    private val editorLspManager: EditorLspManager,
+    private val versions: FileVersionRegistry
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<EditorUiState>(EditorUiState.Loading)
@@ -66,6 +75,9 @@ class CodeEditorViewModel @Inject constructor(
 
     /** 每个路径只读一次盘，结果缓存下来供标签页来回切换复用。 */
     private val loadedStates = mutableMapOf<String, EditorUiState>()
+
+    /** 各路径「打开时磁盘内容」的指纹，用于保存前判断文件是否被 AI/其他会话改过。 */
+    private val loadedFingerprints = mutableMapOf<String, String?>()
 
     /**
      * 把当前文件挂到语言服务器上（成功返回 true）。[wrapper] 是原本的 TextMate 语言，继续负责着色；
@@ -126,33 +138,81 @@ class CodeEditorViewModel @Inject constructor(
                 EditorUiState.Error(e.message)
             }
             loadedStates[path] = state
+            if (state is EditorUiState.Success) refreshBaseline(path)
             // 读盘期间用户可能已切到别的标签页，只在仍停留在这个路径时更新界面。
             if (currentPath == path) _uiState.value = state
         }
     }
 
-    /** 把指定路径的内容写回磁盘。写入在 IO 线程进行，结果通过 [saveEvents] 通知，期间 [saving] 置位。 */
+    /** 刷新指定路径的磁盘指纹基线，并登记给并发保护（AI 会话据此把手上版本视为过期）。 */
+    private fun refreshBaseline(path: String) {
+        val fingerprint = runCatching { fileAccess.fingerprint(path) }.getOrNull()
+        loadedFingerprints[path] = fingerprint
+        fingerprint?.let { versions.recordExternal(fileAccess.toDisplayPath(path), it) }
+    }
+
+    /**
+     * 把指定路径的内容写回磁盘。写入在 IO 线程进行，结果通过 [saveEvents] 通知，期间 [saving] 置位。
+     *
+     * 写盘前先比对磁盘指纹：文件在编辑器打开之后被 AI 会话或别的进程改过时**不写入**，
+     * 改为下发 [SaveResult.Conflict]，由用户决定覆盖还是放弃自己的编辑——否则这次保存会静默抹掉对方的改动。
+     */
     fun save(path: String, content: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _saving.value = true
             try {
-                val result = runCatching { fileAccess.writeFile(path, content) }
-                    .fold(
-                        onSuccess = {
-                            markSaved(path, content)
-                            SaveResult.Success(path)
-                        },
-                        onFailure = { e ->
-                            FileLogger.w(TAG, "保存文件失败: $path", e)
-                            SaveResult.Error(path, e.message)
-                        }
-                    )
-                _saveEvents.send(result)
+                val baseline = loadedFingerprints[path]
+                val current = runCatching { fileAccess.fingerprint(path) }.getOrNull()
+                if (baseline != null && current != null && current != baseline) {
+                    FileLogger.w(TAG, "保存冲突（磁盘内容已变）: $path")
+                    val disk = runCatching { fileAccess.readFile(path) }.getOrNull().orEmpty()
+                    _saveEvents.send(SaveResult.Conflict(path, disk))
+                    return@launch
+                }
+                _saveEvents.send(writeThrough(path, content))
             } finally {
                 _saving.value = false
             }
         }
     }
+
+    /** 无视冲突直接覆盖磁盘（用户在冲突提示里选了「覆盖」）；仍走 [fileAccess] 的原子写。 */
+    fun saveForce(path: String, content: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _saving.value = true
+            try {
+                _saveEvents.send(writeThrough(path, content))
+            } finally {
+                _saving.value = false
+            }
+        }
+    }
+
+    /**
+     * 放弃编辑器里的修改、重新从磁盘加载（用户在冲突提示里选了「放弃我的修改」）。
+     * [load] 会因路径未变直接返回、且命中缓存，故先清掉这条路径的状态与缓存再加载。
+     */
+    fun reloadFromDisk(path: String) {
+        loadedStates.remove(path)
+        loadedFingerprints.remove(path)
+        if (currentPath == path) currentPath = null
+        load(path)
+    }
+
+    /** 真正写盘并刷新版本基线，避免紧接着的第二次保存被自己上一次的写入判成冲突。 */
+    private fun writeThrough(path: String, content: String): SaveResult =
+        runCatching { fileAccess.writeFile(path, content) }
+            .fold(
+                onSuccess = {
+                    refreshBaseline(path)
+                    markSaved(path, content)
+                    SaveResult.Success(path)
+                },
+                onFailure = { e ->
+                    FileLogger.w(TAG, "保存文件失败: $path", e)
+                    SaveResult.Error(path, e.message)
+                }
+            )
 
     /**
      * 保存成功后把缓存与当前 UI 状态同步成落盘内容。

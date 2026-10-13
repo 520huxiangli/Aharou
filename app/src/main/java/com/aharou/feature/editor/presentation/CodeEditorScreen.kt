@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,6 +68,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.core.util.LineDiff
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.domain.EditorSessionManager
 import com.aharou.feature.editor.domain.TextMateSetup
@@ -96,8 +98,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.launch
 
 /**
- * 独立全屏代码编辑页。支持语法高亮、撤销/重做、底部符号快捷栏与保存。
- * 保存直接覆盖写回，不做外部并发写检测——AI 工具或终端可能同时改同一文件。
+ * 独立全屏代码编辑页。支持语法高亮、撤销/重做、底部符号快捷栏与保存；保存前比对磁盘指纹，文件被 AI 会话改过时弹冲突对话框而非静默覆盖。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,6 +134,7 @@ fun CodeEditorScreen(
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var showCloseTabDialog by remember { mutableStateOf(false) }
     var pendingCloseTab by remember { mutableStateOf<String?>(null) }
+    var saveConflictDiskContent by remember { mutableStateOf<String?>(null) } // 非空时弹保存冲突对话框
     var showSettings by remember { mutableStateOf(false) }
     val editorFind = remember { EditorFindState() }
     // 语言服务器挂载状态：只有挂上之后才提供「跳转到定义」（没装服务器 / 非收录语言的入口不该露出来）。
@@ -182,6 +184,7 @@ fun CodeEditorScreen(
                         onBack()
                     }
                 }
+                is SaveResult.Conflict -> { pendingExit = false; saveConflictDiskContent = result.diskContent }
                 is SaveResult.Error -> {
                     pendingExit = false
                     Toast.makeText(
@@ -511,6 +514,27 @@ fun CodeEditorScreen(
                     showCloseTabDialog = false
                     pendingCloseTab = null
                 }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
+    saveConflictDiskContent?.let { disk ->
+        AlertDialog(
+            onDismissRequest = { saveConflictDiskContent = null },
+            title = { Text(stringResource(R.string.editor_save_conflict_title)) },
+            text = {
+                Text(
+                    stringResource(R.string.editor_save_conflict_message) + "\n\n" + LineDiff.toUnified(disk, pendingSaveText),
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                )
+            },
+            confirmButton = { TextButton(onClick = { saveConflictDiskContent = null; viewModel.saveForce(activePath, pendingSaveText) }) { Text(stringResource(R.string.editor_save_conflict_overwrite)) } },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { saveConflictDiskContent = null }) { Text(stringResource(R.string.common_cancel)) }
+                    TextButton(onClick = { saveConflictDiskContent = null; dirty = false; EditorSessionManager.forget(activePath); viewModel.reloadFromDisk(activePath) }) { Text(stringResource(R.string.editor_save_conflict_discard)) }
+                }
             }
         )
     }

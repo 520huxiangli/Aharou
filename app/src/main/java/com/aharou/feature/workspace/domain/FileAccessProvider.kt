@@ -69,6 +69,21 @@ interface FileAccessProvider {
     /** 最后修改时间（epoch 毫秒）。 */
     fun lastModified(path: String): Long
 
+    /**
+     * 文件内容指纹，用于多会话并发编辑的写前校验（乐观并发控制）。
+     *
+     * 返回 `sha256:<十六进制>`；文件不存在或不是普通文件时返回 null。
+     *
+     * 选**内容哈希**而非 `size + mtime` 的原因：远端 SFTP 的 mtime 只有秒级精度
+     * （见 [RemoteSftpFileAccess.lastModified]），同一秒内的两次写入无法区分，会让「过期写」漏判。
+     * 内容哈希无精度问题，代价是每次校验多一次整文件读取——调用方（editFile/writeFile）本来就要
+     * 读原文，增量成本可控。
+     *
+     * 注意：指纹按**原始字节**计算，与调用方用哪种 [Charset] 解码无关；同一文件只要字节未变，
+     * 指纹就稳定。
+     */
+    fun fingerprint(path: String): String?
+
     /** 权限位字符串（如 "rwx"）。 */
     fun permissions(path: String): String
 
@@ -155,6 +170,27 @@ interface FileAccessProvider {
      */
     fun forWorkspace(workspacePath: String): FileAccessProvider = this
 }
+
+/**
+ * 计算文件内容指纹：`sha256:<十六进制小写>`。三套 [FileAccessProvider] 实现共用，保证同一份字节
+ * 在不同后端下得到同一指纹字符串。
+ *
+ * 前缀写进指纹本身（而不是只存裸 hex），将来若换算法（如 blake3），旧记录与新记录天然不可比，
+ * 会退化成「未知版本」而不是**错误地判定为相等**——这是并发校验里更安全的失败方向。
+ */
+internal fun sha256Fingerprint(bytes: ByteArray): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+    return buildString(digest.size * 2 + 7) {
+        append("sha256:")
+        for (b in digest) {
+            val v = b.toInt() and 0xFF
+            append(HEX_CHARS[v ushr 4])
+            append(HEX_CHARS[v and 0x0F])
+        }
+    }
+}
+
+private const val HEX_CHARS = "0123456789abcdef"
 
 /**
  * 单个目录条目名是否合法：非空、不含路径分隔符、不是 `.` 或 `..`。
