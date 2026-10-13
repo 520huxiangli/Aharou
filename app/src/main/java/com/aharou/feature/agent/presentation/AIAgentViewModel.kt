@@ -1425,30 +1425,21 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 系统通知正文：普通用户消息直接展示；后台回调触发的轮次不裸露
-     * 「[系统通知 - 非用户输入]…」内部构造文本，改为展示任务标题。
+     * 系统通知正文：展示 AI 回复的摘要。通知是给「没在看对话」的人看的，
+     * 回吐用户自己刚发的那句话没有信息量；拿不到回复时才回退到通用文案。
      */
-    private fun agentCompleteNotificationBody(userRequest: String): String {
-        if (userRequest.startsWith(BACKGROUND_NOTIFICATION_PREFIX)) {
-            val titles = TASK_NOTIFICATION_TITLE_REGEX.findAll(userRequest)
-                .map { it.groupValues[1] }
-                .filter { it.isNotBlank() }
-                .toList()
-            return when {
-                titles.isEmpty() -> context.getString(R.string.agent_complete_notification_body)
-                titles.size == 1 -> context.getString(
-                    R.string.agent_complete_notification_background_body, titles.first()
-                )
-                else -> context.getString(
-                    R.string.agent_complete_notification_background_multi_body, titles.size
-                )
-            }
+    private fun agentCompleteNotificationBody(reply: String): String {
+        val text = reply.replace('\n', ' ').trim()
+        return text.take(NOTIFICATION_BODY_MAX).ifBlank {
+            context.getString(R.string.agent_complete_notification_body)
         }
-        return userRequest.ifBlank { context.getString(R.string.agent_complete_notification_body) }
     }
 
     private companion object {
         const val TAG = "AIAgentViewModel"
+
+        /** 通知正文里的回复摘要上限（字符）：横幅/胶囊都放不下整段回复。 */
+        const val NOTIFICATION_BODY_MAX = 60
 
         /** 尚无当前会话时的草稿哨兵键：用 UUID 不可能产出的控制字符开头，避免撞上真实会话 id。 */
         const val PENDING_DRAFT_KEY = "\u0000pending"
@@ -2182,7 +2173,7 @@ class AIAgentViewModel @Inject constructor(
                         val inForeground = ProcessLifecycleOwner.get().lifecycle.currentState
                             .isAtLeast(Lifecycle.State.STARTED)
                         if (!inForeground && agentSoundSettings.isEnabled()) {
-                            agentCompletedNotifier.notify(sessionId, agentCompleteNotificationBody(modelRequest))
+                            agentCompletedNotifier.notify(sessionId, agentCompleteNotificationBody(_streamingTexts.value[sessionId].orEmpty()))
                         }
                         // 引擎级记忆兜底：主模型当轮没调 memory 工具时，后台用轻量模型抽取沉淀。
                         // 静默失败、不进对话流；同一会话 10 分钟内不重复跑。
