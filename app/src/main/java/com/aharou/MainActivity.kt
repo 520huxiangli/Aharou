@@ -45,7 +45,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -76,7 +75,7 @@ import com.aharou.core.ui.ImageViewerHost
 import com.aharou.core.ui.ImageViewerRequest
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.PAGE_MOTION_MS
-import com.aharou.core.ui.VerticalSplitHandle
+import com.aharou.core.ui.SplitPaneLayout
 import com.aharou.core.ui.drawerWidth
 import com.aharou.core.ui.isExpandedWidth
 import com.aharou.core.ui.pageEnter
@@ -862,14 +861,26 @@ fun AppNavigation(
                     }
                 }
                 val paneOpen = expanded && paneKind != WorkbenchPaneKind.NONE
-                // 拖动把手时要把位移像素换算成分栏比例，所以记下容器实测宽度。
-                var rowWidthPx by remember { mutableIntStateOf(0) }
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .onSizeChanged { rowWidthPx = it.width }
-                ) {
-                    Box(modifier = Modifier.weight(if (paneOpen) paneSplit else 1f)) {
+                SplitPaneLayout(
+                    paneOpen = paneOpen,
+                    paneSplit = paneSplit,
+                    minSplit = MIN_PANE_SPLIT,
+                    maxSplit = MAX_PANE_SPLIT,
+                    onSplitChange = { paneSplit = it },
+                    rightPane = {
+                        WorkbenchPaneContent(
+                            kind = paneKind,
+                            editorPath = paneEditorPath,
+                            editorLine = paneEditorLine,
+                            onClose = { paneKind = WorkbenchPaneKind.NONE },
+                            onOpenFile = { path -> openFile(path, 0, false) },
+                            onAddSelectionToInput = { text ->
+                                agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
+                            },
+                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) },
+                        )
+                    },
+                    leftPane = {
                         CompositionLocalProvider(
                             androidx.compose.ui.platform.LocalUriHandler provides fileUriHandler,
                             com.aharou.feature.browser.presentation.LocalBrowserOpener provides browserOpener,
@@ -907,36 +918,16 @@ fun AppNavigation(
                                 }
                             )
                         }
-                    }
-                    if (browserSheetOpen && paneKind != WorkbenchPaneKind.BROWSER) {
-                        com.aharou.feature.browser.presentation.BrowserSheet(
-                            tabPool = agentViewModel.browserTabPool,
-                            onDismiss = { browserSheetOpen = false },
-                        )
-                    }
-                    if (paneOpen) {
-                        VerticalSplitHandle(
-                            onDragDelta = { dx ->
-                                if (rowWidthPx > 0) {
-                                    paneSplit = (paneSplit + dx / rowWidthPx)
-                                        .coerceIn(MIN_PANE_SPLIT, MAX_PANE_SPLIT)
-                                }
-                            }
-                        )
-                        WorkbenchPaneContent(
-                            kind = paneKind,
-                            editorPath = paneEditorPath,
-                            editorLine = paneEditorLine,
-                            onClose = { paneKind = WorkbenchPaneKind.NONE },
-                            onOpenFile = { path -> openFile(path, 0, false) },
-                            onAddSelectionToInput = { text ->
-                                agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
-                            },
-                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) },
-                            modifier = Modifier.weight(1f - paneSplit)
-                        )
-                    }
-                }
+                    },
+                    overlay = {
+                        if (browserSheetOpen && paneKind != WorkbenchPaneKind.BROWSER) {
+                            com.aharou.feature.browser.presentation.BrowserSheet(
+                                tabPool = agentViewModel.browserTabPool,
+                                onDismiss = { browserSheetOpen = false },
+                            )
+                        }
+                    },
+                )
             }
             composable("settings") {
                 // 复用 Activity 级 settingsViewModel（MainActivity 顶部已创建并 init），
