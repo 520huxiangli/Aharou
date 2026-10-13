@@ -4,6 +4,7 @@ import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.WatchFilter
+import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.SshHostKeyStore
 import com.aharou.feature.agent.domain.container.SshHostKeyVerifier
@@ -24,6 +25,7 @@ import com.aharou.feature.workspace.domain.remote.SyncEngine
 import com.aharou.feature.workspace.domain.remote.SyncIndexStore
 import com.aharou.feature.workspace.domain.remote.ftp.FtpSyncClient
 import com.aharou.feature.workspace.domain.remote.sftp.SftpSyncClient
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -54,7 +56,8 @@ class RemoteRepository @Inject constructor(
     private val privateKeyStore: SshPrivateKeyStore,
     private val loginKeyStore: SshLoginKeyStore,
     private val fileChangeHub: FileChangeHub,
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val agentDatabase: AgentDatabase
 ) {
     /** 每个挂载的同步指纹索引，用于跳过未变文件；落在 app 私有的 `aharou/sync-index/` 下。 */
     private val syncIndexStore = SyncIndexStore(File(containerInstaller.aharouDir, "sync-index"))
@@ -146,7 +149,7 @@ class RemoteRepository @Inject constructor(
         val authType = if (auth is RemoteAuth.Password) "password" else "key"
         val authData = if (auth is RemoteAuth.Password) auth.password else (auth as RemoteAuth.PrivateKey).privateKeyPath
         val passphrase = if (auth is RemoteAuth.PrivateKey) auth.passphrase else null
-        // 编辑（updateConnection 复用本方法）时保留原创建时间，避免刷新排序位置
+        // 编辑（updateConnection 复用本方法）时保留原创建时间与排序位置，避免刷新列表顺序
         val existing = dao.getConnectionById(conn.id)
         val entity = RemoteConnectionEntity(
             id = conn.id,
@@ -161,9 +164,22 @@ class RemoteRepository @Inject constructor(
             // 存量口令（升级前用户在连接里填的），避免编辑连接把它抹掉。
             passphrase = passphrase?.let { KeystoreCipher.encryptString(it) }
                 ?: existing?.takeIf { authType == "key" }?.passphrase,
-            createdAt = existing?.createdAt ?: System.currentTimeMillis()
+            createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+            // 排序值以数据库当前值为准（重排异步落库，UI 传入的快照可能陈旧）；新建取最大排序 +1。
+            sortOrder = existing?.sortOrder ?: (dao.getMaxSortOrder() + 1)
         )
         dao.insertConnection(entity)
+    }
+
+    /**
+     * 按传入顺序重排连接配置。只写 id + sort_order 两列，
+     * 避免整行 REPLACE 覆盖并发修改的其它字段（如 authData/passphrase）。
+     */
+    suspend fun reorderConnections(connections: List<RemoteConnection>) {
+        FileLogger.d(TAG, "重排连接配置 共 ${connections.size} 个")
+        agentDatabase.withTransaction {
+            connections.forEachIndexed { index, conn -> dao.updateSortOrder(conn.id, index) }
+        }
     }
 
     suspend fun updateConnection(conn: RemoteConnection, auth: RemoteAuth) {
@@ -433,7 +449,8 @@ class RemoteRepository @Inject constructor(
         password = if (authType == "password") KeystoreCipher.decryptString(authData) else "",
         authType = authType,
         authData = authData,
-        passphrase = passphrase?.let { KeystoreCipher.decryptString(it) }
+        passphrase = passphrase?.let { KeystoreCipher.decryptString(it) },
+        sortOrder = sortOrder
     )
 
     private fun RemoteMountEntity.toDomainModel(conn: RemoteConnection?) = RemoteMount(

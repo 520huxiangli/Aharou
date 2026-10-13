@@ -175,7 +175,9 @@ data class RemoteConnectionDto(
     val username: String,
     val authType: String = "password",
     val authData: String,
-    val passphrase: String? = null
+    val passphrase: String? = null,
+    /** 连接列表排序序号；null 表示旧备份无此字段，导入时回退默认 0（由创建时间兜底排序）。 */
+    val sortOrder: Int? = null
 )
 
 @Serializable

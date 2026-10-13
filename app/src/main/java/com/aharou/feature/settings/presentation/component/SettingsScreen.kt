@@ -1225,14 +1225,14 @@ fun SettingsScreen(
                     onDeleteProfile = { viewModel.deleteContainerProfile(it) },
                     onSwitchConfirmed = onStopAllAndCloseTerminal,
                     onResetProfile = { profile ->
-                        // 重置与切换容器同等破坏性：rootfs 整体删掉，AI 会话与终端标签必须全部停掉，
-                        // 否则它们会继续读写正在被删的目录。
+                        // 重置与切换容器同等破坏性：rootfs 整体删掉，必须先停掉 AI 会话与终端标签。
                         onStopAllAndCloseTerminal()
                         viewModel.resetContainer(profile)
                     },
                     resetState = containerReset,
                     onRestoreBuiltin = { viewModel.restoreBuiltinAlpine() },
-                    remoteConnections = remoteConnections
+                    remoteConnections = remoteConnections,
+                    onReorder = viewModel::reorderContainerProfiles
                 )
                 SettingsSection.ContainerDownloads -> ContainerImageDownloadSection(
                     catalog = imageCatalog,

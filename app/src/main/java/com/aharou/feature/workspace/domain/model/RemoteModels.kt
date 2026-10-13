@@ -25,7 +25,9 @@ data class RemoteConnection(
     /** 密码（authType=password）或私钥文件路径（authType=key）。 */
     val authData: String = "",
     /** 私钥口令（authType=key 且私钥加密时）。 */
-    val passphrase: String? = null
+    val passphrase: String? = null,
+    /** 用户拖拽排序的显式顺序，越小越靠前。 */
+    val sortOrder: Int = 0
 )
 
 data class RemoteMount(

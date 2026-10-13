@@ -17,5 +17,7 @@ data class RemoteConnectionEntity(
     val authType: String = "password", // 'password' or 'key'
     val authData: String, // password or private key path
     val passphrase: String? = null,
-    @ColumnInfo(name = "created_at") val createdAt: Long = 0
+    @ColumnInfo(name = "created_at") val createdAt: Long = 0,
+    /** 用户拖拽排序的显式顺序，越小越靠前；新建时分配 max+1，存量行默认 0 由 created_at 兜底。 */
+    @ColumnInfo(name = "sort_order") val sortOrder: Int = 0
 )

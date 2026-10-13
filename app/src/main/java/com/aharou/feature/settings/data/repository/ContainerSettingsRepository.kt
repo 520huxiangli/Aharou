@@ -46,6 +46,8 @@ class ContainerSettingsRepository @Inject constructor(
         val DEFAULT_CONTAINER_ID_KEY = stringPreferencesKey("default_container_profile_id")
         /** 首次启动是否已写入内置 Alpine 默认项；置位后用户删光列表不再自动补回。 */
         val INITIALIZED_KEY = booleanPreferencesKey("initialized")
+        /** 列表顺序是否已归一为「新建在前」的显示序；见 [ensureProfileDisplayOrder]。 */
+        val ORDER_MIGRATED_KEY = booleanPreferencesKey("profile_order_migrated")
         /** 「容器与镜像」页使用说明公告已展示内容的哈希；无值或与当前内容哈希不一致时重新弹出。 */
         val ANNOUNCEMENT_SHOWN_HASH_KEY = stringPreferencesKey("container_announcement_shown_hash")
         /** 下载镜像页已下载/已安装的记录（JSON 列表）。 */
@@ -100,6 +102,39 @@ class ContainerSettingsRepository @Inject constructor(
         }
     }
 
+    /**
+     * 存量用户顺序归一：列表历史上「新建在前」是靠读取时按 createdAt 倒序排出来的，
+     * 存储顺序其实是插入序（旧在前）。改用显式拖拽顺序后不再实时排序，
+     * 故首次升级把存储顺序按 createdAt 倒序重写一次，保证升级前后用户看到的一致。
+     */
+    suspend fun ensureProfileDisplayOrder() {
+        context.containerDataStore.edit { prefs ->
+            if (prefs[ORDER_MIGRATED_KEY] == true) return@edit
+            prefs[ORDER_MIGRATED_KEY] = true
+            val current = prefs[CUSTOM_PROFILES_KEY]?.let { raw ->
+                runCatching { json.decodeFromString(profileSerializer, raw) }.getOrNull()
+            } ?: emptyList()
+            prefs[CUSTOM_PROFILES_KEY] = json.encodeToString(
+                profileSerializer, current.sortedByDescending { it.createdAt }
+            )
+        }
+    }
+
+    /**
+     * 按传入 id 顺序重排列表（只改顺序，不碰内容）。
+     * 未出现在 [orderedIds] 里的项（并发新增）按原相对顺序追加到末尾，不会丢配置。
+     */
+    suspend fun reorderCustomProfiles(orderedIds: List<String>) {
+        context.containerDataStore.edit { prefs ->
+            val current = prefs[CUSTOM_PROFILES_KEY]?.let { raw ->
+                runCatching { json.decodeFromString(profileSerializer, raw) }.getOrNull()
+            } ?: emptyList()
+            val byId = current.associateBy { it.id }
+            val ordered = orderedIds.mapNotNull { byId[it] } + current.filterNot { it.id in orderedIds }
+            prefs[CUSTOM_PROFILES_KEY] = json.encodeToString(profileSerializer, ordered)
+        }
+    }
+
     /** 已展示公告内容的哈希；无值表示从未展示过。 */
     val announcementShownHashFlow: Flow<String?> = context.containerDataStore.data.map { prefs ->
         prefs[ANNOUNCEMENT_SHOWN_HASH_KEY]
@@ -138,8 +173,9 @@ class ContainerSettingsRepository @Inject constructor(
 
     /**
      * 新增或覆盖同名 id 的自定义 profile。
-     * createdAt 规则：传入非 0 则用传入值；为 0 时若原记录存在（编辑场景，表单重建丢了时间）保留原时间，
-     * 否则视为新增写入当前时间——保证编辑保存后不改变排序位置。
+     * createdAt 规则：传入非 0 则用传入值；为 0 时若原记录存在（编辑场景，表单重建丢了时间）保留原时间。
+     * 位置规则：列表顺序由用户拖拽决定（存储顺序即显示顺序），故新增插到最前（沿用旧的「新建在前」观感），
+     * 编辑原地替换、不动位置。
      */
     suspend fun upsertCustomProfile(profile: ContainerProfile) {
         context.containerDataStore.edit { prefs ->
@@ -152,7 +188,11 @@ class ContainerSettingsRepository @Inject constructor(
                 existing != null && existing.createdAt != 0L -> profile.copy(createdAt = existing.createdAt)
                 else -> profile.copy(createdAt = System.currentTimeMillis())
             }
-            val merged = (current.filterNot { it.id == final.id } + final)
+            val merged = if (existing != null) {
+                current.map { if (it.id == final.id) final else it }
+            } else {
+                listOf(final) + current
+            }
             prefs[CUSTOM_PROFILES_KEY] = json.encodeToString(profileSerializer, merged)
         }
     }

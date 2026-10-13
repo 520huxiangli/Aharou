@@ -5,9 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -121,7 +118,8 @@ internal fun ContainerSection(
     /** 非 null 说明正在重置，界面弹不可取消的进度框直到删完。 */
     resetState: ContainerResetUiState? = null,
     onRestoreBuiltin: () -> Unit = {},
-    remoteConnections: List<RemoteConnection> = emptyList()
+    remoteConnections: List<RemoteConnection> = emptyList(),
+    onReorder: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var showAddSheetInternal by remember { mutableStateOf(false) }
@@ -163,10 +161,11 @@ internal fun ContainerSection(
                 .padding(bottom = Spacing.xl)
         ) {
             SettingsGroup {
-                profiles.forEachIndexed { index, profile ->
-                    if (index > 0) {
-                        SettingsDivider()
-                    }
+                ReorderableCardList(
+                    items = profiles,
+                    onSettle = onReorder,
+                    dragHandleLabel = stringResource(R.string.container_sort_long_press)
+                ) { profile, dragHandle ->
                     ContainerRow(
                         profile = profile,
                         active = profile.id == activeProfileId,
@@ -175,7 +174,8 @@ internal fun ContainerSection(
                         subtitle = profileSubtitle(context, profile, remoteConnections),
                         onSelect = { if (profile.id != activeProfileId) pendingSwitch = profile },
                         onEdit = { editingProfile = profile },
-                        onDelete = { deletingProfile = profile }
+                        onDelete = { deletingProfile = profile },
+                        dragModifier = dragHandle
                     )
                 }
             }
@@ -317,7 +317,7 @@ private fun osLogo(osId: String?): Painter? = when (osId) {
 
 /**
  * 单个容器行：分组内白底行，左侧图标方块 + 名称（内置带徽章）/副标题，右侧选中勾选 + 编辑/重置按钮，左滑删除。
- * 行主体点击切换镜像（未选中时弹确认）。
+ * 行主体点击切换镜像（未选中时弹确认）；[dragModifier] 为长按拖动排序手柄，只挂中间名称区，避开左滑手势。
  */
 @Composable
 private fun ContainerRow(
@@ -328,10 +328,9 @@ private fun ContainerRow(
     subtitle: String,
     onSelect: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    dragModifier: Modifier = Modifier
 ) {
-    val light = settingsLightMode()
-
     SwipeToDeleteRow(
         onDelete = onDelete,
         onClick = onSelect
@@ -375,8 +374,8 @@ private fun ContainerRow(
 
             Spacer(modifier = Modifier.width(Spacing.md))
 
-            // 中间：名称（内置徽章）+ 副标题
-            Column(modifier = Modifier.weight(1f)) {
+            // 中间：名称（内置徽章）+ 副标题；长按此区域可拖拽排序
+            Column(modifier = Modifier.weight(1f).then(dragModifier)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = profile.name,

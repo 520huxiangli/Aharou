@@ -13,7 +13,6 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LogLevel
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.RecentCallRecord
-import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.domain.container.ConnectionState
 import com.aharou.feature.agent.domain.container.ContainerImageCatalog
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
@@ -106,7 +105,6 @@ import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
-import com.aharou.feature.settings.domain.model.ProviderDashboardResult
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
 import com.aharou.feature.settings.domain.service.ModelCostCalculator
 import com.aharou.feature.settings.domain.service.ProviderDashboardRunner
@@ -1288,15 +1286,11 @@ class SettingsViewModel @Inject constructor(
             }
 
             launch {
-                // 首次启动写入内置 Alpine 默认项（置位标记后不再自动补回）
+                // 先做存量顺序归一，再开始收集，避开升级后第一帧闪出旧顺序：补内置项 + 把历史「新建在前」的显示序写回存储。
                 containerSettingsRepository.ensureBuiltinDefault()
-            }
-
-            launch {
-                containerSettingsRepository.customProfilesFlow.collectLatest {
-                    // 按添加时间降序（新的在前）；旧数据 createdAt 同为 0 时保持存储顺序
-                    _customProfiles.value = it.sortedByDescending { profile -> profile.createdAt }
-                }
+                containerSettingsRepository.ensureProfileDisplayOrder()
+                // 此后存储顺序即显示顺序：新增插到最前、编辑原地替换、拖拽重排由 reorderCustomProfiles 落库
+                containerSettingsRepository.customProfilesFlow.collectLatest { _customProfiles.value = it }
             }
 
             launch {
@@ -2665,6 +2659,13 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 容器列表长按拖拽排序：内存先重排（列表已重排 UI 才重绘，避免松手瞬间回跳），再异步持久化新顺序。 */
+    fun reorderContainerProfiles(fromIndex: Int, toIndex: Int) {
+        val reordered = _customProfiles.value.moved(fromIndex, toIndex) ?: return
+        _customProfiles.value = reordered
+        viewModelScope.launch { containerSettingsRepository.reorderCustomProfiles(reordered.map { it.id }) }
+    }
+
     /** 编辑自定义 profile：覆盖配置；若镜像来源变了则删旧 rootfs 触发重新解压。 */
     fun editCustomContainerProfile(profile: ContainerProfile) {
         viewModelScope.launch {
@@ -3072,18 +3073,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 提供商列表长按拖拽排序：同步更新内存顺序（reorderable 库要求 onMove 返回前列表已更新，否则拖拽项闪烁），再异步持久化 sortOrder。 */
+    /** 提供商列表长按拖拽排序：内存先重排（reorderable 库要求 onMove 返回前列表已更新，否则拖拽项闪烁），再异步持久化 sortOrder。 */
     fun reorderProviders(fromIndex: Int, toIndex: Int) {
-        if (fromIndex == toIndex) return
-        val current = _providers.value
-        if (fromIndex !in current.indices || toIndex !in current.indices) return
-        val reordered = current.toMutableList().apply {
-            add(toIndex, removeAt(fromIndex))
-        }
+        val reordered = _providers.value.moved(fromIndex, toIndex) ?: return
         _providers.value = reordered
-        viewModelScope.launch {
-            repository.reorderProviders(reordered)
-        }
+        viewModelScope.launch { repository.reorderProviders(reordered) }
     }
 
     fun fetchModels(provider: AIProviderConfig) {
@@ -3270,3 +3264,8 @@ private fun String.hasExtension(exts: Set<String>): Boolean {
     if (dot < 0 || dot == length - 1) return false
     return substring(dot + 1).lowercase() in exts
 }
+
+/** 拖拽排序后的列表：原位或越界返回 null，否则返回移除后插入的新列表。 */
+private fun <T> List<T>.moved(fromIndex: Int, toIndex: Int): List<T>? =
+    if (fromIndex == toIndex || fromIndex !in indices || toIndex !in indices) null
+    else toMutableList().apply { add(toIndex, removeAt(fromIndex)) }

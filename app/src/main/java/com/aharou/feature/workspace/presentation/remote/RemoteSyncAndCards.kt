@@ -44,6 +44,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -220,13 +222,18 @@ private fun ProtocolBadge(protocol: RemoteProtocol) {
     }
 }
 
-/** 连接通道行：服务器图标 + 名称（协议徽章）+ 地址副标题 + 右侧箭头，整行点击编辑，左滑删除。 */
+/**
+ * 连接通道行：服务器图标 + 名称（协议徽章）+ 地址副标题 + 右侧箭头，整行点击编辑，左滑删除。
+ * [dragModifier] 由列表侧提供（长按拖动排序的手柄），只挂在左侧信息区，避免与左滑删除抢手势。
+ */
 @Composable
 fun RemoteConnectionCard(
     conn: RemoteConnection,
     onEdit: (RemoteConnection) -> Unit,
-    onDelete: (RemoteConnection) -> Unit
+    onDelete: (RemoteConnection) -> Unit,
+    dragModifier: Modifier = Modifier
 ) {
+    val sortDescription = stringResource(R.string.remote_connection_sort_long_press)
     SwipeToDeleteRow(
         onDelete = { onDelete(conn) },
         onClick = { onEdit(conn) }
@@ -239,7 +246,12 @@ fun RemoteConnectionCard(
         ) {
             RowIconBox(FeatherIcons.Server)
             Spacer(modifier = Modifier.width(Spacing.md))
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(dragModifier)
+                    .semantics { contentDescription = sortDescription }
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = conn.name,

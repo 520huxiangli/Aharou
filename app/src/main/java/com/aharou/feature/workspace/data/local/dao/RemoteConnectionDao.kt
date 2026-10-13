@@ -14,11 +14,19 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface RemoteConnectionDao {
     // Connection operations
-    @Query("SELECT * FROM remote_connections ORDER BY created_at ASC, rowid ASC")
+    // 用户显式排序值优先；存量行（sort_order 全为 0）由 created_at + rowid 兜底，升级后顺序不变。
+    @Query("SELECT * FROM remote_connections ORDER BY sort_order ASC, created_at ASC, rowid ASC")
     fun getAllConnections(): Flow<List<RemoteConnectionEntity>>
 
-    @Query("SELECT * FROM remote_connections ORDER BY created_at ASC, rowid ASC")
+    @Query("SELECT * FROM remote_connections ORDER BY sort_order ASC, created_at ASC, rowid ASC")
     suspend fun getAllConnectionsOnce(): List<RemoteConnectionEntity>
+
+    @Query("SELECT COALESCE(MAX(sort_order), -1) FROM remote_connections")
+    suspend fun getMaxSortOrder(): Int
+
+    /** 仅更新排序值，避免整行 REPLACE 覆盖并发修改的其它字段。 */
+    @Query("UPDATE remote_connections SET sort_order = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, sortOrder: Int)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAllConnections(connections: List<RemoteConnectionEntity>)

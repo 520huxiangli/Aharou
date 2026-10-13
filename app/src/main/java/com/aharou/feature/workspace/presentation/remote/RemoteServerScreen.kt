@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -41,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.FloatingTabBar
 import com.aharou.core.ui.FloatingTabItem
+import com.aharou.feature.settings.presentation.component.ReorderableCardList
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.settingsPageBackground
@@ -148,17 +148,19 @@ fun RemoteServerScreen(
                         )
                     } else {
                         SettingsList(scrollState = connScrollState) {
-                            uiState.connections.forEachIndexed { index, conn ->
-                                if (index > 0) {
-                                    SettingsDivider()
-                                }
+                            ReorderableCardList(
+                                items = uiState.connections,
+                                onSettle = viewModel::reorderConnections,
+                                dragHandleLabel = stringResource(R.string.remote_connection_sort_long_press)
+                            ) { conn, dragHandle ->
                                 RemoteConnectionCard(
                                     conn = conn,
                                     onEdit = {
                                         connectionToEdit = it
                                         showAddConnectionDialog = true
                                     },
-                                    onDelete = { pendingDeleteConnection = it }
+                                    onDelete = { pendingDeleteConnection = it },
+                                    dragModifier = dragHandle
                                 )
                             }
                         }

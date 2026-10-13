@@ -886,7 +886,8 @@ class BackupManagerImpl @Inject constructor(
 
     private fun RemoteConnectionEntity.toDto() = RemoteConnectionDto(
         id, name, protocol.name, host, port, username, authType,
-        KeystoreCipher.decryptString(authData), passphrase?.let { KeystoreCipher.decryptString(it) }
+        KeystoreCipher.decryptString(authData), passphrase?.let { KeystoreCipher.decryptString(it) },
+        sortOrder
     )
 
     /** 旧备份可能含已移除的协议（本地通道），此类记录跳过不恢复。 */
@@ -896,7 +897,8 @@ class BackupManagerImpl @Inject constructor(
             id, name, parsed, host, port, username, authType,
             // 忽略大小写：旧版本导出的备份里 authType 可能是 PASSWORD/PRIVATE_KEY。
             if (authType.equals("PASSWORD", ignoreCase = true)) KeystoreCipher.encryptString(authData) else authData,
-            passphrase?.let { KeystoreCipher.encryptString(it) }
+            passphrase?.let { KeystoreCipher.encryptString(it) },
+            sortOrder = sortOrder ?: 0
         )
     }
 

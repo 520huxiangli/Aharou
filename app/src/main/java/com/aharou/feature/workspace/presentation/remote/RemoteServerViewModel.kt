@@ -345,6 +345,23 @@ class RemoteServerViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 连接配置长按拖拽排序：同步更新内存顺序（列表已重排 UI 才重绘，避免松手瞬间回跳），
+     * 再异步持久化 sort_order。顺序有实际语义——挂载弹窗与容器 SSH 通道下拉默认取第一项。
+     */
+    fun reorderConnections(fromIndex: Int, toIndex: Int) {
+        if (fromIndex == toIndex) return
+        val current = _uiState.value.connections
+        if (fromIndex !in current.indices || toIndex !in current.indices) return
+        val reordered = current.toMutableList().apply {
+            add(toIndex, removeAt(fromIndex))
+        }
+        _uiState.value = _uiState.value.copy(connections = reordered)
+        viewModelScope.launch {
+            repository.reorderConnections(reordered)
+        }
+    }
+
     fun addMount(connectionId: String, remotePath: String, localWorkspacePath: String, autoConnect: Boolean) {
         viewModelScope.launch {
             val mount = RemoteMount(
