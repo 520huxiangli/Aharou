@@ -322,6 +322,11 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var skillMarketCatalog: com.aharou.feature.agent.domain.skill.market.SkillMarketCatalog
 
+    /** 灵动岛 / 流体云：把通话、Agent、后台终端三路运行态汇成一条 promoted ongoing 通知。
+      * internal：它依赖同为 internal 的 VoiceCallSession，公开属性无法暴露该类型。 */
+    @Inject
+    internal lateinit var liveUpdateCoordinator: com.aharou.feature.agent.presentation.notification.LiveUpdateCoordinator
+
     /** 长驻作用域：持续把持久化的日志等级同步到 FileLogger。 */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -379,6 +384,8 @@ class AIEditorApp : Application(), Configuration.Provider {
             registerBouncyCastle()
         }
         createNotificationChannels()
+        // 灵动岛 / 流体云：启动即接管一条实时进度通知（不依赖小染开关）。
+        liveUpdateCoordinator.start()
         // 启动凭据请求监听：容器内 credential helper 写来的 cred-req-* → 全局弹窗回填 → 回喂 git 续跑。
         credentialRequestBridge.start()
         // 启动即把最新的内置指南手册提取到私有配置目录
