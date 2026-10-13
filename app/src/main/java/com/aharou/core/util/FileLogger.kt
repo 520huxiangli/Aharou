@@ -147,6 +147,9 @@ object FileLogger {
         write("ERROR", tag, message, throwable)
     }
 
+    /** 日志目录（未初始化时为 null）。供崩溃 tombstone 等附属文件与主日志放在一起。 */
+    fun logDirectory(): File? = logDir
+
     /** 返回当前所有日志文件，按文件名（即日期）排序，供"查看日志"等界面使用。 */
     fun listLogFiles(): List<File> {
         val dir = logDir ?: return emptyList()
