@@ -2076,6 +2076,10 @@
 <string name="filebrowser_title">文件</string>
 <string name="computer_params">参数</string>
 <string name="computer_result">结果</string>
+<string name="computer_output_empty">（空）</string>
+<string name="computer_output_collapsed">已折叠超大输出（%1$s）</string>
+<string name="computer_output_expand">展开</string>
+<string name="computer_output_load_more">继续加载（还有 %1$d 块）</string>
 <string name="filepreview_apk_install">安装</string>
 <string name="filepreview_apk_unreadable">无法读取安装包详情。</string>
 <string name="filepreview_image_decode_error">无法解码图片</string>

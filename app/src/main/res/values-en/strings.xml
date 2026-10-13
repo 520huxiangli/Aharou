@@ -2076,6 +2076,10 @@
 <string name="filebrowser_title">Files</string>
 <string name="computer_params">Params</string>
 <string name="computer_result">Result</string>
+<string name="computer_output_empty">(empty)</string>
+<string name="computer_output_collapsed">Large output collapsed (%1$s)</string>
+<string name="computer_output_expand">Expand</string>
+<string name="computer_output_load_more">Load more (%1$d left)</string>
 <string name="filepreview_apk_install">Install</string>
 <string name="filepreview_apk_unreadable">Package details could not be read.</string>
 <string name="filepreview_image_decode_error">Unable to decode image</string>

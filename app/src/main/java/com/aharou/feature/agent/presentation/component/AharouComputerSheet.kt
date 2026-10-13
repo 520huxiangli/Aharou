@@ -235,6 +235,8 @@ private fun ToolComputerPage(
 ) {
     val running = message.content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
         message.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER)
+    // 结果解析只做一次：原实现每次重组都对完整工具结果跑一遍 JSONObject，超长结果自身就够卡。
+    val output = remember(message.id, message.content, running) { formatComputerOutput(message.content, running) }
 
     Column(
         modifier = Modifier
@@ -270,14 +272,14 @@ private fun ToolComputerPage(
             message.toolName == "Bash" || message.toolName == "terminal" -> {
                 TerminalCard(
                     command = extractComputerShellCommand(message.toolArgs),
-                    output = formatComputerOutput(message.content, running),
+                    output = output,
                     isError = message.isError,
                 )
             }
             message.toolName == "browser" -> {
                 BrowserCard(
                     url = extractComputerBrowserUrl(message.toolArgs),
-                    output = formatComputerOutput(message.content, running),
+                    output = output,
                     running = running,
                     pool = browserPool,
                 )
@@ -290,7 +292,7 @@ private fun ToolComputerPage(
                 }
                 InfoCard(
                     title = stringResource(R.string.computer_result),
-                    body = formatComputerOutput(message.content, running),
+                    body = output,
                     mono = false,
                     isError = message.isError,
                 )
@@ -302,7 +304,7 @@ private fun ToolComputerPage(
                 }
                 InfoCard(
                     title = stringResource(R.string.computer_result),
-                    body = formatComputerOutput(message.content, running),
+                    body = output,
                     mono = false,
                     isError = message.isError,
                 )
@@ -399,12 +401,10 @@ private fun TerminalCard(command: String?, output: String, isError: Boolean) {
             )
             HorizontalDivider(thickness = 0.5.dp, color = ComputerCardBorder)
         }
-        Text(
-            text = output.ifBlank { "（无输出）" },
-            fontFamily = ComputerMono,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
+        ExpandableOutputText(
+            text = output,
             color = if (isError) ComputerRed else ComputerGreen,
+            fontFamily = ComputerMono,
         )
     }
 }
@@ -427,11 +427,10 @@ private fun BrowserCard(
         )
     }
     BrowserLivePreview(pool = pool, running = running)
-    Text(
-        text = output.ifBlank { "（无输出）" },
-        fontSize = 12.sp,
-        lineHeight = 17.sp,
+    ExpandableOutputText(
+        text = output,
         color = MaterialTheme.colorScheme.onSurface,
+        lineHeight = 17.sp,
     )
 }
 
@@ -501,11 +500,9 @@ private fun InfoCard(title: String, body: String, mono: Boolean, isError: Boolea
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
-            text = body.ifBlank { "（空）" },
+        ExpandableOutputText(
+            text = body,
             fontFamily = if (mono) ComputerMono else FontFamily.Default,
-            fontSize = 12.sp,
-            lineHeight = 18.sp,
             color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
         )
     }
@@ -531,6 +528,9 @@ internal fun formatComputerOutput(raw: String, running: Boolean): String {
     if (running) return "…"
     if (raw.isBlank()) return ""
     val t = raw.trim()
+    // 超长结果直接原样返回，跳过 JSONObject 解析：解析是主线程同步开销，而这档结果一律走
+    // ExpandableOutputText 折叠渲染，抽不抽得出字段对展示没有意义。
+    if (t.length > OUTPUT_COLLAPSE_THRESHOLD_CHARS) return raw
     if (t.startsWith("{")) {
         val parsed = runCatching {
             val obj = JSONObject(t)
