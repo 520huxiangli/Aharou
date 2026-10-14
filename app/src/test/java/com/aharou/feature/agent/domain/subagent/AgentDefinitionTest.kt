@@ -155,7 +155,7 @@ class AgentDefinitionTest {
         val result = def(disallowed = listOf("mcp__ctx7__*")).filterToolNames(allTools)
 
         assertEquals(
-            listOf("readFile", "writeFile", "editFile", "Bash", "terminal", "search", "mcp__mt__open"),
+            listOf("readFile", "writeFile", "editFile", "Bash", "terminal", "search", "task", "mcp__mt__open"),
             result
         )
     }
