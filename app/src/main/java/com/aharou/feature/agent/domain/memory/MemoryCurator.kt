@@ -147,17 +147,22 @@ class MemoryCurator @Inject constructor(
                     }
                     ArbiterAction.CONFLICT -> {
                         if (similar.scope == effectiveScope) {
-                            memoryRepository.archiveContent(
-                                similar.name, similar.description, similar.content, similar.scope, projectRoot
-                            )
-                            if (memoryRepository.saveMemory(c.name, c.description, c.content, effectiveScope, projectRoot, c.type)) saved++
-                            FileLogger.i(TAG, "记忆「${similar.name}」被新事实推翻，旧版已归档")
+                            // 不覆盖旧条目：矛盾的两条并存，新的标「待确认」，由使用者裁决
+                            // （记忆纪律 F4：矛盾不自动裁定——自行选一边会抹掉「曾经有过分歧」这个证据）。
+                            if (memoryRepository.saveMemory(
+                                    c.name, c.description, c.content, effectiveScope, projectRoot, c.type,
+                                    pending = true
+                                )
+                            ) {
+                                saved++
+                            }
+                            FileLogger.i(TAG, "记忆「${similar.name}」与「${c.name}」冲突，两条并存待确认")
                             memoryTrace.record(
                                 source = MemoryTraceLog.SOURCE_CURATOR,
                                 action = MemoryTraceLog.ACTION_CONFLICT,
                                 name = c.name,
                                 scope = effectiveScope.name.lowercase(),
-                                detail = "推翻「${similar.name}」，旧版已归档",
+                                detail = "与「${similar.name}」冲突，两条并存待确认",
                                 sessionId = sessionId
                             )
                             continue

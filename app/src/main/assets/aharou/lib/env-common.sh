@@ -756,6 +756,10 @@ EOF
     # 匹配不到它、报 fatal 后被 2>/dev/null 吞掉，于是每跑一次初始化就 --add 累加一条重复 path。
     git config --global --remove-section "includeIf.gitdir:$HOME/workspace/" 2>/dev/null || true
     git config --global --add includeIf."gitdir:$HOME/workspace/".path "$AICODE_DIR/gitconfig.credential"
+    # 记忆仓库（设置页「同步到自己的仓库」）也走同一份凭据：它立在 $HOME/.aharou/memory，
+    # 不在工作区之下，不加这条就拿不到 helper、推不上去。作用域同样限定到该目录，不放大到全局。
+    git config --global --remove-section "includeIf.gitdir:$HOME/.aharou/memory/" 2>/dev/null || true
+    git config --global --add includeIf."gitdir:$HOME/.aharou/memory/".path "$AICODE_DIR/gitconfig.credential"
     # 清掉全局顶层 [credential] 段：helper 只应经上面的 includeIf 按目录加载，
     # 写在顶层会对容器内所有仓库生效，破坏「只注入工作区根下」的最小化设计。
     git config --global --remove-section credential 2>/dev/null || true

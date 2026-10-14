@@ -220,6 +220,16 @@ internal fun BackupSection(viewModel: BackupViewModel) {
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                title = stringResource(R.string.backup_data_project_memory),
+                trailing = {
+                    AppSwitch(
+                        checked = exportOptions.projectMemory,
+                        onCheckedChange = { viewModel.updateExportOptions(exportOptions.copy(projectMemory = it)) }
+                    )
+                }
+            )
             WorkspaceBackupHint()
         }
 
@@ -626,6 +636,7 @@ private fun buildImportSummary(context: android.content.Context, stats: com.ahar
     if (stats.globalPermissionRules > 0) appendLine(context.getString(R.string.backup_stat_permission_rules, stats.globalPermissionRules))
     if (stats.workspaceFiles > 0) appendLine(context.getString(R.string.backup_stat_workspace_files, stats.workspaceFiles))
     if (stats.memoryFiles > 0) appendLine(context.getString(R.string.backup_stat_memory_files, stats.memoryFiles))
+    if (stats.projectMemoryFiles > 0) appendLine(context.getString(R.string.backup_stat_project_memory_files, stats.projectMemoryFiles))
     if (stats.appSettingsRestored) append(context.getString(R.string.backup_settings_covered))
 }
 

@@ -105,8 +105,10 @@ data class BackupOptions(
     val permissionRules: Boolean = true,
     val appSettings: Boolean = true,
     val workspaceFiles: Boolean = false,
-    /** 记忆与灵魂：aharou-global/memory 下的全部文件（SOUL.md / 核心档案 / 全局记忆 / 日志 / facts 等）。 */
-    val memoryAndSoul: Boolean = false
+    /** 记忆与灵魂：aharou-global/memory 下的全部文件（SOUL.md / 核心档案 / 全局记忆 / 日志 / facts 等，含 archive/ 归档）。 */
+    val memoryAndSoul: Boolean = false,
+    /** 项目级记忆：本地工作区 `.aharou/memory` 与远程工程私有记忆目录（含 archive/ 归档）。 */
+    val projectMemory: Boolean = true
 )
 
 data class RestoreStats(
@@ -120,6 +122,7 @@ data class RestoreStats(
     val globalPermissionRules: Int = 0,
     val workspaceFiles: Int = 0,
     val memoryFiles: Int = 0,
+    val projectMemoryFiles: Int = 0,
     /** 本次恢复是否真的套用了应用设置段：未含设置的备份不碰本机设置，导入汇总不应声称已覆盖。 */
     val appSettingsRestored: Boolean = false
 ) {
@@ -134,6 +137,7 @@ data class RestoreStats(
         globalPermissionRules = globalPermissionRules + other.globalPermissionRules,
         workspaceFiles = workspaceFiles + other.workspaceFiles,
         memoryFiles = memoryFiles + other.memoryFiles,
+        projectMemoryFiles = projectMemoryFiles + other.projectMemoryFiles,
         appSettingsRestored = appSettingsRestored || other.appSettingsRestored
     )
 }

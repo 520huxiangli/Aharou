@@ -106,6 +106,13 @@ class BackupManagerImpl @Inject constructor(
 
     private val importStaging = BackupImportStaging(context.cacheDir)
 
+    /** 记忆段（全局记忆 + 项目级记忆）的打包与还原，路径与覆盖留底规则见 [MemoryBackupSection]。 */
+    private val memorySection = MemoryBackupSection(
+        context = context,
+        internalWorkspaces = { backupLocalWorkspaces().filter { it.type == WorkspaceType.INTERNAL } },
+        resolveWorkspace = { name, mapping -> resolveWorkspaceForRestore(name, mapping) }
+    )
+
     private fun currentSchemaVersion(): Int = AgentDatabase.SCHEMA_VERSION
 
     private fun appVersionName(): String = runCatching {
@@ -292,7 +299,10 @@ class BackupManagerImpl @Inject constructor(
                     tar.setLongFileMode(TarArchiveOutputStream.LONGFILE_GNU)
                     writeMetadataEntry(tar, buildMetadata(options))
                     if (options.memoryAndSoul) {
-                        writeMemoryEntries(tar)
+                        memorySection.writeGlobalMemory(tar)
+                    }
+                    if (options.projectMemory) {
+                        memorySection.writeProjectMemory(tar)
                     }
                     if (options.workspaceFiles) {
                         writeWorkspaceEntries(tar)
@@ -476,44 +486,6 @@ class BackupManagerImpl @Inject constructor(
             .filter { it.isNotBlank() && !it.startsWith("#") }
             .map { it.trim().removeSuffix("/") }
 
-    private fun writeTarFileEntry(tar: TarArchiveOutputStream, name: String, file: File) {
-        val entry = TarArchiveEntry(name).apply { size = file.length() }
-        tar.putArchiveEntry(entry)
-        FileInputStream(file).use { it.copyTo(tar) }
-        tar.closeArchiveEntry()
-    }
-
-    /** 记忆与灵魂目录：与 AharouMemoryStore 同一路径（filesDir/aharou-global/memory）。 */
-    private fun memoryDir(): File = File(File(context.filesDir, "aharou-global"), "memory")
-
-    /** 写入「记忆与灵魂」段：记忆目录下的全部平铺文件 → `memory/<文件名>`（超大文件跳过）。 */
-    private fun writeMemoryEntries(tar: TarArchiveOutputStream) {
-        val dir = memoryDir()
-        if (!dir.isDirectory) return
-        dir.listFiles()?.sortedBy { it.name }?.forEach { f ->
-            if (f.isFile && f.length() <= MAX_MEMORY_FILE_BYTES) {
-                writeTarFileEntry(tar, "$MEMORY_PREFIX${f.name}", f)
-            }
-        }
-    }
-
-    /** 还原一条 `memory/...` 条目到记忆目录（仅平铺文件名、防路径穿越、同名覆盖）。 */
-    private fun restoreMemoryEntry(tar: TarArchiveInputStream, entry: TarArchiveEntry): RestoreStats {
-        val name = entry.name.removePrefix(MEMORY_PREFIX)
-        if (name.isEmpty() || name.contains('/') || name.contains("..")) return RestoreStats()
-        if (entry.size > MAX_MEMORY_FILE_BYTES) return RestoreStats()
-        val bytes = tar.readBytes()
-        return runCatching {
-            val dir = memoryDir()
-            dir.mkdirs()
-            File(dir, name).writeBytes(bytes)
-            RestoreStats(memoryFiles = 1)
-        }.getOrElse { e ->
-            FileLogger.w(TAG, "恢复记忆文件失败 $name: ${e.message}")
-            RestoreStats()
-        }
-    }
-
     // ── 导入辅助 ──────────────────────────────────────────────
 
     private suspend fun restoreFromTar(
@@ -568,8 +540,10 @@ class BackupManagerImpl @Inject constructor(
                 else -> {
                     if (entry.name.startsWith(WORKSPACE_PREFIX)) {
                         stats += restoreWorkspaceEntry(tar, entry.name, selectedWorkspaces, restoreMapping)
-                    } else if (entry.name.startsWith(MEMORY_PREFIX)) {
-                        stats += restoreMemoryEntry(tar, entry)
+                    } else if (entry.name.startsWith(PROJECT_MEMORY_PREFIX)) {
+                        stats += memorySection.restoreProjectMemoryEntry(tar, entry, selectedWorkspaces, restoreMapping)
+                    } else if (entry.name.startsWith(GLOBAL_MEMORY_PREFIX)) {
+                        stats += memorySection.restoreGlobalMemoryEntry(tar, entry)
                     }
                 }
             }
@@ -967,10 +941,6 @@ class BackupManagerImpl @Inject constructor(
         const val TAG = "BackupManager"
         const val PAGE_SIZE = 500
         const val FILE_METADATA = "metadata.json"
-        /** 「记忆与灵魂」段的 tar 前缀：memory/<文件名>。 */
-        const val MEMORY_PREFIX = "memory/"
-        /** 单条记忆文件体积上限（超过则跳过）。 */
-        const val MAX_MEMORY_FILE_BYTES = 8 * 1024 * 1024L
         const val FILE_SESSIONS = "chatSessions.jsonl"
         const val FILE_MESSAGES = "messages.jsonl"
         const val FILE_TODOS = "todoItems.jsonl"

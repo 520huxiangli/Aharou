@@ -208,6 +208,26 @@ class AIAgentViewModel @Inject constructor(
     private val lastCurateAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     /**
+     * 本轮工具轨迹（按会话）：工具名 + 结果开头。
+     *
+     * 自动整理记忆时要把工具结果一并喂给整理器——一轮活里最值得记的结论（查到的根因、
+     * 跑出来的数据）大多藏在工具输出里，只喂「用户提问 + 助手回答」会整段漏掉。
+     * 本轮结束时取走；整理没跑（节流中）则继续累积，下次一并喂。
+     */
+    private val toolTraceBySession = java.util.concurrent.ConcurrentHashMap<String, StringBuilder>()
+
+    /** 累积一条工具轨迹，单会话总量封顶 [TOOL_TRACE_MAX_CHARS]。 */
+    private fun appendToolTrace(sessionId: String, toolName: String, result: String) {
+        val buffer = toolTraceBySession.getOrPut(sessionId) { StringBuilder() }
+        synchronized(buffer) {
+            if (buffer.length >= TOOL_TRACE_MAX_CHARS) return
+            if (buffer.isNotEmpty()) buffer.append('\n')
+            buffer.append("工具 ").append(toolName).append(": ")
+                .append(result.trim().replace('\n', ' ').take(TOOL_TRACE_ENTRY_CHARS))
+        }
+    }
+
+    /**
      * 「影子屏」取一帧。缩略图轮播用 [sampleSize]=3 就够（每 1.5s 一帧，避免整图进内存）；
      * 工具详情面板里的图要按屏宽铺开，用 2 才看得清。
      */
@@ -1468,6 +1488,12 @@ class AIAgentViewModel @Inject constructor(
         const val PREVIEW_MAX_CHARS = 200_000
         /** 记忆兑现节流：同一会话两次自动整理的最小间隔。 */
         const val MEMORY_CURATE_INTERVAL_MS = 10 * 60 * 1000L
+
+        /** 喂给记忆整理器的单会话工具轨迹总量上限（字符）。 */
+        const val TOOL_TRACE_MAX_CHARS = 6_000
+
+        /** 单条工具结果截取长度：够看清这轮干了什么，又不至于把一次整理调用撑大。 */
+        const val TOOL_TRACE_ENTRY_CHARS = 800
         /** wakeLock 超时保险：构建、装依赖类工具动辄十几分钟，给足 60 分钟；任务正常结束会主动释放。 */
         const val KEEPALIVE_TIMEOUT_MS = 60 * 60 * 1000L
         private const val WAKE_LOCK_RENEW_MARGIN_MS = 10 * 60 * 1000L
@@ -2160,6 +2186,7 @@ class AIAgentViewModel @Inject constructor(
                     }
                     is AgentEvent.ToolCallFinished -> {
                         val msgId = "tool_${event.id}"
+                        appendToolTrace(sessionId, event.toolName, event.result)
                         toolArgsByMsgId.remove(msgId)
                         removeRunningTool(sessionId, msgId)
                     }
@@ -2188,15 +2215,20 @@ class AIAgentViewModel @Inject constructor(
                         val now = System.currentTimeMillis()
                         if (now - (lastCurateAt[sessionId] ?: 0L) >= MEMORY_CURATE_INTERVAL_MS) {
                             viewModelScope.launch {
-                                // 本轮对话文本：用户请求 + 流式回答快照。
+                                // 本轮对话文本：用户请求 + 工具轨迹 + 流式回答快照。
+                                // 工具轨迹不能少：一轮活里最值得沉淀的结论（查到的根因、
+                                // 跑出来的数据）大多在工具输出里，只喂问答两边会整段漏掉。
+                                val toolTrace = toolTraceBySession[sessionId]?.toString()?.takeIf { it.isNotBlank() }
                                 val transcript = buildString {
                                     append("用户: ").appendLine(modelRequest)
+                                    toolTrace?.let { appendLine(it) }
                                     _streamingTexts.value[sessionId]?.take(4000)
                                         ?.let { append("助手: ").appendLine(it) }
                                 }.trim()
                                 if (transcript.isNotBlank()) {
                                     agentWorkflow.curateMemory(sessionId, projectRoot, transcript)
-                                    // 成功后才记账：失败/取消时不占用 10 分钟窗口，下一轮重试。
+                                    // 调用后才清轨迹并记账：失败/取消时不占用 10 分钟窗口，下一轮带着轨迹重试。
+                                    toolTraceBySession.remove(sessionId)
                                     lastCurateAt[sessionId] = System.currentTimeMillis()
                                 }
                             }
@@ -2845,6 +2877,14 @@ class AIAgentViewModel @Inject constructor(
     private val _rewindConflicts = MutableStateFlow<List<String>>(emptyList())
     val rewindConflicts: StateFlow<List<String>> = _rewindConflicts.asStateFlow()
 
+    /** 打开回退菜单时算出的「将还原的文件数」上限，供确认提示展示。 */
+    private val _rewindPreviewFiles = MutableStateFlow(0)
+    val rewindPreviewFiles: StateFlow<Int> = _rewindPreviewFiles.asStateFlow()
+
+    /** 回退时间线：每次恢复/撤销留下的现场，供用户挑一个节点撤销（新→旧）。 */
+    private val _rewindUndoRecords = MutableStateFlow<List<CheckpointManager.UndoRecordInfo>>(emptyList())
+    val rewindUndoRecords: StateFlow<List<CheckpointManager.UndoRecordInfo>> = _rewindUndoRecords.asStateFlow()
+
     fun dismissRewindConflicts() {
         _rewindConflicts.value = emptyList()
     }
@@ -2857,6 +2897,23 @@ class AIAgentViewModel @Inject constructor(
 
     fun openRewindMenu(messageId: String) {
         _targetRewindMessageId.value = messageId
+        // 确认框要把「会动到几个文件」摆出来，故开菜单时先只读地数一遍（不动文件）。
+        _rewindPreviewFiles.value = 0
+        viewModelScope.launch {
+            val sessionId = _currentSessionId.value ?: return@launch
+            val checkpoint = checkpointDao.getCheckpointBySessionAndMessage(sessionId, messageId)
+            _rewindPreviewFiles.value = checkpoint
+                ?.let { checkpointManager.countFilesToRestore(sessionId, it.id) }
+                ?: 0
+            _rewindUndoRecords.value = checkpointManager.listUndoRecords(sessionId)
+        }
+    }
+
+    /** 撤销到指定的备份时间节点（[recordId] 为空即最新一份）。 */
+    fun undoRewind(recordId: String?) = viewModelScope.launch {
+        val sessionId = _currentSessionId.value ?: return@launch
+        checkpointManager.undoRestoreTo(sessionId, recordId)
+        _rewindUndoRecords.value = checkpointManager.listUndoRecords(sessionId)
     }
 
     fun dismissRewindMenu() {

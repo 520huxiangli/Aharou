@@ -132,6 +132,24 @@ class ConfigRemoteDeviceFields @Inject constructor(
 
         registry.register(
             ClosureField(
+                path = "remote.device.allow_ask_ai",
+                displayName = "允许已配对设备向本机 AI 提问",
+                description = "开启后，已配对设备能用 ask_ai **以本机用户的口吻**把问题交给本机 AI——它会当成用户说的来回答。" +
+                    "等于让它们借你的 AI 办事（它们本来就能 shell / write_file，这里多出来的是「AI 被指挥做你没打算的事」），故默认关闭；" +
+                    "工具调用仍走本机权限引擎，该审批的照旧。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(state().config.allowRemoteAskAi) },
+                writer = { v ->
+                    val flag = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("boolean")
+                    runBlocking { controller.setAllowRemoteAskAi(flag) }
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
                 path = "remote.device.pair_code",
                 displayName = "配对码",
                 description = "念给对端的 6 位码（不做废，配对成功后自动换新）。读取时若还没有码会自动生成一枚；" +

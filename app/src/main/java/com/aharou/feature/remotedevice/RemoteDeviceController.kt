@@ -112,6 +112,8 @@ class RemoteDeviceController @Inject constructor(
 
     suspend fun setAutoPairBack(value: Boolean) = settings.setAutoPairBack(value)
 
+    suspend fun setAllowRemoteAskAi(value: Boolean) = settings.setAllowRemoteAskAi(value)
+
     /** 生成（或复用）一枚 6 位配对码；**不过期**，对端拿它换长期 token，配对成功后自动换新。 */
     suspend fun pairingCode(): String = pairing.issueCode()
 

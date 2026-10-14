@@ -540,7 +540,9 @@
     <string name="backup_data_app_settings">应用设置</string>
     <string name="backup_data_workspace">工作区文件</string>
     <string name="backup_data_memory">记忆与灵魂</string>
+    <string name="backup_data_project_memory">项目记忆</string>
     <string name="backup_stat_memory_files">记忆文件 %1$d 个</string>
+    <string name="backup_stat_project_memory_files">项目记忆文件 %1$d 个</string>
     <string name="backup_workspace_git_hint">工作区文件建议通过 Git 提交备份，导出备份仅作备用</string>
     <string name="backup_password_label">口令（可选）</string>
     <string name="backup_processing">处理中</string>
@@ -2403,6 +2405,33 @@
     <string name="memory_trace_action_skip">跳过</string>
     <string name="memory_trace_action_unknown">操作</string>
 
+    <!-- 记忆浏览与整理 -->
+    <string name="memory_entries_header">记忆条目</string>    <string name="memory_entries_empty">全局记忆还是空的</string>
+    <string name="memory_entries_empty_project">这个项目的记忆还是空的</string>
+    <string name="memory_entry_no_description">（无摘要）</string>
+    <string name="memory_entry_pending">待确认</string>
+    <string name="memory_scope_global">全局</string>
+    <string name="memory_scope_project">项目</string>
+    <string name="memory_scope_no_workspace">未选择工作区</string>
+    <string name="memory_edit_description">摘要</string>
+    <string name="memory_edit_content">正文</string>
+    <string name="memory_edit_save">保存</string>
+    <string name="memory_compact_title">整理记忆</string>
+    <string name="memory_compact_subtitle">把同一主题的重复条目合并成一条，原版会自动归档、可恢复</string>
+    <string name="memory_compact_merged">整理完成：合并 %1$d 条，归档 %2$d 条</string>
+    <string name="memory_compact_nothing">没有需要整理的重复条目</string>
+    <string name="memory_archive_header">归档（旧版本）</string>
+    <string name="memory_archive_empty">还没有归档旧版本</string>
+    <string name="memory_archive_restore">恢复</string>
+
+    <!-- 记忆同步（到自己的 git 仓库） -->
+    <string name="memory_sync_header">同步到自己的仓库</string>
+    <string name="memory_sync_repo_title">记忆仓库地址</string>
+    <string name="memory_sync_repo_empty">还没填，点这里填自己的仓库地址</string>
+    <string name="memory_sync_repo_hint">仓库地址（https://…）</string>
+    <string name="memory_sync_now">立即同步</string>
+    <string name="memory_sync_never">还没同步过</string>
+
     <!-- 语音输入 -->
     <string name="voice_model_extracting">解压语音模型…</string>
     <string name="voice_call_toggle_start">点一下开始语音通话（一路听你说，再点一下停）</string>
@@ -2479,6 +2508,13 @@
     <string name="checkpoint_conflict_title">部分文件未还原</string>
     <string name="checkpoint_conflict_message">有 %1$d 个文件被检查点之外的操作修改过，已跳过以免覆盖你的改动：</string>
     <string name="checkpoint_undo_last_restore">撤销上次恢复</string>
+    <string name="checkpoint_confirm_rewind_title">确认回退</string>
+    <string name="checkpoint_confirm_rewind_body">将回到 %1$s，还原 %2$d 个文件。这之后的代码改动会被覆盖；被外部改过的文件会自动跳过。</string>
+    <string name="checkpoint_confirm_rewind_action">确认回退</string>
+    <string name="checkpoint_undo_timeline_title">恢复时间线</string>
+    <string name="checkpoint_undo_timeline_desc">已有 %1$d 个备份时间节点，挑一个撤销</string>
+    <string name="checkpoint_undo_timeline_empty">还没有可撤销的备份节点</string>
+    <string name="checkpoint_undo_timeline_item">涉及 %1$d 个文件</string>
     <string name="checkpoint_undo_last_restore_desc">把最近一次代码恢复回滚回恢复前的状态</string>
 
     <string name="editor_find">查找</string>
@@ -2638,6 +2674,8 @@
     <string name="remote_device_message_title">来自 %1$s 的消息</string>
     <string name="settings_remote_device_auto_pair_back">一次配对即互通</string>
     <string name="settings_remote_device_auto_pair_back_hint">对端配对成功后，本机顺带回连一次、双方各多一条授权，不用反向再配一次；回连只认对方的来源地址。默认开启。</string>
+    <string name="settings_remote_device_allow_ask_ai">允许已配对设备向本机 AI 提问</string>
+    <string name="settings_remote_device_allow_ask_ai_hint">开启后，已配对设备可用 ask_ai **以你的口吻**把问题交给本机 AI——它会当成你说的来回答。等于让它们借你的 AI 办事，所以默认关闭；工具调用仍走本机权限，该审批的照旧。</string>
     <string name="settings_remote_device_pair_hint">在另一台设备的 Aharou 里输入这枚 6 位码完成配对</string>
     <string name="settings_remote_device_pair_remaining">剩余 %1$s</string>
     <string name="settings_remote_device_pair_expired">配对码已过期</string>

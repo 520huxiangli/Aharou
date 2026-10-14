@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.writeTextSafely
+import com.aharou.feature.agent.domain.common.Frontmatter
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -26,6 +27,13 @@ sealed interface MemoryEditResult {
     data class Error(val code: String, val message: String) : MemoryEditResult
 }
 
+/** 归档目录里的一条旧版本（覆盖 / 合并前留的底）。 */
+data class MemoryArchiveInfo(
+    val fileName: String,
+    val sizeBytes: Long,
+    val modifiedAt: Long
+)
+
 /**
  * 记忆数据源抽象接口，支持全局和项目级。
  */
@@ -37,7 +45,7 @@ interface MemorySource {
     fun loadContent(name: String): String?
 
     /** 保存一条记忆（创建或覆盖） */
-    fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null): Boolean
+    fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null): Boolean
 
     /**
      * 对已有记忆的正文做局部编辑（old_string/new_string 精确匹配），语义与 editFile 一致。
@@ -78,7 +86,11 @@ interface MemorySource {
         }
 
         return try {
-            file.writeTextSafely(MemoryParser.format(memory.name, memory.description, content), "MemorySource")
+            file.writeTextSafely(
+                // 局部编辑不该顺手清掉「待确认」标记：改措辞和「确认这条成立」是两回事。
+                MemoryParser.format(memory.name, memory.description, content, pending = memory.pending),
+                "MemorySource"
+            )
             MemoryEditResult.Success
         } catch (e: Exception) {
             FileLogger.e("MemorySource", "Failed to edit memory: $name", e)
@@ -87,6 +99,50 @@ interface MemorySource {
     }
 
     fun deleteMemory(name: String): Boolean
+
+    /**
+     * 该作用域的记忆根目录；null 表示当前不可用（未选工作区等）。
+     * 设置页浏览归档、编辑器定位写盘目标都要用它。
+     */
+    val root: File? get() = null
+
+    /** 归档目录下的旧版本，最新在前。 */
+    fun listArchive(): List<MemoryArchiveInfo> {
+        val dir = root?.let { File(it, ARCHIVE_DIR) } ?: return emptyList()
+        if (!dir.isDirectory) return emptyList()
+        return (dir.listFiles() ?: emptyArray())
+            .filter { it.isFile }
+            .map { MemoryArchiveInfo(it.name, it.length(), it.lastModified()) }
+            .sortedByDescending { it.modifiedAt }
+    }
+
+    /** 读一条归档文件的原文；文件名含路径分隔符时拒绝（防路径穿越）。 */
+    fun readArchive(fileName: String): String? {
+        if (fileName.contains('/') || fileName.contains("..")) return null
+        val dir = root?.let { File(it, ARCHIVE_DIR) } ?: return null
+        val file = File(dir, fileName)
+        return file.takeIf { it.isFile }?.let { runCatching { it.readText() }.getOrNull() }
+    }
+
+    /**
+     * 把一条归档恢复成正式条目：按归档里的 frontmatter 还原名称与摘要，写回顶层。
+     * 同名条目已存在时由 [saveMemory] 先把现有的归档掉——恢复不该悄悄抹掉新版本。
+     */
+    fun restoreArchive(fileName: String): Boolean {
+        if (fileName.contains('/') || fileName.contains("..")) return false
+        val dir = root?.let { File(it, ARCHIVE_DIR) } ?: return false
+        val file = File(dir, fileName)
+        if (!file.isFile) return false
+        val text = runCatching { file.readText() }.getOrNull() ?: return false
+        val (frontmatter, body) = Frontmatter.splitAndParse(text, "MemorySource", "解析归档失败")
+        val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: fileName.substringBeforeLast('-').ifBlank { fileName.removeSuffix(".md") }
+        val description = frontmatter["description"]?.toString().orEmpty()
+        val type = MemoryType.from(frontmatter["type"]?.toString())
+        if (!saveMemory(name, description, body.trim(), type, null)) return false
+        runCatching { file.delete() }
+        return true
+    }
 
     /**
      * 把一条「没能写成本体」的内容存进归档目录（记忆根目录下的 `archive/`）。
@@ -126,7 +182,7 @@ interface MemorySource {
         }
 
         /** 归档子目录名。放在记忆根目录下，天然被 [listMemories] 的顶层扫描排除。 */
-        private const val ARCHIVE_DIR = "archive"
+        const val ARCHIVE_DIR = "archive"
 
         /** 归档目录；[mkdirs] 为 true 时尝试创建，创建失败返回 null。 */
         private fun archiveDir(root: File, mkdirs: Boolean = false): File? {

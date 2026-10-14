@@ -50,7 +50,8 @@ object MemoryParser {
             content = content,
             type = type,
             keywords = keywords,
-            expiresAt = parseExpiresAt(frontmatter["expires_at"])
+            expiresAt = parseExpiresAt(frontmatter["expires_at"]),
+            pending = frontmatter["pending"]?.toString()?.equals("true", ignoreCase = true) == true
         )
     }
 
@@ -60,7 +61,8 @@ object MemoryParser {
         content: String,
         type: MemoryType? = null,
         keywords: List<String> = emptyList(),
-        expiresAt: Long? = null
+        expiresAt: Long? = null,
+        pending: Boolean = false
     ): String {
         val safeName = yamlScalar(name)
         val safeDesc = yamlScalar(description)
@@ -68,6 +70,7 @@ object MemoryParser {
         type?.let { head.append("type: ${it.key}\n") }
         if (keywords.isNotEmpty()) head.append("keywords: ${yamlScalar(keywords.joinToString(", "))}\n")
         expiresAt?.takeIf { it > 0L }?.let { head.append("expires_at: ${formatExpiresAt(it)}\n") }
+        if (pending) head.append("pending: true\n")
         head.append("---\n")
         return head.toString() + content
     }

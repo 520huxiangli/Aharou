@@ -24,7 +24,12 @@ data class Memory(
     val content: String,
     val type: MemoryType = MemoryType.FACT,
     val keywords: List<String> = emptyList(),
-    val expiresAt: Long? = null
+    val expiresAt: Long? = null,
+    /**
+     * 待确认：与另一条记忆的说法冲突、暂时两条并存，等使用者裁决。
+     * 由整理器判为冲突时打上；在设置页保存这条记忆即视为已确认（标记清除）。
+     */
+    val pending: Boolean = false
 )
 
 enum class MemoryScope {

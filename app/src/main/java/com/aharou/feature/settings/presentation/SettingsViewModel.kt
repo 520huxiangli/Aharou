@@ -6,6 +6,13 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.core.net.AppProxy
+import com.aharou.feature.agent.domain.memory.Memory
+import com.aharou.feature.agent.domain.memory.MemoryArchiveInfo
+import com.aharou.feature.agent.domain.memory.MemoryCompactReport
+import com.aharou.feature.agent.domain.memory.MemoryCompactor
+import com.aharou.feature.agent.domain.memory.MemoryRepository
+import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.voice.domain.VoiceModelManager
 import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
@@ -433,7 +440,10 @@ class SettingsViewModel @Inject constructor(
     private val providerDashboardRunner: ProviderDashboardRunner,
     private val terminalSettingsRepository: TerminalSettingsRepository,
     private val proxySettingsRepository: ProxySettingsRepository,
-    private val memoryDistiller: MemoryDistiller
+    private val memoryDistiller: MemoryDistiller,
+    private val memoryRepository: MemoryRepository,
+    private val memoryCompactor: MemoryCompactor,
+    private val workspaceRepository: com.aharou.feature.workspace.data.repository.WorkspaceRepository,
 ) : ViewModel() {
 
     /** 「立即蒸馏」是否正在跑。 */
@@ -465,6 +475,116 @@ class SettingsViewModel @Inject constructor(
 
     /** 「立即蒸馏」的结果。 */
     enum class DistillOutcome { WRITTEN, NOTHING }
+
+    // ── 记忆浏览与编辑（设置页「记忆」分区） ──
+
+    /** 当前浏览的作用域：全局 / 项目。 */
+    private val _memoryScope = MutableStateFlow(MemoryScope.GLOBAL)
+    val memoryScope: StateFlow<MemoryScope> = _memoryScope.asStateFlow()
+
+    /** 当前作用域下的记忆条目；项目作用域无工作区时为空。 */
+    private val _memoryEntries = MutableStateFlow<List<Memory>>(emptyList())
+    val memoryEntries: StateFlow<List<Memory>> = _memoryEntries.asStateFlow()
+
+    /** 当前作用域的归档旧版本（覆盖 / 合并前留的底）。 */
+    private val _memoryArchives = MutableStateFlow<List<MemoryArchiveInfo>>(emptyList())
+    val memoryArchives: StateFlow<List<MemoryArchiveInfo>> = _memoryArchives.asStateFlow()
+
+    /** 整理记忆是否在跑，以及本次结果（合并了几条）。 */
+    private val _compacting = MutableStateFlow(false)
+    val compacting: StateFlow<Boolean> = _compacting.asStateFlow()
+    private val _compactResult = MutableStateFlow<MemoryCompactReport?>(null)
+    val compactResult: StateFlow<MemoryCompactReport?> = _compactResult.asStateFlow()
+
+    /** 项目记忆所属工作区；null 表示当前没有工作区，项目作用域此时不可浏览。 */
+    fun memoryProjectRoot(): String? = workspaceRepository.currentPath().takeIf { it.isNotBlank() }
+
+    fun setMemoryScope(scope: MemoryScope) {
+        if (_memoryScope.value == scope) return
+        _memoryScope.value = scope
+        refreshMemory()
+    }
+
+    /** 重扫当前作用域的条目与归档：设置页每次回到前台、以及每次写操作之后都调。 */
+    fun refreshMemory() {
+        val scope = _memoryScope.value
+        val projectRoot = memoryProjectRoot()
+        _memoryEntries.value = if (scope == MemoryScope.PROJECT && projectRoot == null) {
+            emptyList()
+        } else {
+            runCatching {
+                memoryRepository.listMemories(projectRoot).filter { it.scope == scope }
+            }.getOrDefault(emptyList())
+        }
+        _memoryArchives.value = runCatching {
+            memoryRepository.listArchive(scope, projectRoot)
+        }.getOrDefault(emptyList())
+    }
+
+    /** 编辑器保存：摘要与正文整体覆盖写回，同名旧版会先进归档。传 [pending] = false 表示用户确认了这条。 */
+    fun saveMemoryEntry(name: String, description: String, content: String, type: MemoryType?, pending: Boolean? = null) {
+        val scope = _memoryScope.value
+        val projectRoot = memoryProjectRoot()
+        if (scope == MemoryScope.PROJECT && projectRoot == null) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            memoryRepository.saveMemory(name, description, content, scope, projectRoot, type, pending = pending)
+            refreshMemory()
+        }
+    }
+
+    fun deleteMemoryEntry(name: String) {
+        val scope = _memoryScope.value
+        val projectRoot = memoryProjectRoot()
+        if (scope == MemoryScope.PROJECT && projectRoot == null) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            memoryRepository.deleteMemory(name, scope, projectRoot)
+            refreshMemory()
+        }
+    }
+
+    /** 把一条归档恢复成正式条目；同名现有条目会先被归档。 */
+    fun restoreMemoryArchive(fileName: String) {
+        val scope = _memoryScope.value
+        val projectRoot = memoryProjectRoot()
+        if (scope == MemoryScope.PROJECT && projectRoot == null) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            memoryRepository.restoreArchive(fileName, scope, projectRoot)
+            refreshMemory()
+        }
+    }
+
+    /**
+     * 整理记忆：把同一主题的重复条目合并成一条。
+     * 全局与项目各跑一遍——两个作用域之间不互相改写。
+     */
+    fun compactMemory() {
+        if (_compacting.value) return
+        viewModelScope.launch {
+            _compacting.value = true
+            val projectRoot = memoryProjectRoot()
+            val report = runCatching {
+                val global = memoryCompactor.compact(null, MemoryScope.GLOBAL)
+                val project = if (projectRoot != null) {
+                    memoryCompactor.compact(projectRoot, MemoryScope.PROJECT)
+                } else {
+                    MemoryCompactReport()
+                }
+                MemoryCompactReport(
+                    clusters = global.clusters + project.clusters,
+                    merged = global.merged + project.merged,
+                    archived = global.archived + project.archived,
+                    skipped = global.skipped + project.skipped
+                )
+            }.getOrDefault(MemoryCompactReport())
+            _compacting.value = false
+            _compactResult.value = report
+            refreshMemory()
+        }
+    }
+
+    fun consumeCompactResult() {
+        _compactResult.value = null
+    }
     private companion object {
         /** Shizuku 静默安装的超时（大包 pm install 要几十秒）。 */
         const val SHIZUKU_INSTALL_TIMEOUT_MS = 120_000L

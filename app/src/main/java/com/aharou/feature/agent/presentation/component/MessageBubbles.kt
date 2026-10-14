@@ -757,7 +757,9 @@ private fun BackgroundNotificationBar(message: AgentUIMessage) {
  */
 @Composable
 private fun CompactionSummaryCard(message: AgentUIMessage, markdownCache: MarkdownRenderCache?) {
-    var expanded by remember(message.id) { mutableStateOf(false) }
+    // 默认展开：摘要折叠成一行时与工具行同形，很容易被当成普通工具行划过去，
+    // 用户反而会以为压缩没生效；展开后是「分隔线 + 摘要正文」，一眼能看见。
+    var expanded by remember(message.id) { mutableStateOf(true) }
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.xs)) {
         ChatHairline()
         Column(

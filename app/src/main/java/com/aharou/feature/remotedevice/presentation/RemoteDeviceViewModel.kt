@@ -90,6 +90,10 @@ class RemoteDeviceViewModel @Inject constructor(
         controller.setAutoPairBack(value)
     }
 
+    fun setAllowRemoteAskAi(value: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        controller.setAllowRemoteAskAi(value)
+    }
+
     fun acceptAssistance(host: String, port: Int, code: String) = viewModelScope.launch(Dispatchers.IO) {
         _assist.value = AssistUiState.Working
         _assist.value = when (val outcome = controller.acceptAssistance(host, port, code)) {

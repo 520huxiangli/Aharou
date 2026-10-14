@@ -276,16 +276,20 @@ class SystemPromptProvider @Inject constructor(
     private inner class MemoryListSource : PromptSource {
         // 会话级缓存：同一 (sessionId, projectRoot) 内只读一次盘，保持 system prompt 稳定以命中 KV 缓存；
         // 新开会话 / 切换工作区 / 重启 App 时缓存自然失效重建。空内容用 "" 占位以区分"未缓存"。
-        // 相关性排序只在本会话首次 build 时按当时的用户文本算一次：每轮重排会让提示词前缀跟着变、
-        // 打断 KV 缓存，代价大于收益；会话通常围绕一个任务，首轮文本已能代表它。
-        private val cachedByKey = ConcurrentHashMap<SourceCacheKey, String>()
+        // 相关性排序只在本会话首次 build 时算一次，之后沿用——每轮重排会让提示词前缀跟着变、
+        // 打断 KV 缓存，代价大于收益。但话题换掉后旧清单会长期占位、新话题相关的记忆永远进不来，
+        // 所以缓存里记下当时的提问，只在「不像同一件事」时才失效重排（判据见 MemoryRepository.isTopicDrift）。
+        private val cachedByKey = ConcurrentHashMap<SourceCacheKey, CachedList>()
 
         override fun build(ctx: AgentContext): String? {
             val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
+            val query = ctx.currentUserText
             val cached = cachedByKey[key]
-            if (cached != null) return cached.ifEmpty { null }
+            if (cached != null && !memoryRepository.isTopicDrift(cached.query, query)) {
+                return cached.content.ifEmpty { null }
+            }
             val memories = try {
-                memoryRepository.listMemoriesForPrompt(ctx.projectRoot, ctx.currentUserText)
+                memoryRepository.listMemoriesForPrompt(ctx.projectRoot, query)
             } catch (e: Exception) { return null }
             val content = MemoryPromptRenderer.render(memories).ifEmpty { null }
 
@@ -293,7 +297,7 @@ class SystemPromptProvider @Inject constructor(
             val full = listOf(content, memoryDiscipline()).mapNotNull { it }.joinToString("\n\n")
             if (full.isEmpty()) return null
 
-            cachedByKey[key] = full
+            cachedByKey[key] = CachedList(query, full)
             trimIfNeeded()
             return full
         }
@@ -313,6 +317,13 @@ class SystemPromptProvider @Inject constructor(
 
     /** 会话级缓存 key：同一会话同一工作区共享一份快照，避免每轮重扫磁盘导致 system prompt 变化。 */
     private data class SourceCacheKey(val sessionId: String?, val projectRoot: String)
+
+    /**
+     * 记忆清单的会话级缓存：内容 + 建立它时的提问。
+     *
+     * 放外层而不是 [MemoryListSource] 里——那是 inner class，Kotlin 不允许在它内部再声明 class。
+     */
+    private data class CachedList(val query: String, val content: String)
 
     private val staticRuleSource = StaticRuleSource()
     private val subAgentBaseSource = SubAgentBaseSource()

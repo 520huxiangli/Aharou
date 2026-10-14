@@ -41,6 +41,8 @@ enum class RewindOption {
 @Composable
 fun RewindOptionsBottomSheet(
     promptSnippet: String,
+    undoRecordCount: Int,
+    onShowTimeline: () -> Unit,
     onOptionSelected: (RewindOption) -> Unit,
     onDismissRequest: () -> Unit
 ) {
@@ -114,10 +116,29 @@ fun RewindOptionsBottomSheet(
                 }
             )
 
+            OptionRow(
+                icon = FeatherIcons.RotateCcw,
+                title = stringResource(R.string.checkpoint_undo_timeline_title),
+                description = if (undoRecordCount > 0) {
+                    stringResource(R.string.checkpoint_undo_timeline_desc, undoRecordCount)
+                } else {
+                    stringResource(R.string.checkpoint_undo_timeline_empty)
+                },
+                onClick = {
+                    onShowTimeline()
+                    onDismissRequest()
+                }
+            )
+
             Spacer(modifier = Modifier.height(Spacing.lg))
         }
     }
 }
+
+/** 回退确认里展示的回退点时间；时间戳不可用时回退为空串。 */
+internal fun formatRewindTime(millis: Long): String =
+    if (millis <= 0L) ""
+    else java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(millis))
 
 @Composable
 private fun OptionRow(

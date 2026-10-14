@@ -5,6 +5,7 @@ import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import javax.inject.Inject
+import kotlin.math.ln
 import javax.inject.Singleton
 
 @Singleton
@@ -76,9 +77,15 @@ class MemoryRepository @Inject constructor(
             .filter { it.description.isNotBlank() || isCoreArchiveName(it.name) }
             .filterNot { isStale(it) }
             // 先算一次分再排序：写在 comparator 里会随比较次数反复重算、反复切词。
-            .map { memory -> memory to relevanceScore(memory, normalizedQuery) }
+            // 打分依赖全库的词频统计（IDF），所以先把候选集整好、算一次文档频数，再逐条打分。
+            .let { candidates ->
+                val frequencies = documentFrequencies(candidates)
+                candidates.map { memory ->
+                    memory to relevanceScore(memory, normalizedQuery, candidates.size, frequencies)
+                }
+            }
             .sortedWith(
-                compareByDescending<Pair<Memory, Int>> { it.second }
+                compareByDescending<Pair<Memory, Double>> { it.second }
                     .thenByDescending { it.first.file?.lastModified() ?: 0L }
                     .thenBy { it.first.name.lowercase() }
             )
@@ -117,23 +124,81 @@ class MemoryRepository @Inject constructor(
      * 记忆与当前任务的相关度：对 keywords / name / description 做命中计数后加权求和。
      * [query] 已 trim + lowercase；为空直接返回 0，调用方据此退化到 mtime 排序。
      */
-    private fun relevanceScore(memory: Memory, query: String): Int {
-        if (query.isEmpty()) return 0
-        var score = hitCount(memory.keywords.flatMap { termsOf(it) }, query) * KEYWORD_HIT_WEIGHT
-        score += hitCount(termsOf(memory.name), query) * NAME_HIT_WEIGHT
+    /**
+     * 记忆与当前任务的相关度。
+     *
+     * 在「命中计数 × 字段权重」的基础上再乘词的稀有度（IDF）：常见词（「记忆」「项目」）几乎每条都有，
+     * 命中它说明不了什么；专有词（「PRoot」「bge-m3」）只出现在少数条目里，命中它才是强信号。
+     * 单用命中计数时这两者等价，清单就会被通用条目挤满。
+     *
+     * [total] 为候选条目总数，[frequencies] 为 term → 文档频数（见 [documentFrequencies]）。
+     */
+    private fun relevanceScore(
+        memory: Memory,
+        query: String,
+        total: Int,
+        frequencies: Map<String, Int>
+    ): Double {
+        if (query.isEmpty()) return 0.0
+        var score = weightedHits(memory.keywords.flatMap { termsOf(it) }, query, total, frequencies) *
+            KEYWORD_HIT_WEIGHT
+        score += weightedHits(termsOf(memory.name), query, total, frequencies) * NAME_HIT_WEIGHT
         // description 命中数封顶：散文越长越容易碰巧命中，不封顶会让它压过 keywords。
-        val descriptionHits = hitCount(termsOf(memory.description), query)
-            .coerceAtMost(MAX_DESCRIPTION_HITS)
-        return score + descriptionHits * DESCRIPTION_HIT_WEIGHT
+        score += weightedHits(
+            termsOf(memory.description), query, total, frequencies, MAX_DESCRIPTION_HITS
+        ) * DESCRIPTION_HIT_WEIGHT
+        return score
     }
 
-    /** [terms] 去重后，统计有多少个作为子串出现在 [query] 里。 */
-    private fun hitCount(terms: List<String>, query: String): Int {
-        var hits = 0
-        for (term in terms.toHashSet()) {
-            if (term in query) hits++
+    /** [terms] 去重后，取出现在 [query] 里的词，按稀有度（IDF）降序累加，最多 [cap] 个。 */
+    private fun weightedHits(
+        terms: List<String>,
+        query: String,
+        total: Int,
+        frequencies: Map<String, Int>,
+        cap: Int = Int.MAX_VALUE
+    ): Double =
+        terms.toHashSet()
+            .filter { it in query }
+            .map { idf(it, total, frequencies) }
+            .sortedDescending()
+            .take(cap)
+            .sum()
+
+    /** 平滑 IDF：出现越少的词权重越高，下限 1.0（常见词仍保有一份基础分，不至于归零）。 */
+    private fun idf(term: String, total: Int, frequencies: Map<String, Int>): Double =
+        ln((total + 1.0) / ((frequencies[term] ?: 0) + 1.0)) + 1.0
+
+    /** 每个可命中词出现在多少条记忆里：IDF 的原料。同一个词在一条记忆里出现多次只计一次。 */
+    private fun documentFrequencies(memories: List<Memory>): Map<String, Int> {
+        val frequencies = HashMap<String, Int>()
+        for (memory in memories) {
+            val terms = HashSet<String>()
+            memory.keywords.forEach { terms.addAll(termsOf(it)) }
+            terms.addAll(termsOf(memory.name))
+            terms.addAll(termsOf(memory.description))
+            for (term in terms) frequencies[term] = (frequencies[term] ?: 0) + 1
         }
-        return hits
+        return frequencies
+    }
+
+    /**
+     * 两段文本是否已经不在讲同一件事。
+     *
+     * 用于注入清单的缓存失效：清单按会话缓存（保 KV 缓存），但话题换掉后旧清单就该让位，
+     * 否则上一话题算出来的记忆会长期占着位置，新话题相关的条目永远进不来。
+     * 判据是切词后的重叠系数（交集 / 较短一侧），对「任务从改 A 变成改 B」这类换题敏感。
+     * [current] 为空或只有一个词（「继续」「嗯」这类延续性输入）时一律当作没换题，避免误重排。
+     */
+    fun isTopicDrift(previous: String, current: String): Boolean {
+        if (current.isBlank()) return false
+        val next = termsOf(current).toHashSet()
+        if (next.size <= 1) return false
+        if (previous.isBlank()) return true
+        val prev = termsOf(previous).toHashSet()
+        if (prev.isEmpty()) return true
+        val overlap = prev.count { it in next }.toDouble() / minOf(prev.size, next.size)
+        return overlap < TOPIC_DRIFT_THRESHOLD
     }
 
     /**
@@ -141,7 +206,7 @@ class MemoryRepository @Inject constructor(
      * 二元组（bigram），弥补中文无空格分词——整串 CJK 词几乎不会原样出现在用户输入里，
      * bigram 才是能对上的最小单位。单字与停用词噪音太大，直接丢弃。
      */
-    private fun termsOf(text: String): List<String> {
+    internal fun termsOf(text: String): List<String> {
         if (text.isBlank()) return emptyList()
         val terms = ArrayList<String>()
         for (raw in TERM_SPLIT.split(text)) {
@@ -162,7 +227,13 @@ class MemoryRepository @Inject constructor(
 
     private companion object {
         /** 近重复提示的最低相关度：至少命中一个关键词或名称才值得提醒，避免提示噪声。 */
-        const val SIMILAR_MEMORY_MIN_SCORE = 2
+        const val SIMILAR_MEMORY_MIN_SCORE = 2.0
+
+        /**
+         * 判定「换了话题」的重叠系数下限。低于它就认为当前提问与建立清单时不是同一件事，
+         * 失效重排注入清单。取 0.25 偏保守：宁可慢一拍让位，也别把同一话题内的提示词反复重排。
+         */
+        const val TOPIC_DRIFT_THRESHOLD = 0.25
 
         /** 注入清单的条数上限。超出的条目只是不进提示词，文件仍在，模型仍可 read / edit / delete。 */
         const val MAX_INJECTED_MEMORIES = 60
@@ -211,10 +282,12 @@ class MemoryRepository @Inject constructor(
         limit: Int = 3
     ): List<Memory> {
         val query = "$name $description".lowercase()
-        return listMemories(projectRoot)
-            .asSequence()
+        val candidates = listMemories(projectRoot)
             .filterNot { it.name.equals(name, ignoreCase = true) }
-            .map { it to relevanceScore(it, query) }
+        val frequencies = documentFrequencies(candidates)
+        return candidates
+            .asSequence()
+            .map { it to relevanceScore(it, query, candidates.size, frequencies) }
             .filter { it.second >= SIMILAR_MEMORY_MIN_SCORE }
             .sortedByDescending { it.second }
             .take(limit)
@@ -233,18 +306,20 @@ class MemoryRepository @Inject constructor(
         return globalMemorySource.loadContent(name)
     }
 
-    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null): Boolean {
+    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null): Boolean {
         val existing = existingMemoryOf(name, scope, projectRoot)
         // 未显式指定的字段沿用原值：否则覆盖 / 合并一条 identity 记忆会抹掉它的 type，
-        // 重写一条短期记忆也会把它变成永久（反过来同理）。
+        // 重写一条短期记忆也会把它变成永久（反过来同理）；「待确认」标记同理，
+        // 只有调用方明确表态（比如用户在设置页保存）才清除。
         val effectiveType = type ?: existing?.type
         val effectiveExpiresAt = expiresAt ?: existing?.expiresAt
+        val effectivePending = pending ?: existing?.pending ?: false
         return when (scope) {
             MemoryScope.GLOBAL ->
-                globalMemorySource.saveMemory(name, description, content, effectiveType, effectiveExpiresAt)
+                globalMemorySource.saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending)
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) false
-                else projectSource(projectRoot).saveMemory(name, description, content, effectiveType, effectiveExpiresAt)
+                else projectSource(projectRoot).saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending)
             }
         }
     }
@@ -299,5 +374,25 @@ class MemoryRepository @Inject constructor(
                 else projectSource(projectRoot).archiveContent(name, description, content)
             }
         }
+    }
+
+    /** 列归档：设置页「归档」视图用。 */
+    fun listArchive(scope: MemoryScope, projectRoot: String?): List<MemoryArchiveInfo> = when (scope) {
+        MemoryScope.GLOBAL -> globalMemorySource.listArchive()
+        MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
+            ?.let { projectSource(it).listArchive() } ?: emptyList()
+    }
+
+    fun readArchive(fileName: String, scope: MemoryScope, projectRoot: String?): String? = when (scope) {
+        MemoryScope.GLOBAL -> globalMemorySource.readArchive(fileName)
+        MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
+            ?.let { projectSource(it).readArchive(fileName) }
+    }
+
+    /** 恢复一条归档为正式记忆；同名现有条目会先被归档（见 [MemorySource.restoreArchive]）。 */
+    fun restoreArchive(fileName: String, scope: MemoryScope, projectRoot: String?): Boolean = when (scope) {
+        MemoryScope.GLOBAL -> globalMemorySource.restoreArchive(fileName)
+        MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
+            ?.let { projectSource(it).restoreArchive(fileName) } ?: false
     }
 }

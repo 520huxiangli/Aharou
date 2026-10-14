@@ -168,6 +168,18 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                     )
                 }
             )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Share2,
+                title = stringResource(R.string.settings_remote_device_allow_ask_ai),
+                subtitle = stringResource(R.string.settings_remote_device_allow_ask_ai_hint),
+                trailing = {
+                    AppSwitch(
+                        checked = config.allowRemoteAskAi,
+                        onCheckedChange = { viewModel.setAllowRemoteAskAi(it) }
+                    )
+                }
+            )
         }
 
         // 接受协助：作为协助方连到别人的 Aharou——与本机开服务是两件事，所以不放在 enabled 分支里。

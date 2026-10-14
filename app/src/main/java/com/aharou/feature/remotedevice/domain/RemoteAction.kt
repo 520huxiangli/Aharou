@@ -1,5 +1,6 @@
 package com.aharou.feature.remotedevice.domain
 
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -86,6 +87,8 @@ class RemoteActionCatalog @Inject constructor(
         const val ACTION_FETCH_FILE = "fetch_file"
         const val ACTION_PUSH_FILE = "push_file"
         const val ACTION_SEND_MESSAGE = "send_message"
+        const val ACTION_READ_LOGS = "read_logs"
+        const val ACTION_ASK_AI = "ask_ai"
 
         /** 远端 shell 单次执行上限（秒）：留出审批时间，避免超过调用方 120 秒的 callTimeout。 */
         const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 60L
@@ -188,6 +191,60 @@ class RemoteActionCatalog @Inject constructor(
                     type = ParameterType.STRING,
                     description = "消息正文（纯文本，建议一两句话以内）",
                     required = true
+                )
+            )
+        ),
+        RemoteAction(
+            name = ACTION_READ_LOGS,
+            kind = RemoteActionKind.READ_FILE,
+            description = "读取本机 Aharou 的**应用日志**（只读）。日志落在应用私有目录，容器里看不见，" +
+                "远端 shell 也读不到——这是拿到它的唯一途径。date=yyyy-MM-dd（缺省今天，只保留最近 7 天）、" +
+                "query=关键词过滤（如“还原”）、limit=最多返回行数（默认 200，上限 2000）均可选。",
+            toolName = null,
+            allowedArgs = setOf("date", "query", "limit"),
+            inlineParams = mapOf(
+                "date" to ToolParameter(
+                    name = "date",
+                    type = ParameterType.STRING,
+                    description = "日期 yyyy-MM-dd，缺省今天；日志只保留最近 7 天",
+                    required = false
+                ),
+                "query" to ToolParameter(
+                    name = "query",
+                    type = ParameterType.STRING,
+                    description = "关键词过滤（大小写不敏感），留空不过滤",
+                    required = false
+                ),
+                "limit" to ToolParameter(
+                    name = "limit",
+                    type = ParameterType.INTEGER,
+                    description = "最多返回行数，默认 200，上限 2000",
+                    required = false
+                )
+            )
+        ),
+        RemoteAction(
+            name = ACTION_ASK_AI,
+            kind = RemoteActionKind.MESSAGE,
+            description = "把一段提问发给这台设备的 Aharou **AI**：作为用户消息进入其当前会话、触发一轮，" +
+                "并把生成的回复正文返回。与 send_message 正好互补——那条只给人看、AI 不可见；这条就是给 AI 看的。" +
+                "需本机用户先打开「允许已配对设备向本机 AI 提问」（默认关）；打开后提问以本机用户的口吻投递，" +
+                "AI 会当成用户说的来回答。text 为提问正文；timeout_seconds 为最长等待秒数（默认 60，上限 100），" +
+                "超时则返回「已投递，稍后到本机会话里看」。",
+            toolName = null,
+            allowedArgs = setOf("text", "timeout_seconds"),
+            inlineParams = mapOf(
+                "text" to ToolParameter(
+                    name = "text",
+                    type = ParameterType.STRING,
+                    description = "要问本机 AI 的内容（纯文本）",
+                    required = true
+                ),
+                "timeout_seconds" to ToolParameter(
+                    name = "timeout_seconds",
+                    type = ParameterType.INTEGER,
+                    description = "最长等待秒数，默认 60，上限 100",
+                    required = false
                 )
             )
         )
@@ -348,5 +405,108 @@ class RemoteSendMessageTool(
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
         if (text.isEmpty()) return ToolResult.Error("缺少参数: text", "MISSING_TEXT")
         return ToolResult.Success(buildJsonObject { put("delivered", deliver(text)) })
+    }
+}
+
+/**
+ * `read_logs` 动作的载体：读本机 Aharou 的应用日志（只读）。
+ *
+ * 为什么不直接复用本机的 `config` 工具：那个工具除 `logs` 外还带 `set` / `reveal`，
+ * 能把配置改掉、把密钥读出来；整个工具递给远端等于一并交出去。这里只留只读的日志那一段。
+ *
+ * 为什么必须由 App 自己来读：日志落在应用私有目录，容器里看不见——远端 shell 也无从读起，
+ * 而读它的人就是 App 本身，不需要 root / Shizuku。
+ */
+class RemoteReadLogsTool : AgentTool() {
+    override val name = "remote_read_logs"
+    override val description = "读取本机 Aharou 的应用日志（只读）"
+    override val parameters: Map<String, ToolParameter> = mapOf(
+        "date" to ToolParameter(
+            name = "date",
+            type = ParameterType.STRING,
+            description = "日期 yyyy-MM-dd，缺省今天；日志只保留最近 7 天",
+            required = false
+        ),
+        "query" to ToolParameter(
+            name = "query",
+            type = ParameterType.STRING,
+            description = "关键词过滤（大小写不敏感），留空不过滤",
+            required = false
+        ),
+        "limit" to ToolParameter(
+            name = "limit",
+            type = ParameterType.INTEGER,
+            description = "最多返回行数，默认 $DEFAULT_LINES，上限 $MAX_LINES",
+            required = false
+        )
+    )
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.READ_AGENT_CONFIG)
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val date = (args["date"] as? JsonPrimitive)?.contentOrNull?.trim()?.ifBlank { null }
+        val query = (args["query"] as? JsonPrimitive)?.contentOrNull?.trim()?.ifBlank { null }
+        val limit = (args["limit"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: DEFAULT_LINES
+        val read = FileLogger.readLogTail(date, query, limit.coerceIn(1, MAX_LINES))
+            ?: return ToolResult.Error("没有这份日志（日期用 yyyy-MM-dd，只保留最近 7 天）", "LOG_NOT_FOUND")
+        val header = buildString {
+            append(read.fileName).append("：共 ").append(read.totalLines).append(" 行")
+            if (read.matchedLines != read.totalLines) {
+                append("，命中 ").append(read.matchedLines).append(" 行")
+            }
+            append("，返回尾部 ").append(read.returnedLines).append(" 行")
+            if (read.returnedLines < read.matchedLines) {
+                append("（更早的没返回：加 query 缩小范围，或调大 limit）")
+            }
+        }
+        return ToolResult.Success(buildJsonObject { put("result", "$header\n\n${read.text}") })
+    }
+
+    private companion object {
+        const val DEFAULT_LINES = 200
+        const val MAX_LINES = 2_000
+    }
+}
+
+/**
+ * `ask_ai` 动作的载体：把对端的提问交给本机 AI 跑一轮，并把回复带回去。
+ *
+ * 与 [RemoteSendMessageTool] 是一对：那条只给人看（落库时标 `isContextExcluded`，AI 不可见），
+ * 这条恰恰相反——它就是要进上下文、要模型回应。两条并存、各管一头，别混。
+ */
+class RemoteAskAiTool(
+    private val ask: suspend (String, Long) -> String
+) : AgentTool() {
+    override val name = "remote_ask_ai"
+    override val description = "把一段提问发给本机 Aharou 的 AI（进其上下文、跑一轮，并返回回复正文）"
+    override val parameters: Map<String, ToolParameter> = mapOf(
+        "text" to ToolParameter(
+            name = "text",
+            type = ParameterType.STRING,
+            description = "要问本机 AI 的内容（纯文本）",
+            required = true
+        ),
+        "timeout_seconds" to ToolParameter(
+            name = "timeout_seconds",
+            type = ParameterType.INTEGER,
+            description = "最长等待秒数，默认 $DEFAULT_SECONDS，上限 $MAX_SECONDS",
+            required = false
+        )
+    )
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.MODIFY_SESSION_STATE, ToolCapability.USER_INTERACTION)
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val text = (args["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (text.isEmpty()) return ToolResult.Error("缺少参数: text", "MISSING_TEXT")
+        val seconds = (args["timeout_seconds"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            ?: DEFAULT_SECONDS
+        val reply = ask(text, seconds.coerceIn(5, MAX_SECONDS) * 1000)
+        return ToolResult.Success(buildJsonObject { put("reply", reply) })
+    }
+
+    private companion object {
+        const val DEFAULT_SECONDS = 60L
+        const val MAX_SECONDS = 100L
     }
 }

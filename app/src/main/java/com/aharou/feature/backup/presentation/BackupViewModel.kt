@@ -113,6 +113,7 @@ class BackupViewModel @Inject constructor(
             .putBoolean(KEY_APP_SETTINGS, options.appSettings)
             .putBoolean(KEY_WORKSPACE_FILES, options.workspaceFiles)
             .putBoolean(KEY_MEMORY_AND_SOUL, options.memoryAndSoul)
+            .putBoolean(KEY_PROJECT_MEMORY, options.projectMemory)
             .apply()
     }
 
@@ -124,7 +125,8 @@ class BackupViewModel @Inject constructor(
         permissionRules = prefs.getBoolean(KEY_PERMISSION_RULES, true),
         appSettings = prefs.getBoolean(KEY_APP_SETTINGS, true),
         workspaceFiles = prefs.getBoolean(KEY_WORKSPACE_FILES, false),
-        memoryAndSoul = prefs.getBoolean(KEY_MEMORY_AND_SOUL, true)
+        memoryAndSoul = prefs.getBoolean(KEY_MEMORY_AND_SOUL, true),
+        projectMemory = prefs.getBoolean(KEY_PROJECT_MEMORY, true)
     )
 
     /** 流式导出到 [output]（调用方打开，本方法负责关闭）。 */
@@ -545,5 +547,6 @@ class BackupViewModel @Inject constructor(
         private const val KEY_APP_SETTINGS = "app_settings"
         private const val KEY_WORKSPACE_FILES = "workspace_files"
         private const val KEY_MEMORY_AND_SOUL = "memory_and_soul"
+        private const val KEY_PROJECT_MEMORY = "project_memory"
     }
 }

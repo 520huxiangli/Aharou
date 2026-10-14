@@ -1,17 +1,20 @@
 package com.aharou.feature.settings.presentation.component
 
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -26,7 +29,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -34,7 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.widget.Toast
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,6 +44,9 @@ import com.aharou.core.memory.AharouMemoryStore
 import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppSwitch
+import com.aharou.core.ui.AppTextField
+import com.aharou.feature.agent.domain.memory.Memory
+import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
@@ -54,26 +58,41 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 设置页「记忆」分区（自 上游项目 的 MemoryManagementScreen 移植·适配）。
+ * 设置页「记忆」分区。
  *
- * 「默认启用记忆」开关（控制提示词注入）+ 记忆文件列表（名称/大小/时间）+ 预览 + 删除。
- * 文件位于 filesDir/aharou-global/memory（容器内 /root/.aharou/memory）。
+ * 三块内容：开关与维护动作、按作用域浏览的记忆条目（可编辑）、归档旧版本（可恢复）。
+ * 条目与归档都走 [SettingsViewModel] 的数据源（全局 + 项目两个作用域），
+ * 只在这一层做展示与编辑——文件路径、frontmatter 都由记忆层负责，界面不直接碰文件。
  */
 @Composable
 internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val store = remember { AharouMemoryStore(context.applicationContext) }
     val trace = remember { MemoryTraceLog(context.applicationContext) }
-    var files by remember { mutableStateOf(store.listFiles()) }
-    var records by remember { mutableStateOf(trace.recent(TRACE_DISPLAY_LIMIT)) }
-    var enabled by remember { mutableStateOf(store.isMemoryEnabled()) }
-    var detailName by remember { mutableStateOf<String?>(null) }
-    var deleteTarget by remember { mutableStateOf<String?>(null) }
 
+    val scope by viewModel.memoryScope.collectAsStateWithLifecycle()
+    val entries by viewModel.memoryEntries.collectAsStateWithLifecycle()
+    val archives by viewModel.memoryArchives.collectAsStateWithLifecycle()
+    val compacting by viewModel.compacting.collectAsStateWithLifecycle()
+    val compactResult by viewModel.compactResult.collectAsStateWithLifecycle()
     val distilling by viewModel.distilling.collectAsStateWithLifecycle()
     val distillResult by viewModel.distillResult.collectAsStateWithLifecycle()
 
-    // 蒸馏会改写 GLOBAL.md，跑完重扫一遍列表，让用户看到文件变化。
+    var enabled by remember { mutableStateOf(store.isMemoryEnabled()) }
+    var records by remember { mutableStateOf(trace.recent(TRACE_DISPLAY_LIMIT)) }
+    var editing by remember { mutableStateOf<Memory?>(null) }
+    var deleteTarget by remember { mutableStateOf<Memory?>(null) }
+
+    // 项目作用域是否有工作区可用；没有时入口不给点，免得点进去是一片空白。
+    val projectAvailable = viewModel.memoryProjectRoot() != null
+
+    LifecycleResumeEffect(Unit) {
+        viewModel.refreshMemory()
+        records = trace.recent(TRACE_DISPLAY_LIMIT)
+        enabled = store.isMemoryEnabled()
+        onPauseOrDispose { }
+    }
+
     LaunchedEffect(distillResult) {
         val result = distillResult ?: return@LaunchedEffect
         Toast.makeText(
@@ -85,26 +104,32 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             Toast.LENGTH_LONG,
         ).show()
         viewModel.consumeDistillResult()
-        files = store.listFiles()
     }
 
-    LifecycleResumeEffect(Unit) {
-        files = store.listFiles()
-        records = trace.recent(TRACE_DISPLAY_LIMIT)
-        enabled = store.isMemoryEnabled()
-        onPauseOrDispose { }
+    LaunchedEffect(compactResult) {
+        val result = compactResult ?: return@LaunchedEffect
+        val text = if (result.merged > 0) {
+            context.getString(R.string.memory_compact_merged, result.merged, result.archived)
+        } else {
+            context.getString(R.string.memory_compact_nothing)
+        }
+        Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+        viewModel.consumeCompactResult()
     }
 
-    val detail = detailName
-    if (detail != null) {
-        MemoryDetailPane(
-            store = store,
-            name = detail,
-            onBack = { detailName = null },
-            onDeleted = {
-                detailName = null
-                files = store.listFiles()
+    val editingMemory = editing
+    if (editingMemory != null) {
+        MemoryEditorPane(
+            memory = editingMemory,
+            onBack = { editing = null },
+            onSave = { description, content ->
+                // 用户在编辑器里保存，即视为确认了这条记忆，顺手清掉「待确认」标记。
+                viewModel.saveMemoryEntry(
+                    editingMemory.name, description, content, editingMemory.type, pending = false
+                )
+                editing = null
             },
+            onDelete = { deleteTarget = editingMemory },
         )
         return
     }
@@ -134,6 +159,21 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Zap,
+                title = stringResource(R.string.memory_compact_title),
+                subtitle = stringResource(R.string.memory_compact_subtitle),
+                trailing = {
+                    if (compacting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                },
+                onClick = { if (!compacting) viewModel.compactMemory() },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
                 title = stringResource(R.string.memory_distill_title),
                 subtitle = stringResource(R.string.memory_distill_subtitle),
                 trailing = {
@@ -148,11 +188,23 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             )
         }
 
-        SettingsGroupHeader(text = stringResource(R.string.memory_files_header))
-        if (files.isEmpty()) {
+        MemorySyncSection()
+
+        SettingsGroupHeader(text = stringResource(R.string.memory_entries_header))
+        SettingsGroup {
+            MemoryScopeSelector(
+                current = scope,
+                projectAvailable = projectAvailable,
+                onSelect = viewModel::setMemoryScope,
+            )
+        }
+        if (entries.isEmpty()) {
             SettingsGroup {
                 Text(
-                    text = stringResource(R.string.memory_empty),
+                    text = stringResource(
+                        if (scope == MemoryScope.PROJECT) R.string.memory_entries_empty_project
+                        else R.string.memory_entries_empty
+                    ),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 16.dp),
@@ -160,21 +212,38 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         } else {
             SettingsGroup {
-                files.forEachIndexed { index, info ->
+                entries.forEachIndexed { index, memory ->
+                    if (index > 0) SettingsDivider()
+                    MemoryEntryRow(memory = memory, onClick = { editing = memory })
+                }
+            }
+        }
+
+        SettingsGroupHeader(text = stringResource(R.string.memory_archive_header))
+        if (archives.isEmpty()) {
+            SettingsGroup {
+                Text(
+                    text = stringResource(R.string.memory_archive_empty),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 16.dp),
+                )
+            }
+        } else {
+            SettingsGroup {
+                archives.take(ARCHIVE_DISPLAY_LIMIT).forEachIndexed { index, info ->
                     if (index > 0) SettingsDivider()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { detailName = info.name }
                             .padding(horizontal = Spacing.lg, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = info.name,
+                                text = info.fileName,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -185,13 +254,8 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(onClick = { deleteTarget = info.name }) {
-                            Icon(
-                                imageVector = FeatherIcons.Trash2,
-                                contentDescription = stringResource(R.string.memory_delete),
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp),
-                            )
+                        TextButton(onClick = { viewModel.restoreMemoryArchive(info.fileName) }) {
+                            Text(stringResource(R.string.memory_archive_restore))
                         }
                     }
                 }
@@ -261,13 +325,12 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     deleteTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text(stringResource(R.string.memory_delete_title, target)) },
+            title = { Text(stringResource(R.string.memory_delete_title, target.name)) },
             text = { Text(stringResource(R.string.memory_delete_body)) },
             confirmButton = {
                 TextButton(onClick = {
-                    store.deleteFile(target)
+                    viewModel.deleteMemoryEntry(target.name)
                     deleteTarget = null
-                    files = store.listFiles()
                 }) {
                     Text(stringResource(R.string.memory_delete), color = MaterialTheme.colorScheme.error)
                 }
@@ -281,15 +344,124 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     }
 }
 
+/** 作用域切换：全局 / 项目。项目无工作区时置灰但仍展示，让用户知道有这么一档。 */
 @Composable
-private fun MemoryDetailPane(
-    store: AharouMemoryStore,
-    name: String,
-    onBack: () -> Unit,
-    onDeleted: () -> Unit,
+private fun MemoryScopeSelector(
+    current: MemoryScope,
+    projectAvailable: Boolean,
+    onSelect: (MemoryScope) -> Unit,
 ) {
-    var showDelete by remember { mutableStateOf(false) }
-    val content = remember(name) { store.readFile(name) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.lg, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.lg),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MemoryScopeTab(
+            label = stringResource(R.string.memory_scope_global),
+            selected = current == MemoryScope.GLOBAL,
+            enabled = true,
+            onClick = { onSelect(MemoryScope.GLOBAL) },
+        )
+        MemoryScopeTab(
+            label = stringResource(R.string.memory_scope_project),
+            selected = current == MemoryScope.PROJECT,
+            enabled = projectAvailable,
+            onClick = { onSelect(MemoryScope.PROJECT) },
+        )
+        if (!projectAvailable) {
+            Text(
+                text = stringResource(R.string.memory_scope_no_workspace),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MemoryScopeTab(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = label,
+        fontSize = 14.sp,
+        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+        color = when {
+            !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            selected -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        modifier = Modifier
+            .clickable(enabled = enabled) { onClick() }
+            .padding(vertical = 4.dp),
+    )
+}
+
+/** 一条记忆：名字 + 摘要。分类只对「事件」标注——它不进注入清单，名字本身看不出这点。 */
+@Composable
+private fun MemoryEntryRow(memory: Memory, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = Spacing.lg, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = memory.name,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (memory.pending) {
+                    Text(
+                        text = stringResource(R.string.memory_entry_pending),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = Spacing.sm),
+                    )
+                }
+            }
+            Text(
+                text = memory.description.ifBlank { stringResource(R.string.memory_entry_no_description) },
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        val modified = memory.file?.lastModified() ?: 0L
+        if (modified > 0L) {
+            Text(
+                text = formatDate(modified),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** 记忆编辑器：摘要与正文各一个输入框，保存即整体覆盖写回（旧版由记忆层归档）。 */
+@Composable
+private fun MemoryEditorPane(
+    memory: Memory,
+    onBack: () -> Unit,
+    onSave: (description: String, content: String) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var description by remember(memory.name) { mutableStateOf(memory.description) }
+    var content by remember(memory.name) { mutableStateOf(memory.content) }
 
     Column(
         modifier = Modifier
@@ -307,44 +479,36 @@ private fun MemoryDetailPane(
             SettingsRow(
                 icon = FeatherIcons.Trash2,
                 title = stringResource(R.string.memory_delete),
-                onClick = { showDelete = true },
+                onClick = onDelete,
             )
         }
 
-        SettingsGroupHeader(text = name)
+        SettingsGroupHeader(text = memory.name)
         SettingsGroup {
-            Text(
-                text = content ?: stringResource(R.string.memory_read_error),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Spacing.lg, vertical = 12.dp),
-            )
+            Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)) {
+                AppTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = stringResource(R.string.memory_edit_description),
+                    singleLine = true,
+                )
+                Spacer(modifier = Modifier.height(Spacing.md))
+                AppTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = stringResource(R.string.memory_edit_content),
+                    singleLine = false,
+                    maxLines = 30,
+                )
+                Spacer(modifier = Modifier.height(Spacing.md))
+                Button(
+                    onClick = { onSave(description, content) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.memory_edit_save))
+                }
+            }
         }
-    }
-
-    if (showDelete) {
-        AlertDialog(
-            onDismissRequest = { showDelete = false },
-            title = { Text(stringResource(R.string.memory_delete_title, name)) },
-            text = { Text(stringResource(R.string.memory_delete_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    store.deleteFile(name)
-                    showDelete = false
-                    onDeleted()
-                }) {
-                    Text(stringResource(R.string.memory_delete), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDelete = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            },
-        )
     }
 }
 
@@ -366,6 +530,9 @@ private fun memoryActionLabel(action: String): String = stringResource(
 
 /** 「最近记忆操作」展示条数：够看出最近发生了什么，又不至于把设置页拉得很长。 */
 private const val TRACE_DISPLAY_LIMIT = 20
+
+/** 归档展示条数上限：归档会越积越多，界面只给最近的，再旧的靠文件管理器看。 */
+private const val ARCHIVE_DISPLAY_LIMIT = 20
 
 private fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"

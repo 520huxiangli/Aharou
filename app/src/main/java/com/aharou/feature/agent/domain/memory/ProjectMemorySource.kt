@@ -32,6 +32,8 @@ class ProjectMemorySource(
         }
     }
 
+    override val root: File? get() = if (projectRoot.isBlank()) null else memoryRoot
+
     override fun listMemories(): List<Memory> {
         if (projectRoot.isBlank() || !memoryRoot.exists()) return emptyList()
         val files = memoryRoot.listFiles { file -> file.isFile && file.extension == "md" } ?: return emptyList()
@@ -47,12 +49,15 @@ class ProjectMemorySource(
             ?.content
     }
 
-    override fun saveMemory(name: String, description: String, content: String, type: MemoryType?, expiresAt: Long?): Boolean {
+    override fun saveMemory(name: String, description: String, content: String, type: MemoryType?, expiresAt: Long?, pending: Boolean?): Boolean {
         if (projectRoot.isBlank()) return false
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
             val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-            val payload = MemoryParser.format(MemorySource.sanitizeName(name), description, content, type, expiresAt = expiresAt)
+            val payload = MemoryParser.format(
+                MemorySource.sanitizeName(name), description, content, type,
+                expiresAt = expiresAt, pending = pending == true
+            )
             // 内容一字未变就不重写：mtime 既参与注入排序，又是「长期未改动就静默遗忘」的判据，
             // 无谓刷新会让陈旧条目永远显得新鲜，也会白白抖动 KV Cache。
             if (file.isFile && file.readText() == payload) return true

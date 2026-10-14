@@ -19,6 +19,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1881,17 +1884,114 @@ fun AIChatPanel(
                 )
             }
 
+            val rewindPreviewFiles by viewModel.rewindPreviewFiles.collectAsStateWithLifecycle()
+            val rewindUndoRecords by viewModel.rewindUndoRecords.collectAsStateWithLifecycle()
+            var showUndoTimeline by remember { mutableStateOf(false) }
+            // 涉及代码还原的选项先过一道确认：回退点对应哪一天、会动到几个文件，都得先看清楚。
+            var pendingCodeRewind by remember { mutableStateOf<RewindOption?>(null) }
+
             targetRewindMessageId?.let { targetId ->
                 val targetMsg = messages.find { it.id == targetId }
                 RewindOptionsBottomSheet(
                     promptSnippet = targetMsg?.content ?: "",
+                    undoRecordCount = rewindUndoRecords.size,
+                    onShowTimeline = { showUndoTimeline = true },
                     onOptionSelected = { option ->
-                        viewModel.executeRewindOption(targetId, option) { text, attachments ->
-                            viewModel.updateInputDraft(text)
-                            viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
+                        if (option == RewindOption.RESTORE_CODE || option == RewindOption.RESTORE_CODE_AND_CONVERSATION) {
+                            pendingCodeRewind = option
+                        } else {
+                            viewModel.executeRewindOption(targetId, option) { text, attachments ->
+                                viewModel.updateInputDraft(text)
+                                viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
+                            }
                         }
                     },
                     onDismissRequest = { viewModel.dismissRewindMenu() }
+                )
+            }
+
+            pendingCodeRewind?.let { option ->
+                AlertDialog(
+                    onDismissRequest = { pendingCodeRewind = null },
+                    title = { Text(stringResource(R.string.checkpoint_confirm_rewind_title)) },
+                    text = {
+                        val targetTime = targetRewindMessageId
+                            ?.let { id -> messages.find { it.id == id }?.timestamp }
+                            ?: 0L
+                        Text(
+                            stringResource(
+                                R.string.checkpoint_confirm_rewind_body,
+                                formatRewindTime(targetTime),
+                                rewindPreviewFiles
+                            )
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val targetId = targetRewindMessageId
+                            pendingCodeRewind = null
+                            if (targetId != null) {
+                                viewModel.executeRewindOption(targetId, option) { text, attachments ->
+                                    viewModel.updateInputDraft(text)
+                                    viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
+                                }
+                            }
+                        }) { Text(stringResource(R.string.checkpoint_confirm_rewind_action)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingCodeRewind = null }) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                    }
+                )
+            }
+
+            if (showUndoTimeline) {
+                AlertDialog(
+                    onDismissRequest = { showUndoTimeline = false },
+                    title = { Text(stringResource(R.string.checkpoint_undo_timeline_title)) },
+                    text = {
+                        if (rewindUndoRecords.isEmpty()) {
+                            Text(stringResource(R.string.checkpoint_undo_timeline_empty))
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .heightIn(max = 360.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                rewindUndoRecords.forEach { record ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                showUndoTimeline = false
+                                                viewModel.undoRewind(record.id)
+                                            }
+                                            .padding(vertical = Spacing.sm)
+                                    ) {
+                                        Text(
+                                            text = formatRewindTime(record.createdAt),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = stringResource(
+                                                R.string.checkpoint_undo_timeline_item,
+                                                record.fileCount
+                                            ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showUndoTimeline = false }) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                    }
                 )
             }
 

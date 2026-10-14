@@ -13,8 +13,11 @@ import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.runner.AgentTurnRequest
+import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
+import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.workflow.PermissionGate
 import com.aharou.feature.agent.domain.workflow.PermissionVerdict
 import com.aharou.feature.agent.presentation.MessageRole
@@ -33,6 +36,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -87,6 +91,7 @@ class RemoteActionExecutor @Inject constructor(
     private val messages: MessagePersistenceUseCase,
     private val sessions: SessionUseCase,
     private val messageNotifier: RemoteMessageNotifier,
+    private val agentTurnRunner: AgentTurnRunner,
     @param:ApplicationContext private val context: Context
 ) {
     private companion object {
@@ -149,6 +154,10 @@ class RemoteActionExecutor @Inject constructor(
                 }
                 RemoteActionCatalog.ACTION_SEND_MESSAGE -> RemoteSendMessageTool { text ->
                     deliverMessage(text, caller)
+                }
+                RemoteActionCatalog.ACTION_READ_LOGS -> RemoteReadLogsTool()
+                RemoteActionCatalog.ACTION_ASK_AI -> RemoteAskAiTool { text, timeoutMs ->
+                    askAi(text, timeoutMs, caller)
                 }
                 else -> RemoteInfoTool { deviceInfo(caller) }
             }
@@ -250,6 +259,50 @@ class RemoteActionExecutor @Inject constructor(
         sessions.touch(sessionId, System.currentTimeMillis())
         messageNotifier.notify(from, text)
         return sessionId
+    }
+
+    /**
+     * 把对端的提问交给本机 AI 跑一轮，并把回复带回去。
+     *
+     * 与 [deliverMessage] 的分工：那条以 assistant 身份落库、标 `isContextExcluded`，只给人看、AI 不可见；
+     * 这条以普通用户消息进入会话、触发一轮 agent，回复原样返回调用方。
+     *
+     * 前缀必须写明来源并点明「不是本机用户说的」：远端内容一旦进了上下文就可能左右模型判断，
+     * 至少让它知道自己是在替第三方转述，涉及改动文件、执行命令、读敏感内容时该先问过本机用户。
+     */
+    private suspend fun askAi(text: String, timeoutMs: Long, caller: RemotePairedDevice): String {
+        val workspacePath = workspaceRepository.currentPath()
+        val sessionId = sessions.getMostRecentSessionOfWorkspace(workspacePath)?.id
+            ?: sessions.newSessionEntity(workspacePath).also { sessions.upsertSession(it) }.id
+        if (!settings.current().allowRemoteAskAi) {
+            return "本机没有开放「远端向 AI 提问」——跨设备协作里那个开关默认是关的。" +
+                "可以改用 send_message 把话投给本机用户，或请他到设置里打开这项授权。"
+        }
+        // 以本机用户的口吻投递：这是开关明确授权的语义——本机用户表态「这些设备可以当我自己来问」。
+        // 因此不再加「来自外部设备」的标注（那会让模型一律当不可信输入挡回）。代价写进了设置项描述：
+        // 已配对设备能借本机 AI 的手办事；不过工具调用仍走本机权限引擎，该审批的照旧。
+        FileLogger.i(TAG, "远端 AI 提问: ${caller.deviceName.ifBlank { caller.deviceId }}")
+        val prompt = text
+        var reply = ""
+        val finished = withTimeoutOrNull(timeoutMs) {
+            agentTurnRunner.run(
+                AgentTurnRequest(sessionId = sessionId, text = prompt, skipTitleUpdate = true)
+            ).collect { event ->
+                when (event) {
+                    is AgentEvent.AssistantText -> reply = event.content
+                    is AgentEvent.AssistantDelta -> if (event.accumulated.isNotBlank()) reply = event.accumulated
+                    is AgentEvent.Failed -> reply = "（本机 AI 出错：${event.error.take(300)}）"
+                    else -> Unit
+                }
+            }
+            true
+        }
+        sessions.touch(sessionId, System.currentTimeMillis())
+        return when {
+            finished == null -> "已投递给本机 AI，但 ${timeoutMs / 1000} 秒内没跑完；回复请到本机会话里看。"
+            reply.isBlank() -> "本机 AI 这一轮没有产出文本回复。"
+            else -> reply
+        }
     }
 
     /**
