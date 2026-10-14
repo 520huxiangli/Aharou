@@ -42,6 +42,14 @@ class MemoryRepository @Inject constructor(
     }
 
     /**
+     * 当前作用域（全局 + 项目，去重后）的记忆总条数。
+     *
+     * 供注入清单末尾的规模反馈：清单有 60 条硬上限，模型得知道它看到的只是一部分抽样，
+     * 其余条目要靠 memory(action=search) 取回。
+     */
+    fun countMemories(projectRoot: String?): Int = listMemories(projectRoot).size
+
+    /**
      * 专供系统提示词注入的清单：在 [listMemories] 基础上做「相关度排序 + 降级遗忘 + 有界截断」。
      *
      * 与 [listMemories] 分开，是因为后者还供 `memory(action=list)` 用——那里必须给出**完整**视图，

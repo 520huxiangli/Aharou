@@ -15,6 +15,7 @@ import com.aharou.core.util.AILogger
 import com.aharou.core.util.CrashRecorder
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.TombstoneParser
+import com.aharou.core.util.WorkManagerFileLogger
 import net.schmizz.sshj.common.SecurityUtils
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.mcp.McpManager
@@ -128,6 +129,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 会不留任何痕迹，故把日志与全局崩溃处理器提到 attachBaseContext 最前。
         FileLogger.init(base)
         AILogger.init(base)
+        // WorkManager 的 setLogger 只认首次设置，必须赶在它自己初始化（ContentProvider）之前
+        WorkManagerFileLogger.install()
         installCrashHandler()
         // 全局代理入口：必须在任何 Hilt 注入 / OkHttpClient 构建之前设置，
         // 使 App 侧全部 HTTP 链路（对话、MCP、更新检查等）按需走全局/提供商代理。

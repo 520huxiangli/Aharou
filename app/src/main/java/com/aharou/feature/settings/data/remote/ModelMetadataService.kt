@@ -267,7 +267,8 @@ class ModelMetadataService @Inject constructor(
             } else {
                 modelId
             }
-            val names = listOf(normalized) + vendorStrippedCandidates(normalized)
+            val names = listOf(normalized) + listOfNotNull(stripBracketPrefixes(normalized)) +
+                vendorStrippedCandidates(normalized)
             for (name in names) {
                 lookup(catalog.byProvider, preferred, listOf(name))?.let { return it }
                 lookup(catalog.lowerByProvider, preferred, listOf(name.lowercase()))?.let { return it }
@@ -306,6 +307,24 @@ class ModelMetadataService @Inject constructor(
                 catalog.values.firstNotNullOfOrNull { models -> models[candidate] }?.let { return it }
             }
             return null
+        }
+
+        /**
+         * 剥离开头的 `[...]` 计费 / 分组前缀。
+         *
+         * 中转站常把计价与分组拼进模型名（`[0.18/次][按次K6] claude-opus-5-5`），
+         * 这类名字在目录里必然查不到，会把窗口解析一路拖到兜底值。多试一次剥完前缀的名字。
+         */
+        private fun stripBracketPrefixes(modelId: String): String? {
+            var current = modelId.trim()
+            var stripped = false
+            while (current.startsWith("[")) {
+                val end = current.indexOf(']')
+                if (end <= 0) break
+                current = current.substring(end + 1).trimStart()
+                stripped = true
+            }
+            return current.takeIf { stripped && it.isNotEmpty() }
         }
 
         /**

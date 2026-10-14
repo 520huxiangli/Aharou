@@ -75,8 +75,14 @@ class ContextCompactor @Inject constructor(
          * 失败材料拉黑的有效期：过期后允许对同一段历史重试。失败多源于固定开销或某条超长输出，
          * 拉黑只是免得每轮白跑一次摘要；窗口期太长会把恢复路径一起堵死（用户连点重试也始终失败）。
          */
-        const val FAILED_MATERIAL_TTL_MS = 2 * 60_000L
+        const val FAILED_MATERIAL_TTL_MS = 60_000L
         const val MAX_SUMMARY_BLOCKS = 32
+
+        /**
+         * 摘要正文要在压缩目标里预留的份额：尾部预算不给它留位的话，
+         * 压完之后「固定开销 + 摘要 + 保留段」仍会顶破目标。
+         */
+        const val SUMMARY_OUTPUT_RESERVE_TOKENS = 4_096
 
         /**
          * 摘要输出上限的兜底。首次上限被模型思考吃光时翻倍重试一次，但不越过这个值：
@@ -110,7 +116,7 @@ class ContextCompactor @Inject constructor(
         const val RETAINED_REASON =
             "能压缩的内容都压完了，最近这段（多为刚跑完的工具输出或图片）仍然装不下。可以新建会话接着聊，或换成上下文窗口更大的模型。"
         const val NOT_SMALLER_REASON =
-            "摘要加上必须保留的内容仍装不进压缩目标。请重试，或新建会话。"
+            "摘要加进来之后整体仍未降到预算内（多半是最近这段内容本身就大）。可以新建会话接着聊，或换成上下文窗口更大的模型。"
         const val ALREADY_FAILED_REASON =
             "这段历史刚压缩失败过，本轮不再重复尝试。"
 
@@ -173,7 +179,7 @@ class ContextCompactor @Inject constructor(
     private fun friendlyReason(error: Throwable): String {
         val raw = error.message ?: return error.javaClass.simpleName
         return when {
-            raw.contains("Recent task material and request overhead") -> RETAINED_REASON
+            raw.contains("Recent task material") -> RETAINED_REASON
             raw.contains("Summary, recent task material") -> NOT_SMALLER_REASON
             raw.contains("already failed compaction") -> ALREADY_FAILED_REASON
             else -> raw
@@ -247,7 +253,11 @@ class ContextCompactor @Inject constructor(
                 val currentTokens = currentInputTokens.takeIf { it > 0 } ?: estimatedTokens
                 val hardThresholdPercent = generalSettingsRepository.compactionThresholdPercent()
                 val threshold = (inputBudget * hardThresholdPercent / 100.0).toInt()
-                val targetTokens = (inputBudget * minOf(70, (hardThresholdPercent - 10).coerceAtLeast(0)) / 100.0).toInt()
+                // 系统提示与工具定义压不掉，必须先从可压缩空间里扣掉；而且目标要以「触发线」
+                // （threshold）而非输入预算为基准——否则压完仍高于触发线，下一轮又要再压一次。
+                val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
+                val squeezableBudget = (threshold - fixedOverhead).coerceAtLeast(0)
+                val targetTokens = (squeezableBudget * minOf(70, (hardThresholdPercent - 10).coerceAtLeast(0)) / 100.0).toInt()
                 val softThreshold = (inputBudget * generalSettingsRepository.softCompactionThresholdPercent() / 100.0).toInt()
                 val reachedHard = currentTokens >= threshold || currentTokens >= inputBudget
                 if (!force && !reachedHard && currentTokens >= softThreshold) {
@@ -262,16 +272,19 @@ class ContextCompactor @Inject constructor(
                 }
                 if (!force && !reachedHard) return@withTimeoutOrNull PreparationResult(null)
                 yield()
-                // 系统提示与工具定义压不掉：它们自己就占满目标时压缩不可能达标，
-                // 直接给可操作原因，不调摘要模型，也不把这份历史记进失败名单（关掉工具后还能重试）。
-                val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
-                if (fixedOverhead >= targetTokens) {
+                // 固定开销把可压缩空间吃干净了就没什么可压的：直接给可操作原因，
+                // 不调摘要模型，也不把这份历史记进失败名单（关掉工具后还能重试）。
+                if (squeezableBudget <= 0) {
                     onEvent(AgentEvent.CompactionFailed(OVERHEAD_REASON))
                     return@withTimeoutOrNull PreparationResult(null)
                 }
-                val tailBudget = targetTokens - fixedOverhead
+                // 摘要正文也占目标，尾部预算要给它留位。
+                val tailBudget = (targetTokens - SUMMARY_OUTPUT_RESERVE_TOKENS).coerceAtLeast(0)
                 var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
                 if (force && splitIndex <= 0) splitIndex = messages.lastIndex
+                // 前缀缓存友好：切分点吸附到固定条数网格，连续多轮里没跨过一整格就不动；
+                // 逐条平移会让每轮请求前缀都变，上游的提示词缓存全废。
+                splitIndex = CompactionText.snapToStep(messages, splitIndex)
                 splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
                 if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
                 // 保留段装不下时不要把整份历史判死：先把其中已落盘的超长工具输出折成引用
@@ -300,8 +313,8 @@ class ContextCompactor @Inject constructor(
                 }) {
                     "This historical material already failed compaction; retain it without summarizing again"
                 }
-                check(fixedOverhead + CompactionText.tokensOf(tail) < targetTokens) {
-                    "Recent task material and request overhead exceed the compaction target"
+                check(CompactionText.tokensOf(tail) < tailBudget) {
+                    "Recent task material exceeds the retained budget"
                 }
                 val headIds = head.map { it.id }.filter { it.isNotBlank() }.distinct()
                 val anchorTs = if (sessionId != null) {
@@ -355,8 +368,13 @@ class ContextCompactor @Inject constructor(
                     AgentMessage.AssistantMessage(id = summaryId, content = summary)
                 ) + tail
                 val compactedTokens = CompactionText.estimateRequest(systemPrompt, tools, compacted)
-                check(compactedTokens < estimatedTokens && compactedTokens <= targetTokens) {
-                    "Summary, recent task material and request overhead exceed the compaction target or do not reduce usage"
+                // 只要「确实变小」且没超出能发出去的输入预算就放行：原先还额外要求 ≤ 目标，
+                // 差几个 token 就整轮作废并把这段历史拉黑，用户连点重试也永远失败。
+                check(compactedTokens < estimatedTokens) {
+                    "Summary, recent task material and request overhead do not reduce usage"
+                }
+                check(compactedTokens <= inputBudget) {
+                    "Summary, recent task material and request overhead exceed the input budget"
                 }
                 PreparationResult(PreparedCompaction(compacted, headIds, markerId, summaryId, summary, anchorTs, block, compactedTokens))
             }
@@ -700,6 +718,20 @@ internal object CompactionText {
             else -> null
         }
         return find(root)
+    }
+
+    /** 尾部切分点吸附的条数网格：格子越大前缀越稳，但保留段偏离预算也越多。 */
+    private const val TAIL_STEP_MESSAGES = 8
+
+    /**
+     * 把切分点吸附到固定条数网格：连续多轮里只要没跨过一整格，切分点就不动，请求前缀因此
+     * 保持稳定，能继续命中上游的提示词缓存——逐条平移会让每轮前缀都变，缓存全废。
+     * 只往后吸（保留段更小），因此不会超出保留预算。
+     */
+    fun snapToStep(messages: List<AgentMessage>, split: Int, step: Int = TAIL_STEP_MESSAGES): Int {
+        if (split <= 0 || messages.isEmpty()) return split
+        val snapped = ((split + step - 1) / step) * step
+        return snapped.coerceIn(split, messages.lastIndex)
     }
 
     fun selectTailStartIndex(messages: List<AgentMessage>, budget: Int): Int {

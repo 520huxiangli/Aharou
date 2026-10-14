@@ -18,6 +18,7 @@ import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.agent.domain.memory.MemoryCompactor
 import com.aharou.feature.agent.domain.memory.MemoryCurator
 import com.aharou.feature.agent.domain.container.DelegatingCommandEngine
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
@@ -65,6 +66,7 @@ import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.DelegatingFileAccess
 import com.aharou.feature.workspace.domain.LocalFileAccess
 import com.aharou.feature.workspace.domain.RemoteSftpFileAccess
+import dagger.Lazy
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -490,6 +492,7 @@ object AgentModule {
         agentNotificationCenter: AgentNotificationCenter,
         eventInjector: AgentEventInjector,
         memoryCurator: MemoryCurator,
+        memoryCompactor: Lazy<MemoryCompactor>,
         fileAccess: FileAccessProvider,
         ocrEngine: TesseractOcrEngine,
         vault: VaultRepository
@@ -522,7 +525,8 @@ object AgentModule {
             memoryCurator,
             fileAccess,
             ocrEngine,
-            vault
+            vault,
+            memoryCompactor
         )
     }
 }

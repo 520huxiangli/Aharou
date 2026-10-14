@@ -291,7 +291,14 @@ class SystemPromptProvider @Inject constructor(
             val memories = try {
                 memoryRepository.listMemoriesForPrompt(ctx.projectRoot, query)
             } catch (e: Exception) { return null }
-            val content = MemoryPromptRenderer.render(memories).ifEmpty { null }
+            // 清单末尾附一行规模反馈：注入有 60 条硬上限，让模型知道看到的只是一部分抽样，
+            // 其余要靠 memory(action=search) 取回。总数取不到时退化为只报清单内的条数。
+            val totalInScope = try {
+                memoryRepository.countMemories(ctx.projectRoot)
+            } catch (e: Exception) { memories.size }
+            val content = MemoryPromptRenderer
+                .withScaleNotice(MemoryPromptRenderer.render(memories), memories.size, totalInScope)
+                .ifEmpty { null }
 
             // 记忆纪律紧跟清单注入：清单告诉模型「有什么」，纪律告诉它「何时必须写」。
             val full = listOf(content, memoryDiscipline()).mapNotNull { it }.joinToString("\n\n")

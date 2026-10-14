@@ -55,6 +55,9 @@ class MemoryTraceLog @Inject constructor(
         const val ACTION_CONFLICT = "conflict"
         const val ACTION_SKIP = "skip"
 
+        /** 自动裁决判定候选「不值得写」，落盘前直接拒掉：不写文件、不改已有内容，只留一条流水。 */
+        const val ACTION_REJECT = "reject"
+
         const val SOURCE_TOOL = "tool"
         const val SOURCE_CURATOR = "curator"
         const val SOURCE_DISTILLER = "distiller"

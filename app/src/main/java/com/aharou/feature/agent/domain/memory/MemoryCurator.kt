@@ -103,13 +103,26 @@ class MemoryCurator @Inject constructor(
                 continue
             }
 
-            // 名字不同、讲的却是同一件事，是记忆库最大的噪声来源。先做零成本的相似检索，
-            // 真撞上了再花一次调用让轻量模型四选一——没候选就一分钱不花。
+            // 名字不同、讲的却是同一件事，是记忆库最大的噪声来源。先做零成本的相似检索。
             val similar = memoryRepository
                 .findSimilarMemories(c.name, c.description, projectRoot, limit = 1)
                 .firstOrNull()
+            // 裁决器对每个候选都跑一遍：即使没有相近条目，也要先过「写入门槛」——
+            // 不值得写的（本次排查的临时状态、读代码就能查到的事实）在落盘前直接拒掉。
+            val decision = judge(provider, c, similar)
+            if (decision != null && decision.action == ArbiterAction.REJECT) {
+                FileLogger.i(TAG, "记忆「${c.name}」不值得写入，已拒绝")
+                memoryTrace.record(
+                    source = MemoryTraceLog.SOURCE_CURATOR,
+                    action = MemoryTraceLog.ACTION_REJECT,
+                    name = c.name,
+                    scope = effectiveScope.name.lowercase(),
+                    detail = decision.reason.ifBlank { "自动裁决判定不值得写入" },
+                    sessionId = sessionId
+                )
+                continue
+            }
             if (similar != null) {
-                val decision = judge(provider, c, similar)
                 // 判定失败（null）时整个 when 不进入，直接落到下面的新建。
                 if (decision != null) when (decision.action) {
                     ArbiterAction.SKIP -> {
@@ -168,7 +181,7 @@ class MemoryCurator @Inject constructor(
                             continue
                         }
                     }
-                    // NEW、判定失败（null）或跳作用域改不动 → 一律落回新建。
+                    // NEW、判定失败（null）或跨作用域改不动 → 一律落回新建（REJECT 已在上面拦截）。
                     else -> Unit
                 }
             }
@@ -201,15 +214,16 @@ class MemoryCurator @Inject constructor(
     }.getOrDefault(0)
 
     /**
-     * 让轻量模型在新条目与一条已有相似条目之间做四选一。
+     * 让轻量模型裁决一个候选：先判「值不值得写」（不过门槛就 REJECT），再在无相近条目时
+     * 于 NEW / REJECT 之间、有相近条目时于 NEW / MERGE / CONFLICT / SKIP / REJECT 之间选。
      *
-     * 只在确实检索到相似条目时才调用。任何失败——提示词缺失、请求出错、JSON 不合规——
+     * 无论有没有相近条目都会调用。任何失败——提示词缺失、请求出错、JSON 不合规——
      * 都返回 null，由调用方落回「直接新建」：判定器抽风时宁可多一条记忆，也不能把候选丢掉。
      */
     private suspend fun judge(
         provider: AIProvider,
         candidate: Candidate,
-        existing: Memory
+        existing: Memory?
     ): ArbiterDecision? = runCatching {
         val systemPrompt = promptFileResolver.resolve(ARBITER_PROMPT_FILE)
             .replace(LEADING_COMMENT, "").trim()
@@ -221,9 +235,14 @@ class MemoryCurator @Inject constructor(
             append("摘要：").append(candidate.description).append('\n')
             append(candidate.content.take(MAX_ARBITER_ITEM_CHARS)).append("\n\n")
             append("## 已有记忆\n")
-            append("名称：").append(existing.name).append('\n')
-            append("摘要：").append(existing.description).append('\n')
-            append(existing.content.take(MAX_ARBITER_ITEM_CHARS))
+            if (existing == null) {
+                // 没有相近条目：这次裁决只判「值不值得写」，模型据此在 NEW 与 REJECT 间选。
+                append("（无相近的已有记忆）")
+            } else {
+                append("名称：").append(existing.name).append('\n')
+                append("摘要：").append(existing.description).append('\n')
+                append(existing.content.take(MAX_ARBITER_ITEM_CHARS))
+            }
         }
 
         val raw = provider.complete(
@@ -248,11 +267,14 @@ class MemoryCurator @Inject constructor(
             "MERGE" -> ArbiterAction.MERGE
             "CONFLICT" -> ArbiterAction.CONFLICT
             "SKIP" -> ArbiterAction.SKIP
+            "REJECT" -> ArbiterAction.REJECT
             else -> return null
         }
         val merged = obj["mergedContent"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (action == ArbiterAction.MERGE && merged.isEmpty()) return null
-        return ArbiterDecision(action, merged)
+        // reason 是裁决器的一句话理由，REJECT 时记入流水，其余动作忽略。
+        val reason = obj["reason"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        return ArbiterDecision(action, merged, reason)
     }
 
     /** 解析整理器输出；格式不合法/越界条目一律丢弃，宁缺毋滥。 */
@@ -306,8 +328,15 @@ class MemoryCurator @Inject constructor(
     }
 }
 
-/** 裁决器给出的四种处理方式。 */
-private enum class ArbiterAction { NEW, MERGE, CONFLICT, SKIP }
+/** 裁决器给出的处理方式。 */
+private enum class ArbiterAction { NEW, MERGE, CONFLICT, SKIP, REJECT }
 
-/** 一次裁决的结果；[mergedContent] 仅在 MERGE 时非空（由 [MemoryCurator.parseDecision] 保证）。 */
-private data class ArbiterDecision(val action: ArbiterAction, val mergedContent: String = "")
+/**
+ * 一次裁决的结果；[mergedContent] 仅在 MERGE 时非空（由 [MemoryCurator.parseDecision] 保证），
+ * [reason] 是裁决器给出的一句话理由，REJECT 时记入流水。
+ */
+private data class ArbiterDecision(
+    val action: ArbiterAction,
+    val mergedContent: String = "",
+    val reason: String = ""
+)

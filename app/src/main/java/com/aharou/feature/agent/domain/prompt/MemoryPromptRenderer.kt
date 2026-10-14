@@ -20,6 +20,7 @@ internal object MemoryPromptRenderer {
     private const val GLOBAL_HEADER = "全局记忆 (跨项目个人偏好，需要详情时用 memory(action=read, name=xxx, scope=global))："
     private const val PROJECT_HEADER = "项目记忆 (当前项目专属，需要详情时用 memory(action=read, name=xxx, scope=project))："
     private const val OMISSION_NOTICE = "部分记忆索引因 8000 字符总预算未注入；memory(action=list) 仍可查看完整清单，再用 memory(action=read, name=..., scope=...) 读取正文。"
+    private const val SCALE_NOTICE = "当前项目记忆 %d 条，注入清单 %d 条；其余需用 memory search 取回"
     private const val INLINE_HEADER = "以下条目的正文已直接给出（长期约定与红线，不必再 memory read）："
     private const val TRUNCATED_SUFFIX = "\n…（正文过长已截断，完整内容用 memory(action=read, name=%s) 读取）"
 
@@ -42,6 +43,18 @@ internal object MemoryPromptRenderer {
             if (inlineText.isEmpty()) "" else "$INLINE_HEADER\n\n$inlineText",
             renderIndex(rest)
         ).filter { it.isNotEmpty() }.joinToString("\n\n")
+    }
+
+    /**
+     * 在已渲染的清单末尾附一行规模反馈：告诉模型清单是有硬上限的抽样。
+     *
+     * 与 [render] 分开、不并进 [render] 里，是因为 [render] 的输出长度被测试与
+     * 8000 字符预算盯着，追加文字会越界；这行只在最终拼装 system prompt 时贴上去。
+     * [totalInScope] 为当前作用域记忆总数，[injected] 为本次注入清单条数。
+     */
+    fun withScaleNotice(rendered: String, injected: Int, totalInScope: Int): String {
+        if (rendered.isEmpty()) return rendered
+        return "$rendered\n\n${SCALE_NOTICE.format(totalInScope, injected)}"
     }
 
     fun expandOnce(text: String, variable: String, content: String?): String {

@@ -8,7 +8,10 @@ import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
+import com.aharou.feature.agent.domain.memory.MemoryCompactor
 import com.aharou.feature.agent.domain.memory.MemoryCurator
+import com.aharou.feature.agent.domain.memory.MemoryScope
+import dagger.Lazy
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -124,7 +127,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val memoryCurator: MemoryCurator,
     private val fileAccess: FileAccessProvider,
     private val ocrEngine: TesseractOcrEngine,
-    private val vault: VaultRepository
+    private val vault: VaultRepository,
+    private val memoryCompactor: Lazy<MemoryCompactor> // Lazy 断环：MemoryCompactor 自己依赖 AgentWorkflow
 ) : AgentWorkflow {
 
     /** 卡死提示文案：从 prompts 文件读一次并缓存，用户可编辑该文件定制。 */
@@ -1130,12 +1134,6 @@ class StatefulAgentWorkflow @Inject constructor(
     }
 
     /**
-     * 发送前按模型视觉能力处理消息中的图片：
-     * - 支持 vision：原样返回。
-     * - 不支持：剥离所有图片（仅影响本次发送，不动持久化数据），历史/输入中的图片不会原样发给
-     *   非多模态模型导致请求失败；切回多模态模型后图片上下文仍可正常使用。
-     */
-    /**
      * 发送前按模型能力处理图片：能看图就原样发；不能看时改用本地 OCR 把图转成文字塞回去。
      *
      * 这里之前是直接把 images 清空 —— 用户消息还剩一句「图片已省略」，工具结果那条连提示都没有，
@@ -1325,6 +1323,8 @@ class StatefulAgentWorkflow @Inject constructor(
             val provider = resolveCompactionFallbackProvider(sessionId) ?: getEffectiveProvider(sessionId)
             val saved = memoryCurator.curate(provider, sessionId, projectRoot, transcript)
             if (saved > 0) promptProvider.invalidateMemoryCache(sessionId, projectRoot)
+            // 会话收尾顺带看一眼记忆是否需要整理（阈值与冷却在内部判定，静默失败）。
+            memoryCompactor.get().compactIfDue(projectRoot, MemoryScope.PROJECT)
             saved
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

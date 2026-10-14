@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -126,6 +127,21 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.AICode" />
+
+        <!-- 移除 WorkManager 的默认初始化器：它在 ContentProvider 阶段（早于 Application.onCreate
+             与 Hilt 字段注入）就用「默认配置」初始化 WorkManager，于是 @HiltWorker 的 Worker
+             拿不到 HiltWorkerFactory，构造时报 NoSuchMethodException 而永远跑不起来。
+             移除后改由 WorkManager 首次被取用时按 Configuration.Provider 延迟初始化。 -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
 
         <provider
             android:name=".feature.workspace.data.provider.WorkspaceDocumentsProvider"

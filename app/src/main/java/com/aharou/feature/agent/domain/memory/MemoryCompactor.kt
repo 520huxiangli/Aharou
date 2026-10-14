@@ -39,6 +39,7 @@ class MemoryCompactor @Inject constructor(
     private val promptFileResolver: PromptFileResolver,
     private val memoryTrace: MemoryTraceLog,
     private val agentWorkflow: AgentWorkflow,
+    private val autoCompactSettings: MemoryAutoCompactSettings,
 ) {
 
     /**
@@ -48,11 +49,7 @@ class MemoryCompactor @Inject constructor(
      * @param scope 只处理这一个作用域：项目记忆不该被合并进全局，反之亦然。
      */
     suspend fun compact(projectRoot: String?, scope: MemoryScope): MemoryCompactReport {
-        val candidates = memoryRepository.listMemories(projectRoot)
-            .filter { it.scope == scope }
-            // 事件类是留档、不是知识，合并它们没有意义；核心档案整份是一个整体，拆合都会毁语义。
-            .filter { it.type != MemoryType.EVENT }
-            .filterNot { isCoreArchiveName(it.name) }
+        val candidates = compactionCandidates(projectRoot, scope)
         if (candidates.size < MIN_CLUSTER_SIZE * 2) return MemoryCompactReport()
 
         val clusters = cluster(candidates).filter { it.size >= MIN_CLUSTER_SIZE }
@@ -85,6 +82,38 @@ class MemoryCompactor @Inject constructor(
         }
         return report
     }
+
+    /**
+     * 会话收尾时的「按需自动整理」入口：候选攒够、且距上次自动整理满 [AUTO_COMPACT_COOLDOWN_MILLIS]
+     * 才真正跑一次整理。
+     *
+     * 整理要花模型调用，不能每次会话收尾都跑；两条门槛都满足才动，且全程静默——失败只记日志，
+     * 绝不把异常抛给调用方（它挂在对话收尾路径上）。
+     *
+     * @return 真跑了整理时返回这次的统计；候选不足 / 冷却未满 / 出错都返回 null。
+     */
+    suspend fun compactIfDue(projectRoot: String?, scope: MemoryScope): MemoryCompactReport? = runCatching {
+        if (compactionCandidates(projectRoot, scope).size < AUTO_COMPACT_THRESHOLD) return@runCatching null
+
+        val last = autoCompactSettings.lastAutoCompactAt
+        if (last > 0L && System.currentTimeMillis() - last < AUTO_COMPACT_COOLDOWN_MILLIS) {
+            return@runCatching null
+        }
+
+        val report = compact(projectRoot, scope)
+        // 跑完才落时间戳：中途抛错不留时间戳，下次会话收尾还能立刻重试。
+        autoCompactSettings.lastAutoCompactAt = System.currentTimeMillis()
+        report
+    }.onFailure { e ->
+        FileLogger.w(TAG, "按需自动整理失败（静默忽略）: ${e.message}", e)
+    }.getOrNull()
+
+    /** 一个作用域下参与整理的候选条目：事件类只留档、核心档案整份不可拆，都不算候选。 */
+    private fun compactionCandidates(projectRoot: String?, scope: MemoryScope): List<Memory> =
+        memoryRepository.listMemories(projectRoot)
+            .filter { it.scope == scope }
+            .filter { it.type != MemoryType.EVENT }
+            .filterNot { isCoreArchiveName(it.name) }
 
     /**
      * 落盘一次合并：先把组员逐条归档，再写合并结果，最后删掉被并掉的旧条目。
@@ -244,6 +273,12 @@ class MemoryCompactor @Inject constructor(
 
         /** 单条喂给模型时正文的截断长度。 */
         const val MAX_ITEM_CHARS = 1_200
+
+        /** 自动整理触发阈值：候选少于这么多就不跑（够多才值得花一次模型调用）。 */
+        const val AUTO_COMPACT_THRESHOLD = 150
+
+        /** 自动整理的冷却时间：距上次自动整理不足这么久就跳过，避免每次会话收尾都跑。 */
+        const val AUTO_COMPACT_COOLDOWN_MILLIS = 24L * 60L * 60L * 1_000L
     }
 }
 
