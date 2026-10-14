@@ -228,6 +228,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configRemoteDeviceFields: com.aharou.feature.remotedevice.data.ConfigRemoteDeviceFields
 
+    /** 记忆同步字段注册（仓库地址 / 分支 / 上次结果与时间）。 */
+    @Inject
+    lateinit var configMemorySyncFields: com.aharou.feature.agent.data.ConfigMemorySyncFields
+
     /** 凭据类字段注册（GitHub 令牌 / 自动注入 / SSH 登录密钥 / 凭据库）。 */
     @Inject
     lateinit var configCredentialFields: com.aharou.feature.settings.data.ConfigCredentialFields
@@ -379,6 +383,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configContainerFields.registerInto(configRegistry)
         configProviderFields.registerInto(configRegistry)
         configRemoteFields.registerInto(configRegistry)
+        configMemorySyncFields.registerInto(configRegistry)
         configModelRoleFields.registerInto(configRegistry)
         configEnvFields.registerInto(configRegistry)
         configScheduledTaskFields.registerInto(configRegistry)

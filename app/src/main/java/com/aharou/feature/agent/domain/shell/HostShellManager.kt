@@ -71,13 +71,13 @@ class HostShellManager @Inject constructor(
      * 的设备上，工具会据此报「未安装 Shizuku」并放弃执行，root 通道永远走不到。这里就地探测并即时判定。
      */
     suspend fun ensureMode(): HostShellMode {
-        if (rootShell.available.value == null) rootShell.refresh()
+        if (rootShell.needsReprobe()) rootShell.refresh()
         return resolve(rootShell.available.value, shizukuManager.state.value)
     }
 
     /** 执行命令。[HostShellMode.UNAVAILABLE] 时抛异常。 */
     suspend fun run(command: String, timeoutMs: Long): ShellCommandResult {
-        if (rootShell.available.value == null) rootShell.refresh()
+        if (rootShell.needsReprobe()) rootShell.refresh()
         if (rootShell.available.value == true) {
             val result = rootShell.run(command, timeoutMs)
             // su 在、但这一条起不来（如授权被拒）：回退 Shizuku，而不是把失败直接抛出去。

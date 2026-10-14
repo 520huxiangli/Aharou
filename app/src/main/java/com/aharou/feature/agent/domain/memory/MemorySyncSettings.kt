@@ -37,11 +37,32 @@ class MemorySyncSettings @Inject constructor(
         get() = prefs.getString(KEY_LAST_RESULT, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_LAST_RESULT, value.take(400)).apply()
 
+    /**
+     * 是否自动同步（后台周期推一次）。
+     *
+     * 默认开：记忆同步是「推上去就好」的事，不该让人记着去点。开关与仓库地址都就绪才会真正排周期任务。
+     */
+    var autoSync: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_SYNC, true)
+        set(value) = prefs.edit().putBoolean(KEY_AUTO_SYNC, value).apply()
+
+    /** 自动同步间隔（分钟）。低于 [MIN_INTERVAL_MINUTES] 没有意义，WorkManager 也做不到。 */
+    var autoSyncIntervalMinutes: Int
+        get() = prefs.getInt(KEY_AUTO_INTERVAL, DEFAULT_INTERVAL_MINUTES).coerceAtLeast(MIN_INTERVAL_MINUTES)
+        set(value) = prefs.edit().putInt(KEY_AUTO_INTERVAL, value.coerceAtLeast(MIN_INTERVAL_MINUTES)).apply()
+
     private companion object {
         const val DEFAULT_BRANCH = "main"
+        const val DEFAULT_INTERVAL_MINUTES = 60
+
+        /** WorkManager 周期任务允许的最小周期。 */
+        const val MIN_INTERVAL_MINUTES = 15
+
         const val KEY_REPO_URL = "repo_url"
         const val KEY_BRANCH = "branch"
         const val KEY_LAST_SYNC_AT = "last_sync_at"
         const val KEY_LAST_RESULT = "last_result"
+        const val KEY_AUTO_SYNC = "auto_sync"
+        const val KEY_AUTO_INTERVAL = "auto_interval_minutes"
     }
 }

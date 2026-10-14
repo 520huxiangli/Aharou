@@ -42,8 +42,12 @@ class ShizukuTool @Inject constructor(
     override val name = "Shizuku"
 
     override val description =
-        "在宿主 Android 系统上执行命令（有 root 时为 uid 0，否则等价 `adb shell`），" +
-            "用于 `pm`/`am`/`cmd` 等系统操作与读写 /sdcard。需已授予 root 权限或安装并授权 Shizuku，且每次调用都会弹窗确认。"
+        "在宿主 Android 系统上执行命令（有 root 时为 uid 0，否则等价 `adb shell`）：" +
+            "`pm`/`am`/`cmd` 等系统操作、读写 /sdcard，以及**系统任意路径**——有 root 时含 " +
+            "`/data/data/<包名>` 这类应用私有目录。" +
+            "注意 `readFile`/`writeFile` 只允许工作区、容器 rootfs、AI 配置、记忆与共享区，" +
+            "要读写别处的路径就用本工具跑 shell 命令，别在文件工具上死磕。" +
+            "需已授予 root 权限或安装并授权 Shizuku，且每次调用都会弹窗确认。"
 
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val capabilities = setOf(ToolCapability.EXECUTE_COMMANDS)

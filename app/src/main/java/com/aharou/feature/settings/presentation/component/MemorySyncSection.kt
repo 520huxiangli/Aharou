@@ -21,17 +21,19 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.dialogTextFieldColors
+import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.settings.presentation.MemorySyncViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Zap
 
 /**
- * 设置页「记忆」分区里的同步区：填自己的仓库地址、手动同步一次。
+ * 设置页「记忆」分区里的同步区：填自己的仓库地址、开关自动同步。
  *
- * 仓库根就是记忆目录本身（详见 [com.aharou.feature.agent.domain.memory.MemorySyncManager]），
- * 所以这里只同步全局记忆；项目记忆留在各自工作区，不进仓库。
+ * 仓库是一个收集桶（`global/` + `projects/<工作区名-项目身份哈希>/`），全局与各项目的记忆都进得去；
+ * 细节见 [com.aharou.feature.agent.domain.memory.MemorySyncManager]。
  */
 @Composable
 internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel()) {
@@ -41,6 +43,7 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
 
     var repoUrl by remember { mutableStateOf(viewModel.repoUrl()) }
     var lastResult by remember { mutableStateOf(viewModel.lastResult()) }
+    var autoSync by remember { mutableStateOf(viewModel.autoSyncEnabled()) }
     var editingRepo by remember { mutableStateOf(false) }
 
     LaunchedEffect(outcome) {
@@ -62,17 +65,24 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Zap,
-                title = stringResource(R.string.memory_sync_now),
-                subtitle = lastResult.ifBlank { stringResource(R.string.memory_sync_never) },
-                trailing = {
-                    if (syncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    }
+                title = stringResource(R.string.memory_sync_auto),
+                subtitle = when {
+                    syncing -> stringResource(R.string.memory_sync_working)
+                    lastResult.isNotBlank() -> lastResult
+                    else -> stringResource(
+                        R.string.memory_sync_auto_hint,
+                        MemorySyncScheduler.MIN_INTERVAL_MINUTES
+                    )
                 },
-                onClick = { if (!syncing) viewModel.syncNow() },
+                trailing = {
+                    AppSwitch(
+                        checked = autoSync,
+                        onCheckedChange = {
+                            autoSync = it
+                            viewModel.setAutoSync(it)
+                        }
+                    )
+                }
             )
         }
     }

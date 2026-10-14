@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.feature.agent.domain.memory.MemorySyncManager
 import com.aharou.feature.agent.domain.memory.MemorySyncOutcome
+import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import javax.inject.Inject
 class MemorySyncViewModel @Inject constructor(
     private val syncManager: MemorySyncManager,
     private val settings: MemorySyncSettings,
+    private val scheduler: MemorySyncScheduler,
 ) : ViewModel() {
 
     private val _syncing = MutableStateFlow(false)
@@ -34,6 +36,18 @@ class MemorySyncViewModel @Inject constructor(
 
     fun saveRepoUrl(url: String) {
         settings.repoUrl = url
+        // 排不排周期任务取决于「开关 + 地址」两者，地址改了要重排；顺手推一次，省得等下一个周期。
+        scheduler.apply()
+        if (settings.autoSync) syncNow()
+    }
+
+    fun autoSyncEnabled(): Boolean = settings.autoSync
+
+    fun setAutoSync(enabled: Boolean) {
+        settings.autoSync = enabled
+        scheduler.apply()
+        // 刚打开就立刻跑一次：不必等第一个周期，界面上也就不必再留一个手动按钮。
+        if (enabled) syncNow()
     }
 
     /** 上次同步的结果文案；从未同步过为空串。 */

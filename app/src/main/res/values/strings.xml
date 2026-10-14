@@ -2431,6 +2431,9 @@
     <string name="memory_sync_repo_hint">仓库地址（https://…）</string>
     <string name="memory_sync_now">立即同步</string>
     <string name="memory_sync_never">还没同步过</string>
+    <string name="memory_sync_auto">自动同步</string>
+    <string name="memory_sync_auto_hint">后台定期推一次（最短 %1$d 分钟）；打开开关时会立刻同步一次。</string>
+    <string name="memory_sync_working">正在同步…</string>
 
     <!-- 语音输入 -->
     <string name="voice_model_extracting">解压语音模型…</string>
