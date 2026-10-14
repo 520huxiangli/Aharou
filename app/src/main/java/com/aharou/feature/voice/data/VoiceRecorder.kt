@@ -33,6 +33,10 @@ internal class VoiceRecorder @Inject constructor(
     @Volatile
     private var recording = false
 
+    /** 本次录音的起始时刻，仅用于在 stop/cancel 里打「已录多久」的诊断日志。 */
+    @Volatile
+    private var startedAtMs = 0L
+
     /** 可选的实时回调节点：每读到一块 PCM 就回调一次（流式识别用）。 */
     @Volatile
     private var chunkListener: ((FloatArray) -> Unit)? = null
@@ -81,6 +85,7 @@ internal class VoiceRecorder @Inject constructor(
         buffer = samples
         recording = true
         record = recorder
+        startedAtMs = System.currentTimeMillis()
 
         recorder.startRecording()
         worker = Thread({
@@ -114,6 +119,10 @@ internal class VoiceRecorder @Inject constructor(
                 FileLogger.e(TAG, "录音线程异常", e)
             }
         }, "voice-recorder").apply { isDaemon = true; start() }
+        FileLogger.i(
+            TAG,
+            "开始录音：监听者=${if (onChunk == null) "无" else "有"} AudioRecord状态=${recorder.state} 缓冲=${bufferBytes}字节",
+        )
         return RecordStartResult.Started
     }
 
@@ -124,6 +133,8 @@ internal class VoiceRecorder @Inject constructor(
      *         调用方据此提示「没听清」而不是把噪声当语音发出去。
      */
     fun stop(): FloatArray {
+        val elapsed = System.currentTimeMillis() - startedAtMs
+        FileLogger.i(TAG, "stop() 入口：recording=$recording 缓冲=${buffer?.size ?: 0} 已录=${elapsed}ms")
         if (!recording) return FloatArray(0)
         recording = false
         chunkListener = null
@@ -154,6 +165,8 @@ internal class VoiceRecorder @Inject constructor(
 
     /** 丢弃当前录音，不返回数据（权限被拒 / 用户取消时用）。 */
     fun cancel() {
+        val elapsed = System.currentTimeMillis() - startedAtMs
+        FileLogger.i(TAG, "cancel() 入口：recording=$recording 缓冲=${buffer?.size ?: 0} 已录=${elapsed}ms")
         if (!recording) return
         recording = false
         chunkListener = null

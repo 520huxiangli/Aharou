@@ -1,6 +1,7 @@
 package com.aharou.feature.settings.data
 
 import android.content.Context
+import com.aharou.R
 import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.ConfigRisk
@@ -10,6 +11,7 @@ import com.aharou.core.config.fields.ClosureField
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreEnumField
 import com.aharou.core.config.fields.DataStoreIntField
+import com.aharou.feature.agent.domain.skill.PromptLanguageSettings
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.LanguageSettingsRepository
 import com.aharou.feature.settings.data.repository.StartupSessionMode
@@ -38,6 +40,7 @@ class ConfigAppFields @Inject constructor(
     private val generalSettings: GeneralSettingsRepository,
     private val updateCheckSettings: UpdateCheckSettingsRepository,
     private val toolSafetySettings: ToolSafetySettingsRepository,
+    private val promptLanguageSettings: PromptLanguageSettings,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -54,6 +57,22 @@ class ConfigAppFields @Inject constructor(
                     val tag = (v as? ConfigValue.Str)?.value
                         ?: throw ConfigError.TypeMismatch("string")
                     runBlocking { languageSettings.setLanguage(if (tag == "auto") null else tag) }
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
+                path = "app.prompt_language",
+                displayName = context.getString(R.string.settings_prompt_language),
+                description = context.getString(R.string.settings_prompt_language_desc),
+                valueSchema = ConfigSchema.StrEnum(PromptLanguageSettings.VALUES),
+                revertable = true,
+                reader = { ConfigValue.Str(promptLanguageSettings.get()) },
+                writer = { v ->
+                    val tag = (v as? ConfigValue.Str)?.value
+                        ?: throw ConfigError.TypeMismatch("string")
+                    promptLanguageSettings.set(tag)
                 },
             ),
         )

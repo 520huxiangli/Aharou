@@ -148,10 +148,10 @@ internal class VoiceCallSession @Inject constructor(
             val path = workspacePath.ifBlank { agentTurnRunner.currentWorkspacePath() }
             if (path.isBlank()) {
                 _error.value = "NO_WORKSPACE"
-                _state.value = State.Idle
+                setState(State.Idle, "无工作区，放弃启动")
                 return@launch
             }
-            _state.value = State.Preparing
+            setState(State.Preparing, "start(): 建会话")
             sessionId = runCatching { agentTurnRunner.ensureSession(path) }
                 .getOrElse {
                     FileLogger.e(TAG, "取通话会话失败", it)
@@ -159,7 +159,7 @@ internal class VoiceCallSession @Inject constructor(
                 }
             if (sessionId.isBlank()) {
                 _error.value = "NO_SESSION"
-                _state.value = State.Idle
+                setState(State.Idle, "会话创建失败")
                 return@launch
             }
             if (wakeMode) {
@@ -167,14 +167,14 @@ internal class VoiceCallSession @Inject constructor(
                 // 这几秒里录音还没开，用户接着说的指令会被整段丢掉（实测空窗 4.2s）。
                 scope.launch {
                     runCatching {
-                        modelManager.ensureModel(VoiceModels.ASR_ZH)
+                        modelManager.ensureModel(VoiceModels.ASR_ZH, allowDownload = false)
                         asrEngine.warmUp(modelManager.modelDir(VoiceModels.ASR_ZH))
                         FileLogger.i(TAG, "流式识别器预热完成")
                     }.onFailure { FileLogger.w(TAG, "流式识别器预热失败", it) }
                 }
                 scope.launch {
                     runCatching {
-                        modelManager.ensureModel(VoiceModels.ASR_ZH_OFFLINE)
+                        modelManager.ensureModel(VoiceModels.ASR_ZH_OFFLINE, allowDownload = false)
                         offlineAsrEngine.warmUp(modelManager.modelDir(VoiceModels.ASR_ZH_OFFLINE))
                         FileLogger.i(TAG, "离线识别器预热完成")
                     }.onFailure { FileLogger.w(TAG, "离线识别器预热失败", it) }
@@ -189,13 +189,22 @@ internal class VoiceCallSession @Inject constructor(
     /** 挂断：收掉录音、播报、识别，回到空闲。 */
     fun stop() {
         val wasActive = _state.value != State.Idle
+        FileLogger.i(TAG, "stop() 挂断：当前状态=${_state.value} 唤醒模式=$wakeMode")
         teardown()
         _error.value = null
         // 只有真在通话中挂断才响，会话自行回到空闲（超时/失败）时不响
         if (wasActive) soundEffects.play(VoiceSoundEffects.Effect.HANGUP)
     }
 
+    /** 统一的 state 赋值入口：只在真正变化时打一条 INFO，附触发场景，便于对照 UI 状态与会话真实状态。 */
+    private fun setState(to: State, scene: String) {
+        val prev = _state.value
+        _state.value = to
+        if (prev != to) FileLogger.i(TAG, "状态迁移：$prev→$to（$scene）")
+    }
+
     private fun teardown(stopSpeech: Boolean = true) {
+        FileLogger.i(TAG, "teardown：停录音/播报/识别（stopSpeech=$stopSpeech）")
         connectTonePlayed = false
         synchronized(audioLock) {
             ongoingTurn?.cancel()
@@ -212,7 +221,7 @@ internal class VoiceCallSession @Inject constructor(
             clearPreRoll()
             clearUtterance()
             _liveText.value = ""
-            _state.value = State.Idle
+            setState(State.Idle, "teardown 收尾")
         }
         if (stopSpeech) speechQueue.stop()
     }
@@ -249,7 +258,7 @@ internal class VoiceCallSession @Inject constructor(
      */
     private suspend fun beginWakeListening() {
         val kwsReady = if (!modelManager.isReady(VoiceModels.KWS_ZH)) {
-            runCatching { modelManager.ensureModel(VoiceModels.KWS_ZH) {} }.isSuccess
+            runCatching { modelManager.ensureModel(VoiceModels.KWS_ZH, allowDownload = false) {} }.isSuccess
         } else {
             true
         }
@@ -277,12 +286,12 @@ internal class VoiceCallSession @Inject constructor(
             clearUtterance()
             _liveText.value = ""
             val wasRecording = recorder.isRecording
-            if (wasRecording) _state.value = State.WakeListening
+            if (wasRecording) setState(State.WakeListening, "唤醒监听：复用已在跑的录音")
             wasRecording
         }
         if (!alreadyRecording) {
             when (recorder.start(::onPcmChunk)) {
-                RecordStartResult.Started -> synchronized(audioLock) { _state.value = State.WakeListening }
+                RecordStartResult.Started -> synchronized(audioLock) { setState(State.WakeListening, "唤醒监听：新开录音") }
                 RecordStartResult.NoPermission -> fail("MIC_PERMISSION")
                 RecordStartResult.Failed -> fail("RECORD_FAILED")
             }
@@ -292,7 +301,7 @@ internal class VoiceCallSession @Inject constructor(
 
     private suspend fun beginListening() {
         if (!modelManager.isReady(VoiceModels.ASR_ZH)) {
-            val ok = runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH) {} }.isSuccess
+            val ok = runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH, allowDownload = false) {} }.isSuccess
             if (!ok) {
                 fail("MODEL_UNAVAILABLE")
                 return
@@ -314,12 +323,12 @@ internal class VoiceCallSession @Inject constructor(
             _liveText.value = ""
             clearUtterance()
             val wasRecording = recorder.isRecording
-            if (wasRecording) _state.value = State.Listening
+            if (wasRecording) setState(State.Listening, "识别：复用已在跑的录音")
             wasRecording
         }
         if (!alreadyRecording) {
             when (recorder.start(::onPcmChunk)) {
-                RecordStartResult.Started -> synchronized(audioLock) { _state.value = State.Listening }
+                RecordStartResult.Started -> synchronized(audioLock) { setState(State.Listening, "识别：新开录音") }
                 RecordStartResult.NoPermission -> fail("MIC_PERMISSION")
                 RecordStartResult.Failed -> fail("RECORD_FAILED")
             }
@@ -411,7 +420,7 @@ internal class VoiceCallSession @Inject constructor(
         ackJob = null
         listenTimeoutJob?.cancel()
         listenTimeoutJob = null
-        _state.value = State.Thinking
+        setState(State.Thinking, "提交文本，转思考")
         _liveText.value = ""
         stopRecording()
         releaseAsr()
@@ -421,7 +430,7 @@ internal class VoiceCallSession @Inject constructor(
             val offlineText = if (audio.isNotEmpty()) {
                 // 兜底：预热还没跑完（或失败）时，这里确保一次。
                 // 模型不落盘时就 recognize 永远返回 null，表现是「识别毫无变化」。
-                runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH_OFFLINE) }
+                runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH_OFFLINE, allowDownload = false) }
                 offlineAsrEngine
                     .recognize(modelManager.modelDir(VoiceModels.ASR_ZH_OFFLINE), audio)
                     ?.let { stripWakeWord(it) }
@@ -441,7 +450,7 @@ internal class VoiceCallSession @Inject constructor(
                     if (event is AgentEvent.AssistantText && event.content.isNotBlank()) {
                         speechQueue.enqueue(event.content, interrupt = first)
                         first = false
-                        _state.value = State.Speaking
+                        setState(State.Speaking, "收到首个回复片段")
                     }
                 }
             }.onFailure { FileLogger.e(TAG, "通话一轮失败", it) }
@@ -642,7 +651,7 @@ internal class VoiceCallSession @Inject constructor(
     /** 应答语「我在」：先停收音再说，免得把它自己录进去。 */
     private fun speakWakeAck() {
         if (_state.value != State.Listening) return
-        _state.value = State.Speaking
+        setState(State.Speaking, "播唤醒应答语")
         stopRecording()
         releaseAsr()
         speechQueue.enqueue(context.getString(R.string.voice_wake_ack), interrupt = true)
@@ -673,6 +682,7 @@ internal class VoiceCallSession @Inject constructor(
 
     private fun fail(code: String) {
         FileLogger.w(TAG, "通话失败：$code")
+        FileLogger.i(TAG, "fail() 入口：当前状态=${_state.value} 原因=$code")
         // 语音场景下人多半没在看屏幕，失败原因必须说出来，不能只画在界面上；
         // 所以这里不调 speechQueue.stop()，让刚排进去的那句提示能念完。
         teardown(stopSpeech = false)

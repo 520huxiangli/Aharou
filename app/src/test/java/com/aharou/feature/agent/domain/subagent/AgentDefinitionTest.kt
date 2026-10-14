@@ -118,10 +118,10 @@ class AgentDefinitionTest {
         prompt = "p"
     )
 
-    /** 省略两个名单即继承全量工具，但 task 永远剔除（子代理不能嵌套派发）。 */
+    /** 省略两个名单即继承全量工具（子代理现已允许再派子代理，task 不再被无条件剔除）。 */
     @Test
-    fun filter_emptyListsInheritAllExceptTask() {
-        assertEquals(allTools - "task", def().filterToolNames(allTools))
+    fun filter_emptyListsInheritAll() {
+        assertEquals(allTools, def().filterToolNames(allTools))
     }
 
     @Test
@@ -136,7 +136,7 @@ class AgentDefinitionTest {
     fun filter_denylistRemovesListed() {
         val result = def(disallowed = listOf("Bash", "terminal")).filterToolNames(allTools)
 
-        assertEquals(allTools - "task" - "Bash" - "terminal", result)
+        assertEquals(allTools - "Bash" - "terminal", result)
     }
 
     /** 黑名单先生效，两名单都命中的工具最终被移除。 */
@@ -161,9 +161,9 @@ class AgentDefinitionTest {
     }
 
     @Test
-    fun filter_allowlistCannotReintroduceTask() {
+    fun filter_allowlistKeepsListedIncludingTask() {
         assertEquals(
-            listOf("readFile"),
+            listOf("readFile", "task"),
             def(allowed = listOf("readFile", "task")).filterToolNames(allTools)
         )
     }

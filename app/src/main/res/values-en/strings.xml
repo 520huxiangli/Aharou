@@ -184,6 +184,9 @@
 
     <!-- Language settings -->
     <string name="language_follow_system">Follow System</string>
+    <!-- Prompt language: config-channel field app.prompt_language -->
+    <string name="settings_prompt_language">Prompt language</string>
+    <string name="settings_prompt_language_desc">Language used to pick translations for list-style content injected to the model (skill descriptions, etc.); prompt bodies stay unchanged. auto = follow the reply language (soul.lang), then the UI language if that is auto too; zh/en = fixed.</string>
 
     <!-- SettingsScreen common -->
     <string name="common_back">Back</string>
@@ -611,6 +614,8 @@
     <!-- Subagent -->
     <string name="subagent_tab_sessions">Chats</string>
     <string name="drawer_tab_files">Files</string>
+    <string name="drawer_tab_workflow">Workflow</string>
+    <string name="workflow_empty">No workflow to show yet</string>
     <string name="drawer_expand_subagents">Expand subagents</string>
     <string name="drawer_collapse_subagents">Collapse subagents</string>
     <string name="file_browser_error">Failed to read folder</string>
@@ -2435,6 +2440,10 @@
     <string name="memory_sync_auto">Auto sync</string>
     <string name="memory_sync_auto_hint">Pushes in the background every %1$d minutes; turning it on syncs once right away.</string>
     <string name="memory_sync_working">Syncing…</string>
+    <string name="memory_sync_token_title">Access token</string>
+    <string name="memory_sync_token_empty">Not set yet; push fails without it</string>
+    <string name="memory_sync_token_set">Saved</string>
+    <string name="memory_sync_token_hint">Access token</string>
 
     <!-- Voice input -->
     <string name="voice_model_extracting">Extracting voice model…</string>
@@ -2778,4 +2787,14 @@
     <string name="editor_save_conflict_message">The file was changed elsewhere (possibly by an AI session). Choose which version to keep:</string>
     <string name="editor_save_conflict_overwrite">Overwrite</string>
     <string name="editor_save_conflict_discard">Discard my changes</string>
+
+    <!-- Workflow tree board -->
+    <string name="workflow_status_pending">Pending</string>
+    <string name="workflow_status_running">Running</string>
+    <string name="workflow_status_done">Done</string>
+    <string name="workflow_status_failed">Failed</string>
+    <string name="workflow_node_expert_model">Expert %1$s · Model %2$s</string>
+    <string name="workflow_node_expert_only">Expert %1$s</string>
+    <string name="workflow_node_model_only">Model %1$s</string>
+    <string name="workflow_add_child">Add sub-branch</string>
 </resources>

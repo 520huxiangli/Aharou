@@ -52,9 +52,12 @@ import javax.inject.Inject
  * - `stop`：停止指定子代理的执行（取消其 AI 任务）。
  * - `del`：删除指定子代理会话及其全部消息。
  * - `list`：列出当前会话的全部子代理及其状态。
+ * - `team`：列出同批队友（同一父会话下的其它子代理）：谁在跑、各自负责任务与角色。
+ * - `tell`：向同批队友发一条消息（id + message），供分支上的子代理互相交流。
  *
- * 最多同时允许 5 个运行中的子代理（create 时检查上限）。
- * 子代理不能嵌套创建子代理（其工具集中不含 `task`）。
+ * 最多同时允许 5 个运行中的子代理（create 时检查上限），嵌套派发同样计入该上限。
+ * 子代理可再派子代理，但最多嵌套 2 层（主代理 → 子代理 → 孙代理，见 [AgentDefinition.MAX_SUBAGENT_DEPTH]），
+ * 再深会被拒绝。
  *
  * `create` 可用 `agent` 参数指定自定义子代理定义（`agents/<name>.md`），
  * 由定义决定该子会话的模型、工具集与系统提示词；省略则用继承父会话模型的默认通用子代理。
@@ -91,6 +94,10 @@ class TaskTool @Inject constructor(
         val EXEC_TOOLS = setOf("Bash", "terminal", "Shizuku", "vscreen", "a11y")
         /** 未指定 agent 时子会话记录的类型标识。 */
         const val DEFAULT_SUBAGENT_TYPE = "subagent"
+        /** `team` 名单一次最多列多少个队友，以及单个队友标题的截断长度。 */
+        const val TEAM_ROSTER_LIMIT = 20
+        /** 发给队友的单条消息长度上限（与 messageParent 一致）。 */
+        const val SIBLING_MESSAGE_MAX = 4000
     }
 
     override val name = "task"
@@ -104,24 +111,24 @@ class TaskTool @Inject constructor(
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
         return when (action) {
-            "read", "list", "send", "roles" -> emptySet()
+            "read", "list", "send", "roles", "team", "tell" -> emptySet()
             else -> setOf(ToolCapability.MODIFY_SESSION_STATE)
         }
     }
 
-    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。"
+    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。分支上的子代理可用 team 查队友、tell 互相发消息；子代理最多嵌套 2 层。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）",
+            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）",
             required = false
         ),
         "id" to ToolParameter(
             name = "id",
             type = ParameterType.STRING,
-            description = "子会话 id（read/send/stop/del 必填，取自 task 返回的 id）",
+            description = "子会话 id（read/send/stop/del/tell 必填，取自 task 返回的 id 或 team 名单）",
             required = false
         ),
         "description" to ToolParameter(
@@ -154,6 +161,18 @@ class TaskTool @Inject constructor(
             description = "选角关键词（create 可选，2~5 个词）：描述任务的功能或领域，如 \"code review\"、\"database migration\"、\"ui design\"。与 department 配合在该部门内按名称与用途描述打分选一个角色，比记角色名更可靠",
             required = false
         ),
+        "model" to ToolParameter(
+            name = "model",
+            type = ParameterType.STRING,
+            description = "子代理使用的模型名（create 可选）：显式传给子会话，覆盖角色定义里的 model；留空则继承角色定义，未选角色时继承本会话模型",
+            required = false
+        ),
+        "provider" to ToolParameter(
+            name = "provider",
+            type = ParameterType.STRING,
+            description = "子代理使用的提供商（create 可选）：可写 providerId 或设置里显示的提供商名称，覆盖角色定义里的 provider；留空则继承角色定义，未选角色时继承本会话 provider",
+            required = false
+        ),
         "writePaths" to ToolParameter(
             name = "writePaths",
             type = ParameterType.ARRAY,
@@ -164,7 +183,7 @@ class TaskTool @Inject constructor(
         "pipeline" to ToolParameter(
             name = "pipeline",
             type = ParameterType.ARRAY,
-            description = "流水线任务列表（action=pipeline 必填）。每项：{id, description, prompt, dependsOn?, writePaths?, agent? / department?+agentQuery?}。" +
+            description = "流水线任务列表（action=pipeline 必填）。每项：{id, description, prompt, dependsOn?, writePaths?, agent? / department?+agentQuery?, model?, provider?}。" +
                 "无依赖的任务同层并发跑；有依赖的等上游全部完成后才跑，且上游产出会自动接在它的 prompt 前面。" +
                 "同一层任务的 writePaths 不得相交（含目录与其中文件的关系）。",
             required = false,
@@ -186,14 +205,16 @@ class TaskTool @Inject constructor(
                     ),
                     "agent" to mapOf("type" to "string"),
                     "department" to mapOf("type" to "string"),
-                    "agentQuery" to mapOf("type" to "string")
+                    "agentQuery" to mapOf("type" to "string"),
+                    "model" to mapOf("type" to "string", "description" to "该分支使用的模型；留空继承角色定义或父会话"),
+                    "provider" to mapOf("type" to "string", "description" to "该分支使用的提供商（providerId 或名称）；留空继承角色定义或父会话")
                 )
             )
         ),
         "message" to ToolParameter(
             name = "message",
             type = ParameterType.STRING,
-            description = "发给子代理的消息正文（send 必填）。可反复调用；运行中的子代理会尽快收到，已完成的会被重新唤醒",
+            description = "发给子代理的消息正文（send/tell 必填）。可反复调用；运行中的子代理会尽快收到，已完成的会被重新唤醒",
             required = false
         )
     )
@@ -209,7 +230,9 @@ class TaskTool @Inject constructor(
             "del" -> deleteSubagent(args, context)
             "list" -> listSubagents(context)
             "roles" -> listRoles(args)
-            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles", "INVALID_ARGS")
+            "team" -> listTeam(context)
+            "tell" -> tellSibling(args, context)
+            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell", "INVALID_ARGS")
         }
     }
 
@@ -243,7 +266,9 @@ class TaskTool @Inject constructor(
                     writePaths = stringSetOf(obj["writePaths"]),
                     agent = (obj["agent"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
                     department = (obj["department"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
-                    agentQuery = (obj["agentQuery"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+                    agentQuery = (obj["agentQuery"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
+                    model = (obj["model"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() },
+                    provider = (obj["provider"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
                 )
             }
         }
@@ -300,6 +325,8 @@ class TaskTool @Inject constructor(
                     task.agent?.let { put("agent", it) }
                     task.department?.let { put("department", it) }
                     task.agentQuery?.let { put("agentQuery", it) }
+                    task.model?.let { put("model", it) }
+                    task.provider?.let { put("provider", it) }
                     task.writePaths?.let { paths ->
                         put("writePaths", buildJsonArray { paths.forEach { add(JsonPrimitive(it)) } })
                     }
@@ -421,7 +448,9 @@ class TaskTool @Inject constructor(
         val writePaths: Set<String>?,
         val agent: String?,
         val department: String?,
-        val agentQuery: String?
+        val agentQuery: String?,
+        val model: String?,
+        val provider: String?
     )
 
     /** 解析 writePaths 参数；未提供返回 null（不登记租约 = 不限制）。 */
@@ -437,6 +466,18 @@ class TaskTool @Inject constructor(
         val parentSessionId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
         val parentSession = sessionUseCase.getSessionById(parentSessionId)
             ?: return ToolResult.Error("当前会话不存在", "SESSION_NOT_FOUND")
+
+        // 递归深度上限：主代理（0）→ 子代理（1）→ 孙代理（2）为限，再深直接拒。
+        // 深度按会话记录的 parentId 链回溯，模型无法用参数伪造。
+        val depth = subagentDepth(parentSessionId)
+        if (depth >= AgentDefinition.MAX_SUBAGENT_DEPTH) {
+            return ToolResult.Error(
+                "子代理最多嵌套 ${AgentDefinition.MAX_SUBAGENT_DEPTH} 层（主代理 → 子代理 → 孙代理），" +
+                    "当前会话已在第 $depth 层，不能再往下派发。继续下派会让代理树无限膨胀、互相等待而卡死；" +
+                    "请在本层把任务做完，或把需求用 messageParent 交回上一层统筹。",
+                "MAX_SUBAGENT_DEPTH_EXCEEDED"
+            )
+        }
 
         // 检查并发上限
         if (eventBus.isFull) {
@@ -484,6 +525,18 @@ class TaskTool @Inject constructor(
             }
         }
 
+        // 显式 model/provider 覆盖：传了就盖掉角色定义里的同名值，未传则沿用定义（再退到父会话继承）。
+        // provider 解析不出时不静默回退，否则用户显式指定的提供商被悄悄忽略，跑在别的模型上。
+        val explicitModel = (args["model"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val explicitProvider = (args["provider"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+        val explicitProviderId = explicitProvider?.let { resolveProviderId(it) }
+        if (explicitProvider != null && explicitProviderId == null) {
+            return ToolResult.Error(
+                "找不到提供商: $explicitProvider（可写 providerId，或设置里显示的提供商名称）",
+                "PROVIDER_NOT_FOUND"
+            )
+        }
+
         // 并行写隔离：同一时刻两个子代理写同一处会互相踩，冲突的直接拒绝，由主代理串行派发。
         val writePaths = parseWritePaths(args)
         val subSession = createMutex.withLock {
@@ -500,8 +553,8 @@ class TaskTool @Inject constructor(
                 parentId = parentSessionId,
                 parent = parentSession,
                 subagentType = definition?.name ?: DEFAULT_SUBAGENT_TYPE,
-                providerId = definition?.providerId?.let { resolveProviderId(it) },
-                model = definition?.model,
+                providerId = explicitProviderId ?: definition?.providerId?.let { resolveProviderId(it) },
+                model = explicitModel ?: definition?.model,
                 reasoningEffort = definition?.reasoningEffort?.let { effort ->
                     ReasoningEffort.entries.firstOrNull { it.apiValue == effort }?.name
                 },
@@ -514,13 +567,18 @@ class TaskTool @Inject constructor(
         }
         val subSessionId = subSession.id
 
+        // 团队简报：把同批队友与协作方式接在任务指令前，让分支上的模型知道彼此是一个团队。
+        // 取不到简报时退回原始指令，不影响派发（新增通道失败不拖垮主流程）。
+        val briefing = runCatching { teamBriefing(parentSessionId, subSessionId) }.getOrNull()
+        val detail = if (briefing.isNullOrBlank()) prompt else "$briefing\n\n---\n\n$prompt"
+
         // 通知 ViewModel 在子会话上启动 AI 工作流
         eventBus.emit(
             SubAgentEvent(
                 subSessionId = subSessionId,
                 parentSessionId = parentSessionId,
                 type = SubAgentEventType.SPAWNED,
-                detail = prompt
+                detail = detail
             )
         )
         FileLogger.i(TAG, "子代理已创建: session=$subSessionId parent=$parentSessionId agent=${definition?.name ?: "-"}")
@@ -744,6 +802,106 @@ class TaskTool @Inject constructor(
                 put("count", subs.size)
                 put("runningCount", activeIds.size)
                 put("maxRunning", SubAgentEventBus.MAX_RUNNING)
+            }
+        )
+    }
+
+    /**
+     * 会话在代理树里的深度：主代理（根会话）为 0，其子代理为 1，孙代理为 2……
+     * 逐级按 parentId 回溯；带跳过上限，异常数据（如成环）也不会无限递归。
+     */
+    private suspend fun subagentDepth(sessionId: String): Int {
+        var depth = 0
+        var cursor = sessionUseCase.getSessionById(sessionId)?.parentId
+        while (cursor != null && depth <= AgentDefinition.MAX_SUBAGENT_DEPTH + 1) {
+            depth++
+            cursor = sessionUseCase.getSessionById(cursor)?.parentId
+        }
+        return depth
+    }
+
+    /**
+     * 新子代理的团队简报：列出同批队友（同父会话的其它子代理）与协作方式，
+     * 让分支上的模型知道彼此是一个团队、可以互相交流。
+     */
+    private suspend fun teamBriefing(parentSessionId: String, selfId: String): String {
+        val siblings = chatSessionDao.getSubSessionsByParentOnce(parentSessionId).filter { it.id != selfId }
+        val activeIds = eventBus.activeSubSessionIds.value
+        val lines = mutableListOf(
+            "## 团队协作",
+            "你与同一父会话派出的其它子代理是一个团队，可以互相交流、分工协作。"
+        )
+        if (siblings.isEmpty()) {
+            lines += "当前还没有其它队友（后继可能加入）。"
+        } else {
+            lines += "当前队友："
+            siblings.take(TEAM_ROSTER_LIMIT).forEach { s ->
+                val role = s.subagentType?.takeIf { it.isNotBlank() }?.let { "$it，" }.orEmpty()
+                lines += "- $role${s.title}（${if (s.id in activeIds) "运行中" else "已完成"}，id=${s.id}）"
+            }
+        }
+        lines += "查看实时队友：task(action=\"team\")；给队友发消息：task(action=\"tell\", id=\"<队友 id>\", message=\"…\")。"
+        return lines.joinToString("\n")
+    }
+
+    /** 列出同批队友（同父会话的其它子代理）：谁在跑、各自负责任务与角色。主会话无父，返回提示。 */
+    private suspend fun listTeam(context: AgentContext): ToolResult {
+        val selfId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
+        val parentId = sessionUseCase.getSessionById(selfId)?.parentId
+            ?: return ToolResult.Error("当前是主会话，没有同批队友；查看派出的子代理请用 action=\"list\"。", "NO_PARENT")
+        val activeIds = eventBus.activeSubSessionIds.value
+        val teammates = eventBus.siblingsOf(selfId).take(TEAM_ROSTER_LIMIT).mapNotNull { id ->
+            sessionUseCase.getSessionById(id)?.let { entity ->
+                buildJsonObject {
+                    put("id", entity.id)
+                    put("title", entity.title)
+                    put("role", entity.subagentType ?: "")
+                    put("state", if (entity.id in activeIds) "running" else "completed")
+                }
+            }
+        }
+        return ToolResult.Success(
+            buildJsonObject {
+                put("parent", parentId)
+                put("teammates", buildJsonArray { teammates.forEach { add(it) } })
+                put("count", teammates.size)
+                put(
+                    "message",
+                    if (teammates.isEmpty()) "当前没有其它队友。"
+                    else "给队友发消息用 task(action=\"tell\", id=\"<队友 id>\", message=\"…\")。"
+                )
+            }
+        )
+    }
+
+    /** 向同批队友发一条消息（复用子代理消息投递通道：收件人忙碌时搭车、空闲时被唤醒）。 */
+    private suspend fun tellSibling(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val selfId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
+        val targetId = (args["id"] as? JsonPrimitive)?.contentOrNull?.trim()
+            ?: return ToolResult.Error("参数无效：id 不能为空", "INVALID_ARGS")
+        val message = (args["message"] as? JsonPrimitive)?.contentOrNull?.trim()
+        if (message.isNullOrBlank()) return ToolResult.Error("参数无效：message 不能为空", "INVALID_ARGS")
+        if (targetId == selfId) return ToolResult.Error("不能给自己发消息", "INVALID_ARGS")
+        if (message.length > SIBLING_MESSAGE_MAX) {
+            return ToolResult.Error("消息过长（上限 $SIBLING_MESSAGE_MAX 字）", "INVALID_ARGS")
+        }
+        val parentId = sessionUseCase.getSessionById(selfId)?.parentId
+            ?: return ToolResult.Error("当前是主会话，没有同批队友；向子代理发消息请用 action=\"send\"。", "NO_PARENT")
+        val target = sessionUseCase.getSessionById(targetId)
+            ?: return ToolResult.Error("队友会话不存在: $targetId", "SESSION_NOT_FOUND")
+        if (target.parentId != parentId) {
+            return ToolResult.Error("$targetId 不是你的队友（不在同一父会话下）；用 action=\"team\" 查看队友。", "NOT_SIBLING")
+        }
+        val delivered = runCatching { eventBus.sendToSibling(selfId, targetId, message) }.getOrDefault(false)
+        if (!delivered) {
+            return ToolResult.Error("消息未送达：该队友不在当前协作批次内或已被停止；用 action=\"team\" 查看实时队友。", "SIBLING_UNREACHABLE")
+        }
+        FileLogger.i(TAG, "子代理向队友发消息: from=$selfId to=$targetId")
+        return ToolResult.Success(
+            buildJsonObject {
+                put("id", targetId)
+                put("state", "delivered")
+                put("message", "消息已投递给队友，可继续手头工作；它的回复会像父会话消息一样送达你。")
             }
         )
     }

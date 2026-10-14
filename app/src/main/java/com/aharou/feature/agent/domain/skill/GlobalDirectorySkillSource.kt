@@ -18,7 +18,7 @@ class GlobalDirectorySkillSource @Inject constructor(
     val skillsRoot: String = "~/.aharou/skills"
 
     override fun listSkills(): List<Skill> =
-        SkillDirectoryScanner.scan(fileAccess, skillsRoot, language.code)
+        SkillDirectoryScanner.scan(fileAccess, skillsRoot, language.promptCode)
 
     override fun loadInstructions(name: String): String? =
         listSkills().firstOrNull { it.name.equals(name, ignoreCase = true) }?.instructions

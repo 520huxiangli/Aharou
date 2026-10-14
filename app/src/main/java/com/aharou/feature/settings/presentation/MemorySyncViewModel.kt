@@ -6,11 +6,14 @@ import com.aharou.feature.agent.domain.memory.MemorySyncManager
 import com.aharou.feature.agent.domain.memory.MemorySyncOutcome
 import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
+import com.aharou.feature.credentials.data.repository.FileCredentialRepository
+import com.aharou.feature.credentials.domain.model.GitCredential
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 /**
@@ -24,6 +27,7 @@ class MemorySyncViewModel @Inject constructor(
     private val syncManager: MemorySyncManager,
     private val settings: MemorySyncSettings,
     private val scheduler: MemorySyncScheduler,
+    private val credentials: FileCredentialRepository,
 ) : ViewModel() {
 
     private val _syncing = MutableStateFlow(false)
@@ -69,5 +73,46 @@ class MemorySyncViewModel @Inject constructor(
 
     fun consumeOutcome() {
         _outcome.value = null
+    }
+
+    /**
+     * 是否已为当前仓库主机配过访问令牌。
+     *
+     * 只看「有没有」不看值：[FileCredentialRepository] 在内存里缓存了整份凭据，这里不会读盘。
+     */
+    fun hasToken(): Boolean = repoHost()?.let { runBlocking { credentials.findForHost(it) } != null } ?: false
+
+    /**
+     * 保存访问令牌。
+     *
+     * 容器里的 git **只读** `~/.aharou/git-credentials`（credential helper 直读该文件），**不读凭据库**，
+     * 所以直接写 git 凭据；主机从仓库地址解析，用户名按 cnb 平台惯例固定。空串表示清除该主机凭据。
+     * 写后立刻同步一次，好让用户马上看到凭据到底能不能用。
+     */
+    fun saveToken(token: String) {
+        val host = repoHost() ?: return
+        viewModelScope.launch {
+            val existing = runCatching { credentials.findForHost(host) }.getOrNull()
+            if (token.isBlank()) {
+                existing?.let { runCatching { credentials.delete(it.id) } }
+            } else {
+                runCatching {
+                    credentials.save(
+                        GitCredential(id = host, host = host, username = GIT_USERNAME, token = token),
+                    )
+                }
+            }
+            if (token.isNotBlank() && settings.autoSync) syncNow()
+        }
+    }
+
+    /** 仓库地址的主机名；没填或解析不出来时返回 null。 */
+    private fun repoHost(): String? = runCatching {
+        java.net.URI(settings.repoUrl.trim()).host?.lowercase()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    private companion object {
+        /** cnb 平台的 git 用户名。 */
+        const val GIT_USERNAME = "cnb"
     }
 }

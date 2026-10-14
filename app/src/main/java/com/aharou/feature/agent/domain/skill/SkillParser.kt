@@ -38,7 +38,7 @@ object SkillParser {
     /**
      * 从原始 Markdown 文本解析技能（不依赖磁盘），供文件/压缩包导入使用。
      * [fallbackName] 为 frontmatter 缺 name 时的兜底（通常传源文件名或所在目录名）。
-     * [lang] 给定时按界面语言挑 `description_zh` / `description_en`；为 null 只取 `description`
+     * [lang] 给定时按提示词语言挑 `description_zh` / `description_en`；为 null 只取 `description`
      * 原字段——导入路径要原样写回 frontmatter，不能被译文顶掉原文。
      */
     fun parseText(text: String, fallbackName: String, lang: String? = null): Skill {
@@ -65,7 +65,7 @@ object SkillParser {
         )
     }
 
-    /** 按界面语言挑描述：中文优先 `description_zh`，其它语言优先 `description_en`，都缺再退通用字段。 */
+    /** 按提示词语言挑描述：中文优先 `description_zh`，其它语言优先 `description_en`，都缺再退通用字段。 */
     private fun langDescription(frontmatter: Map<String, Any>, lang: String?): String {
         if (lang == null) return frontmatter["description"]?.toString() ?: ""
         val keys = if (lang == "zh") {

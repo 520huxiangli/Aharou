@@ -2,12 +2,17 @@ package com.aharou.feature.agent.data
 
 import com.aharou.core.config.ConfigAccess
 import com.aharou.core.config.ConfigError
+import com.aharou.core.config.ConfigField
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
 import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
+import com.aharou.feature.credentials.data.repository.FileCredentialRepository
+import com.aharou.feature.credentials.domain.model.GitCredential
+import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -25,6 +30,7 @@ import javax.inject.Singleton
 class ConfigMemorySyncFields @Inject constructor(
     private val settings: MemorySyncSettings,
     private val scheduler: MemorySyncScheduler,
+    private val credentials: FileCredentialRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -46,6 +52,8 @@ class ConfigMemorySyncFields @Inject constructor(
                 },
             ),
         )
+
+        registry.register(repoTokenField())
 
         registry.register(
             ClosureField(
@@ -126,4 +134,50 @@ class ConfigMemorySyncFields @Inject constructor(
 
     private fun formatTime(epochMs: Long): String =
         if (epochMs <= 0L) "" else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(epochMs))
+
+    /**
+     * 记忆仓库的访问令牌。
+     *
+     * 容器里的 git **只读** `~/.aharou/git-credentials`（credential helper 直读该文件），**不读凭据库**，
+     * 所以这里直接写 git 凭据；主机从仓库地址解析，用户名按 cnb 平台惯例固定。
+     */
+    private fun repoTokenField(): ConfigField = ClosureField(
+        path = "memory.sync.token",
+        displayName = "访问令牌",
+        description = "推送记忆仓库用的访问令牌，按仓库地址的主机写入 git 凭据（容器里的 git 只读 " +
+            "~/.aharou/git-credentials，不读凭据库）。留空即清除该主机的凭据。",
+        valueSchema = ConfigSchema.Str(maxLength = 512),
+        risk = ConfigRisk.SENSITIVE,
+        revertable = true,
+        reader = {
+            ConfigValue.Str(
+                runBlocking { repoHost()?.let { credentials.findForHost(it) }?.token }.orEmpty(),
+            )
+        },
+        writer = { v ->
+            val token = (v as? ConfigValue.Str)?.value
+                ?: throw ConfigError.TypeMismatch("string")
+            val host = repoHost() ?: throw ConfigError.InvalidValue("请先填写记忆仓库地址")
+            runBlocking {
+                val existing = credentials.findForHost(host)
+                if (token.isBlank()) {
+                    existing?.let { credentials.delete(it.id) }
+                } else {
+                    credentials.save(
+                        GitCredential(id = host, host = host, username = GIT_USERNAME, token = token),
+                    )
+                }
+            }
+        },
+    )
+
+    /** 仓库地址的主机名；没填或解析不出来时返回 null。 */
+    private fun repoHost(): String? = runCatching {
+        java.net.URI(settings.repoUrl.trim()).host?.lowercase()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    private companion object {
+        /** cnb 平台的 git 用户名。 */
+        const val GIT_USERNAME = "cnb"
+    }
 }

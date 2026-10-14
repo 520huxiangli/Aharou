@@ -576,7 +576,8 @@ class AIEditorApp : Application(), Configuration.Provider {
             runCatching { scheduledTaskScheduler.ensureScheduled(this@AIEditorApp) }
                 .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
         }
-        // 记忆自动同步：UPDATE 策略下重复排队不会重置周期计时，每次启动调一次是安全的。
+        // 记忆自动同步：每次启动重排一次（CANCEL_AND_REENQUEUE，会重建任务并归零状态，
+        // 否则一条 FAILED 的旧任务会永远卡着不执行）。
         appScope.launch {
             runCatching { memorySyncScheduler.apply() }
                 .onFailure { FileLogger.e("AIEditorApp", "记忆同步调度初始化失败", it) }

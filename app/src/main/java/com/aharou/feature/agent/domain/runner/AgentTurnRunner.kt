@@ -227,7 +227,7 @@ class AgentTurnRunner @Inject constructor(
                 val allowed = agentDefinition.filterToolNames(allTools.map { it.name }).toSet()
                 allTools.filter { it.name in allowed }
             }
-            isSub -> allTools.filterNot { it.name == AgentDefinition.NESTED_TOOL }
+            isSub -> allTools // 子代理可再派子代理，递归由 MAX_SUBAGENT_DEPTH 兜底
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
         }
 

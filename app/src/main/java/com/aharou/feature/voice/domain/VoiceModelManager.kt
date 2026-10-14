@@ -103,7 +103,7 @@ class VoiceModelManager @Inject constructor(
         onState: (VoiceModelState) -> Unit = {},
     ): File {
         mutex.withLock { modelDir(spec).deleteRecursively() }
-        return ensureModel(spec, onState)
+        return ensureModel(spec, onState = onState)
     }
 
     /** 全部模型的聚合状态（设置页那一行照它显示）。 */
@@ -121,13 +121,15 @@ class VoiceModelManager @Inject constructor(
     /**
      * 确保模型可用，返回模型目录。已就绪时直接返回。
      *
-     * 未就绪时**联网下载**：从 [VoiceModelSpec.url] 拉 tar.bz2，只解出运行所需的文件，
-     * 解压完把压缩包删掉。首次使用某个模型会有一次几百 MB 的下载，之后一直命中本地。
+     * 未就绪时，只有 [allowDownload] 为 true 才会**联网下载**：从 [VoiceModelSpec.url] 拉 tar.bz2，
+     * 只解出运行所需的文件，解压完把压缩包删掉。首次使用某个模型会有一次几百 MB 的下载，之后一直
+     * 命中本地；[allowDownload] 为 false 时直接抛异常，由调用方提示用户去设置页手动下载。
      *
-     * @throws IOException 下载失败或解压出的文件不完整
+     * @throws IOException 下载失败、解压出的文件不完整，或 [allowDownload] 为 false 且模型未就绪
      */
     suspend fun ensureModel(
         spec: VoiceModelSpec,
+        allowDownload: Boolean = true,
         onState: (VoiceModelState) -> Unit = {},
     ): File = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -135,6 +137,11 @@ class VoiceModelManager @Inject constructor(
             if (isReady(spec)) {
                 onState(VoiceModelState.Ready)
                 return@withLock dir
+            }
+            if (!allowDownload) {
+                // 调用方（语音会话）明确不下载：没下过就当不可用，让上层提示去设置页手动下，
+                // 不在用户点麦克风时背地里拉几百 MB。
+                throw IOException("${spec.displayName}尚未下载，请到设置 → 默认模型 → 离线语音模型处下载")
             }
             val staging = File(modelRoot(), "${spec.dirName}.staging")
             val archive = File(modelRoot(), "${spec.dirName}.tar.bz2")

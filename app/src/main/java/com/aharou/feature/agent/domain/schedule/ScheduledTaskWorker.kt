@@ -1,13 +1,14 @@
 package com.aharou.feature.agent.domain.schedule
 
 import android.content.Context
-import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
-import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 
 /**
  * 定时任务检查 Worker：每 15 分钟醒一次，认领到点的任务并把它们派给会话层。
@@ -17,16 +18,21 @@ import dagger.assisted.AssistedInject
  *
  * **错过不补跑**：迟到超过一个周期的（例如 App 很久没打开）只推进时间并记 `skipped`，
  * 否则一开机可能连着补跑好几轮，既烧 token 也容易把会话刷满。
+ * **为何不用 @HiltWorker**：见 MemorySyncWorker 的说明——那个注解的处理与 Dagger 的 KSP
+ * 处理器在本工程内冲突，会把 Hilt 的 `*_GeneratedInjector` 整体搞丢。普通 Worker + [EntryPoint]
+ * 可由 HiltWorkerFactory 的反射兜底正常构造。
  */
-@HiltWorker
-class ScheduledTaskWorker @AssistedInject constructor(
-    @Assisted context: Context,
-    @Assisted params: WorkerParameters,
-    private val dao: ScheduledTaskDao,
-    private val runBus: ScheduledRunBus
+class ScheduledTaskWorker(
+    context: Context,
+    params: WorkerParameters,
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        val entryPoint = EntryPointAccessors.fromApplication(
+            applicationContext, ScheduledTaskEntryPoint::class.java
+        )
+        val dao = entryPoint.scheduledTaskDao()
+        val runBus = entryPoint.scheduledRunBus()
         val now = System.currentTimeMillis()
         val due = runCatching { dao.due(now) }.getOrElse { e ->
             FileLogger.e(TAG, "读取到点的定时任务失败", e)
@@ -76,4 +82,12 @@ class ScheduledTaskWorker @AssistedInject constructor(
         const val OUTCOME_DISPATCHED = "dispatched"
         const val OUTCOME_SKIPPED = "skipped"
     }
+}
+
+/** Worker 不在 Hilt 的注入图里，依赖得经 EntryPoint 取。 */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ScheduledTaskEntryPoint {
+    fun scheduledTaskDao(): ScheduledTaskDao
+    fun scheduledRunBus(): ScheduledRunBus
 }

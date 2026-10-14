@@ -184,6 +184,9 @@
 
     <!-- 语言设置页 -->
     <string name="language_follow_system">跟随系统</string>
+    <!-- 提示词语言：config 通道字段 app.prompt_language -->
+    <string name="settings_prompt_language">提示词语言</string>
+    <string name="settings_prompt_language_desc">注入给模型的清单类内容（技能描述等）按此语言挑译文，提示词正文不变。auto=跟随回复语言（soul.lang），它也为 auto 时跟随界面语言；zh/en=固定。</string>
 
     <!-- SettingsScreen 通用 -->
     <string name="common_back">返回</string>
@@ -606,6 +609,8 @@
     <!-- Subagent -->
     <string name="subagent_tab_sessions">会话</string>
     <string name="drawer_tab_files">文件</string>
+    <string name="drawer_tab_workflow">工作流</string>
+    <string name="workflow_empty">暂无工作流</string>
     <string name="drawer_expand_subagents">展开子代理</string>
     <string name="drawer_collapse_subagents">收起子代理</string>
     <string name="file_browser_error">读取目录失败</string>
@@ -2434,6 +2439,10 @@
     <string name="memory_sync_auto">自动同步</string>
     <string name="memory_sync_auto_hint">后台每 %1$d 分钟推一次；打开开关时会立刻同步一次。</string>
     <string name="memory_sync_working">正在同步…</string>
+    <string name="memory_sync_token_title">访问令牌</string>
+    <string name="memory_sync_token_empty">还没填，不填推送会失败</string>
+    <string name="memory_sync_token_set">已填写</string>
+    <string name="memory_sync_token_hint">访问令牌</string>
 
     <!-- 语音输入 -->
     <string name="voice_model_extracting">解压语音模型…</string>
@@ -2777,4 +2786,14 @@
     <string name="editor_save_conflict_message">文件已被其他地方修改（可能是 AI 会话），请选择保留哪一份：</string>
     <string name="editor_save_conflict_overwrite">覆盖磁盘</string>
     <string name="editor_save_conflict_discard">放弃我的修改</string>
+
+    <!-- 树状工作流画布 WorkflowTreeBoard -->
+    <string name="workflow_status_pending">待办</string>
+    <string name="workflow_status_running">运行中</string>
+    <string name="workflow_status_done">完成</string>
+    <string name="workflow_status_failed">失败</string>
+    <string name="workflow_node_expert_model">专家 %1$s · 模型 %2$s</string>
+    <string name="workflow_node_expert_only">专家 %1$s</string>
+    <string name="workflow_node_model_only">模型 %1$s</string>
+    <string name="workflow_add_child">新增子分支</string>
 </resources>

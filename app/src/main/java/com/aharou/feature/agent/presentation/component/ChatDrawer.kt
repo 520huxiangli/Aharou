@@ -222,7 +222,8 @@ fun ChatDrawerContent(
             selected = selectedTab,
             labels = listOf(
                 stringResource(R.string.subagent_tab_sessions),
-                stringResource(R.string.drawer_tab_files)
+                stringResource(R.string.drawer_tab_files),
+                stringResource(R.string.drawer_tab_workflow)
             ),
             onSelect = { selectedTab = it }
         )
@@ -336,6 +337,7 @@ fun ChatDrawerContent(
                     onLongClick = { menuSession = it },
                     onOpenSearchHit = onOpenSearchHit
                 )
+                2 -> WorkflowTab(sessions, subSessionsByParent, agentStates, currentSessionId, onSelect)
                 1 -> if (fileSearchQuery.isNotBlank()) {
                     // 命中行点击：先把要定位的行号交给打开动作，再走与文件树同一条打开链路。
                     FileSearchResults(
@@ -595,8 +597,7 @@ private fun SessionListContent(
             restore = { it.toSet() }
         )
     ) { mutableStateOf(emptySet<String>()) }
-    // 文件夹 = 工作区。会话按 workspacePath 归档，文件夹按「当前所在优先、其次最近活跃」排序，
-    // 组内仍是 DAO 的置顶优先 + 更新时间倒序。
+    // 文件夹 = 工作区：按「当前所在优先、其次最近活跃」排序，组内是 DAO 的置顶优先 + 更新时间倒序。
     val folders = remember(sessions, workspaces, currentWorkspacePath) {
         val names = workspaces.associate { it.path to it.name }
         sessions.groupBy { it.workspacePath }
@@ -904,10 +905,9 @@ private fun FileBrowserTab(
                 val textMeasurer = rememberTextMeasurer()
                 val textStyle = MaterialTheme.typography.bodyMedium
                 val density = LocalDensity.current
-                // 预算最宽一行的内容宽度（固定开销 + 缩进 + 文本），供所有行取统一宽度，
-                // 以实现整棵树统一横向平移（而非每行各自滚动）。
-                // 逐个 measure 在大目录下会在组合期同步跑上千次文本测量；先按「缩进 + 字符宽度权重」
-                // 挑出最宽的那一行，只对它做一次真实测量。估算不精确，但这里只用来给横向滚动留够宽度。
+                // 预算最宽一行的内容宽度，供所有行取统一宽度以实现整树横向平移（而非每行各自滚动）。
+                // 逐个 measure 在大目录下会在组合期同步跑上千次文本测量，故先按「缩进 + 字符宽度权重」
+                // 挑出最宽那行只测一次；估算不精确，但这里只用来给横向滚动留够宽度。
                 val maxContentPx = remember(state.nodes, textStyle) {
                     with(density) {
                         val widest = state.nodes.maxByOrNull { node ->

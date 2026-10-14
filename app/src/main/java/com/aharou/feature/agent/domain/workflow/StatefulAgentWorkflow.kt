@@ -312,7 +312,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val tools = when {
             definition != null -> definition.filterToolNames(allTools.map { it.name }).toSet()
                 .let { allowed -> allTools.filter { it.name in allowed } }
-            session?.parentId != null -> allTools.filterNot { it.name == AgentDefinition.NESTED_TOOL }
+            session?.parentId != null -> allTools // 子代理可再派子代理，递归由 MAX_SUBAGENT_DEPTH 兜底
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider

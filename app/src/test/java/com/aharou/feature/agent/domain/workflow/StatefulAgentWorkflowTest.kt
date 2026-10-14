@@ -368,8 +368,8 @@ class StatefulAgentWorkflowTest {
     }
 
     @Test
-    fun manualCompactionWithoutDefinitionStillExcludesNestedTask() = runTest {
-        verifyManualToolFiltering(parentId = "parent", expectedNames = listOf("readFile", "messageParent"))
+    fun manualCompactionWithoutDefinitionIncludesNestedTask() = runTest {
+        verifyManualToolFiltering(parentId = "parent", expectedNames = listOf("readFile", "task", "messageParent"))
     }
 
     @Test

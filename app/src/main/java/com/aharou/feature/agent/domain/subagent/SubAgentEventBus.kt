@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -60,6 +61,13 @@ class SubAgentEventBus @Inject constructor() {
     private val _activeSubSessionIds = MutableStateFlow<Set<String>>(emptySet())
     val activeSubSessionIds: StateFlow<Set<String>> = _activeSubSessionIds.asStateFlow()
 
+    /**
+     * 子会话 → 父会话的内存登记表，供兄弟消息路由与「团队名单」。总线在 SPAWNED 时同步登记
+     * （不依赖订阅者，投递失败也登记成功）；只覆盖本进程，跨进程场景由会话记录的 parentId 兜底。
+     * emit 可能被多协程并发调用，故用并发 Map。
+     */
+    private val parentOfSub = ConcurrentHashMap<String, String>()
+
     /** 运行中的子代理数量。 */
     val activeCount: Int get() = _activeSubSessionIds.value.size
 
@@ -86,6 +94,7 @@ class SubAgentEventBus @Inject constructor() {
         when (event.type) {
             SubAgentEventType.SPAWNED -> {
                 _activeSubSessionIds.value = _activeSubSessionIds.value + event.subSessionId
+                parentOfSub[event.subSessionId] = event.parentSessionId
             }
             SubAgentEventType.COMPLETED, SubAgentEventType.FAILED, SubAgentEventType.STOPPED -> {
                 _activeSubSessionIds.value = _activeSubSessionIds.value - event.subSessionId
@@ -100,5 +109,42 @@ class SubAgentEventBus @Inject constructor() {
     companion object {
         /** 同时运行的子代理上限。判定以此为准，工具层只引用不自己再写一份。 */
         const val MAX_RUNNING = 5
+    }
+
+    // ── 兄弟（同父）消息路由 ──────────────────────────────────
+    // 与「父 → 子」「子 → 父」两条旧通道并存，行为不变：这里只新增一条兄弟可见的通道。
+
+    /** 与 [subSessionId] 同父的其它子代理 id（本进程登记过的），供「团队名单」与兄弟路由使用。 */
+    fun siblingsOf(subSessionId: String): List<String> {
+        val parent = parentOfSub[subSessionId] ?: return emptyList()
+        return parentOfSub.entries.filter { it.value == parent && it.key != subSessionId }.map { it.key }
+    }
+
+    /** 两个子代理是否同父（互为兄弟）；同一会话或任一方未登记都算否。 */
+    private fun areSiblings(a: String, b: String): Boolean {
+        if (a == b) return false
+        val pa = parentOfSub[a] ?: return false
+        val pb = parentOfSub[b] ?: return false
+        return pa == pb
+    }
+
+    /**
+     * 兄弟消息路由：把 [fromSessionId] 的消息投递给同父的 [toSessionId]。
+     *
+     * 复用既有的子代理消息投递通道（MESSAGE_FROM_SUB，收件人取 parentSessionId）：收件人忙碌时搭车送达、
+     * 空闲或已完成时被唤醒起新一轮，与「子 → 父」通道共用同一套分发逻辑。非兄弟、消息为空或收件人未登记
+     * 时返回 false，由调用方决定提示；本方法不抛异常，任何失败都不影响主流程。
+     */
+    fun sendToSibling(fromSessionId: String, toSessionId: String, message: String): Boolean {
+        if (message.isBlank() || !areSiblings(fromSessionId, toSessionId)) return false
+        emit(
+            SubAgentEvent(
+                subSessionId = fromSessionId,
+                parentSessionId = toSessionId,
+                type = SubAgentEventType.MESSAGE_FROM_SUB,
+                detail = message
+            )
+        )
+        return true
     }
 }

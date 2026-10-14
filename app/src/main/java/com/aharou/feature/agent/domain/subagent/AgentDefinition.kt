@@ -71,19 +71,22 @@ data class AgentDefinition(
     val filePath: String? = null
 ) {
     /**
-     * 按白名单/黑名单裁剪工具名集合。`task` 永远被剔除——子代理不能嵌套派子代理。
+     * 按白名单/黑名单裁剪工具名集合。
      *
      * 黑名单先生效，再与白名单取交集；支持 `mcp__server__*` 形式的通配，
      * 以便一次禁掉某个 MCP server 的全部工具。
+     *
+     * 不再无条件剔除 `task`：子代理现已允许再派子代理，递归改由 TaskTool 依据
+     * [MAX_SUBAGENT_DEPTH] 做深度上限兜底。要禁掉某个角色的派发能力，把 `task`
+     * 写进 [disallowedTools] 即可。
      */
     fun filterToolNames(all: List<String>): List<String> {
         val afterDeny = all.filterNot { name -> disallowedTools.any { matches(it, name) } }
-        val afterAllow = if (allowedTools.isEmpty()) {
+        return if (allowedTools.isEmpty()) {
             afterDeny
         } else {
             afterDeny.filter { name -> allowedTools.any { matches(it, name) } }
         }
-        return afterAllow.filterNot { it == NESTED_TOOL }
     }
 
     private fun matches(pattern: String, toolName: String): Boolean {
@@ -102,7 +105,17 @@ data class AgentDefinition(
             InjectPart.PROJECT_RULES
         )
 
-        /** 子代理不可嵌套派发，其工具集永远剔除该工具。 */
+        /**
+         * 子代理递归派发的最大深度：主代理（0）→ 子代理（1）→ 孙代理（2）为上限，
+         * 再往下由 TaskTool 直接拒绝，避免递归派发无限膨胀、耗光并发额度。
+         */
+        const val MAX_SUBAGENT_DEPTH = 2
+
+        /**
+         * `task` 工具的标识名，也是子代理派发所用的工具名。子代理现已允许再派子代理，
+         * 嵌套递归由 [MAX_SUBAGENT_DEPTH] 深度上限兜底，工具集不再按此名剔除；要禁掉某个
+         * 角色的派发能力，把 `task` 写进其 [AgentDefinition.disallowedTools] 即可。
+         */
         const val NESTED_TOOL = "task"
 
         /** 仅子代理可用的工具（子→主发消息）；主会话工具集剔除它。 */

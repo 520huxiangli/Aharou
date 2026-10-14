@@ -44,6 +44,8 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
     var lastResult by remember { mutableStateOf(viewModel.lastResult()) }
     var autoSync by remember { mutableStateOf(viewModel.autoSyncEnabled()) }
     var editingRepo by remember { mutableStateOf(false) }
+    var editingToken by remember { mutableStateOf(false) }
+    var hasToken by remember { mutableStateOf(viewModel.hasToken()) }
 
     LaunchedEffect(outcome) {
         val result = outcome ?: return@LaunchedEffect
@@ -60,6 +62,14 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
                 title = stringResource(R.string.memory_sync_repo_title),
                 subtitle = repoUrl.ifBlank { stringResource(R.string.memory_sync_repo_empty) },
                 onClick = { editingRepo = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
+                title = stringResource(R.string.memory_sync_token_title),
+                subtitle = if (hasToken) stringResource(R.string.memory_sync_token_set)
+                    else stringResource(R.string.memory_sync_token_empty),
+                onClick = { editingToken = true },
             )
             SettingsDivider()
             SettingsRow(
@@ -113,6 +123,38 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
             },
             dismissButton = {
                 TextButton(onClick = { editingRepo = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
+    if (editingToken) {
+        var draft by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { editingToken = false },
+            title = { Text(stringResource(R.string.memory_sync_token_title)) },
+            text = {
+                AppTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = stringResource(R.string.memory_sync_token_hint),
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    colors = dialogTextFieldColors(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.saveToken(draft)
+                    hasToken = draft.isNotBlank()
+                    editingToken = false
+                }) {
+                    Text(stringResource(R.string.memory_edit_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingToken = false }) {
                     Text(stringResource(R.string.common_cancel))
                 }
             },
