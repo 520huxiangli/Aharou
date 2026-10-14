@@ -32,7 +32,7 @@ class ConfigMemorySyncFields @Inject constructor(
             ClosureField(
                 path = "memory.sync.repo_url",
                 displayName = "记忆仓库地址",
-                description = "全局记忆同步到哪个 git 仓库（原地仓库：仓库根就是记忆目录）。留空表示没配、同步功能不可用。" +
+                description = "记忆同步到哪个 git 仓库：仓库是收集桶，全局记忆进 `global/`、各工作区的项目记忆进 `projects/<项目名-短哈希>/`（含远程工作区，前缀 `remote-`）。留空表示没配、同步功能不可用。" +
                     "远端仓库需自行创建，凭据走容器里已有的 git 凭据。",
                 valueSchema = ConfigSchema.Str(maxLength = 512),
                 revertable = true,
@@ -41,6 +41,8 @@ class ConfigMemorySyncFields @Inject constructor(
                     val url = (v as? ConfigValue.Str)?.value
                         ?: throw ConfigError.TypeMismatch("string")
                     settings.repoUrl = url
+                    // 排不排周期任务取决于「开关 + 地址」两者，地址改了要重排。
+                    scheduler.apply()
                 },
             ),
         )
@@ -65,7 +67,7 @@ class ConfigMemorySyncFields @Inject constructor(
             ClosureField(
                 path = "memory.sync.auto",
                 displayName = "自动同步",
-                description = "开启后由后台周期任务推送记忆（需先填仓库地址）。关闭时只有手动点「立即同步」才会推。默认关闭。",
+                description = "开启后由后台周期任务推送记忆（需先填仓库地址）。关闭后不再后台推送，重新打开开关时会立刻推一次。默认开启。",
                 valueSchema = ConfigSchema.Bool,
                 revertable = true,
                 reader = { ConfigValue.Bool(settings.autoSync) },

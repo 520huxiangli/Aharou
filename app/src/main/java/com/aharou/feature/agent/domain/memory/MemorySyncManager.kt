@@ -22,6 +22,18 @@ private const val TAG = "MemorySyncManager"
 /** 容器内的工作树：bind 自宿主 `filesDir/aharou/memory-repo`（`files/aharou` → `/root/.aharou`）。 */
 private const val CONTAINER_REPO_DIR = "/root/.aharou/memory-repo"
 
+/**
+ * 容器里的 git 凭据 helper。
+ *
+ * 容器初始化的 includeIf 只覆盖 `$HOME/workspace/` 与 `$HOME/.aharou/memory/`，本工作树不在其中，
+ * 不在这里补一条仓库级 helper，push 就会以 `could not read Username for 'https://…'` 失败。
+ */
+private const val CREDENTIAL_HELPER = "/root/.aicode/git-credential-aicode"
+
+/** 提交与 rebase 的署名：仓库是用户的，不用写进仓库配置。 */
+private const val GIT_AUTHOR_NAME = "Aharou"
+private const val GIT_AUTHOR_EMAIL = "aharou@local"
+
 /** 仓库里全局记忆的子目录。 */
 private const val GLOBAL_DIR = "global"
 
@@ -74,14 +86,26 @@ class MemorySyncManager @Inject constructor(
             ensureRemote(url)
             addAndCommit()
             // 首次推送时远端还没有这个分支，pull 必然失败——它只是「尽量跟上别的设备」的尽力而为。
-            run("git pull --rebase origin ${quote(branch)}")
+            // rebase 要重放本地提交、必须有署名（仓库里没配 user.name/email），否则会以
+            // 「unable to auto-detect email address」失败，并把工作树卡在 rebase 中间态。
+            val pull = run("git -c user.name=$GIT_AUTHOR_NAME -c user.email=$GIT_AUTHOR_EMAIL pull --rebase origin ${quote(branch)}")
+            if (pull.exitCode != 0) {
+                // rebase 中的 --ours 指被 rebase 到的上游（远端）：新设备上那份默认模板 CORE.md 与仓库里的
+                // 真档案同名不同内容，这类撞车该让仓库版本胜出；本地独有的文件不冲突，照常保留。
+                val resolved = run("git checkout --ours -- . && git add -A && GIT_EDITOR=true git rebase --continue")
+                // 还收不了就退回干净状态，别把工作树留在 rebase 中间态——
+                // 下一次 add -A 会把冲突标记当内容提交进仓库。
+                if (resolved.exitCode != 0) run("git rebase --abort")
+            }
+            // 先补本机再推：补的是仓库里有、本机没有的文件（同名一律不碰），放到推送之前，
+            // 推送失败也不至于让本机一直缺着别的设备推上来的记忆。
+            val restored = distribute(repoDir)
             val push = run("git push -u origin ${quote(branch)}")
             if (push.exitCode != 0) {
                 val reason = push.output.trim().takeLast(400).ifBlank { "git 退出码 ${push.exitCode}" }
                 settings.lastResult = "推送失败：$reason"
                 return MemorySyncOutcome(false, "推送失败：$reason")
             }
-            val restored = distribute(repoDir)
             settings.lastSyncAt = System.currentTimeMillis()
             settings.lastResult = "已同步"
             val tail = if (restored > 0) "，补回本机 $restored 个文件" else ""
@@ -226,6 +250,8 @@ class MemorySyncManager @Inject constructor(
         } else {
             run("git remote add origin ${quote(url)}")
         }
+        // 仓库级配置而非全局：只让这一个仓库拿到凭据，不扩散到容器里的其它目录。
+        run("git config --local credential.helper ${quote(CREDENTIAL_HELPER)}")
     }
 
     private suspend fun addAndCommit() {
@@ -233,7 +259,7 @@ class MemorySyncManager @Inject constructor(
         if (add.exitCode != 0) throw IllegalStateException("暂存失败：${add.output.trim().take(200)}")
         // 没有改动时 commit 会非零退出，这不是错误，故不判退出码。
         // 用 -c 传署名而不是写进仓库配置：这个仓库是用户的，别留下我们的痕迹。
-        run("git -c user.name=Aharou -c user.email=aharou@local commit -m ${quote("memory: ${timestamp()}")}")
+        run("git -c user.name=$GIT_AUTHOR_NAME -c user.email=$GIT_AUTHOR_EMAIL commit -m ${quote("memory: ${timestamp()}")}")
     }
 
     /** 仓库工作树（宿主路径）。 */

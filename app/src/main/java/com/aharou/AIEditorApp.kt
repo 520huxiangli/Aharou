@@ -288,6 +288,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var scheduledTaskScheduler: com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 
+    /** 记忆自动同步调度：默认开启的开关只有在这里排一次才真正生效，否则从没碰过设置页的用户永远不会同步。 */
+    @Inject
+    lateinit var memorySyncScheduler: com.aharou.feature.agent.domain.memory.MemorySyncScheduler
+
     /** 旧 Room git 凭据一次性迁移器：启动即把旧表数据写入 git-credentials 文件后删表（真源已迁到文件）。 */
     @Inject
     lateinit var legacyCredentialMigrator: com.aharou.feature.credentials.data.LegacyCredentialMigrator
@@ -568,6 +572,11 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { scheduledTaskScheduler.ensureScheduled(this@AIEditorApp) }
                 .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
+        }
+        // 记忆自动同步：UPDATE 策略下重复排队不会重置周期计时，每次启动调一次是安全的。
+        appScope.launch {
+            runCatching { memorySyncScheduler.apply() }
+                .onFailure { FileLogger.e("AIEditorApp", "记忆同步调度初始化失败", it) }
         }
         // 权限规则由 App 启动即常驻订阅（AI 评估随时要读到最新规则）；MCP 配置与技能列表
         // 改由各自消费方（McpManager / 设置页）按需订阅，无需在这里拉起。

@@ -2433,7 +2433,7 @@
     <string name="memory_sync_now">Sync now</string>
     <string name="memory_sync_never">Never synced</string>
     <string name="memory_sync_auto">Auto sync</string>
-    <string name="memory_sync_auto_hint">Pushes in the background (%1$d minutes minimum); turning it on syncs once right away.</string>
+    <string name="memory_sync_auto_hint">Pushes in the background every %1$d minutes; turning it on syncs once right away.</string>
     <string name="memory_sync_working">Syncing…</string>
 
     <!-- Voice input -->

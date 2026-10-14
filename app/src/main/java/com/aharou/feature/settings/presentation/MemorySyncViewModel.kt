@@ -43,6 +43,9 @@ class MemorySyncViewModel @Inject constructor(
 
     fun autoSyncEnabled(): Boolean = settings.autoSync
 
+    /** 后台同步的真实间隔（分钟），用于界面提示。 */
+    fun autoSyncIntervalMinutes(): Int = settings.autoSyncIntervalMinutes
+
     fun setAutoSync(enabled: Boolean) {
         settings.autoSync = enabled
         scheduler.apply()

@@ -24,7 +24,6 @@ import com.aharou.R
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.dialogTextFieldColors
-import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.settings.presentation.MemorySyncViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Zap
@@ -68,11 +67,13 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
                 title = stringResource(R.string.memory_sync_auto),
                 subtitle = when {
                     syncing -> stringResource(R.string.memory_sync_working)
-                    lastResult.isNotBlank() -> lastResult
-                    else -> stringResource(
-                        R.string.memory_sync_auto_hint,
-                        MemorySyncScheduler.MIN_INTERVAL_MINUTES
-                    )
+                    else -> {
+                        val hint = stringResource(
+                            R.string.memory_sync_auto_hint,
+                            viewModel.autoSyncIntervalMinutes()
+                        )
+                        if (lastResult.isNotBlank()) "$hint · $lastResult" else hint
+                    }
                 },
                 trailing = {
                     AppSwitch(
