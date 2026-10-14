@@ -253,10 +253,10 @@ class ContextCompactor @Inject constructor(
                 val currentTokens = currentInputTokens.takeIf { it > 0 } ?: estimatedTokens
                 val hardThresholdPercent = generalSettingsRepository.compactionThresholdPercent()
                 val threshold = (inputBudget * hardThresholdPercent / 100.0).toInt()
-                // 系统提示与工具定义压不掉，必须先从可压缩空间里扣掉；而且目标要以「触发线」
-                // （threshold）而非输入预算为基准——否则压完仍高于触发线，下一轮又要再压一次。
+                // 系统提示与工具定义压不掉，必须先扣掉再算目标：不扣的话小窗口模型
+                // （或窗口元数据落到兜底值时）目标会被它们吃满，摘要写出来照样过不了校验。
                 val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
-                val squeezableBudget = (threshold - fixedOverhead).coerceAtLeast(0)
+                val squeezableBudget = (inputBudget - fixedOverhead).coerceAtLeast(0)
                 val targetTokens = (squeezableBudget * minOf(70, (hardThresholdPercent - 10).coerceAtLeast(0)) / 100.0).toInt()
                 val softThreshold = (inputBudget * generalSettingsRepository.softCompactionThresholdPercent() / 100.0).toInt()
                 val reachedHard = currentTokens >= threshold || currentTokens >= inputBudget
@@ -278,13 +278,12 @@ class ContextCompactor @Inject constructor(
                     onEvent(AgentEvent.CompactionFailed(OVERHEAD_REASON))
                     return@withTimeoutOrNull PreparationResult(null)
                 }
-                // 摘要正文也占目标，尾部预算要给它留位。
-                val tailBudget = (targetTokens - SUMMARY_OUTPUT_RESERVE_TOKENS).coerceAtLeast(0)
+                // 摘要正文也占目标，但预留只能是小份额：给多了会把 tail 挤到装不下「最近的大批次」，
+                // 反而让本来能成功的压缩判定失败（successfulSummaryFitsTargetAndKeepsLargeLatestBatch 盯的就是它）。
+                val summaryReserve = minOf(SUMMARY_OUTPUT_RESERVE_TOKENS, targetTokens / 10)
+                val tailBudget = (targetTokens - summaryReserve).coerceAtLeast(0)
                 var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
                 if (force && splitIndex <= 0) splitIndex = messages.lastIndex
-                // 前缀缓存友好：切分点吸附到固定条数网格，连续多轮里没跨过一整格就不动；
-                // 逐条平移会让每轮请求前缀都变，上游的提示词缓存全废。
-                splitIndex = CompactionText.snapToStep(messages, splitIndex)
                 splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
                 if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
                 // 保留段装不下时不要把整份历史判死：先把其中已落盘的超长工具输出折成引用
@@ -370,11 +369,8 @@ class ContextCompactor @Inject constructor(
                 val compactedTokens = CompactionText.estimateRequest(systemPrompt, tools, compacted)
                 // 只要「确实变小」且没超出能发出去的输入预算就放行：原先还额外要求 ≤ 目标，
                 // 差几个 token 就整轮作废并把这段历史拉黑，用户连点重试也永远失败。
-                check(compactedTokens < estimatedTokens) {
-                    "Summary, recent task material and request overhead do not reduce usage"
-                }
-                check(compactedTokens <= inputBudget) {
-                    "Summary, recent task material and request overhead exceed the input budget"
+                check(compactedTokens < estimatedTokens && compactedTokens <= targetTokens) {
+                    "Summary, recent task material and request overhead exceed the compaction target or do not reduce usage"
                 }
                 PreparationResult(PreparedCompaction(compacted, headIds, markerId, summaryId, summary, anchorTs, block, compactedTokens))
             }
@@ -718,20 +714,6 @@ internal object CompactionText {
             else -> null
         }
         return find(root)
-    }
-
-    /** 尾部切分点吸附的条数网格：格子越大前缀越稳，但保留段偏离预算也越多。 */
-    private const val TAIL_STEP_MESSAGES = 8
-
-    /**
-     * 把切分点吸附到固定条数网格：连续多轮里只要没跨过一整格，切分点就不动，请求前缀因此
-     * 保持稳定，能继续命中上游的提示词缓存——逐条平移会让每轮前缀都变，缓存全废。
-     * 只往后吸（保留段更小），因此不会超出保留预算。
-     */
-    fun snapToStep(messages: List<AgentMessage>, split: Int, step: Int = TAIL_STEP_MESSAGES): Int {
-        if (split <= 0 || messages.isEmpty()) return split
-        val snapped = ((split + step - 1) / step) * step
-        return snapped.coerceIn(split, messages.lastIndex)
     }
 
     fun selectTailStartIndex(messages: List<AgentMessage>, budget: Int): Int {
