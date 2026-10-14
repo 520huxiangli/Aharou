@@ -82,14 +82,36 @@ class CheckpointManagerSessionIsolationTest {
 
         manager.beforeFileModified("sessionA", modified)
         fileAccess.writeFile(modified, "改过了", overwrite = true)
+        // 真实链路里工具写完必记写入摘要（afterFileModified）；缺了它，还原时会因「无法判断来历」
+        // 被当成外部改动跳过——那是有意的保护，不是这里要测的行为。
+        manager.afterFileModified("sessionA", modified)
         manager.beforeFileModified("sessionA", created)
         fileAccess.writeFile(created, "新建的", overwrite = true)
+        manager.afterFileModified("sessionA", created)
 
         val restored = manager.restoreCodeToCheckpoint("sessionA", cpA.id)
 
         assertEquals(2, restored.restoredCount)
         assertEquals("original", File(modified).readText())
         assertFalse(File(created).exists())
+    }
+
+    @Test
+    fun externallyModifiedFile_isSkippedNotOverwritten() = runTest {
+        val modified = File(workspace, "x.txt").apply { writeText("original") }.absolutePath
+
+        val cpA = manager.createCheckpoint("sessionA", "msgA", "A 的请求")
+        manager.beforeFileModified("sessionA", modified)
+        fileAccess.writeFile(modified, "AI 写的", overwrite = true)
+        manager.afterFileModified("sessionA", modified)
+        // 检查点之外的操作（手改 / 终端命令）又改了一手
+        fileAccess.writeFile(modified, "我自己改的", overwrite = true)
+
+        val restored = manager.restoreCodeToCheckpoint("sessionA", cpA.id)
+
+        assertEquals(0, restored.restoredCount)
+        assertTrue(restored.conflicts.contains(modified))
+        assertEquals("我自己改的", File(modified).readText())
     }
 
     @Test
