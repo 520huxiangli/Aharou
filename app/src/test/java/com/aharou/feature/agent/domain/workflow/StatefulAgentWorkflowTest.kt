@@ -3,7 +3,9 @@ package com.aharou.feature.agent.domain.workflow
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
+import com.aharou.feature.agent.domain.memory.MemoryCompactor
 import com.aharou.feature.agent.domain.model.AgentContext
+import dagger.Lazy
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
@@ -107,7 +109,9 @@ class StatefulAgentWorkflowTest {
             every { redact(any()) } answers { firstArg<String>() }
         },
         // 协作开关：这些用例不碰跨设备协作，relaxed mock 下 current().enabled 为 false（等价关闭）。
-        remoteDeviceSettings = mockk(relaxed = true)
+        remoteDeviceSettings = mockk(relaxed = true),
+        // 记忆整理入口：这些用例不会走到自动整理，Lazy 里放个 relaxed mock 即可（注入形式是 dagger.Lazy 为了断环）。
+        memoryCompactor = Lazy { mockk<MemoryCompactor>(relaxed = true) }
     ), recordPrivateCalls = true)
 
     private fun prepare(chunks: Flow<AIStreamChunk>) {
