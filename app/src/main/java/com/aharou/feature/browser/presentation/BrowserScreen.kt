@@ -17,9 +17,11 @@ fun BrowserScreen(
     tabPool: BrowserTabPool,
     onNavigateBack: () -> Unit,
     embedded: Boolean = false,
+    onTakeoverAgent: () -> Unit = {},
 ) {
     BrowserSheet(
         tabPool = tabPool,
         onDismiss = onNavigateBack,
+        onTakeoverAgent = onTakeoverAgent,
     )
 }

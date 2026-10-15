@@ -1,6 +1,7 @@
 package com.aharou.feature.browser.presentation
 
 import com.aharou.R
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
@@ -93,6 +94,13 @@ import kotlinx.coroutines.launch
 fun BrowserSheet(
     tabPool: BrowserTabPool,
     onDismiss: () -> Unit,
+    /**
+     * 用户点「接管」时调：停掉正在跑的 agent。
+     *
+     * 只清 tab 占用标记是不够的——agent 下一个动作会把同一个 tab 立即标回占用，
+     * 浮层又冒出来，用户看到的就是「点了没反应」。
+     */
+    onTakeoverAgent: () -> Unit = {},
 ) {
     val tabs by tabPool.tabs.collectAsState()
     val selectedTabId by tabPool.selectedTabId.collectAsState()
@@ -348,7 +356,16 @@ fun BrowserSheet(
                 if (isAgentBusy) {
                     AgentBrowsingOverlay(
                         accent = accent,
-                        onTakeover = { tabPool.releaseAllTabs() },
+                        onTakeover = {
+                            // 先停 agent，再释放占用：反过来会被它的下一个动作立刻占回去
+                            onTakeoverAgent()
+                            tabPool.releaseAllTabs()
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.browser_takeover_done),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
                     )
                 }
             }

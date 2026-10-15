@@ -39,6 +39,7 @@ internal fun WorkbenchPaneContent(
     onAddSelectionToInput: (String) -> Unit,
     onSendToChat: (String) -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
+    onTakeoverAgent: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -88,7 +89,8 @@ internal fun WorkbenchPaneContent(
                 BrowserScreen(
                     tabPool = browserViewModel.tabPool,
                     onNavigateBack = onClose,
-                    embedded = true
+                    embedded = true,
+                    onTakeoverAgent = onTakeoverAgent,
                 )
             }
         }

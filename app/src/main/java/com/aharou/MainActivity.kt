@@ -877,7 +877,7 @@ fun AppNavigation(
                             onAddSelectionToInput = { text ->
                                 agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
                             },
-                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) },
+                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) }, onTakeoverAgent = { agentViewModel.stopAgent() },
                         )
                     },
                     leftPane = {
@@ -973,7 +973,7 @@ fun AppNavigation(
                 val browserViewModel: com.aharou.feature.browser.presentation.BrowserViewModel = hiltViewModel()
                 BrowserScreen(
                     tabPool = browserViewModel.tabPool,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() }, onTakeoverAgent = { agentViewModel.stopAgent() },
                 )
             }
             composable("sandbox") {

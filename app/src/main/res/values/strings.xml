@@ -2052,6 +2052,7 @@
 <string name="browser_settings_user_agent">用户代理</string>
 <string name="browser_stop">停止</string>
 <string name="browser_takeover">接管</string>
+<string name="browser_takeover_done">已接管，AI 已停下</string>
 <string name="browser_use_tab_busy_timeout">另一个工具正在操作浏览器标签页 %1$d，本次请求在 %2$d 秒内没有排到。不支持多个工具同时操作同一个标签页。请新开一个标签页（action: new_tab）并在那里重试。</string>
 <string name="cancel">取消</string>
 <string name="external_link_blocked">已拦截跳转到外部应用的链接（%1$s）</string>

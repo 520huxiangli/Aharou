@@ -2052,6 +2052,7 @@
 <string name="browser_settings_user_agent">User Agent</string>
 <string name="browser_stop">Stop</string>
 <string name="browser_takeover">Takeover</string>
+<string name="browser_takeover_done">Taken over — the agent has stopped</string>
 <string name="browser_use_tab_busy_timeout">Another tool is currently operating browser tab %1$d, and this request could not get a turn within %2$d seconds. Multiple tools operating the same tab at once is not supported. Please open a new tab (action: new_tab) and retry your action there.</string>
 <string name="cancel">Cancel</string>
 <string name="external_link_blocked">Blocked link to external app (%1$s)</string>
