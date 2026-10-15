@@ -199,6 +199,22 @@
       }
     },
     {
+      "id": "ubuntu-26.10",
+      "name": "Ubuntu",
+      "version": "26.10",
+      "description": "Ubuntu 26.10 (Stonking Stingray) base rootfs，非 LTS，官方支持至 2027-07",
+      "sizeBytes": 36245313,
+      "distro": "ubuntu",
+      "path": "ubuntu-base/releases/26.10/release/ubuntu-base-26.10-base-{abi}.tar.gz",
+      "paths": {
+        "aharou": "ubuntu-26.10-{abi}.tar.gz"
+      },
+      "abiNames": {
+        "arm64": "arm64",
+        "x86_64": "amd64"
+      }
+    },
+    {
       "id": "debian-12",
       "name": "Debian",
       "version": "12.15 (bookworm)",
