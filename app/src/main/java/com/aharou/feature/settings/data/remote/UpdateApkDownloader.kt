@@ -2,10 +2,12 @@ package com.aharou.feature.settings.data.remote
 
 import android.content.Context
 import com.aharou.core.net.AppProxy
+import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -32,6 +34,24 @@ import okhttp3.Response
  * 下载完可直接换成 content:// URI 交给系统安装器（file:// 在 targetSdk 28+ 会被拒）。
  * 请求走全局代理认证，与容器镜像下载保持一致。
  */
+/**
+ * 流式计算文件的 sha256，返回小写十六进制。
+ *
+ * 与下载器分离（不依赖 Context / 网络），便于单测直接拿固定字节验证。
+ */
+internal fun sha256Hex(file: File): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            digest.update(buffer, 0, n)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) }
+}
+
 @Singleton
 class UpdateApkDownloader @Inject constructor(
     @param:ApplicationContext private val context: Context
@@ -75,17 +95,22 @@ class UpdateApkDownloader @Inject constructor(
      * 或全部源都失败才回错。
      *
      * @param expectedSize GitHub API 报的资产大小，用于校验完整性（<=0 表示未知，跳过校验）
+     * @param expectedSha256 GitHub API 报的资产 sha256；null 表示来源不给，跳过哈希校验
      */
     suspend fun download(
         candidates: List<String>,
         fileName: String,
         expectedSize: Long,
+        expectedSha256: String? = null,
         onSource: (String) -> Unit = {},
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val dest = File(downloadDir(), fileName)
-        // 已下完的直接复用：更新弹窗会被反复打开，没必要每次重下
-        if (expectedSize > 0 && dest.isFile && dest.length() == expectedSize) {
+        // 已下完的直接复用：更新弹窗会被反复打开，没必要每次重下。
+        // 但复用也要过校验，否则上一次留下的坏包会被直接送去安装。
+        if (expectedSize > 0 && dest.isFile && dest.length() == expectedSize &&
+            matchesDigest(dest, expectedSha256)
+        ) {
             return@withContext dest
         }
         var lastError: Exception? = null
@@ -93,7 +118,7 @@ class UpdateApkDownloader @Inject constructor(
         // 只按「可达」顺序试的话，一个通但只有几十 KB/s 的源会把整包拖慢到底。
         for (url in rankBySpeed(candidates)) {
             try {
-                val file = fetch(url, dest, expectedSize, onSource, onProgress)
+                val file = fetch(url, dest, expectedSize, expectedSha256, onSource, onProgress)
                 return@withContext file
             } catch (e: CancellationException) {
                 throw e
@@ -147,6 +172,8 @@ class UpdateApkDownloader @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "UpdateApkDownloader"
+
         /** 测速时每个源只下这么多：够分出快慢，又不白耗流量。
          *  128KB 在 16KB/s 的慢源上约 8 秒，配合 callTimeout 能及时收算。 */
         const val PROBE_BYTES = 128L * 1024
@@ -155,10 +182,25 @@ class UpdateApkDownloader @Inject constructor(
         const val PROBE_TIMEOUT_MS = 6_000L
     }
 
+    /**
+     * 比对文件 sha256。
+     *
+     * [expected] 为空表示这条来源不提供校验值（如 GitCode 通道）——此时放行，由调用处记日志。
+     * 校验值来自 GitHub Release API，与 cnb / 反代这些下载源不同源，能真正拦住链路上被换掉的包。
+     */
+    internal fun matchesDigest(file: File, expected: String?): Boolean {
+        if (expected.isNullOrBlank()) return true
+        val actual = sha256Hex(file)
+        if (actual.equals(expected, ignoreCase = true)) return true
+        FileLogger.w(TAG, "安装包 sha256 不匹配：期望 $expected，实际 $actual")
+        return false
+    }
+
     private suspend fun fetch(
         url: String,
         dest: File,
         expectedSize: Long,
+        expectedSha256: String?,
         onSource: (String) -> Unit,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit,
     ): File = suspendCancellableCoroutine { cont ->
@@ -213,6 +255,13 @@ class UpdateApkDownloader @Inject constructor(
                     val downloaded = dest.length()
                     if (expectedSize > 0 && downloaded != expectedSize) {
                         throw IOException("安装包不完整（$downloaded / $expectedSize 字节）")
+                    }
+                    if (expectedSha256.isNullOrBlank()) {
+                        FileLogger.w(TAG, "下载源未提供 sha256，跳过完整性校验：$url")
+                    } else if (!matchesDigest(dest, expectedSha256)) {
+                        // 删半成品再抛错：留着的话下一个源会顺着它续传，等于把坏数据补齐
+                        dest.delete()
+                        throw IOException("安装包校验失败（sha256 不匹配）")
                     }
                     cont.resume(dest)
                 } catch (e: Exception) {

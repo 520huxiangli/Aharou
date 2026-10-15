@@ -63,7 +63,7 @@ class ConfigFtpFields @Inject constructor(
             ClosureField(
                 path = "ftp.password",
                 displayName = "FTP 密码",
-                description = "登录密码（匿名关闭时生效），明文存于 ftp_server_prefs。改动会重启正在运行的服务。",
+                description = "登录密码（匿名关闭时生效），加密存储。改动会重启正在运行的服务。",
                 valueSchema = ConfigSchema.Str(maxLength = 256),
                 risk = ConfigRisk.SENSITIVE,
                 revertable = true,

@@ -193,7 +193,9 @@ sealed interface UpdateCheckUiState {
         val changelog: String,
         /** release 里挑出的 APK 资产名；为 null 时只能走浏览器兜底。 */
         val apkAssetName: String? = null,
-        val apkAssetSize: Long = 0L
+        val apkAssetSize: Long = 0L,
+        /** 该资产的 sha256（剥掉 `sha256:` 前缀）；为 null 时下载后不校验。 */
+        val apkAssetDigest: String? = null
     ) : UpdateCheckUiState
     data class Error(val message: String) : UpdateCheckUiState
 }
@@ -2308,7 +2310,8 @@ class SettingsViewModel @Inject constructor(
                             latestTag = result.info.latestTag,
                             changelog = result.info.changelog,
                             apkAssetName = result.info.apkAssetName,
-                            apkAssetSize = result.info.apkAssetSize
+                            apkAssetSize = result.info.apkAssetSize,
+                            apkAssetDigest = result.info.apkAssetDigest
                         )
                     }
                 }
@@ -2318,7 +2321,7 @@ class SettingsViewModel @Inject constructor(
             }
             // 自动下载：检测到新版本就提前把包下好，用户之后只需点一下「立即安装」
             if (result is UpdateCheckResult.NewVersion && updateCheckSettingsRepository.autoDownloadEnabled) {
-                autoDownloadIfNeeded(result.info.latestTag)
+                autoDownloadIfNeeded(result.info.latestTag, result.info.apkAssetDigest)
             }
             // 无论结果如何，都刷新 ~/.aharou/update-info.json 供 AI 读取
             updateCheckSettingsRepository.writeUpdateInfo(
@@ -2360,6 +2363,7 @@ class SettingsViewModel @Inject constructor(
                     candidates = candidates,
                     fileName = assetName,
                     expectedSize = state.apkAssetSize,
+                    expectedSha256 = state.apkAssetDigest,
                     onSource = { url ->
                         usedSource = url
                         _updateDownloadState.value = UpdateDownloadUiState.Downloading(
@@ -2399,9 +2403,14 @@ class SettingsViewModel @Inject constructor(
     /**
      * 检测到新版本就提前把包装好（开关默认开）。已下好同一版本则直接进入可安装状态，不重复下载。
      */
-    private fun autoDownloadIfNeeded(tag: String) {
+    private fun autoDownloadIfNeeded(tag: String, expectedSha256: String?) {
         val savedPath = updateCheckSettingsRepository.downloadedPath
-        if (updateCheckSettingsRepository.downloadedTag == tag && savedPath != null && File(savedPath).exists()) {
+        // 复用上次下好的包同样要校验：它接着就被送去安装，不能因为「上次下过」而免检。
+        if (updateCheckSettingsRepository.downloadedTag == tag && savedPath != null &&
+            File(savedPath).isFile &&
+            runCatching { updateApkDownloader.matchesDigest(File(savedPath), expectedSha256) }
+                .getOrDefault(false)
+        ) {
             _updateDownloadState.value = UpdateDownloadUiState.Ready(savedPath, tag)
             maybeAutoInstall(savedPath, tag)
             return

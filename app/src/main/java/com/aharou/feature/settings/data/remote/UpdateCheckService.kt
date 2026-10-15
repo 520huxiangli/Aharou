@@ -28,7 +28,9 @@ data class UpdateInfo(
     /** 最新版里挑出的 APK 资产名（无 apk 资产时为 null）。 */
     val apkAssetName: String? = null,
     /** 该资产的字节数，用于校验下载完整性；0 表示未知。 */
-    val apkAssetSize: Long = 0L
+    val apkAssetSize: Long = 0L,
+    /** 该资产的 sha256（已剥掉 `sha256:` 前缀）；null 表示来源不给，跳过校验。 */
+    val apkAssetDigest: String? = null
 )
 
 /** 检查更新结果。 */
@@ -88,7 +90,8 @@ class UpdateCheckService @Inject constructor(
                             changelog = versionUpdates.joinToString("\n\n") { "${it.tag}\n${it.changelog}" },
                             updates = versionUpdates,
                             apkAssetName = apkAsset?.name,
-                            apkAssetSize = apkAsset?.size ?: 0L
+                            apkAssetSize = apkAsset?.size ?: 0L,
+                            apkAssetDigest = apkAsset?.digest
                         )
                     )
                 }
@@ -141,7 +144,15 @@ class UpdateCheckService @Inject constructor(
             assets = obj.getAsJsonArray("assets")?.mapNotNull { a ->
                 val asset = a.asJsonObject
                 val name = asset.get("name")?.asString ?: return@mapNotNull null
-                ReleaseAsset(name = name, size = asset.get("size")?.asLong ?: 0L)
+                ReleaseAsset(
+                    name = name,
+                    size = asset.get("size")?.asLong ?: 0L,
+                    // GitHub 给每个资产带 digest（形如 sha256:xxxx），它来自 GitHub 自己的存储层，
+                    // 与 cnb / 反代这些下载源不同源，所以能当下载完整性校验的信任锚。
+                    digest = asset.get("digest")?.asString
+                        ?.removePrefix("sha256:")
+                        ?.takeIf { it.isNotBlank() }
+                )
             } ?: emptyList()
         )
     }
@@ -199,7 +210,7 @@ class UpdateCheckService @Inject constructor(
     )
 
     /** release 里的单个资产（只关心发布包本身）。 */
-    private data class ReleaseAsset(val name: String, val size: Long)
+    private data class ReleaseAsset(val name: String, val size: Long, val digest: String? = null)
 
     private companion object {
         const val GITHUB_RELEASES_API = "https://api.github.com/repos/520huxiangli/Aharou/releases"

@@ -1642,6 +1642,7 @@
     <string name="ftp_listen_port">Listen Port</string>
     <string name="ftp_login_username">Login Username</string>
     <string name="ftp_login_password">Login Password</string>
+    <string name="ftp_password_hint">Generated automatically and stored encrypted on this device; you can change it</string>
     <string name="ftp_allow_anonymous">Allow Anonymous</string>
     <string name="ftp_anonymous_desc">Connect without username and password</string>
     <string name="ftp_auto_start">Auto-start on app launch</string>

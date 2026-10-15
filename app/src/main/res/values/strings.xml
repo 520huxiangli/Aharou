@@ -1642,6 +1642,7 @@
     <string name="ftp_listen_port">监听端口</string>
     <string name="ftp_login_username">登录用户名</string>
     <string name="ftp_login_password">登录密码</string>
+    <string name="ftp_password_hint">口令自动生成并加密保存在本机，可自行修改</string>
     <string name="ftp_allow_anonymous">允许匿名访问</string>
     <string name="ftp_anonymous_desc">无需输入用户名和密码即可连接</string>
     <string name="ftp_auto_start">应用启动时自启</string>

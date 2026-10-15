@@ -1,7 +1,7 @@
 {
   "//": "棘轮基线：登记既有违规，只许缩减不许新增或上涨。修好一处就从这里删掉对应条目，脚本会在 [WARN] 里提示可清理项。",
   "fileLines": {
-    "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3391,
+    "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3400,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3254,
     "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3226,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 2174,

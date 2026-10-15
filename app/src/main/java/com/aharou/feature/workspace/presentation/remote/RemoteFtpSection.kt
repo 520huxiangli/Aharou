@@ -229,6 +229,12 @@ fun WiFiFtpServerSection(
                     enabled = !editAnonymous
                 )
 
+                Text(
+                    text = stringResource(R.string.ftp_password_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,

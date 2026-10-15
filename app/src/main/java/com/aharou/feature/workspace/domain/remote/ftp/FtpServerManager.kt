@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
+import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,7 @@ import org.apache.ftpserver.usermanager.impl.ConcurrentLoginPermission
 import org.apache.ftpserver.usermanager.impl.WritePermission
 import java.io.File
 import java.net.Inet4Address
+import java.security.SecureRandom
 import java.net.NetworkInterface
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,6 +52,21 @@ class FtpServerManager @Inject constructor(
         val PASSWORD_KEY = stringPreferencesKey("password")
         val ANONYMOUS_KEY = booleanPreferencesKey("anonymous")
         val AUTO_START_KEY = booleanPreferencesKey("auto_start")
+
+        /** 历史默认口令。读到它按「从未设置过」处理并换成随机值——它同时留在代码与旧数据里，不换等于没修。 */
+        const val LEGACY_DEFAULT_PASSWORD = "123456"
+
+        /** 随机口令：62 字符表取 12 位，约 71 bit，够挡住在线爆破，也便于手动抄。 */
+        const val RANDOM_PASSWORD_LENGTH = 12
+        const val PASSWORD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
+        val secureRandom = SecureRandom()
+
+        fun randomPassword(): String = buildString(RANDOM_PASSWORD_LENGTH) {
+            repeat(RANDOM_PASSWORD_LENGTH) {
+                append(PASSWORD_ALPHABET[secureRandom.nextInt(PASSWORD_ALPHABET.length)])
+            }
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,7 +81,7 @@ class FtpServerManager @Inject constructor(
     private val _username = MutableStateFlow("aicode")
     val username: StateFlow<String> = _username.asStateFlow()
 
-    private val _password = MutableStateFlow("123456")
+    private val _password = MutableStateFlow("")
     val password: StateFlow<String> = _password.asStateFlow()
 
     private val _isAnonymous = MutableStateFlow(false)
@@ -88,7 +105,7 @@ class FtpServerManager @Inject constructor(
             val prefs = context.ftpServerDataStore.data.first()
             _port.value = prefs[PORT_KEY] ?: 2121
             _username.value = prefs[USERNAME_KEY] ?: "aicode"
-            _password.value = prefs[PASSWORD_KEY] ?: "123456"
+            _password.value = resolvePassword(prefs[PASSWORD_KEY])
             _isAnonymous.value = prefs[ANONYMOUS_KEY] ?: false
             _autoStart.value = prefs[AUTO_START_KEY] ?: false
 
@@ -98,6 +115,21 @@ class FtpServerManager @Inject constructor(
                 startServer()
             }
         }
+    }
+
+    /**
+     * 取可用口令：没有、解不开、或仍是历史默认值时生成随机口令并加密落盘。
+     * 返回值始终是明文——UI 要显示、Apache FtpServer 也要用它做比对。
+     */
+    private suspend fun resolvePassword(stored: String?): String {
+        val plain = stored?.let { KeystoreCipher.decryptString(it) }
+        if (!plain.isNullOrEmpty() && plain != LEGACY_DEFAULT_PASSWORD) return plain
+
+        val generated = randomPassword()
+        context.ftpServerDataStore.edit { prefs ->
+            prefs[PASSWORD_KEY] = KeystoreCipher.encryptString(generated)
+        }
+        return generated
     }
 
     fun getLocalIpAddress(): String {
@@ -141,7 +173,8 @@ class FtpServerManager @Inject constructor(
         context.ftpServerDataStore.edit { prefs ->
             prefs[PORT_KEY] = port
             prefs[USERNAME_KEY] = username
-            prefs[PASSWORD_KEY] = password
+            // 只保护静态存储；Apache FtpServer 比对用的是内存里的明文。
+            prefs[PASSWORD_KEY] = KeystoreCipher.encryptString(password)
             prefs[ANONYMOUS_KEY] = isAnonymous
             prefs[AUTO_START_KEY] = autoStart
         }
