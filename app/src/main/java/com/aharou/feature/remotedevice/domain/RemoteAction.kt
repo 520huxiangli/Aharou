@@ -108,8 +108,8 @@ class RemoteActionCatalog @Inject constructor(
         const val TOOL_A11Y = "a11y"
         const val TOOL_VSCREEN = "vscreen"
 
-        /** `ui` 动作允许的操作：只放驱动屏幕必需的那几个（task 与生命周期动作不开放给远端）。 */
-        val UI_ALLOWED_ACTIONS = setOf("launch", "shot", "tap", "swipe", "key", "type")
+        /** `ui` 动作允许的操作：start 是驱动的前提必须放（不放则 launch/shot 都跑不起来）；stop 与 task 不开放给远端。 */
+        val UI_ALLOWED_ACTIONS = setOf("start", "launch", "shot", "tap", "swipe", "key", "type")
     }
 
     val actions: List<RemoteAction> = listOf(
@@ -161,7 +161,8 @@ class RemoteActionCatalog @Inject constructor(
             kind = RemoteActionKind.UI,
             description = "在**影子屏**里驱动这台手机：launch 启动 App、shot 截图（传 ocr=true 则只回文字）、" +
                 "tap / swipe / key 触控、type 输入文字。全程跑在宿主上的无头虚拟屏，不打断本机用户的主屏。" +
-                "只支持这六个操作——影子屏的启停与 task（多步子代理）不开放给远端。需本机已就绪 root 或 Shizuku。",
+                "只支持这七个操作——start 是驱动的前提（先 start，再 launch 目标 App）；" +
+                "stop 与 task（多步子代理）不开放给远端。需本机已就绪 root 或 Shizuku。",
             toolName = TOOL_VSCREEN,
             allowedArgs = setOf(
                 "action", "component", "x", "y", "x2", "y2", "duration", "keycode", "text", "submit", "ocr"

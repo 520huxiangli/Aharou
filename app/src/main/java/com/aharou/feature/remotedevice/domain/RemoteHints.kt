@@ -40,11 +40,11 @@ internal object RemoteHints {
     }
 
     private fun byMessage(message: String): String? = when {
-        message.contains("只支持") -> "换成列出的取值重试；影子屏的启停与 task 不开放给远端"
+        message.contains("只支持") -> "换成列出的取值重试；stop 与 task 不开放给远端（可用 start 先拉起影子屏）"
         message.contains("Shizuku") || message.contains("root") ->
             "本机需要 root 或 Shizuku 就绪才能驱动屏幕：可请本机用户到设置里检查通道"
         message.contains("影子屏") || message.contains("vscreen") ->
-            "先用 ui action=launch 在影子屏里启动目标 App，再做 tap / type"
+            "影子屏没启动时先 ui action=start，再 ui action=launch 起目标 App，然后才能 tap / type"
         message.contains("路径越界") ->
             "只允许落在这些根之内：~/workspace（工作区）、容器 rootfs、~/.aharou（AI 配置）、记忆、~/shared（共享区）"
         message.contains("本机未提供能力") -> "先调 info 看本机当前可用的动作清单"
