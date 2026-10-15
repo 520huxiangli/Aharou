@@ -143,6 +143,10 @@ class RemoteActionExecutor @Inject constructor(
         rawArgs: Map<String, JsonElement>,
         caller: RemotePairedDevice
     ): RemoteActionResult {
+        // 取值白名单先于一切：schema 里没列不等于对方传不进来，越权值必须在这里挡住
+        action.firstViolatedArg(rawArgs)?.let { (key, allowed) ->
+            return failure(action, "$key 只支持：${allowed.joinToString(" / ")}")
+        }
         val args = buildArgs(action, rawArgs)
         val tool = if (action.toolName == null) {
             when (action.name) {
@@ -163,7 +167,7 @@ class RemoteActionExecutor @Inject constructor(
             }
         } else {
             catalog.resolveTool(action)
-                ?: return RemoteActionResult("本机未提供能力：${action.name}", isError = true)
+                ?: return failure(action, "本机未提供能力：${action.name}")
         }
 
         val callId = UUID.randomUUID().toString()
@@ -188,7 +192,7 @@ class RemoteActionExecutor @Inject constructor(
         val approved = when (verdict) {
             is PermissionVerdict.Deny -> {
                 FileLogger.i(TAG, "远端动作被策略拒绝: ${action.name} — ${verdict.reason}")
-                return RemoteActionResult(verdict.reason, isError = true)
+                return failure(action, verdict.reason)
             }
             is PermissionVerdict.Ask -> awaitDecision(
                 action = action,
@@ -221,7 +225,7 @@ class RemoteActionExecutor @Inject constructor(
 
         if (!approved) {
             FileLogger.i(TAG, "远端动作未获批准: ${action.name}（来自 ${caller.deviceName}）")
-            return RemoteActionResult("本机用户未批准该动作", isError = true)
+            return failure(action, "本机用户未批准该动作")
         }
 
         return try {
@@ -229,10 +233,10 @@ class RemoteActionExecutor @Inject constructor(
                 tool.executeWithContext(args, agentContext(workspacePath, approvalSessionId))
             }
             FileLogger.i(TAG, "远端动作执行完成: ${action.name}（来自 ${caller.deviceName}）")
-            toActionResult(result)
+            toActionResult(result, action)
         } catch (e: Exception) {
             FileLogger.e(TAG, "远端动作执行失败: ${action.name}", e)
-            RemoteActionResult("执行失败：${e.message ?: e.javaClass.simpleName}", isError = true)
+            failure(action, "执行失败：${e.message ?: e.javaClass.simpleName}")
         }
     }
 
@@ -423,13 +427,37 @@ class RemoteActionExecutor @Inject constructor(
         writePaths = null
     )
 
-    private fun toActionResult(result: ToolResult): RemoteActionResult = when (result) {
+    /**
+     * 统一的失败返回：带错误码与「下一步」提示，让对端一次就能改对（而不是换几个参数重试）。
+     * 提示语集中在 [RemoteHints]。
+     */
+    private fun failure(action: RemoteAction, message: String, code: String? = null): RemoteActionResult =
+        RemoteActionResult(
+            text = RemoteHints.append(
+                if (code.isNullOrBlank()) message else "[$code] $message",
+                RemoteHints.forError(code, message)
+            ),
+            isError = true
+        )
+
+    private fun toActionResult(result: ToolResult, action: RemoteAction): RemoteActionResult = when (result) {
         is ToolResult.Success -> RemoteActionResult(
-            text = result.data.toString(),
+            text = RemoteHints.append(result.data.toString(), RemoteHints.forSuccess(action)),
             images = result.images
         )
-        is ToolResult.Error -> RemoteActionResult(result.message, isError = true)
-        is ToolResult.Partial -> RemoteActionResult("${result.data}\n${result.message}")
+        is ToolResult.Error -> RemoteActionResult(
+            text = RemoteHints.append(
+                "[${result.code}] ${result.message}",
+                RemoteHints.forError(result.code, result.message)
+            ),
+            isError = true
+        )
+        is ToolResult.Partial -> RemoteActionResult(
+            text = RemoteHints.append(
+                "${result.data}\n${result.message}",
+                RemoteHints.forError(null, result.message)
+            )
+        )
     }
 
     private suspend fun deviceInfo(caller: RemotePairedDevice): JsonObject = buildJsonObject {

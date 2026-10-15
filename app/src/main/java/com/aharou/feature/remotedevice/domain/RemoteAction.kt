@@ -47,6 +47,12 @@ data class RemoteAction(
      */
     val escalateWhenAllowed: Boolean = true,
     /**
+     * 某些参数只允许取固定几个值（如 vscreen 的 `action`）。两个作用：
+     *  - [RemoteActionCatalog.inputSchema] 用它缩窄 enum，让对端只看到合法取值；
+     *  - 执行前强校验——schema 只是「告知」，拦不住按协议硬传越权值的调用。
+     */
+    val argAllowedValues: Map<String, Set<String>> = emptyMap(),
+    /**
      * 内置动作（没有对应本机工具）自带的参数声明。
      *
      * 参数 schema 平时从本机工具的 `parameters` 过滤而来；内置动作没有那个来源，
@@ -62,6 +68,7 @@ enum class RemoteActionKind(val capability: String) {
     WRITE_FILE("write"),
     EXECUTE_COMMAND("exec"),
     SCREENSHOT("screen"),
+    UI("ui"),
     MESSAGE("message")
 }
 
@@ -84,6 +91,7 @@ class RemoteActionCatalog @Inject constructor(
         const val ACTION_WRITE_FILE = "write_file"
         const val ACTION_SHELL = "shell"
         const val ACTION_SCREENSHOT = "screenshot"
+        const val ACTION_UI = "ui"
         const val ACTION_FETCH_FILE = "fetch_file"
         const val ACTION_PUSH_FILE = "push_file"
         const val ACTION_SEND_MESSAGE = "send_message"
@@ -98,6 +106,10 @@ class RemoteActionCatalog @Inject constructor(
         const val TOOL_WRITE_FILE = "writeFile"
         const val TOOL_BASH = "Bash"
         const val TOOL_A11Y = "a11y"
+        const val TOOL_VSCREEN = "vscreen"
+
+        /** `ui` 动作允许的操作：只放驱动屏幕必需的那几个（task 与生命周期动作不开放给远端）。 */
+        val UI_ALLOWED_ACTIONS = setOf("launch", "shot", "tap", "swipe", "key", "type")
     }
 
     val actions: List<RemoteAction> = listOf(
@@ -143,6 +155,18 @@ class RemoteActionCatalog @Inject constructor(
             toolName = TOOL_A11Y,
             allowedArgs = emptySet(),
             forcedArgs = mapOf("action" to "shot")
+        ),
+        RemoteAction(
+            name = ACTION_UI,
+            kind = RemoteActionKind.UI,
+            description = "在**影子屏**里驱动这台手机：launch 启动 App、shot 截图（传 ocr=true 则只回文字）、" +
+                "tap / swipe / key 触控、type 输入文字。全程跑在宿主上的无头虚拟屏，不打断本机用户的主屏。" +
+                "只支持这六个操作——影子屏的启停与 task（多步子代理）不开放给远端。需本机已就绪 root 或 Shizuku。",
+            toolName = TOOL_VSCREEN,
+            allowedArgs = setOf(
+                "action", "component", "x", "y", "x2", "y2", "duration", "keycode", "text", "submit", "ocr"
+            ),
+            argAllowedValues = mapOf("action" to UI_ALLOWED_ACTIONS)
         ),
         RemoteAction(
             name = ACTION_FETCH_FILE,
@@ -269,7 +293,9 @@ class RemoteActionCatalog @Inject constructor(
                     putJsonObject(key) {
                         put("type", schemaType(param))
                         put("description", param.description)
-                        param.enum?.let { values -> putJsonArray("enum") { values.forEach { add(JsonPrimitive(it)) } } }
+                        // 动作白名单优先：它比工具自带的 enum 更窄（如 vscreen 只放六个操作）
+                        val values = action.argAllowedValues[key]?.toList() ?: param.enum
+                        values?.let { list -> putJsonArray("enum") { list.forEach { add(JsonPrimitive(it)) } } }
                     }
                 }
                 // 强制注入的参数对调用方可见（省得对端猜），但标为不可改。
@@ -298,6 +324,17 @@ class RemoteActionCatalog @Inject constructor(
         ParameterType.OBJECT -> "object"
     }
 }
+
+/**
+ * 参数取值是否越权：返回第一个「参数名 to 允许值」，全部合法时返回 null。
+ *
+ * 单独抽成顶层函数是为了能直接单测——判定不依赖 Android / Hilt。
+ */
+internal fun RemoteAction.firstViolatedArg(raw: Map<String, JsonElement>): Pair<String, Set<String>>? =
+    argAllowedValues.entries.firstOrNull { (key, allowed) ->
+        val value = (raw[key] as? JsonPrimitive)?.contentOrNull?.trim()
+        value != null && value !in allowed
+    }?.let { it.key to it.value }
 
 /**
  * `info` 动作的载体：把它也做成一个 [AgentTool]，好让远端调用统一经过本机门禁（
