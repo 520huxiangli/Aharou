@@ -56,14 +56,34 @@ class OpenAIAdapter @Inject constructor(
     /** 自定义请求头：占位符替换后写出，完全覆盖同名默认头。 */
     override var customHeaders: Map<String, String> = emptyMap()
 
+    /** Codex 标识用的安装 / 会话 id：进程内保持稳定，避免每次请求都换新的。 */
+    private val codexInstallationId: String by lazy { java.util.UUID.randomUUID().toString() }
+    private val codexSessionId: String by lazy { java.util.UUID.randomUUID().toString() }
+
+    /** 每次请求换一个 turn id；header 与请求体里的 codex 痕迹必须一致，因此提出来存。 */
+    @Volatile
+    private var codexTurnId: String = java.util.UUID.randomUUID().toString()
+
     // OpenAI 系不发输出上限参数（用服务端默认），仅为接口完整性保留。
     override var maxOutputTokens: Int? = null
 
     // null 时请求体不带 temperature（Gson 跳过 null 字段），交由服务端默认。
     override var temperature: Float? = null
 
-    private fun extraHeaders(): Map<String, String> =
-        resolveCustomHeaders(customHeaders, logSessionId, apiKey)
+    private fun extraHeaders(): Map<String, String> {
+        val base = resolveCustomHeaders(customHeaders, logSessionId, apiKey)
+        if (!isCodexClient()) return base
+        return base + codexHeaders()
+    }
+
+    /**
+     * 自定义头里声明了 codex 系 `originator`（`codex_exec` / `codex_cli_rs` 等）就当作
+     * 用户在冒充 Codex 客户端；否则一律不发任何 codex 痕迹。
+     */
+    private fun isCodexClient(): Boolean = customHeaders.entries.any {
+        it.key.equals("originator", ignoreCase = true) &&
+            it.value.lowercase().startsWith("codex")
+    }
 
     /**
      * 目标端点：Responses API 开启时用 `v1/responses`，否则用 chat/completions 路径（[defaultProviderApiPath]）。
@@ -180,6 +200,8 @@ class OpenAIAdapter @Inject constructor(
         reasoningEffort: String?,
         stream: Boolean
     ): Map<String, Any?> {
+        // 每次请求换一个 turn id（header 与请求体里的 codex 痕迹要一致）。
+        codexTurnId = java.util.UUID.randomUUID().toString()
         val isDeepSeek = model.contains("deepseek", ignoreCase = true)
         val request = mutableMapOf<String, Any?>(
             "model" to model,
@@ -212,7 +234,54 @@ class OpenAIAdapter @Inject constructor(
         // OpenAI 官方 Responses 原生支持 prompt_cache_key（同会话路由到同一缓存 shard）；
         // 自动管理缓存的服务（如 DeepSeek）会静默忽略该字段，不会报错。
         logSessionId?.let { request["prompt_cache_key"] = it }
+        codexClientMetadata()?.let { request["client_metadata"] = it }
         return request
+    }
+
+    /**
+     * Codex CLI 请求里带的客户端标识。部分中转站按客户端类型计费，只认带 Codex 痕迹的
+     * 请求（光改 `originator` / `User-Agent` 不够）。
+     *
+     * 形状照 `codex exec` 0.163.0 实际发出的请求抄：请求体 `client_metadata` 七个键，
+     * 其中 `x-codex-turn-metadata` 是一段内嵌的 JSON 字符串，header 里还会重发一份。
+     * 触发条件是自定义请求头里写了 codex 系 originator——没这么配的 provider 不受影响。
+     */
+    private fun codexClientMetadata(): Map<String, String>? {
+        if (!isCodexClient()) return null
+        val windowId = "$codexSessionId:0"
+        return mapOf(
+            "turn_id" to codexTurnId,
+            "x-codex-turn-metadata" to codexTurnMetadataJson(),
+            "thread_id" to codexSessionId,
+            "root_turn_id" to codexTurnId,
+            "session_id" to codexSessionId,
+            "x-codex-installation-id" to codexInstallationId,
+            "x-codex-window-id" to windowId
+        )
+    }
+
+    /** 冒充 Codex 时要一并补上的专属请求头（同样照实际请求抄）。 */
+    private fun codexHeaders(): Map<String, String> = mapOf(
+        "session-id" to codexSessionId,
+        "thread-id" to codexSessionId,
+        "x-client-request-id" to codexSessionId,
+        "x-codex-window-id" to "$codexSessionId:0",
+        "x-codex-turn-metadata" to codexTurnMetadataJson(),
+        "x-codex-beta-features" to "remote_compaction_v2"
+    )
+
+    /** 值都是 UUID / 常量，手拼即可（不必为一段 20 字段的 JSON 引序列化器）。 */
+    private fun codexTurnMetadataJson(): String = buildString {
+        append("{")
+        append("\"installation_id\":\"").append(codexInstallationId).append("\",")
+        append("\"session_id\":\"").append(codexSessionId).append("\",")
+        append("\"thread_id\":\"").append(codexSessionId).append("\",")
+        append("\"turn_id\":\"").append(codexTurnId).append("\",")
+        append("\"window_id\":\"").append(codexSessionId).append(":0\",")
+        append("\"window_number\":0,")
+        append("\"request_kind\":\"turn\",")
+        append("\"turn_trigger\":\"exec\",")
+        append("\"model\":\"").append(model).append("\"}")
     }
 
     /**
