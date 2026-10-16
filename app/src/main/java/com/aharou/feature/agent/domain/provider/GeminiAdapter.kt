@@ -90,7 +90,7 @@ class GeminiAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.generateContent(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request)
+                api.generateContent(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -223,7 +223,7 @@ class GeminiAdapter @Inject constructor(
                 var streamOutputTokens = 0
                 var streamCachedInputTokens = 0
 
-                val body = firstContent.awaitBody(api.streamGenerateContent(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request))
+                val body = firstContent.awaitBody(api.streamGenerateContent(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
 
                 body.use { rb ->
                     firstContent.attach { rb.close() }
@@ -417,7 +417,7 @@ class GeminiAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createInteraction(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request)
+                api.createInteraction(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -483,7 +483,7 @@ class GeminiAdapter @Inject constructor(
 
                     val body = firstContent.awaitBody(api.streamInteraction(
                         url = url,
-                        apiKey = apiKey,
+                        apiKey = apiKey.takeIf { it.isNotBlank() },
                         extraHeaders = extraHeaders(),
                         request = request
                     ))

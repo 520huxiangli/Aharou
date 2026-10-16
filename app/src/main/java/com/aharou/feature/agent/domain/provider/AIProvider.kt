@@ -288,6 +288,13 @@ suspend fun AIProvider.switchKeyOnFailure(error: Throwable, triedKeys: MutableSe
     return outcome
 }
 
+/**
+ * 请求鉴权头值：空 Key（免鉴权供应商）返回 null，Retrofit 会据此**省略**对应的鉴权头。
+ * 用于 [OI] 兼容与其它需要 `Authorization: Bearer` 的供应商；Anthropic/Gemini 传原始 Key 即可。
+ */
+fun bearerTokenOrNull(apiKey: String): String? =
+    apiKey.takeIf { it.isNotBlank() }?.let { "Bearer $it" }
+
 fun joinUrl(baseUrl: String, path: String): String {
     val base = baseUrl.trim().trimEnd('/')
     val cleanPath = path.trimStart('/')

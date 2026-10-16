@@ -100,15 +100,5 @@
     "tags": [
       "注册送10元"
     ]
-  },
-  {
-    "id": "happypet",
-    "name": "Fuck Studio",
-    "type": "OPENAI",
-    "baseUrl": "https://api.happy-pet.fun/",
-    "isRecommended": false,
-    "badge": null,
-    "websiteUrl": "https://api.happy-pet.fun/sign-up?aff=UMX9",
-    "tags": []
   }
 ]

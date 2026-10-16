@@ -11,7 +11,7 @@ interface OpenAIApi {
     @POST
     suspend fun createChatCompletion(
         @Url url: String,
-        @retrofit2.http.Header("Authorization") authorization: String,
+        @retrofit2.http.Header("Authorization") authorization: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: ChatCompletionRequest
     ): ChatCompletionResponse
@@ -21,7 +21,7 @@ interface OpenAIApi {
     @POST
     fun streamChatCompletion(
         @Url url: String,
-        @retrofit2.http.Header("Authorization") authorization: String,
+        @retrofit2.http.Header("Authorization") authorization: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: ChatCompletionRequest
     ): retrofit2.Call<ResponseBody>
@@ -29,7 +29,7 @@ interface OpenAIApi {
     @POST
     suspend fun createResponses(
         @Url url: String,
-        @retrofit2.http.Header("Authorization") authorization: String,
+        @retrofit2.http.Header("Authorization") authorization: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): com.google.gson.JsonObject
@@ -38,7 +38,7 @@ interface OpenAIApi {
     @POST
     fun streamResponses(
         @Url url: String,
-        @retrofit2.http.Header("Authorization") authorization: String,
+        @retrofit2.http.Header("Authorization") authorization: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): retrofit2.Call<ResponseBody>
@@ -47,7 +47,7 @@ interface OpenAIApi {
     @POST
     suspend fun createImage(
         @Url url: String,
-        @retrofit2.http.Header("Authorization") authorization: String,
+        @retrofit2.http.Header("Authorization") authorization: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: ImageGenerationRequest
     ): ImageGenerationResponse

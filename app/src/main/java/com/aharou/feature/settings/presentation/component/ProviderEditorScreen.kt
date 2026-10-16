@@ -159,7 +159,6 @@ import com.aharou.R
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProviderEditorScreen(
@@ -518,6 +517,7 @@ fun ProviderEditorScreen(
                                 label = stringResource(R.string.provider_api_key),
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
+                                placeholder = stringResource(R.string.provider_api_key_placeholder),
                                 visualTransformation = if (apiKeyVisible) {
                                     VisualTransformation.None
                                 } else {

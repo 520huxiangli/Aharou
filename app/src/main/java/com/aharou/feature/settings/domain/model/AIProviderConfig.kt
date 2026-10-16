@@ -71,8 +71,11 @@ data class AIProviderConfig(
             listOf(ProviderKey(apiKey)).filter { it.value.isNotBlank() }
         }
 
-    /** 是否已配置至少一个可用 Key。 */
-    val hasUsableApiKey: Boolean get() = effectiveApiKeys.isNotEmpty()
+    /**
+     * 是否可用于发起请求。除了配了 Key 的常规供应商，**空 Key 的免鉴权供应商**也算可用：
+     * 这类供应商（本地网关、部分公益站等）本就不需要 Key，请求会不带鉴权头发出去。
+     */
+    val hasUsableApiKey: Boolean get() = effectiveApiKeys.isNotEmpty() || baseUrl.isNotBlank()
 
     /** 实际生效的切换状态码：留空回退默认集合。 */
     val effectiveKeySwitchStatusCodes: Set<Int>

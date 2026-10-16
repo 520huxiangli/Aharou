@@ -41,6 +41,7 @@ import compose.icons.feathericons.Lock
 import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.MessageCircle
 import compose.icons.feathericons.Monitor
+import compose.icons.feathericons.Package
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.RefreshCw
@@ -150,6 +151,12 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.Book,
                 title = stringResource(SettingsSection.Skills.titleRes),
                 onClick = { onOpen(SettingsSection.Skills) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Package,
+                title = stringResource(SettingsSection.Plugins.titleRes),
+                onClick = { onOpen(SettingsSection.Plugins) }
             )
             SettingsDivider()
             SettingsRow(

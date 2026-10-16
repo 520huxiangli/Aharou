@@ -12,7 +12,7 @@ interface GeminiApi {
     @POST
     suspend fun generateContent(
         @Url url: String,
-        @Header("x-goog-api-key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): com.google.gson.JsonObject
@@ -21,7 +21,7 @@ interface GeminiApi {
     @POST
     fun streamGenerateContent(
         @Url url: String,
-        @Header("x-goog-api-key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): retrofit2.Call<ResponseBody>
@@ -30,7 +30,7 @@ interface GeminiApi {
     @POST
     suspend fun createInteraction(
         @Url url: String,
-        @Header("x-goog-api-key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): com.google.gson.JsonObject
@@ -43,7 +43,7 @@ interface GeminiApi {
     @POST
     fun streamInteraction(
         @Url url: String,
-        @Header("x-goog-api-key") apiKey: String,
+        @Header("x-goog-api-key") apiKey: String?,
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): retrofit2.Call<ResponseBody>

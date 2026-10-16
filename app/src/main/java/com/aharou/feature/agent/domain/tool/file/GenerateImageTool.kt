@@ -9,6 +9,7 @@ import com.aharou.feature.agent.data.remote.openai.ImageGenerationResponse
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.provider.bearerTokenOrNull
 import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.isKeySwitchFailure
 import com.aharou.feature.agent.domain.provider.joinUrl
@@ -234,7 +235,7 @@ class GenerateImageTool @Inject constructor(
             var response = try {
                 openAIApi.createImage(
                     url = url,
-                    authorization = "Bearer $activeApiKey",
+                    authorization = bearerTokenOrNull(activeApiKey),
                     extraHeaders = extraHeaders,
                     request = request
                 )

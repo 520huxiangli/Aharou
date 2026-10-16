@@ -71,7 +71,7 @@ class ModelApiService @Inject constructor(
         var failedUrl = ""
         var failedHeaders: Map<String, String> = emptyMap()
         runCatching {
-            if (apiKey.isBlank()) error(context.getString(R.string.provider_api_key_required))
+            // 空 Key 也放行（免鉴权供应商）；真正需要 Key 的平台会由上游返回鉴权错误。
 
             val modelsPath = if (type == ProviderType.GEMINI) "v1beta/models" else "v1/models"
             val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, modelsPath)
@@ -185,7 +185,7 @@ class ModelApiService @Inject constructor(
     ): ModelTestResult = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
         try {
-            if (apiKey.isBlank()) error(context.getString(R.string.provider_api_key_required))
+            // 空 Key 也放行（免鉴权供应商）；真正需要 Key 的平台会由上游返回鉴权错误。
 
             val (url, payload) = when (type) {
                 ProviderType.ANTHROPIC -> {
@@ -286,7 +286,10 @@ class ModelApiService @Inject constructor(
     }
 
     private fun Request.Builder.applyAuth(apiKey: String, type: ProviderType): Request.Builder =
-        when (type) {
+        if (apiKey.isBlank()) {
+            // 免鉴权供应商（空 Key）：不带任何鉴权头，请求照常发出。
+            this
+        } else when (type) {
             ProviderType.ANTHROPIC -> this
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01")

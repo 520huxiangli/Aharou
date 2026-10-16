@@ -99,7 +99,7 @@ class AnthropicAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createMessage(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request)
+                api.createMessage(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -204,7 +204,7 @@ class AnthropicAdapter @Inject constructor(
             // content block index -> thinking / redacted_thinking 累积；按 index 分槽，避免一轮多个思考块被合并。
             val thinkingBlocks = LinkedHashMap<Int, ThinkingBlockAcc>()
 
-            val body = firstContent.awaitBody(api.streamMessage(url = url, apiKey = apiKey, extraHeaders = extraHeaders(), request = request))
+            val body = firstContent.awaitBody(api.streamMessage(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
 
             body.use { rb ->
                 firstContent.attach { rb.close() }

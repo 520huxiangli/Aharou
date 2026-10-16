@@ -6,6 +6,7 @@ import com.aharou.feature.agent.data.remote.openai.ImageGenerationResponse
 import com.aharou.feature.agent.data.remote.openai.ImageGenerationResult
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIChatMessage
+import com.aharou.feature.agent.domain.provider.bearerTokenOrNull
 import com.aharou.feature.agent.domain.provider.EnrichedHttpException
 import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.joinUrl
@@ -48,7 +49,7 @@ class ChatImageFallback @Inject constructor(
         val response = try {
             openAIApi.createChatCompletion(
                 url = url,
-                authorization = "Bearer $apiKey",
+                authorization = bearerTokenOrNull(apiKey),
                 extraHeaders = extraHeaders,
                 request = request
             )

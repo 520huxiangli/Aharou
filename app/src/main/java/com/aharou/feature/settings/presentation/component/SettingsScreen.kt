@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
+import com.aharou.feature.plugin.presentation.PluginSettingsSection
 import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
@@ -143,6 +144,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SkillMarket(R.string.skills_market),
     // 详情页与市场页共用一个标题：层级靠返回箭头体现
     SkillMarketDetail(R.string.skills_market),
+    Plugins(R.string.settings_plugins),
     Knowledge(R.string.settings_knowledge_base),
     SubAgents(R.string.settings_subagents), ScheduledTasks(R.string.settings_scheduled_tasks),
     SubAgentDetail(R.string.settings_subagents),
@@ -294,7 +296,6 @@ fun SettingsScreen(
             ?: stringResource(R.string.language_follow_system)
     }
 
-
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     // 市场列表的滚动位置：放在这一层，进技能详情页再返回时不会跳回第一条
     val marketListState = rememberLazyListState()
@@ -415,7 +416,7 @@ fun SettingsScreen(
         SettingsSection.Pet -> SettingsSection.AharouGroup
         SettingsSection.AccountCenter -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels,
-        SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
+        SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Plugins, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
         SettingsSection.General -> SettingsSection.GeneralGroup
         SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
@@ -1080,6 +1081,7 @@ fun SettingsScreen(
                 )
                 SettingsSection.Connectors -> ConnectorsSection(languageTag = languageTag)
                 SettingsSection.RemoteDevice -> RemoteDeviceSection()
+                SettingsSection.Plugins -> PluginSettingsSection()
                 SettingsSection.Skills -> SkillsSection(
                     projectName = currentProjectName,
                     entries = skills,
@@ -1658,9 +1660,7 @@ internal fun SettingsMenu(
                 onClick = { onOpen(SettingsSection.HelpGroup) }
             )
         }
-
     }
-
 }
 
 /** 导入结果弹窗：导入中显示转圈；完成时展示成功数量与逐个跳过原因（整体失败则直接报错误）。 */

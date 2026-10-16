@@ -12,7 +12,7 @@ interface AnthropicApi {
     @POST
     suspend fun createMessage(
         @Url url: String,
-        @Header("x-api-key") apiKey: String,
+        @Header("x-api-key") apiKey: String?,
         @Header("anthropic-version") version: String = "2023-06-01",
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: AnthropicMessageRequest
@@ -23,7 +23,7 @@ interface AnthropicApi {
     @POST
     fun streamMessage(
         @Url url: String,
-        @Header("x-api-key") apiKey: String,
+        @Header("x-api-key") apiKey: String?,
         @Header("anthropic-version") version: String = "2023-06-01",
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: AnthropicMessageRequest
