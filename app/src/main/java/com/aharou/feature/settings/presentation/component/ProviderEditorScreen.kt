@@ -194,7 +194,7 @@ fun ProviderEditorScreen(
     }
     var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: presetPrefill?.baseUrl ?: "") }
     var useFullUrl by remember { mutableStateOf(initialProvider?.useFullUrl ?: false) }
-    var useResponseApi by remember { mutableStateOf(initialProvider?.useResponseApi ?: false) }
+    var useResponseApi by remember { mutableStateOf(initialProvider?.useResponseApi ?: presetPrefill?.useResponseApi ?: false) }
     var anthropicCacheBreakpoints by remember { mutableStateOf(initialProvider?.anthropicCacheBreakpoints ?: true) }
     var openaiChatCacheKey by remember { mutableStateOf(initialProvider?.openaiChatCacheKey ?: false) }
     var dashboardScriptPath by remember { mutableStateOf(initialProvider?.dashboardScriptPath ?: "") }
@@ -205,7 +205,7 @@ fun ProviderEditorScreen(
     }
     val customHeaders = remember {
         mutableStateListOf<Pair<String, String>>().apply {
-            addAll(initialProvider?.customHeaders?.toList() ?: emptyList())
+            addAll((initialProvider?.customHeaders ?: presetPrefill?.customHeaders ?: emptyMap()).toList())
         }
     }
     var proxyEnabled by remember { mutableStateOf(initialProvider?.proxyEnabled ?: false) }

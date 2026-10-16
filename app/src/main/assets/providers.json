@@ -110,5 +110,38 @@
     "badge": null,
     "websiteUrl": "https://api.happy-pet.fun/sign-up?aff=UMX9",
     "tags": []
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "type": "OPENAI",
+    "baseUrl": "https://api.openai.com/",
+    "isRecommended": false,
+    "badge": null,
+    "websiteUrl": null,
+    "tags": [
+      "Responses API"
+    ],
+    "useResponseApi": true,
+    "customHeaders": {
+      "originator": "codex_cli_rs",
+      "User-Agent": "codex_cli_rs/0.44.0 (Android; arm64)"
+    }
+  },
+  {
+    "id": "claude-code",
+    "name": "Claude Code",
+    "type": "ANTHROPIC",
+    "baseUrl": "https://api.anthropic.com/",
+    "isRecommended": false,
+    "badge": null,
+    "websiteUrl": null,
+    "tags": [
+      "客户端标识"
+    ],
+    "customHeaders": {
+      "user-agent": "claude-cli/2.0.0 (external, cli)",
+      "x-app": "cli"
+    }
   }
 ]

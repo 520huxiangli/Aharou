@@ -25,7 +25,14 @@ data class ProviderPreset(
     /** 供应商官网或推广注册链接 */
     val websiteUrl: String? = null,
     /** 特性/福利标签列表（如 ["注册送10元"]） */
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    /**
+     * 选中后是否自动开启 Responses API（端点切到 `v1/responses`）。
+     * 部分中转站按客户端类型计费，只在走这条端点时按正常倍率结算。
+     */
+    val useResponseApi: Boolean = false,
+    /** 选中后预填的自定义请求头（发送时走既有的占位符解析，覆盖同名默认头）。 */
+    val customHeaders: Map<String, String> = emptyMap()
 )
 
 /**
