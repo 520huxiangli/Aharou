@@ -49,9 +49,16 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
@@ -381,8 +388,14 @@ internal fun AgentMessageItem(
                                             backgroundColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.24f),
                                         )
                                     ) {
+                                        // 用户消息不走 Markdown 渲染，这里只把纯文本里的 http(s) 链接
+                                        // 注解成可点链接，换行与其它字符原样保留。点击经 LocalUriHandler 派发。
+                                        val linkColor = MaterialTheme.colorScheme.primary
+                                        val userText = remember(message.content, linkColor) {
+                                            linkifyUserText(message.content, linkColor)
+                                        }
                                         Text(
-                                            text = message.content,
+                                            text = userText,
                                             color = chatUserBubbleTextColor(),
                                             style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
                                             modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)
@@ -902,3 +915,35 @@ private fun CompactionFailureCard(message: AgentUIMessage) {
         }
     }
 }
+
+/** 用户消息里的 http(s) 链接；`\S+` 先贪到空白，尾部标点再剥掉。 */
+private val USER_MESSAGE_URL = Regex("""https?://\S+""")
+
+/** URL 尾部常被当句读的标点/括号，属于正文而非链接。 */
+private const val URL_TRAILING_PUNCT = ".,;:!?)]}>\"'，。；：！？）】》」』、"
+
+/**
+ * 把纯文本里的 URL 注解成可点链接，其余内容原样保留（含换行）。用户消息不走 Markdown
+ * 渲染，这里只做链接识别，不引入 Markdown 语法副作用；点击由 [LinkAnnotation.Url] 默认
+ * 经 LocalUriHandler 派发。
+ */
+private fun linkifyUserText(text: String, linkColor: Color): AnnotatedString =
+    buildAnnotatedString {
+        var index = 0
+        for (match in USER_MESSAGE_URL.findAll(text)) {
+            val url = match.value.trimEnd { it in URL_TRAILING_PUNCT }
+            if (url.isEmpty()) continue
+            val start = match.range.first
+            if (start > index) append(text.substring(index, start))
+            withLink(
+                LinkAnnotation.Url(
+                    url = url,
+                    styles = TextLinkStyles(
+                        style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
+                    )
+                )
+            ) { append(url) }
+            index = start + url.length
+        }
+        if (index < text.length) append(text.substring(index))
+    }

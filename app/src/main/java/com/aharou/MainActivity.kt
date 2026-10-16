@@ -853,12 +853,21 @@ fun AppNavigation(
         ) {
             composable("chat") {
                 // 聊天区内覆盖 LocalUriHandler：Markdown 链接点击默认经此 handler 派发。
-                // 文件路径类链接（无 scheme 或 file://）拦下来跳编辑器，其余（http/https 等）仍走系统浏览器。
+                // http/https 链接与本地 .html 文件都送内置浏览器预览；其它文件路径跳编辑器；
+                // mailto/tel 等非 http 网址仍走系统外部处理。
                 val defaultUriHandler = androidx.compose.ui.platform.LocalUriHandler.current
                 val fileUriHandler = remember(defaultUriHandler, expanded) {
-                    FileAwareUriHandler(defaultUriHandler) { filePath, line ->
-                        openFile(filePath, line, false)
-                    }
+                    FileAwareUriHandler(
+                        delegate = defaultUriHandler,
+                        onOpenUrl = browserOpener,
+                        toFileUrl = { path ->
+                            runCatching {
+                                val f = agentViewModel.fileAccess.copyToLocal(path)
+                                if (f.isFile) android.net.Uri.fromFile(f).toString() else null
+                            }.getOrNull()
+                        },
+                        onOpenFile = { filePath, line -> openFile(filePath, line, false) },
+                    )
                 }
                 val paneOpen = expanded && paneKind != WorkbenchPaneKind.NONE
                 SplitPaneLayout(
@@ -1316,42 +1325,6 @@ private fun toastFileOpFailed(context: android.content.Context, messageRes: Int)
     Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
 }
 
-/**
- * 聊天区 Markdown 链接处理：把「容器文件路径」链接拦下来交给 [onOpenFile] 打开编辑器，
- * 其余（http/https/mailto 等网址）委托给系统默认 [delegate]（浏览器）。
- *
- * 约定：AI 用 `[显示文本](路径)` 输出可点击路径，路径可带 `:行号` 后缀（如 `~/workspace/a.kt:42`）。
- */
-private class FileAwareUriHandler(
-    private val delegate: androidx.compose.ui.platform.UriHandler,
-    private val onOpenFile: (path: String, line: Int) -> Unit
-) : androidx.compose.ui.platform.UriHandler {
-    override fun openUri(uri: String) {
-        val filePath = asChatFilePath(uri)
-        if (filePath == null) {
-            delegate.openUri(uri)
-            return
-        }
-        val (path, line) = splitPathAndLine(filePath)
-        onOpenFile(path, line)
-    }
-}
-
-/** 带 `//` 的层级式 scheme：`http://`、`https://`、`file://`、`content://` 等。 */
-private val HIERARCHICAL_SCHEME = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*)://")
-
-/**
- * 不带 `//` 的网址型 scheme 只能白名单枚举：scheme 语法允许 `.`，因此工作区根目录下的
- * 文件链接 `notes.md:12` 与 `mailto:x` 在语法上无从区分，按「有冒号即网址」判定会让
- * 这类链接被丢给浏览器而点不开。
- */
-private val OPAQUE_URL_SCHEME = Regex(
-    "^(mailto|tel|sms|smsto|geo|data|market|intent|about|javascript):",
-    RegexOption.IGNORE_CASE
-)
-
-private val TRAILING_LINE = Regex("^(.*):(\\d+)$")
-
 /** 文件树里点击即在内置查看器预览的图片格式（与 sendFile 的图片判定一致）。 */
 private val PREVIEWABLE_IMAGE_EXTS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
 
@@ -1359,21 +1332,3 @@ private val PREVIEWABLE_IMAGE_EXTS = setOf("png", "jpg", "jpeg", "gif", "webp", 
 private val INSTALLABLE_APK_EXTS = setOf("apk", "apks", "xapk")
 
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
-
-/** 聊天区链接目标 → 归一化后的文件路径；判定为网址（非 `file` scheme）时返回 null。 */
-internal fun asChatFilePath(uri: String): String? {
-    val hierarchical = HIERARCHICAL_SCHEME.find(uri)?.groupValues?.get(1)?.lowercase()
-    return when {
-        hierarchical == "file" -> android.net.Uri.decode(uri.removePrefix("file://"))
-        hierarchical != null -> null // http/https/content 等交给系统
-        OPAQUE_URL_SCHEME.containsMatchIn(uri) -> null // mailto/tel 等
-        else -> uri // 容器绝对路径或相对工作区路径，含 `notes.md:12` 这种纯文件名
-    }
-}
-
-/** 拆出可选的 `:行号` 后缀；无则行号为 0。 */
-internal fun splitPathAndLine(path: String): Pair<String, Int> {
-    val cleaned = path.substringBefore('#').trim()
-    val m = TRAILING_LINE.find(cleaned) ?: return cleaned to 0
-    return m.groupValues[1] to (m.groupValues[2].toIntOrNull() ?: 0)
-}

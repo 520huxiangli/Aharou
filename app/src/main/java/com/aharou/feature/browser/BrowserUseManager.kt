@@ -122,7 +122,7 @@ class BrowserUseManager(
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 val ua = customUA ?: profile.userAgentString
                 if (ua != null) userAgentString = ua
-            }
+            }.enableLocalHtmlPreview()
             // T-android-webview-v3-port: enable first- + third-party cookies.
             // WebView ships with third-party cookies disabled by default; that
             // breaks hCaptcha / Turnstile / reCAPTCHA flows where the
