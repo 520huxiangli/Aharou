@@ -26,7 +26,7 @@ class AnthropicAdapterTest {
 
         override suspend fun createMessage(
             url: String,
-            apiKey: String,
+            apiKey: String?,
             version: String,
             extraHeaders: Map<String, String>,
             request: AnthropicMessageRequest
@@ -37,7 +37,7 @@ class AnthropicAdapterTest {
 
         override fun streamMessage(
             url: String,
-            apiKey: String,
+            apiKey: String?,
             version: String,
             extraHeaders: Map<String, String>,
             request: AnthropicMessageRequest
