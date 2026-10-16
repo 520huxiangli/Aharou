@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +48,8 @@ import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.settings.presentation.DistillOutcome
+import com.aharou.feature.settings.presentation.MemoryActionError
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
@@ -56,6 +59,7 @@ import compose.icons.feathericons.Zap
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * 设置页「记忆」分区。
@@ -77,11 +81,14 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     val compactResult by viewModel.compactResult.collectAsStateWithLifecycle()
     val distilling by viewModel.distilling.collectAsStateWithLifecycle()
     val distillResult by viewModel.distillResult.collectAsStateWithLifecycle()
+    val actionError by viewModel.memoryActionError.collectAsStateWithLifecycle()
 
     var enabled by remember { mutableStateOf(store.isMemoryEnabled()) }
     var records by remember { mutableStateOf(trace.recent(TRACE_DISPLAY_LIMIT)) }
     var editing by remember { mutableStateOf<Memory?>(null) }
     var deleteTarget by remember { mutableStateOf<Memory?>(null) }
+    var writing by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     // 项目作用域是否有工作区可用；没有时入口不给点，免得点进去是一片空白。
     val projectAvailable = viewModel.memoryProjectRoot() != null
@@ -98,7 +105,7 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
         Toast.makeText(
             context,
             context.getString(
-                if (result == SettingsViewModel.DistillOutcome.WRITTEN) R.string.memory_distill_written
+                if (result == DistillOutcome.WRITTEN) R.string.memory_distill_written
                 else R.string.memory_distill_nothing
             ),
             Toast.LENGTH_LONG,
@@ -117,19 +124,64 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
         viewModel.consumeCompactResult()
     }
 
+    // 写操作（保存 / 删除 / 恢复）的失败提示由 ViewModel 统一给类型，界面只负责取文案并消费掉。
+    LaunchedEffect(actionError) {
+        val error = actionError ?: return@LaunchedEffect
+        val messageRes = when (error) {
+            MemoryActionError.NO_WORKSPACE -> R.string.memory_error_no_workspace
+            MemoryActionError.SAVE_FAILED -> R.string.memory_error_save_failed
+            MemoryActionError.DELETE_FAILED -> R.string.memory_error_delete_failed
+            MemoryActionError.RESTORE_FAILED -> R.string.memory_error_restore_failed
+        }
+        Toast.makeText(context, messageRes, Toast.LENGTH_LONG).show()
+        viewModel.consumeMemoryActionError()
+    }
+
+    deleteTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!writing) deleteTarget = null },
+            title = { Text(stringResource(R.string.memory_delete_title, target.name)) },
+            text = { Text(stringResource(R.string.memory_delete_body)) },
+            confirmButton = {
+                TextButton(enabled = !writing, onClick = {
+                    writing = true
+                    coroutineScope.launch {
+                        try {
+                            if (viewModel.deleteMemoryEntry(target.name)) {
+                                deleteTarget = null
+                                editing = null
+                            }
+                        } finally { writing = false }
+                    }
+                }) { Text(stringResource(R.string.memory_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(enabled = !writing, onClick = { deleteTarget = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            },
+        )
+    }
+
     val editingMemory = editing
     if (editingMemory != null) {
         MemoryEditorPane(
             memory = editingMemory,
-            onBack = { editing = null },
-            onSave = { description, content ->
-                // 用户在编辑器里保存，即视为确认了这条记忆，顺手清掉「待确认」标记。
-                viewModel.saveMemoryEntry(
-                    editingMemory.name, description, content, editingMemory.type, pending = false
-                )
-                editing = null
+            writing = writing,
+            onBack = { if (!writing) editing = null },
+            onSave = { description, content, confirm ->
+                writing = true
+                coroutineScope.launch {
+                    try {
+                        val saved = viewModel.saveMemoryEntry(
+                            editingMemory.name, description, content, editingMemory.type,
+                            pending = if (confirm) false else editingMemory.pending
+                        )
+                        if (saved) editing = null
+                    } finally { writing = false }
+                }
             },
-            onDelete = { deleteTarget = editingMemory },
+            onDelete = { if (!writing) deleteTarget = editingMemory },
         )
         return
     }
@@ -254,7 +306,14 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        TextButton(onClick = { viewModel.restoreMemoryArchive(info.fileName) }) {
+                        TextButton(enabled = !writing, onClick = {
+                            writing = true
+                            coroutineScope.launch {
+                                try {
+                                    viewModel.restoreMemoryArchive(info.fileName)
+                                } finally { writing = false }
+                            }
+                        }) {
                             Text(stringResource(R.string.memory_archive_restore))
                         }
                     }
@@ -322,26 +381,6 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
         }
     }
 
-    deleteTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text(stringResource(R.string.memory_delete_title, target.name)) },
-            text = { Text(stringResource(R.string.memory_delete_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.deleteMemoryEntry(target.name)
-                    deleteTarget = null
-                }) {
-                    Text(stringResource(R.string.memory_delete), color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            },
-        )
-    }
 }
 
 /** 作用域切换：全局 / 项目。项目无工作区时置灰但仍展示，让用户知道有这么一档。 */
@@ -456,8 +495,9 @@ private fun MemoryEntryRow(memory: Memory, onClick: () -> Unit) {
 @Composable
 private fun MemoryEditorPane(
     memory: Memory,
+    writing: Boolean,
     onBack: () -> Unit,
-    onSave: (description: String, content: String) -> Unit,
+    onSave: (description: String, content: String, confirm: Boolean) -> Unit,
     onDelete: () -> Unit,
 ) {
     var description by remember(memory.name) { mutableStateOf(memory.description) }
@@ -488,24 +528,31 @@ private fun MemoryEditorPane(
             Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)) {
                 AppTextField(
                     value = description,
-                    onValueChange = { description = it },
+                    onValueChange = { if (!writing) description = it },
                     label = stringResource(R.string.memory_edit_description),
                     singleLine = true,
                 )
                 Spacer(modifier = Modifier.height(Spacing.md))
                 AppTextField(
                     value = content,
-                    onValueChange = { content = it },
+                    onValueChange = { if (!writing) content = it },
                     label = stringResource(R.string.memory_edit_content),
                     singleLine = false,
                     maxLines = 30,
                 )
                 Spacer(modifier = Modifier.height(Spacing.md))
                 Button(
-                    onClick = { onSave(description, content) },
+                    onClick = { onSave(description, content, false) },
+                    enabled = !writing,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(stringResource(R.string.memory_edit_save))
+                }
+                if (memory.pending) {
+                    Text(stringResource(R.string.memory_pending_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(enabled = !writing, onClick = { onSave(description, content, true) }) {
+                        Text(stringResource(R.string.memory_confirm_entry))
+                    }
                 }
             }
         }

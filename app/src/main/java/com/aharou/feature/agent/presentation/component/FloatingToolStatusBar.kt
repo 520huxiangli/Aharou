@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -105,7 +106,8 @@ internal fun FloatingToolStatusBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(barHeight)
+                // 写死 38dp 会把「工具名 + 状态」两行的下半截切掉（系统大字体下必现），只设下限让它随内容长。
+                .heightIn(min = barHeight)
                 .align(Alignment.BottomCenter)
                 .shadow(8.dp, RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))

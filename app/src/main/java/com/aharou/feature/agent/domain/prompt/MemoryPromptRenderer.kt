@@ -24,6 +24,15 @@ internal object MemoryPromptRenderer {
     private const val INLINE_HEADER = "以下条目的正文已直接给出（长期约定与红线，不必再 memory read）："
     private const val TRUNCATED_SUFFIX = "\n…（正文过长已截断，完整内容用 memory(action=read, name=%s) 读取）"
 
+    /**
+     * 待确认（冲突未裁决）条目的索引标注。
+     *
+     * 这类条目是同一件事的两种说法并存、等用户拍板的中间态：既要出现在清单里（静默隐藏
+     * 等于把分歧抹掉，用户再也看不到），又必须让模型看出它是有争议的内容——否则渲染成
+     * 普通摘要行后，「未经确认的说法」会被当成既定事实直接照着做。
+     */
+    private const val PENDING_LABEL = "（待确认：与另一条说法冲突、尚未裁决，不得当作既定事实）"
+
     fun render(memories: List<Memory>): String {
         val inlined = mutableListOf<Memory>()
         val inlineText = buildString {
@@ -68,9 +77,12 @@ internal object MemoryPromptRenderer {
      * 是否内联正文。只认「长期约定」类（`type: identity`）且不是核心档案——
      * 核心档案（CORE / GLOBAL / OPS 等）的正文已由 AharouMemoryStore 那条通路注入，
      * 这里再给一次就是重复占用上下文。
+     *
+     * 待确认（pending）的条目一律不内联，identity 类也不例外：内联段是「已确认的既有事实」，
+     * 把未裁决的冲突说法放进去，等于直接替用户拍板。它们退到索引里并带 [PENDING_LABEL]。
      */
     private fun shouldInline(memory: Memory): Boolean =
-        memory.type == MemoryType.IDENTITY && !isCoreArchiveName(memory.name)
+        memory.type == MemoryType.IDENTITY && !isCoreArchiveName(memory.name) && !memory.pending
 
     private fun inlineBlock(memory: Memory): String {
         val body = memory.content.trim()
@@ -110,10 +122,13 @@ internal object MemoryPromptRenderer {
             if (isNotEmpty()) append("\n\n")
             append(if (scope == MemoryScope.GLOBAL) GLOBAL_HEADER else PROJECT_HEADER)
             scoped.forEach {
-                append("\n- ${it.name}: ${it.description.ifBlank { "无" }}${recencyLabel(it)}")
+                append("\n- ${it.name}: ${it.description.ifBlank { "无" }}${pendingLabel(it)}${recencyLabel(it)}")
             }
         }
     }
+
+    /** 待确认条目的索引标注；正文不在这里给，要看内容得用 memory(action=read, ...)。 */
+    private fun pendingLabel(memory: Memory): String = if (memory.pending) PENDING_LABEL else ""
 
     /** 最近改动过的条目在索引里带时间标注：让「最近被纠正过什么」一眼可见，不必翻文件时间。 */
     private fun recencyLabel(memory: Memory): String {

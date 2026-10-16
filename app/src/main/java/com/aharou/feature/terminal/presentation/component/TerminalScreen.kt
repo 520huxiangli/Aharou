@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -516,6 +517,9 @@ private fun TerminalTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(TerminalBg)
+            // 顶栏是自绘的（不是 M3 TopAppBar），而 Scaffold 的 contentWindowInsets 已置零，
+            // 不自己避让状态栏就会被系统栏盖住上半截。
+            .statusBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

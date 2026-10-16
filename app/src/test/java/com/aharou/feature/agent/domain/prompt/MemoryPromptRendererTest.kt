@@ -89,6 +89,32 @@ class MemoryPromptRendererTest {
     }
 
     @Test
+    fun pendingEntryIsLabeledAndItsBodyIsNotInlined() {
+        // 待确认条目是「同一件事的两种说法并存、等用户拍板」的中间态：名字要留在清单里
+        // （静默隐藏等于把分歧抹掉），但不能内联正文——那是已确认事实才有的待遇。
+        val pendingNote = memory("pending-note", type = MemoryType.IDENTITY, pending = true)
+        val output = MemoryPromptRenderer.render(listOf(pendingNote, memory("normal")))
+
+        assertTrue(output.contains("- pending-note: summary"))
+        assertTrue(output.contains("待确认"))
+        assertTrue(output.contains("不得当作既定事实"))
+        assertFalse(output.contains("private body"))
+        assertTrue(output.contains("- normal: summary"))
+    }
+
+    @Test
+    fun pendingEntryDoesNotSuppressOtherInlineBodies() {
+        val pendingNote = memory("pending-note", type = MemoryType.IDENTITY, pending = true)
+        val confirmed = memory("confirmed-note", type = MemoryType.IDENTITY, description = "confirmed index")
+
+        val output = MemoryPromptRenderer.render(listOf(pendingNote, confirmed))
+
+        assertTrue(output.contains("confirmed index"))
+        assertTrue(output.contains("private body"))
+        assertTrue(output.contains("- pending-note: summary（待确认"))
+    }
+
+    @Test
     fun lowercaseNamesAreNotMistakenForCoreArchives() {
         val regular = (0 until 20).map { memory("regular-$it", description = "x".repeat(500)) }
         val output = MemoryPromptRenderer.render(regular + memory("lowercase_name", description = "x".repeat(500)))
@@ -143,6 +169,7 @@ class MemoryPromptRendererTest {
         name: String,
         scope: MemoryScope = MemoryScope.GLOBAL,
         description: String = "summary",
-        type: MemoryType = MemoryType.FACT
-    ) = Memory(name, description, scope, content = "private body", type = type)
+        type: MemoryType = MemoryType.FACT,
+        pending: Boolean = false
+    ) = Memory(name, description, scope, content = "private body", type = type, pending = pending)
 }

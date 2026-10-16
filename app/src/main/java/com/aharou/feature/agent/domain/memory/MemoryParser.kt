@@ -40,7 +40,7 @@ object MemoryParser {
         // 这样不需要对已有记忆做任何迁移。
         val type = MemoryType.from(frontmatter["type"]?.toString()) ?: inferType(name)
         val declared = parseKeywords(frontmatter["keywords"])
-        val keywords = declared.ifEmpty { extractKeywords(name, description, content) }
+        val keywords = if (frontmatter.containsKey("keywords")) declared else extractKeywords(name, description, content)
 
         return Memory(
             name = name,
@@ -60,7 +60,7 @@ object MemoryParser {
         description: String,
         content: String,
         type: MemoryType? = null,
-        keywords: List<String> = emptyList(),
+        keywords: List<String>? = null,
         expiresAt: Long? = null,
         pending: Boolean = false
     ): String {
@@ -68,8 +68,8 @@ object MemoryParser {
         val safeDesc = yamlScalar(description)
         val head = StringBuilder("---\nname: $safeName\ndescription: $safeDesc\n")
         type?.let { head.append("type: ${it.key}\n") }
-        if (keywords.isNotEmpty()) head.append("keywords: ${yamlScalar(keywords.joinToString(", "))}\n")
-        expiresAt?.takeIf { it > 0L }?.let { head.append("expires_at: ${formatExpiresAt(it)}\n") }
+        keywords?.let { head.append("keywords: [${it.joinToString(", ") { word -> yamlScalar(word) }}]\n") }
+        expiresAt?.takeIf { it > 0L }?.let { head.append("expires_at: $it\n") }
         if (pending) head.append("pending: true\n")
         head.append("---\n")
         return head.toString() + content
@@ -80,17 +80,16 @@ object MemoryParser {
      * 格式不合法时返回 null（当不过期），不因一个字段把整条记忆解析失败。
      */
     private fun parseExpiresAt(raw: Any?): Long? {
-        val text = raw?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val text = when (raw) {
+            is java.util.Date -> raw.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+            else -> raw?.toString()?.trim()
+        }?.takeIf { it.isNotEmpty() } ?: return null
         text.toLongOrNull()?.let { return it.takeIf { v -> v > 0L } }
         return runCatching {
             LocalDate.parse(text).atTime(23, 59, 59)
                 .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         }.getOrNull()
     }
-
-    /** 写出人可读的日期，便于直接看文件判断什么时候过期。 */
-    private fun formatExpiresAt(epochMillis: Long): String =
-        java.time.Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate().toString()
 
     /**
      * 老条目没有 `type` 字段时的启发式判定。
@@ -113,10 +112,7 @@ object MemoryParser {
             is String -> raw.split(',', '，', ' ')
             else -> return emptyList()
         }
-        return parts.map { it.trim() }
-            .filter { it.length in 2..24 }
-            .distinct()
-            .take(MAX_KEYWORDS)
+        return parts.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
     }
 
     /**
@@ -137,15 +133,7 @@ object MemoryParser {
     }
 
     /** 把任意字符串转成安全的 YAML 标量，避免冒号/引号/换行破坏 frontmatter。 */
-    private fun yamlScalar(value: String): String {
-        val needsQuote = value.contains(':') || value.contains('#') ||
-            value.contains('"') || value.contains('\'') ||
-            value.startsWith('-') || value.startsWith(' ') || value.endsWith(' ') ||
-            value.contains('\n') || value.isBlank()
-        return if (needsQuote) {
-            "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-        } else {
-            value
-        }
-    }
+    private fun yamlScalar(value: String): String = "\"" + value
+        .replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\""
 }

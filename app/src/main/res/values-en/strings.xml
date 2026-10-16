@@ -2424,6 +2424,12 @@
     <string name="memory_edit_description">Summary</string>
     <string name="memory_edit_content">Content</string>
     <string name="memory_edit_save">Save</string>
+    <string name="memory_error_no_workspace">No workspace is available for this project. Open a workspace and try again.</string>
+    <string name="memory_error_save_failed">Save failed. Check storage permissions and free space, then retry. Unsaved edits remain on this page.</string>
+    <string name="memory_error_delete_failed">Delete failed. Check storage permissions and free space, then retry.</string>
+    <string name="memory_error_restore_failed">Restore failed. Check storage permissions and free space, then retry.</string>
+    <string name="memory_pending_hint">This memory disagrees with another one and has not been resolved yet. A normal save only edits its content and does not confirm it; review both claims, then tap Confirm this entry and save. Confirming affects only this entry and leaves other conflicting entries untouched.</string>
+    <string name="memory_confirm_entry">Confirm this entry and save</string>
     <string name="memory_compact_title">Compact memory</string>
     <string name="memory_compact_subtitle">Merge duplicate entries on the same topic; originals are archived and can be restored</string>
     <string name="memory_compact_merged">Compacted: merged %1$d, archived %2$d</string>
@@ -2446,6 +2452,11 @@
     <string name="memory_sync_token_empty">Not set yet; push fails without it</string>
     <string name="memory_sync_token_set">Saved</string>
     <string name="memory_sync_token_hint">Access token</string>
+    <string name="memory_sync_result_header">Last sync result</string>
+    <string name="memory_sync_result_collected">Entries collected (added or updated)</string>
+    <string name="memory_sync_result_conflicts">Conflicts (kept this device\'s version, remote copy archived)</string>
+    <string name="memory_sync_pending_deleted">Possibly deleted on another device</string>
+    <string name="memory_sync_pending_deleted_hint">These entries are missing on both this device and the repository, so they may have been deleted elsewhere. This is a notice only; nothing is removed automatically. Delete them yourself if they are no longer needed.</string>
 
     <!-- Voice input -->
     <string name="voice_model_extracting">Extracting voice model…</string>

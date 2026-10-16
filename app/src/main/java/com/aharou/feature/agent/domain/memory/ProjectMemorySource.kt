@@ -1,7 +1,5 @@
 package com.aharou.feature.agent.domain.memory
 
-import com.aharou.core.util.FileLogger
-import com.aharou.core.util.writeTextSafely
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
@@ -49,34 +47,24 @@ class ProjectMemorySource(
             ?.content
     }
 
-    override fun saveMemory(name: String, description: String, content: String, type: MemoryType?, expiresAt: Long?, pending: Boolean?): Boolean {
+    override fun saveMemory(
+        name: String, description: String, content: String, type: MemoryType?,
+        expiresAt: Long?, pending: Boolean?, keywords: List<String>?
+    ): Boolean {
         if (projectRoot.isBlank()) return false
-        return try {
-            if (!memoryRoot.exists()) memoryRoot.mkdirs()
-            val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-            val payload = MemoryParser.format(
-                MemorySource.sanitizeName(name), description, content, type,
-                expiresAt = expiresAt, pending = pending == true
-            )
-            // 内容一字未变就不重写：mtime 既参与注入排序，又是「长期未改动就静默遗忘」的判据，
-            // 无谓刷新会让陈旧条目永远显得新鲜，也会白白抖动 KV Cache。
-            if (file.isFile && file.readText() == payload) return true
-            // 覆盖前先留一份旧版：旧值往往是判断事实演变方向的唯一证据。
-            MemorySource.archiveExistingFile(memoryRoot, name)
-            file.writeTextSafely(payload, "ProjectMemorySource")
-            true
-        } catch (e: Exception) {
-            FileLogger.e("ProjectMemorySource", "Failed to save memory: $name", e)
-            false
-        }
+        return MemoryFileStorage.save(
+            memoryRoot, MemoryScope.PROJECT, name, description, content, type, expiresAt, pending, keywords
+        )
     }
 
-    override fun archiveContent(name: String, description: String, content: String): Boolean =
-        MemorySource.writeArchiveFile(memoryRoot, name, description, content, "ProjectMemorySource") != null
+    override fun archiveContent(
+        name: String, description: String, content: String, type: MemoryType?,
+        keywords: List<String>, expiresAt: Long?, pending: Boolean
+    ): Boolean = root?.let {
+        MemorySource.writeArchiveFile(it, name, description, content, "ProjectMemorySource", type, keywords, expiresAt, pending)
+    } != null
 
-    override fun deleteMemory(name: String): Boolean {
-        if (projectRoot.isBlank()) return false
-        val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-        return if (file.exists()) file.delete() else false
+    override fun deleteMemory(name: String): Boolean = synchronized(MemoryFileStorage.lock) {
+        root?.let { MemorySource.resolveMemoryFile(it, name).delete() } ?: false
     }
 }

@@ -66,14 +66,17 @@ class MemoryCompactor @Inject constructor(
         val budget = maxOf(1, (candidates.size * MAX_SHRINK_RATIO).toInt())
         var report = MemoryCompactReport(clusters = clusters.size)
         var merged = 0
-        for (group in clusters.sortedByDescending { it.size }) {
-            if (merged >= MAX_CLUSTERS || merged >= budget) break
+        var reservedShrink = 0
+        for (cluster in clusters.sortedByDescending { it.size }) {
+            if (merged >= MAX_CLUSTERS || reservedShrink >= budget) break
+            val group = cluster.take(budget - reservedShrink + 1)
             val proposal = propose(systemPrompt, group)
             if (proposal == null || proposal.action != CompactAction.MERGE || !passesGuard(group, proposal)) {
                 report = report.copy(skipped = report.skipped + 1)
                 continue
             }
-            if (merge(group, proposal, scope, projectRoot)) {
+            reservedShrink += group.size - 1
+            if (merge(group, proposal)) {
                 merged++
                 report = report.copy(merged = merged, archived = report.archived + group.size)
             } else {
@@ -112,7 +115,7 @@ class MemoryCompactor @Inject constructor(
     private fun compactionCandidates(projectRoot: String?, scope: MemoryScope): List<Memory> =
         memoryRepository.listMemories(projectRoot)
             .filter { it.scope == scope }
-            .filter { it.type != MemoryType.EVENT }
+            .filter { it.type != MemoryType.EVENT && !it.pending && it.content.length <= MAX_ITEM_CHARS }
             .filterNot { isCoreArchiveName(it.name) }
 
     /**
@@ -123,37 +126,39 @@ class MemoryCompactor @Inject constructor(
      */
     private fun merge(
         group: List<Memory>,
-        proposal: CompactProposal,
-        scope: MemoryScope,
-        projectRoot: String?
+        proposal: CompactProposal
     ): Boolean {
-        group.forEach { memory ->
-            memoryRepository.archiveContent(memory.name, memory.description, memory.content, scope, projectRoot)
-        }
         val name = MemorySource.sanitizeName(proposal.name)
         if (name.isEmpty()) return false
-        val saved = memoryRepository.saveMemory(
-            name = name,
-            description = proposal.description,
-            content = proposal.content,
-            scope = scope,
-            projectRoot = projectRoot,
-            type = proposal.type
-        )
-        if (!saved) return false
-        // 合并结果自己占了组员的名字时不能删它，其余组员按名字删掉。
-        group.filterNot { it.name.equals(name, ignoreCase = true) }.forEach { memory ->
-            memoryRepository.deleteMemory(memory.name, scope, projectRoot)
-        }
+        if (!MemoryFileStorage.merge(group, name, proposal.description, proposal.content)) return false
+        if (!applyProposalType(group, name, proposal.type)) return false
         memoryTrace.record(
             source = MemoryTraceLog.SOURCE_TOOL,
             action = MemoryTraceLog.ACTION_MERGE,
             name = name,
-            scope = scope.name.lowercase(),
+            scope = group.first().scope.name.lowercase(),
             detail = "整理合并 ${group.size} 条：${group.joinToString("、") { it.name }}"
         )
         FileLogger.i(TAG, "记忆整理：${group.joinToString("、") { it.name }} → $name")
         return true
+    }
+
+    /**
+     * 把模型对合并稿的分类补写回落盘文件。
+     *
+     * [MemoryFileStorage.merge] 只会沿用组内首条的分类（它拿不到模型对合并结果的判断），
+     * 而合并稿常常是「把几条事实升级成一条约定」——分类若还停在旧值，合并结果就不会进注入清单。
+     */
+    private fun applyProposalType(group: List<Memory>, name: String, type: MemoryType?): Boolean {
+        val effective = type ?: group.first().type
+        if (effective == group.first().type) return true
+        val root = group.first().file?.parentFile ?: return false
+        val target = MemorySource.resolveMemoryFile(root, name)
+        val parsed = MemoryParser.parse(target, group.first().scope) ?: return false
+        val payload = MemoryParser.format(
+            parsed.name, parsed.description, parsed.content, effective, parsed.keywords, parsed.expiresAt, parsed.pending
+        )
+        return MemoryFileStorage.write(target, payload)
     }
 
     /**
@@ -172,6 +177,7 @@ class MemoryCompactor @Inject constructor(
         }
         for (i in memories.indices) {
             for (j in i + 1 until memories.size) {
+                if (memories[i].type != memories[j].type || memories[i].expiresAt != memories[j].expiresAt) continue
                 if (overlap(terms[i], terms[j]) < SIMILAR_THRESHOLD) continue
                 val a = root(i)
                 val b = root(j)
@@ -200,7 +206,7 @@ class MemoryCompactor @Inject constructor(
                 append("### 条目 ").append(index + 1).append('\n')
                 append("name: ").appendLine(memory.name)
                 append("description: ").appendLine(memory.description)
-                append(memory.content.take(MAX_ITEM_CHARS)).append("\n\n")
+                append(memory.content).append("\n\n")
             }
         }
         val raw = agentWorkflow.completeOnce(systemPrompt, input) ?: return@runCatching null
@@ -271,7 +277,7 @@ class MemoryCompactor @Inject constructor(
         /** 合并稿允许出现的「原文没有的词」上限：容忍措辞改写，拦住成段编造。 */
         const val MAX_NOVEL_TERMS = 8
 
-        /** 单条喂给模型时正文的截断长度。 */
+        /** 超出此长度的条目不参与自动合并，防止未看全文就删除原条目。 */
         const val MAX_ITEM_CHARS = 1_200
 
         /** 自动整理触发阈值：候选少于这么多就不跑（够多才值得花一次模型调用）。 */

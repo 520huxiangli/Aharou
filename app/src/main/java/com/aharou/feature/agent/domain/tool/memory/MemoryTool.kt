@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.memory
 import com.aharou.core.memory.MemoryTraceLog
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
+import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
@@ -23,6 +24,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import javax.inject.Inject
 
 class MemoryTool @Inject constructor(
@@ -105,7 +107,7 @@ class MemoryTool @Inject constructor(
         "scope" to ToolParameter(
             name = "scope",
             type = ParameterType.STRING,
-            description = "作用域：project=当前项目专属；global=跨项目通用。默认为 project。",
+            description = "作用域：project=当前项目专属；global=跨项目通用。read/list/search 不指定时查看项目优先的合并视图；写操作默认 project。显式指定时只访问该作用域。", 
             enum = listOf("project", "global"),
             required = false
         ),
@@ -116,6 +118,18 @@ class MemoryTool @Inject constructor(
                 "preference=用户偏好；workflow=做事方式 / 流程约定；fact=一般事实（默认）；" +
                 "event=一次性事件（只留档，不进注入清单）。只在值得跨会话反复引用时才用 identity。",
             enum = listOf("identity", "preference", "workflow", "fact", "event"),
+            required = false
+        ),
+        "query" to ToolParameter(
+            name = "query",
+            type = ParameterType.STRING,
+            description = "search 的检索关键词；兼容用 name 传入关键词。",
+            required = false
+        ),
+        "limit" to ToolParameter(
+            name = "limit",
+            type = ParameterType.INTEGER,
+            description = "search 最多返回的条数，默认 8，范围 1–50。",
             required = false
         ),
         "ttl_days" to ToolParameter(
@@ -136,7 +150,11 @@ class MemoryTool @Inject constructor(
         
         val memoryName = args["name"]?.jsonPrimitive?.contentOrNull?.trim()
         val scopeStr = args["scope"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-        val scope = if (scopeStr == "global") MemoryScope.GLOBAL else MemoryScope.PROJECT
+        if (scopeStr != null && scopeStr !in setOf("global", "project")) {
+            return ToolResult.Error("scope 仅支持 global 或 project", "INVALID_SCOPE")
+        }
+        val requestedScope = scopeStr?.let { if (it == "global") MemoryScope.GLOBAL else MemoryScope.PROJECT }
+        val scope = requestedScope ?: MemoryScope.PROJECT
 
         // 隐身会话不写任何记忆（read/list/search 等只读操作照常放行）。
         val ghostSessionId = context.sessionId
@@ -148,9 +166,9 @@ class MemoryTool @Inject constructor(
 
         return try {
             when (action) {
-                "list" -> handleList(context.projectRoot)
-                "search" -> handleSearch(args, context.projectRoot)
-                "read" -> handleRead(memoryName, scope, context.projectRoot)
+                "list" -> handleList(context.projectRoot, requestedScope)
+                "search" -> handleSearch(args, context.projectRoot, requestedScope)
+                "read" -> handleRead(memoryName, requestedScope, context.projectRoot)
                 "save" -> handleSave(args, memoryName, scope, context.projectRoot, context.sessionId)
                 "edit" -> handleEdit(args, memoryName, scope, context.projectRoot, context.sessionId)
                 "delete" -> handleDelete(memoryName, scope, context.projectRoot, context.sessionId)
@@ -173,14 +191,14 @@ class MemoryTool @Inject constructor(
         else -> false
     }
 
-    private fun handleList(projectRoot: String?): ToolResult {
-        val memories = memoryRepository.listMemories(projectRoot)
+    private fun handleList(projectRoot: String?, scope: MemoryScope?): ToolResult {
+        val memories = memoryRepository.listMemories(projectRoot, scope)
         if (memories.isEmpty()) return ToolResult.Success(JsonPrimitive("当前没有任何记忆。"))
 
         // 列出全部（含事件类）：清单里见不到的条目得能在这里找到名字，否则无从 read 取回。
         // 标注 type，便于区分「跨会话仍成立的知识」与「某次事件的留档」。
         val list = memories.joinToString("\n") {
-            "- ${it.name} (${it.scope.name.lowercase()}/${it.type.key}): ${it.description}"
+            "- ${it.name} (${it.scope.name.lowercase()}/${it.type.key}${if (it.pending) "/待确认" else ""}): ${it.description}"
         }
         return ToolResult.Success(JsonPrimitive("当前记忆列表：\n$list"))
     }
@@ -188,45 +206,63 @@ class MemoryTool @Inject constructor(
     /**
      * 按关键词检索记忆。
      *
-     * 打分优先级：keywords（专为此抽取，噪音最低）> 名称/描述 > 正文。
+     * 打分口径只有一套，就在 MemoryRepository 里（keywords > 名称 > 描述，带 IDF 与 CJK bigram）；
+     * 这里复用它的切词（[MemoryRepository.termsOf]）对候选做命中筛选，按「命中的检索词个数」粗排，
+     * 不再自带一套 substring 权重——两套打分必然随时间漂移，同一个关键词在 search 与提示词注入
+     * 清单里会给出不同答案。
+     *
+     * 候选取自 [MemoryRepository.listMemories]，scope 非空时就是严格单作用域视图（同名不折叠），
+     * 作用域筛选因此真正生效。
+     *
      * 只返回摘要行，正文靠 read 取——检索结果不该把上下文塞满。
      */
-    private fun handleSearch(args: Map<String, JsonElement>, projectRoot: String?): ToolResult {
+    private fun handleSearch(args: Map<String, JsonElement>, projectRoot: String?, scope: MemoryScope?): ToolResult {
         val query = (args["query"] ?: args["name"])?.jsonPrimitive?.contentOrNull?.trim()
         if (query.isNullOrEmpty()) return ToolResult.Error("search 操作需要 query 参数", "MISSING_QUERY")
 
-        val terms = query.lowercase().split(' ', ',', '，', '、', '+').filter { it.isNotBlank() }
-        val scored = memoryRepository.listMemories(projectRoot).mapNotNull { m ->
-            val kw = m.keywords.joinToString(" ").lowercase()
-            val head = "${m.name} ${m.description}".lowercase()
-            val body = m.content.lowercase()
-            var score = 0
-            terms.forEach { t ->
-                if (t in kw) score += 3
-                if (t in head) score += 2
-                if (t in body) score += 1
-            }
-            if (score > 0) m to score else null
-        }.sortedByDescending { it.second }.take(8)
-
-        if (scored.isEmpty()) {
+        val limit = args["limit"]?.let { (it as? JsonPrimitive)?.intOrNull } ?: 8
+        if (limit !in 1..50 || (args.containsKey("limit") && (args["limit"] as? JsonPrimitive)?.intOrNull == null)) {
+            return ToolResult.Error("limit 必须为 1–50 的整数", "INVALID_LIMIT")
+        }
+        // 与仓储层同一套切词：中文拆成字符二元组，停用词与单字噪音在那边已统一丢弃。
+        val terms = memoryRepository.termsOf(query).distinct()
+        if (terms.isEmpty()) {
             return ToolResult.Success(JsonPrimitive("没有匹配「$query」的记忆。可先用 action=list 看全部名称。"))
         }
-        val text = scored.joinToString("\n") { (m, _) ->
+        val matched = memoryRepository.listMemories(projectRoot, scope).mapNotNull { m ->
+            val indexed = buildSet {
+                m.keywords.forEach { addAll(memoryRepository.termsOf(it)) }
+                addAll(memoryRepository.termsOf("${m.name} ${m.description}"))
+                addAll(memoryRepository.termsOf(m.content))
+            }
+            val hits = terms.count { it in indexed }
+            if (hits > 0) m to hits else null
+        }.sortedWith(
+            // 命中越多越靠前；打平看最近改动，再按名称，保证同一 query 每次结果顺序一致。
+            compareByDescending<Pair<Memory, Int>> { it.second }
+                .thenByDescending { it.first.file?.lastModified() ?: 0L }
+                .thenBy { it.first.name.lowercase() }
+        ).take(limit)
+
+        if (matched.isEmpty()) {
+            return ToolResult.Success(JsonPrimitive("没有匹配「$query」的记忆。可先用 action=list 看全部名称。"))
+        }
+        val text = matched.joinToString("\n") { (m, _) ->
             val kws = if (m.keywords.isEmpty()) "" else " [关键词: ${m.keywords.joinToString(", ")}]"
-            "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}): ${m.description}$kws"
+            "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}${if (m.pending) "/待确认" else ""}): ${m.description}$kws"
         }
         return ToolResult.Success(
-            JsonPrimitive("匹配「$query」的记忆（最多 8 条）：\n$text\n\n用 action=read + name=<名称> 取完整正文。")
+            JsonPrimitive("匹配「$query」的记忆（最多 $limit 条）：\n$text\n\n用 action=read + name=<名称> + scope=<作用域> 取完整正文。")
         )
     }
 
-    private fun handleRead(name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+    private fun handleRead(name: String?, scope: MemoryScope?, projectRoot: String?): ToolResult {
         if (name.isNullOrEmpty()) return ToolResult.Error("read 操作需要 name 参数", "MISSING_NAME")
-        val content = memoryRepository.loadContent(name, projectRoot)
+        val memory = memoryRepository.findMemory(name, projectRoot, scope)
             ?: return ToolResult.Error("未找到记忆「$name」", "MEMORY_NOT_FOUND")
-        memoryRepository.recordUsage(name, scope)
-        return ToolResult.Success(JsonPrimitive(content))
+        memoryRepository.recordUsage(memory.name, memory.scope)
+        val notice = if (memory.pending) "待确认：此条记忆存在冲突，未经用户确认不得作为已确认约定或自动裁决。\n\n" else ""
+        return ToolResult.Success(JsonPrimitive(notice + memory.content))
     }
 
     private fun handleSave(
@@ -250,13 +286,13 @@ class MemoryTool @Inject constructor(
         val ttlDays = args["ttl_days"]?.jsonPrimitive?.contentOrNull?.trim()?.toIntOrNull()
         val expiresAt = ttlDays?.takeIf { it > 0 }
             ?.let { System.currentTimeMillis() + it * 24L * 60L * 60L * 1_000L }
-        val existed = memoryRepository.loadContent(name, projectRoot) != null
+        val existed = memoryRepository.loadContent(name, projectRoot, scope) != null
         val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot, type, expiresAt)
         if (!success) return ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
 
         // 重名（意同）是记忆库最大的噪声来源：同一条事实被不同名字反复记下，检索时互相抢位。
         // 只提醒不阻断——写进去的内容本身没毛病，模型拿到提示后可以立刻用 edit 合并。
-        val similar = memoryRepository.findSimilarMemories(name, description, projectRoot)
+        val similar = memoryRepository.findSimilarMemories(name, description, projectRoot, scope = scope)
         val detail = buildList {
             if (existed) add("覆盖已有记忆（旧版已归档）")
             if (similar.isNotEmpty()) add("命中相近记忆：" + similar.joinToString("、") { it.name })
@@ -277,7 +313,8 @@ class MemoryTool @Inject constructor(
                 similar.joinToString("、") { "「${it.name}」（${it.description}）" } +
                 "。若这次写的是同一条事实，请改用 action=edit 就地修改，别再新建条目。"
         }
-        val typeNote = when (type) {
+        val stored = memoryRepository.findMemory(name, projectRoot, scope)
+        val typeNote = if (stored?.pending == true) "它仍待确认，需保留冲突双方，不能作为已确认约定。" else when (stored?.type ?: type) {
             MemoryType.IDENTITY -> "它属于长期约定，正文会在下一次会话启动时直接进系统提示词常驻（无需再 read）。"
             MemoryType.EVENT -> "它被标为一次性事件：只留档，不进注入清单，需要时用 search / read 取回。"
             else -> "它将在下一次会话启动时自动注入摘要。"

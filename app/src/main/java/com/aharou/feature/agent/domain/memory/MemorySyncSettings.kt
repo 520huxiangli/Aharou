@@ -38,6 +38,16 @@ class MemorySyncSettings @Inject constructor(
         set(value) = prefs.edit().putString(KEY_LAST_RESULT, value.take(400)).apply()
 
     /**
+     * 上次同步中「疑似被其他设备删除」的条目清单（仓库相对路径，每行一条）；无则空串。
+     *
+     * 与 [lastResult] 一样持久化：同步结果对象是一次性的，界面在别的时间点也要能看到这份清单。
+     * 只是报告，不涉及任何删除动作。
+     */
+    var lastPendingDeletions: String
+        get() = prefs.getString(KEY_PENDING_DELETIONS, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_PENDING_DELETIONS, value.take(4000)).apply()
+
+    /**
      * 是否自动同步（后台周期推一次）。
      *
      * 默认开：记忆同步是「推上去就好」的事，不该让人记着去点。开关与仓库地址都就绪才会真正排周期任务。
@@ -62,6 +72,7 @@ class MemorySyncSettings @Inject constructor(
         const val KEY_BRANCH = "branch"
         const val KEY_LAST_SYNC_AT = "last_sync_at"
         const val KEY_LAST_RESULT = "last_result"
+        const val KEY_PENDING_DELETIONS = "pending_deletions"
         const val KEY_AUTO_SYNC = "auto_sync"
         const val KEY_AUTO_INTERVAL = "auto_interval_minutes"
     }

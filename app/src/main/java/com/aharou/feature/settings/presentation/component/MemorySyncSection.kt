@@ -2,10 +2,14 @@ package com.aharou.feature.settings.presentation.component
 
 import android.widget.Toast
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -17,10 +21,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.dialogTextFieldColors
@@ -46,11 +55,17 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
     var editingRepo by remember { mutableStateOf(false) }
     var editingToken by remember { mutableStateOf(false) }
     var hasToken by remember { mutableStateOf(viewModel.hasToken()) }
+    var lastCounts by remember { mutableStateOf<SyncCounts?>(null) }
+    var pendingDeletions by remember { mutableStateOf(viewModel.pendingDeletions()) }
 
     LaunchedEffect(outcome) {
         val result = outcome ?: return@LaunchedEffect
         Toast.makeText(context, result.message, Toast.LENGTH_LONG).show()
+        if (result.success) {
+            lastCounts = SyncCounts(result.collected, result.conflicts, result.pendingDeletions.size)
+        }
         lastResult = viewModel.lastResult()
+        pendingDeletions = viewModel.pendingDeletions()
         viewModel.consumeOutcome()
     }
 
@@ -70,6 +85,14 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
                 subtitle = if (hasToken) stringResource(R.string.memory_sync_token_set)
                     else stringResource(R.string.memory_sync_token_empty),
                 onClick = { editingToken = true },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
+                title = stringResource(R.string.memory_sync_now),
+                subtitle = lastResult.ifBlank { stringResource(R.string.memory_sync_never) },
+                enabled = !syncing && repoUrl.isNotBlank(),
+                onClick = viewModel::syncNow,
             )
             SettingsDivider()
             SettingsRow(
@@ -95,6 +118,42 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
                     )
                 }
             )
+        }
+
+        // 上次同步的明细：把数量摊开；「疑似在其他设备被删除」只提示，不执行删除。
+        val counts = lastCounts
+        if (counts != null || pendingDeletions.isNotEmpty()) {
+            SettingsGroupHeader(text = stringResource(R.string.memory_sync_result_header))
+            SettingsGroup {
+                if (counts != null) {
+                    SyncCountRow(stringResource(R.string.memory_sync_result_collected), counts.collected)
+                    SettingsDivider()
+                    SyncCountRow(stringResource(R.string.memory_sync_result_conflicts), counts.conflicts)
+                    SettingsDivider()
+                    SyncCountRow(stringResource(R.string.memory_sync_pending_deleted), counts.pendingDeleted)
+                }
+                if (pendingDeletions.isNotEmpty()) {
+                    if (counts != null) SettingsDivider()
+                    Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)) {
+                        Text(
+                            text = stringResource(R.string.memory_sync_pending_deleted_hint),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(Spacing.sm))
+                        pendingDeletions.forEach { path ->
+                            Text(
+                                text = path,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -160,4 +219,23 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
             },
         )
     }
+}
+
+/** 一次同步的数量明细，供结果区展示。 */
+private data class SyncCounts(val collected: Int, val conflicts: Int, val pendingDeleted: Int)
+
+/** 结果区的一行：左侧说明，右侧数字。 */
+@Composable
+private fun SyncCountRow(title: String, count: Int) {
+    SettingsRow(
+        title = title,
+        trailing = {
+            Text(
+                text = count.toString(),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+    )
 }

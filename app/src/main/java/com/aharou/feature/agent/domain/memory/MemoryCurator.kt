@@ -12,6 +12,10 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -67,28 +71,12 @@ class MemoryCurator @Inject constructor(
         val candidates = parseCandidates(response.content)
         var saved = 0
         for (c in candidates) {
-            // PROJECT 但无工作区时降级为 GLOBAL（静默场景下降级比丢弃合理）。
-            val effectiveScope = if (c.scope == MemoryScope.PROJECT && projectRoot.isNullOrBlank()) {
-                MemoryScope.GLOBAL
-            } else {
-                c.scope
-            }
-            // 已有同名记忆不覆盖：主模型当轮写的完整版本不该被 curator 的截断版覆盖。
-            // 但内容不同说明这条事实已经变了，候选版本照样进归档——直接丢掉等于库里
-            // 留着过时版本，还看不出它被改过。
-            val existing = memoryRepository.loadContent(c.name, projectRoot)
+            if (c.scope == MemoryScope.PROJECT && projectRoot.isNullOrBlank()) continue
+            val effectiveScope = c.scope
+            val existing = memoryRepository.findMemory(c.name, projectRoot, effectiveScope)
             if (existing != null) {
-                if (existing.trim() != c.content.trim()) {
-                    memoryRepository.archiveContent(c.name, c.description, c.content, effectiveScope, projectRoot)
-                    FileLogger.i(TAG, "记忆「${c.name}」已存在且内容不同，候选版本转入归档")
-                    memoryTrace.record(
-                        source = MemoryTraceLog.SOURCE_CURATOR,
-                        action = MemoryTraceLog.ACTION_ARCHIVE,
-                        name = c.name,
-                        scope = effectiveScope.name.lowercase(),
-                        detail = "候选与同名条目内容不同，旧版已归档",
-                        sessionId = sessionId
-                    )
+                if (existing.content.trim() != c.content.trim()) {
+                    if (preserveConflict(c, existing, projectRoot, sessionId)) saved++
                 } else {
                     FileLogger.i(TAG, "记忆「${c.name}」已存在，跳过自动覆盖")
                     memoryTrace.record(
@@ -105,12 +93,25 @@ class MemoryCurator @Inject constructor(
 
             // 名字不同、讲的却是同一件事，是记忆库最大的噪声来源。先做零成本的相似检索。
             val similar = memoryRepository
-                .findSimilarMemories(c.name, c.description, projectRoot, limit = 1)
+                .findSimilarMemories(c.name, c.description, projectRoot, limit = 1, scope = effectiveScope)
                 .firstOrNull()
-            // 裁决器对每个候选都跑一遍：即使没有相近条目，也要先过「写入门槛」——
-            // 不值得写的（本次排查的临时状态、读代码就能查到的事实）在落盘前直接拒掉。
+            if (similar?.pending == true) {
+                if (preserveConflict(c, similar, projectRoot, sessionId)) saved++
+                continue
+            }
             val decision = judge(provider, c, similar)
-            if (decision != null && decision.action == ArbiterAction.REJECT) {
+            if (decision == null) {
+                memoryTrace.record(
+                    source = MemoryTraceLog.SOURCE_CURATOR,
+                    action = MemoryTraceLog.ACTION_SKIP,
+                    name = c.name,
+                    scope = effectiveScope.name.lowercase(),
+                    detail = "裁决失败，保守跳过自动写入",
+                    sessionId = sessionId
+                )
+                continue
+            }
+            if (decision.action == ArbiterAction.REJECT) {
                 FileLogger.i(TAG, "记忆「${c.name}」不值得写入，已拒绝")
                 memoryTrace.record(
                     source = MemoryTraceLog.SOURCE_CURATOR,
@@ -123,8 +124,7 @@ class MemoryCurator @Inject constructor(
                 continue
             }
             if (similar != null) {
-                // 判定失败（null）时整个 when 不进入，直接落到下面的新建。
-                if (decision != null) when (decision.action) {
+                when (decision.action) {
                     ArbiterAction.SKIP -> {
                         FileLogger.i(TAG, "记忆「${c.name}」与「${similar.name}」重复，跳过")
                         memoryTrace.record(
@@ -155,33 +155,13 @@ class MemoryCurator @Inject constructor(
                                 sessionId = sessionId
                             )
                             saved++
-                            continue
                         }
+                        continue
                     }
                     ArbiterAction.CONFLICT -> {
-                        if (similar.scope == effectiveScope) {
-                            // 不覆盖旧条目：矛盾的两条并存，新的标「待确认」，由使用者裁决
-                            // （记忆纪律 F4：矛盾不自动裁定——自行选一边会抹掉「曾经有过分歧」这个证据）。
-                            if (memoryRepository.saveMemory(
-                                    c.name, c.description, c.content, effectiveScope, projectRoot, c.type,
-                                    pending = true
-                                )
-                            ) {
-                                saved++
-                            }
-                            FileLogger.i(TAG, "记忆「${similar.name}」与「${c.name}」冲突，两条并存待确认")
-                            memoryTrace.record(
-                                source = MemoryTraceLog.SOURCE_CURATOR,
-                                action = MemoryTraceLog.ACTION_CONFLICT,
-                                name = c.name,
-                                scope = effectiveScope.name.lowercase(),
-                                detail = "与「${similar.name}」冲突，两条并存待确认",
-                                sessionId = sessionId
-                            )
-                            continue
-                        }
+                        if (preserveConflict(c, similar, projectRoot, sessionId)) saved++
+                        continue
                     }
-                    // NEW、判定失败（null）或跨作用域改不动 → 一律落回新建（REJECT 已在上面拦截）。
                     else -> Unit
                 }
             }
@@ -213,12 +193,55 @@ class MemoryCurator @Inject constructor(
         FileLogger.w(TAG, "自动记忆整理失败（静默忽略）: ${e.message}", e)
     }.getOrDefault(0)
 
+    private fun preserveConflict(
+        candidate: Candidate,
+        existing: Memory,
+        projectRoot: String?,
+        sessionId: String
+    ): Boolean {
+        if (candidate.scope != existing.scope) return false
+        val hash = MessageDigest.getInstance("SHA-256")
+            .digest(candidate.content.toByteArray(Charsets.UTF_8))
+            .take(6).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val baseName = "${candidate.name}_pending_$hash"
+        var name = if (candidate.name.equals(existing.name, ignoreCase = true)) baseName else candidate.name
+        var suffix = 0
+        while (true) {
+            val occupied = memoryRepository.findMemory(name, projectRoot, candidate.scope) ?: break
+            if (occupied.content.trim() == candidate.content.trim()) break
+            name = "${baseName}_${++suffix}"
+        }
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
+        val oldDescription = if (existing.description.contains("[待确认")) existing.description
+            else "${existing.description} [待确认 $date，与 $name 冲突]"
+        if (!memoryRepository.saveMemory(
+                existing.name, oldDescription, existing.content, existing.scope, projectRoot,
+                pending = true
+            )
+        ) return false
+        val ok = memoryRepository.saveMemory(
+            name, "${candidate.description} [待确认 $date，与 ${existing.name} 冲突]",
+            candidate.content, candidate.scope, projectRoot, candidate.type, pending = true
+        )
+        if (ok) {
+            memoryTrace.record(
+                source = MemoryTraceLog.SOURCE_CURATOR,
+                action = MemoryTraceLog.ACTION_CONFLICT,
+                name = name,
+                scope = candidate.scope.name.lowercase(),
+                detail = "与「${existing.name}」冲突，双方保留待确认",
+                sessionId = sessionId
+            )
+        }
+        return ok
+    }
+
     /**
      * 让轻量模型裁决一个候选：先判「值不值得写」（不过门槛就 REJECT），再在无相近条目时
      * 于 NEW / REJECT 之间、有相近条目时于 NEW / MERGE / CONFLICT / SKIP / REJECT 之间选。
      *
      * 无论有没有相近条目都会调用。任何失败——提示词缺失、请求出错、JSON 不合规——
-     * 都返回 null，由调用方落回「直接新建」：判定器抽风时宁可多一条记忆，也不能把候选丢掉。
+     * 都返回 null，由调用方保守跳过自动写入，不扩大自动沉淀范围。
      */
     private suspend fun judge(
         provider: AIProvider,
@@ -250,7 +273,9 @@ class MemoryCurator @Inject constructor(
             messages = listOf(AgentMessage.UserMessage(content = userText)),
             tools = emptyList()
         ).content
-        parseDecision(raw)
+        parseDecision(raw)?.takeIf {
+            existing != null || it.action == ArbiterAction.NEW || it.action == ArbiterAction.REJECT
+        }
     }.getOrNull()
 
     /** 解析裁决输出；MERGE 没给出合并正文时整体作废，交给降级路径处理。 */
@@ -298,7 +323,7 @@ class MemoryCurator @Inject constructor(
                     val type = MemoryType.from(obj["type"]?.jsonPrimitive?.contentOrNull?.trim())
                     if (name.isEmpty() || body.isEmpty() || description.isEmpty()) return@runCatching null
                     Candidate(
-                        name = name,
+                        name = MemorySource.sanitizeName(name),
                         description = description.take(200),
                         content = body.take(2000),
                         scope = if (isProject) MemoryScope.PROJECT else MemoryScope.GLOBAL,

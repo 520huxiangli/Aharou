@@ -60,6 +60,15 @@ class MemorySyncViewModel @Inject constructor(
     /** 上次同步的结果文案；从未同步过为空串。 */
     fun lastResult(): String = settings.lastResult
 
+    /**
+     * 上次同步中「疑似被其他设备删除」的条目（仓库相对路径）；无则空列表。
+     *
+     * 从持久化的设置读：同步结果对象是一次性的，界面在结果被消费后也要能列出这份清单。仅是报告，
+     * 删不删由用户决定，同步本身不会执行删除。
+     */
+    fun pendingDeletions(): List<String> =
+        settings.lastPendingDeletions.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
     fun syncNow() {
         if (_syncing.value) return
         viewModelScope.launch {

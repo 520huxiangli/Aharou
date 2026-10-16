@@ -9,7 +9,9 @@ import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.model.Workspace
+import kotlinx.coroutines.sync.Mutex
 import java.io.File
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -43,18 +45,43 @@ private const val PROJECTS_DIR = "projects"
 /** 远程工作区的项目记忆在仓库里的目录前缀。 */
 private const val REMOTE_PREFIX = "remote-"
 
-/** 一次同步的结果：成功与否，外加一句给用户看的话。 */
-data class MemorySyncOutcome(val success: Boolean, val message: String)
+/** 冲突归档的子目录名，与 `MemorySource` 的归档目录同名（`archive/`）。 */
+private const val ARCHIVE_DIR = "archive"
+
+/** 冲突归档的前缀：与记忆自身的归档条目区分开，避免重名互相覆盖。 */
+private const val REMOTE_ARCHIVE_PREFIX = "remote-"
+
+/** 一轮 rebase 冲突最多处理几轮，异常情况下防止空转。 */
+private const val MAX_REBASE_ROUNDS = 10
+
+/**
+ * 一次同步的结果。
+ *
+ * @param success 是否成功。
+ * @param message 给用户看的一句话（成功时含收集数、补回数、冲突数、疑似删除数）。
+ * @param collected 本轮收进仓库的本地文件数（**新增与更新合并计数**）。
+ * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端」处理的条目数。
+ * @param pendingDeletions 上次提交里存在、本次远端与本机都不存在的条目（仓库相对路径），
+ *   疑似在其他设备被删除；**仅报告，不执行任何删除**，删不删由用户决定。
+ */
+data class MemorySyncOutcome(
+    val success: Boolean,
+    val message: String,
+    val collected: Int = 0,
+    val conflicts: Int = 0,
+    val pendingDeletions: List<String> = emptyList(),
+)
 
 /**
  * 把记忆同步到用户自己的 git 仓库。
  *
  * 仓库是一个**收集桶**，不等于任何一处记忆目录：同步时把全局记忆与各工作区的项目记忆分别拷进
- * `global/` 与 `projects/<项目名-短哈希>/`，再提交推送；拉取后只把本机缺的文件补回来。
+ * `global/` 与 `projects/<项目名-短哈希>/`，再提交推送；拉取后按「本机未改动才覆盖」补回本机。
  *
  * 为什么不沿用「仓库根就是记忆目录」：那只能是单一目录。项目记忆散在各工作区下，要一起走就得有汇合点。
- * 代价是仓库里存的是副本，所以这里**只做单向增补**——本地有的一律覆盖仓库、仓库里别的东西不动；
- * 拉取只补本地没有的，绝不拿仓库的版本去盖本机（多数情况下本地那份才新，盖过去等于抹掉本机改动）。
+ * 代价是仓库里存的是副本。合并语义以 **base = 上次提交** 为准（本轮 collect 之前的工作树内容，
+ * 也就是上一轮 push 之后、本轮 pull 之前那一刻）：本机改、远端改由 git 三方判定；
+ * 两侧都改且不同则**保留本机版本继续推、远端版本另存进该条目的 `archive/`**，绝不静默覆盖本机改动。
  *
  * 远端凭据由容器里的 credential helper 提供，作用域靠容器初始化的 includeIf（见 env-common.sh）。
  */
@@ -68,54 +95,126 @@ class MemorySyncManager @Inject constructor(
     private val executionModeHolder: ExecutionModeHolder,
 ) {
 
-    /** 同步一次：收集 → 初始化仓库 → 配远端 → 提交 → 拉取合并 → 推送 → 补回本机缺的。 */
+    /**
+     * 进程内互斥：UI（MemorySyncViewModel）与 WorkManager 的 Worker 同进程、共享同一个单例，
+     * 两条路径会同时戳同一棵 git 工作树。拿不到锁立即返回，不排队——排队只会让后到的那次
+     * 对着刚被改过的工作树再跑一遍，徒增一次空转。
+     */
+    private val syncMutex = Mutex()
+
+    /** 同步一次：拿锁 → 收集 → 提交 → 拉取合并 → 推送 → 补回本机缺的。 */
     suspend fun sync(): MemorySyncOutcome {
+        if (!syncMutex.tryLock()) return MemorySyncOutcome(false, "已有同步正在进行中")
+        return try {
+            syncLocked()
+        } finally {
+            // 异常路径也要放锁，否则一次崩溃就把后续所有同步永久挡在门外。
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncLocked(): MemorySyncOutcome {
         val url = settings.repoUrl
-        if (url.isBlank()) return MemorySyncOutcome(false, "还没有填记忆仓库地址")
+        if (url.isBlank()) return finish(MemorySyncOutcome(false, "还没有填记忆仓库地址"))
         if (executionModeHolder.currentMode() == ExecutionMode.REMOTE_SSH) {
             // 记忆目录在本机，容器也在本机；远程模式下命令会发到服务器，那里没有这份记忆。
-            return MemorySyncOutcome(false, "记忆目录在本机，远程模式下同步不了，先切回本地模式")
+            return finish(MemorySyncOutcome(false, "记忆目录在本机，远程模式下同步不了，先切回本地模式"))
         }
         val branch = settings.branch
         return try {
             val repoDir = repoDir().apply { mkdirs() }
+            // 上一次异常中断可能把工作树留在 rebase / merge 中间态；先收干净，
+            // 否则 base 快照会掺进冲突标记、提交也会把冲突标记当内容写进仓库。
+            abortInterruptedState(repoDir)
             migrateLegacyLayout(repoDir)
             writeGitIgnore(repoDir)
-            val collected = collect(repoDir)
+            // base = 本轮 collect 之前的仓库内容 = 上次提交（上一轮 push 之后、本轮 pull 之前的那一刻），
+            // 用来判定「上次提交里存在、本次两边都没有」的疑似删除条目。
+            val basePaths = repoPathsUnder(repoDir, GLOBAL_DIR) + repoPathsUnder(repoDir, PROJECTS_DIR)
+            val localPaths = mutableSetOf<String>()
+            val locallyModified = mutableSetOf<String>()
+            val collected = collect(repoDir, localPaths, locallyModified)
+
             ensureRepo()
             ensureRemote(url)
             addAndCommit()
-            // 首次推送时远端还没有这个分支，pull 必然失败——它只是「尽量跟上别的设备」的尽力而为。
-            // rebase 要重放本地提交、必须有署名（仓库里没配 user.name/email），否则会以
-            // 「unable to auto-detect email address」失败，并把工作树卡在 rebase 中间态。
-            val pull = run("git -c user.name=$GIT_AUTHOR_NAME -c user.email=$GIT_AUTHOR_EMAIL pull --rebase origin ${quote(branch)}")
-            if (pull.exitCode != 0) {
-                // rebase 中的 --ours 指被 rebase 到的上游（远端）：新设备上那份默认模板 CORE.md 与仓库里的
-                // 真档案同名不同内容，这类撞车该让仓库版本胜出；本地独有的文件不冲突，照常保留。
-                val resolved = run("git checkout --ours -- . && git add -A && GIT_EDITOR=true git rebase --continue")
-                // 还收不了就退回干净状态，别把工作树留在 rebase 中间态——
-                // 下一次 add -A 会把冲突标记当内容提交进仓库。
-                if (resolved.exitCode != 0) run("git rebase --abort")
+
+            // 远端分支在不在、有没有新提交，先问一次，别拿「拉不到」当「没有」。
+            val ls = run("git ls-remote --heads origin ${quote("refs/heads/$branch")}")
+            if (ls.exitCode != 0) {
+                val reason = ls.output.trim().takeLast(400).ifBlank { "git 退出码 ${ls.exitCode}" }
+                return finish(MemorySyncOutcome(false, "无法访问远端仓库：$reason", collected))
             }
-            // 先补本机再推：补的是仓库里有、本机没有的文件（同名一律不碰），放到推送之前，
-            // 推送失败也不至于让本机一直缺着别的设备推上来的记忆。
-            val restored = distribute(repoDir)
+            val remoteRef = ls.output.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.isNotEmpty() }
+                ?.substringBefore('\t')
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+
+            var remotePaths: Set<String> = emptySet()
+            var conflicts = 0
+            if (remoteRef != null) {
+                val fetch = run("git fetch --quiet origin ${quote(branch)}")
+                if (fetch.exitCode != 0) {
+                    val reason = fetch.output.trim().takeLast(400).ifBlank { "git 退出码 ${fetch.exitCode}" }
+                    return finish(MemorySyncOutcome(false, "拉取远端失败：$reason", collected))
+                }
+                remotePaths = readRemotePaths(remoteRef)
+                // 把本地提交重放到远端最新提交之上：rebase 的三方基正是「上次与远端共享的提交」，
+                // 即需求里的 base。本机改 / 远端改 / 两侧都改由 git 判定，两侧都改则下面逐条保留双方。
+                val rebase = run(
+                    "git -c user.name=$GIT_AUTHOR_NAME -c user.email=$GIT_AUTHOR_EMAIL rebase ${quote(remoteRef)}"
+                )
+                if (rebase.exitCode != 0) {
+                    if (conflictedPaths().isEmpty() && !rebaseInProgress(repoDir)) {
+                        // 不是冲突能解释的失败（无共同祖先、工作树不干净、网络等）：干净中止并回报。
+                        val reason = rebase.output.trim().takeLast(400).ifBlank { "git 退出码 ${rebase.exitCode}" }
+                        return finish(MemorySyncOutcome(false, "拉取失败：$reason", collected))
+                    }
+                    val resolution = resolveRebaseConflicts(repoDir, locallyModified)
+                    conflicts = resolution.conflicts
+                    val failure = resolution.failure
+                    if (failure != null) {
+                        return finish(MemorySyncOutcome(false, failure, collected, conflicts))
+                    }
+                }
+            }
+
+            // 冲突归档与 rebase 结束后的收尾是在上一步之后写进工作树的，单独补一次提交。
+            addAndCommit()
+            val restored = distribute(repoDir, locallyModified)
             val push = run("git push -u origin ${quote(branch)}")
             if (push.exitCode != 0) {
                 val reason = push.output.trim().takeLast(400).ifBlank { "git 退出码 ${push.exitCode}" }
-                settings.lastResult = "推送失败：$reason"
-                return MemorySyncOutcome(false, "推送失败：$reason")
+                return finish(MemorySyncOutcome(false, "推送失败：$reason", collected, conflicts))
             }
-            settings.lastSyncAt = System.currentTimeMillis()
-            settings.lastResult = "已同步"
-            val tail = if (restored > 0) "，补回本机 $restored 个文件" else ""
-            MemorySyncOutcome(true, "已同步到记忆仓库（收上 $collected 个文件$tail）")
+            // 删除同步（保守）：只报告、不动作。远端分支未知时无法判定，干脆不报。
+            val pending = if (remoteRef != null) pendingDeletions(basePaths, localPaths, remotePaths) else emptyList()
+            val message = successMessage(collected, restored, conflicts, pending.size)
+            finish(MemorySyncOutcome(true, message, collected, conflicts, pending))
         } catch (e: Exception) {
             FileLogger.w(TAG, "记忆同步失败: ${e.message}", e)
             val reason = e.message.orEmpty().take(400).ifBlank { "同步失败" }
-            settings.lastResult = reason
-            MemorySyncOutcome(false, reason)
+            finish(MemorySyncOutcome(false, reason))
         }
+    }
+
+    /** 统一收尾：把结果落到设置里（供界面回显），成功才更新 lastSyncAt。 */
+    private fun finish(outcome: MemorySyncOutcome): MemorySyncOutcome {
+        settings.lastResult = outcome.message
+        settings.lastPendingDeletions = outcome.pendingDeletions.joinToString("\n")
+        if (outcome.success) settings.lastSyncAt = System.currentTimeMillis()
+        return outcome
+    }
+
+    /** 给用户看的那句话：把收集数、补回数、冲突数、疑似删除数都摊开。 */
+    private fun successMessage(collected: Int, restored: Int, conflicts: Int, pendingDeletions: Int): String {
+        val parts = mutableListOf("收上 $collected 个文件")
+        if (restored > 0) parts += "补回本机 $restored 个文件"
+        if (conflicts > 0) parts += "冲突 $conflicts 条（远端版本已存进 archive/）"
+        if (pendingDeletions > 0) parts += "疑似被其他设备删除 $pendingDeletions 条"
+        return "已同步到记忆仓库（${parts.joinToString("，")}）"
     }
 
     /**
@@ -141,94 +240,182 @@ class MemorySyncManager @Inject constructor(
     }
 
     /**
-     * 收集：把各来源的记忆拷进仓库工作树，返回拷进去的文件数。
+     * 收集：把各来源的记忆拷进仓库工作树，返回本轮实际写盘（新增或内容更新）的文件数。
      *
-     * 只覆盖同名文件、不清理仓库里已有的内容——别的设备推上来的项目目录得留着。
+     * 只覆盖内容不同的同名文件、不清理仓库里已有的内容——别的设备推上来的项目目录得留着。
+     * 同时回填两组仓库相对路径：所有本地条目的 [localPaths]，以及本机改动过的 [locallyModified]
+     * （后者决定分发时哪些本地文件绝不被仓库版本覆盖）。
      */
-    private fun collect(repoDir: File): Int {
-        var copied = copyTree(memoryStore.dir, File(repoDir, GLOBAL_DIR))
-        workspaceRepository.workspaces.value
-            .filter { it.available }
-            .forEach { ws ->
-                val src = File(File(ws.path, ".aharou"), "memory")
-                if (src.isDirectory) {
-                    copied += copyTree(src, File(File(repoDir, PROJECTS_DIR), projectKey(ws)))
-                }
+    private fun collect(repoDir: File, localPaths: MutableSet<String>, locallyModified: MutableSet<String>): Int {
+        var copied = 0
+        localRoots().forEach { root ->
+            walkFiles(root.dir) { src, relWithin ->
+                val rel = "${root.repoPrefix}/$relWithin"
+                localPaths += rel
+                val target = File(repoDir, rel)
+                // 跳过判据只看内容：长度相同不代表内容相同，mtime 跨设备、拷来拷去都不可信。
+                if (sameContent(target, src)) return@walkFiles
+                runCatching {
+                    target.parentFile?.mkdirs()
+                    src.copyTo(target, overwrite = true)
+                    locallyModified += rel
+                    copied++
+                }.onFailure { FileLogger.w(TAG, "拷贝失败: ${src.absolutePath}", it) }
             }
-        // 远程工作区的项目记忆落在私有目录里，本来就按 key 分目录
-        remoteProjectsRoot()?.listFiles()?.filter { it.isDirectory }?.forEach { keyDir ->
-            copied += copyTree(keyDir, File(File(repoDir, PROJECTS_DIR), "$REMOTE_PREFIX${keyDir.name}"))
         }
         FileLogger.i(TAG, "收集完成：$copied 个文件")
         return copied
     }
 
     /**
-     * 分发：把仓库里有、本机没有的文件补回去，返回补回的条数。
+     * 分发：把仓库里的最新内容带回本机，返回实际写盘（补回或更新）的条数。
      *
-     * 只增不改：本机已有同名文件一律不动——多数情况下本地那份才是最新的，
-     * 拿仓库的版本去盖它等于把本机改动抹掉。
+     * 只动**本机没改过**的条目（[locallyModified] 之外）：本机改过的一律保留，冲突条目也在其中。
+     * 于是「远端改了、本机没改」会更新本机；「双方都改」保持本机不变（远端版本已在 archive/）。
      */
-    private fun distribute(repoDir: File): Int {
-        var restored = copyMissing(File(repoDir, GLOBAL_DIR), memoryStore.dir)
-        val projects = File(repoDir, PROJECTS_DIR)
-        val workspaces = workspaceRepository.workspaces.value
-        projects.listFiles()?.filter { it.isDirectory }?.forEach { dir ->
-            val name = dir.name
-            val target = if (name.startsWith(REMOTE_PREFIX)) {
-                remoteProjectsRoot()?.let { File(it, name.removePrefix(REMOTE_PREFIX)) }
-            } else {
-                workspaces.firstOrNull { projectKey(it) == name }
-                    ?.let { File(File(it.path, ".aharou"), "memory") }
-            }
-            if (target != null) restored += copyMissing(dir, target)
-        }
-        return restored
-    }
-
-    /** 递归拷贝 [src] 到 [dst]（同名覆盖，内容相同则跳过），返回实际写入的文件数。 */
-    private fun copyTree(src: File, dst: File): Int {
-        val children = src.listFiles() ?: return 0
-        var copied = 0
-        children.forEach { child ->
-            if (isIgnored(child.name)) return@forEach
-            val target = File(dst, child.name)
-            if (child.isDirectory) {
-                copied += copyTree(child, target)
-            } else if (child.isFile) {
-                runCatching {
-                    if (target.isFile && target.length() == child.length() &&
-                        target.lastModified() >= child.lastModified()
-                    ) {
-                        return@runCatching
-                    }
-                    target.parentFile?.mkdirs()
-                    child.copyTo(target, overwrite = true)
-                    copied++
-                }.onFailure { FileLogger.w(TAG, "拷贝失败: ${child.absolutePath}", it) }
-            }
-        }
-        return copied
-    }
-
-    /** 递归补回 [src] 里 [dst] 缺失的文件（同名一律不碰），返回补回的条数。 */
-    private fun copyMissing(src: File, dst: File): Int {
-        val children = src.listFiles() ?: return 0
+    private fun distribute(repoDir: File, locallyModified: Set<String>): Int {
         var restored = 0
-        children.forEach { child ->
-            if (isIgnored(child.name)) return@forEach
-            val target = File(dst, child.name)
-            if (child.isDirectory) {
-                restored += copyMissing(child, target)
-            } else if (child.isFile && !target.isFile) {
+        localRoots().forEach { root ->
+            val repoRoot = File(repoDir, root.repoPrefix)
+            walkFiles(repoRoot) { repoFile, relWithin ->
+                val rel = "${root.repoPrefix}/$relWithin"
+                if (rel in locallyModified) return@walkFiles
+                val target = File(root.dir, relWithin)
+                if (sameContent(target, repoFile)) return@walkFiles
                 runCatching {
                     target.parentFile?.mkdirs()
-                    child.copyTo(target, overwrite = false)
+                    repoFile.copyTo(target, overwrite = true)
                     restored++
                 }.onFailure { FileLogger.w(TAG, "补回失败: ${target.absolutePath}", it) }
             }
         }
         return restored
+    }
+
+    /**
+     * 处理 rebase 冲突：**保留本机版本、把远端版本另存进该条目的 `archive/`**，直到 rebase 结束。
+     *
+     * rebase 冲突里 `--ours` 是被 rebase 到的上游（远端）、`--theirs` 是正在重放的本地提交，
+     * 所以保留本机用 `--theirs`，远端版本从索引 stage 2（`<rev>:2:<path>`）取。
+     * 全部冲突处理完仍收不了尾则 `rebase --abort` 干净中止，绝不把工作树留在中间态。
+     */
+    private suspend fun resolveRebaseConflicts(
+        repoDir: File,
+        locallyModified: MutableSet<String>,
+    ): RebaseResolution {
+        var conflicts = 0
+        var rounds = 0
+        while (rebaseInProgress(repoDir) && rounds++ < MAX_REBASE_ROUNDS) {
+            conflictedPaths().forEach { path ->
+                archiveRemoteVersion(repoDir, path)
+                run("git checkout --theirs -- ${quote(path)}")
+                run("git add -- ${quote(path)}")
+                locallyModified += path
+                conflicts++
+            }
+            run(
+                "GIT_EDITOR=true git -c user.name=$GIT_AUTHOR_NAME -c user.email=$GIT_AUTHOR_EMAIL rebase --continue"
+            )
+        }
+        if (rebaseInProgress(repoDir)) {
+            run("git rebase --abort")
+            return RebaseResolution(conflicts, "拉取冲突无法自动处理，已中止（本机改动未动，可稍后重试）")
+        }
+        return RebaseResolution(conflicts, null)
+    }
+
+    /** 把冲突条目的远端版本写进同目录的 `archive/remote-<名>`（`remote-` 前缀防重名）。 */
+    private suspend fun archiveRemoteVersion(repoDir: File, path: String) {
+        val remote = run("git show ${quote(":2:$path")}")
+        if (remote.exitCode != 0) return
+        val dir = path.substringBeforeLast('/', "")
+        val name = path.substringAfterLast('/')
+        val archiveRel = if (dir.isEmpty()) {
+            "$ARCHIVE_DIR/$REMOTE_ARCHIVE_PREFIX$name"
+        } else {
+            "$dir/$ARCHIVE_DIR/$REMOTE_ARCHIVE_PREFIX$name"
+        }
+        runCatching {
+            val target = File(repoDir, archiveRel)
+            target.parentFile?.mkdirs()
+            target.writeText(remote.output)
+        }.onFailure { FileLogger.w(TAG, "远端版本归档失败: $archiveRel", it) }
+    }
+
+    /** 上次提交里存在、本次远端与本机都不存在的条目：疑似在其他设备被删，仅报告不删除。 */
+    private fun pendingDeletions(base: Set<String>, local: Set<String>, remote: Set<String>): List<String> =
+        base.filter { it !in local && it !in remote }.sorted()
+
+    /** 上一次异常中断留下的 rebase / merge 中间态，开工前先收干净。 */
+    private suspend fun abortInterruptedState(repoDir: File) {
+        if (!File(repoDir, ".git").isDirectory) return
+        if (rebaseInProgress(repoDir)) run("git rebase --abort")
+        if (File(File(repoDir, ".git"), "MERGE_HEAD").isFile) run("git merge --abort")
+    }
+
+    private fun rebaseInProgress(repoDir: File): Boolean {
+        val gitDir = File(repoDir, ".git")
+        return File(gitDir, "rebase-merge").exists() || File(gitDir, "rebase-apply").exists()
+    }
+
+    private suspend fun conflictedPaths(): List<String> {
+        val out = run("git -c core.quotePath=false diff --name-only --diff-filter=U")
+        if (out.exitCode != 0) return emptyList()
+        return out.output.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    }
+
+    /** 远端分支上参与同步的条目（仓库相对路径），供疑似删除判定。 */
+    private suspend fun readRemotePaths(ref: String): Set<String> {
+        val out = run("git -c core.quotePath=false ls-tree -r --name-only ${quote(ref)}")
+        if (out.exitCode != 0) return emptySet()
+        return out.output.lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("$GLOBAL_DIR/") || it.startsWith("$PROJECTS_DIR/") }
+            .toSet()
+    }
+
+    /** 参与同步的本地根：仓库前缀 ↔ 本机落盘目录。global 一处、每个可用工作区一处、每个远程 key 一处。 */
+    private data class LocalRoot(val repoPrefix: String, val dir: File)
+
+    private fun localRoots(): List<LocalRoot> {
+        val roots = mutableListOf(LocalRoot(GLOBAL_DIR, memoryStore.dir))
+        workspaceRepository.workspaces.value
+            .filter { it.available }
+            .forEach { ws ->
+                roots += LocalRoot("$PROJECTS_DIR/${projectKey(ws)}", File(File(ws.path, ".aharou"), "memory"))
+            }
+        remoteProjectsRoot()?.listFiles()?.filter { it.isDirectory }?.forEach { keyDir ->
+            roots += LocalRoot("$PROJECTS_DIR/$REMOTE_PREFIX${keyDir.name}", keyDir)
+        }
+        return roots
+    }
+
+    private fun repoPathsUnder(repoDir: File, prefix: String): Set<String> {
+        val out = mutableSetOf<String>()
+        walkFiles(File(repoDir, prefix)) { _, relWithin -> out += "$prefix/$relWithin" }
+        return out
+    }
+
+    /** 递归遍历目录下的文件；符号链接一律跳过（详见 [walkInto]）。 */
+    private fun walkFiles(root: File, onFile: (File, String) -> Unit) = walkInto(root, "", onFile)
+
+    private fun walkInto(dir: File, prefix: String, onFile: (File, String) -> Unit) {
+        dir.listFiles()?.forEach { child ->
+            // 跳过符号链接（判断源侧）：循环链接会无限递归，指向目录外的链接会把不该同步的文件收进仓库。
+            if (isIgnored(child.name) || isSymlink(child)) return@forEach
+            val rel = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (child.isDirectory) walkInto(child, rel, onFile) else if (child.isFile) onFile(child, rel)
+        }
+    }
+
+    private fun isSymlink(file: File): Boolean =
+        runCatching { Files.isSymbolicLink(file.toPath()) }.getOrDefault(false)
+
+    /** 内容比对：长度或内容不同即视为不同（不用 mtime——它跨设备、拷来拷去都不可信）。 */
+    private fun sameContent(a: File, b: File): Boolean {
+        if (!a.isFile) return false
+        if (a.length() != b.length()) return false
+        return runCatching { a.readBytes().contentEquals(b.readBytes()) }.getOrDefault(false)
     }
 
     /** 不跟着记忆走的东西：仓库自身的元数据、设备本地统计、临时文件。 */
@@ -318,6 +505,9 @@ class MemorySyncManager @Inject constructor(
 
     private fun timestamp(): String =
         SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+
+    /** 一次 rebase 冲突处理的结果：处理了几条，以及是否已干净中止。 */
+    private data class RebaseResolution(val conflicts: Int, val failure: String?)
 
     private companion object {
         /** 单条 git 命令的超时：推送要联网，给足时间但仍设上限，避免卡住界面。 */

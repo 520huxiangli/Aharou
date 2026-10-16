@@ -2423,6 +2423,12 @@
     <string name="memory_edit_description">摘要</string>
     <string name="memory_edit_content">正文</string>
     <string name="memory_edit_save">保存</string>
+    <string name="memory_error_no_workspace">这个项目还没有可用工作区，先打开一个工作区再试。</string>
+    <string name="memory_error_save_failed">保存失败，请检查存储权限与可用空间后重试；未提交的编辑仍保留在当前页面。</string>
+    <string name="memory_error_delete_failed">删除失败，请检查存储权限与可用空间后重试。</string>
+    <string name="memory_error_restore_failed">恢复失败，请检查存储权限与可用空间后重试。</string>
+    <string name="memory_pending_hint">这条记忆与另一条记忆的说法不一致，还没有裁决。普通「保存」只修改内容、不代表确认；核对两条说法后，可点「确认此条并保存」。确认只作用于当前条目，不会自动改动其他冲突条目。</string>
+    <string name="memory_confirm_entry">确认此条并保存</string>
     <string name="memory_compact_title">整理记忆</string>
     <string name="memory_compact_subtitle">把同一主题的重复条目合并成一条，原版会自动归档、可恢复</string>
     <string name="memory_compact_merged">整理完成：合并 %1$d 条，归档 %2$d 条</string>
@@ -2445,6 +2451,11 @@
     <string name="memory_sync_token_empty">还没填，不填推送会失败</string>
     <string name="memory_sync_token_set">已填写</string>
     <string name="memory_sync_token_hint">访问令牌</string>
+    <string name="memory_sync_result_header">上次同步结果</string>
+    <string name="memory_sync_result_collected">收进仓库的条目（新增或更新）</string>
+    <string name="memory_sync_result_conflicts">冲突条目（保留本机版本，远端存入归档）</string>
+    <string name="memory_sync_pending_deleted">疑似在其他设备删除</string>
+    <string name="memory_sync_pending_deleted_hint">以下条目在本机与仓库里都已找不到，可能在其他设备被删除。这里只做提示，不会自动删除；确认不再需要时请自行处理。</string>
 
     <!-- 语音输入 -->
     <string name="voice_model_extracting">解压语音模型…</string>

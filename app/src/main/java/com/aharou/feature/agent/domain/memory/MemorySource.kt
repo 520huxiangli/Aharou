@@ -1,7 +1,6 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.writeTextSafely
 import com.aharou.feature.agent.domain.common.Frontmatter
 import java.io.File
 import java.text.SimpleDateFormat
@@ -45,14 +44,14 @@ interface MemorySource {
     fun loadContent(name: String): String?
 
     /** 保存一条记忆（创建或覆盖） */
-    fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null): Boolean
+    fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null, keywords: List<String>? = null): Boolean
 
     /**
      * 对已有记忆的正文做局部编辑（old_string/new_string 精确匹配），语义与 editFile 一致。
      * 默认实现基于 [listMemories] 定位记忆文件，在内存中按序应用所有编辑；
      * 任一编辑校验失败则整批不写盘（原子），成功后用原 name/description 重新格式化写回。
      */
-    fun editMemory(name: String, edits: List<MemoryEdit>): MemoryEditResult {
+    fun editMemory(name: String, edits: List<MemoryEdit>): MemoryEditResult = synchronized(MemoryFileStorage.lock) {
         val memory = listMemories().firstOrNull { it.name.equals(name, ignoreCase = true) }
             ?: return MemoryEditResult.NotFound(name)
         val file = memory.file ?: return MemoryEditResult.NotFound(name)
@@ -86,12 +85,16 @@ interface MemorySource {
         }
 
         return try {
-            file.writeTextSafely(
-                // 局部编辑不该顺手清掉「待确认」标记：改措辞和「确认这条成立」是两回事。
-                MemoryParser.format(memory.name, memory.description, content, pending = memory.pending),
-                "MemorySource"
+            val directory = file.parentFile ?: return MemoryEditResult.NotFound(name)
+            if (archiveExistingFile(directory, file.nameWithoutExtension) == null) {
+                return MemoryEditResult.Error("EDIT_ARCHIVE_FAILED", "归档旧版记忆失败，原文未修改")
+            }
+            val payload = MemoryParser.format(
+                memory.name, memory.description, content, memory.type, memory.keywords,
+                memory.expiresAt, memory.pending
             )
-            MemoryEditResult.Success
+            if (MemoryFileStorage.write(file, payload)) MemoryEditResult.Success
+            else MemoryEditResult.Error("EDIT_WRITE_FAILED", "写入记忆文件失败，原文未修改")
         } catch (e: Exception) {
             FileLogger.e("MemorySource", "Failed to edit memory: $name", e)
             MemoryEditResult.Error("EDIT_WRITE_FAILED", "写入记忆文件失败: ${e.message}")
@@ -128,20 +131,19 @@ interface MemorySource {
      * 把一条归档恢复成正式条目：按归档里的 frontmatter 还原名称与摘要，写回顶层。
      * 同名条目已存在时由 [saveMemory] 先把现有的归档掉——恢复不该悄悄抹掉新版本。
      */
-    fun restoreArchive(fileName: String): Boolean {
-        if (fileName.contains('/') || fileName.contains("..")) return false
-        val dir = root?.let { File(it, ARCHIVE_DIR) } ?: return false
-        val file = File(dir, fileName)
+    fun restoreArchive(fileName: String): Boolean = synchronized(MemoryFileStorage.lock) {
+        if (fileName.contains('/') || fileName.contains('\\') || fileName.contains("..")) return false
+        val directory = root ?: return false
+        val file = File(File(directory, ARCHIVE_DIR), fileName)
         if (!file.isFile) return false
         val text = runCatching { file.readText() }.getOrNull() ?: return false
-        val (frontmatter, body) = Frontmatter.splitAndParse(text, "MemorySource", "解析归档失败")
+        val (frontmatter, _) = Frontmatter.splitAndParse(text, "MemorySource", "解析归档失败")
         val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() }
-            ?: fileName.substringBeforeLast('-').ifBlank { fileName.removeSuffix(".md") }
-        val description = frontmatter["description"]?.toString().orEmpty()
-        val type = MemoryType.from(frontmatter["type"]?.toString())
-        if (!saveMemory(name, description, body.trim(), type, null)) return false
-        runCatching { file.delete() }
-        return true
+            ?: fileName.removeSuffix(".md").replace(Regex("-\\d{8}-\\d{6}(?:-\\d+)?$"), "")
+        val target = resolveMemoryFile(directory, name)
+        if (target.exists() && archiveExistingFile(directory, name) == null) return false
+        if (!MemoryFileStorage.write(target, text)) return false
+        return file.delete()
     }
 
     /**
@@ -152,7 +154,10 @@ interface MemorySource {
      * 归档是子目录，[listMemories] 只扫顶层 `.md`，因此归档不会被注入提示词、也不会被
      * search 命中——要取回得显式读文件。
      */
-    fun archiveContent(name: String, description: String, content: String): Boolean
+    fun archiveContent(
+        name: String, description: String, content: String, type: MemoryType? = null,
+        keywords: List<String> = emptyList(), expiresAt: Long? = null, pending: Boolean = false
+    ): Boolean
 
     companion object {
         /**
@@ -187,7 +192,7 @@ interface MemorySource {
         /** 归档目录；[mkdirs] 为 true 时尝试创建，创建失败返回 null。 */
         private fun archiveDir(root: File, mkdirs: Boolean = false): File? {
             val dir = File(root, ARCHIVE_DIR)
-            if (mkdirs && !dir.exists() && !dir.mkdirs()) return null
+            if (mkdirs && !dir.isDirectory && !dir.mkdirs()) return null
             return dir
         }
 
@@ -209,13 +214,12 @@ interface MemorySource {
         }
 
         /** 覆盖写之前把 [name] 现有文件原样留一份到归档目录；没有现成文件时返回 null。 */
-        fun archiveExistingFile(root: File, name: String): File? {
+        fun archiveExistingFile(root: File, name: String): File? = synchronized(MemoryFileStorage.lock) {
             val existing = resolveMemoryFile(root, name)
             if (!existing.isFile) return null
             val target = uniqueArchiveFile(root, name) ?: return null
             return try {
-                existing.copyTo(target, overwrite = false)
-                target
+                if (MemoryFileStorage.write(target, existing.readText())) target else null
             } catch (e: Exception) {
                 FileLogger.w("MemorySource", "归档旧版记忆失败: $name", e)
                 null
@@ -228,15 +232,16 @@ interface MemorySource {
             name: String,
             description: String,
             content: String,
-            tag: String
-        ): File? {
+            tag: String,
+            type: MemoryType? = null,
+            keywords: List<String> = emptyList(),
+            expiresAt: Long? = null,
+            pending: Boolean = false
+        ): File? = synchronized(MemoryFileStorage.lock) {
             val target = uniqueArchiveFile(root, name) ?: return null
             return try {
-                target.writeTextSafely(
-                    MemoryParser.format(sanitizeName(name), description, content),
-                    tag
-                )
-                target
+                val payload = MemoryParser.format(sanitizeName(name), description, content, type, keywords, expiresAt, pending)
+                if (MemoryFileStorage.write(target, payload)) target else null
             } catch (e: Exception) {
                 FileLogger.w(tag, "写入归档记忆失败: $name", e)
                 null

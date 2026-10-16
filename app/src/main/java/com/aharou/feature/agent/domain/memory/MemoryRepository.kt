@@ -21,25 +21,23 @@ class MemoryRepository @Inject constructor(
         ProjectMemorySource(projectRoot, executionModeHolder, containerInstaller, projectAicodeRoot)
 
     /** 扫描并聚合全局和项目级的 memory。同名 memory 项目级优先。 */
-    fun listMemories(projectRoot: String?): List<Memory> {
-        val allMemories = mutableListOf<Memory>()
-        
-        // 1. 加载全局记忆
-        allMemories.addAll(globalMemorySource.listMemories())
-        
-        // 2. 加载项目记忆（如果有）
-        if (!projectRoot.isNullOrBlank()) {
-            allMemories.addAll(projectSource(projectRoot).listMemories())
-        }
-        
-        // 去重：按 name 小写分组，保留最后加入的（即项目级优先覆盖全局级）。
-        // 每日日志与月归档（LOG-*）跟记忆条目同在记忆目录里，但它们不是「记忆」：
-        // 列进摘要清单只会把清单塞满（空日志全是「无」），正文也已由今日日志尾巴覆盖。
-        return allMemories
-            .filterNot { it.name.startsWith("LOG-") }
+    fun listMemories(projectRoot: String?, scope: MemoryScope? = null): List<Memory> {
+        if (scope != null) return listMemoriesInScope(scope, projectRoot)
+        return (listMemoriesInScope(MemoryScope.GLOBAL, projectRoot) +
+            listMemoriesInScope(MemoryScope.PROJECT, projectRoot))
             .groupBy { it.name.lowercase() }
             .map { it.value.last() }
     }
+
+    fun listMemoriesInScope(scope: MemoryScope, projectRoot: String?): List<Memory> =
+        when (scope) {
+            MemoryScope.GLOBAL -> globalMemorySource.listMemories()
+            MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
+                ?.let { projectSource(it).listMemories() } ?: emptyList()
+        }.filterNot { it.name.startsWith("LOG-") }
+
+    fun findMemory(name: String, projectRoot: String?, scope: MemoryScope? = null): Memory? =
+        listMemories(projectRoot, scope).firstOrNull { it.name.equals(name, ignoreCase = true) }
 
     /**
      * 当前作用域（全局 + 项目，去重后）的记忆总条数。
@@ -287,10 +285,11 @@ class MemoryRepository @Inject constructor(
         name: String,
         description: String,
         projectRoot: String?,
-        limit: Int = 3
+        limit: Int = 3,
+        scope: MemoryScope? = null
     ): List<Memory> {
         val query = "$name $description".lowercase()
-        val candidates = listMemories(projectRoot)
+        val candidates = listMemories(projectRoot, scope)
             .filterNot { it.name.equals(name, ignoreCase = true) }
         val frequencies = documentFrequencies(candidates)
         return candidates
@@ -304,17 +303,10 @@ class MemoryRepository @Inject constructor(
     }
 
     /** 读取指定 memory 的完整指令正文；不存在 / 解析失败返回 null。 */
-    fun loadContent(name: String, projectRoot: String?): String? {
-        // 优先从项目级读取
-        if (!projectRoot.isNullOrBlank()) {
-            val content = projectSource(projectRoot).loadContent(name)
-            if (content != null) return content
-        }
-        // 回退到全局读取
-        return globalMemorySource.loadContent(name)
-    }
+    fun loadContent(name: String, projectRoot: String?, scope: MemoryScope? = null): String? =
+        findMemory(name, projectRoot, scope)?.content
 
-    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null): Boolean {
+    fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null, keywords: List<String>? = null): Boolean {
         val existing = existingMemoryOf(name, scope, projectRoot)
         // 未显式指定的字段沿用原值：否则覆盖 / 合并一条 identity 记忆会抹掉它的 type，
         // 重写一条短期记忆也会把它变成永久（反过来同理）；「待确认」标记同理，
@@ -322,12 +314,13 @@ class MemoryRepository @Inject constructor(
         val effectiveType = type ?: existing?.type
         val effectiveExpiresAt = expiresAt ?: existing?.expiresAt
         val effectivePending = pending ?: existing?.pending ?: false
+        val effectiveKeywords = keywords ?: existing?.keywords
         return when (scope) {
             MemoryScope.GLOBAL ->
-                globalMemorySource.saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending)
+                globalMemorySource.saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending, effectiveKeywords)
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) false
-                else projectSource(projectRoot).saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending)
+                else projectSource(projectRoot).saveMemory(name, description, content, effectiveType, effectiveExpiresAt, effectivePending, effectiveKeywords)
             }
         }
     }
@@ -339,8 +332,7 @@ class MemoryRepository @Inject constructor(
 
     /** 已存在条目的分类；不存在时返回 null（新建交给 MemoryParser 的启发式推断）。 */
     private fun existingMemoryOf(name: String, scope: MemoryScope, projectRoot: String?): Memory? =
-        listMemories(projectRoot)
-            .firstOrNull { it.scope == scope && it.name.equals(name, ignoreCase = true) }
+        findMemory(name, projectRoot, scope)
 
     fun editMemory(name: String, edits: List<MemoryEdit>, scope: MemoryScope, projectRoot: String?): MemoryEditResult {
         return when (scope) {
@@ -373,13 +365,17 @@ class MemoryRepository @Inject constructor(
         description: String,
         content: String,
         scope: MemoryScope,
-        projectRoot: String?
+        projectRoot: String?,
+        type: MemoryType? = null,
+        keywords: List<String> = emptyList(),
+        expiresAt: Long? = null,
+        pending: Boolean = false
     ): Boolean {
         return when (scope) {
-            MemoryScope.GLOBAL -> globalMemorySource.archiveContent(name, description, content)
+            MemoryScope.GLOBAL -> globalMemorySource.archiveContent(name, description, content, type, keywords, expiresAt, pending)
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) false
-                else projectSource(projectRoot).archiveContent(name, description, content)
+                else projectSource(projectRoot).archiveContent(name, description, content, type, keywords, expiresAt, pending)
             }
         }
     }
