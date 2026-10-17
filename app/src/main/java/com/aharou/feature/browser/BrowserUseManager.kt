@@ -1720,13 +1720,6 @@ class BrowserUseManager(
                 val date = java.util.Date(expires.toLong() * 1000L)
                 sb.append("; Expires=").append(httpDateFmt.format(date))
             }
-            // sameSite accepted (Lax/Strict/None, any case) so exports including
-            // it aren't rejected, but NOT applied yet — CookieManager.setCookie
-            // honors a SameSite attribute, but wiring it needs validation against
-            // the cross-site captcha flows. TODO [set-cookies-samesite].
-            @Suppress("UNUSED_VARIABLE")
-            val sameSite = cookieString(raw, "sameSite", "same_site")
-
             cookieMgr.setCookie(url, sb.toString())
             setNames.add(name)
             domainsTouched.add(domain)

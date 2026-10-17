@@ -303,9 +303,8 @@ private fun FileItemRow(
             .combinedClickable(
                 onClick = onClick,
                 // [T-android-file-context-copy-abs-path] Long-press opens the
-                // file context menu (currently "Copy Absolute Path"; the
-                // HTML-only "Add to Home" item below stays gated). Mirrors the
-                // iOS file context menu.
+                // file context menu ("Copy Absolute Path"). Mirrors the iOS
+                // file context menu.
                 onLongClick = { menuExpanded = true },
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -383,9 +382,7 @@ private fun FileItemRow(
     }
 
     // [T-android-file-context-copy-abs-path] File context menu, anchored to
-    // the row's bounding Box. Always offers "Copy Absolute Path"; the
-    // HTML-only "Add to Home" item below stays gated behind the unvalidated
-    // WebApp entry point (TODO webapp-hidden).
+    // the row's bounding Box. Always offers "Copy Absolute Path".
     run {
         val context = LocalContext.current
         AharouMenu(
@@ -413,8 +410,6 @@ private fun FileItemRow(
                     ).show()
                 },
             )
-            // [Aharou] 原 原版 的「Add to Home」菜单项属未完成的残疾功能（源码中 false && 已关），
-            // 移植版直接不搬。
         }
     }
     } // anchoring Box
