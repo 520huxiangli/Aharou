@@ -10,6 +10,7 @@ import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.voice.data.OfflineAsrEngine
 import com.aharou.feature.voice.data.RecordStartResult
 import com.aharou.feature.voice.data.StreamingAsrEngine
+import com.aharou.feature.voice.data.VoiceAudioSession
 import com.aharou.feature.voice.data.VoiceRecorder
 import com.aharou.feature.voice.data.VoiceSoundEffects
 import com.aharou.feature.voice.data.WakeWordEngine
@@ -55,6 +56,7 @@ internal class VoiceCallSession @Inject constructor(
     private val modelManager: VoiceModelManager,
     private val recorder: VoiceRecorder,
     private val soundEffects: VoiceSoundEffects,
+    private val audioSession: VoiceAudioSession,
     @param:ApplicationContext private val context: Context,
 ) {
 
@@ -162,6 +164,10 @@ internal class VoiceCallSession @Inject constructor(
                 setState(State.Idle, "会话创建失败")
                 return@launch
             }
+            // 进通话音频模式：开扬声器 + 让系统按通话链路处理音频（这是系统回声消除的前提）。
+            // 位置在这里而不是 start() 入口：上面几条失败路径直接回 Idle，不进 teardown，
+            // 提前进模式就会退了没人退。
+            audioSession.enterCommunicationMode()
             if (wakeMode) {
                 // 三个模型全部提前预热。识别器首次加载要 4 秒多，拖到唤醒词命中才加载的话，
                 // 这几秒里录音还没开，用户接着说的指令会被整段丢掉（实测空窗 4.2s）。
@@ -224,6 +230,7 @@ internal class VoiceCallSession @Inject constructor(
             setState(State.Idle, "teardown 收尾")
         }
         if (stopSpeech) speechQueue.stop()
+        audioSession.exitCommunicationMode()
     }
 
     /** 用户主动打断当前播报/思考，直接回到收音。 */
@@ -290,7 +297,7 @@ internal class VoiceCallSession @Inject constructor(
             wasRecording
         }
         if (!alreadyRecording) {
-            when (recorder.start(::onPcmChunk)) {
+            when (recorder.start(::onPcmChunk, forCall = true)) {
                 RecordStartResult.Started -> synchronized(audioLock) { setState(State.WakeListening, "唤醒监听：新开录音") }
                 RecordStartResult.NoPermission -> fail("MIC_PERMISSION")
                 RecordStartResult.Failed -> fail("RECORD_FAILED")
@@ -327,7 +334,7 @@ internal class VoiceCallSession @Inject constructor(
             wasRecording
         }
         if (!alreadyRecording) {
-            when (recorder.start(::onPcmChunk)) {
+            when (recorder.start(::onPcmChunk, forCall = true)) {
                 RecordStartResult.Started -> synchronized(audioLock) { setState(State.Listening, "识别：新开录音") }
                 RecordStartResult.NoPermission -> fail("MIC_PERMISSION")
                 RecordStartResult.Failed -> fail("RECORD_FAILED")

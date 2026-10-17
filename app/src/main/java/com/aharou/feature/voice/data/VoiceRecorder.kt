@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import androidx.core.content.ContextCompat
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -30,6 +32,10 @@ internal class VoiceRecorder @Inject constructor(
     private var worker: Thread? = null
     private var buffer: MutableList<Float>? = null
 
+    /** 通话场景挂上的系统音频效果；设备不支持时为 null。 */
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+
     @Volatile
     private var recording = false
 
@@ -49,9 +55,11 @@ internal class VoiceRecorder @Inject constructor(
      *
      * @param onChunk 每读到一块 PCM（[-1,1] 归一化）就回调一次，用于流式识别。
      *                回调在录音线程上同步执行，实现里不要做耗时操作，也不要直接更新 UI。
+     * @param forCall 通话/语音对话场景：换用 [CALL_SOURCE] 音源并挂上系统回声消除，
+     *                否则一边播报一边收音时 AI 会听见自己说的话。
      */
     @SuppressLint("MissingPermission")
-    fun start(onChunk: ((FloatArray) -> Unit)? = null): RecordStartResult {
+    fun start(onChunk: ((FloatArray) -> Unit)? = null, forCall: Boolean = false): RecordStartResult {
         if (recording) return RecordStartResult.Failed
         chunkListener = onChunk
         if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) !=
@@ -67,8 +75,9 @@ internal class VoiceRecorder @Inject constructor(
         }
         // 取最小值的 2 倍：留出余量吸收调度抖动，又不至于让 stop 后还要读很久残留
         val bufferBytes = minBuffer * 2
+        val source = if (forCall) CALL_SOURCE else MEDIA_SOURCE
         val recorder = try {
-            AudioRecord(MEDIA_SOURCE, SAMPLE_RATE, CHANNEL, ENCODING, bufferBytes)
+            AudioRecord(source, SAMPLE_RATE, CHANNEL, ENCODING, bufferBytes)
         } catch (e: Exception) {
             FileLogger.e(TAG, "创建 AudioRecord 失败", e)
             return RecordStartResult.Failed
@@ -78,6 +87,7 @@ internal class VoiceRecorder @Inject constructor(
             recorder.release()
             return RecordStartResult.Failed
         }
+        if (forCall) attachCallAudioEffects(recorder)
 
         // 只有调用方会回读整段录音（onChunk == null）时才累积：流式路径与通话/唤醒是常驻录音，
         // 从不读 stop() 返回值，累积只会随挂机时长无限增长直至 OOM。
@@ -145,6 +155,7 @@ internal class VoiceRecorder @Inject constructor(
         record = null
         worker?.let { runCatching { it.join(500) } }
         worker = null
+        releaseAudioEffects()
 
         val samples = synchronized(buffer ?: mutableListOf<Float>()) {
             (buffer ?: mutableListOf<Float>()).toFloatArray()
@@ -178,6 +189,31 @@ internal class VoiceRecorder @Inject constructor(
         worker?.let { runCatching { it.join(300) } }
         worker = null
         buffer = null
+        releaseAudioEffects()
+    }
+
+    /**
+     * 通话场景挂上系统回声消除与降噪：一边播报一边收音时，不消回声的话 AI 会听见自己刚说的话。
+     * 设备/驱动不一定支持，[AcousticEchoCanceler.isAvailable] 为假或 create 返回 null 就静默跳过——
+     * 这时仍有 [CALL_SOURCE] 音源自带的处理兜底。
+     */
+    private fun attachCallAudioEffects(recorder: AudioRecord) {
+        runCatching {
+            if (AcousticEchoCanceler.isAvailable()) {
+                echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
+            }
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
+            }
+        }.onFailure { FileLogger.w(TAG, "挂载通话音频效果失败", it) }
+    }
+
+    /** 释放音频效果。必须早于/同步于 AudioRecord 的释放，否则部分设备会漏资源。 */
+    private fun releaseAudioEffects() {
+        runCatching { echoCanceler?.release() }
+        runCatching { noiseSuppressor?.release() }
+        echoCanceler = null
+        noiseSuppressor = null
     }
 
     private fun peakAmplitude(samples: FloatArray): Float {
@@ -195,6 +231,9 @@ internal class VoiceRecorder @Inject constructor(
         const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
         const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
         const val MEDIA_SOURCE = MediaRecorder.AudioSource.VOICE_RECOGNITION
+
+        /** 通话音源：系统会为它启用回声消除/降噪/自动增益，正是外放对话需要的。 */
+        const val CALL_SOURCE = MediaRecorder.AudioSource.VOICE_COMMUNICATION
 
         /** 短于 300ms 基本是误触，不值得送去识别。 */
         const val MIN_DURATION_MS = 300L

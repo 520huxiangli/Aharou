@@ -71,16 +71,25 @@ internal class VoiceAudioSession @Inject constructor(
         unregisterNoisyReceiver()
     }
 
-    /** 进入通话音频模式（启用回声消除与通话路由）。需要 MODIFY_AUDIO_SETTINGS 权限。 */
+    /**
+     * 进入通话音频模式（启用系统回声消除与通话路由）。需要 MODIFY_AUDIO_SETTINGS 权限。
+     *
+     * 通话是「外放对话」而不是贴耳打电话：MODE_IN_COMMUNICATION 默认走听筒，
+     * 不把扬声器置开的话，用户对着屏幕根本听不见 AI 说话。
+     */
     fun enterCommunicationMode() {
-        runCatching { audioManager.mode = AudioManager.MODE_IN_COMMUNICATION }
-            .onFailure { FileLogger.w(TAG, "进入通话音频模式失败", it) }
+        runCatching {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager.isSpeakerphoneOn = true
+        }.onFailure { FileLogger.w(TAG, "进入通话音频模式失败", it) }
     }
 
-    /** 退出通话音频模式。 */
+    /** 退出通话音频模式，恢复普通路由。 */
     fun exitCommunicationMode() {
-        runCatching { audioManager.mode = AudioManager.MODE_NORMAL }
-            .onFailure { FileLogger.w(TAG, "退出通话音频模式失败", it) }
+        runCatching {
+            audioManager.isSpeakerphoneOn = false
+            audioManager.mode = AudioManager.MODE_NORMAL
+        }.onFailure { FileLogger.w(TAG, "退出通话音频模式失败", it) }
     }
 
     private fun buildFocusRequest(): AudioFocusRequest = AudioFocusRequest.Builder(
