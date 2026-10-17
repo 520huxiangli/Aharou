@@ -116,14 +116,16 @@ object MemoryParser {
     }
 
     /**
-     * 零成本关键词抽取（不调模型）：从 name 与 description 取词。
+     * 零成本关键词抽取（不调模型）：从 name 与 description 取词，另加正文里的结构化实体。
      *
      * 关键词只服务于 `memory(action=search)` 的召回，不进注入清单，
      * 所以宁多勿缺：模糊一点只会多召回一条，漏了则等于搜不到。
-     * 正文不参与抽取——长正文会把噪音词顶上来，且拖慢每次列目录。
+     * 正文只参与实体抽取（IP / 域名 / 路径 / 端口）——这些串稀有且精确，
+     * 而正文的普通词会把噪音顶上来、拖慢每次列目录。
      */
     private fun extractKeywords(name: String, description: String, body: String): List<String> {
         val out = LinkedHashSet<String>()
+        MemoryEntities.extract("$name\n$description\n$body").forEach { out += it }
         name.split('-', '_', ' ').forEach { if (it.length >= 2) out += it }   // 文件名本身就是高信号
         SPLIT.split(description).forEach { raw ->
             val w = raw.trim().trimStart('\'', '"', '（', '(').trimEnd('\'', '"', '）', ')', '。', '，')

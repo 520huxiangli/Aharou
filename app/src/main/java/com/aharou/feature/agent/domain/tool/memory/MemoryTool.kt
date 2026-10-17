@@ -275,6 +275,13 @@ class MemoryTool @Inject constructor(
         if (name.isNullOrEmpty()) return ToolResult.Error("save 操作需要 name 参数", "MISSING_NAME")
         val description = args["description"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: return ToolResult.Error("save 操作需要 description 参数", "MISSING_DESCRIPTION")
+        if (description.isEmpty()) {
+            return ToolResult.Error(
+                "摘要不能为空，摘要要包含正文里的关键实体（域名/IP/端口/路径等）；" +
+                    "空摘要的条目不会进注入清单，之后也检索不出来。",
+                "EMPTY_DESCRIPTION"
+            )
+        }
         val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
             ?: return ToolResult.Error("save 操作需要 content 参数", "MISSING_CONTENT")
 

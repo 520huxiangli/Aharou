@@ -28,6 +28,29 @@ enum class DistillOutcome { WRITTEN, NOTHING }
 enum class MemoryActionError { NO_WORKSPACE, SAVE_FAILED, DELETE_FAILED, RESTORE_FAILED }
 
 /**
+ * 检索测试里的一条记忆：它会不会被这句话召回，以及命中了摘要清单的哪个字段。
+ *
+ * 只标命中字段、不给分数：打分函数是记忆层的私有实现，取不到值；
+ * 命中判定复用记忆层自己的切词（[MemoryRepository.termsOf]），口径与真实排序一致。
+ */
+data class MemoryRecallHit(
+    val memory: Memory,
+    val hitKeywords: Boolean,
+    val hitName: Boolean,
+    val hitDescription: Boolean,
+) {
+    val matched: Boolean get() = hitKeywords || hitName || hitDescription
+}
+
+/** 一次检索测试的结果；[items] 为空表示当前没有任何会注入的记忆。 */
+data class MemoryRecallReport(
+    val query: String,
+    val items: List<MemoryRecallHit>,
+) {
+    val hasHit: Boolean get() = items.any { it.matched }
+}
+
+/**
  * 设置页「记忆」分区的状态与操作。
  *
  * 从 SettingsViewModel 抽出来：那个类逼近单文件行数门禁，而记忆这一块与其它设置项没有耦合。
@@ -68,6 +91,13 @@ class MemorySettingsController @Inject constructor(
 
     private val _distillResult = MutableStateFlow<DistillOutcome?>(null)
     val distillResult: StateFlow<DistillOutcome?> = _distillResult.asStateFlow()
+
+    /** 检索测试是否在跑，以及上一次的结果（换新输入后整体替换）。 */
+    private val _recallTesting = MutableStateFlow(false)
+    val recallTesting: StateFlow<Boolean> = _recallTesting.asStateFlow()
+
+    private val _recallReport = MutableStateFlow<MemoryRecallReport?>(null)
+    val recallReport: StateFlow<MemoryRecallReport?> = _recallReport.asStateFlow()
 
     /** 项目记忆所属工作区；null 表示当前没有工作区，项目作用域此时不可浏览。 */
     fun projectRoot(): String? = workspaceRepository.currentPath().takeIf { it.isNotBlank() }
@@ -192,4 +222,46 @@ class MemorySettingsController @Inject constructor(
     fun consumeDistillResult() {
         _distillResult.value = null
     }
+
+    /**
+     * 检索测试：拿用户的一句话原样喂给注入清单（[MemoryRepository.listMemoriesForPrompt]），
+     * 看它会把哪几条排到前面、各靠哪个字段命中。
+     *
+     * 只读：不写文件、不记使用次数、不动排序缓存。数据源就是真实的注入路径，
+     * 不在这里另写一套检索，免得测出来的结果与线上不一致。
+     */
+    suspend fun testRecall(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return
+        _recallTesting.value = true
+        val projectRoot = projectRoot()
+        val hits = withContext(Dispatchers.IO) {
+            runCatching {
+                val normalized = trimmed.lowercase()
+                memoryRepository.listMemoriesForPrompt(projectRoot, trimmed)
+                    .take(RECALL_DISPLAY_LIMIT)
+                    .map { memory ->
+                        MemoryRecallHit(
+                            memory = memory,
+                            hitKeywords = memory.keywords.any { keyword ->
+                                memoryRepository.termsOf(keyword).any { it in normalized }
+                            },
+                            hitName = memoryRepository.termsOf(memory.name).any { it in normalized },
+                            hitDescription = memoryRepository.termsOf(memory.description)
+                                .any { it in normalized },
+                        )
+                    }
+            }.getOrDefault(emptyList())
+        }
+        _recallTesting.value = false
+        _recallReport.value = MemoryRecallReport(trimmed, hits)
+    }
+
+    /** 关掉弹层后清掉结果，下次打开从空开始。 */
+    fun clearRecallReport() {
+        _recallReport.value = null
+    }
 }
+
+/** 检索测试最多展示几条：与用户核对摘要的量级相称，再长就没人看了。 */
+private const val RECALL_DISPLAY_LIMIT = 10

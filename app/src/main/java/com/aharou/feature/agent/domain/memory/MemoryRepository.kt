@@ -208,13 +208,15 @@ class MemoryRepository @Inject constructor(
     }
 
     /**
-     * 把一段文本切成可命中的短词：按「非字母数字」切分并小写；纯 CJK 的词额外展开成字符
+     * 把一段文本切成可命中的短词：先整体取出 IP / 域名 / 路径 / 端口（这些串被拆开就再也对不上），
+     * 再按「非字母数字」切分并小写；纯 CJK 的词额外展开成字符
      * 二元组（bigram），弥补中文无空格分词——整串 CJK 词几乎不会原样出现在用户输入里，
      * bigram 才是能对上的最小单位。单字与停用词噪音太大，直接丢弃。
      */
     internal fun termsOf(text: String): List<String> {
         if (text.isBlank()) return emptyList()
         val terms = ArrayList<String>()
+        terms += MemoryEntities.extract(text)
         for (raw in TERM_SPLIT.split(text)) {
             val token = raw.lowercase()
             if (token.length < MIN_TERM_LENGTH || token in STOP_WORDS) continue

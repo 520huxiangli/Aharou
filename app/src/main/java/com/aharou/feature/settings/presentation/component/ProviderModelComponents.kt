@@ -405,6 +405,16 @@ internal fun ModelTestDetailBottomSheet(
                             )
                         }
                     }
+                    if (!result.success && result.message.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = result.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 IconButton(
                     onClick = {

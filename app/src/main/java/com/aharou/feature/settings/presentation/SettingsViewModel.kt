@@ -453,6 +453,8 @@ class SettingsViewModel @Inject constructor(
     val compactResult: StateFlow<MemoryCompactReport?> get() = memorySettings.compactResult
     val distilling: StateFlow<Boolean> get() = memorySettings.distilling
     val distillResult: StateFlow<DistillOutcome?> get() = memorySettings.distillResult
+    val memoryRecallTesting: StateFlow<Boolean> get() = memorySettings.recallTesting
+    val memoryRecallReport: StateFlow<MemoryRecallReport?> get() = memorySettings.recallReport
 
     fun memoryProjectRoot(): String? = memorySettings.projectRoot()
 
@@ -487,6 +489,14 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun consumeDistillResult() = memorySettings.consumeDistillResult()
+
+    fun testMemoryRecall(query: String) {
+        if (memorySettings.recallTesting.value) return
+        viewModelScope.launch { memorySettings.testRecall(query) }
+    }
+
+    fun clearMemoryRecallReport() = memorySettings.clearRecallReport()
+
     private companion object {
         /** Shizuku 静默安装的超时（大包 pm install 要几十秒）。 */
         const val SHIZUKU_INSTALL_TIMEOUT_MS = 120_000L

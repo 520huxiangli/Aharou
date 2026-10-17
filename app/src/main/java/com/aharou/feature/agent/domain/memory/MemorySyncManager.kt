@@ -54,13 +54,16 @@ private const val REMOTE_ARCHIVE_PREFIX = "remote-"
 /** 一轮 rebase 冲突最多处理几轮，异常情况下防止空转。 */
 private const val MAX_REBASE_ROUNDS = 10
 
+/** frontmatter 里已声明待确认：这些条目不重复追加冲突标记，否则每次同步都会叠一层日期。 */
+private val PENDING_LINE = Regex("(?im)^pending:\\s*true\\s*\$")
+
 /**
  * 一次同步的结果。
  *
  * @param success 是否成功。
  * @param message 给用户看的一句话（成功时含收集数、补回数、冲突数、疑似删除数）。
  * @param collected 本轮收进仓库的本地文件数（**新增与更新合并计数**）。
- * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端」处理的条目数。
+ * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端 + 双方标待确认」处理的条目数。
  * @param pendingDeletions 上次提交里存在、本次远端与本机都不存在的条目（仓库相对路径），
  *   疑似在其他设备被删除；**仅报告，不执行任何删除**，删不删由用户决定。
  */
@@ -81,7 +84,8 @@ data class MemorySyncOutcome(
  * 为什么不沿用「仓库根就是记忆目录」：那只能是单一目录。项目记忆散在各工作区下，要一起走就得有汇合点。
  * 代价是仓库里存的是副本。合并语义以 **base = 上次提交** 为准（本轮 collect 之前的工作树内容，
  * 也就是上一轮 push 之后、本轮 pull 之前那一刻）：本机改、远端改由 git 三方判定；
- * 两侧都改且不同则**保留本机版本继续推、远端版本另存进该条目的 `archive/`**，绝不静默覆盖本机改动。
+ * 两侧都改且不同则**保留本机版本继续推、远端版本另存进该条目的 `archive/`**，
+ * 并给双方都标上待确认，绝不静默覆盖本机改动、也不让远端改动无声消失。
  *
  * 远端凭据由容器里的 credential helper 提供，作用域靠容器初始化的 includeIf（见 env-common.sh）。
  */
@@ -212,7 +216,7 @@ class MemorySyncManager @Inject constructor(
     private fun successMessage(collected: Int, restored: Int, conflicts: Int, pendingDeletions: Int): String {
         val parts = mutableListOf("收上 $collected 个文件")
         if (restored > 0) parts += "补回本机 $restored 个文件"
-        if (conflicts > 0) parts += "冲突 $conflicts 条（远端版本已存进 archive/）"
+        if (conflicts > 0) parts += "冲突 $conflicts 条（双方已标待确认，远端版本存进 archive/）"
         if (pendingDeletions > 0) parts += "疑似被其他设备删除 $pendingDeletions 条"
         return "已同步到记忆仓库（${parts.joinToString("，")}）"
     }
@@ -297,6 +301,7 @@ class MemorySyncManager @Inject constructor(
      *
      * rebase 冲突里 `--ours` 是被 rebase 到的上游（远端）、`--theirs` 是正在重放的本地提交，
      * 所以保留本机用 `--theirs`，远端版本从索引 stage 2（`<rev>:2:<path>`）取。
+     * 两侧都标待确认：只归档不标，远端改动就会被静默埋进 archive/，用户永远看不到冲突发生过。
      * 全部冲突处理完仍收不了尾则 `rebase --abort` 干净中止，绝不把工作树留在中间态。
      */
     private suspend fun resolveRebaseConflicts(
@@ -307,8 +312,10 @@ class MemorySyncManager @Inject constructor(
         var rounds = 0
         while (rebaseInProgress(repoDir) && rounds++ < MAX_REBASE_ROUNDS) {
             conflictedPaths().forEach { path ->
-                archiveRemoteVersion(repoDir, path)
+                val archived = archiveRemoteVersion(repoDir, path)
                 run("git checkout --theirs -- ${quote(path)}")
+                // 必须在 git add 之前打标：待确认标记要跟着这次 rebase 提交一起进仓库。
+                markConflictPending(repoDir, path, archived)
                 run("git add -- ${quote(path)}")
                 locallyModified += path
                 conflicts++
@@ -324,10 +331,14 @@ class MemorySyncManager @Inject constructor(
         return RebaseResolution(conflicts, null)
     }
 
-    /** 把冲突条目的远端版本写进同目录的 `archive/remote-<名>`（`remote-` 前缀防重名）。 */
-    private suspend fun archiveRemoteVersion(repoDir: File, path: String) {
+    /**
+     * 把冲突条目的远端版本写进同目录的 `archive/remote-<名>`（`remote-` 前缀防重名）。
+     *
+     * @return 归档文件的仓库相对路径；取不到远端版本或写盘失败时 null。
+     */
+    private suspend fun archiveRemoteVersion(repoDir: File, path: String): String? {
         val remote = run("git show ${quote(":2:$path")}")
-        if (remote.exitCode != 0) return
+        if (remote.exitCode != 0) return null
         val dir = path.substringBeforeLast('/', "")
         val name = path.substringAfterLast('/')
         val archiveRel = if (dir.isEmpty()) {
@@ -335,11 +346,66 @@ class MemorySyncManager @Inject constructor(
         } else {
             "$dir/$ARCHIVE_DIR/$REMOTE_ARCHIVE_PREFIX$name"
         }
-        runCatching {
+        return runCatching {
             val target = File(repoDir, archiveRel)
             target.parentFile?.mkdirs()
             target.writeText(remote.output)
-        }.onFailure { FileLogger.w(TAG, "远端版本归档失败: $archiveRel", it) }
+            archiveRel
+        }.onFailure { FileLogger.w(TAG, "远端版本归档失败: $archiveRel", it) }.getOrNull()
+    }
+
+    /** 一条冲突的双方都标待确认；本机那份在仓库工作树与本机记忆目录里各标一次。 */
+    private fun markConflictPending(repoDir: File, path: String, archived: String?) {
+        markPending(File(repoDir, path), "远端版本")
+        // 仓库副本会被下次 collect 用本机文件覆盖，所以本机原件也得标，否则标记下一轮就丢了。
+        localFileFor(path)?.let { markPending(it, "远端版本") }
+        archived?.let { markPending(File(repoDir, it), "本机版本") }
+    }
+
+    /**
+     * 给一条记忆打待确认：frontmatter 补 `pending: true`，description 追加冲突说明。
+     *
+     * 已带 `pending: true` 的条目直接跳过，避免反复同步把同一件事标成多条冲突。
+     */
+    private fun markPending(file: File, counterpart: String) {
+        val text = runCatching { file.readText() }.getOrNull() ?: return
+        val normalized = text.replace("\r\n", "\n")
+        val headEnd = if (normalized.startsWith("---\n")) normalized.indexOf("\n---", startIndex = 4) else -1
+        val head = if (headEnd >= 0) normalized.substring(4, headEnd) else ""
+        if (PENDING_LINE.containsMatchIn(head)) return
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
+        val marker = "[待确认 $date，与${counterpart}冲突]"
+        val lines = if (head.isEmpty()) mutableListOf<String>() else head.split("\n").toMutableList()
+        val descIndex = lines.indexOfFirst { it.trimStart().startsWith("description:") }
+        if (descIndex >= 0) lines[descIndex] = appendMarkerToLine(lines[descIndex], marker)
+        lines.add("pending: true")
+        val body = if (headEnd >= 0) normalized.substring(headEnd) else "\n---\n$normalized"
+        runCatching { file.writeText("---\n${lines.joinToString("\n")}$body") }
+            .onFailure { FileLogger.w(TAG, "待确认标记写入失败: ${file.absolutePath}", it) }
+    }
+
+    /** 把标记塞进 description 值：有引号就塞在收尾引号前，没有就整体包成双引号标量。 */
+    private fun appendMarkerToLine(line: String, marker: String): String {
+        val colon = line.indexOf(':')
+        if (colon < 0) return line
+        val prefix = line.substring(0, colon + 1)
+        val raw = line.substring(colon + 1).trim()
+        val value = when {
+            raw.length >= 2 && raw.first() == '"' && raw.last() == '"' -> raw.dropLast(1) + " $marker\""
+            raw.length >= 2 && raw.first() == '\'' && raw.last() == '\'' -> raw.dropLast(1) + " $marker'"
+            raw.isEmpty() -> "\"$marker\""
+            else -> "\"" + raw.replace("\\", "\\\\").replace("\"", "\\\"") + " $marker\""
+        }
+        return "$prefix $value"
+    }
+
+    /** 仓库相对路径对应的本机记忆文件；项目在本机不可用（没有对应目录）时返回 null。 */
+    private fun localFileFor(repoPath: String): File? {
+        localRoots().forEach { root ->
+            val prefix = "${root.repoPrefix}/"
+            if (repoPath.startsWith(prefix)) return File(root.dir, repoPath.removePrefix(prefix))
+        }
+        return null
     }
 
     /** 上次提交里存在、本次远端与本机都不存在的条目：疑似在其他设备被删，仅报告不删除。 */

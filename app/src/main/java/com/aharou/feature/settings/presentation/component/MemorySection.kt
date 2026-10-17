@@ -53,6 +53,7 @@ import com.aharou.feature.settings.presentation.MemoryActionError
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.Search
 import compose.icons.feathericons.Star
 import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Zap
@@ -82,11 +83,14 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     val distilling by viewModel.distilling.collectAsStateWithLifecycle()
     val distillResult by viewModel.distillResult.collectAsStateWithLifecycle()
     val actionError by viewModel.memoryActionError.collectAsStateWithLifecycle()
+    val recallTesting by viewModel.memoryRecallTesting.collectAsStateWithLifecycle()
+    val recallReport by viewModel.memoryRecallReport.collectAsStateWithLifecycle()
 
     var enabled by remember { mutableStateOf(store.isMemoryEnabled()) }
     var records by remember { mutableStateOf(trace.recent(TRACE_DISPLAY_LIMIT)) }
     var editing by remember { mutableStateOf<Memory?>(null) }
     var deleteTarget by remember { mutableStateOf<Memory?>(null) }
+    var showRecallTest by remember { mutableStateOf(false) }
     var writing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -164,6 +168,17 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     }
 
     val editingMemory = editing
+    if (showRecallTest) {
+        MemoryRecallTestSheet(
+            testing = recallTesting,
+            report = recallReport,
+            onRun = viewModel::testMemoryRecall,
+            onDismiss = {
+                showRecallTest = false
+                viewModel.clearMemoryRecallReport()
+            },
+        )
+    }
     if (editingMemory != null) {
         MemoryEditorPane(
             memory = editingMemory,
@@ -237,6 +252,13 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
                     }
                 },
                 onClick = { if (!distilling) viewModel.distillNow() },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Search,
+                title = stringResource(R.string.memory_recall_title),
+                subtitle = stringResource(R.string.memory_recall_subtitle),
+                onClick = { showRecallTest = true },
             )
         }
 

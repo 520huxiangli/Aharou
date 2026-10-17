@@ -2,10 +2,12 @@ package com.aharou.feature.agent.domain.prompt
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.rule.RuleRepository
+import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -16,6 +18,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.runBlocking
 
 /**
  * 按模块组装系统提示词：稳定基线放最前（享受 KV Cache），仅日期为低频变化。
@@ -40,7 +43,8 @@ class SystemPromptProvider @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val promptFragmentCatalog: PromptFragmentCatalog,
-    private val ruleRepository: RuleRepository
+    private val ruleRepository: RuleRepository,
+    private val chatSessionDao: ChatSessionDao
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -362,6 +366,36 @@ class SystemPromptProvider @Inject constructor(
                 ?.takeIf { it.isNotBlank() }
     }
 
+    private val coreArchiveSource = CoreArchiveSource()
+
+    /**
+     * 隐身会话用的记忆段：只保留核心档案（身份与行为红线），不注入全局记忆与今日日志。
+     * 隐身会话不写记忆（见 GhostModeStore），也就不该把跨会话记忆读进来——否则用户以为
+     * 「隐身」了，模型却仍能说出之前会话里的用户信息。
+     */
+    private inner class CoreArchiveSource : PromptSource {
+        override fun build(ctx: AgentContext): String? = runCatching {
+            if (!aharouMemoryStore.isMemoryEnabled()) return@runCatching null
+            val core = aharouMemoryStore.readCore()?.trim().orEmpty()
+            if (core.isEmpty()) return@runCatching null
+            "## 记忆（持久，跨会话）\n### 核心档案\n$core"
+        }.getOrNull()
+    }
+
+    /**
+     * 当前会话是否隐身。
+     *
+     * [build] 是非 suspend 函数（调用方在用 withContext(Dispatchers.IO) 包着跑），而隐身标记既可能在
+     * GhostModeStore 的内存集合里、也可能只在会话行上，所以这里只能阻塞查一次。
+     * 不缓存结果：用户可能在会话中途开关隐身，缓存会让「刚打开隐身」的那一轮仍然注入记忆。
+     */
+    private fun isGhostSession(ctx: AgentContext): Boolean {
+        val sessionId = ctx.sessionId?.takeIf { it.isNotBlank() } ?: return false
+        return runCatching { runBlocking { GhostModeStore.isGhost(chatSessionDao, sessionId) } }
+            .onFailure { FileLogger.w(TAG, "读取会话隐身标记失败: ${it.message}", it) }
+            .getOrDefault(false)
+    }
+
     private val customDir: File
         get() = File(containerInstaller.aharouDir, "prompts.custom")
 
@@ -381,12 +415,16 @@ class SystemPromptProvider @Inject constructor(
         }
 
         // 1. 获取各个 Source 的基线快照。
+        // 隐身会话只保留核心档案：记忆清单与常驻记忆全部不注入（写入侧已由 GhostModeStore 拦住，
+        // 读取侧不拦的话，「隐身」只挡住了落盘、挡不住模型把旧会话里的用户信息读进上下文）。
+        val ghost = isGhostSession(agentContext)
         val rawStatic = staticRuleSource.build(agentContext)
         val soulContent = soulSource.build(agentContext)
-        val aharouMemoryContent = aharouMemorySource.build(agentContext)
+        val aharouMemoryContent =
+            if (ghost) coreArchiveSource.build(agentContext) else aharouMemorySource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val subAgentsContent = subAgentListSource.build(agentContext)
-        val memoriesContent = memoryListSource.build(agentContext)
+        val memoriesContent = if (ghost) null else memoryListSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
         val rulesContent = availableRulesSource.build(agentContext)
         val workspaceTypeContent = workspaceTypeSource.build(agentContext)
@@ -453,7 +491,7 @@ class SystemPromptProvider @Inject constructor(
         return renderVariables(
             content,
             activeSkillsSource.build(ctx),
-            memoryListSource.build(ctx),
+            if (isGhostSession(ctx)) null else memoryListSource.build(ctx),
             subAgentListSource.build(ctx),
             projectRuleSource.build(ctx),
             workspaceSource.build(ctx),
@@ -483,7 +521,7 @@ class SystemPromptProvider @Inject constructor(
             append("专注完成本会话交给你的任务，并在最后一条回复里给出完整结论——主代理只能读到你的最后一条回复，中间过程与工具结果它看不到。\n\n")
             append(definition.prompt)
         }
-        val memories = memoryListSource.build(agentContext)
+        val memories = if (isGhostSession(agentContext)) null else memoryListSource.build(agentContext)
         return buildString {
             append(
                 renderVariables(

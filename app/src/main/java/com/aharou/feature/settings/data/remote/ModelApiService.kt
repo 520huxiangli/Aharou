@@ -8,11 +8,13 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -114,25 +116,36 @@ class ModelApiService @Inject constructor(
                     throw FetchModelsException("HTTP ${response.code}: ${body.take(200)}", debug)
                 }
 
-                val jsonObj = json.parseToJsonElement(body).jsonObject
-                val data = if (type == ProviderType.GEMINI) {
-                    jsonObj["models"]?.jsonArray
-                } else {
-                    jsonObj["data"]?.jsonArray
+                // 有的网关用 HTTP 200 + 业务错误码回鉴权失败（如讯飞系返回 `data: {}`），
+                // 直接 jsonArray 会抛序列化异常把真实原因盖掉，故先判定类型再取。
+                val jsonObj = runCatching { json.parseToJsonElement(body) }.getOrNull() as? JsonObject
+                val data = jsonObj?.let { obj ->
+                    if (type == ProviderType.GEMINI) obj["models"] as? JsonArray else obj["data"] as? JsonArray
                 } ?: run {
+                    val serverError = jsonObj?.let { serverErrorMessage(it) }
+                    val message = if (serverError != null) {
+                        context.getString(R.string.provider_fetch_server_error, serverError)
+                    } else {
+                        context.getString(R.string.provider_fetch_missing_fields)
+                    }
+                    val errorDetail = if (serverError != null) {
+                        context.getString(R.string.provider_fetch_server_error_detail, serverError, body)
+                    } else {
+                        context.getString(R.string.provider_fetch_missing_fields_detail, body)
+                    }
                     val debug = ModelTestResult(
                         success = false,
                         latencyMs = latency,
-                        message = context.getString(R.string.provider_fetch_missing_fields),
+                        message = message,
                         requestUrl = url,
                         requestHeaders = reqHeadersMap,
                         requestBody = "",
                         responseCode = response.code,
                         responseHeaders = respHeadersMap,
                         responseBody = body,
-                        errorDetail = context.getString(R.string.provider_fetch_missing_fields_detail, body)
+                        errorDetail = errorDetail
                     )
-                    throw FetchModelsException(context.getString(R.string.provider_fetch_missing_fields), debug)
+                    throw FetchModelsException(message, debug)
                 }
 
                 val modelList = data.mapNotNull { 
@@ -282,6 +295,23 @@ class ModelApiService @Inject constructor(
                 message = e.message ?: context.getString(R.string.chat_error_title),
                 errorDetail = e.stackTraceToString()
             )
+        }
+    }
+
+    /** 从错误响应里取出可读描述（如 `code` + `desc` / `message` / `error.message`）；取不到返回 null。 */
+    private fun serverErrorMessage(obj: JsonObject): String? {
+        fun text(element: JsonElement?): String? = (element as? JsonPrimitive)?.contentOrNull
+        val error = obj["error"] as? JsonObject
+        val desc = text(obj["desc"])
+            ?: text(obj["message"])
+            ?: text(obj["msg"])
+            ?: text(error?.get("message"))
+        val code = text(obj["code"]) ?: text(error?.get("code"))
+        if (desc.isNullOrBlank() && code.isNullOrBlank()) return null
+        return when {
+            desc.isNullOrBlank() -> "code=$code"
+            code.isNullOrBlank() -> desc
+            else -> "$desc (code=$code)"
         }
     }
 
