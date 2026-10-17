@@ -1,6 +1,8 @@
 package com.aharou.feature.settings.presentation.component
 
 import android.Manifest
+import android.app.AlarmManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -39,6 +41,7 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.agent.domain.tool.device.DeviceNotificationListener
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
 import compose.icons.feathericons.Calendar
@@ -274,6 +277,44 @@ internal fun AppPermissionsSection(
                     )
                 }
             )
+            SettingsDivider()
+            val notificationAccessGranted = DeviceNotificationListener.isEnabled(context)
+            SettingsRow(
+                icon = FeatherIcons.Bell,
+                title = stringResource(R.string.permissions_notification_access),
+                subtitle = stringResource(R.string.permissions_notification_access_desc),
+                onClick = {
+                    if (!notificationAccessGranted) {
+                        runCatching {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        }
+                    }
+                },
+                trailing = { PermissionStatusText(allowed = notificationAccessGranted) }
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                SettingsDivider()
+                val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                val exactAlarmGranted = alarmManager?.canScheduleExactAlarms() == true
+                SettingsRow(
+                    icon = FeatherIcons.Clock,
+                    title = stringResource(R.string.permissions_exact_alarm),
+                    subtitle = stringResource(R.string.permissions_exact_alarm_desc),
+                    onClick = {
+                        if (!exactAlarmGranted) {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    trailing = { PermissionStatusText(allowed = exactAlarmGranted) }
+                )
+            }
         }
 
         SettingsGroupHeader(text = stringResource(R.string.settings_category_system_permissions))

@@ -40,6 +40,18 @@ interface ScheduledTaskDao {
     @Query("SELECT COUNT(*) FROM scheduled_tasks WHERE enabled = 1")
     suspend fun countEnabled(): Int
 
+    /** 启用中的某类触发任务：事件总线按类型取候选（时间类不走这条路）。 */
+    @Query("SELECT * FROM scheduled_tasks WHERE enabled = 1 AND triggerType = :type ORDER BY createdAt ASC")
+    suspend fun enabledByTriggerType(type: String): List<ScheduledTaskEntity>
+
+    /**
+     * 事件投递：只把 nextRunAt 拨到事件时刻，不动别的列。
+     * 不复用 upsert 整行回写——事件总线读到任务行之后，设置页改名或调度器可能已经改过同一行，
+     * 整行回写会把那些改动一并吃掉。返回 0 表示任务已不存在。
+     */
+    @Query("UPDATE scheduled_tasks SET nextRunAt = :nextRunAt, updatedAt = :now WHERE id = :id")
+    suspend fun armEvent(id: String, nextRunAt: Long, now: Long): Int
+
     /**
      * 认领一次运行：仅当 [nextRunAt] 仍是调用方读到的 [expectedNextRunAt] 时才推进时间并计数，
      * 返回受影响行数；0 表示已被别的路径认领，本次放弃——避免同一个到点时刻跑两遍。

@@ -1305,12 +1305,14 @@
     <string name="skills_import_error_io">写入技能文件失败</string>
 
     <!-- Scheduled Tasks -->
-    <string name="settings_scheduled_tasks">定时任务</string>
-    <string name="scheduled_tasks_intro">让 AI 按固定周期自动执行一条指令。周期下限 %1$d 分钟，实际触发时间取决于系统后台调度。</string>
+    <string name="settings_scheduled_tasks">自动化任务</string>
+    <string name="scheduled_tasks_intro">让 AI 按你定的时间自动干活：可以按周期重复、每天固定时刻、或只跑一次。选定时刻的任务会走系统精确闹钟（Android 12 及以上需授权「精确闹钟」），周期下限 %1$d 分钟。</string>
     <string name="scheduled_tasks_list_header">任务列表</string>
     <string name="scheduled_tasks_empty">还没有定时任务</string>
-    <string name="scheduled_tasks_add">新建定时任务</string>
+    <string name="scheduled_tasks_add">新建自动化任务</string>
     <string name="scheduled_tasks_cycle">每 %1$d 分钟 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_daily">每天 %1$s · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_once">%1$s 跑一次 · 已运行 %2$d 次（%3$s）</string>
     <string name="scheduled_tasks_limit">上限 %1$d 次</string>
     <string name="scheduled_tasks_limit_unlimited">不限</string>
     <string name="scheduled_tasks_next_at">下次 %1$s（约 %2$d 分钟后）</string>
@@ -1318,8 +1320,16 @@
     <string name="scheduled_tasks_due">等待执行</string>
     <string name="scheduled_tasks_pill_countdown">%1$d 分钟后</string>
     <string name="scheduled_tasks_missed">上次错过未补跑</string>
-    <string name="scheduled_tasks_editor_new">新建定时任务</string>
-    <string name="scheduled_tasks_editor_edit">编辑定时任务</string>
+    <string name="scheduled_tasks_editor_new">新建自动化任务</string>
+    <string name="scheduled_tasks_editor_edit">编辑自动化任务</string>
+    <string name="scheduled_tasks_kind">运行方式</string>
+    <string name="scheduled_tasks_kind_interval">按周期重复</string>
+    <string name="scheduled_tasks_kind_daily">每天定时</string>
+    <string name="scheduled_tasks_kind_once">只跑一次</string>
+    <string name="scheduled_tasks_daily_time">每天的时刻</string>
+    <string name="scheduled_tasks_daily_time_hint">24 小时制，例如 08:30</string>
+    <string name="scheduled_tasks_once_time">触发时间</string>
+    <string name="scheduled_tasks_once_time_hint">格式 2026-10-20 08:30</string>
     <string name="scheduled_tasks_name">名称</string>
     <string name="scheduled_tasks_prompt">指令</string>
     <string name="scheduled_tasks_interval">周期（分钟）</string>
@@ -1337,6 +1347,43 @@
     <string name="scheduled_tasks_enabled">启用</string>
     <string name="scheduled_tasks_delete_title">删除定时任务</string>
     <string name="scheduled_tasks_delete_message">将删除「%1$s」，此操作不可恢复。确定删除？</string>
+
+    <!-- 自动化任务的触发方式、事件参数、条件与防抖 -->
+    <string name="scheduled_tasks_trigger">触发方式</string>
+    <string name="scheduled_tasks_trigger_time">到点</string>
+    <string name="scheduled_tasks_trigger_notification">收到通知</string>
+    <string name="scheduled_tasks_trigger_battery">电量变化</string>
+    <string name="scheduled_tasks_trigger_network">网络变化</string>
+    <string name="scheduled_tasks_trigger_boot">开机</string>
+    <string name="scheduled_tasks_trigger_package">来源应用</string>
+    <string name="scheduled_tasks_trigger_package_hint">填应用包名（如 com.tencent.mm）；留空表示任意应用。需先在「软件权限」里开启通知使用权</string>
+    <string name="scheduled_tasks_trigger_battery_below">电量阈值（%）</string>
+    <string name="scheduled_tasks_trigger_battery_below_hint">填 0-100 之间的百分比，留空表示不用这个条件</string>
+    <string name="scheduled_tasks_trigger_on_charging">插电触发</string>
+    <string name="scheduled_tasks_trigger_ssid">WiFi 名</string>
+    <string name="scheduled_tasks_trigger_ssid_hint">留空表示任意网络变化</string>
+    <string name="scheduled_tasks_trigger_boot_hint">开机或重启完成后触发一次</string>
+    <string name="scheduled_tasks_conditions">触发条件（可选）</string>
+    <string name="scheduled_tasks_condition_window_from">时段起</string>
+    <string name="scheduled_tasks_condition_window_to">时段止</string>
+    <string name="scheduled_tasks_condition_window_hint">24 小时制 HH:mm，两端都留空表示不限时段</string>
+    <string name="scheduled_tasks_condition_charging">仅充电时</string>
+    <string name="scheduled_tasks_condition_min_battery">最低电量（%）</string>
+    <string name="scheduled_tasks_condition_min_battery_hint">电量低于该值就不运行，留空表示不限</string>
+    <string name="scheduled_tasks_debounce">防抖（分钟）</string>
+    <string name="scheduled_tasks_debounce_hint">状态型事件在窗口内重复到达只触发一次；0 表示不防抖</string>
+    <string name="scheduled_tasks_waiting_event">等事件触发</string>
+    <string name="scheduled_tasks_desc_notification">收到通知时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_notification_app">收到 %1$s 的通知时 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_battery_below">电量低于 %1$d%% 时 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_battery_charging">开始充电时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_battery">电量变化时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_network">网络变化时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_network_ssid">连接 %1$s 时 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_boot">开机时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_skipped_condition">条件不满足</string>
+    <string name="scheduled_tasks_skipped_debounce">防抖中</string>
+    <string name="scheduled_tasks_skipped_running">上一次还在跑</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">子代理</string>
@@ -2272,6 +2319,10 @@
     <string name="permissions_battery_whitelist_desc">查看 / 管理全部应用的电池优化白名单</string>
     <string name="permissions_usage_access">使用情况访问</string>
     <string name="permissions_usage_access_desc">读取应用使用统计（统计 / 自动化用）</string>
+    <string name="permissions_notification_access">通知使用权</string>
+    <string name="permissions_notification_access_desc">读取通知内容，让 AI 能回答「刚才谁给我发消息了」（需在系统里手动勾选）</string>
+    <string name="permissions_exact_alarm">精确闹钟</string>
+    <string name="permissions_exact_alarm_desc">让自动化任务在指定时刻准点触发（Android 12 及以上需要）</string>
 
     <string name="floating_grant">悬浮窗权限</string>
     <string name="floating_status_granted">已授权</string>

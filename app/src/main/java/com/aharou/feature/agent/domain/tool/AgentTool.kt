@@ -70,7 +70,13 @@ enum class ToolCapability {
     USER_INTERACTION,
     MODIFY_SESSION_STATE,
     MODIFY_TODO_STATE,
-    EXTERNAL_TOOL
+    EXTERNAL_TOOL,
+
+    /** 读宿主设备数据：剪贴板 / 日历 / 联系人 / 通知 / 定位 / 相册 / 设备状态。 */
+    READ_DEVICE_DATA,
+
+    /** 改宿主设备状态：建闹钟、写日历或联系人、写剪贴板、发通知、控制媒体。 */
+    MODIFY_DEVICE_STATE
 }
 
 /**

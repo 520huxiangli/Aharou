@@ -28,6 +28,7 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
 import com.aharou.feature.settings.presentation.ScheduledTasksViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Clock
@@ -41,7 +42,8 @@ private const val TAG = "ScheduledTaskPill"
 /**
  * 聊天页顶栏下方的定时任务胶囊。
  *
- * 当前会话若被某个启用中的定时任务指向，就显示「倒计时 · 已运行/上限」；没有任务时**不占位**。
+ * 当前会话若被某个启用中的定时任务指向，就显示「倒计时（等事件触发的任务则显示「等事件触发」）· 已运行/上限」；
+ * 没有任务时**不占位**。
  * 取的是「下一次最早要跑」的那个任务（同一会话挂了多个时）。
  */
 @Composable
@@ -69,10 +71,12 @@ internal fun ScheduledTaskPill(
     }
 
     val remainMinutes = (task.nextRunAt - nowMs) / 60_000L
-    val countdown = if (remainMinutes <= 0L) {
-        stringResource(R.string.scheduled_tasks_due)
-    } else {
-        stringResource(R.string.scheduled_tasks_pill_countdown, remainMinutes)
+    val countdown = when {
+        // 事件类任务静息时 nextRunAt 停在远期值，没有倒计时可言。
+        !TriggerType.isTimeTrigger(task) && task.nextRunAt > nowMs ->
+            stringResource(R.string.scheduled_tasks_waiting_event)
+        remainMinutes <= 0L -> stringResource(R.string.scheduled_tasks_due)
+        else -> stringResource(R.string.scheduled_tasks_pill_countdown, remainMinutes)
     }
     val runs = if (task.maxRuns > 0) "${task.runCount}/${task.maxRuns}" else task.runCount.toString()
 

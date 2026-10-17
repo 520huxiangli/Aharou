@@ -40,7 +40,20 @@ class ScheduledTasksViewModel @Inject constructor(
         workspacePath: String?,
         intervalMinutes: Int,
         maxRuns: Int,
-        enabled: Boolean
+        enabled: Boolean,
+        scheduleType: String = ScheduledTaskEntity.TYPE_INTERVAL,
+        dailyMinuteOfDay: Int = 9 * 60,
+        onceAtMillis: Long = 0L,
+        triggerType: String = ScheduledTaskEntity.TYPE_TIME,
+        triggerPackage: String = "",
+        triggerBatteryBelow: Int = -1,
+        triggerOnCharging: Boolean = false,
+        triggerSsid: String = "",
+        conditionWindowFrom: Int = -1,
+        conditionWindowTo: Int = -1,
+        condRequireCharging: Boolean = false,
+        condMinBattery: Int = -1,
+        debounceMinutes: Int = 10
     ) {
         viewModelScope.launch {
             repository.save(
@@ -51,7 +64,20 @@ class ScheduledTasksViewModel @Inject constructor(
                 workspacePath = workspacePath,
                 intervalMinutes = intervalMinutes,
                 maxRuns = maxRuns,
-                enabled = enabled
+                enabled = enabled,
+                scheduleType = scheduleType,
+                dailyMinuteOfDay = dailyMinuteOfDay,
+                onceAtMillis = onceAtMillis,
+                triggerType = triggerType,
+                triggerPackage = triggerPackage,
+                triggerBatteryBelow = triggerBatteryBelow,
+                triggerOnCharging = triggerOnCharging,
+                triggerSsid = triggerSsid,
+                conditionWindowFrom = conditionWindowFrom,
+                conditionWindowTo = conditionWindowTo,
+                condRequireCharging = condRequireCharging,
+                condMinBattery = condMinBattery,
+                debounceMinutes = debounceMinutes
             )
             scheduler.ensureScheduled(context)
         }

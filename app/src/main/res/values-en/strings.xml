@@ -1305,12 +1305,14 @@
     <string name="skills_import_error_io">failed to write the skill file</string>
 
     <!-- Scheduled Tasks -->
-    <string name="settings_scheduled_tasks">Scheduled tasks</string>
-    <string name="scheduled_tasks_intro">Run a prompt with AI automatically on a fixed interval. The shortest interval is %1$d minutes; exact timing depends on system background scheduling.</string>
+    <string name="settings_scheduled_tasks">Automation tasks</string>
+    <string name="scheduled_tasks_intro">Let the AI do work on your schedule: repeat on an interval, run daily at a fixed time, or run once. Tasks with a fixed time use system exact alarms (Android 12+ needs the exact alarm permission); the shortest interval is %1$d minutes.</string>
     <string name="scheduled_tasks_list_header">Tasks</string>
     <string name="scheduled_tasks_empty">No scheduled tasks yet</string>
-    <string name="scheduled_tasks_add">New scheduled task</string>
+    <string name="scheduled_tasks_add">New automation task</string>
     <string name="scheduled_tasks_cycle">Every %1$d min · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_daily">Daily at %1$s · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_once">Once at %1$s · ran %2$d times (%3$s)</string>
     <string name="scheduled_tasks_limit">limit %1$d</string>
     <string name="scheduled_tasks_limit_unlimited">unlimited</string>
     <string name="scheduled_tasks_next_at">Next %1$s (in ~%2$d min)</string>
@@ -1318,8 +1320,16 @@
     <string name="scheduled_tasks_due">Due now</string>
     <string name="scheduled_tasks_pill_countdown">in %1$d min</string>
     <string name="scheduled_tasks_missed">Missed last run</string>
-    <string name="scheduled_tasks_editor_new">New scheduled task</string>
-    <string name="scheduled_tasks_editor_edit">Edit scheduled task</string>
+    <string name="scheduled_tasks_editor_new">New automation task</string>
+    <string name="scheduled_tasks_editor_edit">Edit automation task</string>
+    <string name="scheduled_tasks_kind">Schedule</string>
+    <string name="scheduled_tasks_kind_interval">Repeat on an interval</string>
+    <string name="scheduled_tasks_kind_daily">Daily at a fixed time</string>
+    <string name="scheduled_tasks_kind_once">Run once</string>
+    <string name="scheduled_tasks_daily_time">Time of day</string>
+    <string name="scheduled_tasks_daily_time_hint">24-hour clock, e.g. 08:30</string>
+    <string name="scheduled_tasks_once_time">Run at</string>
+    <string name="scheduled_tasks_once_time_hint">Format 2026-10-20 08:30</string>
     <string name="scheduled_tasks_name">Name</string>
     <string name="scheduled_tasks_prompt">Prompt</string>
     <string name="scheduled_tasks_interval">Interval (minutes)</string>
@@ -1337,6 +1347,43 @@
     <string name="scheduled_tasks_enabled">Enabled</string>
     <string name="scheduled_tasks_delete_title">Delete scheduled task</string>
     <string name="scheduled_tasks_delete_message">This deletes \"%1$s\" and cannot be undone. Delete it?</string>
+
+    <!-- Triggers, event parameters, conditions and debounce of automation tasks -->
+    <string name="scheduled_tasks_trigger">Trigger</string>
+    <string name="scheduled_tasks_trigger_time">At a set time</string>
+    <string name="scheduled_tasks_trigger_notification">On notification</string>
+    <string name="scheduled_tasks_trigger_battery">On battery change</string>
+    <string name="scheduled_tasks_trigger_network">On network change</string>
+    <string name="scheduled_tasks_trigger_boot">On boot</string>
+    <string name="scheduled_tasks_trigger_package">Source app</string>
+    <string name="scheduled_tasks_trigger_package_hint">Enter the app package (e.g. com.tencent.mm); leave empty for any app. Turn on notification access in App permissions first</string>
+    <string name="scheduled_tasks_trigger_battery_below">Battery threshold (%)</string>
+    <string name="scheduled_tasks_trigger_battery_below_hint">Any percentage from 0 to 100; leave empty to skip this condition</string>
+    <string name="scheduled_tasks_trigger_on_charging">When plugged in</string>
+    <string name="scheduled_tasks_trigger_ssid">Wi-Fi name</string>
+    <string name="scheduled_tasks_trigger_ssid_hint">Leave empty for any network change</string>
+    <string name="scheduled_tasks_trigger_boot_hint">Fires once after the device finishes booting</string>
+    <string name="scheduled_tasks_conditions">Trigger conditions (optional)</string>
+    <string name="scheduled_tasks_condition_window_from">From</string>
+    <string name="scheduled_tasks_condition_window_to">To</string>
+    <string name="scheduled_tasks_condition_window_hint">24-hour HH:mm; leave both empty for any time</string>
+    <string name="scheduled_tasks_condition_charging">Only while charging</string>
+    <string name="scheduled_tasks_condition_min_battery">Minimum battery (%)</string>
+    <string name="scheduled_tasks_condition_min_battery_hint">Skips the run when battery is below this; leave empty for no limit</string>
+    <string name="scheduled_tasks_debounce">Debounce (minutes)</string>
+    <string name="scheduled_tasks_debounce_hint">Repeated state events within the window fire once; 0 disables debouncing</string>
+    <string name="scheduled_tasks_waiting_event">Waiting for an event</string>
+    <string name="scheduled_tasks_desc_notification">On notification · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_notification_app">On notification from %1$s · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_battery_below">When battery drops below %1$d%% · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_battery_charging">When charging starts · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_battery">On battery change · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_network">On network change · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_network_ssid">When connected to %1$s · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_boot">On boot · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_skipped_condition">Conditions not met</string>
+    <string name="scheduled_tasks_skipped_debounce">In the debounce window</string>
+    <string name="scheduled_tasks_skipped_running">Previous run still going</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
@@ -2272,6 +2319,10 @@
     <string name="permissions_battery_whitelist_desc">Manage the battery-optimization whitelist</string>
     <string name="permissions_usage_access">Usage access</string>
     <string name="permissions_usage_access_desc">Read app usage statistics</string>
+    <string name="permissions_notification_access">Notification access</string>
+    <string name="permissions_notification_access_desc">Read notification content so the AI can answer \"who just messaged me\" (must be enabled in system settings)</string>
+    <string name="permissions_exact_alarm">Exact alarms</string>
+    <string name="permissions_exact_alarm_desc">Let automation tasks fire at the exact time (required on Android 12+)</string>
 
     <string name="floating_grant">Overlay permission</string>
     <string name="floating_status_granted">Granted</string>

@@ -1,5 +1,6 @@
 package com.aharou.feature.settings.presentation.component
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
+import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
 import com.aharou.feature.settings.presentation.ScheduledTasksViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
@@ -59,10 +61,17 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
 
-/** 上次错过未补跑的结果标记，与 [ScheduledTaskEntity.lastOutcome] 的取值一致。 */
+/** 值得在列表里提示的 [ScheduledTaskEntity.lastOutcome] 取值；其余（如 dispatched）不打扰用户。 */
 private const val OUTCOME_SKIPPED = "skipped"
+private const val OUTCOME_SKIPPED_MISSED = "skipped_missed"
+private const val OUTCOME_SKIPPED_CONDITION = "skipped_condition"
+private const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
+private const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
 
 private const val MAX_SESSION_CHOICES = 30
+
+/** 新建任务时防抖窗口的默认分钟数，与 [ScheduledTaskEntity.debounceMinutes] 的默认值一致。 */
+private const val DEFAULT_DEBOUNCE_MINUTES = 10
 
 @Composable
 internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltViewModel()) {
@@ -156,7 +165,20 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
                     workspacePath = draft.workspacePath,
                     intervalMinutes = draft.intervalMinutes,
                     maxRuns = draft.maxRuns,
-                    enabled = draft.enabled
+                    enabled = draft.enabled,
+                    scheduleType = draft.scheduleType,
+                    dailyMinuteOfDay = draft.dailyMinuteOfDay,
+                    onceAtMillis = draft.onceAtMillis,
+                    triggerType = draft.triggerType,
+                    triggerPackage = draft.triggerPackage,
+                    triggerBatteryBelow = draft.triggerBatteryBelow,
+                    triggerOnCharging = draft.triggerOnCharging,
+                    triggerSsid = draft.triggerSsid,
+                    conditionWindowFrom = draft.conditionWindowFrom,
+                    conditionWindowTo = draft.conditionWindowTo,
+                    condRequireCharging = draft.condRequireCharging,
+                    condMinBattery = draft.condMinBattery,
+                    debounceMinutes = draft.debounceMinutes
                 )
                 showEditor = false
             }
@@ -201,6 +223,9 @@ private fun ScheduledTaskRow(
     }
     val nextText = when {
         !task.enabled -> stringResource(R.string.scheduled_tasks_disabled)
+        // 事件类任务静息时 nextRunAt 停在远期值，只有被事件投递进来才会到点。
+        !TriggerType.isTimeTrigger(task) && task.nextRunAt > now ->
+            stringResource(R.string.scheduled_tasks_waiting_event)
         task.nextRunAt <= now -> stringResource(R.string.scheduled_tasks_due)
         else -> stringResource(
             R.string.scheduled_tasks_next_at,
@@ -245,12 +270,7 @@ private fun ScheduledTaskRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = stringResource(
-                        R.string.scheduled_tasks_cycle,
-                        task.intervalMinutes,
-                        task.runCount,
-                        limitText
-                    ),
+                    text = taskDescription(task, limitText),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -263,11 +283,17 @@ private fun ScheduledTaskRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (task.lastOutcome == OUTCOME_SKIPPED) {
+                outcomeLabel(task.lastOutcome)?.let { label ->
                     Text(
-                        text = stringResource(R.string.scheduled_tasks_missed),
+                        text = stringResource(label),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
+                        color = if (task.lastOutcome == OUTCOME_SKIPPED ||
+                            task.lastOutcome == OUTCOME_SKIPPED_MISSED
+                        ) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         modifier = Modifier.padding(top = Spacing.xs)
                     )
                 }
@@ -283,6 +309,98 @@ private fun ScheduledTaskRow(
     }
 }
 
+/** 列表第二行的「怎么跑」：时间类看运行方式，事件类看触发方式与触发参数。 */
+@Composable
+private fun taskDescription(task: ScheduledTaskEntity, limitText: String): String =
+    if (TriggerType.isTimeTrigger(task)) {
+        timeDescription(task, limitText)
+    } else {
+        eventDescription(task, limitText)
+    }
+
+@Composable
+private fun timeDescription(task: ScheduledTaskEntity, limitText: String): String = when (task.scheduleType) {
+    ScheduledTaskEntity.TYPE_DAILY -> stringResource(
+        R.string.scheduled_tasks_desc_daily,
+        formatMinuteOfDay(task.dailyMinuteOfDay),
+        task.runCount,
+        limitText
+    )
+    ScheduledTaskEntity.TYPE_ONCE -> stringResource(
+        R.string.scheduled_tasks_desc_once,
+        formatDateTime(task.onceAtMillis),
+        task.runCount,
+        limitText
+    )
+    else -> stringResource(
+        R.string.scheduled_tasks_cycle,
+        task.intervalMinutes,
+        task.runCount,
+        limitText
+    )
+}
+
+@Composable
+private fun eventDescription(task: ScheduledTaskEntity, limitText: String): String = when (task.triggerType) {
+    ScheduledTaskEntity.TYPE_NOTIFICATION -> if (task.triggerPackage.isBlank()) {
+        stringResource(R.string.scheduled_tasks_desc_notification, task.runCount, limitText)
+    } else {
+        stringResource(
+            R.string.scheduled_tasks_desc_notification_app,
+            task.triggerPackage,
+            task.runCount,
+            limitText
+        )
+    }
+
+    ScheduledTaskEntity.TYPE_BATTERY -> when {
+        task.triggerBatteryBelow >= 0 -> stringResource(
+            R.string.scheduled_tasks_desc_battery_below,
+            task.triggerBatteryBelow,
+            task.runCount,
+            limitText
+        )
+        task.triggerOnCharging -> stringResource(
+            R.string.scheduled_tasks_desc_battery_charging,
+            task.runCount,
+            limitText
+        )
+        else -> stringResource(R.string.scheduled_tasks_desc_battery, task.runCount, limitText)
+    }
+
+    ScheduledTaskEntity.TYPE_NETWORK -> if (task.triggerSsid.isBlank()) {
+        stringResource(R.string.scheduled_tasks_desc_network, task.runCount, limitText)
+    } else {
+        stringResource(
+            R.string.scheduled_tasks_desc_network_ssid,
+            task.triggerSsid,
+            task.runCount,
+            limitText
+        )
+    }
+
+    else -> stringResource(R.string.scheduled_tasks_desc_boot, task.runCount, limitText)
+}
+
+/** 上次结果里值得说一句的那几种；没说头的结果返回 null。 */
+@StringRes
+private fun outcomeLabel(outcome: String?): Int? = when (outcome) {
+    OUTCOME_SKIPPED, OUTCOME_SKIPPED_MISSED -> R.string.scheduled_tasks_missed
+    OUTCOME_SKIPPED_CONDITION -> R.string.scheduled_tasks_skipped_condition
+    OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
+    OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
+    else -> null
+}
+
+@StringRes
+private fun triggerLabel(type: String): Int = when (type) {
+    ScheduledTaskEntity.TYPE_NOTIFICATION -> R.string.scheduled_tasks_trigger_notification
+    ScheduledTaskEntity.TYPE_BATTERY -> R.string.scheduled_tasks_trigger_battery
+    ScheduledTaskEntity.TYPE_NETWORK -> R.string.scheduled_tasks_trigger_network
+    ScheduledTaskEntity.TYPE_BOOT -> R.string.scheduled_tasks_trigger_boot
+    else -> R.string.scheduled_tasks_trigger_time
+}
+
 private data class ScheduledTaskDraft(
     val name: String,
     val prompt: String,
@@ -290,7 +408,20 @@ private data class ScheduledTaskDraft(
     val workspacePath: String?,
     val intervalMinutes: Int,
     val maxRuns: Int,
-    val enabled: Boolean
+    val enabled: Boolean,
+    val scheduleType: String,
+    val dailyMinuteOfDay: Int,
+    val onceAtMillis: Long,
+    val triggerType: String,
+    val triggerPackage: String,
+    val triggerBatteryBelow: Int,
+    val triggerOnCharging: Boolean,
+    val triggerSsid: String,
+    val conditionWindowFrom: Int,
+    val conditionWindowTo: Int,
+    val condRequireCharging: Boolean,
+    val condMinBattery: Int,
+    val debounceMinutes: Int
 )
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -306,16 +437,54 @@ private fun ScheduledTaskEditorSheet(
     var intervalText by remember {
         mutableStateOf((initial?.intervalMinutes ?: ScheduledTaskScheduler.MIN_INTERVAL_MINUTES).toString())
     }
+    var kindType by remember { mutableStateOf(initial?.scheduleType ?: ScheduledTaskEntity.TYPE_INTERVAL) }
+    var dailyText by remember { mutableStateOf(formatMinuteOfDay(initial?.dailyMinuteOfDay ?: 9 * 60)) }
+    var onceText by remember {
+        mutableStateOf(initial?.onceAtMillis?.takeIf { it > 0L }?.let { formatDateTime(it) }.orEmpty())
+    }
     var maxRunsText by remember { mutableStateOf((initial?.maxRuns ?: 0).toString()) }
     var workspacePath by remember { mutableStateOf(initial?.workspacePath.orEmpty()) }
     var useExisting by remember { mutableStateOf(initial?.targetSessionId != null) }
     var selectedSessionId by remember { mutableStateOf(initial?.targetSessionId) }
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
+    var triggerType by remember { mutableStateOf(initial?.triggerType ?: ScheduledTaskEntity.TYPE_TIME) }
+    var triggerPackage by remember { mutableStateOf(initial?.triggerPackage.orEmpty()) }
+    var chargingStart by remember { mutableStateOf(initial?.triggerOnCharging ?: false) }
+    var ssid by remember { mutableStateOf(initial?.triggerSsid.orEmpty()) }
+    var requireCharging by remember { mutableStateOf(initial?.condRequireCharging ?: false) }
+    var debounceText by remember {
+        mutableStateOf((initial?.debounceMinutes ?: DEFAULT_DEBOUNCE_MINUTES).toString())
+    }
+    // 数值型参数在表单里用空串表示「不限」：-1 这类哨兵值不摆到界面上给用户看。
+    var batteryBelowText by remember { mutableStateOf(percentText(initial?.triggerBatteryBelow)) }
+    var minBatteryText by remember { mutableStateOf(percentText(initial?.condMinBattery)) }
+    var windowFromText by remember { mutableStateOf(minuteText(initial?.conditionWindowFrom)) }
+    var windowToText by remember { mutableStateOf(minuteText(initial?.conditionWindowTo)) }
 
+    val isTimeTrigger = TriggerType.isTimeTrigger(triggerType)
     val minInterval = ScheduledTaskScheduler.MIN_INTERVAL_MINUTES
     val intervalValue = intervalText.toIntOrNull() ?: 0
     val maxRunsValue = maxRunsText.toIntOrNull() ?: 0
-    val canSave = name.isNotBlank() && prompt.isNotBlank() && intervalValue > 0 &&
+    val dailyMinute = parseMinuteOfDay(dailyText)
+    val onceMillis = parseDateTime(onceText)
+    val batteryBelow = batteryBelowText.toIntOrNull() ?: -1
+    val minBattery = minBatteryText.toIntOrNull() ?: -1
+    val windowFrom = parseMinuteOfDay(windowFromText)
+    val windowTo = parseMinuteOfDay(windowToText)
+    val debounceMinutes = debounceText.toIntOrNull() ?: 0
+    val batteryBelowInvalid = batteryBelowText.isNotBlank() && batteryBelow !in 0..100
+    val minBatteryInvalid = minBatteryText.isNotBlank() && minBattery !in 0..100
+    val windowFromInvalid = windowFromText.isNotBlank() && windowFrom == null
+    val windowToInvalid = windowToText.isNotBlank() && windowTo == null
+    val scheduleReady = when {
+        // 事件类触发不看到点时间，时间参数空着也照样能存。
+        !isTimeTrigger -> true
+        kindType == ScheduledTaskEntity.TYPE_DAILY -> dailyMinute != null
+        kindType == ScheduledTaskEntity.TYPE_ONCE -> onceMillis != null
+        else -> intervalValue > 0
+    }
+    val canSave = name.isNotBlank() && prompt.isNotBlank() && scheduleReady &&
+        !batteryBelowInvalid && !minBatteryInvalid && !windowFromInvalid && !windowToInvalid &&
         (!useExisting || selectedSessionId != null)
 
     AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
@@ -352,16 +521,119 @@ private fun ScheduledTaskEditorSheet(
                 minLines = 3
             )
 
-            AppTextField(
-                value = intervalText,
-                onValueChange = { input -> intervalText = input.filter { it.isDigit() } },
-                label = stringResource(R.string.scheduled_tasks_interval),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = intervalValue in 1 until minInterval,
-                supportingText = {
-                    Text(stringResource(R.string.scheduled_tasks_interval_hint, minInterval))
-                }
+            Text(
+                text = stringResource(R.string.scheduled_tasks_trigger),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
             )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                TriggerType.ALL.forEach { type ->
+                    TargetChoiceRow(
+                        title = stringResource(triggerLabel(type)),
+                        selected = triggerType == type,
+                        onClick = { triggerType = type }
+                    )
+                }
+            }
+
+            // 运行方式与时间输入只对「按时间」有意义；选了事件就走各自的参数输入。
+            if (isTimeTrigger) {
+                Text(
+                    text = stringResource(R.string.scheduled_tasks_kind),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    TargetChoiceRow(
+                        title = stringResource(R.string.scheduled_tasks_kind_interval),
+                        selected = kindType == ScheduledTaskEntity.TYPE_INTERVAL,
+                        onClick = { kindType = ScheduledTaskEntity.TYPE_INTERVAL }
+                    )
+                    TargetChoiceRow(
+                        title = stringResource(R.string.scheduled_tasks_kind_daily),
+                        selected = kindType == ScheduledTaskEntity.TYPE_DAILY,
+                        onClick = { kindType = ScheduledTaskEntity.TYPE_DAILY }
+                    )
+                    TargetChoiceRow(
+                        title = stringResource(R.string.scheduled_tasks_kind_once),
+                        selected = kindType == ScheduledTaskEntity.TYPE_ONCE,
+                        onClick = { kindType = ScheduledTaskEntity.TYPE_ONCE }
+                    )
+                }
+
+                when (kindType) {
+                    ScheduledTaskEntity.TYPE_DAILY -> AppTextField(
+                        value = dailyText,
+                        onValueChange = { dailyText = it },
+                        label = stringResource(R.string.scheduled_tasks_daily_time),
+                        isError = dailyMinute == null,
+                        supportingText = { Text(stringResource(R.string.scheduled_tasks_daily_time_hint)) }
+                    )
+
+                    ScheduledTaskEntity.TYPE_ONCE -> AppTextField(
+                        value = onceText,
+                        onValueChange = { onceText = it },
+                        label = stringResource(R.string.scheduled_tasks_once_time),
+                        isError = onceMillis == null,
+                        supportingText = { Text(stringResource(R.string.scheduled_tasks_once_time_hint)) }
+                    )
+
+                    else -> AppTextField(
+                        value = intervalText,
+                        onValueChange = { input -> intervalText = input.filter { it.isDigit() } },
+                        label = stringResource(R.string.scheduled_tasks_interval),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = intervalValue in 1 until minInterval,
+                        supportingText = {
+                            Text(stringResource(R.string.scheduled_tasks_interval_hint, minInterval))
+                        }
+                    )
+                }
+            } else {
+                when (triggerType) {
+                    ScheduledTaskEntity.TYPE_NOTIFICATION -> AppTextField(
+                        value = triggerPackage,
+                        onValueChange = { triggerPackage = it },
+                        label = stringResource(R.string.scheduled_tasks_trigger_package),
+                        supportingText = {
+                            Text(stringResource(R.string.scheduled_tasks_trigger_package_hint))
+                        }
+                    )
+
+                    ScheduledTaskEntity.TYPE_BATTERY -> {
+                        AppTextField(
+                            value = batteryBelowText,
+                            onValueChange = { input -> batteryBelowText = input.filter { it.isDigit() } },
+                            label = stringResource(R.string.scheduled_tasks_trigger_battery_below),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            isError = batteryBelowInvalid,
+                            supportingText = {
+                                Text(stringResource(R.string.scheduled_tasks_trigger_battery_below_hint))
+                            }
+                        )
+                        SwitchRow(
+                            title = stringResource(R.string.scheduled_tasks_trigger_on_charging),
+                            checked = chargingStart,
+                            onCheckedChange = { chargingStart = it }
+                        )
+                    }
+
+                    ScheduledTaskEntity.TYPE_NETWORK -> AppTextField(
+                        value = ssid,
+                        onValueChange = { ssid = it },
+                        label = stringResource(R.string.scheduled_tasks_trigger_ssid),
+                        supportingText = {
+                            Text(stringResource(R.string.scheduled_tasks_trigger_ssid_hint))
+                        }
+                    )
+
+                    else -> Text(
+                        text = stringResource(R.string.scheduled_tasks_trigger_boot_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
 
             Text(
                 text = stringResource(R.string.scheduled_tasks_target),
@@ -424,18 +696,67 @@ private fun ScheduledTaskEditorSheet(
                 }
             )
 
+            Text(
+                text = stringResource(R.string.scheduled_tasks_conditions),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
-                Text(
-                    text = stringResource(R.string.scheduled_tasks_enabled),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
+                AppTextField(
+                    value = windowFromText,
+                    onValueChange = { windowFromText = it },
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.scheduled_tasks_condition_window_from),
+                    isError = windowFromInvalid
                 )
-                AppSwitch(checked = enabled, onCheckedChange = { enabled = it })
+                AppTextField(
+                    value = windowToText,
+                    onValueChange = { windowToText = it },
+                    modifier = Modifier.weight(1f),
+                    label = stringResource(R.string.scheduled_tasks_condition_window_to),
+                    isError = windowToInvalid
+                )
             }
+            Text(
+                text = stringResource(R.string.scheduled_tasks_condition_window_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            SwitchRow(
+                title = stringResource(R.string.scheduled_tasks_condition_charging),
+                checked = requireCharging,
+                onCheckedChange = { requireCharging = it }
+            )
+            AppTextField(
+                value = minBatteryText,
+                onValueChange = { input -> minBatteryText = input.filter { it.isDigit() } },
+                label = stringResource(R.string.scheduled_tasks_condition_min_battery),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = minBatteryInvalid,
+                supportingText = {
+                    Text(stringResource(R.string.scheduled_tasks_condition_min_battery_hint))
+                }
+            )
+
+            // 防抖只对事件触发生效：时间类任务的节奏由周期决定，摆出来只会误导。
+            if (!isTimeTrigger) {
+                AppTextField(
+                    value = debounceText,
+                    onValueChange = { input -> debounceText = input.filter { it.isDigit() } },
+                    label = stringResource(R.string.scheduled_tasks_debounce),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    supportingText = { Text(stringResource(R.string.scheduled_tasks_debounce_hint)) }
+                )
+            }
+
+            SwitchRow(
+                title = stringResource(R.string.scheduled_tasks_enabled),
+                checked = enabled,
+                onCheckedChange = { enabled = it }
+            )
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -457,7 +778,20 @@ private fun ScheduledTaskEditorSheet(
                                 workspacePath = if (useExisting) null else workspacePath.trim().ifBlank { null },
                                 intervalMinutes = intervalValue,
                                 maxRuns = maxRunsValue,
-                                enabled = enabled
+                                enabled = enabled,
+                                scheduleType = kindType,
+                                dailyMinuteOfDay = dailyMinute ?: (9 * 60),
+                                onceAtMillis = onceMillis ?: 0L,
+                                triggerType = triggerType,
+                                triggerPackage = triggerPackage.trim(),
+                                triggerBatteryBelow = batteryBelow.coerceIn(-1, 100),
+                                triggerOnCharging = chargingStart,
+                                triggerSsid = ssid.trim(),
+                                conditionWindowFrom = windowFrom ?: -1,
+                                conditionWindowTo = windowTo ?: -1,
+                                condRequireCharging = requireCharging,
+                                condMinBattery = minBattery.coerceIn(-1, 100),
+                                debounceMinutes = debounceMinutes.coerceAtLeast(0)
                             )
                         )
                     }
@@ -540,6 +874,68 @@ private fun SessionChoiceRow(
     }
 }
 
+@Composable
+private fun SwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        AppSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/** 分钟数型参数：-1（不限）在表单里显示为空串。 */
+private fun minuteText(minuteOfDay: Int?): String =
+    minuteOfDay?.takeIf { it >= 0 }?.let { formatMinuteOfDay(it) }.orEmpty()
+
+/** 百分比型参数：-1（不限）在表单里显示为空串。 */
+private fun percentText(percent: Int?): String = percent?.takeIf { it >= 0 }?.toString().orEmpty()
+
 private val taskTimeFormat = SimpleDateFormat("M-d HH:mm", Locale.getDefault())
 
 private fun formatTaskTime(epochMs: Long): String = taskTimeFormat.format(Date(epochMs))
+
+private val taskDateTimeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+
+private fun formatDateTime(epochMs: Long): String = taskDateTimeFormat.format(Date(epochMs))
+
+private fun formatMinuteOfDay(minuteOfDay: Int): String =
+    "%02d:%02d".format(minuteOfDay / 60, minuteOfDay % 60)
+
+/** 解析「HH:mm」；非法输入返回 null，由表单据此禁用保存。 */
+private fun parseMinuteOfDay(text: String): Int? {
+    val parts = text.trim().split(":")
+    if (parts.size != 2) return null
+    val hour = parts[0].toIntOrNull() ?: return null
+    val minute = parts[1].toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59) return null
+    return hour * 60 + minute
+}
+
+private val taskDateTimePatterns = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd")
+
+/** 解析「yyyy-MM-dd HH:mm」（秒与纯日期也接受）；非法输入返回 null。 */
+private fun parseDateTime(text: String): Long? {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return null
+    for (pattern in taskDateTimePatterns) {
+        val millis = runCatching {
+            SimpleDateFormat(pattern, Locale.getDefault())
+                .apply { isLenient = false }
+                .parse(trimmed)
+                ?.time
+        }.getOrNull()
+        if (millis != null) return millis
+    }
+    return null
+}

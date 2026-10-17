@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Android 13+ 相册读：细粒度媒体权限优先，用户不开「所有文件访问」也能查相册。 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- 前台服务类型对应权限：targetSdk 34 起，声明了 foregroundServiceType 却没申请对应权限，
          startForeground() 直接抛 SecurityException。两个前台服务统一用 specialUse（用例见各自 service）。 -->
@@ -21,6 +24,9 @@
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- 自动化任务的「每天 8:00」这类精确时刻。Android 12+ 属特殊权限，用户可在系统里收走，
+         故调度层同时保留 WorkManager 周期兜底，未授权时降级为不精确闹钟。 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <!-- [Aharou] 权限拉满：Agent 全能力所需 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -219,6 +225,18 @@
                 android:resource="@xml/aharou_accessibility_service" />
         </service>
 
+        <!-- 通知读取：让 Agent 能回答「刚才谁给我发消息了」。这个权限只能由用户在系统
+             「通知使用权」里手动勾选，应用无法自行申请，也不该假装能申请。 -->
+        <service
+            android:name="com.aharou.feature.agent.domain.tool.device.DeviceNotificationListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <!-- 小染悬浮层：用户开着就一直在的桌面伙伴，同时承担原来的「状态胶囊」职责
              （Agent 进度、通话字幕、通话开关都在她身上）。需悬浮窗权限。 -->
         <service
@@ -292,6 +310,25 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/aharou_widget_info" />
+        </receiver>
+
+        <!-- 自动化任务的精确闹钟到点唤醒；只由本 App 的 PendingIntent 触发，不对外暴露。 -->
+        <receiver
+            android:name="com.aharou.feature.agent.domain.schedule.ScheduledTaskAlarmReceiver"
+            android:exported="false" />
+
+        <!-- 自动化任务的事件源：只做两件事——开机与应用被更新时触发 boot 类任务、恢复周期检查，
+             代码里也只认这两个 action（别的 action 一律忽略，防伪造广播拿它当触发入口）。
+             带 intent-filter 的接收器必须显式声明 exported，这里给 false：系统广播照收，
+             外部应用发的同名广播拦在外面。 -->
+        <receiver
+            android:name="com.aharou.feature.agent.domain.schedule.trigger.AutomationEventReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
         </receiver>
 
         <!-- 工具授权通知的动作接收器：通知栏「允许/拒绝/直接回复」经它回填到 App 内的授权入口。

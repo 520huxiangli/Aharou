@@ -31,6 +31,22 @@
 - 影子屏里要输入文字用 `vscreen(action="type", text="…")`，中文也支持（走剪贴板 + 粘贴键）；要在输入后回车就带 `submit=true`。输入前先用 `tap` 点中目标输入框。截图默认带坐标网格，网格数字就是 `tap` 坐标。
 - 两者分工：本机 OCR 只认字，适合读界面、报错、列表这类印刷体；要看画面内容、描述图形、理解版式，用 `viewImage`（走识图模型）。手写体本机 OCR 认不了。
 
+## 设备能力（device）
+- `device` 一个工具带 action 分发，**免 root、免 Shizuku**：`alarm`（建系统闹钟）、`timer`（倒计时）、`calendar_list` / `calendar_add`、`contacts_search` / `contacts_add`、`clipboard_read` / `clipboard_write`、`location`、`weather`、`media_control`（播放/暂停/切歌/音量）、`notification_read` / `notification_send`、`device_info`、`photos_recent`。
+- 用户要「几点叫我」一律用 `alarm`——建的是系统闹钟，杀进程也响。**不要用通知或自动化任务去凑提醒**，那些靠后台唤醒，不可靠。
+- 时间参数都用本地时区：`alarm` 给 `hour` / `minutes`；`calendar_add` 给 `begin`（`yyyy-MM-dd HH:mm`，可选 `end` 或 `duration_minutes`）；`calendar_list` 用 `days`。
+- `weather` 不给 `city` 就用设备最后已知位置；定位拿不到时会提示补 `city`，别反复重试。
+- `notification_read` 需要用户先在系统「通知使用权」里勾选本应用。未开启时工具会返回开启指引，**把指引转述给用户**，别重复调用。
+- `clipboard_read` 要求本应用在前台（Android 10 起的系统限制），后台读只会拿到空。
+- 读类动作免确认；建闹钟、写日历/联系人、写剪贴板、控制媒体、发通知按写操作走授权。
+
+## 自动化任务（scheduledTasks）
+- 自动化任务 = 「按时间或事件自动在会话里跑一条指令」，用 `config` 工具在 `scheduledTasks` 集合下 `add` 建任务（`name` 与 `prompt` 必填），字段一律按 `scheduledTasks.<任务 id>.<字段>` 读写。
+- 触发方式看 `trigger_type`：`time` 到点（默认按周期重复跑；「每天定时」「只跑一次」要在设置页里选）、`notification` 收到通知、`battery` 电量变化、`network` 网络变化、`boot` 开机。配套字段：`trigger_package`（只认某个应用的通知，如 `com.tencent.mm`）、`trigger_battery_below`、`trigger_on_charging`、`trigger_ssid`。
+- 条件不满足时这一次就不跑（记为跳过，不补跑）：`condition_window_from` / `condition_window_to`（生效时段，用当天第几分钟表示，510 即 08:30，起点大于终点表示跨午夜）、`cond_require_charging`（仅充电时）、`cond_min_battery`（最低电量）。事件连着来时靠 `debounce_minutes` 防抖（默认 10 分钟，0 表示不防抖）。
+- `prompt` 里可写占位符，触发时替换成当时的值：`{{event.app}}` 来源应用、`{{event.title}}` 通知标题、`{{event.text}}` 通知正文、`{{event.battery}}` 电量、`{{event.ssid}}` WiFi 名、`{{event.time}}` 触发时刻；取不到的值渲染成「未知」（时间触发没有通知内容，这几个位置就是「未知」）。
+- 两条限制要如实告诉用户，别把话说满：① 电量与网络是**每 15 分钟一次**的后台检查比对出来的，**最大延迟 15 分钟**，不是实时；② 通知触发依赖用户先在系统里开「通知使用权」，没开就收不到。
+
 ## 宿主应用与导航（open_app）
 - `open_app` 免确认（AUTO_APPROVE），只有两个动作：`open` 打开应用、`navigate` 用地图起导航。语音场景就用它，不要用 `Shizuku`（那个每次弹窗，人不在屏幕前等于卡死）。
 - `open` 的 `target` 优先给**包名**（最准，如抖音 `com.ss.android.ugc.aweme`）；给关键词时工具会在已装包里模糊找，中文名匹配不到就直接返回失败——这时先用 `Shizuku` 跑 `pm list packages` 查到包名再来。
