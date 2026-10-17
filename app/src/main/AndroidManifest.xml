@@ -44,9 +44,11 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
 
     <!-- Android 11+ 的包可见性：Shizuku 不在默认可见范围内，声明后才能查它的安装状态与启动入口。
-         另有 QUERY_ALL_PACKAGES 兜底，这里显式声明以缩小对全量包可见性的依赖。 -->
+         另有 QUERY_ALL_PACKAGES 兜底，这里显式声明以缩小对全量包可见性的依赖。
+         Shevery 是换了包名的 Shizuku 分支，不声明会被当成未安装。 -->
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
+        <package android:name="com.hamondev.shevery" />
     </queries>
 
     <application

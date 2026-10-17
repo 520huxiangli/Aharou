@@ -60,6 +60,14 @@ class ShizukuManager @Inject constructor(
         /** Shizuku 官方应用包名（Sui 也用它作为入口）。 */
         const val SHIZUKU_PACKAGE = "moe.shizuku.privileged.api"
 
+        /**
+         * 兼容分支的包名。Shevery 改了包名并强制卸载官方版，只认官方包名会把它误判成未安装。
+         * binder 通道本身与管理器包名无关，这里只用于展示状态与跳转入口。
+         */
+        const val SHEVERY_PACKAGE = "com.hamondev.shevery"
+
+        val MANAGER_PACKAGES = listOf(SHIZUKU_PACKAGE, SHEVERY_PACKAGE)
+
         const val PERMISSION_REQUEST_CODE = 1001
 
         /** 服务身份 tag：不设时用类名，类名经 R8 混淆后不稳定，故显式固定。 */
@@ -161,8 +169,11 @@ class ShizukuManager @Inject constructor(
     }
 
     private fun computeState(): ShizukuState {
-        if (!isShizukuInstalled()) return ShizukuState.NOT_INSTALLED
-        if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) return ShizukuState.NOT_RUNNING
+        // 先判 binder：分支版换了包名照样推 binder，以包名开闸会把可用通道误判成「未安装」。
+        val binderAlive = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        if (!binderAlive) {
+            return if (findManagerPackage() != null) ShizukuState.NOT_RUNNING else ShizukuState.NOT_INSTALLED
+        }
         // pre-v11 无 UserService，等同不可用。
         if (runCatching { Shizuku.isPreV11() }.getOrDefault(false)) return ShizukuState.NOT_RUNNING
         val granted = runCatching {
@@ -171,10 +182,10 @@ class ShizukuManager @Inject constructor(
         return if (granted) ShizukuState.READY else ShizukuState.PERMISSION_DENIED
     }
 
-    private fun isShizukuInstalled(): Boolean = runCatching {
-        context.packageManager.getPackageInfo(SHIZUKU_PACKAGE, 0)
-        true
-    }.getOrDefault(false)
+    /** 已安装的管理器包名（官方或兼容分支），都没装返回 null。 */
+    private fun findManagerPackage(): String? = MANAGER_PACKAGES.firstOrNull { pkg ->
+        runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+    }
 
     /** 申请 Shizuku 授权。需在主线程调用（Shizuku 内部要求）。 */
     fun requestPermission() {
@@ -185,7 +196,7 @@ class ShizukuManager @Inject constructor(
 
     /** 打开 Shizuku 应用；未安装则跳转官方下载页。 */
     fun openShizukuApp() {
-        val launch = context.packageManager.getLaunchIntentForPackage(SHIZUKU_PACKAGE)
+        val launch = findManagerPackage()?.let { context.packageManager.getLaunchIntentForPackage(it) }
         runCatching {
             if (launch != null) {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

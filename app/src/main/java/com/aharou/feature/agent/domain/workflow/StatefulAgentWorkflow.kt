@@ -336,10 +336,10 @@ class StatefulAgentWorkflow @Inject constructor(
                 it.chatCacheKeyEnabled = config.openaiChatCacheKey
             }
         }
-        // 多 Key 模式下由轮换器决定本次用哪个 Key（会话内粘住，Key 不可用时切下一个并重发）。
+        // 多 Key 由轮换器决定本次用哪个（会话粘住）；无 Key 供应商（免鉴权，如本地网关）置空照发。
         val activeKeys = config.effectiveApiKeys
         provider.apiKey = keyRotator.activeKey(config, sessionId)
-            ?: throw IllegalStateException("「${config.name}」的 Key 均在冷却中，请稍后重试")
+            ?: if (activeKeys.isEmpty()) "" else throw IllegalStateException("「${config.name}」的 Key 均在冷却中，请稍后重试")
         // 只有真正的多 Key 才需要自动切换：单 Key 冷却后没有可切换目标，只会把用户锁死一段时间。
         val keySwitcher: (suspend (Throwable, String, Set<String>) -> KeySwitchOutcome?)? =
             if (activeKeys.size > 1) {
