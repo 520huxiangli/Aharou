@@ -27,7 +27,21 @@ data class ImInboundMessage(
     val isGroup: Boolean,
     val messageId: String,
     /** 若本条是对某条消息的回复，携带被回复消息的发送者 id（用于判断是否 @ 机器人）。 */
-    val replyToSenderId: String?
+    val replyToSenderId: String?,
+    /**
+     * 本条是否 @ 了机器人（群聊才需要）。平台能直接判定就在各自解析里填，
+     * 文本里出现 @ 只当兜底。
+     */
+    val mentionsBot: Boolean = false,
+
+    /** 随消息带来的图片/文件。各平台形态不一，统一成 [ImAttachment]。 */
+    val attachments: List<ImAttachment> = emptyList(),
+
+    /**
+     * 平台要求回复时回带的上下文令牌（微信 iLink 的 context_token）。
+     * 其余平台为 null，不影响原有行为。
+     */
+    val contextToken: String? = null
 )
 
 /** 一次内联按钮点击（审批卡片）。 */
@@ -43,6 +57,26 @@ data class ImCallbackQuery(
     /** 按钮携带的数据，形如 `a:y:<审批id>`。 */
     val data: String
 )
+
+/**
+ * 对方发来的一份附件。
+ *
+ * 下载两种方式二选一：能直接拿直链的（微信 CDN、Telegram getFile）走 [url]；
+ * 需要平台专用接口才能下的（飞书 message_resource、QQ 附件）用 [fileId]，
+ * 由 [com.aharou.feature.im.domain.ImChannel.downloadAttachment] 现场下载。
+ */
+data class ImAttachment(
+    val kind: Kind,
+    /** 平台侧标识：飞书 file_key、QQ 附件 url、Telegram file_id 等。 */
+    val fileId: String = "",
+    /** 可直接 GET 的直链；为空时由渠道实现用 fileId 自己下。 */
+    val url: String? = null,
+    val fileName: String = "",
+    val mimeType: String = "",
+    val sizeBytes: Long = 0L
+) {
+    enum class Kind { IMAGE, FILE, AUDIO, VIDEO }
+}
 
 /** 机器人的自身身份（getMe 结果）。 */
 data class ImBotIdentity(val id: Long, val username: String)
@@ -65,17 +99,3 @@ data class PendingPairing(
     val expiresAt: Long
 )
 
-/** 连接状态，供前台服务与设置界面观察。 */
-sealed interface TelegramState {
-    /** 未运行（开关关闭或服务未启动）。 */
-    data object Stopped : TelegramState
-
-    /** 已启动、正在建连或重试。 */
-    data object Connecting : TelegramState
-
-    /** getMe 成功，长轮询进行中。 */
-    data class Connected(val username: String) : TelegramState
-
-    /** 连接失败（token 错误、基址不可达等），message 已脱敏。 */
-    data class Error(val message: String) : TelegramState
-}

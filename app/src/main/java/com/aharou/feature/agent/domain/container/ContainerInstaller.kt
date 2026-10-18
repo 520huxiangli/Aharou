@@ -246,6 +246,9 @@ class ContainerInstaller @Inject constructor(
 
         /** 删 rootfs 时每删这么多条目回调一次进度（太密会刷爆 UI 状态流）。 */
         private const val DELETE_PROGRESS_STEP = 2000
+
+        /** 匹配已有的 jvmargs 行（按行剔除用）：properties 允许等号两边带空格。 */
+        private val JVMARGS_LINE = Regex("""^\s*org\.gradle\.jvmargs\s*=""")
     }
 
     /** assets 内的架构特定目录 */
@@ -471,6 +474,39 @@ class ContainerInstaller @Inject constructor(
     fun repairRootfsCompatibility(rootfs: File) {
         fixCoreutilsPermissions(rootfs)
         fixNodeGlobEntry(rootfs)
+    }
+
+    /**
+     * 把 Gradle 堆上限写进容器用户的 `~/.gradle/gradle.properties`（用户级）。
+     *
+     * 用户级 gradle.properties 优先级高于项目根目录那份（Gradle 文档：GRADLE_USER_HOME > Build Root Dir >
+     * GRADLE_HOME），所以项目里写死的 `org.gradle.jvmargs` 会被这里覆盖——这正是「按设备内存调上限」的落点，
+     * 也让同一台机器上任意项目都能生效。文件里其它行（aapt2 覆盖等）原样保留；内容没变不写盘。
+     *
+     * @return 是否真的改动了文件
+     */
+    fun syncGradleHeap(rootfs: File, heapMb: Int): Boolean {
+        val dir = File(File(rootfs, "root"), ".gradle")
+        val file = File(dir, "gradle.properties")
+        // Metaspace 不跟堆等比：2GB 档等比只剩 512m，同一工程加载依赖即 OutOfMemoryError: Metaspace。
+        // 仓库根 gradle.properties 的 4096m/1024m 是 CI 反复 OOM 后收敛的配对，这里固定同一档。
+        val jvmArgs = "-Xmx${heapMb}m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC"
+        val current = if (file.isFile) runCatching { file.readLines() }.getOrDefault(emptyList()) else emptyList()
+        if (current.any { it.trim() == "org.gradle.jvmargs=$jvmArgs" }) return false
+        val lines = current.filterNot { JVMARGS_LINE.containsMatchIn(it) } +
+            "org.gradle.jvmargs=$jvmArgs"
+        dir.mkdirs()
+        // 先写同目录临时文件再 rename 覆盖：writeText 是清空后重写，多个进程并发起命令时
+        // 另一个进程可能读到空文件或半截内容而拿不到 jvmargs。同目录保证 rename 不跨文件系统。
+        val tmp = File.createTempFile("gradle.properties", ".tmp", dir)
+        try {
+            tmp.writeText(lines.joinToString("\n", postfix = "\n"))
+            if (!tmp.renameTo(file)) throw IOException("rename 失败: ${tmp.absolutePath} -> ${file.absolutePath}")
+        } finally {
+            tmp.delete()
+        }
+        FileLogger.i(TAG, "容器 Gradle 堆上限已更新：${jvmArgs}（${file.absolutePath}）")
+        return true
     }
 
     private fun fixCoreutilsPermissions(rootfs: File) {

@@ -31,6 +31,9 @@ class TerminalKeepaliveService : Service() {
     private val binder = LocalBinder()
     private var sessionCount = 0
 
+    /** 工作区路径 → 该工作区正在跑的会话数。用于在通知里区分是哪个工作区的任务。 */
+    private val workspaceSessions = mutableMapOf<String, Int>()
+
     /** 用户在设置页开启的常驻保活：为 true 时即便没有后台会话也保持前台通知。 */
     private var persistent = false
 
@@ -82,11 +85,13 @@ class TerminalKeepaliveService : Service() {
         when (intent?.action) {
             ACTION_START_SESSION -> {
                 sessionCount++
+                bumpWorkspace(intent.getStringExtra(EXTRA_WORKSPACE), +1)
                 ensureForeground()
                 FileLogger.i(TAG, "Session started, count=$sessionCount")
             }
             ACTION_STOP_SESSION -> {
                 sessionCount = (sessionCount - 1).coerceAtLeast(0)
+                bumpWorkspace(intent.getStringExtra(EXTRA_WORKSPACE), -1)
                 if (sessionCount == 0 && !persistent) {
                     stopSelf(startId)
                     FileLogger.i(TAG, "All sessions ended, stopping service")
@@ -133,12 +138,29 @@ class TerminalKeepaliveService : Service() {
      * ForegroundServiceStartNotAllowedException，此处捕获仅记录——常驻通知本次未能展示，
      * 不应让进程崩溃（设置页的开关仍是开启态，下次前台时由 [com.aharou.MainActivity] 恢复）。
      */
+    /** 维护「每个工作区在跑几个任务」；路径为空（旧调用方）就只算总数。 */
+    private fun bumpWorkspace(path: String?, delta: Int) {
+        val key = path?.takeIf { it.isNotBlank() } ?: return
+        val next = (workspaceSessions[key] ?: 0) + delta
+        if (next <= 0) workspaceSessions.remove(key) else workspaceSessions[key] = next
+    }
+
+    /** 通知副文案里的工作区部分：只取末级目录名，多个用「、」连接。 */
+    private fun workspaceLabel(): String = workspaceSessions.keys
+        .filter { it.isNotBlank() }
+        .map { it.trimEnd('/').substringAfterLast('/').ifBlank { it } }
+        .distinct()
+        .joinToString("、")
+
     private fun ensureForeground() {
+        val label = workspaceLabel()
         val text = when {
             sessionCount > 0 && persistent ->
-                getString(R.string.notification_keepalive_persistent_sessions, sessionCount)
+                getString(R.string.notification_keepalive_persistent_sessions, sessionCount) +
+                    if (label.isBlank()) "" else " · $label"
             sessionCount > 0 ->
-                getString(R.string.notification_keepalive_running_sessions, sessionCount)
+                getString(R.string.notification_keepalive_running_sessions, sessionCount) +
+                    if (label.isBlank()) "" else " · $label"
             else -> getString(R.string.notification_keepalive_enabled)
         }
         val openAppIntent = PendingIntent.getActivity(
@@ -201,6 +223,9 @@ class TerminalKeepaliveService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "terminal_service"
         const val ACTION_START_SESSION = "com.aharou.agent.action.START_SESSION"
+
+        /** 本次会话属于哪个工作区（绝对路径）；旧调用方不传时只算总数。 */
+        const val EXTRA_WORKSPACE = "com.aharou.agent.extra.WORKSPACE"
         const val ACTION_STOP_SESSION = "com.aharou.agent.action.STOP_SESSION"
         const val ACTION_ENABLE_PERSISTENT = "com.aharou.agent.action.ENABLE_PERSISTENT"
         const val ACTION_DISABLE_PERSISTENT = "com.aharou.agent.action.DISABLE_PERSISTENT"
@@ -232,18 +257,20 @@ class TerminalKeepaliveService : Service() {
         }
 
         /** 登记一个后台会话（不改变用户常驻开关）。由调用方按状态迁移保证不重复计数。 */
-        fun startSession(context: Context) {
+        fun startSession(context: Context, workspacePath: String? = null) {
             val intent = Intent(context, TerminalKeepaliveService::class.java).apply {
                 action = ACTION_START_SESSION
+                workspacePath?.let { putExtra(EXTRA_WORKSPACE, it) }
             }
             runCatching { context.startService(intent) }
                 .onFailure { FileLogger.e(TAG, "startSession startService failed", it) }
         }
 
         /** 结束一个后台会话。 */
-        fun stopSession(context: Context) {
+        fun stopSession(context: Context, workspacePath: String? = null) {
             val intent = Intent(context, TerminalKeepaliveService::class.java).apply {
                 action = ACTION_STOP_SESSION
+                workspacePath?.let { putExtra(EXTRA_WORKSPACE, it) }
             }
             runCatching { context.startService(intent) }
                 .onFailure { FileLogger.e(TAG, "stopSession startService failed", it) }

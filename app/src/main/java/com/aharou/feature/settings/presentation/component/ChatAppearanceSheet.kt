@@ -1,5 +1,8 @@
 package com.aharou.feature.settings.presentation.component
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,10 +26,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -40,6 +45,12 @@ import com.aharou.core.theme.colorToHsl
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.agent.data.repository.ChatAppearance
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.content.Context
+import android.net.Uri
 import kotlin.math.roundToInt
 
 /**
@@ -79,6 +90,25 @@ internal fun ChatAppearanceSheet(
     var assistantAlpha by remember { mutableFloatStateOf(current.assistantBubbleAlpha) }
 
     var cornerDp by remember { mutableFloatStateOf(current.bubbleCornerDp.toFloat()) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var bgPath by remember { mutableStateOf(current.backgroundImagePath) }
+    var bgBlur by remember { mutableFloatStateOf(current.backgroundBlurDp.toFloat()) }
+    var bgDim by remember { mutableFloatStateOf(current.backgroundDim) }
+    val bgPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                saveChatBackground(context, uri)?.let { saved ->
+                    // 只留最新一张：旧图不删会随换背景不断堆积
+                    backgroundDir(context).listFiles()?.forEach { file ->
+                        if (file.name != saved) file.delete()
+                    }
+                    bgPath = saved
+                }
+            }
+        }
+    }
 
     val userColor = colorFromHsl(userHue, userSaturation, userLightness)
     val assistantColor = colorFromHsl(assistantHue, assistantSaturation, assistantLightness)
@@ -157,6 +187,43 @@ internal fun ChatAppearanceSheet(
             SectionTitle(stringResource(R.string.chat_appearance_corner) + " · ${corner}dp")
             Slider(value = cornerDp, onValueChange = { cornerDp = it }, valueRange = 0f..28f)
 
+            SectionTitle(stringResource(R.string.chat_background_title))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = {
+                    bgPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) {
+                    Text(
+                        stringResource(
+                            if (bgPath == null) R.string.chat_background_pick else R.string.chat_background_change
+                        )
+                    )
+                }
+                if (bgPath != null) {
+                    TextButton(onClick = { bgPath = null }) {
+                        Text(stringResource(R.string.chat_background_clear))
+                    }
+                }
+            }
+            if (bgPath != null) {
+                // 模糊靠 RenderEffect，只有 Android 12+ 才有；低版本会忽略，只靠压暗
+                Text(
+                    text = "${stringResource(R.string.chat_background_blur)} · ${bgBlur.roundToInt()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(value = bgBlur, onValueChange = { bgBlur = it }, valueRange = 0f..25f)
+                Text(
+                    text = "${stringResource(R.string.chat_background_dim)} · ${(bgDim * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Slider(value = bgDim, onValueChange = { bgDim = it }, valueRange = 0f..0.8f)
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -175,7 +242,10 @@ internal fun ChatAppearanceSheet(
                             assistantBubbleFollowsSkin = assistantFollows,
                             assistantBubbleColor = assistantColor.toArgb().toLong() and 0xFFFFFFFFL,
                             assistantBubbleAlpha = assistantAlpha,
-                            bubbleCornerDp = corner
+                            bubbleCornerDp = corner,
+                            backgroundImagePath = bgPath,
+                            backgroundBlurDp = bgBlur.roundToInt(),
+                            backgroundDim = bgDim
                         )
                     )
                 }) {
@@ -288,4 +358,24 @@ private fun PreviewBar(contentColor: Color) {
                 .background(barColor.copy(alpha = 0.6f))
         )
     }
+}
+
+/** 背景图存放目录：放 filesDir 下，卸载 App 就跟着清掉。 */
+private fun backgroundDir(context: Context): File =
+    File(context.filesDir, "aharou/chat_bg").apply { mkdirs() }
+
+/**
+ * 把选中的图复制进私有目录。
+ *
+ * 不存 content:// URI：读权限是临时的，重启或清缓存后大概率失效，背景会变空白。
+ */
+private suspend fun saveChatBackground(context: Context, uri: Uri): String? = withContext(Dispatchers.IO) {
+    runCatching {
+        val name = "bg_${System.currentTimeMillis()}.img"
+        val target = File(backgroundDir(context), name)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output -> input.copyTo(output) }
+        } ?: return@runCatching null
+        name
+    }.getOrNull()
 }

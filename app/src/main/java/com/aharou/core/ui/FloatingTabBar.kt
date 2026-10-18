@@ -42,8 +42,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -105,16 +107,31 @@ fun FloatingTabBar(
     val glassBackgroundBrush = remember(isLight, surfaceColor, surfaceVariantColor, cardSurfaceColor, mutedSurfaceColor) {
         if (isLight) {
             Brush.verticalGradient(
-                listOf(cardSurfaceColor.copy(alpha = 0.94f), mutedSurfaceColor.copy(alpha = 0.90f))
+                listOf(cardSurfaceColor.copy(alpha = 0.74f), mutedSurfaceColor.copy(alpha = 0.62f))
             )
         } else {
             Brush.verticalGradient(
                 listOf(
-                    surfaceVariantColor.copy(alpha = 0.92f),
-                    surfaceColor.copy(alpha = 0.88f)
+                    surfaceVariantColor.copy(alpha = 0.74f),
+                    surfaceColor.copy(alpha = 0.62f)
                 )
             )
         }
+    }
+
+    // Compose 没有 backdrop blur（六层里的「模糊」这层做不到），只能把其余几层做足：
+    // 底色半透明透出背景、斜向 specular 高光、上下边缘内发光、外投影。
+    // 缺了高光与内发光就只剩一块半透明色板，肉眼几乎看不出材质差别。
+    val glassHighlightBrush = remember(isLight) {
+        Brush.linearGradient(
+            colorStops = arrayOf(
+                0f to Color.White.copy(alpha = if (isLight) 0.50f else 0.16f),
+                0.42f to Color.White.copy(alpha = if (isLight) 0.08f else 0.03f),
+                1f to Color.White.copy(alpha = if (isLight) 0.02f else 0.08f)
+            ),
+            start = Offset.Zero,
+            end = Offset.Infinite
+        )
     }
 
     val glassBorderBrush = remember(isLight, outlineVariantColor, pageBackgroundColor) {
@@ -186,6 +203,23 @@ fun FloatingTabBar(
                 )
                 .clip(RoundedCornerShape(Radius.pill))
                 .background(glassBackgroundBrush)
+                .drawWithContent {
+                    drawContent()
+                    // 光从上方来：顶边一条亮线、底边一条暗线，玻璃的「厚度」就靠这两笔
+                    val stroke = 1.dp.toPx()
+                    drawLine(
+                        color = Color.White.copy(alpha = if (isLight) 0.55f else 0.22f),
+                        start = Offset(size.width * 0.10f, stroke / 2),
+                        end = Offset(size.width * 0.90f, stroke / 2),
+                        strokeWidth = stroke
+                    )
+                    drawLine(
+                        color = Color.Black.copy(alpha = if (isLight) 0.05f else 0.18f),
+                        start = Offset(size.width * 0.10f, size.height - stroke / 2),
+                        end = Offset(size.width * 0.90f, size.height - stroke / 2),
+                        strokeWidth = stroke
+                    )
+                }
                 .border(1.dp, glassBorderBrush, RoundedCornerShape(Radius.pill))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
                 .pointerInput(items) {
@@ -230,6 +264,12 @@ fun FloatingTabBar(
                     )
                 }
         ) {
+            // specular 高光：左上偏亮、右下微亮，模拟表面反射
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(glassHighlightBrush)
+            )
             val tabWidth = tabBounds.values.firstOrNull()?.width ?: 0f
 
             if (tabWidth > 0f) {
@@ -388,16 +428,31 @@ fun FloatingTabBar(
     val glassBackgroundBrush = remember(isLight, surfaceColor, surfaceVariantColor, cardSurfaceColor, mutedSurfaceColor) {
         if (isLight) {
             Brush.verticalGradient(
-                listOf(cardSurfaceColor.copy(alpha = 0.94f), mutedSurfaceColor.copy(alpha = 0.90f))
+                listOf(cardSurfaceColor.copy(alpha = 0.74f), mutedSurfaceColor.copy(alpha = 0.62f))
             )
         } else {
             Brush.verticalGradient(
                 listOf(
-                    surfaceVariantColor.copy(alpha = 0.92f),
-                    surfaceColor.copy(alpha = 0.88f)
+                    surfaceVariantColor.copy(alpha = 0.74f),
+                    surfaceColor.copy(alpha = 0.62f)
                 )
             )
         }
+    }
+
+    // Compose 没有 backdrop blur（六层里的「模糊」这层做不到），只能把其余几层做足：
+    // 底色半透明透出背景、斜向 specular 高光、上下边缘内发光、外投影。
+    // 缺了高光与内发光就只剩一块半透明色板，肉眼几乎看不出材质差别。
+    val glassHighlightBrush = remember(isLight) {
+        Brush.linearGradient(
+            colorStops = arrayOf(
+                0f to Color.White.copy(alpha = if (isLight) 0.50f else 0.16f),
+                0.42f to Color.White.copy(alpha = if (isLight) 0.08f else 0.03f),
+                1f to Color.White.copy(alpha = if (isLight) 0.02f else 0.08f)
+            ),
+            start = Offset.Zero,
+            end = Offset.Infinite
+        )
     }
 
     val glassBorderBrush = remember(isLight, outlineVariantColor, pageBackgroundColor) {
@@ -470,6 +525,23 @@ fun FloatingTabBar(
                 )
                 .clip(RoundedCornerShape(Radius.pill))
                 .background(glassBackgroundBrush)
+                .drawWithContent {
+                    drawContent()
+                    // 光从上方来：顶边一条亮线、底边一条暗线，玻璃的「厚度」就靠这两笔
+                    val stroke = 1.dp.toPx()
+                    drawLine(
+                        color = Color.White.copy(alpha = if (isLight) 0.55f else 0.22f),
+                        start = Offset(size.width * 0.10f, stroke / 2),
+                        end = Offset(size.width * 0.90f, stroke / 2),
+                        strokeWidth = stroke
+                    )
+                    drawLine(
+                        color = Color.Black.copy(alpha = if (isLight) 0.05f else 0.18f),
+                        start = Offset(size.width * 0.10f, size.height - stroke / 2),
+                        end = Offset(size.width * 0.90f, size.height - stroke / 2),
+                        strokeWidth = stroke
+                    )
+                }
                 .border(1.dp, glassBorderBrush, RoundedCornerShape(Radius.pill))
                 .padding(horizontal = 6.dp, vertical = 3.dp)
                 .pointerInput(items) {
@@ -495,6 +567,12 @@ fun FloatingTabBar(
                     )
                 }
         ) {
+            // specular 高光：左上偏亮、右下微亮，模拟表面反射
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(glassHighlightBrush)
+            )
             val tabWidth = tabBounds.values.firstOrNull()?.width ?: 0f
 
             if (tabWidth > 0f) {

@@ -13,9 +13,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -211,17 +208,19 @@ class MemoryCurator @Inject constructor(
             if (occupied.content.trim() == candidate.content.trim()) break
             name = "${baseName}_${++suffix}"
         }
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
-        val oldDescription = if (existing.description.contains("[待确认")) existing.description
-            else "${existing.description} [待确认 $date，与 $name 冲突]"
-        if (!memoryRepository.saveMemory(
-                existing.name, oldDescription, existing.content, existing.scope, projectRoot,
-                pending = true
-            )
-        ) return false
+        // 旧条目**保持原样**：它正在生效，不该因为新来的候选而当场失效。
+        // 旧实现把双方都标 pending，结果是两条都不进上下文——那次改动等于把知识丢了，
+        // 比「暂时分不清哪条对」还糟。
+        // 冲突关系放 keywords，不写进 description：描述会被永久污染，裁决完也洗不掉。
         val ok = memoryRepository.saveMemory(
-            name, "${candidate.description} [待确认 $date，与 ${existing.name} 冲突]",
-            candidate.content, candidate.scope, projectRoot, candidate.type, pending = true
+            name,
+            candidate.description,
+            candidate.content,
+            candidate.scope,
+            projectRoot,
+            candidate.type,
+            pending = true,
+            keywords = listOf("conflict:${existing.name}")
         )
         if (ok) {
             memoryTrace.record(
@@ -229,7 +228,7 @@ class MemoryCurator @Inject constructor(
                 action = MemoryTraceLog.ACTION_CONFLICT,
                 name = name,
                 scope = candidate.scope.name.lowercase(),
-                detail = "与「${existing.name}」冲突，双方保留待确认",
+                detail = "与「${existing.name}」冲突，新条目标为待确认，旧条目不受影响",
                 sessionId = sessionId
             )
         }

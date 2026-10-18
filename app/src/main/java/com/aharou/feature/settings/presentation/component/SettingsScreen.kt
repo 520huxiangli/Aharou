@@ -153,8 +153,9 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     PromptEditor(R.string.prompts_title),
     Container(R.string.settings_container),
     ContainerDownloads(R.string.container_download_image),
+    ContainerSources(R.string.container_sources_title),
     Proxy(R.string.proxy_title),
-    TelegramBot(R.string.settings_telegram_bot),
+    TelegramBot(R.string.settings_telegram_bot), WeixinBot(R.string.settings_weixin_bot), FeishuBot(R.string.settings_feishu_bot), QqBot(R.string.settings_qq_bot),
     Log(R.string.settings_log),
     Permissions(R.string.settings_permissions),
     AppPermissions(R.string.settings_app_permissions),
@@ -172,7 +173,6 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     MoreGroup(R.string.settings_category_more),
     HelpGroup(R.string.settings_category_help)
 }
-
 /**
  * 分区层级：0 首页菜单，1 一级分区，2 分区里再翻一层的详情 / 编辑页，3 详情页之上的编辑页。
  *
@@ -191,11 +191,10 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
     SettingsSection.PromptDetail,
-    SettingsSection.ContainerDownloads,
+    SettingsSection.ContainerDownloads, SettingsSection.ContainerSources,
     SettingsSection.Log -> 2
     else -> 1
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -414,17 +413,16 @@ fun SettingsScreen(
         SettingsSection.Memory,
         SettingsSection.Pet -> SettingsSection.AharouGroup
         SettingsSection.AccountCenter -> SettingsSection.AiGroup
-        SettingsSection.Providers, SettingsSection.DefaultModels, SettingsSection.ScheduledTasks, SettingsSection.Extensions -> SettingsSection.AiGroup
+        SettingsSection.Providers, SettingsSection.DefaultModels, SettingsSection.ScheduledTasks, SettingsSection.Extensions,
+        SettingsSection.TelegramBot, SettingsSection.WeixinBot, SettingsSection.FeishuBot, SettingsSection.QqBot -> SettingsSection.AiGroup
         SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Plugins, SettingsSection.Knowledge -> SettingsSection.Extensions
-        SettingsSection.General -> SettingsSection.GeneralGroup
-        SettingsSection.Theme -> SettingsSection.GeneralGroup
+        SettingsSection.General, SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
         SettingsSection.AppPermissions,
         SettingsSection.Accessibility,
         SettingsSection.BackgroundRun -> SettingsSection.PermissionsGroup
         SettingsSection.Container,
         SettingsSection.Proxy,
-        SettingsSection.TelegramBot,
         SettingsSection.ShadowScreen,
         SettingsSection.SubAgents,
         SettingsSection.RemoteServers,
@@ -438,15 +436,14 @@ fun SettingsScreen(
         SettingsSection.Prompts -> SettingsSection.AharouGroup
         SettingsSection.ProviderEditor -> SettingsSection.Providers
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
-        SettingsSection.SkillDetail -> SettingsSection.Skills
-        SettingsSection.SkillMarket -> SettingsSection.Skills
+        SettingsSection.SkillDetail, SettingsSection.SkillMarket -> SettingsSection.Skills
         SettingsSection.SkillMarketDetail -> SettingsSection.SkillMarket
         SettingsSection.SkillEditor -> skillEditorReturn
         SettingsSection.SubAgentDetail -> SettingsSection.SubAgents
         SettingsSection.SubAgentEditor -> subAgentEditorReturn
         SettingsSection.PromptDetail -> SettingsSection.Prompts
         SettingsSection.PromptEditor -> promptEditorReturn
-        SettingsSection.ContainerDownloads -> SettingsSection.Container
+        SettingsSection.ContainerDownloads, SettingsSection.ContainerSources -> SettingsSection.Container
         else -> if (expanded) null else SettingsSection.Menu
     }
 
@@ -1231,11 +1228,12 @@ fun SettingsScreen(
                         onStopAllAndCloseTerminal()
                         viewModel.resetContainer(profile)
                     },
-                    resetState = containerReset,
-                    onRestoreBuiltin = { viewModel.restoreBuiltinAlpine() },
+                    resetState = containerReset, onRestoreBuiltin = { viewModel.restoreBuiltinAlpine() },
+                    onOpenSources = { section = SettingsSection.ContainerSources },
                     remoteConnections = remoteConnections,
                     onReorder = viewModel::reorderContainerProfiles
                 )
+                SettingsSection.ContainerSources -> ContainerSourcesSection()
                 SettingsSection.ContainerDownloads -> ContainerImageDownloadSection(
                     catalog = imageCatalog,
                     state = imageDownload,
@@ -1259,6 +1257,9 @@ fun SettingsScreen(
                     onSetPassword = viewModel::setProxyPassword,
                     onSetNoProxy = viewModel::setProxyNoProxy
                 )
+                SettingsSection.WeixinBot -> WeixinBotSection()
+                SettingsSection.FeishuBot -> FeishuBotSection()
+                SettingsSection.QqBot -> QqBotSection()
                 SettingsSection.TelegramBot -> TelegramBotSection()
                 SettingsSection.Log -> LogSection(
                     current = logLevel,
@@ -1593,7 +1594,6 @@ fun SettingsScreen(
     }
     } // BoxWithConstraints 结束
 }
-
 /** 大屏右栏未选中分区时的占位提示。 */
 @Composable
 private fun SettingsDetailPlaceholder() {

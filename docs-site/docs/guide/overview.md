@@ -56,6 +56,7 @@
 | 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md 项目规则 → [文档](/guide/memory) |
 | 共享知识库 | 从一个公开 Markdown 仓库同步资料到本地，AI 用 `knowledge_search` 检索 → [文档](/guide/knowledge-base) |
 | Telegram 机器人 | 在 Telegram 里给机器人发消息，本机跑 AI 并流式回复，需先配对 → [文档](/guide/telegram-bot) |
+| 微信 / 飞书 / QQ 接入 | 同样的能力接到微信（iLink）、飞书、QQ，都是长连接、不用公网 → [文档](/guide/im-bots) |
 | 跨设备协作 | 本机作为可被调用的执行端（局域网或跨网络直连），另一台 Aharou 配对后可请求读/写文件、执行命令、截图、给本机当前会话传话（配对一次即双向互通）；也可反向「接受协助」去连别人的设备 → [文档](/guide/cross-device) |
 | 依赖版本检查 | 让 AI 检查 Gradle 依赖是否有新版本，并给出「改哪一行、从什么改成什么」的建议 → [文档](/guide/dependency-check) |
 | 人格（Soul） | 助手的名字、图标、风格与人格正文，注入系统提示词 → [文档](/guide/soul) |

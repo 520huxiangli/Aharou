@@ -31,6 +31,7 @@ import com.aharou.feature.agent.domain.container.SshLoginKeyStore
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.agent.domain.tool.file.ReadFileTool
+import com.aharou.feature.agent.domain.tool.SendImFileTool
 import com.aharou.feature.agent.domain.tool.file.SendFileTool
 import com.aharou.feature.agent.domain.tool.file.GenerateImageTool
 import com.aharou.feature.agent.domain.tool.file.ViewImageTool
@@ -396,6 +397,7 @@ object AgentModule {
     fun provideToolRegistry(
         readFileTool: ReadFileTool,
         sendFileTool: SendFileTool,
+        sendImFileTool: SendImFileTool,
         viewImageTool: ViewImageTool,
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
@@ -430,6 +432,7 @@ object AgentModule {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
             register("sendFile", sendFileTool)
+            register("sendToChat", sendImFileTool)
             register("viewImage", viewImageTool)
             register("writeFile", writeFileTool)
             register("editFile", editFileTool)

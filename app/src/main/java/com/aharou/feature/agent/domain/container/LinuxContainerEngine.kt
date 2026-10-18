@@ -81,7 +81,8 @@ class LinuxContainerEngine @Inject constructor(
     private val containerOsDetector: ContainerOsDetector,
     private val containerSettingsRepository: com.aharou.feature.settings.data.repository.ContainerSettingsRepository,
     private val pathHomeResolver: com.aharou.feature.workspace.domain.PathHomeResolver,
-    private val runtimeProcessStore: RuntimeProcessStore
+    private val runtimeProcessStore: RuntimeProcessStore,
+    private val gradleHeapApplier: ContainerGradleHeapApplier
 ) : CommandEngine {
     /** 容器初始化的实时进度，供所有入口（终端页/AI/后台终端/MCP）共享同一份状态。 */
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -895,7 +896,7 @@ class LinuxContainerEngine @Inject constructor(
             }
         }
         argv.addAll(profile.extraArgs)
-
+        gradleHeapApplier.apply(profile)
         return argv
     }
 

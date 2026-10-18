@@ -144,6 +144,33 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 onClick = { onOpen(SettingsSection.ScheduledTasks) }
             )
         }
+
+        SettingsGroupHeader(text = stringResource(R.string.settings_category_bots))
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.MessageCircle,
+                title = stringResource(SettingsSection.TelegramBot.titleRes),
+                onClick = { onOpen(SettingsSection.TelegramBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.MessageCircle,
+                title = stringResource(SettingsSection.WeixinBot.titleRes),
+                onClick = { onOpen(SettingsSection.WeixinBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Globe,
+                title = stringResource(SettingsSection.FeishuBot.titleRes),
+                onClick = { onOpen(SettingsSection.FeishuBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.HardDrive,
+                title = stringResource(SettingsSection.QqBot.titleRes),
+                onClick = { onOpen(SettingsSection.QqBot) }
+            )
+        }
     }
 }
 
@@ -280,12 +307,6 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.Globe,
                 title = stringResource(SettingsSection.Proxy.titleRes),
                 onClick = { onOpen(SettingsSection.Proxy) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.MessageCircle,
-                title = stringResource(SettingsSection.TelegramBot.titleRes),
-                onClick = { onOpen(SettingsSection.TelegramBot) }
             )
             SettingsDivider()
             SettingsRow(

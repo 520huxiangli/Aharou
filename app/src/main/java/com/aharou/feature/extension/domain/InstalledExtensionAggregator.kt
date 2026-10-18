@@ -2,6 +2,7 @@ package com.aharou.feature.extension.domain
 
 import android.content.Context
 import com.aharou.feature.agent.domain.knowledge.KnowledgeCatalog
+import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.knowledge.KnowledgeSourceRepository
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.market.SkillInstallRepository
@@ -26,6 +27,7 @@ class InstalledExtensionAggregator @Inject constructor(
     private val skillInstalls: SkillInstallRepository,
     private val knowledgeCatalog: KnowledgeCatalog,
     private val knowledgeSources: KnowledgeSourceRepository,
+    private val mcpConfigRepository: McpConfigRepository,
     @param:ApplicationContext private val context: Context,
 ) {
 
@@ -33,9 +35,25 @@ class InstalledExtensionAggregator @Inject constructor(
     suspend fun installed(): List<ExtensionEntry> = buildList {
         addAll(pluginEntries())
         addAll(skillEntries())
+        addAll(mcpEntries())
         addAll(knowledgeEntries())
         addAll(connectorEntries())
     }
+
+    /** 已配置的 MCP 服务器（全局 + 项目级合并，项目优先）。 */
+    private suspend fun mcpEntries(): List<ExtensionEntry> =
+        mcpConfigRepository.getEffectiveEntries().map { entry ->
+            val server = entry.server
+            ExtensionEntry(
+                id = "mcp:${server.name}",
+                kind = ExtensionKind.MCP,
+                name = server.name,
+                description = if (server.isStdio) server.command.orEmpty() else server.url.orEmpty(),
+                sourceLabel = entry.scope.name,
+                state = if (server.enabled) ExtensionState.RUNNING else ExtensionState.INSTALLED,
+                detail = if (server.isStdio) "stdio" else "http",
+            )
+        }
 
     private suspend fun pluginEntries(): List<ExtensionEntry> =
         pluginManager.listInstalled().map { plugin ->

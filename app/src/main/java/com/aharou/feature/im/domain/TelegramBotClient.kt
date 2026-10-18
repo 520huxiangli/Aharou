@@ -1,10 +1,15 @@
 package com.aharou.feature.im.domain
 
 import com.aharou.feature.im.data.repository.TelegramConfig
+import com.aharou.feature.im.domain.model.ImAttachment
 import com.aharou.feature.im.domain.model.ImBotIdentity
 import com.aharou.feature.im.domain.model.ImCallbackQuery
 import com.aharou.feature.im.domain.model.ImInboundMessage
 import com.aharou.feature.im.domain.model.ImUpdate
+import java.io.File
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
@@ -51,7 +56,11 @@ class TelegramApiException(message: String) : RuntimeException(message)
 @Singleton
 class TelegramBotClient @Inject constructor(
     private val baseClient: OkHttpClient
-) {
+) : ImChannel {
+
+    override val id: String = "telegram"
+
+    override val supportsButtons: Boolean get() = true
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -140,8 +149,8 @@ class TelegramBotClient @Inject constructor(
     }
 
     /** 错误信息脱敏：OkHttp/服务端可能把 URL（含 token）带进消息。 */
-    fun redact(text: String, cfg: TelegramConfig): String {
-        val token = cfg.botToken
+    override fun redact(text: String, cfg: ImChannelConfig): String {
+        val token = (cfg as? TelegramConfig)?.botToken.orEmpty()
         val masked = if (token.isNotBlank()) text.replace(token, "<token>") else text
         return masked.lineSequence().firstOrNull().orEmpty().take(300)
     }
@@ -199,19 +208,91 @@ class TelegramBotClient @Inject constructor(
     }
 
     /** 在 IO 线程执行并支持协程取消（取消时中止底层 Call，避免长轮询挂住服务停止）。 */
+    /**
+     * 发请求并拿原始响应。
+     *
+     * `suspendCancellableCoroutine` 不切线程，`call.execute()` 是阻塞调用，
+     * 不显式放到 IO 线程会抛 NetworkOnMainThreadException。
+     */
     private suspend fun execute(client: OkHttpClient, request: Request): Pair<Int, String> =
-        suspendCancellableCoroutine { cont ->
-            val call = client.newCall(request)
-            cont.invokeOnCancellation { runCatching { call.cancel() } }
-            try {
-                call.execute().use { response ->
-                    val body = response.body?.string().orEmpty()
-                    if (cont.isActive) cont.resume(response.code to body)
+        withContext(Dispatchers.IO) {
+            suspendCancellableCoroutine { cont ->
+                val call = client.newCall(request)
+                cont.invokeOnCancellation { runCatching { call.cancel() } }
+                try {
+                    call.execute().use { response ->
+                        val body = response.body?.string().orEmpty()
+                        if (cont.isActive) cont.resume(response.code to body)
+                    }
+                } catch (t: Throwable) {
+                    if (cont.isActive) cont.resumeWithException(t) else cont.cancel()
                 }
-            } catch (t: Throwable) {
-                if (cont.isActive) cont.resumeWithException(t) else cont.cancel()
             }
         }
+
+    /**
+     * 附件下载：Telegram 要两步——getFile 换 file_path，再从 file/bot<token>/<path> 取流。
+     *
+     * 落到系统临时目录（这个客户端拿不到 Context），由编排层搬进应用私有目录。
+     */
+    override suspend fun downloadAttachment(cfg: ImChannelConfig, attachment: ImAttachment): File? {
+        val c = cfg.asTelegram()
+        val fileId = attachment.fileId.takeIf { it.isNotBlank() } ?: return null
+        val meta = runCatching {
+            call(c, "getFile", buildJsonObject { put("file_id", fileId) })
+        }.getOrNull() ?: return null
+        val path = ((meta as? JsonObject)?.get("result") as? JsonObject)
+            ?.get("file_path")?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.isNotBlank() } ?: return null
+        val url = c.baseUrl.trimEnd('/') + "/file/bot${c.botToken}/" + path
+        val target = File.createTempFile("tg_", "_" + (attachment.fileName.ifBlank { path.substringAfterLast('/') }))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder().url(url).get().build()
+                clientFor(c).newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val body = response.body ?: return@use null
+                    target.outputStream().use { out -> body.byteStream().copyTo(out) }
+                    target
+                }
+            }.getOrNull()
+        }
+    }
+
+    /** 发媒体：Telegram 用 multipart 上传，图片走 sendPhoto、其余走 sendDocument。 */
+    override suspend fun sendMedia(
+        cfg: ImChannelConfig,
+        chatId: String,
+        file: File,
+        kind: ImAttachment.Kind,
+        caption: String
+    ): String? {
+        val c = cfg.asTelegram()
+        val isImage = kind == ImAttachment.Kind.IMAGE
+        val method = if (isImage) "sendPhoto" else "sendDocument"
+        val fieldName = if (isImage) "photo" else "document"
+        val mime = when (kind) {
+            ImAttachment.Kind.IMAGE -> "image/jpeg"
+            ImAttachment.Kind.AUDIO -> "audio/mpeg"
+            ImAttachment.Kind.VIDEO -> "video/mp4"
+            ImAttachment.Kind.FILE -> "application/octet-stream"
+        }.toMediaTypeOrNull()
+        val form = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart("chat_id", chatId)
+            .addFormDataPart(fieldName, file.name, file.asRequestBody(mime))
+            .apply { if (caption.isNotBlank()) addFormDataPart("caption", caption.take(1000)) }
+            .build()
+        val url = c.baseUrl.trimEnd('/') + "/bot${c.botToken}/" + method
+        val request = Request.Builder().url(url).post(form).build()
+        val (code, raw) = execute(clientFor(c), request)
+        if (code !in 200..299) return null
+        return runCatching {
+            val root = json.parseToJsonElement(raw) as? JsonObject
+            (root?.get("result") as? JsonObject)?.get("message_id")
+                ?.jsonPrimitive?.longOrNull?.toString()
+        }.getOrNull()
+    }
 
     private fun parseUpdate(obj: JsonObject): ImUpdate? {
         val updateId = obj["update_id"]?.jsonPrimitive?.longOrNull ?: return null
@@ -231,6 +312,48 @@ class TelegramBotClient @Inject constructor(
         val text = message["text"]?.jsonPrimitive?.contentOrNull
             ?: message["caption"]?.jsonPrimitive?.contentOrNull
             ?: ""
+        // photo 给一组尺寸，取最大那张（数组末位）；document 就是文件本身
+        val attachments = buildList {
+            (message["photo"] as? JsonArray)?.lastOrNull()?.let { it as? JsonObject }?.let { pic ->
+                pic["file_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { fileId ->
+                    add(
+                        ImAttachment(
+                            kind = ImAttachment.Kind.IMAGE,
+                            fileId = fileId,
+                            mimeType = "image/jpeg",
+                            sizeBytes = pic["file_size"]?.jsonPrimitive?.longOrNull ?: 0L
+                        )
+                    )
+                }
+            }
+            (message["document"] as? JsonObject)?.let { doc ->
+                doc["file_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { fileId ->
+                    add(
+                        ImAttachment(
+                            kind = ImAttachment.Kind.FILE,
+                            fileId = fileId,
+                            fileName = doc["file_name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                            mimeType = doc["mime_type"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                            sizeBytes = doc["file_size"]?.jsonPrimitive?.longOrNull ?: 0L
+                        )
+                    )
+                }
+            }
+            (message["voice"] as? JsonObject)?.let { voice ->
+                voice["file_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { fileId ->
+                    add(
+                        ImAttachment(
+                            kind = ImAttachment.Kind.AUDIO,
+                            fileId = fileId,
+                            mimeType = voice["mime_type"]?.jsonPrimitive?.contentOrNull ?: "audio/ogg",
+                            sizeBytes = voice["file_size"]?.jsonPrimitive?.longOrNull ?: 0L
+                        )
+                    )
+                }
+            }
+        }
+        // 纯图片/文件也是有效消息，不能只看文本
+        if (text.isBlank() && attachments.isEmpty()) return null
         val name = listOfNotNull(
             from["first_name"]?.jsonPrimitive?.contentOrNull,
             from["last_name"]?.jsonPrimitive?.contentOrNull
@@ -247,7 +370,8 @@ class TelegramBotClient @Inject constructor(
             text = text,
             isGroup = isGroup,
             messageId = message["message_id"]?.jsonPrimitive?.longOrNull?.toString().orEmpty(),
-            replyToSenderId = replyTo
+            replyToSenderId = replyTo,
+            attachments = attachments
         )
     }
 
@@ -262,6 +386,59 @@ class TelegramBotClient @Inject constructor(
             messageId = message?.get("message_id")?.jsonPrimitive?.longOrNull?.toString().orEmpty(),
             data = cb["data"]?.jsonPrimitive?.contentOrNull.orEmpty()
         )
+    }
+
+    // ── ImChannel 实现：把渠道无关的调用映射到上面的具体方法 ────────────────
+
+    /** Telegram 支持 editMessageText，流式过程中可以就地刷新。 */
+    override val supportsEdit: Boolean get() = true
+
+    override suspend fun identity(cfg: ImChannelConfig): ImBotIdentity = getMe(cfg.asTelegram())
+
+    override suspend fun prepare(cfg: ImChannelConfig, dropHistory: Boolean) =
+        deleteWebhook(cfg.asTelegram(), dropPending = dropHistory)
+
+    override suspend fun poll(cfg: ImChannelConfig, cursor: Long, timeoutSeconds: Int): List<ImUpdate> =
+        getUpdates(cfg.asTelegram(), cursor, timeoutSeconds)
+
+    override suspend fun send(cfg: ImChannelConfig, chatId: String, text: String): String =
+        sendMessage(cfg.asTelegram(), chatId, text)
+
+    override suspend fun edit(cfg: ImChannelConfig, chatId: String, messageId: String, text: String): Boolean {
+        editMessageText(cfg.asTelegram(), chatId, messageId, text)
+        return true
+    }
+
+    override suspend fun sendWithButtons(
+        cfg: ImChannelConfig,
+        chatId: String,
+        text: String,
+        buttons: List<List<Pair<String, String>>>
+    ): String? = sendMessage(cfg.asTelegram(), chatId, text, inlineKeyboard(buttons))
+
+    override suspend fun acknowledgeCallback(cfg: ImChannelConfig, callbackId: String) =
+        answerCallbackQuery(cfg.asTelegram(), callbackId)
+
+    override suspend fun clearMarkup(cfg: ImChannelConfig, chatId: String, messageId: String) =
+        clearReplyMarkup(cfg.asTelegram(), chatId, messageId)
+
+    private fun ImChannelConfig.asTelegram(): TelegramConfig =
+        this as? TelegramConfig ?: error("Telegram 通道收到了非 Telegram 配置：${this::class.simpleName}")
+
+    /** (文本, 回调数据) 二维表 → Telegram 的 inline_keyboard。 */
+    private fun inlineKeyboard(buttons: List<List<Pair<String, String>>>): JsonObject = buildJsonObject {
+        put("inline_keyboard", buildJsonArray {
+            buttons.forEach { row ->
+                add(buildJsonArray {
+                    row.forEach { (label, data) ->
+                        add(buildJsonObject {
+                            put("text", label)
+                            put("callback_data", data)
+                        })
+                    }
+                })
+            }
+        })
     }
 
     companion object {

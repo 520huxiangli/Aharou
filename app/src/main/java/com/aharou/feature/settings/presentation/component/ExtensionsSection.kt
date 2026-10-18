@@ -120,21 +120,23 @@ internal fun ExtensionsSection(
                 )
             }
 
+            // 去原页的入口常驻最上面：某一类可能一条都没有（如还没配过 MCP），但路不能断
+            // ——曾经把它挂在列表末尾、且要求列表非空才渲染，结果空分类下整块功能都进不去。
+            kindFilter?.let { kind ->
+                SettingsGroup {
+                    SettingsRow(
+                        icon = extensionJumpIcon(kind),
+                        title = stringResource(extensionJumpSection(kind).titleRes),
+                        subtitle = stringResource(R.string.extension_open_original_hint),
+                        onClick = { onOpenSection(extensionJumpSection(kind)) }
+                    )
+                }
+            }
+
             when {
                 loading && entries.isEmpty() -> HintText(stringResource(R.string.extension_loading))
                 entries.isEmpty() -> HintText(stringResource(R.string.extension_empty))
                 else -> SettingsGroup {
-                    // 菜单里不再单列这几个入口，给一条明确的去路（导入本地包、编辑、删除都在那边）。
-                    // 放在列表**最前面**：某一类动辄几十条，挂在末尾等于没有。
-                    kindFilter?.let { kind ->
-                        SettingsRow(
-                            icon = extensionJumpIcon(kind),
-                            title = stringResource(extensionJumpSection(kind).titleRes),
-                            subtitle = stringResource(R.string.extension_open_original_hint),
-                            onClick = { onOpenSection(extensionJumpSection(kind)) }
-                        )
-                        SettingsDivider()
-                    }
                     entries.forEachIndexed { index, entry ->
                         if (index > 0) SettingsDivider()
                         val busy = busyId == entry.id

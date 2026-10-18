@@ -13,7 +13,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -900,6 +902,20 @@ fun AppNavigation(
                                     navController.navigate("toolDetail")
                                 },
                         ) {
+                            // 背景图铺在 AIChatPanel 之下（它的 Scaffold 已改透明）；
+                            // 没设背景图时这层就是主题底色，观感与改动前一致。
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.background)
+                            ) {
+                            val chatAppearance =
+                                com.aharou.feature.agent.presentation.component.LocalChatAppearance.current
+                            com.aharou.core.ui.ChatBackgroundLayer(
+                                imageName = chatAppearance.backgroundImagePath,
+                                blurDp = chatAppearance.backgroundBlurDp,
+                                dim = chatAppearance.backgroundDim
+                            )
                             AIChatPanel(
                                 viewModel = agentViewModel,
                                 settingsViewModel = settingsViewModel,
@@ -926,6 +942,7 @@ fun AppNavigation(
                                     }
                                 }
                             )
+                            }
                         }
                     },
                     overlay = {

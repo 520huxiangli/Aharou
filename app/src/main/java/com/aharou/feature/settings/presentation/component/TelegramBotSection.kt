@@ -42,7 +42,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
-import com.aharou.feature.im.domain.model.TelegramState
+import com.aharou.feature.im.domain.ImChannelState
 import com.aharou.feature.settings.presentation.TelegramBotViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
@@ -251,23 +251,23 @@ private fun InGroupHint(text: String) {
 
 /** 连接状态展示文案。 */
 @Composable
-private fun connectionLabel(state: TelegramState): String = when (state) {
-    is TelegramState.Connected -> stringResource(
+private fun connectionLabel(state: ImChannelState): String = when (state) {
+    is ImChannelState.Connected -> stringResource(
         R.string.settings_telegram_bot_status_connected,
-        state.username
+        state.identity
     )
-    is TelegramState.Error -> stringResource(
+    is ImChannelState.Error -> stringResource(
         R.string.settings_telegram_bot_status_error,
         state.message
     )
-    TelegramState.Connecting -> stringResource(R.string.settings_telegram_bot_status_connecting)
-    TelegramState.Stopped -> stringResource(R.string.settings_telegram_bot_status_stopped)
+    ImChannelState.Connecting -> stringResource(R.string.im_status_connecting)
+    ImChannelState.Stopped -> stringResource(R.string.settings_telegram_bot_status_stopped)
 }
 
 /** 连接状态对应的语义色：正常主色、失败错误色、其余弱化色。 */
 @Composable
-private fun connectionColor(state: TelegramState) = when (state) {
-    is TelegramState.Connected -> MaterialTheme.colorScheme.primary
-    is TelegramState.Error -> MaterialTheme.colorScheme.error
+private fun connectionColor(state: ImChannelState) = when (state) {
+    is ImChannelState.Connected -> MaterialTheme.colorScheme.primary
+    is ImChannelState.Error -> MaterialTheme.colorScheme.error
     else -> MaterialTheme.semanticColors.subtleText
 }

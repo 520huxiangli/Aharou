@@ -1,8 +1,10 @@
 package com.aharou.feature.settings.data.repository
 
+import android.app.ActivityManager
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
@@ -39,7 +41,37 @@ data class DownloadedImageRecord(
 class ContainerSettingsRepository @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) {
-    private companion object {
+    companion object {
+        /** Gradle 堆上限可调范围与步进（设置页滑条与配置通道共用）。 */
+        const val GRADLE_HEAP_MIN_MB = 2048
+        const val GRADLE_HEAP_MAX_MB = 8192
+        const val GRADLE_HEAP_STEP_MB = 512
+
+        /** 设备总内存（MB）；拿不到时按 4GB 计。 */
+        fun deviceTotalMemMb(context: Context): Int = runCatching {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            // ActivityManager 没有 memoryInfo 属性：getMemoryInfo 要求传入结果对象
+            val info = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(info)
+            (info.totalMem / (1024 * 1024)).toInt()
+        }.getOrDefault(4096)
+
+        /**
+         * 按设备总内存推荐的堆上限。
+         *
+         * 刻意比「总内存的几分之一」更保守：容器能拿到的可用内存远小于总内存（宿主上还有一堆应用），
+         * 堆上限超过实际可用内存时 JVM 迟迟不 GC，最终被内核 OOM 杀掉、编译无声中断。
+         * 内存宽裕的用户可以在设置页往上调。
+         *
+         * 阈值按 11/7GB 而非标称的 12/8GB：`totalMem` 报的是内核可用物理内存，标称值总要扣掉
+         * 保留内存与 GPU 共享段，12GB 机器通常只报 11.1~11.5GB、8GB 只报 7.4~7.8GB。
+         */
+        fun recommendedGradleHeapMb(totalMemMb: Int): Int = when {
+            totalMemMb >= 11 * 1024 -> 3072
+            totalMemMb >= 7 * 1024 -> 2560
+            else -> GRADLE_HEAP_MIN_MB
+        }
+
         val ACTIVE_PROFILE_ID_KEY = stringPreferencesKey("active_profile_id")
         val CUSTOM_PROFILES_KEY = stringPreferencesKey("custom_profiles_json")
         /** 远程工作区模式下本地 MCP stdio 等服务的运行容器；无值时默认内置 Alpine。 */
@@ -52,6 +84,8 @@ class ContainerSettingsRepository @Inject constructor(
         val ANNOUNCEMENT_SHOWN_HASH_KEY = stringPreferencesKey("container_announcement_shown_hash")
         /** 下载镜像页已下载/已安装的记录（JSON 列表）。 */
         val DOWNLOADED_IMAGES_KEY = stringPreferencesKey("downloaded_images_json")
+        /** 容器内编译 Gradle 工程时的 JVM 堆上限（MB）；无值时按设备内存推荐。 */
+        val GRADLE_HEAP_MB_KEY = intPreferencesKey("gradle_heap_mb")
         val downloadedImageSerializer = ListSerializer(DownloadedImageRecord.serializer())
         val profileSerializer = ListSerializer(ContainerProfile.serializer())
         val json = Json { ignoreUnknownKeys = true }
@@ -72,6 +106,23 @@ class ContainerSettingsRepository @Inject constructor(
         prefs[CUSTOM_PROFILES_KEY]?.let { raw ->
             runCatching { json.decodeFromString(profileSerializer, raw) }.getOrNull()
         } ?: emptyList()
+    }
+
+    /** 设备总内存（MB），只查一次：binder IPC，不必每次 flow 发射都问。 */
+    private val totalMemMb: Int by lazy { deviceTotalMemMb(context) }
+
+    /** Gradle 堆上限（MB）；未设置过时按设备内存给推荐值。 */
+    val gradleHeapMbFlow: Flow<Int> = context.containerDataStore.data.map { prefs ->
+        prefs[GRADLE_HEAP_MB_KEY]?.coerceIn(GRADLE_HEAP_MIN_MB, GRADLE_HEAP_MAX_MB)
+            ?: recommendedGradleHeapMb(totalMemMb)
+    }
+
+    /** 写入前对齐到滑条步进：配置通道可以传任意值，3000 这种会让滑条停在两刻度之间。 */
+    suspend fun setGradleHeapMb(mb: Int) {
+        val aligned = (mb / GRADLE_HEAP_STEP_MB) * GRADLE_HEAP_STEP_MB
+        context.containerDataStore.edit {
+            it[GRADLE_HEAP_MB_KEY] = aligned.coerceIn(GRADLE_HEAP_MIN_MB, GRADLE_HEAP_MAX_MB)
+        }
     }
 
     suspend fun setActiveProfile(id: String) {

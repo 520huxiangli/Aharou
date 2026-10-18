@@ -5,15 +5,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.feature.im.data.repository.TelegramConfig
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
-import com.aharou.feature.im.domain.TelegramBotBridge
+import com.aharou.feature.im.domain.ImBotBridge
+import com.aharou.feature.im.domain.ImChannelState
 import com.aharou.feature.im.domain.model.PairedChat
 import com.aharou.feature.im.domain.model.PendingPairing
-import com.aharou.feature.im.domain.model.TelegramState
 import com.aharou.feature.im.domain.pairing.ImPairingStore
 import com.aharou.feature.im.service.TelegramBotService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import javax.inject.Named
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +25,7 @@ import kotlinx.coroutines.launch
 /** Telegram 机器人设置页的一次性快照。 */
 data class TelegramBotUiState(
     val config: TelegramConfig = TelegramConfig(),
-    val connection: TelegramState = TelegramState.Stopped,
+    val connection: ImChannelState = ImChannelState.Stopped,
     val pending: List<PendingPairing> = emptyList(),
     val paired: List<PairedChat> = emptyList()
 )
@@ -33,7 +34,7 @@ data class TelegramBotUiState(
  * 「设置 → Telegram 机器人」页的状态。
  *
  * 配置读写走 [TelegramSettingsRepository]（DataStore），连接状态与已配对名单来自共享单例
- * [TelegramBotBridge]，待配对列表按需从 [ImPairingStore] 拉取——配对码有 10 分钟过期语义，
+ * [ImBotBridge]，待配对列表按需从 [ImPairingStore] 拉取——配对码有 10 分钟过期语义，
  * 不做定时刷新，页面内 approve/deny/remove 后各刷新一次即可。
  *
  * 开关即启停：由本页负责拉起/停掉 [TelegramBotService] 前台服务，注意 Android 8.0+ 需走
@@ -44,7 +45,7 @@ class TelegramBotViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val settings: TelegramSettingsRepository,
     private val pairing: ImPairingStore,
-    private val bridge: TelegramBotBridge
+    @param:Named("telegram") private val bridge: ImBotBridge
 ) : ViewModel() {
 
     /** 待配对列表由本页主动拉取（DataStore 与 bridge 都不持有它）。 */
@@ -91,21 +92,21 @@ class TelegramBotViewModel @Inject constructor(
 
     fun approve(code: String) {
         viewModelScope.launch {
-            pairing.approve(code)
+            pairing.approve(bridge.id, code)
             refresh()
         }
     }
 
     fun deny(code: String) {
         viewModelScope.launch {
-            pairing.deny(code)
+            pairing.deny(bridge.id, code)
             refresh()
         }
     }
 
     fun removePaired(senderId: String) {
         viewModelScope.launch {
-            pairing.remove(senderId)
+            pairing.remove(bridge.id, senderId)
             refresh()
         }
     }
@@ -113,7 +114,7 @@ class TelegramBotViewModel @Inject constructor(
     /** 待配对与已配对一起刷新：bridge 的已配对名单不会自己变，approve/deny/remove 后都要推一次。 */
     fun refresh() {
         viewModelScope.launch {
-            pending.value = runCatching { pairing.pending() }.getOrDefault(emptyList())
+            pending.value = runCatching { pairing.pending(bridge.id) }.getOrDefault(emptyList())
             bridge.refreshPaired()
         }
     }

@@ -1451,7 +1451,7 @@ fun AIChatPanel(
         LocalAttachmentOpener provides attachmentOpener
     ) {
         Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatHeader(

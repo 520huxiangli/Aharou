@@ -349,17 +349,19 @@ class RemoteTerminalSessionManager @Inject constructor(
         }
     }
 
-    private fun startKeepaliveService() {
+    private fun startKeepaliveService(workspacePath: String? = null) {
         val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
             action = TerminalKeepaliveService.ACTION_START_SESSION
+            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
         }
         appContext.startService(intent)
-        FileLogger.i(TAG, "后台保活 Service 已启动")
+        FileLogger.i(TAG, "后台保活 Service 已启动（workspace=$workspacePath）")
     }
 
-    private fun stopKeepaliveService() {
+    private fun stopKeepaliveService(workspacePath: String? = null) {
         val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
             action = TerminalKeepaliveService.ACTION_STOP_SESSION
+            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
         }
         appContext.startService(intent)
         FileLogger.i(TAG, "后台保活 Service 已停止")

@@ -63,7 +63,7 @@ private val PENDING_LINE = Regex("(?im)^pending:\\s*true\\s*\$")
  * @param success 是否成功。
  * @param message 给用户看的一句话（成功时含收集数、补回数、冲突数、疑似删除数）。
  * @param collected 本轮收进仓库的本地文件数（**新增与更新合并计数**）。
- * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端 + 双方标待确认」处理的条目数。
+ * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端 + 新条目标待确认」处理的条目数。
  * @param pendingDeletions 上次提交里存在、本次远端与本机都不存在的条目（仓库相对路径），
  *   疑似在其他设备被删除；**仅报告，不执行任何删除**，删不删由用户决定。
  */
@@ -79,7 +79,8 @@ data class MemorySyncOutcome(
  * 把记忆同步到用户自己的 git 仓库。
  *
  * 仓库是一个**收集桶**，不等于任何一处记忆目录：同步时把全局记忆与各工作区的项目记忆分别拷进
- * `global/` 与 `projects/<项目名-短哈希>/`，再提交推送；拉取后按「本机未改动才覆盖」补回本机。
+ * `global/` 与 `projects/<项目名-短哈希>/`，再提交推送；拉取后按「本机未改动才覆盖」补回本机
+ * （本机真实删除的条目会同步成仓库里的删除，不会再被补回）。
  *
  * 为什么不沿用「仓库根就是记忆目录」：那只能是单一目录。项目记忆散在各工作区下，要一起走就得有汇合点。
  * 代价是仓库里存的是副本。合并语义以 **base = 上次提交** 为准（本轮 collect 之前的工作树内容，
@@ -139,6 +140,16 @@ class MemorySyncManager @Inject constructor(
             val locallyModified = mutableSetOf<String>()
             val collected = collect(repoDir, localPaths, locallyModified)
 
+            // 本机删掉的条目要同步成仓库里的删除。否则：collect 只收「本机存在」的文件，
+            // 仓库里那份一直留着 → addAndCommit 把它当原样提交 → distribute 又照仓库把它写回本机，
+            // 表现为「删了记忆、同步一次又回来」（2026-10-18 实测 mtime 全是同一秒）。
+            // basePaths 里没有的不算删除，避免首次同步或换设备时误删。
+            val deletedLocally = basePaths - localPaths
+            if (deletedLocally.isNotEmpty()) {
+                deletedLocally.forEach { rel -> runCatching { File(repoDir, rel).delete() } }
+                FileLogger.i(TAG, "本机删除同步到仓库：${deletedLocally.size} 个")
+            }
+
             ensureRepo()
             ensureRemote(url)
             addAndCommit()
@@ -193,7 +204,8 @@ class MemorySyncManager @Inject constructor(
                 val reason = push.output.trim().takeLast(400).ifBlank { "git 退出码 ${push.exitCode}" }
                 return finish(MemorySyncOutcome(false, "推送失败：$reason", collected, conflicts))
             }
-            // 删除同步（保守）：只报告、不动作。远端分支未知时无法判定，干脆不报。
+            // 删除同步：本机真实删除的条目已在 collect 之后从仓库移除（见 deletedLocally）；
+            // 这里只报告「base 有、本机与远端都没了」的条目，那是别的设备的删除，本机不跟随。
             val pending = if (remoteRef != null) pendingDeletions(basePaths, localPaths, remotePaths) else emptyList()
             val message = successMessage(collected, restored, conflicts, pending.size)
             finish(MemorySyncOutcome(true, message, collected, conflicts, pending))

@@ -197,6 +197,39 @@
                 android:value="持有 Telegram 长轮询连接，让用户能在 Telegram 里与本机 AI agent 对话" />
         </service>
 
+        <!-- 微信 iLink（ClawBot）：同样长轮询、同样 specialUse，理由同上。 -->
+        <service
+            android:name=".feature.im.service.WeixinBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有微信 iLink 长轮询连接，让用户能在微信里与本机 AI agent 对话" />
+        </service>
+
+        <!-- 飞书：WebSocket 长连接，同样 specialUse。 -->
+        <service
+            android:name=".feature.im.service.FeishuBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有飞书 WebSocket 长连接，让用户能在飞书里与本机 AI agent 对话" />
+        </service>
+
+        <!-- QQ 开放平台：WebSocket Gateway，同样 specialUse。 -->
+        <service
+            android:name=".feature.im.service.QqBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有 QQ 机器人 WebSocket 连接，让用户能在 QQ 里与本机 AI agent 对话" />
+        </service>
+
         <!-- 跨设备协作：局域网内的 MCP Streamable HTTP 服务，把本机能力（读/写文件、受限 shell、截图）
              暴露给已配对的设备调用；默认关闭，需用户在设置里手动开启，通知栏可一键停止。
              同样用 specialUse（理由见服务类注释）——它既不是数据同步也不是媒体播放，属用户可见的自定义用途。 -->

@@ -119,6 +119,61 @@ class ConfigChatFields @Inject constructor(
                 maxValue = 28,
             ),
         )
+
+        registerBackground(registry)
+    }
+
+    /**
+     * 聊天背景：图文件名、模糊、压暗。
+     *
+     * 仓库只提供整份 `update`（气泡项有联动），所以用 `ClosureField` + `runBlocking` 桥接，
+     * 与颜色字段同一种写法。注意 `chat.background_image` **只改记录值**：图要真放进去得走设置页选图，
+     * 那里会拷贝进私有目录并删旧图。
+     */
+    private fun registerBackground(registry: ConfigRegistry) {
+        registry.register(
+            ClosureField(
+                path = "chat.background_image",
+                displayName = "聊天背景图",
+                description = "私有目录里的背景图文件名；留空表示纯色背景。换图请在「设置 → 聊天外观」里选——" +
+                    "直接填文件名不会把图拷进去。",
+                valueSchema = ConfigSchema.Str(maxLength = 120),
+                revertable = true,
+                reader = { ConfigValue.Str(runBlocking { repository.settingsFlow.first() }.backgroundImagePath.orEmpty()) },
+                writer = { v ->
+                    val s = (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+                    runBlocking { repository.update { it.copy(backgroundImagePath = s.takeIf(String::isNotBlank)) } }
+                },
+            ),
+        )
+        registry.register(
+            ClosureField(
+                path = "chat.background_blur_dp",
+                displayName = "背景模糊半径",
+                description = "单位 dp，0 表示不模糊（0..25）。Android 12 以下不支持模糊，会忽略此值。",
+                valueSchema = ConfigSchema.Int(0, 25),
+                revertable = true,
+                reader = { ConfigValue.Int(runBlocking { repository.settingsFlow.first() }.backgroundBlurDp) },
+                writer = { v ->
+                    val n = (v as? ConfigValue.Int)?.value ?: throw ConfigError.TypeMismatch("int")
+                    runBlocking { repository.update { it.copy(backgroundBlurDp = n.coerceIn(0, 25)) } }
+                },
+            ),
+        )
+        registry.register(
+            ClosureField(
+                path = "chat.background_dim",
+                displayName = "背景压暗程度",
+                description = "0..1 的小数；背景图偏亮时靠它把正文衬出来，0 表示不压暗。",
+                valueSchema = ConfigSchema.Double(0.0, 1.0),
+                revertable = true,
+                reader = { ConfigValue.Double(runBlocking { repository.settingsFlow.first() }.backgroundDim.toDouble()) },
+                writer = { v ->
+                    val d = (v as? ConfigValue.Double)?.value ?: throw ConfigError.TypeMismatch("double")
+                    runBlocking { repository.update { it.copy(backgroundDim = d.coerceIn(0.0, 1.0).toFloat()) } }
+                },
+            ),
+        )
     }
 
     /** 颜色字段：以 `#AARRGGBB` / `#RRGGBB` 十六进制进出，空串对应仓库里的「跟随皮肤」(null)。 */

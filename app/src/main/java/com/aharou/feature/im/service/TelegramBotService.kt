@@ -15,10 +15,11 @@ import androidx.core.content.ContextCompat
 import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.im.domain.TelegramBotBridge
-import com.aharou.feature.im.domain.model.TelegramState
+import com.aharou.feature.im.domain.ImBotBridge
+import com.aharou.feature.im.domain.ImChannelState
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import javax.inject.Named
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +37,7 @@ import kotlinx.coroutines.launch
 @AndroidEntryPoint
 class TelegramBotService : Service() {
 
-    @Inject lateinit var bridge: TelegramBotBridge
+    @Inject @Named("telegram") lateinit var bridge: ImBotBridge
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -136,8 +137,8 @@ class TelegramBotService : Service() {
     }
 
     private fun stateText(): String = when (val state = bridge.state.value) {
-        is TelegramState.Error -> state.message
-        is TelegramState.Connected -> getString(R.string.im_telegram_service_running)
+        is ImChannelState.Error -> state.message
+        is ImChannelState.Connected -> getString(R.string.im_telegram_service_running)
         else -> getString(R.string.im_telegram_service_connecting)
     }
 

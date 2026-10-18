@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -35,7 +36,13 @@ data class ChatAppearance(
     val assistantBubbleFollowsSkin: Boolean = true,
     val assistantBubbleColor: Long? = null,
     val assistantBubbleAlpha: Float = 1f,
-    val bubbleCornerDp: Int = 14
+    val bubbleCornerDp: Int = 14,
+    /** 背景图文件名（存于私有目录）；null 表示纯色背景。 */
+    val backgroundImagePath: String? = null,
+    /** 背景模糊半径（dp）；0 不模糊。API 31 以下系统不支持，渲染层会忽略。 */
+    val backgroundBlurDp: Int = 0,
+    /** 背景压暗程度 0..1：背景图偏亮时靠它把正文衬出来。 */
+    val backgroundDim: Float = 0f
 )
 
 @Singleton
@@ -51,6 +58,9 @@ class ChatAppearanceRepository @Inject constructor(
         val ASSISTANT_COLOR = longPreferencesKey("bubble_assistant_color")
         val ASSISTANT_ALPHA = floatPreferencesKey("bubble_assistant_alpha")
         val CORNER = intPreferencesKey("bubble_corner_dp")
+        val BACKGROUND_IMAGE = stringPreferencesKey("background_image")
+        val BACKGROUND_BLUR = intPreferencesKey("background_blur_dp")
+        val BACKGROUND_DIM = floatPreferencesKey("background_dim")
 
         /** 颜色不可能是 0 或负值，用它表示「没选过颜色，跟随皮肤」。 */
         const val NO_COLOR = -1L
@@ -65,7 +75,10 @@ class ChatAppearanceRepository @Inject constructor(
             assistantBubbleFollowsSkin = prefs[ASSISTANT_FOLLOWS] ?: true,
             assistantBubbleColor = prefs[ASSISTANT_COLOR]?.takeIf { it != NO_COLOR },
             assistantBubbleAlpha = prefs[ASSISTANT_ALPHA] ?: 1f,
-            bubbleCornerDp = prefs[CORNER] ?: 14
+            bubbleCornerDp = prefs[CORNER] ?: 14,
+            backgroundImagePath = prefs[BACKGROUND_IMAGE]?.takeIf { it.isNotBlank() },
+            backgroundBlurDp = prefs[BACKGROUND_BLUR] ?: 0,
+            backgroundDim = prefs[BACKGROUND_DIM] ?: 0f
         )
     }
 
@@ -81,6 +94,9 @@ class ChatAppearanceRepository @Inject constructor(
             prefs[ASSISTANT_COLOR] = next.assistantBubbleColor ?: NO_COLOR
             prefs[ASSISTANT_ALPHA] = next.assistantBubbleAlpha
             prefs[CORNER] = next.bubbleCornerDp
+            prefs[BACKGROUND_IMAGE] = next.backgroundImagePath.orEmpty()
+            prefs[BACKGROUND_BLUR] = next.backgroundBlurDp
+            prefs[BACKGROUND_DIM] = next.backgroundDim
         }
     }
 }

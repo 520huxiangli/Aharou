@@ -119,7 +119,7 @@ internal fun ContainerSection(
     resetState: ContainerResetUiState? = null,
     onRestoreBuiltin: () -> Unit = {},
     remoteConnections: List<RemoteConnection> = emptyList(),
-    onReorder: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> }
+    onReorder: (fromIndex: Int, toIndex: Int) -> Unit = { _, _ -> }, onOpenSources: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showAddSheetInternal by remember { mutableStateOf(false) }
@@ -160,6 +160,7 @@ internal fun ContainerSection(
                 .padding(horizontal = Spacing.lg)
                 .padding(bottom = Spacing.xl)
         ) {
+            ContainerSourcesEntry(onOpenSources)
             SettingsGroup {
                 ReorderableCardList(
                     items = profiles,
@@ -180,7 +181,7 @@ internal fun ContainerSection(
                 }
             }
 
-            Spacer(Modifier.height(Spacing.md))
+            ContainerGradleHeapSection()
 
             // 容器出问题时用户往往只看到一句「命令失败」，一键体检把真实原因摆出来。
             ContainerHealthSection()
@@ -297,7 +298,6 @@ internal fun ContainerSection(
         )
     }
 }
-
 /** 删除确认的补充说明：内置可恢复、自定义本地清 rootfs、远程 SSH 无额外说明。 */
 private fun deleteHint(context: Context, profile: ContainerProfile): String = when {
     profile.isBuiltin -> context.getString(R.string.container_builtin_restorable)

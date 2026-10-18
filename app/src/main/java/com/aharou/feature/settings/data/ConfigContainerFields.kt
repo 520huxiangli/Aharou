@@ -9,17 +9,23 @@ import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.DataStoreEnumField
+import com.aharou.core.config.fields.DataStoreIntField
 import com.aharou.core.config.fields.DataStoreStrField
 import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.RootfsSource
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
+import com.aharou.feature.settings.presentation.ContainerDnsMode
+import com.aharou.feature.settings.presentation.ContainerMirrorMode
+import com.aharou.feature.settings.presentation.ContainerSourcesRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -32,9 +38,11 @@ import kotlinx.coroutines.runBlocking
 class ConfigContainerFields @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val containerSettings: ContainerSettingsRepository,
+    private val containerSources: ContainerSourcesRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
+        registry.registerSources()
         registry.register(
             DataStoreStrField(
                 path = "container.active_profile",
@@ -53,6 +61,22 @@ class ConfigContainerFields @Inject constructor(
                 description = "远程工作区模式下，本地 MCP stdio 等服务跑在哪个容器。默认 ${ContainerProfile.BUILTIN_ID}（内置 Alpine）。",
                 flow = containerSettings.defaultContainerIdFlow,
                 setter = { containerSettings.setDefaultContainerId(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreIntField(
+                path = "container.gradle_heap_mb",
+                displayName = "容器 Gradle 堆上限（MB）",
+                description = "容器内编译 Gradle 工程时的 JVM 堆上限，写进容器的 ~/.gradle/gradle.properties" +
+                    "（用户级优先于项目里写死的 org.gradle.jvmargs），改完下一次编译生效。" +
+                    "范围 ${ContainerSettingsRepository.GRADLE_HEAP_MIN_MB}~${ContainerSettingsRepository.GRADLE_HEAP_MAX_MB}；" +
+                    "默认按设备总内存自动推荐一档。" +
+                    "堆上限超过实际可用内存会被系统 OOM 杀掉（编译无声中断），内存紧张时调低而不是调高。",
+                flow = containerSettings.gradleHeapMbFlow,
+                setter = { containerSettings.setGradleHeapMb(it) },
+                minValue = ContainerSettingsRepository.GRADLE_HEAP_MIN_MB,
+                maxValue = ContainerSettingsRepository.GRADLE_HEAP_MAX_MB,
             ),
         )
 
@@ -281,5 +305,54 @@ class ConfigContainerFields @Inject constructor(
             require(id)
             runBlocking { containerSettings.deleteCustomProfile(id) }
         }
+    }
+
+    /**
+     * 容器软件源与 DNS。
+     *
+     * 这两个字段只是「记录值」：真正换源/改 DNS 要写进容器（跑 setup_mirror、重建时重放），
+     * 是设置页里带进度的动作，不适合从配置通道直接触发，所以说明里写清楚。
+     */
+    private fun ConfigRegistry.registerSources() {
+        register(
+            DataStoreEnumField(
+                path = "container.sources.mirror",
+                displayName = "容器软件源",
+                description = "OFFICIAL 用发行版自带源，CHINA 自动探测国内镜像。改这里只改记录值；" +
+                    "真正生效要在「设置 → 镜像与 DNS」里点切换（会写进容器，重建后自动重放）。",
+                flow = containerSources.settingsFlow.map { it.mirror.name },
+                setter = { value ->
+                    ContainerMirrorMode.entries.firstOrNull { it.name == value }?.let { mode ->
+                        containerSources.save(containerSources.read().copy(mirror = mode))
+                    }
+                },
+                cases = ContainerMirrorMode.entries.map { it.name },
+            ),
+        )
+        register(
+            DataStoreEnumField(
+                path = "container.sources.dns",
+                displayName = "容器 DNS",
+                description = "SYSTEM 跟随手机当前网络，另两档用固定公共 DNS。同样只是记录值，生效要回设置页点切换。",
+                flow = containerSources.settingsFlow.map { it.dns.name },
+                setter = { value ->
+                    ContainerDnsMode.entries.firstOrNull { it.name == value }?.let { mode ->
+                        containerSources.save(containerSources.read().copy(dns = mode))
+                    }
+                },
+                cases = ContainerDnsMode.entries.map { it.name },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "container.sources.mirror_host",
+                displayName = "容器镜像站",
+                description = "自动探测到的镜像站域名；留空表示没探测过或已回退官方源。",
+                flow = containerSources.settingsFlow.map { it.mirrorHost },
+                setter = { value ->
+                    containerSources.save(containerSources.read().copy(mirrorHost = value))
+                },
+            ),
+        )
     }
 }

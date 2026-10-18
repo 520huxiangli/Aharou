@@ -190,6 +190,7 @@ export default defineConfig({
             { text: '记忆与项目规则', link: '/guide/memory' },
             { text: '共享知识库', link: '/guide/knowledge-base' },
             { text: 'Telegram 机器人', link: '/guide/telegram-bot' },
+            { text: '机器人接入（微信 / 飞书 / QQ）', link: '/guide/im-bots' },
             { text: '跨设备协作', link: '/guide/cross-device' },
             { text: '依赖版本检查', link: '/guide/dependency-check' },
             { text: '人格（Soul）', link: '/guide/soul' }

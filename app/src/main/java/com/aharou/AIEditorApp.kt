@@ -223,6 +223,13 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configImFields: com.aharou.feature.im.data.ConfigImFields
 
+    @Inject
+    lateinit var configStewardFields: com.aharou.feature.agent.data.ConfigStewardFields
+
+    /** 冷启动时按开关重新拉起 IM 前台服务（否则每次进 App 都要手动关再开）。 */
+    @Inject
+    lateinit var imServiceRestore: com.aharou.feature.im.ImServiceRestore
+
     /** 桌面伙伴「小染」字段注册。 */
     @Inject
     lateinit var configPetFields: com.aharou.feature.pet.data.ConfigPetFields
@@ -383,6 +390,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         logDeviceInfo()
         // 补记 Java 未捕获异常处理器覆盖不到的异常退出（native 崩溃 / ANR / 低内存被杀 / 被信号杀死）。
         appScope.launch { reportAbnormalExits() }
+
+        // IM 机器人：开关是打开的就重新拉服务，冷启动不再需要用户手动切开关
+        runCatching { imServiceRestore.restore(this, appScope) }
+            .onFailure { FileLogger.w(TAG, "恢复 IM 机器人服务失败", it) }
         // Aharou 配置通道 + 人格（SOUL.md）：初始化注册表/审计；首次运行释放默认模板文件（外置可改）
         com.aharou.core.config.ConfigRegistry.init(this)
         // 应用设置字段（app.* / appearance.* / editor.* / terminal.* / sound.* / network.*）注册：
@@ -405,6 +416,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configChatFields.registerInto(configRegistry)
         configBrowserFields.registerInto(configRegistry)
         configImFields.registerInto(configRegistry)
+        configStewardFields.registerInto(configRegistry)
         configPetFields.registerInto(configRegistry)
         configRemoteDeviceFields.registerInto(configRegistry)
         configCredentialFields.registerInto(configRegistry)

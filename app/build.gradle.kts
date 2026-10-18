@@ -307,6 +307,9 @@ dependencies {
     // Vico 图表（Token 统计趋势图）
     implementation("com.patrykandpatrick.vico:compose-m3:2.4.4")
 
+    // 二维码生成：微信扫码绑定要把 iLink 返回的链接编成可扫的位图（纯 Java，无 native）
+    implementation("com.google.zxing:core:3.5.3")
+
     // Lifecycle + ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")

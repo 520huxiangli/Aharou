@@ -108,13 +108,15 @@ object GitHubDnsFallback {
         // 块过期（REFRESH_AFTER_MS）为止，所以这里顺手探活一次（有 5 分钟节流兜着，不会每条命令都探）。
         val injected = parseBlock(existing)
         if (injected != null && !isStale(injected.stamp, now) && targets.all { it in injected.hosts }) {
+            // 假 IP（198.18.x.x 之类）也要当成失效：它们被 VPN 接管后照样「可达」，
+            // 但容器里的 git 会一直失败——不这样判，旧条目会一直续命。
             val alive = injected.entries
                 .filter { (_, host) -> host in targets }
-                .all { (ip, _) -> isReachable(ip) }
+                .all { (ip, _) -> isUsableIp(ip) && isReachable(ip) }
             if (alive) return null
             FileLogger.i(
                 TAG,
-                "已注入的 hosts 条目已连不上，重新解析：" +
+                "已注入的 hosts 条目已失效（连不上或是保留网段的假 IP），重新解析：" +
                     injected.entries.joinToString { "${it.second}→${it.first}" }
             )
         }
@@ -179,21 +181,47 @@ object GitHubDnsFallback {
 
     private fun isStale(stamp: Long, now: Long): Boolean = now - stamp > REFRESH_AFTER_MS
 
-    /** 按优先级挑一个 443 实测可达的 IP；超出总预算就放弃。 */
+    /**
+     * 是不是能写进 hosts 的真实公网地址。
+     *
+     * **保留网段一律拒绝**：开着 Clash 类 TUN 代理时，DNS 会返回 198.18.x.x 的 fake-ip，
+     * 它对 `isReachable` 也是通的（TCP 被 VPN 接管），但写进容器 hosts 后 GitHub 全断，
+     * 用户只能手动删 hosts——这就是「修好了又被重写」的根因。
+     */
+    private fun isUsableIp(ip: String): Boolean {
+        val bytes = runCatching { InetAddress.getByName(ip).address }.getOrNull() ?: return false
+        if (bytes.size != 4) return false
+        val b0 = bytes[0].toInt() and 0xff
+        val b1 = bytes[1].toInt() and 0xff
+        return when {
+            b0 == 0 -> false                     // 0.0.0.0/8
+            b0 == 10 -> false                    // 私有
+            b0 == 127 -> false                   // 回环
+            b0 == 169 && b1 == 254 -> false      // link-local
+            b0 == 172 && b1 in 16..31 -> false   // 私有
+            b0 == 192 && b1 == 168 -> false      // 私有
+            b0 == 100 && b1 in 64..127 -> false  // CGNAT
+            b0 == 198 && b1 in 18..19 -> false   // 基准测试保留（fake-ip 常用）
+            b0 >= 224 -> false                   // 组播与保留
+            else -> true
+        }
+    }
+
+    /** 按优先级挑一个 443 实测可达的真实 IP；超出总预算就放弃。 */
     private fun pickIp(host: String): String? {
         val deadline = System.currentTimeMillis() + TOTAL_BUDGET_MS
 
         // 宿主侧解析走 Android 系统 resolver，命中缓存时极快，拿到的 IP 也最贴近本机网络。
         // 宿主能解析不代表容器能解析，但 IP 只要真通就能用，所以这里只把它当候选。
-        resolveOnHost(host)?.let { if (isReachable(it)) return it }
+        resolveOnHost(host)?.let { if (isUsableIp(it) && isReachable(it)) return it }
 
         if (System.currentTimeMillis() < deadline) {
-            resolveViaDoh(host)?.let { if (isReachable(it)) return it }
+            resolveViaDoh(host)?.let { if (isUsableIp(it) && isReachable(it)) return it }
         }
         if (host in DEFAULT_HOSTS) {
             for (ip in SEED_IPS) {
                 if (System.currentTimeMillis() >= deadline) break
-                if (isReachable(ip)) return ip
+                if (isUsableIp(ip) && isReachable(ip)) return ip
             }
         }
         return null

@@ -1,0 +1,53 @@
+name: Sync Container Images
+
+# 容器镜像（Alpine/Ubuntu/Debian 的 rootfs）此前全靠人工：查新版本 → 下两个 ABI → 对
+# SHA256SUMS → 改名 → 传 cnb → 改清单。本工作流把这段自动化，App 的自建源只认 cnb。
+on:
+  schedule:
+    # 每周一 UTC 05:20 自动执行（北京时间 13:20）。上游 rootfs 只随发行版小版本更新，周更足够。
+    - cron: '20 5 * * 1'
+  workflow_dispatch: # 支持在 Actions 界面手动触发
+
+# 同一时刻只允许一次同步，避免两次运行撞车（附件是覆盖写，撞车会互相盖掉）。
+concurrency:
+  group: sync-container-images
+  cancel-in-progress: false
+
+# 脚本会改清单，需要回写 master。
+permissions:
+  contents: write
+
+jobs:
+  sync-container-images:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      # 先跑一次 dry-run 把差异打进日志：真出问题时能一眼看出「本该同步什么」。
+      - name: Detect upstream updates (dry run)
+        run: python3 scripts/sync-container-images.py
+
+      # 有新版本才真的下载与上传；无变化时这一步几乎不耗时。
+      - name: Download, verify and upload to cnb
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: python3 scripts/sync-container-images.py --apply
+
+      - name: Commit manifest if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/container-images.json data/container-images.json
+          if git diff --cached --quiet; then
+            echo "清单无变化，跳过提交"
+          else
+            git commit -m "chore(container): 同步容器镜像新版本"
+            git push
+          fi

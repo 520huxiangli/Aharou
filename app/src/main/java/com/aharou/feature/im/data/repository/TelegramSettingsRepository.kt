@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
+import com.aharou.feature.im.domain.ImChannelConfig
+import com.aharou.feature.im.domain.ImSettingsSource
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -21,15 +23,15 @@ private val Context.telegramImDataStore by preferencesDataStore(
 
 /** Telegram 机器人接入的持久配置快照。 */
 data class TelegramConfig(
-    val enabled: Boolean = false,
+    override val enabled: Boolean = false,
     val botToken: String = "",
     /** Bot API 基址。境内 api.telegram.org 不可直连时改为自建反代/镜像地址。 */
     val baseUrl: String = DEFAULT_BASE_URL,
     /** 可选代理，如 http://127.0.0.1:7890、socks5://127.0.0.1:1080；留空则走全局代理设置。 */
-    val proxy: String = ""
-) {
+    override val proxy: String = ""
+) : ImChannelConfig {
     /** 基址已配置且 token 非空才谈得上连接。 */
-    val ready: Boolean
+    override val ready: Boolean
         get() = botToken.isNotBlank() && baseUrl.isNotBlank()
 
     companion object {
@@ -46,7 +48,7 @@ data class TelegramConfig(
 @Singleton
 class TelegramSettingsRepository @Inject constructor(
     @param:ApplicationContext private val context: Context
-) {
+) : ImSettingsSource {
     private companion object {
         val ENABLED_KEY = booleanPreferencesKey("telegram_enabled")
         val TOKEN_KEY = stringPreferencesKey("telegram_bot_token")
@@ -55,7 +57,7 @@ class TelegramSettingsRepository @Inject constructor(
         val LAST_UPDATE_KEY = longPreferencesKey("telegram_last_update_id")
     }
 
-    val configFlow: Flow<TelegramConfig> = context.telegramImDataStore.data.map { prefs ->
+    override val configFlow: Flow<TelegramConfig> = context.telegramImDataStore.data.map { prefs ->
         TelegramConfig(
             enabled = prefs[ENABLED_KEY] ?: false,
             botToken = prefs[TOKEN_KEY] ?: "",
@@ -96,5 +98,15 @@ class TelegramSettingsRepository @Inject constructor(
 
     suspend fun setLastUpdateId(offset: Long) {
         context.telegramImDataStore.edit { it[LAST_UPDATE_KEY] = offset }
+    }
+
+    // ── ImSettingsSource：编排层只认这三件事 ───────────────
+
+    override suspend fun currentConfig(): ImChannelConfig = current()
+
+    override suspend fun lastCursor(): String = lastUpdateId().toString()
+
+    override suspend fun saveCursor(cursor: String) {
+        setLastUpdateId(cursor.toLongOrNull() ?: 0L)
     }
 }
