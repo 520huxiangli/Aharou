@@ -190,6 +190,7 @@ class AIAgentViewModel @Inject constructor(
     private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
+    private val stewardBridge: StewardBridge,
     private val todoItemDao: TodoItemDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
@@ -842,7 +843,6 @@ class AIAgentViewModel @Inject constructor(
         _pendingScrollMessage.value = null
     }
 
-
     /** 侧边栏「文件」Tab 已展开的目录集合（容器路径）。含工作区根：根也可折叠，默认展开；按工作区持久化。 */
     private val _expandedPaths = MutableStateFlow(setOf(WorkspacePathMapper.CONTAINER_ROOT))
 
@@ -1227,7 +1227,6 @@ class AIAgentViewModel @Inject constructor(
         }
         return result
     }
-
 
     private val _runningTools = MutableStateFlow<Map<String, Map<String, RunningToolOutput>>>(emptyMap())
     val runningTool: StateFlow<List<RunningToolOutput>> = _currentSessionId
@@ -2233,6 +2232,7 @@ class AIAgentViewModel @Inject constructor(
                                 }
                             }
                         }
+                        stewardBridge.onTurnFinished(viewModelScope, sessionId) { next -> enqueueAgentRequest(next, projectRoot = projectRoot, isAutoTrigger = true, targetSessionId = sessionId) }
                     }
                     is AgentEvent.ModeChanged -> {
                         // 模式切换事件：PlanApprovalManager 已在 workflow 层面挂起等待用户批准

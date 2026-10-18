@@ -624,8 +624,7 @@ internal fun ChatInputBar(
                         }
                     )
                     UploadIconButton(
-                        enabled = !isBusy,
-                        icon = FeatherIcons.Plus,
+                        enabled = !isBusy, icon = FeatherIcons.Plus,
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )

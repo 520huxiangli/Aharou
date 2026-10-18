@@ -1,0 +1,11 @@
+{
+  "sources": {
+    "aharou": {
+      "name": { "zh": "Aharou 官方插件", "en": "Aharou Official Plugins" },
+      "kind": "index",
+      "repo": "520huxiangli/Aharou",
+      "branch": "master",
+      "path": "plugins/index.json"
+    }
+  }
+}

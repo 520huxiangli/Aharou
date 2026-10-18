@@ -181,6 +181,7 @@ export default defineConfig({
             { text: 'MCP 服务器', link: '/guide/mcp' },
             { text: '连接器', link: '/guide/connectors' },
             { text: '凭据库', link: '/guide/vault' },
+            { text: '扩展', link: '/guide/extensions' },
             { text: '技能', link: '/guide/skills' },
             { text: '子代理', link: '/guide/subagent' },
             { text: '自动化任务', link: '/guide/scheduled-tasks' },

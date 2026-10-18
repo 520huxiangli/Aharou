@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 /**
@@ -89,7 +88,7 @@ class MemorySyncViewModel @Inject constructor(
      *
      * 只看「有没有」不看值：[FileCredentialRepository] 在内存里缓存了整份凭据，这里不会读盘。
      */
-    fun hasToken(): Boolean = repoHost()?.let { runBlocking { credentials.findForHost(it) } != null } ?: false
+    suspend fun hasToken(): Boolean = repoHost()?.let { credentials.findForHost(it) != null } ?: false
 
     /**
      * 保存访问令牌。

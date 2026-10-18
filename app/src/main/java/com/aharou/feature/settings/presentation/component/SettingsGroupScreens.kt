@@ -23,13 +23,11 @@ import com.aharou.feature.terminal.data.repository.TerminalSettings
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.User
 import compose.icons.feathericons.BarChart2
-import compose.icons.feathericons.Book
 import compose.icons.feathericons.BookOpen
 import compose.icons.feathericons.Box
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
-import compose.icons.feathericons.Database
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
@@ -41,7 +39,6 @@ import compose.icons.feathericons.Lock
 import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.MessageCircle
 import compose.icons.feathericons.Monitor
-import compose.icons.feathericons.Package
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.RefreshCw
@@ -137,32 +134,8 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Box,
-                title = stringResource(SettingsSection.Mcp.titleRes),
-                onClick = { onOpen(SettingsSection.Mcp) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Globe,
-                title = stringResource(SettingsSection.Connectors.titleRes),
-                onClick = { onOpen(SettingsSection.Connectors) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Book,
-                title = stringResource(SettingsSection.Skills.titleRes),
-                onClick = { onOpen(SettingsSection.Skills) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Package,
-                title = stringResource(SettingsSection.Plugins.titleRes),
-                onClick = { onOpen(SettingsSection.Plugins) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Database,
-                title = stringResource(SettingsSection.Knowledge.titleRes),
-                onClick = { onOpen(SettingsSection.Knowledge) }
+                title = stringResource(SettingsSection.Extensions.titleRes),
+                onClick = { onOpen(SettingsSection.Extensions) }
             )
             SettingsDivider()
             SettingsRow(

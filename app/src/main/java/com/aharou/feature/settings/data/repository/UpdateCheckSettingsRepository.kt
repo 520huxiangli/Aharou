@@ -95,8 +95,8 @@ class UpdateCheckSettingsRepository @Inject constructor(
     /**
      * 记录最近一次更新包下载用了哪个源，写到 `~/.aharou/last-update-download.json`。
      *
-     * 放这里是因为它同时被挂进容器：出事时 agent（或用户）能直接看到「这次走的 GitCode 还是
-     * 回退到了镜像」——否则只能靠猜（下载只链是候选列表，失败会静默换下一个源）。
+     * 放这里是因为它同时被挂进容器：出事时 agent（或用户）能直接看到「这次走的 cnb、还是
+     * 回退到了反代或原链」——否则只能靠猜（下载只链是候选列表，失败会静默换下一个源）。
      */
     fun writeDownloadRecord(tag: String, sourceUrl: String, filePath: String) {
         runCatching {
@@ -104,7 +104,7 @@ class UpdateCheckSettingsRepository @Inject constructor(
             val obj = JSONObject().apply {
                 put("tag", tag)
                 put("sourceUrl", sourceUrl)
-                put("fromGitCode", sourceUrl.contains("gitcode.com"))
+                put("fromCnb", sourceUrl.contains("cnb.cool"))
                 put("filePath", filePath)
                 put("time", java.time.LocalDateTime.now().toString())
             }

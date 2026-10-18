@@ -43,9 +43,11 @@ sealed interface UpdateCheckResult {
 /**
  * 拉取版本信息并生成更新日志。
  *
- * 来源有两个，按序尝试：GitHub Releases API 为主，失败（国内常被 DNS 污染/超时）时回退
- * GitCode 镜像仓库的 API——它匿名可读、字段与 GitHub 近似，代价是**只同步了正式版**
- * （RC 在 GitCode 上标不出预发布），所以测试版通道实际只有 GitHub 一条路。
+ * 来源有三个，按序尝试：**cnb 发布仓**（国内直连可用、含资产哈希，且包就在那儿，版本与下载源同源）
+ * → **反代转发的 GitHub API**（直连被限速时的同源兜底）→ **GitHub 直连**。全失败才报网络错误。
+ *
+ * 历史上还挂过 GitCode 镜像当兑底，2026-10-18 已移除：那个镜像早停更，它「成功」返回旧列表
+ * 会让检查更新误判成「已是最新」（真实假阴性）。
  *
  * 两个通道各收各的：正式版通道只出正式版（且需严格高于当前版本），测试版通道只出预发布
  * （beta 与 RC）。更新日志按版本从高到低拼接（版本号 + 正文，轻量清理 markdown 标题/粗体）。
@@ -58,8 +60,12 @@ class UpdateCheckService @Inject constructor(
     suspend fun checkForUpdate(currentVersion: String, channel: UpdateChannel): UpdateCheckResult =
         withContext(Dispatchers.IO) {
             runCatching {
-                val releases = fetchGithubReleases()?.takeIf { it.isNotEmpty() }
-                    ?: fetchGitcodeReleases()?.takeIf { it.isNotEmpty() }
+                // 源顺序：cnb（国内直连可用、含资产哈希）→ 反代转发 GitHub → GitHub 直连。
+                // 不拿 GitCode 当兜底：那个镜像早已停更，它「成功」返回一份旧列表会让本函数
+                // 误判成「已是最新」—— 2026-10-18 就是这么坑了一次。
+                val releases = fetchCnbReleases()?.takeIf { it.isNotEmpty() }
+                    ?: fetchGithubProxiedReleases()?.takeIf { it.isNotEmpty() }
+                    ?: fetchGithubReleases()?.takeIf { it.isNotEmpty() }
                     ?: return@withContext UpdateCheckResult.Error(
                         context.getString(R.string.about_network_error)
                     )
@@ -99,10 +105,42 @@ class UpdateCheckService @Inject constructor(
         }
 
     /**
-     * 主源：GitHub Releases API。
+     * 主源：cnb 发布仓的 release 列表。
+     *
+     * 选它当主源有两个实际原因：国内直连可用（GitHub 常被限流 / DNS 污染），以及包就在 cnb，
+     * 版本信息与下载源同源，不会出现「查到有新版、下载源却没有这个包」的错位。
+     *
+     * 用的是网页路由 `cnb.cool/{owner}/{repo}/-/releases`（匿名可读），不是 `api.cnb.cool`
+     * 那套（那套一律要令牌）。
+     */
+    private fun fetchCnbReleases(): List<ReleaseInfo>? = runCatching {
+        val req = Request.Builder()
+            .url(CNB_RELEASES_API)
+            .header("Accept", "application/json")
+            .build()
+        SHARED_CLIENT.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            parseReleases(resp.body?.string()) { cnbRelease(it) }
+        }
+    }.getOrNull()
+
+    /** 二级源：反代转发的 GitHub API——数据与直连同源，用于直连被限速（403 / 429）时兜底。 */
+    private fun fetchGithubProxiedReleases(): List<ReleaseInfo>? = runCatching {
+        val req = Request.Builder()
+            .url(GITHUB_PROXY_API + GITHUB_RELEASES_API + "?per_page=50")
+            .header("Accept", "application/vnd.github+json")
+            .build()
+        SHARED_CLIENT.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            parseReleases(resp.body?.string()) { githubRelease(it) }
+        }
+    }.getOrNull()
+
+    /**
+     * 末位兜底：GitHub Releases API 直连。
      *
      * 拿不到（网络不通、限流、解析失败）返回 null，由调用方换源；不在这里区分失败原因——
-     * 两个源都失败时对用户来说都是「网络不通」。
+     * 所有源都失败时对用户来说都是「网络不通」。
      */
     private fun fetchGithubReleases(): List<ReleaseInfo>? = runCatching {
         val req = Request.Builder()
@@ -112,18 +150,6 @@ class UpdateCheckService @Inject constructor(
         SHARED_CLIENT.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return@use null
             parseReleases(resp.body?.string()) { githubRelease(it) }
-        }
-    }.getOrNull()
-
-    /** 兜底源：GitCode 镜像仓库（`Aharou/Aharou`）。 */
-    private fun fetchGitcodeReleases(): List<ReleaseInfo>? = runCatching {
-        val req = Request.Builder()
-            .url("$GITCODE_RELEASES_API?per_page=50")
-            .header("Accept", "application/json")
-            .build()
-        SHARED_CLIENT.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return@use null
-            parseReleases(resp.body?.string()) { gitcodeRelease(it) }
         }
     }.getOrNull()
 
@@ -158,11 +184,12 @@ class UpdateCheckService @Inject constructor(
     }
 
     /**
-     * GitCode 的 release JSON：字段与 GitHub 大致同名，但附件**不给大小**（size 记 0，
-     * 下载时不校验完整性），而且附件列表里混着源码包的 tar/zip——挑 APK 由
-     * [UpdateDownloadSource.pickApkAsset] 按扩展名过滤，这里不额外筛。
+     * cnb 的 release JSON：字段名与 GitHub 大致同名，资产另给 `hash_value` / `hash_algo`。
+     *
+     * 那个哈希来自 cnb 自己的存储层、与我们的下载源同源，所以**只能防传输损坏、不是信任锚**
+     * （GitHub 的 digest 才是）；有就带上，没有就留空跳过校验。
      */
-    private fun gitcodeRelease(obj: JsonObject): ReleaseInfo? {
+    private fun cnbRelease(obj: JsonObject): ReleaseInfo? {
         val tag = obj.get("tag_name")?.asString ?: return null
         val version = parseVersionTag(tag) ?: return null
         return ReleaseInfo(
@@ -171,7 +198,16 @@ class UpdateCheckService @Inject constructor(
             notes = obj.get("body")?.asString.orEmpty(),
             prerelease = obj.get("prerelease")?.asBoolean ?: false,
             assets = obj.getAsJsonArray("assets")?.mapNotNull { a ->
-                a.asJsonObject.get("name")?.asString?.let { ReleaseAsset(name = it, size = 0L) }
+                val asset = a.asJsonObject
+                val name = asset.get("name")?.asString ?: return@mapNotNull null
+                val sha256 = asset.get("hash_value")?.asString
+                    ?.removePrefix("sha256:")
+                    ?.takeIf { it.isNotBlank() && asset.get("hash_algo")?.asString.equals("sha256", true) }
+                ReleaseAsset(
+                    name = name,
+                    size = asset.get("size")?.asLong ?: 0L,
+                    digest = sha256
+                )
             } ?: emptyList()
         )
     }
@@ -215,8 +251,11 @@ class UpdateCheckService @Inject constructor(
     private companion object {
         const val GITHUB_RELEASES_API = "https://api.github.com/repos/520huxiangli/Aharou/releases"
 
-        /** GitCode 镜像仓库（另一账号下的同名仓库，见 UpdateDownloadSource 的说明）。 */
-        const val GITCODE_RELEASES_API = "https://api.gitcode.com/api/v5/repos/Aharou/Aharou/releases"
+        /** cnb 发布仓的 release 列表（网页路由，匿名可读；`api.cnb.cool` 那套要令牌，别用混）。 */
+        const val CNB_RELEASES_API = "https://cnb.cool/huxiangli/aharou-releases/-/releases"
+
+        /** GitHub API 反代前缀：直连被限速时用它拿同一份数据。 */
+        const val GITHUB_PROXY_API = "https://gh-proxy.com/"
 
         val SHARED_CLIENT by lazy {
             okhttp3.OkHttpClient.Builder()

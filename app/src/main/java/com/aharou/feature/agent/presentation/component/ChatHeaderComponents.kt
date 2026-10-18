@@ -29,6 +29,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +48,8 @@ import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
+import compose.icons.feathericons.Archive
+import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.HardDrive
@@ -73,6 +78,9 @@ internal fun ChatHeader(
     gitActive: Boolean = false,
     browserActive: Boolean = false
 ) {
+    // 顶栏工具收纳：Git / 终端 / 浏览器 收进一个按钮，展开时在原位覆盖成那三个入口，
+    // 替出来的格子给智能托管。展开态只改这一段，不弹浮层也不撑开新行。
+    var toolsExpanded by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.background
     ) {
@@ -101,44 +109,63 @@ internal fun ChatHeader(
                 } else {
                     Spacer(modifier = Modifier.width(Spacing.sm))
                 }
-                // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
-                Spacer(modifier = Modifier.weight(1f))
+                // 新建会话常驻菜单键旁边，不跟着右侧那组图标走
                 IconButton(onClick = onNewChat) {
                     Icon(
                         FeatherIcons.Plus,
                         contentDescription = stringResource(R.string.chat_new_session),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                WorkbenchIconButton(
-                    icon = FeatherIcons.GitBranch,
-                    contentDescription = stringResource(R.string.chat_open_git),
-                    active = gitActive,
-                    onClick = onNavigateToGit
-                )
-                WorkbenchIconButton(
-                    icon = FeatherIcons.Terminal,
-                    contentDescription = stringResource(R.string.chat_open_terminal),
-                    active = terminalActive,
-                    onClick = onNavigateToTerminal
-                )
-                WorkbenchIconButton(
-                    icon = FeatherIcons.Globe,
-                    contentDescription = stringResource(R.string.chat_open_browser),
-                    active = browserActive,
-                    onClick = onNavigateToBrowser
-                )
-                WorkbenchIconButton(
-                    icon = FeatherIcons.Folder,
-                    contentDescription = stringResource(R.string.chat_open_sandbox),
-                    active = false,
-                    onClick = onNavigateToSandbox
-                )
-                WorkbenchIconButton(
-                    icon = FeatherIcons.HardDrive,
-                    contentDescription = stringResource(R.string.chat_open_shared),
-                    active = false,
-                    onClick = onNavigateToShared
-                )
+                // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
+                Spacer(modifier = Modifier.weight(1f))
+                if (toolsExpanded) {
+                    // 展开态：只有工具三入口 + 收起，其余一律让位
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.GitBranch,
+                        contentDescription = stringResource(R.string.chat_open_git),
+                        active = gitActive,
+                        onClick = onNavigateToGit
+                    )
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.Terminal,
+                        contentDescription = stringResource(R.string.chat_open_terminal),
+                        active = terminalActive,
+                        onClick = onNavigateToTerminal
+                    )
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.Globe,
+                        contentDescription = stringResource(R.string.chat_open_browser),
+                        active = browserActive,
+                        onClick = onNavigateToBrowser
+                    )
+                    IconButton(onClick = { toolsExpanded = false }) {
+                        Icon(
+                            FeatherIcons.ChevronRight,
+                            contentDescription = stringResource(R.string.chat_tools_collapse),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    // 智能托管常驻顶栏：AI 空闲时自动判断任务是否完成并续写下一步
+                    sessionId?.takeIf { it.isNotBlank() }?.let { StewardEntryButton(sessionId = it) }
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.Folder,
+                        contentDescription = stringResource(R.string.chat_open_sandbox),
+                        active = false,
+                        onClick = onNavigateToSandbox
+                    )
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.HardDrive,
+                        contentDescription = stringResource(R.string.chat_open_shared),
+                        active = false,
+                        onClick = onNavigateToShared
+                    )
+                    IconButton(onClick = { toolsExpanded = true }) {
+                        Icon(
+                            FeatherIcons.Archive,
+                            contentDescription = stringResource(R.string.chat_tools_expand),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
             // 远程模式：左边 SSH 连接状态，右边 token 累计统计
             if (connectionState != null) {

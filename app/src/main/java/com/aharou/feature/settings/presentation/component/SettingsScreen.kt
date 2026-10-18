@@ -136,15 +136,14 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     AccountCenter(R.string.account_entry_title),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
-    Mcp(R.string.settings_mcp),
-    Connectors(R.string.settings_connectors),
+    Mcp(R.string.settings_mcp), Connectors(R.string.settings_connectors),
     Skills(R.string.settings_skills),
-    SkillDetail(R.string.settings_skills),
-    SkillEditor(R.string.settings_skills),
+    SkillDetail(R.string.settings_skills), SkillEditor(R.string.settings_skills),
     SkillMarket(R.string.skills_market),
     // 详情页与市场页共用一个标题：层级靠返回箭头体现
     SkillMarketDetail(R.string.skills_market),
     Plugins(R.string.settings_plugins),
+    Extensions(R.string.settings_extensions),
     Knowledge(R.string.settings_knowledge_base),
     SubAgents(R.string.settings_subagents), ScheduledTasks(R.string.settings_scheduled_tasks),
     SubAgentDetail(R.string.settings_subagents),
@@ -415,8 +414,8 @@ fun SettingsScreen(
         SettingsSection.Memory,
         SettingsSection.Pet -> SettingsSection.AharouGroup
         SettingsSection.AccountCenter -> SettingsSection.AiGroup
-        SettingsSection.Providers, SettingsSection.DefaultModels,
-        SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Plugins, SettingsSection.Knowledge, SettingsSection.ScheduledTasks -> SettingsSection.AiGroup
+        SettingsSection.Providers, SettingsSection.DefaultModels, SettingsSection.ScheduledTasks, SettingsSection.Extensions -> SettingsSection.AiGroup
+        SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Plugins, SettingsSection.Knowledge -> SettingsSection.Extensions
         SettingsSection.General -> SettingsSection.GeneralGroup
         SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
@@ -588,7 +587,7 @@ fun SettingsScreen(
             targetState = section,
             modifier = Modifier.fillMaxSize(),
             transitionSpec = {
-                val forward = targetState.depth() >= initialState.depth()
+                val forward = targetState != parentSection && targetState.depth() >= initialState.depth()
                 // sizeTransform 必须给 null：新旧内容尺寸本就一样，默认的尺寸补间只会让容器裁剪拖影。
                 ContentTransform(pageEnter(forward), pageExit(forward), sizeTransform = null)
             },
@@ -946,6 +945,7 @@ fun SettingsScreen(
                 SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
                 SettingsSection.Knowledge -> KnowledgeBaseSection()
+                SettingsSection.Extensions -> ExtensionsSection(onOpenSection = openSection)
                 SettingsSection.Theme -> ThemeSettingsSection(
                     selected = themeMode,
                     selectedPresetId = themePresetId,

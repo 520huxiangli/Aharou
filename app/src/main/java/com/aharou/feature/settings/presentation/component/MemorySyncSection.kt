@@ -54,7 +54,9 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
     var autoSync by remember { mutableStateOf(viewModel.autoSyncEnabled()) }
     var editingRepo by remember { mutableStateOf(false) }
     var editingToken by remember { mutableStateOf(false) }
-    var hasToken by remember { mutableStateOf(viewModel.hasToken()) }
+    var hasToken by remember { mutableStateOf(false) }
+    // 凭据查询是挂起的，取值不能写在 remember 初始化里（那会在组合期同步等）。
+    LaunchedEffect(Unit) { hasToken = viewModel.hasToken() }
     var lastCounts by remember { mutableStateOf<SyncCounts?>(null) }
     var pendingDeletions by remember { mutableStateOf(viewModel.pendingDeletions()) }
 

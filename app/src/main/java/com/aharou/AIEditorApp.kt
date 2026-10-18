@@ -360,6 +360,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var skillMarketCatalog: com.aharou.feature.agent.domain.skill.market.SkillMarketCatalog
 
+    /** 插件市场源清单：同样启动即对账，索引放仓库里那个 JSON 就行。 */
+    @Inject
+    lateinit var pluginMarketCatalog: com.aharou.feature.plugin.domain.market.PluginMarketCatalog
+
     /** 灵动岛 / 流体云：把通话、Agent、后台终端三路运行态汇成一条 promoted ongoing 通知。
       * internal：它依赖同为 internal 的 VoiceCallSession，公开属性无法暴露该类型。 */
     @Inject
@@ -471,6 +475,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             containerImageCatalog.refreshFromNetworkIfStale()
             skillMarketCatalog.refreshFromNetworkIfStale()
+            pluginMarketCatalog.refreshFromNetworkIfStale()
         }
         // 启动即刷新知识库源清单并同步本地副本（失败静默，沿用上次同步到的内容）。
         appScope.launch {
