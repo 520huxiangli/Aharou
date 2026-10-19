@@ -49,6 +49,7 @@ class KnowledgeRepository @Inject constructor(
     /** 卸载：只删本地副本，远端一点不动。 */
     fun uninstall(sourceId: String): Boolean {
         val dir = sourceDir(sourceId)
+        removeDigest(sourceId)
         return dir.isDirectory && dir.deleteRecursively()
     }
 
@@ -70,9 +71,8 @@ class KnowledgeRepository @Inject constructor(
         if (source.repo.isBlank()) return@withContext null
 
         val coord = SkillRepoAccess.Coord(source.host, source.repo, source.branch)
-        val tree = httpGetFirst(SkillRepoAccess.treeUrls(coord))
-            ?.let { SkillRepoAccess.parseTree(source.host, it) }
-            ?: return@withContext null
+        val treeBody = httpGetFirst(SkillRepoAccess.treeUrls(coord)) ?: return@withContext null
+        val tree = SkillRepoAccess.parseTree(source.host, treeBody)
 
         val prefix = source.path.trim('/')
         // 排除的目录名按路径段匹配：微软那几个教学仓带了上百种语言的 translations/，
@@ -110,8 +110,24 @@ class KnowledgeRepository @Inject constructor(
         }
 
         FileLogger.d(TAG, "知识库 $sourceId 同步完成：写入 $written，移除 $removed，共 ${remoteFiles.size} 篇")
+        SkillRepoAccess.treeDigest(source.host, treeBody)?.let { saveDigest(sourceId, it) }
         SyncResult(docs = remoteFiles.size, written = written, removed = removed)
     }
+
+    /**
+     * 拉一次远端文件树算指纹，用来判断已安装的源有没有新版。
+     * 网络不通、或者响应里没有 blob sha 时返回 null（界面就当「没变化」）。
+     */
+    suspend fun remoteDigest(sourceId: String): String? = withContext(Dispatchers.IO) {
+        val source = catalog.load().sources[sourceId] ?: return@withContext null
+        if (source.repo.isBlank()) return@withContext null
+        val coord = SkillRepoAccess.Coord(source.host, source.repo, source.branch)
+        httpGetFirst(SkillRepoAccess.treeUrls(coord))
+            ?.let { SkillRepoAccess.treeDigest(source.host, it) }
+    }
+
+    /** 上次同步成功时记下的指纹；本功能上线前装的源没有记录，返回 null。 */
+    fun savedDigest(sourceId: String): String? = readDigests()[sourceId]
 
     /** 本地已同步的文档清单；[sourceId] 为空时列全部源。 */
     fun documents(sourceId: String? = null): List<KnowledgeDoc> {
@@ -179,6 +195,36 @@ class KnowledgeRepository @Inject constructor(
         return hits.sortedWith(compareByDescending<KnowledgeHit> { it.score }.thenBy { it.path }).take(limit)
     }
 
+    /** 指纹存成一行一个 `源id=摘要`，跟着本地副本走：放在知识库根目录下，但它是文件，不会被当成源目录扫。 */
+    private fun digestFile(): File = File(rootDir(), DIGEST_FILE)
+
+    private fun readDigests(): Map<String, String> = runCatching {
+        digestFile().takeIf { it.isFile }?.readLines(Charsets.UTF_8).orEmpty()
+            .mapNotNull { line ->
+                val at = line.indexOf('=')
+                if (at <= 0) null else line.substring(0, at) to line.substring(at + 1)
+            }
+            .toMap()
+    }.getOrDefault(emptyMap())
+
+    private fun saveDigest(sourceId: String, digest: String) {
+        writeDigests(readDigests() + (sourceId to digest))
+    }
+
+    private fun removeDigest(sourceId: String) {
+        val all = readDigests()
+        if (sourceId in all) writeDigests(all - sourceId)
+    }
+
+    private fun writeDigests(all: Map<String, String>) {
+        runCatching {
+            digestFile().writeTextSafely(
+                all.entries.joinToString("\n") { "${it.key}=${it.value}" },
+                TAG
+            )
+        }
+    }
+
     /** 当前界面语言；per-app 语言下取配置里的语言，别用进程 Locale。 */
     private val appLanguage: String
         get() = context.resources.configuration.locales[0].language
@@ -219,6 +265,9 @@ class KnowledgeRepository @Inject constructor(
 
         /** 与容器内的 `~/.aharou` 对应：filesDir/aharou/knowledge/<源 id>/。 */
         const val KNOWLEDGE_DIR = "aharou/knowledge"
+
+        /** 知识库里各源上次同步时的内容指纹。 */
+        const val DIGEST_FILE = "digests.txt"
 
         const val SNIPPET_LEAD = 80
         const val SNIPPET_TAIL = 160

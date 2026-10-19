@@ -2744,6 +2744,7 @@
     <string name="knowledge_base_install">安装</string>
     <string name="knowledge_base_installing">安装中…</string>
     <string name="knowledge_base_uninstall">卸载</string>
+    <string name="knowledge_base_update">更新</string>
     <string name="knowledge_base_installed_meta">已安装 · %1$d 篇</string>
     <string name="knowledge_base_category_all">全部</string>
     <string name="knowledge_base_remove">移除</string>

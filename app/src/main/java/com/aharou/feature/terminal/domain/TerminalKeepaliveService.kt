@@ -72,9 +72,14 @@ class TerminalKeepaliveService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // 用户从最近任务划掉 app = 明确不要后台运行：停掉前台服务并取消 WorkManager 周期兜底，
-        // 否则进程被杀后服务会被 START_STICKY 或 KeepaliveWorker 重新拉起并弹通知。
-        // 开关本身保持不变，下次打开 app 时由 MainActivity / AIEditorApp 自动恢复。
+        // 开关开着就不动它：国产 ROM 的「清理 / 内存加速」同样会走这个回调，
+        // 一律停掉等于让开关失效——而且这里会把 KeepaliveWorker 一并取消，
+        // 进程被杀后系统不会再拉起，用户看到的就是「锁了后台还是掉」。
+        if (persistent) {
+            FileLogger.i(TAG, "Task removed, persistent keepalive kept")
+            return
+        }
+        // 没开常驻：用户从最近任务划掉 app = 明确不要后台运行，停服务并取消周期兜底。
         KeepaliveWorker.cancel(this)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()

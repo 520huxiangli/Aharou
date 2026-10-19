@@ -2745,6 +2745,7 @@
     <string name="knowledge_base_install">Install</string>
     <string name="knowledge_base_installing">Installing…</string>
     <string name="knowledge_base_uninstall">Uninstall</string>
+    <string name="knowledge_base_update">Update</string>
     <string name="knowledge_base_installed_meta">Installed · %1$d docs</string>
     <string name="knowledge_base_category_all">All</string>
     <string name="knowledge_base_remove">Remove</string>

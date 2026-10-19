@@ -1,9 +1,11 @@
 package com.aharou.feature.agent.domain.skill.market
 
+import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -208,22 +210,48 @@ object SkillRepoAccess {
      * jsDelivr 的 flat 则是 `files` 数组；都靠 `type` 区分目录与文件（jsDelivr 只列文件、无 type）。
      */
     fun parseTree(host: String, body: String): List<String> {
-        val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
-
-        val items: List<JsonObject> = if (host == GITLAB) {
-            objectsIn(root)
-        } else {
-            val obj = runCatching { root.jsonObject }.getOrNull() ?: return emptyList()
-            objectsIn(obj["tree"]).ifEmpty { objectsIn(obj["files"]) }
-        }
-
-        return items.mapNotNull { item ->
+        return treeItems(host, body).mapNotNull { item ->
             val type = item["type"]?.jsonPrimitive?.content
             if (type != null && type != "blob") return@mapNotNull null
             val name = item["path"]?.jsonPrimitive?.content
                 ?: item["name"]?.jsonPrimitive?.content
                 ?: return@mapNotNull null
             name.removePrefix("/").takeIf { it.isNotBlank() }
+        }
+    }
+
+    /**
+     * 文件树的内容指纹：按路径排序后把「路径 + blob sha」拼起来取 SHA-256。
+     *
+     * 只用来回答「远端变了没有」，不参与同步；同步自己会逐文件比对内容。
+     * jsDelivr flat 那类不带 sha 的响应拿不到指纹，返回 null（界面按「未知」处理）。
+     */
+    fun treeDigest(host: String, body: String): String? {
+        val entries = treeItems(host, body).mapNotNull { item ->
+            val path = item["path"]?.jsonPrimitive?.contentOrNull
+                ?: item["name"]?.jsonPrimitive?.contentOrNull
+                ?: return@mapNotNull null
+            // GitHub/Gitee/Gitea 用 sha，GitLab 的树接口用 id，两者都是 blob 的 SHA-1。
+            val sha = item["sha"]?.jsonPrimitive?.contentOrNull
+                ?: item["id"]?.jsonPrimitive?.contentOrNull
+                ?: return@mapNotNull null
+            path.removePrefix("/") to sha
+        }
+        if (entries.isEmpty()) return null
+        val joined = entries.sortedBy { it.first }.joinToString("\n") { "${it.first}:${it.second}" }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(joined.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** 统一取出树条目：GitLab 直接是数组，其余取 `tree`（jsDelivr flat 退化取 `files`）。 */
+    private fun treeItems(host: String, body: String): List<JsonObject> {
+        val root = runCatching { json.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
+        return if (host == GITLAB) {
+            objectsIn(root)
+        } else {
+            val obj = runCatching { root.jsonObject }.getOrNull() ?: return emptyList()
+            objectsIn(obj["tree"]).ifEmpty { objectsIn(obj["files"]) }
         }
     }
 

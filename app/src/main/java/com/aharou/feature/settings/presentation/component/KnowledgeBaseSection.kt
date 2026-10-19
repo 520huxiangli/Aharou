@@ -156,10 +156,12 @@ internal fun KnowledgeBaseSection(
                         description = source.definition.displayDescription(lang),
                         docCount = source.docCount,
                         installed = source.installed,
+                        hasUpdate = source.hasUpdate,
                         working = busyId == source.id,
                         blocked = busyId != null && busyId != source.id,
                         custom = source.custom,
                         onInstall = { viewModel.install(source.id) },
+                        onUpdate = { viewModel.install(source.id) },
                         onUninstall = { viewModel.uninstall(source.id) },
                         onRemoveSource = { viewModel.removeSource(source.id) }
                     )
@@ -180,10 +182,12 @@ private fun KnowledgeRow(
     description: String,
     docCount: Int,
     installed: Boolean,
+    hasUpdate: Boolean,
     working: Boolean,
     blocked: Boolean,
     custom: Boolean,
     onInstall: () -> Unit,
+    onUpdate: () -> Unit,
     onUninstall: () -> Unit,
     onRemoveSource: () -> Unit
 ) {
@@ -231,8 +235,15 @@ private fun KnowledgeRow(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.semanticColors.subtleText
             )
-            installed -> TextButton(onClick = onUninstall) {
-                Text(stringResource(R.string.knowledge_base_uninstall))
+            installed -> Row(verticalAlignment = Alignment.CenterVertically) {
+                if (hasUpdate) {
+                    TextButton(onClick = onUpdate) {
+                        Text(stringResource(R.string.knowledge_base_update))
+                    }
+                }
+                TextButton(onClick = onUninstall) {
+                    Text(stringResource(R.string.knowledge_base_uninstall))
+                }
             }
             else -> TextButton(onClick = onInstall, enabled = !blocked) {
                 Text(stringResource(R.string.knowledge_base_install))

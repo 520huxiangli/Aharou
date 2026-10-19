@@ -186,9 +186,9 @@ class ExecuteCommandTool @Inject constructor(
             val workdir = sessionWorkdir(context)
             val timeoutMs = resolveTimeoutMs(args)
             FileLogger.d(TAG, "execute_command (timeout=${timeoutMs}ms): $command")
-            val output = commandEngine.runCommandSync(command, workdir, timeoutMs)
-            FileLogger.v(TAG, "execute_command 完成，输出 ${output.length} 字符")
-            ToolResult.Success(JsonPrimitive(output))
+            val result = commandEngine.runCommandSyncWithExit(command, workdir, timeoutMs)
+            FileLogger.v(TAG, "execute_command 完成，输出 ${result.output.length} 字符，退出码 ${result.exitCode}")
+            ToolResult.Success(JsonPrimitive(withExitCode(result.output, result.exitCode)))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -219,6 +219,7 @@ class ExecuteCommandTool @Inject constructor(
 
         // 限幅累积：喂回模型的最终结果只保留开头+结尾，避免超大输出撑爆上下文。
         val accumulated = BoundedOutput()
+        var exitCode: Int? = null
         try {
             val workdir = sessionWorkdir(context)
             val timeoutMs = resolveTimeoutMs(args)
@@ -230,11 +231,11 @@ class ExecuteCommandTool @Inject constructor(
                         accumulated.append("\n")
                         emit(ToolStreamEvent.Progress(event.text))
                     }
-                    is CommandEvent.Exit -> { /* 结束在流完成后统一聚合 */ }
+                    is CommandEvent.Exit -> exitCode = event.code
                 }
             }
-            FileLogger.v(TAG, "execute_command(流式) 完成，输出 ${accumulated.totalChars} 字符")
-            emit(ToolStreamEvent.Completed(ToolResult.Success(JsonPrimitive(accumulated.build()))))
+            FileLogger.v(TAG, "execute_command(流式) 完成，输出 ${accumulated.totalChars} 字符，退出码 $exitCode")
+            emit(ToolStreamEvent.Completed(ToolResult.Success(JsonPrimitive(withExitCode(accumulated.build(), exitCode)))))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -243,11 +244,21 @@ class ExecuteCommandTool @Inject constructor(
             FileLogger.e(TAG, "execute_command(流式) 异常(已保留此前输出 ${accumulated.totalChars} 字符): $command", e)
             val saved = accumulated.build()
             val result = if (saved.isNotEmpty()) {
-                ToolResult.Success(JsonPrimitive(saved))
+                ToolResult.Success(JsonPrimitive(withExitCode(saved, exitCode)))
             } else {
                 ToolResult.Error("执行命令失败: ${e.message}")
             }
             emit(ToolStreamEvent.Completed(result))
         }
+    }
+
+    /**
+     * 退出码拼在结果末尾，让模型能分辨「跑完没输出」和「失败没输出」。
+     * 拿不到退出码（超时、引擎异常、远程通道断开）就不拼，别让模型把未知当成成功。
+     */
+    private fun withExitCode(output: String, exitCode: Int?): String {
+        if (exitCode == null) return output
+        val line = "[退出码: $exitCode]"
+        return if (output.isBlank()) line else "$output\n$line"
     }
 }

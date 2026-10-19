@@ -40,7 +40,8 @@ class KnowledgeBaseViewModel @Inject constructor(
         val definition: KnowledgeSourceDef,
         val custom: Boolean,
         val installed: Boolean,
-        val docCount: Int
+        val docCount: Int,
+        val hasUpdate: Boolean = false
     )
 
     /**
@@ -58,11 +59,15 @@ class KnowledgeBaseViewModel @Inject constructor(
     var busyId by mutableStateOf<String?>(null)
         private set
 
+    /** 已安装但上游有新版的源 id；只在后台比对得出，失败就空着。 */
+    private var updateIds by mutableStateOf<Set<String>>(emptySet())
+
     var status by mutableStateOf(KnowledgeBaseStatus.Idle)
         private set
 
     init {
         reload()
+        checkUpdates()
     }
 
     /** 重新读源清单与本地安装情况。 */
@@ -75,7 +80,8 @@ class KnowledgeBaseViewModel @Inject constructor(
                 definition = definition,
                 custom = id in customIds,
                 installed = repository.isInstalled(id),
-                docCount = repository.documents(id).size
+                docCount = repository.documents(id).size,
+                hasUpdate = id in updateIds
             )
         }
         // 只列真正有源的分类；清单没声明分类时按源里出现的顺序兜底
@@ -100,13 +106,33 @@ class KnowledgeBaseViewModel @Inject constructor(
                     { KnowledgeBaseStatus.Failed }
                 )
             busyId = null
+            updateIds = updateIds - id
             reload()
+        }
+    }
+
+    /**
+     * 后台比对已安装源的指纹，变了就在那一行显示「更新」。
+     * 只拉文件树（每个源一次请求），不下载文档；失败静默，不打扰用户。
+     */
+    private fun checkUpdates() {
+        viewModelScope.launch {
+            val stale = sources.filter { it.installed }.mapNotNull { source ->
+                val remote = repository.remoteDigest(source.id) ?: return@mapNotNull null
+                val saved = repository.savedDigest(source.id) ?: return@mapNotNull null
+                source.id.takeIf { saved != remote }
+            }.toSet()
+            if (stale != updateIds) {
+                updateIds = stale
+                reload()
+            }
         }
     }
 
     /** 卸一个源：只删本地副本，源仍在列表里，随时能再装。 */
     fun uninstall(id: String) {
         repository.uninstall(id)
+        updateIds = updateIds - id
         reload()
     }
 
