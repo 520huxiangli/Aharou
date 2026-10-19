@@ -333,16 +333,6 @@ class StatefulAgentWorkflowTest {
     }
 
     @Test
-    fun toolLimitProducesSideEffectWithoutProcessingOutputInReducer() {
-        val state = StatefulAgentWorkflow.AgentSessionState(totalToolCalls = 200)
-        val action = StatefulAgentWorkflow.AgentAction.LlmResponse(response, "message")
-        val result = workflow.reduce(state, action)
-        assertTrue((result.first as StatefulAgentWorkflow.AgentSessionState).toolLimitNotified)
-        assertEquals("RejectToolBatch", (result.second as List<*>).single()!!.javaClass.simpleName)
-        verify(exactly = 0) { outputStore.process(any(), any(), any()) }
-    }
-
-    @Test
     fun userRejectionProducesSideEffectWithoutProcessingOutputInReducer() {
         val state = StatefulAgentWorkflow.AgentSessionState(batchToolCalls = listOf(toolCall),
             pendingPermissionCalls = listOf(toolCall))

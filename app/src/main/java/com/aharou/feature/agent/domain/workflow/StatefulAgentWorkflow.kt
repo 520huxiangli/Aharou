@@ -166,12 +166,6 @@ class StatefulAgentWorkflow @Inject constructor(
         /** 模型直出图片落盘目录（与 GenerateImageTool 保持一致）。 */
         const val GENERATED_IMAGE_DIR = "~/.aharou/generated-images"
         const val MAX_GENERATED_IMAGE_BYTES = 20L * 1024 * 1024
-
-        /**
-         * 单次任务里工具调用的总次数上限（跨轮累加）。模型可能陷入「调工具→再调工具」的循环，
-         * 到量后回一条提示并结束本轮，不再只能靠用户手动停止。
-         */
-        const val MAX_TOTAL_TOOL_CALLS = 200
     }
 
     /**
@@ -197,10 +191,8 @@ class StatefulAgentWorkflow @Inject constructor(
         val approvedToolCalls: List<ToolCall> = emptyList(),
         /** 被策略/系统拒绝（非用户拒绝）的 tool 结果，key = toolCall.id */
         val rejectedToolResults: Map<String, ToolBatchResult> = emptyMap(),
-        /** 累计进入执行阶段的工具调用次数（跨轮累加），用于总次数熔断。 */
-        val totalToolCalls: Int = 0,
-        /** 已达上限并回传过一次提示：再触发时直接结束，不再给模型收尾回合。 */
-        val toolLimitNotified: Boolean = false
+        /** 累计进入执行阶段的工具调用次数（跨轮累加），仅用于遥测统计。 */
+        val totalToolCalls: Int = 0
     )
 
     /** 改变状态的动作 (Action) */

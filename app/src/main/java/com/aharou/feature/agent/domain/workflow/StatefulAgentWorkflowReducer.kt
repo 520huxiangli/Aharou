@@ -72,23 +72,13 @@ internal fun StatefulAgentWorkflow.reduce(
                 // 本批多个 tool_call：全部进入待权限队列，逐个弹窗收集批准；
                 // 全部评估完成后才进入并行执行阶段（见 PermissionBatchEvaluated / ToolBatchFinished）。
                 val toolCalls = action.response.toolCalls.toList()
-                if (newState.totalToolCalls >= StatefulAgentWorkflow.MAX_TOTAL_TOOL_CALLS) {
-                    // 到上限：不再执行，但要按 assistant(toolCalls) 的顺序补齐 tool 响应后收尾。
-                    // 第一次触发先回一条提示让模型收口，再触发就直接结束——
-                    // 否则提示本身又变成一轮模型调用，循环还是停不下来。
-                    effects.add(AgentSideEffect.RejectToolBatch(toolCalls,
-                        "本次任务的工具调用已达上限（${StatefulAgentWorkflow.MAX_TOTAL_TOOL_CALLS} 次），该调用未执行。请基于已有信息给出结论，或向用户说明还差什么。",
-                        "TOOL_CALL_LIMIT", newState.toolLimitNotified))
-                    newState = newState.copy(toolLimitNotified = true)
-                } else {
-                    newState = newState.copy(
-                        batchToolCalls = toolCalls,
-                        pendingPermissionCalls = toolCalls,
-                        approvedToolCalls = emptyList(),
-                        rejectedToolResults = emptyMap()
-                    )
-                    effects.add(AgentSideEffect.RequestPermissionBatch(toolCalls))
-                }
+                newState = newState.copy(
+                    batchToolCalls = toolCalls,
+                    pendingPermissionCalls = toolCalls,
+                    approvedToolCalls = emptyList(),
+                    rejectedToolResults = emptyMap()
+                )
+                effects.add(AgentSideEffect.RequestPermissionBatch(toolCalls))
             }
         }
         is AgentAction.LlmError -> {
