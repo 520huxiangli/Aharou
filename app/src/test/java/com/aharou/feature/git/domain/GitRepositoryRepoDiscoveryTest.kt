@@ -3,12 +3,9 @@ package com.aharou.feature.git.domain
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.container.CommandResult
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
-import io.mockk.any
-import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -143,44 +140,53 @@ class GitRepositoryRepoDiscoveryTest {
     @Test
     fun setRepoPath_commandsRunInSelectedRepo() = runTest {
         val engine = mockk<CommandEngine>()
-        val cwd = slot<String?>()
-        coEvery { engine.runCommandSyncUnbounded(any(), capture(cwd), any()) } returns CommandResult("", 0)
+        var lastCwd: String? = null
+        coEvery { engine.runCommandSyncUnbounded(any(), any(), any()) } answers {
+            lastCwd = invocation.args[1] as String?
+            CommandResult("", 0)
+        }
         val repo = createRepo(engine)
 
         repo.status()
-        assertEquals(root, cwd.captured)
+        assertEquals(root, lastCwd)
 
         repo.setRepoPath("$root/git1")
         repo.status()
-        assertEquals("$root/git1", cwd.captured)
+        assertEquals("$root/git1", lastCwd)
         assertEquals("$root/git1", repo.currentRepoPath)
     }
 
     @Test
     fun setRepoPathNull_fallsBackToWorkspaceRoot() = runTest {
         val engine = mockk<CommandEngine>()
-        val cwd = slot<String?>()
-        coEvery { engine.runCommandSyncUnbounded(any(), capture(cwd), any()) } returns CommandResult("", 0)
+        var lastCwd: String? = null
+        coEvery { engine.runCommandSyncUnbounded(any(), any(), any()) } answers {
+            lastCwd = invocation.args[1] as String?
+            CommandResult("", 0)
+        }
         val repo = createRepo(engine)
 
         repo.setRepoPath("$root/git1")
 
         repo.setRepoPath(null)
         repo.status()
-        assertEquals(root, cwd.captured)
+        assertEquals(root, lastCwd)
     }
 
     @Test
     fun setRepoPath_outsideWorkspace_ignored() = runTest {
         val engine = mockk<CommandEngine>()
-        val cwd = slot<String?>()
-        coEvery { engine.runCommandSyncUnbounded(any(), capture(cwd), any()) } returns CommandResult("", 0)
+        var lastCwd: String? = null
+        coEvery { engine.runCommandSyncUnbounded(any(), any(), any()) } answers {
+            lastCwd = invocation.args[1] as String?
+            CommandResult("", 0)
+        }
         val repo = createRepo(engine)
 
         // 切了工作区但选中路径还是旧工作区的：不能把 git 命令发过去。
         repo.setRepoPath("/root/other-workspace/git1")
         repo.status()
-        assertEquals(root, cwd.captured)
+        assertEquals(root, lastCwd)
     }
 
     @Test
