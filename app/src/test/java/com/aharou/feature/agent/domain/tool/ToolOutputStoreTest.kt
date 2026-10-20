@@ -404,8 +404,15 @@ class ToolOutputStoreTest {
     private fun assertArchive(original: ToolResult, data: JsonElement) {
         val path = data.jsonObject.getValue("output_path").jsonPrimitive.content
         assertTrue(path.startsWith("/home/remote/.aharou/tool-output/"))
-        assertEquals(original.toTransportString(), archives.getValue(path))
-        assertEquals(JsonPrimitive(original.toTransportString().length), data.jsonObject["output_total_chars"])
+        val archived = archives.getValue(path)
+        // 存档是可读文本：纯文本结果存正文，结构化结果存带缩进的 JSON（不再是转义成一整行的传输串）。
+        if (original is ToolResult.Success && original.data is JsonPrimitive && original.data.isString) {
+            assertEquals(original.data.content, archived)
+        } else {
+            assertTrue("归档应为可读 JSON", archived.contains("\"status\""))
+            assertTrue("归档应保留换行而非转义", archived.contains("\n"))
+        }
+        assertEquals(JsonPrimitive(archived.length), data.jsonObject["output_total_chars"])
         // 既有字段一个都不能少，新行数字段与它们并存。
         assertTrue(data.jsonObject.containsKey("output_truncated"))
         assertTrue(data.jsonObject.containsKey("output_total_lines"))

@@ -282,6 +282,11 @@ class ContainerImageCatalog @Inject constructor(
         }
 
         /** 与 [com.aharou.feature.agent.domain.container.ContainerInstaller] 一致的架构判定：x86 设备走 x86_64，其余走 arm64。 */
-        val CURRENT_ABI: String = if (Build.SUPPORTED_ABIS.any { it.contains("x86") }) "x86_64" else "arm64"
+        /** 延迟到首次访问才解析：纯 JVM 单测里 Android 的 Build 是空壳，提前初始化会让整个类加载失败。 */
+        val CURRENT_ABI: String by lazy {
+            runCatching {
+                if (Build.SUPPORTED_ABIS.any { it.contains("x86") }) "x86_64" else "arm64"
+            }.getOrDefault("arm64")
+        }
     }
 }
