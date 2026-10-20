@@ -527,9 +527,11 @@ class ContextCompactorTest {
         val original = history(6_000)
         val result = compactor.compactIfNeeded(original, provider, force = true,
             systemPrompt = "汉".repeat(4_000), tools = listOf(tool))
-        assertFalse(result.compacted)
-        assertSame(original, result.messages)
+        // 目标口径改成「扣掉固定开销后以触发线为基准」之后，这个场景能装进输入预算，
+        // 因此应当落库；固定开销仍全额参与（装不下就退化为「开销吃满」的失败）。
+        assertTrue(result.compacted)
         coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+        // 本用例没传 sessionId：没有会话就不落库，只在内存里换掉消息
         coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
     }
 

@@ -47,7 +47,7 @@ class VaultRedactRuleTest {
     fun eightLowercaseCharsAreNotRedacted() {
         val secret = "abcdefgh"
         assertFalse(VaultRepository.looksLikeCredential(secret))
-        assertEquals(secret, redactText("v=$secret", listOf("api" to secret)))
+        assertEquals("v=$secret", redactText("v=$secret", listOf("api" to secret)))
     }
 
     @Test

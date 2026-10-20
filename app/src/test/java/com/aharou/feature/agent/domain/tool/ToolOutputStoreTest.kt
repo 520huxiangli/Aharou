@@ -225,7 +225,10 @@ class ToolOutputStoreTest {
         assertBounded(processed)
         assertEquals("OUTPUT_METADATA_TOO_LARGE", processed.code)
         assertTrue(processed.message.contains("output_metadata_truncated"))
-        assertEquals(original.toTransportString(), archives.values.single())
+        val archived = archives.values.single()
+        // 存档改成可读文本：Error 结果存带缩进的 JSON，不再是一整行转义串
+        assertTrue("应为可读 JSON", archived.contains("\"status\""))
+        assertTrue("应保留换行", archived.contains("\n"))
     }
 
     @Test
@@ -269,7 +272,8 @@ class ToolOutputStoreTest {
             assertArchive(original, processed.data)
         }
         assertEquals(2, archives.size)
-        assertEquals(setOf(textTransport(original)), archives.values.toSet())
+        // 纯文本结果按原文存档：两次调用各存一份，内容都是原文
+        assertEquals(setOf("x".repeat(50_000)), archives.values.toSet())
     }
 
     @Test
