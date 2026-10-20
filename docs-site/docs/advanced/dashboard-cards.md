@@ -75,6 +75,9 @@ AI 助手与开发者可以依据此规范，编写面板脚本（Python / Node 
 | `AICODE_SESSION_MODE` | `build` | 当前会话模式：`build`（构建）/ `plan`（计划）/ `auto`（自动） |
 | `AICODE_REASONING_EFFORT` | `high` | 当前思考强度档位：`none` / `low` / `medium` / `high` / `xhigh` / `max`；选了「默认」时为空 |
 | `AICODE_REFRESH_REASON` | `llm` | 本次面板刷新的触发原因：`session`（进入/切换会话，数据就绪后触发）、`llm`（LLM 请求返回后自动刷新）、`done`（AI 一轮任务完成后自动刷新，此时 `AICODE_AGENT_STATE` 为最终状态）、`manual`（手动点击刷新/错误重试）、`button`（卡片内刷新按钮触发） |
+| `AICODE_BUTTON_TITLE` | `按钮标题原样` | 本次点的是哪个刷新按钮：卡片上那个按钮的 `title` 原样传过来，**不限于固定几个名字**，你卡片里写什么就是什么。仅 `AICODE_REFRESH_REASON=button` 时有值，其余场景为空串 |
+| `AICODE_BUTTON_VALUE` | `按钮 value 原样` | 该按钮在卡片 JSON 里填的 `value`；没填时为空串 |
+| `AICODE_INPUT_<ID>` | `3` | 卡片里输入框的当前值：按你在 input 元素里写的 `id` 规整（转大写、非字母数字转下划线）后注入，例如 `id="reg_count"` → `AICODE_INPUT_REG_COUNT`。点按钮时才带上，没有输入框时没有这条变量 |
 
 ### 工作区变量
 
@@ -417,7 +420,8 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
   | :--- | :--- | :--- | :--- |
   | `type` | String | 是 | - | 固定 `"ActionButton"`（别名 `"button"`、`"action"`） |
   | `title` | String | 是 | - | 按钮文本（如 `"前往充值"`, `"复制卡密"`） |
-  | `action` | String | 否 | `"openUrl"` | 行为类型：`"openUrl"`（在**内置浏览器**里打开链接）/ `"copy"`（复制文本）/ `"refresh"`（刷新面板） |
+  | `action` | String | 否 | `"openUrl"` | 行为类型：`"openUrl"`（在**内置浏览器**里打开链接）/ `"copy"`（复制文本）/ `"refresh"`（刷新面板；当前 `.clickable` 算按钮，脚本可用 `AICODE_BUTTON_TITLE` 区分是哪个）/ `"submit"`（与 refresh 同义，用于「提交表单」，输入框的值会一并带给脚本） |
+  | `disabled` | Boolean | 否 | `false` | 置 `true` 时按钮变灰且不可点，适合「任务执行中」的占位按钮 |
   | `url` | String | 条件 | - | `action=openUrl` 时必填，完整的 HTTP/HTTPS 链接；指向人看的页面（控制台/充值页），不要填 API 地址 |
   | `value` | String | 条件 | - | `action=copy` 时必填，要复制的文本内容 |
   | `icon` | String | 否 | `null` | 按钮前置图标名称（如 `"external-link"`、`"copy"`） |
@@ -444,6 +448,40 @@ AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
   ]
 }
 ```
+
+### 5.4 输入类 (Input)
+
+卡片里可以放输入框：用户填好之后，点一个 `action` 为 `"submit"`（或 `"refresh"`）的按钮，输入值会以环境变量带给脚本。也就是说「点按钮」就是提交。
+
+#### `Input.Text` / `Input.Number`
+
+| 属性 | 类型 | 必填 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `type` | String | 是 | - | `"Input.Text"`（文本；别名 `textinput` / `inputtext`）或 `"Input.Number"`（数字键盘；别名 `numberinput` / `inputnumber`） |
+| `id` | String | 是 | - | 元素 id，决定回传的变量名：`reg_count` → `AICODE_INPUT_REG_COUNT`；没写 id 的输入框会被直接丢弃 |
+| `label` | String | 否 | `""` | 输入框标题（也可用 `title`） |
+| `placeholder` | String | 否 | `null` | 占位提示 |
+| `value` | String | 否 | `""` | 默认值（用户没改过时用它，也可用 `default`） |
+
+示例（填注册数量）：
+
+```json
+{ "type": "Input.Number", "id": "reg_count", "label": "注册数量", "placeholder": "1 ~ 5", "value": "1" }
+```
+
+脚本侧直接读：
+
+```bash
+COUNT="${AICODE_INPUT_REG_COUNT:-1}"
+case "$AICODE_BUTTON_TITLE" in
+  "注册新号") echo "将要注册 $COUNT 个" ;;
+esac
+```
+
+两个细节：
+
+- 输入值由 App 按会话存在一边，脚本重跑不会把用户刚填的值冲掉；但脚本输出里没了的输入框，值也不再回传。
+- 输入框只负责「取值到按钮」，不会自己触发脚本——想生效必须点一下带 `submit` / `refresh` 的按钮。
 
 ---
 

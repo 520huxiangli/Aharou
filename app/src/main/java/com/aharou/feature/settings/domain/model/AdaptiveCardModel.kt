@@ -26,7 +26,12 @@ data class DashboardContext(
     val agentState: String = "",
     val sessionMode: String = "",
     val reasoningEffort: String = "",
-    val refreshReason: String = ""
+    val refreshReason: String = "",
+    /** 点的是哪张卡片里的哪个按钮：仅 refresh 动作由按钮触发时有值，空串表示非按钮触发。 */
+    val buttonTitle: String = "",
+    val buttonValue: String = "",
+    /** 卡片里输入框的当前值，键为元素 id；脚本侧通过 AICODE_INPUT_<ID> 读到。 */
+    val inputs: Map<String, String> = emptyMap()
 )
 
 /**
@@ -434,6 +439,26 @@ data class TabSetElement(
 ) : AdaptiveCardElement
 
 /**
+ * 文本输入框。取值由宿主按会话持有，点按钮提交时随 AICODE_INPUT_<ID> 回传给脚本。
+ */
+data class InputTextElement(
+    val id: String,
+    val label: String = "",
+    val placeholder: String? = null,
+    val value: String = ""
+) : AdaptiveCardElement
+
+/**
+ * 数字输入框（拉起数字键盘，其余同 [InputTextElement]）。
+ */
+data class InputNumberElement(
+    val id: String,
+    val label: String = "",
+    val placeholder: String? = null,
+    val value: String = ""
+) : AdaptiveCardElement
+
+/**
  * 可点击按钮元素，可放在任意容器中。替代旧的根级 actions。
  */
 data class ActionButtonElement(
@@ -445,7 +470,8 @@ data class ActionButtonElement(
     val style: ContainerStyle = ContainerStyle.DEFAULT,
     val color: CardColor = CardColor.Accent,
     val padding: CardPadding? = null,
-    val margin: CardPadding? = null
+    val margin: CardPadding? = null,
+    val disabled: Boolean = false
 ) : AdaptiveCardElement
 
 /**

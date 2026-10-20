@@ -251,7 +251,7 @@ Workspaces are deliberately isolated: chats and memories are invisible across th
 - Only put genuinely cross-workspace information in it (what changed, what to do next); don't dump whole conversations in.
 
 ::: tip Moving the workspace or clearing the inbox
-The inbox identity is the full workspace path: renaming or moving the directory gives it a new identity, so it can no longer read the old inbox (the old file stays in `~/shared/inbox/`). To clear it, delete the file. Read progress is stored separately in app data; wiping app data resets it to 0, so existing messages are announced once more (nothing is lost).
+The inbox identity is the full workspace path: renaming or moving the directory gives it a new identity, so it can no longer read the old inbox (the old file stays in `~/shared/inbox/`). Messages are **removed from the file once they have been delivered** to the receiving workspace, so whatever remains is still undelivered; to clear it, just delete the file.
 :::
 
 ::: warning Local workspaces only

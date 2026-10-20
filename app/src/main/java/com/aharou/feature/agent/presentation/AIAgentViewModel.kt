@@ -1540,7 +1540,7 @@ class AIAgentViewModel @Inject constructor(
         // 来信不必等切工作区：写入工具与目录监听发出信号后，直接投到目标工作区的默认会话。
         sharedInboxDelivery.bind { path -> deliverInboxToDefaultSession(path) }
         viewModelScope.launch {
-            _currentWorkspace.collectLatest { path ->
+            _currentWorkspace.collect { path ->
                 if (path.isNotBlank()) withContext(Dispatchers.IO) { deliverInboxToDefaultSession(path) }
             }
         }
@@ -1714,21 +1714,23 @@ class AIAgentViewModel @Inject constructor(
      * 把共享区信箱的未读消息作为一条**代理间通知**投递：与本机子代理消息同一通道，
      * 忙碌时搭车进工具结果、空闲时作为一条通知消息起新一轮——用户看得到，模型也读得到。
      *
-     * 这里先 consume：后面的系统提示注入读到空就不再重复提醒（单通道）。
+     * 这里先 peek 拿到未读，投递成功后再把这批行从信箱删掉（不再维护已读位置指针）。
      */
     private suspend fun deliverInboxMessages(sessionId: String, projectRoot: String) {
         if (projectRoot.isBlank()) return
+        // 会话不在就别清信箱：先把消息留着，等真有会话时再投
+        if (sessionUseCase.getSessionById(sessionId) == null) return
         val unread = runCatching { sharedInbox.peek(projectRoot) }.getOrNull().orEmpty()
         if (unread.isEmpty()) return
-        val delivered = runCatching { sharedInbox.consume(projectRoot) }.getOrDefault(unread)
-        if (delivered.isEmpty()) return
         deliverAgentMessage(
             recipientSessionId = sessionId,
             senderSessionId = SharedInbox.NOTIFICATION_SENDER_ID,
             senderTitle = "共享区信箱",
-            message = delivered.joinToString("\n"),
+            message = unread.joinToString("\n"),
             fromParent = false
         )
+        // 投递完成后才从信箱里清掉这几行：反过来做的话，投递途中出任何岔子都会把消息丢掉
+        runCatching { sharedInbox.dropDelivered(projectRoot, unread.size) }
     }
 
     private suspend fun deliverAgentMessage(

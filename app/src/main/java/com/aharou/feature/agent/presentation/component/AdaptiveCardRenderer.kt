@@ -70,6 +70,8 @@ import com.aharou.feature.settings.domain.model.DividerElement
 import com.aharou.feature.settings.domain.model.FactSetElement
 import com.aharou.feature.settings.domain.model.FlowRowElement
 import com.aharou.feature.settings.domain.model.ImageElement
+import com.aharou.feature.settings.domain.model.InputNumberElement
+import com.aharou.feature.settings.domain.model.InputTextElement
 import com.aharou.feature.settings.domain.model.MetricElement
 import com.aharou.feature.settings.domain.model.ProgressBarElement
 import com.aharou.feature.settings.domain.model.RowElement
@@ -95,7 +97,7 @@ fun AdaptiveCardView(
     card: AdaptiveCardRoot,
     isExpanded: Boolean,
     onAction: (AdaptiveCardAction) -> Unit = {},
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     if (!isExpanded) {
@@ -103,7 +105,7 @@ fun AdaptiveCardView(
         if (card.compact != null) {
             RenderElement(card.compact, isCompact = true, onAction = onAction, onRefresh = onRefresh, modifier = modifier)
         } else {
-            // 自动从 body 提取前 2~3 个主要组件紧凑展示
+            // 收起态：compact 优先，没有就取 body 前几个
             Row(
                 modifier = modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -134,7 +136,7 @@ private fun RenderElement(
     element: AdaptiveCardElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     when (element) {
@@ -153,6 +155,7 @@ private fun RenderElement(
             }
         }
         is ActionButtonElement -> RenderActionButton(element, onAction, onRefresh, modifier)
+        is InputTextElement, is InputNumberElement -> RenderInputElement(element, modifier)
         is TextBlockElement -> RenderTextBlock(element, isCompact, modifier)
         is ProgressBarElement -> RenderProgressBar(element, isCompact, modifier)
         is MetricElement -> RenderMetric(element, isCompact, modifier)
@@ -168,7 +171,7 @@ private fun RenderColumnSet(
     element: ColumnSetElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val spacingDp = element.gapDp?.dp ?: resolveSpacing(element.spacing)
@@ -226,7 +229,7 @@ private fun RenderColumn(
     column: ColumnElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val verticalArrangement = when (column.verticalContentAlignment?.trim()?.lowercase()) {
@@ -260,7 +263,7 @@ private fun RenderContainer(
     container: ContainerElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val (bgColor, borderCol) = resolveContainerColors(container.style)
@@ -309,7 +312,7 @@ private fun RenderRow(
     row: RowElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val rowGap = row.gapDp?.dp ?: resolveSpacing(row.spacing)
@@ -711,7 +714,7 @@ private fun RenderFlowRow(
     element: FlowRowElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val hGap = element.gapDp?.dp ?: Spacing.sm
@@ -737,7 +740,7 @@ private fun RenderScrollRow(
     element: ScrollRowElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val gap = element.gapDp?.dp ?: Spacing.sm
@@ -781,7 +784,7 @@ private fun RenderTabSet(
     element: TabSetElement,
     isCompact: Boolean,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     if (element.tabs.isEmpty()) return
@@ -1007,18 +1010,14 @@ private fun RenderPillsTabBar(
 private fun RenderActionButton(
     element: ActionButtonElement,
     onAction: (AdaptiveCardAction) -> Unit,
-    onRefresh: () -> Unit = {},
+    onRefresh: (String, String?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val (bgColor, _) = resolveContainerColors(element.style)
-    val fgColor = resolveColor(element.color, false)
-    val effectiveBg = if (element.style == ContainerStyle.DEFAULT) {
-        fgColor.copy(alpha = 0.12f)
-    } else {
-        bgColor
-    }
-
-    val isRefresh = element.actionType.lowercase() == "refresh"
+    // 禁用态改用 disabled 控件的次级色；submit 与 refresh 走同一条回调，都是重跑脚本
+    val fgColor = if (element.disabled) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f) else resolveColor(element.color, false)
+    val effectiveBg = if (element.disabled) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f) else if (element.style == ContainerStyle.DEFAULT) fgColor.copy(alpha = 0.12f) else bgColor
+    val isRefresh = element.actionType.lowercase().let { it == "refresh" || it == "submit" }
 
     val action: AdaptiveCardAction? = when (element.actionType.lowercase()) {
         "refresh" -> null
@@ -1027,14 +1026,14 @@ private fun RenderActionButton(
         else -> element.url?.takeIf { it.isNotBlank() }
             ?.let { AdaptiveCardAction.OpenUrl(element.title, it, element.icon) }
     }
-    if (!isRefresh && action == null) return
+    if (!isRefresh && action == null && !element.disabled) return // 禁用的占位按钮常没有 url
 
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(Radius.sm))
             .applyMargin(element.margin)
             .applyPadding(element.padding)
-            .clickable { if (isRefresh) onRefresh() else action?.let(onAction) },
+            .clickable(enabled = !element.disabled) { if (isRefresh) onRefresh(element.title, element.value) else action?.let(onAction) },
         shape = RoundedCornerShape(Radius.sm),
         color = effectiveBg,
         border = if (element.style == ContainerStyle.DEFAULT) null
@@ -1192,3 +1191,4 @@ private fun parseHexColor(hex: String): Color? {
         Color(android.graphics.Color.parseColor(hex))
     }.getOrNull()
 }
+

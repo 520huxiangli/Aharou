@@ -304,13 +304,14 @@ class ViewImageTool @Inject constructor(
         val visionModel = visionModelSettingsRepository.getVisionModel().trim()
         if (visionProviderId.isNotEmpty() && visionModel.isNotEmpty()) {
             val config = aiProviderRepository.getProviderById(visionProviderId)
-            if (config != null && config.isEnabled && config.apiKey.isNotBlank()) {
+            if (config != null && config.isEnabled && config.hasUsableApiKey) {
                 return createStandaloneProvider(config.copy(selectedModel = visionModel), sessionId)
             }
         }
         val config = resolveCurrentChatConfig(sessionId)
             ?: throw IllegalStateException("尚未配置 AI 供应商，请到设置中添加并选择一个")
-        if (config.apiKey.isBlank()) throw IllegalStateException("「${config.name}」未填写 API Key")
+        // 多 Key 模式下 apiKey 是空的（Key 全在 apiKeys 里），所以按「是否有可用 Key 或免鉴权 BaseUrl」判断
+        if (!config.hasUsableApiKey) throw IllegalStateException("「${config.name}」未填写 API Key")
         if (config.effectiveModel.isBlank()) throw IllegalStateException("「${config.name}」未选择模型")
         return createStandaloneProvider(config, sessionId)
     }
@@ -322,7 +323,7 @@ class ViewImageTool @Inject constructor(
             val boundModel = session?.model
             if (!boundProviderId.isNullOrBlank()) {
                 val config = aiProviderRepository.getProviderById(boundProviderId)
-                if (config != null && config.isEnabled && config.apiKey.isNotBlank()) {
+                if (config != null && config.isEnabled && config.hasUsableApiKey) {
                     return if (!boundModel.isNullOrBlank()) config.copy(selectedModel = boundModel) else config
                 }
             }
@@ -331,7 +332,7 @@ class ViewImageTool @Inject constructor(
         val defaultModel = defaultModelSettingsRepository.getDefaultModel()
         if (defaultProviderId.isNotBlank() && defaultModel.isNotBlank()) {
             val config = aiProviderRepository.getProviderById(defaultProviderId)
-            if (config != null && config.isEnabled && config.apiKey.isNotBlank()) {
+            if (config != null && config.isEnabled && config.hasUsableApiKey) {
                 return config.copy(selectedModel = defaultModel)
             }
         }
@@ -348,7 +349,7 @@ class ViewImageTool @Inject constructor(
                 it.chatCacheKeyEnabled = config.openaiChatCacheKey
             }
         }
-        provider.apiKey = config.apiKey
+        provider.apiKey = config.firstUsableApiKey
         provider.baseUrl = config.baseUrl
         provider.model = config.effectiveModel
         provider.useFullUrl = config.useFullUrl

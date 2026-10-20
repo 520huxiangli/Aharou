@@ -12,13 +12,13 @@ import javax.inject.Singleton
 /**
  * 跨工作区信箱：共享区 `~/shared/inbox/<工作区标识>.md`，一行一条消息。
  *
- * 不同工作区刻意隔离（会话、记忆互相看不见），信箱是它们之间唯一的「留话」通道：
- * 每轮开始组装系统提示词时，把本工作区文件里比已读位置更新的行汇总成一条提示注入。
+ * 不同工作区刻意隔离（会话、记忆互相看不见），信箱是它们之间唯一的「留话」通道。
  *
  * - 文件**懒创建**：只在第一次真往里写消息（由 AI 用 writeFile 完成）时才存在，读到不存在的文件就是空信箱，
  *   不挂到工作区创建流程上。
- * - 已读位置按工作区记在 `~/.aharou/inbox-state/<工作区标识>.txt`，内容就是已读行数；
- *   跟着 App 数据走，升级不丢，清 App 数据后归零 → 信箱里现存的消息会被再提示一次（不丢消息，宁可多提示一遍）。
+ * - **文件即队列**：消息交给会话之后由 [dropDelivered] 从文件里删掉，文件里只留还没送达的消息。
+ *   不另存「已读位置」——那份行号指针一旦和文件对不上（投递半路中断、文件被重写、多会话并发），
+ *   消息就会被永久标成已读而没人看见。
  * - 无新消息时不写盘、不注入，零开销。
  * - 仅本地执行模式：远程 SSH 工作区的 `~/shared` 在对端服务器上，并不指向 App 这份共享目录，
  *   收发会是两张皮，所以远程模式直接停用（返回空、不提示地址）。
@@ -34,20 +34,30 @@ class SharedInbox @Inject constructor(
         return WorkspaceIdentity.idFor(workspacePath)?.let { "$CONTAINER_INBOX_DIR/$it.md" }
     }
 
-    /** 只读不推进已读位置。 */
+    /** 信箱里全部未送达的消息行；文件不存在视为空信箱（只读不建）。 */
     fun peek(workspacePath: String): List<String> = synchronized(lock) {
         if (!enabled()) return emptyList()
-        unreadMessages(messages(workspacePath), readCount(workspacePath))
+        messages(workspacePath)
     }
 
-    /** 取未读并把已读位置推进到文件末尾；无新消息时不写盘。 */
-    fun consume(workspacePath: String): List<String> = synchronized(lock) {
-        if (!enabled()) return emptyList()
+    /**
+     * 把已经交给会话的前 [count] 行从文件里删掉。
+     *
+     * [count] 传 peek 时拿到的条数：期间又追加进来的新行不在删除范围内，会留在文件里等下一次投递。
+     * 删空就连文件一起删掉，回到「懒创建」状态。
+     *
+     * 调用方必须在**投递成功之后**才调它：反过来的话，投递路上任何一处岔子都会让消息凭空消失。
+     */
+    fun dropDelivered(workspacePath: String, count: Int) = synchronized(lock) {
+        if (count <= 0 || !enabled()) return@synchronized
+        val file = inboxFile(workspacePath) ?: return@synchronized
+        if (!file.isFile) return@synchronized
         val all = messages(workspacePath)
-        val read = readCount(workspacePath)
-        val unread = unreadMessages(all, read)
-        if (all.size != read) writeCount(workspacePath, all.size)
-        unread
+        if (all.isEmpty()) return@synchronized
+        val rest = all.drop(count.coerceAtMost(all.size))
+        runCatching {
+            if (rest.isEmpty()) file.delete() else file.writeText(rest.joinToString("\n") + "\n")
+        }.onFailure { FileLogger.w(TAG, "清理已投递信箱消息失败: ${it.message}", it) }
     }
 
     /** 信箱当前是否可用（远程 SSH 模式下共享区不在本机，收发是两张皮）。 */
@@ -70,28 +80,9 @@ class SharedInbox @Inject constructor(
         WorkspaceIdentity.idFor(workspacePath)
             ?.let { File(File(containerInstaller.sharedDir, INBOX_DIR), "$it.md") }
 
-    private fun stateFile(workspacePath: String): File? =
-        WorkspaceIdentity.idFor(workspacePath)
-            ?.let { File(File(containerInstaller.aharouDir, STATE_DIR), "$it.txt") }
-
-    private fun readCount(workspacePath: String): Int {
-        val file = stateFile(workspacePath) ?: return 0
-        if (!file.isFile) return 0
-        return runCatching { file.readText().trim().toInt() }.getOrDefault(0)
-    }
-
-    private fun writeCount(workspacePath: String, count: Int) {
-        val file = stateFile(workspacePath) ?: return
-        runCatching {
-            file.parentFile?.mkdirs()
-            file.writeText(count.toString())
-        }.onFailure { FileLogger.w(TAG, "写共享区信箱已读位置失败: ${it.message}", it) }
-    }
-
     companion object {
         private const val TAG = "SharedInbox"
         private const val INBOX_DIR = "inbox"
-        private const val STATE_DIR = "inbox-state"
 
         /** 信箱通知的发送方标识：通知卡片据此把「跨工作区消息」和「子代理消息」区分开。 */
         const val NOTIFICATION_SENDER_ID = "shared-inbox"
@@ -102,7 +93,7 @@ class SharedInbox @Inject constructor(
         /** 一次最多注入多少条：积压过多时只给最近的，避免一条通知把上下文撑爆。 */
         const val MAX_INJECTED = 20
 
-        /** 已读位置的读改写要串行：同一工作区可能有两个会话同时开轮。 */
+        /** 读写要串行：同一工作区可能有两个会话同时开轮。 */
         private val lock = Any()
 
         /** 写入路径是否落在共享区信箱目录：写入工具据此判断要不要通知投递。 */
@@ -116,10 +107,10 @@ class SharedInbox @Inject constructor(
             text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
 
         /**
-         * 未读 = 已读位置之后的行。
+         * 按「已读行数」切未读。
          *
-         * 已经读到的条数大于当前行数说明文件被重写过、旧位置失效，按「全部都是新的」处理——
-         * 宁可多提示一遍，也不让新消息被旧位置吃掉。
+         * 信箱改成投递即清空之后运行时不再走这条路径，保留它是给 `SharedInboxTest` 里的旧用例恒温；
+         * 新代码请直接用 [peek]（返回的就已经是未送达的全部消息）。
          */
         fun unreadMessages(all: List<String>, readCount: Int): List<String> = when {
             readCount <= 0 -> all

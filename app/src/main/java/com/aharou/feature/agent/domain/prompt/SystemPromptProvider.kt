@@ -245,15 +245,14 @@ class SystemPromptProvider @Inject constructor(
     }
 
     /**
-     * 跨工作区信箱：本工作区 `~/shared/inbox/<标识>.md` 里比已读位置更新的行，汇总成**一条**系统提示。
+     * 跨工作区信箱：本工作区 `~/shared/inbox/<标识>.md` 里的未送达消息，汇总成**一条**系统提示。
      *
-     * 无未读时整段不出现（零开销、不打扰）；有未读时顺手推进已读位置，所以同一批消息只提醒一次。
-     * 位置按工作区存而非按会话存，切会话不会重复提示。
+     * 无未读时整段不出现（零开销、不打扰）；有未读时提示完就把这些行从文件里清掉，所以同一批消息只提醒一次。
      */
     private inner class SharedInboxSource : PromptSource {
         override fun build(ctx: AgentContext): String? = build(ctx, consume = true)
 
-        /** [consume] 为 false 时只读不推动已读位置（手动压缩等不发用户轮次的场景）。 */
+        /** [consume] 为 false 时只读、不清信箱（手动压缩等不发用户轮次的场景）。 */
         fun build(ctx: AgentContext, consume: Boolean): String? {
             if (ctx.projectRoot.isBlank()) return null
             // 先空读一次：没有新消息就到此为止，不查库、不写盘。
@@ -266,13 +265,11 @@ class SystemPromptProvider @Inject constructor(
             if (unread.isEmpty()) return null
             // 子代理与父会话同属一个工作区：在这里消费会让父会话再也收不到这些消息。
             if (isSubAgentSession(ctx)) return null
-            // 以消费时重新算出的未读为准：两次读之间新追加的行也能一条不少地展示。
-            val delivered = if (consume) {
-                runCatching { sharedInbox.consume(ctx.projectRoot) }
-                    .onFailure { FileLogger.w(TAG, "推进共享区信箱已读位置失败: ${it.message}", it) }
-                    .getOrDefault(unread)
-            } else {
-                unread
+            // 提示词已经带上这批消息，就立刻从信箱里清掉，避免下一轮重复注入
+            val delivered = unread
+            if (consume) {
+                runCatching { sharedInbox.dropDelivered(ctx.projectRoot, delivered.size) }
+                    .onFailure { FileLogger.w(TAG, "清理已投递信箱消息失败: ${it.message}", it) }
             }
             if (delivered.isEmpty()) return null
             val shown = SharedInbox.latest(delivered)

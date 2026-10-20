@@ -72,7 +72,7 @@ fun ProviderDashboardBar(
     maxExpandedBodyHeight: Dp,
     modifier: Modifier = Modifier,
     forceCollapse: Boolean = false,
-    onRefreshByButton: () -> Unit = {},
+    onRefreshByButton: (String, String?) -> Unit = { _, _ -> },
     onExpandedChange: (Boolean) -> Unit = {},
     /** 卡片里的外链交由此回调处理（走内置浏览器）；不传时退回系统浏览器，保证任何宿主都能用。 */
     onOpenInBrowser: ((String) -> Unit)? = null

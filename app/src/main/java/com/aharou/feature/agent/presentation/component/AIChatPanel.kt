@@ -689,6 +689,9 @@ fun AIChatPanel(
     // 余额/待办面板展开状态：展开时叠加面板联动折叠，避免输入框被双重顶开
     var dashboardExpanded by rememberSaveable { mutableStateOf(false) }
     var todoExpanded by rememberSaveable { mutableStateOf(false) }
+    // 面板输入框的值按会话隔离：切会话就清空，避免上一会话填的值串到新会话。
+    // 用 remember 而非 rememberSaveable：Map 不能直接进 Bundle，面板输入本来就是临时值。
+    var dashboardInputs by remember(currentSessionId) { mutableStateOf(emptyMap<String, String>()) }
     // ProviderDashboardBar 仅在有面板脚本的 provider 下渲染（见 ChatInputBar）。无该栏时
     // dashboardExpanded 可能残留 true：面板曾展开后随 provider 切换/脚本移除而卸载，LaunchedEffect
     // 上报链路中断无法复位，直接拿它做 forceCollapse 会把授权/询问/计划面板永久压成收起态。
@@ -700,7 +703,9 @@ fun AIChatPanel(
         lastInput: Int = 0,
         lastOutput: Int = 0,
         lastCached: Int = 0,
-        refreshReason: String = ""
+        refreshReason: String = "",
+        buttonTitle: String = "",
+        buttonValue: String = ""
     ): DashboardContext {
         val curSessionId = currentSessionId.orEmpty()
         val agentStateStr = when (agentState) {
@@ -743,7 +748,10 @@ fun AIChatPanel(
             sessionMode = currentMode.name.lowercase(),
             // 「默认」档没有 apiValue，环境变量给空串（仪表盘脚本据此判断未指定档位）。
             reasoningEffort = reasoningEffort.apiValue.orEmpty(),
-            refreshReason = refreshReason
+            refreshReason = refreshReason,
+            buttonTitle = buttonTitle,
+            buttonValue = buttonValue,
+            inputs = dashboardInputs
         )
     }
 
@@ -769,7 +777,8 @@ fun AIChatPanel(
     )
     val latestActiveProvider by rememberUpdatedState(activeProvider)
     // 最近一次请求报告的输入 token，近似当前上下文规模；用于下方「长会话」提示。
-    var lastInputTokens by remember { mutableStateOf(0) }
+    // 绑当前会话 id：切到新会话必须归零，否则会继续拿上一个会话的规模弹「长会话」提示。
+    var lastInputTokens by remember(currentSessionId) { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         // 流式响应期间每个 chunk 都会产生一个 llmCallEvent。以前每个事件都 force 跑一遍面板脚本，
         // 而脚本要起 proot 进程，一两秒一遍会把主线程拖到 ANR（实测 2026-09-30 23:56 触发过）。
@@ -1679,91 +1688,100 @@ fun AIChatPanel(
                 state = fileMentionState, busy = isBusy,
                 onSelect = { viewModel.applyFileMention(it) }
             )
-            ChatInputBar(
-                value = inputText,
-                onValueChange = viewModel::updateInputDraft,
-                onSend = { text -> sendMessage(text) },
-                enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,
-                onStop = { viewModel.stopAgent() },
-                onForceStop = { viewModel.forceStopAgent() },
-                isBusy = isBusy,
-                canForceStop = currentSessionId?.let { it in activeAgentSessions } == true,
-                workspaceViewModel = workspaceViewModel,
-                onStopCurrentSessions = { viewModel.stopAllAgents() },
-                onOpenDashboardUrl = { url ->
-                    // 自定义面板里的链接走内置浏览器：先建/选中标签页再跳过去。
-                    viewModel.browserTabPool.selectOrCreateTabForURL(url)
-                    onNavigateToBrowser()
-                },
-                activeProvider = activeProvider,
-                providers = providers,
-                modelMetadata = modelMetadata,
-                onSelectModel = { p, m ->
-                    viewModel.setSessionProviderModel(p, m)
-                },
-                currentMode = currentMode,
-                onToggleMode = { viewModel.setSessionMode(it) },
-                reasoningEffort = reasoningEffort,
-                onReasoningEffortChange = { viewModel.setSessionReasoningEffort(it) },
-                pendingAttachments = pendingAttachments,
-                onRemoveAttachment = ::removePendingAttachment,
-                onReadAttachment = { path -> viewModel.readAttachmentText(path) },
-                pastedTexts = pastedTexts,
-                onStashPaste = { viewModel.stashPastedText(it) },
-                onRemovePaste = { viewModel.removePastedText(it) },
-                canUploadFiles = canUploadFiles,
-                canUploadImages = canUploadImages,
-                onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-                onUploadImage = {
-                    imagePicker.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                onTakePhoto = ::takePhoto,
-                slashCommands = slashCommands,
-                queuedRequests = queuedRequests,
-                onRemoveQueued = { viewModel.removeQueuedRequest(it) },
-                onMoveQueued = { from, to -> viewModel.moveQueuedRequest(from, to) },
-                onEditQueued = { queuedEditing = it },
-                onInterjectQueued = { viewModel.interjectQueuedRequest(it) },
-                dashboardState = currentDashboardState,
-                todoItems = currentTodoItems,
-                sessionId = currentSessionId.orEmpty(),
-                onTodoExpandedChange = { todoExpanded = it },
-                // 键盘弹出不再强制收起：面板自己会在展开前先收键盘（不然点了没反应）。
-                // 这里只保留弹窗/提问/审批这类遮罩场景的强制收起。
-                forceCollapseDashboard = pendingPermission != null || pendingQuestion != null || planApproval != null,
-                onDashboardExpandedChange = { dashboardExpanded = it },
-                onRefreshDashboard = {
-                    activeProvider?.let {
-                        val context = buildDashboardContext(refreshReason = "manual")
-                        settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
-                    }
-                },
-                onRefreshDashboardByButton = {
-                    activeProvider?.let {
-                        val context = buildDashboardContext(refreshReason = "button")
-                        settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
-                    }
-                },
-                tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
-                tokenProgress = run {
-                    val contextLimit = activeModelMetadata?.let {
-                        com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)
-                    } ?: 0
-                    val usage = contextUsages[currentSessionId]?.takeIf { sessionLastInputTokens > 0 || isBusy }
-                    if (contextLimit > 0) {
-                        (usage?.inputTokens ?: sessionLastInputTokens).toFloat() / contextLimit
-                    } else 0f
-                },
-                isScrolling = listState.isScrollInProgress,
-                forceOpenModelSheet = onboardingStep == OnboardingStep.SIMULATE_CHOOSE_MODEL,
-                onSelectModelInOnboarding = onSelectModelInOnboarding,
-                onModelSheetDismiss = onDismissModelSheetInOnboarding,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onboardingTarget(OnboardingStep.SEND_MESSAGE)
-            )
+            DashboardInputsProvider(
+                inputs = dashboardInputs,
+                onInputChange = { id, text -> dashboardInputs = dashboardInputs + (id to text) }
+            ) {
+                ChatInputBar(
+                    value = inputText,
+                    onValueChange = viewModel::updateInputDraft,
+                    onSend = { text -> sendMessage(text) },
+                    enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,
+                    onStop = { viewModel.stopAgent() },
+                    onForceStop = { viewModel.forceStopAgent() },
+                    isBusy = isBusy,
+                    canForceStop = currentSessionId?.let { it in activeAgentSessions } == true,
+                    workspaceViewModel = workspaceViewModel,
+                    onStopCurrentSessions = { viewModel.stopAllAgents() },
+                    onOpenDashboardUrl = { url ->
+                        // 自定义面板里的链接走内置浏览器：先建/选中标签页再跳过去。
+                        viewModel.browserTabPool.selectOrCreateTabForURL(url)
+                        onNavigateToBrowser()
+                    },
+                    activeProvider = activeProvider,
+                    providers = providers,
+                    modelMetadata = modelMetadata,
+                    onSelectModel = { p, m ->
+                        viewModel.setSessionProviderModel(p, m)
+                    },
+                    currentMode = currentMode,
+                    onToggleMode = { viewModel.setSessionMode(it) },
+                    reasoningEffort = reasoningEffort,
+                    onReasoningEffortChange = { viewModel.setSessionReasoningEffort(it) },
+                    pendingAttachments = pendingAttachments,
+                    onRemoveAttachment = ::removePendingAttachment,
+                    onReadAttachment = { path -> viewModel.readAttachmentText(path) },
+                    pastedTexts = pastedTexts,
+                    onStashPaste = { viewModel.stashPastedText(it) },
+                    onRemovePaste = { viewModel.removePastedText(it) },
+                    canUploadFiles = canUploadFiles,
+                    canUploadImages = canUploadImages,
+                    onUploadFile = { filePicker.launch(arrayOf("*/*")) },
+                    onUploadImage = {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    onTakePhoto = ::takePhoto,
+                    slashCommands = slashCommands,
+                    queuedRequests = queuedRequests,
+                    onRemoveQueued = { viewModel.removeQueuedRequest(it) },
+                    onMoveQueued = { from, to -> viewModel.moveQueuedRequest(from, to) },
+                    onEditQueued = { queuedEditing = it },
+                    onInterjectQueued = { viewModel.interjectQueuedRequest(it) },
+                    dashboardState = currentDashboardState,
+                    todoItems = currentTodoItems,
+                    sessionId = currentSessionId.orEmpty(),
+                    onTodoExpandedChange = { todoExpanded = it },
+                    // 键盘弹出不再强制收起：面板自己会在展开前先收键盘（不然点了没反应）。
+                    // 这里只保留弹窗/提问/审批这类遮罩场景的强制收起。
+                    forceCollapseDashboard = pendingPermission != null || pendingQuestion != null || planApproval != null,
+                    onDashboardExpandedChange = { dashboardExpanded = it },
+                    onRefreshDashboard = {
+                        activeProvider?.let {
+                            val context = buildDashboardContext(refreshReason = "manual")
+                            settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
+                        }
+                    },
+                    onRefreshDashboardByButton = { buttonTitle, buttonValue ->
+                        activeProvider?.let {
+                            val context = buildDashboardContext(
+                                refreshReason = "button",
+                                buttonTitle = buttonTitle,
+                                buttonValue = buttonValue.orEmpty()
+                            )
+                            settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
+                        }
+                    },
+                    tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
+                    tokenProgress = run {
+                        val contextLimit = activeModelMetadata?.let {
+                            com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)
+                        } ?: 0
+                        val usage = contextUsages[currentSessionId]?.takeIf { sessionLastInputTokens > 0 || isBusy }
+                        if (contextLimit > 0) {
+                            (usage?.inputTokens ?: sessionLastInputTokens).toFloat() / contextLimit
+                        } else 0f
+                    },
+                    isScrolling = listState.isScrollInProgress,
+                    forceOpenModelSheet = onboardingStep == OnboardingStep.SIMULATE_CHOOSE_MODEL,
+                    onSelectModelInOnboarding = onSelectModelInOnboarding,
+                    onModelSheetDismiss = onDismissModelSheetInOnboarding,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onboardingTarget(OnboardingStep.SEND_MESSAGE)
+                )
+            }
             } // 悬浮层结束
 
             // 悬浮授权弹窗：独立于底栏排版流，悬浮于输入框上方，避免撑大底栏高度导致消息列表被顶上去。

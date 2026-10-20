@@ -46,7 +46,7 @@ class SharedInboxDelivery @Inject constructor(
 
     /**
      * 串行扫描：同一次写入可能同时触发「工具通知」与「目录监听」，两次扫描落到同一条未读上，
-     * 前一次投递会推进已读位置，后一次自然读到空。
+     * 前一次投递完成后会把这几行清掉，后一次自然读到空。
      */
     private suspend fun dispatch() = mutex.withLock {
         val deliver = handler ?: return@withLock

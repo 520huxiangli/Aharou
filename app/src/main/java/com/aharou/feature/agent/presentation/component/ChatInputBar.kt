@@ -193,7 +193,7 @@ internal fun ChatInputBar(
     tokenEstimated: Boolean = false,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
-    onRefreshDashboardByButton: () -> Unit = {},
+    onRefreshDashboardByButton: (String, String?) -> Unit = { _, _ -> },
     onDashboardExpandedChange: (Boolean) -> Unit = {},
     /** 自定义面板卡片里的外链：交由此回调在内置浏览器打开。 */
     onOpenDashboardUrl: (String) -> Unit = {},

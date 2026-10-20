@@ -37,6 +37,8 @@ description: "要写或改「自定义面板（DIY Dashboard）」脚本时使�
 | `AICODE_SESSION_MODE` | `build` / `plan` / `auto` |
 | `AICODE_REASONING_EFFORT` | `none` / `low` / `medium` / `high` / `xhigh` / `max`，未指定时为空 |
 | `AICODE_REFRESH_REASON` | 本次刷新原因：`session` / `llm` / `done` / `manual` / `button` |
+| `AICODE_INPUT_<ID>` | 卡片输入框的当前值（例如 `id=reg_count` → `AICODE_INPUT_REG_COUNT`），点按钮时才带 |
+| `AICODE_BUTTON_TITLE` / `_VALUE` | 被点的刷新按钮的标题 / `value`，原样透传、不限固定名字；仅 `REFRESH_REASON=button` 时有值 |
 | `AICODE_WORKSPACE` / `_NAME` | 当前工作区容器路径（恒为 `/root/workspace`）/ 目录名 |
 
 自定义脚本参数（供应商编辑 → 面板 DIY 里配 Key-Value）会注入为 `AICODE_KEY_<KEY>`，KEY 会规整成大写、只留字母数字下划线。参数值支持占位符 `{{PROVIDER_API_KEY}}`、`{{PROVIDER_ID}}`、`{{PROVIDER_NAME}}`、`{{PROVIDER_TYPE}}`、`{{BASE_URL}}`、`{{DEFAULT_MODEL}}`、`{{SELECTED_MODEL}}`、`{{MODEL}}`。
@@ -66,7 +68,7 @@ description: "要写或改「自定义面板（DIY Dashboard）」脚本时使�
 
 - 每次 LLM 请求返回后自动重跑脚本刷新。
 - 进入/切换会话、改脚本、点刷新按钮、`ActionButton action=refresh` 也会刷新。
-- 脚本里想区分来源就读 `AICODE_REFRESH_REASON`。
+- 脚本里想区分来源就读 `AICODE_REFRESH_REASON`；卡片上挂了多个刷新按钮时，再读 `AICODE_BUTTON_TITLE`（值同理看 `AICODE_BUTTON_VALUE`），按标题分支就能做到点谁干谁。
 
 ## 最小可用示例
 

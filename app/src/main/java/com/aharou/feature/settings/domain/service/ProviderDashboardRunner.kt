@@ -24,6 +24,8 @@ import com.aharou.feature.settings.domain.model.FactItem
 import com.aharou.feature.settings.domain.model.FactSetElement
 import com.aharou.feature.settings.domain.model.FlowRowElement
 import com.aharou.feature.settings.domain.model.ImageElement
+import com.aharou.feature.settings.domain.model.InputNumberElement
+import com.aharou.feature.settings.domain.model.InputTextElement
 import com.aharou.feature.settings.domain.model.MetricElement
 import com.aharou.feature.settings.domain.model.ProgressBarElement
 import com.aharou.feature.settings.domain.model.ProviderDashboardResult
@@ -138,6 +140,8 @@ class ProviderDashboardRunner @Inject constructor(
                 "tabset", "tabs" -> parseTabSet(obj)
                 "tab" -> parseTab(obj)
                 "button", "actionbutton", "action" -> parseActionButton(obj)
+                "input.text", "inputtext", "textinput" -> parseInput(obj, number = false)
+                "input.number", "inputnumber", "numberinput" -> parseInput(obj, number = true)
                 "textblock", "text" -> parseTextBlock(obj)
                 "progressbar", "progress" -> parseProgressBar(obj)
                 "metric", "stat", "statblock" -> parseMetric(obj)
@@ -535,11 +539,13 @@ class ProviderDashboardRunner @Inject constructor(
                 type.contains("openurl") || type == "url" || type == "link" -> "openUrl"
                 type.contains("copy") -> "copy"
                 type.contains("refresh") -> "refresh"
+                type == "submit" || type == "input.submit" -> "submit"
                 else -> {
                     val action = obj["action"]?.primitiveStringOrNull()?.trim()?.lowercase()
                     when {
                         action == "copy" || action == "copyToClipboard" -> "copy"
                         action == "refresh" || action == "reload" -> "refresh"
+                        action == "submit" || action == "send" -> "submit"
                         else -> "openUrl"
                     }
                 }
@@ -551,6 +557,7 @@ class ProviderDashboardRunner @Inject constructor(
             val color = CardColor.fromString(obj["color"]?.primitiveStringOrNull())
             val padding = parsePadding(obj["padding"])
             val margin = parsePadding(obj["margin"])
+            val disabled = obj["disabled"]?.primitiveBooleanOrNull() ?: false
             return ActionButtonElement(
                 title = title,
                 actionType = actionType,
@@ -560,8 +567,20 @@ class ProviderDashboardRunner @Inject constructor(
                 style = style,
                 color = color,
                 padding = padding,
-                margin = margin
+                margin = margin,
+                disabled = disabled
             )
+        }
+
+        /** 输入框：id 参与值回传（AICODE_INPUT_<ID>），没有 id 就无法把值带回脚本，直接跳过。 */
+        private fun parseInput(obj: JsonObject, number: Boolean): AdaptiveCardElement? {
+            val id = obj["id"]?.primitiveStringOrNull()?.trim().orEmpty()
+            if (id.isBlank()) return null
+            val label = (obj["label"] ?: obj["title"])?.primitiveStringOrNull().orEmpty()
+            val placeholder = obj["placeholder"]?.primitiveStringOrNull()
+            val value = (obj["value"] ?: obj["default"])?.primitiveStringOrNull().orEmpty()
+            return if (number) InputNumberElement(id, label, placeholder, value)
+            else InputTextElement(id, label, placeholder, value)
         }
 
         private fun parseDpOrNull(element: JsonElement?): Int? {
@@ -775,6 +794,13 @@ class ProviderDashboardRunner @Inject constructor(
             envs.add("AICODE_SESSION_MODE=${shellQuote(context.sessionMode)}")
             envs.add("AICODE_REASONING_EFFORT=${shellQuote(context.reasoningEffort)}")
             envs.add("AICODE_REFRESH_REASON=${shellQuote(context.refreshReason)}")
+            envs.add("AICODE_BUTTON_TITLE=${shellQuote(context.buttonTitle)}")
+            envs.add("AICODE_BUTTON_VALUE=${shellQuote(context.buttonValue)}")
+            // 输入框当前值：ID 规整成大写字母数字下划线，脚本直接读 AICODE_INPUT_<ID>
+            context.inputs.forEach { (key, value) ->
+                val envKey = sanitizeEnvKey(key)
+                if (envKey.isNotEmpty()) envs.add("AICODE_INPUT_$envKey=${shellQuote(value)}")
+            }
         }
 
         // [Aharou 改名] 过渡期同时注入两套前缀：新脚本用 AHAROU_*，旧脚本 AICODE_* 照常可用。
