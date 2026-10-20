@@ -202,7 +202,7 @@ sealed interface UpdateCheckUiState {
 sealed interface UpdateDownloadUiState {
     data object Idle : UpdateDownloadUiState
 
-    /** 正在挑选可用的下载源（GitCode → 加速镜像 → GitHub 原链）。 */
+    /** 正在挑选可用的下载源（cnb 发布仓 → 加速镜像 → GitHub 原链）。 */
     data object Resolving : UpdateDownloadUiState
 
     data class Downloading(
@@ -2256,7 +2256,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 应用内下载更新包：候选源依次尝试（GitCode → 加速镜像 → GitHub 原链），
+     * 应用内下载更新包：候选源依次尝试（cnb 发布仓 → 加速镜像 → GitHub 原链），
      * 进度与当前来源写入 [updateDownloadState] 供弹窗展示。
      */
     fun downloadUpdate() {
