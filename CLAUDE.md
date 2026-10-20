@@ -178,7 +178,7 @@ Tag 驱动发版，平时 `master` 上的提交不影响发布包。
 
 ### 步骤
 
-0. **更新内置模型数据（仅打 Tag 前执行）**：`python3 scripts/update-models-dev-assets.py` 从 models.dev 刷新 `app/src/main/assets/api.official.json`（只保留内置 12 个官方 provider、不引入新 provider，现有 provider 下可扩充模型与单价）。**该脚本只在打 Tag 发版前手动执行；日常提交 / 推 master / 其它开发流程一律不跑**。**失败时脚本非零退出且不改快照——直接跳过此步发版，不要重试或手改文件**；成功则把快照改动一并提交到即将打 Tag 的分支。
+0. **更新内置模型数据（发版前跑，但不单独成笔提交）**：`python3 scripts/update-models-dev-assets.py` 从 models.dev 刷新 `app/src/main/assets/api.official.json`（只保留内置 12 个官方 provider、不引入新 provider，现有 provider 下可扩充模型与单价）。**流程照旧每版跑**，但跑完要把快照改动 squash 进本版最近的实质提交（在功能提交上 `git commit --amend`，或 `fixup` + `rebase --autosquash`），**不要单独出一笔 `chore(build): 更新内置模型数据`，也不在发版记录 / 版本说明里列条目**——它在 Release changelog 里只会是噪音（2026-10-20 主人定）。**失败时脚本非零退出且不改快照——直接跳过发版此步，不要重试或手改文件**。
 1. **在 `master` 最新提交上打 Tag 并推送**：`git tag v1.7.0-rc1 && git push origin v1.7.0-rc1`。**严禁在 `feat/*` / `refactor/*` 上打 Tag 发版**，必须先合入 `master`。
 2. CI 捕获 `v*` Tag 后自动推导版本、构建 APK、发布 Release。
 3. **真机装 RC 包**，至少跑通 AI 对话 + 终端 + 容器启动三条主线。
