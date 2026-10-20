@@ -2632,6 +2632,7 @@
     <string name="memory_sync_never">还没同步过</string>
     <string name="memory_sync_auto">自动同步</string>
     <string name="memory_sync_auto_hint">后台每 %1$d 分钟推一次；打开开关时会立刻同步一次。</string>
+    <string name="memory_sync_system_limit_hint">自动同步由系统调度，省电策略或后台限制可能把它推迟；时间长时间不更新时，点上方「立即同步」即可立刻执行。</string>
     <string name="memory_sync_working">正在同步…</string>
     <string name="memory_sync_token_title">访问令牌</string>
     <string name="memory_sync_token_empty">还没填，不填推送会失败</string>

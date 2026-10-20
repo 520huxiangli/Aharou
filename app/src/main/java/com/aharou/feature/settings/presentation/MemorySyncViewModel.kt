@@ -40,7 +40,7 @@ class MemorySyncViewModel @Inject constructor(
     fun saveRepoUrl(url: String) {
         settings.repoUrl = url
         // 排不排周期任务取决于「开关 + 地址」两者，地址改了要重排；顺手推一次，省得等下一个周期。
-        scheduler.apply()
+        scheduler.apply(force = true)
         if (settings.autoSync) syncNow()
     }
 
@@ -51,7 +51,7 @@ class MemorySyncViewModel @Inject constructor(
 
     fun setAutoSync(enabled: Boolean) {
         settings.autoSync = enabled
-        scheduler.apply()
+        scheduler.apply(force = true)
         // 刚打开就立刻跑一次：不必等第一个周期，界面上也就不必再留一个手动按钮。
         if (enabled) syncNow()
     }

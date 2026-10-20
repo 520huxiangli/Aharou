@@ -598,8 +598,8 @@ class AIEditorApp : Application(), Configuration.Provider {
                 .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
             eventTriggerBus.postAppStart()
         }
-        // 记忆自动同步：每次启动重排一次（CANCEL_AND_REENQUEUE，会重建任务并归零状态，
-        // 否则一条 FAILED 的旧任务会永远卡着不执行）。
+        // 记忆自动同步：启动时按需重排。已有任务能跑就保留周期计时（KEEP），只有任务缺失或
+        // 已 FAILED/CANCELLED 才重建——否则每次冷启动都把周期归零，重启得勤的时候任务永远等不到。
         appScope.launch {
             runCatching { memorySyncScheduler.apply() }
                 .onFailure { FileLogger.e("AIEditorApp", "记忆同步调度初始化失败", it) }

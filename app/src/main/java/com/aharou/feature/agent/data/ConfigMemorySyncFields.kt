@@ -48,7 +48,7 @@ class ConfigMemorySyncFields @Inject constructor(
                         ?: throw ConfigError.TypeMismatch("string")
                     settings.repoUrl = url
                     // 排不排周期任务取决于「开关 + 地址」两者，地址改了要重排。
-                    scheduler.apply()
+                    scheduler.apply(force = true)
                 },
             ),
         )
@@ -83,7 +83,7 @@ class ConfigMemorySyncFields @Inject constructor(
                     val flag = (v as? ConfigValue.Bool)?.value
                         ?: throw ConfigError.TypeMismatch("boolean")
                     settings.autoSync = flag
-                    scheduler.apply()
+                    scheduler.apply(force = true)
                 },
             ),
         )
@@ -100,7 +100,7 @@ class ConfigMemorySyncFields @Inject constructor(
                     val minutes = (v as? ConfigValue.Int)?.value
                         ?: throw ConfigError.TypeMismatch("integer")
                     settings.autoSyncIntervalMinutes = minutes
-                    scheduler.apply()
+                    scheduler.apply(force = true)
                 },
             ),
         )

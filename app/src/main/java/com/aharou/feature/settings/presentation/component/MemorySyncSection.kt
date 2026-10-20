@@ -122,6 +122,16 @@ internal fun MemorySyncSection(viewModel: MemorySyncViewModel = hiltViewModel())
             )
         }
 
+        // 周期任务由系统调度：省电策略、后台限制都可能把它推迟，用户看到时间不更新时先想到这里。
+        if (autoSync) {
+            Text(
+                text = stringResource(R.string.memory_sync_system_limit_hint),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm),
+            )
+        }
+
         // 上次同步的明细：把数量摊开；「疑似在其他设备被删除」只提示，不执行删除。
         val counts = lastCounts
         if (counts != null || pendingDeletions.isNotEmpty()) {
