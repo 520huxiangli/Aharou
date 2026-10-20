@@ -8,6 +8,8 @@ import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.MemorySyncManager
+import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.session.GhostModeStore
@@ -25,6 +27,10 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.intOrNull
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 class MemoryTool @Inject constructor(
@@ -32,9 +38,17 @@ class MemoryTool @Inject constructor(
     private val aharouMemory: com.aharou.core.memory.AharouMemoryStore,
     private val memoryTrace: MemoryTraceLog,
     private val chatSessionDao: ChatSessionDao,
+    private val memorySyncManager: MemorySyncManager,
+    private val memorySyncSettings: MemorySyncSettings,
 ) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
+
+        /** `sync` 的最小间隔：同步一次要 collect + 拉取 + 推送，连刷只会白烧网络。 */
+        const val SYNC_MIN_INTERVAL_MS = 60_000L
+
+        /** 上次发起同步的时刻（进程内）；成功完成的时间另由 lastSyncAt 持久化。 */
+        val lastSyncAttemptAt = AtomicLong(0L)
     }
 
     override val name = "memory"
@@ -48,7 +62,8 @@ class MemoryTool @Inject constructor(
         }
     }
     override val description =
-        "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+        "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案；" +
+            "sync=立刻把记忆同步到用户配置的仓库）。发现新的用户偏好、项目约定或架构决策时主动记录。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -75,7 +90,7 @@ class MemoryTool @Inject constructor(
             name = "action",
             type = ParameterType.STRING,
             description = "操作类型：read=读取记忆正文；save=保存（创建或全量覆盖）；edit=局部编辑已有正文；delete=删除；list=列出所有记忆摘要",
-            enum = listOf("read", "save", "edit", "delete", "list", "search", "log", "fact", "mindstream", "core"),
+            enum = listOf("read", "save", "edit", "delete", "list", "search", "log", "fact", "mindstream", "core", "sync"),
             required = true
         ),
         "name" to ToolParameter(
@@ -176,6 +191,7 @@ class MemoryTool @Inject constructor(
                 "fact" -> handleFact(args)
                 "mindstream" -> handleMindstream(args)
                 "core" -> handleCore(args)
+                "sync" -> handleSync()
                 else -> ToolResult.Error("不支持的操作: $action", "UNSUPPORTED_ACTION")
             }
         } catch (e: Exception) {
@@ -189,6 +205,47 @@ class MemoryTool @Inject constructor(
         "save", "edit", "delete", "log", "fact", "mindstream" -> true
         "core" -> !args["content"]?.jsonPrimitive?.contentOrNull.isNullOrEmpty()
         else -> false
+    }
+
+    /**
+     * 立刻跑一次记忆同步。
+     *
+     * 与 `MemorySyncWorker` 走同一个 [MemorySyncManager] 单例，并发由它内部的 Mutex 兜底
+     * （第二个调用会拿到「已有同步正在进行中」）；这里只加一层 60 秒限频。
+     */
+    private suspend fun handleSync(): ToolResult {
+        val settings = memorySyncSettings
+        if (settings.repoUrl.isBlank()) {
+            return ToolResult.Error("还没有填记忆仓库地址，同步无处可推。", "SYNC_NO_REPO")
+        }
+        val now = System.currentTimeMillis()
+        val previous = lastSyncAttemptAt.get()
+        if (previous > 0 && now - previous < SYNC_MIN_INTERVAL_MS) {
+            val waitSeconds = (SYNC_MIN_INTERVAL_MS - (now - previous)) / 1000
+            return ToolResult.Success(
+                JsonPrimitive("刚同步过，${waitSeconds} 秒后可再试（同步是网络操作，不必连刷）。")
+            )
+        }
+        lastSyncAttemptAt.set(now)
+        val outcome = memorySyncManager.sync()
+        val at = settings.lastSyncAt.takeIf { it > 0 }
+            ?.let { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(it)) }
+            .orEmpty()
+        val summary = buildString {
+            append(if (outcome.success) "同步成功" else "同步失败：${outcome.message}")
+            if (outcome.success) {
+                append("（收上 ${outcome.collected} 个文件")
+                if (outcome.conflicts > 0) append("，${outcome.conflicts} 处冲突已保留双方")
+                if (outcome.pendingDeletions.isNotEmpty()) append("，疑似被其他设备删除 ${outcome.pendingDeletions.size} 个")
+                append("）")
+            }
+            if (at.isNotBlank()) append("；上次同步时间：$at")
+        }
+        return if (outcome.success) {
+            ToolResult.Success(JsonPrimitive(summary))
+        } else {
+            ToolResult.Error(summary, "SYNC_FAILED")
+        }
     }
 
     private fun handleList(projectRoot: String?, scope: MemoryScope?): ToolResult {
