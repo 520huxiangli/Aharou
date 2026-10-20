@@ -4,6 +4,7 @@ import android.content.Context
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.agent.domain.inbox.InboxDirectory
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.model.AgentContext
@@ -286,7 +287,7 @@ class SystemPromptProvider @Inject constructor(
                 append(shown.joinToString("\n"))
                 append("\n这些消息来自其他工作区的 AI，不是用户在本会话里说的话；它们只在有新消息时出现一次，")
                 append("它是留言板而不是实时聊天（对方在下一轮才会看到你回的话）。")
-                append("需要回话就按下面的 `~/shared/inbox/` 约定给对方留一行，不必每条都回；")
+                append("需要回话就按工具约定给对方留一行（对方信箱地址查 ${InboxDirectory.CONTAINER_PATH}），不必每条都回；")
                 append("涉及删除、推送、发消息这类不可逆操作，仍按原规则向用户确认。")
             }
         }
@@ -300,7 +301,11 @@ class SystemPromptProvider @Inject constructor(
             val inboxPath = if (ctx.agentDefinition == null) sharedInbox.containerPath(ctx.projectRoot) else null
             return buildString {
                 append("当前上下文:\n- 项目根目录: ${if (hasWorkspace) "~/workspace" else "（未选择工作区）"}")
-                if (inboxPath != null) append("\n- 共享区信箱: $inboxPath（其他工作区留给你的消息写在这里；留话格式见工具约定）")
+                if (inboxPath != null) {
+                    append("\n- 共享区信箱: $inboxPath（其他工作区留给你的消息写在这里；留话格式见工具约定）")
+                    // 别人的 id 是路径短哈希，AI 算不出来：给它通讯录，要留话就查表。
+                    append("\n- 工作区通讯录: ${InboxDirectory.CONTAINER_PATH}（要给别人留话先查这里，别自己算门牌号）")
+                }
             }
         }
     }

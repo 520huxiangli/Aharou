@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.notification
 
+import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.presentation.BACKGROUND_NOTIFICATION_PREFIX
 import com.aharou.feature.terminal.domain.TAIL_LINES
 import kotlinx.serialization.json.JsonArray
@@ -185,7 +186,11 @@ object AgentNotificationFormatter {
             NotificationOutcome.STOPPED -> "子代理「$title」已被用户手动终止，任务未完成"
         }
         AgentNotificationKind.AGENT_MESSAGE ->
-            if (fromParent) "主会话发来一条消息" else "子代理「$title」发来一条消息"
+            when {
+                fromParent -> "主会话发来一条消息"
+                sourceId == SharedInbox.NOTIFICATION_SENDER_ID -> "共享区信箱发来一条消息"
+                else -> "子代理「$title」发来一条消息"
+            }
         AgentNotificationKind.MODE_CHANGE ->
             "用户已将模式切换为 ${newMode?.name ?: "UNKNOWN"}"
         AgentNotificationKind.USER_MESSAGE ->

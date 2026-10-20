@@ -50,7 +50,8 @@ class SharedInbox @Inject constructor(
         unread
     }
 
-    private fun enabled(): Boolean =
+    /** 信箱当前是否可用（远程 SSH 模式下共享区不在本机，收发是两张皮）。 */
+    fun enabled(): Boolean =
         executionModeHolder.currentMode() != ExecutionMode.REMOTE_SSH
 
     /** 信箱正文的全部消息行；文件不存在视为空信箱（只读不建）。 */
@@ -91,6 +92,9 @@ class SharedInbox @Inject constructor(
         private const val TAG = "SharedInbox"
         private const val INBOX_DIR = "inbox"
         private const val STATE_DIR = "inbox-state"
+
+        /** 信箱通知的发送方标识：通知卡片据此把「跨工作区消息」和「子代理消息」区分开。 */
+        const val NOTIFICATION_SENDER_ID = "shared-inbox"
 
         /** 信箱目录的容器内路径，提示词与文档里都用这个写法。 */
         const val CONTAINER_INBOX_DIR = "~/shared/inbox"

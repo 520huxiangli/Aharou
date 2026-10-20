@@ -43,6 +43,8 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ChatSession
 import com.aharou.feature.agent.domain.model.ReasoningEffort
+import com.aharou.feature.agent.domain.inbox.InboxDirectory
+import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import com.aharou.feature.agent.domain.notification.AgentNotificationFormatter
 import com.aharou.feature.agent.domain.notification.AgentNotificationKind
@@ -185,6 +187,8 @@ class AIAgentViewModel @Inject constructor(
     private val subAgentEventBus: SubAgentEventBus,
     private val scheduledRunBus: ScheduledRunBus,
     private val agentNotificationCenter: AgentNotificationCenter,
+    private val sharedInbox: SharedInbox,
+    private val inboxDirectory: InboxDirectory,
     private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
@@ -1529,6 +1533,20 @@ class AIAgentViewModel @Inject constructor(
             }
         }
 
+        // 进入/切换工作区就把信箱未读投到该工作区的「默认会话」（最近更新的那个），
+        // 不必用户先在这个工作区发一句话、由那一轮去捞。没有会话就不投，不凭空造空会话。
+        viewModelScope.launch {
+            _currentWorkspace.collectLatest { path ->
+                if (path.isNotBlank()) withContext(Dispatchers.IO) { deliverInboxToDefaultSession(path) }
+            }
+        }
+
+        // 工作区列表或当前工作区变化时刷新共享区通讯录（幂等：内容没变不写盘）。
+        viewModelScope.launch {
+            combine(workspaceRepository.workspaces, _currentWorkspace) { list, _ -> list }
+                .collect { list -> withContext(Dispatchers.IO) { inboxDirectory.refresh(list) } }
+        }
+
         // 订阅后台命令完成事件：notify=true 的命令结束后自动注入消息并触发 AI 新一轮。
         // 会话忙碌期间到达的事件会被缓存，待本轮结束后合并成一条发送（见 [flushMergedNotifications]）。
         viewModelScope.launch {
@@ -1676,9 +1694,44 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
+     * 把某工作区信箱的未读投到它的默认会话——最近更新的那个根会话。
+     *
+     * 工作区里还没任何会话时不投：不为一条留言凭空造一个会话（用户切过去只会看到一个空壳，
+     * 而它下次真的开始聊时又会在轮首拿到这批消息）。
+     */
+    private suspend fun deliverInboxToDefaultSession(workspacePath: String) {
+        val unread = runCatching { sharedInbox.peek(workspacePath) }.getOrNull().orEmpty()
+        if (unread.isEmpty()) return
+        val session = runCatching { sessionUseCase.getMostRecentSessionOfWorkspace(workspacePath) }
+            .getOrNull() ?: return
+        deliverInboxMessages(session.id, workspacePath)
+    }
+
+    /**
      * 投递一条代理间消息：收件人忙碌时入 [AgentNotificationCenter]（本轮内工具结果搭车，或整轮结束后兜底），
      * 空闲时以一条通知消息触发其新一轮。消息正文随通知一并送达，收件方无需再另行读取。
      */
+    /**
+     * 把共享区信箱的未读消息作为一条**代理间通知**投递：与本机子代理消息同一通道，
+     * 忙碌时搭车进工具结果、空闲时作为一条通知消息起新一轮——用户看得到，模型也读得到。
+     *
+     * 这里先 consume：后面的系统提示注入读到空就不再重复提醒（单通道）。
+     */
+    private suspend fun deliverInboxMessages(sessionId: String, projectRoot: String) {
+        if (projectRoot.isBlank()) return
+        val unread = runCatching { sharedInbox.peek(projectRoot) }.getOrNull().orEmpty()
+        if (unread.isEmpty()) return
+        val delivered = runCatching { sharedInbox.consume(projectRoot) }.getOrDefault(unread)
+        if (delivered.isEmpty()) return
+        deliverAgentMessage(
+            recipientSessionId = sessionId,
+            senderSessionId = SharedInbox.NOTIFICATION_SENDER_ID,
+            senderTitle = "共享区信箱",
+            message = delivered.joinToString("\n"),
+            fromParent = false
+        )
+    }
+
     private suspend fun deliverAgentMessage(
         recipientSessionId: String,
         senderSessionId: String,
@@ -2020,6 +2073,7 @@ class AIAgentViewModel @Inject constructor(
                     _reasoningTimings.value = _reasoningTimings.value + (sessionId to (start to end))
                 }
             }
+            deliverInboxMessages(sessionId, projectRoot)
             agentTurnRunner.run(
                 AgentTurnRequest(
                     sessionId = sessionId,
