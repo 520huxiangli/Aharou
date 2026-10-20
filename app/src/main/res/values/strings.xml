@@ -694,6 +694,7 @@
     <string name="editor_unsaved_title">未保存的修改</string>
     <string name="editor_unsaved_message">当前文件有未保存的修改，是否保存？</string>
     <string name="editor_save_and_exit">保存并退出</string>
+    <string name="editor_save_and_switch">保存并切换</string>
     <string name="editor_dont_save">不保存</string>
     <string name="editor_close_tab">关闭标签页</string>
     <string name="editor_close_tab_unsaved_title">这个文件还有未保存的改动</string>
@@ -784,7 +785,10 @@
     <string name="chat_status_running_command">正在执行命令</string>
     <string name="chat_status_editing_file">正在编辑文件</string>
     <string name="chat_status_reading_file">正在读取文件</string>
+    <string name="chat_status_viewing_image">正在查看图片</string>
     <string name="chat_status_searching_web">正在联网搜索</string>
+    <string name="chat_status_browsing_web">正在操作浏览器</string>
+    <string name="chat_status_asking_user">正在询问用户</string>
     <string name="chat_status_generating_image">正在生成图片</string>
     <string name="chat_status_updating_todo">正在整理待办</string>
     <string name="chat_status_starting_subagent">正在启动子代理</string>
@@ -795,6 +799,7 @@
     <string name="chat_tool_calls_count">%1$d 次工具调用</string>
     <string name="chat_turn_running">执行中</string>
     <string name="chat_turn_completed">已完成 %1$s</string>
+    <string name="chat_turn_completed_plain">已完成</string>
     <string name="chat_context_usage">上下文已用 %1$d%%</string>
     <string name="chat_bg_command_done">后台命令已完成</string>
     <string name="chat_bg_commands_done">%1$d 个后台任务已完成</string>
@@ -966,9 +971,14 @@
     <string name="container_download_failed">下载失败：%1$s</string>
     <string name="container_download_list_empty">暂无可用镜像</string>
     <string name="container_download_done">已下载</string>
+    <string name="container_download_newer_available">有新版可下载</string>
+    <string name="container_download_checksum_failed">文件校验失败，可能被截断或篡改，请重试</string>
     <string name="container_download_size">大小：%1$s</string>
     <string name="container_download_delete_title">删除下载镜像</string>
     <string name="container_download_delete_confirm">删除「%1$s」的下载文件？已导入的容器将无法再解压。</string>
+    <string name="container_image_eol_ending_soon">即将停止支持</string>
+    <string name="container_image_eol_extended_only">仅延伸支持</string>
+    <string name="container_image_eol_end_of_life">已停止支持</string>
 
     <!-- Credential Editor -->
     <string name="credential_edit">编辑凭据</string>
@@ -1091,9 +1101,10 @@
     <string name="git_files_changed">%1$s 个文件改动</string>
     <string name="git_no_files_changed">该提交无文件改动</string>
     <string name="git_loading_files">正在加载改动文件…</string>
-    <string name="git_not_a_repo">当前工作区不是 Git 仓库</string>
-    <string name="git_init_desc">初始化后会在此创建 .git，之后可暂存、提交、关联远程。</string>
-    <string name="git_init_repo">初始化 Git 仓库</string>
+    <string name="git_not_a_repo">当前工作区还不是 Git 仓库</string>
+    <string name="git_init_desc_primary">可在此初始化新仓库，开始版本管理</string>
+    <string name="git_init_desc_secondary">若子目录已有 Git 仓库，也可直接选择使用</string>
+    <string name="git_init_repo">初始化新仓库</string>
     <string name="git_clone_repo">克隆远程仓库</string>
     <string name="git_clone_dialog_title">克隆 Git 仓库</string>
     <string name="git_clone_desc">当前工作区为空时直接克隆进去（不新建、不改名）；否则克隆到新建的独立工作区并自动切换过去。私有仓库可先在右上角凭据管理中配置访问凭据。</string>
@@ -1134,6 +1145,13 @@
     <string name="git_toast_action_failed">%1$s失败：%2$s</string>
     <string name="git_toast_checkout_success">已切换到 %1$s</string>
     <string name="git_toast_checkout_failed">切换失败：%1$s</string>
+    <string name="git_switch_repo">切换仓库</string>
+    <string name="git_pick_existing_repo">选择已有仓库</string>
+    <string name="git_repo_selector_title">选择仓库</string>
+    <string name="git_repo_not_repo">非仓库</string>
+    <string name="git_pick_repo_empty">当前工作区没有可选的目录</string>
+    <string name="git_toast_not_repo">该目录不是 Git 仓库</string>
+    <string name="git_toast_switch_repo_failed">切换仓库失败：%1$s</string>
     <string name="git_toast_diff_failed">加载差异失败</string>
     <string name="git_toast_path_copied">已复制路径</string>
     <string name="git_action_stage_all">全部暂存</string>
@@ -1441,6 +1459,7 @@
     <string name="scheduled_tasks_trigger_battery">电量变化</string>
     <string name="scheduled_tasks_trigger_network">网络变化</string>
     <string name="scheduled_tasks_trigger_boot">开机</string>
+    <string name="scheduled_tasks_trigger_app_start">应用启动</string>
     <string name="scheduled_tasks_trigger_package">来源应用</string>
     <string name="scheduled_tasks_trigger_package_hint">填应用包名（如 com.tencent.mm）；留空表示任意应用。需先在「软件权限」里开启通知使用权</string>
     <string name="scheduled_tasks_trigger_battery_below">电量阈值（%）</string>
@@ -1449,6 +1468,7 @@
     <string name="scheduled_tasks_trigger_ssid">WiFi 名</string>
     <string name="scheduled_tasks_trigger_ssid_hint">留空表示任意网络变化</string>
     <string name="scheduled_tasks_trigger_boot_hint">开机或重启完成后触发一次</string>
+    <string name="scheduled_tasks_trigger_app_start_hint">App 启动后触发一次；在后台被系统重新拉起也算一次启动</string>
     <string name="scheduled_tasks_conditions">触发条件（可选）</string>
     <string name="scheduled_tasks_condition_window_from">时段起</string>
     <string name="scheduled_tasks_condition_window_to">时段止</string>
@@ -1467,6 +1487,7 @@
     <string name="scheduled_tasks_desc_network">网络变化时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_desc_network_ssid">连接 %1$s 时 · 已运行 %2$d 次（%3$s）</string>
     <string name="scheduled_tasks_desc_boot">开机时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_app_start">应用启动时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_skipped_condition">条件不满足</string>
     <string name="scheduled_tasks_skipped_debounce">防抖中</string>
     <string name="scheduled_tasks_skipped_running">上一次还在跑</string>
@@ -1614,6 +1635,10 @@
     <string name="agent_perm_action_reject">拒绝</string>
     <string name="agent_perm_action_reply">回复</string>
     <string name="agent_perm_reply_hint">输入要发送给该会话的内容</string>
+    <string name="agent_prompt_question_title">%1$s 等待你回答</string>
+    <string name="agent_prompt_question_body">%1$d 个问题待回答：%2$s</string>
+    <string name="agent_prompt_plan_title">%1$s 的计划待审批</string>
+    <string name="agent_prompt_plan_body">计划已写好，等待你批准后执行</string>
     <string name="artifact_view_code">查看代码</string>
     <string name="artifact_preview_failed">内容渲染失败，可切换到「查看代码」查看源码</string>
     <string name="artifact_saved_to">已保存到 %1$s</string>
@@ -1900,6 +1925,8 @@
 
     <!-- Terminal Settings & Themes -->
     <string name="terminal_settings_title">终端设置</string>
+    <string name="settings_auto_close_agent_tabs_title">任务结束后自动清理临时终端</string>
+    <string name="settings_auto_close_agent_tabs_subtitle">只关闭 AI 为一次性任务打开、且已经结束的标签；你自己开的标签与常驻服务不受影响</string>
     <string name="terminal_theme_title">配色主题</string>
     <string name="terminal_font_size_title">字体大小</string>
     <string name="terminal_cursor_style_title">光标样式</string>

@@ -30,12 +30,25 @@ data class PendingConfigChange(
     val id: String = UUID.randomUUID().toString(),
     val items: List<PendingConfigChangeItem>,
     val caption: String?,
+    /**
+     * 为真表示这次请求必须由用户点击决定，任何自动批准策略都不生效。
+     * 读取明文（`config reveal` 敏感字段）走这条路：它不改任何值，但会把密钥
+     * 送进模型上下文，属于「读」的敏感动作，AUTO 模式也不该替用户点头。
+     */
+    val alwaysConfirm: Boolean = false,
 )
 
 /** Final disposition the gate reports back to the bridge. */
 sealed class ConfirmOutcome {
     /** User approved with the given (possibly per-row toggled) item set. */
-    data class Approved(val items: List<PendingConfigChangeItem>) : ConfirmOutcome()
+    data class Approved(
+        val items: List<PendingConfigChangeItem>,
+        /**
+         * 未经用户点击，由 AUTO 模式策略在入队前自动批准（弹窗与 120 秒计时都没发生）。
+         * 审计行据此打 [ConfigConfirmationGate.AUTO_APPROVE_CAPTION] 来源标记。
+         */
+        val auto: Boolean = false,
+    ) : ConfirmOutcome()
     /** User cancelled. */
     object Rejected : ConfirmOutcome()
     /** No user response within the gate's timeout window. */

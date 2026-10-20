@@ -80,7 +80,7 @@ class TerminalSessionTool @Inject constructor(
 
     override val name = "terminal"
     override val description =
-        "管理常驻后台终端会话（启动命令、发输入/快捷键、读输出、关闭标签）。会自行结束且需等结果的任务用 start + notify=true（结束后系统主动通知，勿轮询）；常驻服务用 notify=false，需要时再 read。中断前台进程用 key=ctrl+c。"
+        "管理常驻后台终端会话（启动命令、发输入/快捷键、读输出、关闭标签）。会自行结束且需等结果的任务用 start + notify=true（结束后系统主动通知，勿轮询）；常驻服务用 notify=false，需要时再 read。中断前台进程用 key=ctrl+c。任务完成后可关闭自己创建的临时标签（close），常驻服务与用户手动开的标签不要关；一次性任务（notify=true）的标签在回合结束、进程已退出后也会被自动关闭。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val capabilities = setOf(ToolCapability.EXECUTE_COMMANDS)
 

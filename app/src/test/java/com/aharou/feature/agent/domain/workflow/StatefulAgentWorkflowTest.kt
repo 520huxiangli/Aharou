@@ -123,7 +123,7 @@ class StatefulAgentWorkflowTest {
         every { provider.providerId } returns "provider"
         every { provider.model } returns "model"
         every { provider.completeStream(any(), any(), any(), any()) } returns chunks
-        every { prompts.build(any()) } returns "system"
+        every { prompts.build(any(), any()) } returns "system"
         // 卡死提示改为文件驱动后，workflow 首次用到时会 resolvePrompt；不打桩会抛 MockKException。
         every { prompts.resolvePrompt(any()) } returns "（测试）你在重复同一个动作"
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata("model", contextTokens = 100_000, supportsVision = true)
@@ -411,7 +411,7 @@ class StatefulAgentWorkflowTest {
             AgentMessage.UserMessage(content = "one"), AgentMessage.AssistantMessage(content = "two"),
             AgentMessage.UserMessage(content = "three"))
         val promptContext = slot<AgentContext>()
-        every { prompts.build(capture(promptContext)) } returns "subagent system"
+        every { prompts.build(capture(promptContext), any()) } returns "subagent system"
         coEvery { compactor.compactIfNeeded(any(), provider, "session", true, provider,
             "subagent system", listOf(readTool), 0, any()) } answers { CompactionResult(firstArg(), true) }
         assertTrue(workflow.compactSession("session") {})

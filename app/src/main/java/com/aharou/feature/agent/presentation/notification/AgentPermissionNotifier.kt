@@ -9,6 +9,10 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
@@ -16,12 +20,19 @@ import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
+import com.aharou.feature.agent.domain.tool.mode.PlanApprovalRequest
+import com.aharou.feature.agent.domain.tool.question.PendingUserQuestion
+import com.aharou.feature.widget.WidgetActions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 
 /** 用户在授权通知里「直接回复」的文本，按会话投递。 */
 data class AgentPermissionReply(val sessionId: String, val text: String)
@@ -34,6 +45,9 @@ data class AgentPermissionReply(val sessionId: String, val text: String)
  * 任何 Composable——只要进程还活着（等待授权期间前台保活服务会拉住进程），通知栏就能直接决策。
  * 动作统一由 [AgentPermissionActionReceiver] 广播回填，走与 App 内弹窗完全相同的
  * `resolve` 入口，避免另起一套逻辑导致状态分叉。
+ *
+ * 另外两类待批事件——`askUserQuestion` 提问与退出 PLAN 的计划审批——必须回界面作答，
+ * 这里只做后台提示（[syncPrompts]），点通知回到对应会话，不给动作按钮。
  *
  * 通知权限被拒时 [NotificationManagerCompat.notify] 会抛 SecurityException，这里静默吞掉，
  * 不影响原授权流程。
@@ -55,6 +69,41 @@ class AgentPermissionNotifier @Inject constructor(
     private val cache = mutableMapOf<String, Cached>()
 
     private data class Cached(val id: String, val title: String)
+
+    /** 等待用户「回界面处理」的两类待批事件（提问 / 计划审批）：通知只提示，不做动作。 */
+    private var pendingQuestion: PendingUserQuestion? = null
+    private var pendingPlanApproval: PlanApprovalRequest? = null
+
+    /** 提示类通知的状态保护：状态同步与生命周期回调可能来自不同线程。 */
+    private val promptLock = Any()
+
+    /** 已展示的提示类通知：kind → (请求标识, 通知 id)。 */
+    private val shownPrompts = mutableMapOf<String, Pair<String, Int>>()
+
+    private val promptScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 一张提示类通知的内容快照。 */
+    private data class PromptNotice(
+        val kind: String,
+        val sessionId: String,
+        val requestId: String,
+        val titleRes: Int,
+        val body: String,
+        val bigText: String
+    )
+
+    init {
+        // 只在后台提示：前台不打扰，退回后台时补发，回到前台立即撤下。
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : LifecycleEventObserver {
+            override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
+                when (event) {
+                    Lifecycle.Event.ON_STOP -> applyPromptNotices()
+                    Lifecycle.Event.ON_START -> cancelPromptNotices()
+                    else -> Unit
+                }
+            }
+        })
+    }
 
     /** 同步等待授权的会话集合：为每个会话展示/更新通知，撤下已解决会话的通知。 */
     suspend fun sync(sessionIds: Set<String>) {
@@ -89,6 +138,18 @@ class AgentPermissionNotifier @Inject constructor(
         }
     }
 
+    /**
+     * 同步「等待用户处理」的两类待批事件：askUserQuestion 提问与退出 PLAN 的计划审批。
+     *
+     * 这两类必须在界面里作答（选选项 / 批准计划），通知不提供动作按钮，只做提示并让点击回到
+     * 对应会话；仅在 App 处于后台时展示，用户处理完（状态清空）或回到前台立即撤销。
+     */
+    fun syncPrompts(question: PendingUserQuestion?, planApproval: PlanApprovalRequest?) {
+        pendingQuestion = question
+        pendingPlanApproval = planApproval
+        applyPromptNotices()
+    }
+
     /** 通知栏「直接回复」提交后重发一次通知，清空输入框里残留的文本。 */
     fun refresh(sessionId: String) {
         val cached = cache[sessionId] ?: return
@@ -108,6 +169,123 @@ class AgentPermissionNotifier @Inject constructor(
             FileLogger.w(TAG, "授权通知回复投递失败（缓冲已满）: sid=$sessionId")
         }
     }
+
+    /** 按当前状态与前后台情况重算提示类通知：该展示的补发，已不需要的撤掉。 */
+    private fun applyPromptNotices() {
+        if (inForeground()) {
+            cancelPromptNotices()
+            return
+        }
+        ensureChannel()
+        val notices = buildPromptNotices()
+        val kinds = notices.mapTo(HashSet()) { it.kind }
+        val staleIds = synchronized(promptLock) {
+            shownPrompts.keys.filter { it !in kinds }.mapNotNull { shownPrompts.remove(it)?.second }
+        }
+        staleIds.forEach { id -> runCatching { NotificationManagerCompat.from(context).cancel(id) } }
+        notices.forEach { notice -> promptScope.launch { postPromptNotice(notice) } }
+    }
+
+    private fun buildPromptNotices(): List<PromptNotice> {
+        val notices = mutableListOf<PromptNotice>()
+        pendingQuestion?.takeIf { it.sessionId.isNotBlank() }?.let { question ->
+            val first = question.questions.firstOrNull()?.question.orEmpty()
+            notices += PromptNotice(
+                kind = KIND_QUESTION,
+                sessionId = question.sessionId,
+                requestId = question.id,
+                titleRes = R.string.agent_prompt_question_title,
+                body = if (question.questions.size <= 1) first
+                else context.getString(R.string.agent_prompt_question_body, question.questions.size, first),
+                bigText = question.questions.joinToString("\n") { "· ${it.question}" }
+            )
+        }
+        pendingPlanApproval?.takeIf { it.sessionId.isNotBlank() }?.let { plan ->
+            val reason = plan.reason.trim()
+            notices += PromptNotice(
+                kind = KIND_PLAN,
+                sessionId = plan.sessionId,
+                requestId = reason.ifBlank { KIND_PLAN },
+                titleRes = R.string.agent_prompt_plan_title,
+                body = context.getString(R.string.agent_prompt_plan_body),
+                bigText = reason
+            )
+        }
+        return notices
+    }
+
+    private suspend fun postPromptNotice(notice: PromptNotice) {
+        val id = notificationId(notice.sessionId, notice.kind)
+        var previousId: Int? = null
+        val alreadyShown = synchronized(promptLock) {
+            val current = shownPrompts[notice.kind]
+            when {
+                current == null -> {
+                    shownPrompts[notice.kind] = notice.requestId to id
+                    false
+                }
+                current.first == notice.requestId -> true
+                else -> {
+                    if (current.second != id) previousId = current.second
+                    shownPrompts[notice.kind] = notice.requestId to id
+                    false
+                }
+            }
+        }
+        // 换了请求（乃至换了会话）：先把上一条撤掉，避免留下过期通知条。
+        previousId?.let { old -> runCatching { NotificationManagerCompat.from(context).cancel(old) } }
+        // 请求未变化就不重发，避免其它会话进入等待时把已在展示的通知重复弹一次。
+        if (alreadyShown) return
+        val title = sessionTitle(notice.sessionId)
+        // 取标题期间状态可能已清空或被前台撤销：确认仍需要展示再发。
+        val stillNeeded = synchronized(promptLock) { shownPrompts[notice.kind]?.first == notice.requestId }
+        if (!stillNeeded || inForeground()) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentTitle(context.getString(notice.titleRes, title))
+            .setContentText(notice.body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(notice.bigText.ifBlank { notice.body }))
+            .setContentIntent(openSessionIntent(notice.sessionId))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
+            .onFailure { FileLogger.w(TAG, "发送待处理通知失败: sid=${notice.sessionId} kind=${notice.kind}") }
+    }
+
+    /** 撤掉提示类通知（回到前台 / 状态已清空），同时清缓存，下次进入后台可重新提示。 */
+    private fun cancelPromptNotices() {
+        val ids = synchronized(promptLock) {
+            val ids = shownPrompts.values.map { it.second }
+            shownPrompts.clear()
+            ids
+        }
+        ids.forEach { id -> runCatching { NotificationManagerCompat.from(context).cancel(id) } }
+    }
+
+    /**
+     * 点击提示类通知：回到该会话。复用桌面组件已建立的 OPEN_CHAT 协议
+     * （[WidgetActions.ACTION_OPEN_CHAT] + 会话 id extra），MainActivity 收到后切会话并进聊天页。
+     */
+    private fun openSessionIntent(sessionId: String): PendingIntent = PendingIntent.getActivity(
+        context,
+        REQUEST_OPEN_SESSION + (sessionId.hashCode() and 0xffff),
+        Intent(context, MainActivity::class.java).apply {
+            action = WidgetActions.ACTION_OPEN_CHAT
+            putExtra(WidgetActions.EXTRA_SESSION_ID, sessionId)
+            // 与桌面组件一致：从通知点进来要回到已有任务栈，再经 onNewIntent 切会话。
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        },
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
+    private fun inForeground(): Boolean =
+        ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
     private suspend fun sessionTitle(sessionId: String): String =
         sessionUseCase.getSessionById(sessionId)?.title?.takeIf { it.isNotBlank() }
@@ -263,8 +441,13 @@ class AgentPermissionNotifier @Inject constructor(
         const val ACTION_REJECT = "com.aharou.action.PERMISSION_REJECT"
         const val ACTION_REPLY = "com.aharou.action.PERMISSION_REPLY"
         const val KEY_REPLY = "com.aharou.extra.PERMISSION_REPLY_TEXT"
+
+        /** 提示类通知的两种类型，同时用作「同一类型只保留最新一条」的键。 */
+        private const val KIND_QUESTION = "question"
+        private const val KIND_PLAN = "plan"
         private const val TAG = "AgentPermission"
         private const val NOTIFICATION_BASE = 210000
         private const val REQUEST_OPEN_APP = 210000
+        private const val REQUEST_OPEN_SESSION = 220000
     }
 }

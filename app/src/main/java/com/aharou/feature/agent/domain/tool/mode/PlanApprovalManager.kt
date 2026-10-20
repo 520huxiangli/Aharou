@@ -33,7 +33,7 @@ class PlanApprovalManager @Inject constructor(
         val decision = CompletableDeferred<PlanApprovalChoice>()
         currentDecision = decision
         currentSessionId = sessionId
-        _pendingApproval.value = PlanApprovalRequest(reason = reason)
+        _pendingApproval.value = PlanApprovalRequest(reason = reason, sessionId = sessionId.orEmpty())
 
         try {
             return decision.await()
@@ -73,7 +73,16 @@ class PlanApprovalManager @Inject constructor(
     }
 }
 
-data class PlanApprovalRequest(val reason: String)
+/**
+ * 一次计划审批请求。
+ *
+ * @param reason AI 给出的切换理由（计划摘要）。
+ * @param sessionId 发起审批的会话 id；用于在通知栏标注归属、点通知回到对应会话。
+ */
+data class PlanApprovalRequest(
+    val reason: String,
+    val sessionId: String = ""
+)
 
 enum class PlanApprovalChoice {
     /** 批准计划，切换到 BUILD 模式执行 */

@@ -15,7 +15,6 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.GitIgnoreMatcher
 import com.aharou.core.util.toUserMessage
 import com.aharou.core.util.formatCostUsd
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
@@ -74,7 +73,6 @@ import com.aharou.feature.terminal.domain.TerminalSessionManager
 import com.aharou.feature.terminal.domain.renewWakeLockUntilIdle
 import com.aharou.feature.terminal.domain.takeTailLines
 import com.aharou.feature.workspace.domain.FileAccessProvider
-import com.aharou.feature.workspace.domain.FileEntry
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.agent.domain.workflow.AgentEvent
@@ -190,10 +188,11 @@ class AIAgentViewModel @Inject constructor(
     private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
-    private val stewardBridge: StewardBridge,
+    private val turnEndBridge: AgentTurnEndBridge,
     private val todoItemDao: TodoItemDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
+    private val fileTreeRoots: ContainerTreeRootProvider,
     /** Aharou：浏览器池 —— 聊天页“自动围观”面板与 browser 工具共用同一池。 */
     val browserTabPool: com.aharou.feature.browser.BrowserTabPool,
     /** Aharou：影子屏控制器 —— 聊天页小屏幕实时预览与 vscreen 工具共用。 */
@@ -872,13 +871,18 @@ class AIAgentViewModel @Inject constructor(
     /** 手动刷新信号：远程模式无 inotify，只能靠它；本地模式作为兜底。 */
     private val _browseRefresh = MutableStateFlow(0)
 
+    private val browseTreeBuilder = FileBrowseTreeBuilder(fileAccess)
+
     /**
-     * 扁平化的可见文件树。listFiles 在本地是阻塞 IO、远程是网络调用，必须跑 IO 调度器。
+     * 扁平化的可见文件树（工作区根 + 当前容器根）。listFiles 在本地是阻塞 IO、远程是网络调用，必须跑 IO 调度器。
      * 监听工作区根与所有已展开目录：任一发生变动（不限 AI，终端与其它 App 同样算）或手动刷新都会重建树。
      * 只监听展开中的目录、不递归整棵树，避免大仓库开出大量 inotify 句柄。
      */
-    val browseState: StateFlow<FileBrowseState> = _expandedPaths
-        .flatMapLatest { expanded ->
+    val browseState: StateFlow<FileBrowseState> = combine(
+        _expandedPaths,
+        fileTreeRoots.containerRoot
+    ) { expanded, root -> expanded to root }
+        .flatMapLatest { (expanded, root) ->
             val watched = expanded + WorkspacePathMapper.CONTAINER_ROOT
             val triggers = merge(
                 watched.map { fileChangeHub.watchWorkspace(it).asDirtySignal() }.merge().debounce(BROWSE_DEBOUNCE_MS),
@@ -888,74 +892,13 @@ class AIAgentViewModel @Inject constructor(
             flow {
                 // 首次产出前由 stateIn 初值 Loading 占位；后续展开/折叠/刷新不再回到 Loading，
                 // StateFlow 保留上一份 Success 直到新树就绪，避免闪加载动画与滚动位置丢失。
-                emit(buildBrowseTree(expanded))
-                triggers.collect { emit(buildBrowseTree(expanded)) }
+                emit(browseTreeBuilder.build(expanded, root))
+                triggers.collect { emit(browseTreeBuilder.build(expanded, root)) }
             }.flowOn(Dispatchers.IO)
         }
         // 新树已就绪：清掉展开等待态（无论成功/出错都清，避免转圈卡死）。
         .onEach { _expandingPath.value = null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FileBrowseState.Loading)
-
-    /** 读取工作区根并按 [expanded] 递归展开，产出扁平的可见节点列表；根读取失败则整体报错。 */
-    private fun buildBrowseTree(expanded: Set<String>): FileBrowseState {
-        val root = WorkspacePathMapper.CONTAINER_ROOT
-        val rootEntries = runCatching { fileAccess.listFiles(root) }.getOrElse { e ->
-            FileLogger.w(TAG, "列目录失败: $root", e)
-            return FileBrowseState.Error(e.message)
-        }
-        val ignorePatterns = loadRootGitignore(root)
-        val rootExpanded = root in expanded
-        val nodes = mutableListOf<FileTreeNode>()
-        nodes += FileTreeNode(
-            entry = FileEntry(name = "workspace", isDirectory = true, size = 0, lastModified = 0),
-            path = root,
-            depth = 0,
-            isRoot = true,
-            isExpanded = rootExpanded
-        )
-        if (rootExpanded) {
-            appendBrowseChildren(root, rootEntries, depth = 1, expanded = expanded, ignorePatterns = ignorePatterns, relParts = emptyList(), out = nodes)
-        }
-        return FileBrowseState.Success(nodes)
-    }
-
-    /** 读工作区根 .gitignore（本地/远程均可）；去空行/注释/否定行，读不到则空。仅根 .gitignore，不处理嵌套。 */
-    private fun loadRootGitignore(root: String): List<String> = runCatching {
-        val path = "$root/.gitignore"
-        if (!fileAccess.exists(path)) return emptyList()
-        fileAccess.readFile(path).lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") && !it.startsWith("!") }
-            .map { it.removeSuffix("/") }
-            .toList()
-    }.getOrDefault(emptyList())
-
-    private fun appendBrowseChildren(
-        parent: String,
-        entries: List<FileEntry>,
-        depth: Int,
-        expanded: Set<String>,
-        ignorePatterns: List<String>,
-        relParts: List<String>,
-        out: MutableList<FileTreeNode>
-    ) {
-        // 按名字去重：文件系统的 readdir 在 FUSE 存储（外部工作区/模拟存储）上可能重复返回同一条目，
-        // AOSP 的 ReaddirHelper 亦做同样处理。同名条目会产生重复的节点 path，撞坏 LazyColumn 的 key。
-        for (entry in entries.distinctBy { it.name }.sortedWith(BROWSE_ORDER)) {
-            val path = "$parent/${entry.name}"
-            val parts = relParts + entry.name
-            val ignored = ignorePatterns.isNotEmpty() &&
-                GitIgnoreMatcher.isIgnored(ignorePatterns, parts)
-            val open = entry.isDirectory && path in expanded
-            if (!open) {
-                out += FileTreeNode(entry, path, depth, isRoot = false, isExpanded = false, ignored = ignored)
-                continue
-            }
-            val children = runCatching { fileAccess.listFiles(path) }.getOrNull()
-            out += FileTreeNode(entry, path, depth, isRoot = false, isExpanded = true, hasError = children == null, ignored = ignored)
-            if (children != null) appendBrowseChildren(path, children, depth + 1, expanded, ignorePatterns, parts, out)
-        }
-    }
 
     fun refreshBrowse() {
         _browseRefresh.value++
@@ -967,7 +910,7 @@ class AIAgentViewModel @Inject constructor(
         if (path == _expandingPath.value) return
         val current = _expandedPaths.value
         val updated = if (path in current) {
-            current.filterNot { it == path || it.startsWith("$path/") }.toSet()
+            current.filterNot { it == path || it.startsWith(childPathPrefix(path)) }.toSet()
         } else {
             _expandingPath.value = path
             current + path
@@ -1002,7 +945,7 @@ class AIAgentViewModel @Inject constructor(
 
     /** [parent] 目录下的子路径；名称非法时返回 null。 */
     private fun browseChildPath(parent: String, name: String): String? =
-        if (isValidFileEntryName(name)) "$parent/${name.trim()}" else null
+        if (isValidFileEntryName(name)) childPathPrefix(parent) + name.trim() else null
 
     /** 在 [parent] 目录新建空文件。 */
     fun createBrowseFile(parent: String, name: String, onResult: (Boolean) -> Unit) {
@@ -1033,7 +976,7 @@ class AIAgentViewModel @Inject constructor(
     /** 重命名条目（仅同目录内改名，不跨目录移动）。 */
     fun renameBrowseEntry(path: String, newName: String, onResult: (Boolean) -> Unit) =
         mutateBrowse(busyPaths = setOf(path), onResult = onResult) {
-            val parent = path.substringBeforeLast('/', "")
+            val parent = parentPathOf(path)
             if (parent.isEmpty() || !isValidFileEntryName(newName)) {
                 false
             } else {
@@ -1081,8 +1024,8 @@ class AIAgentViewModel @Inject constructor(
         if (clip.sourcePath == targetDir) return@launch onResult(false)
         val name = clip.sourceName
         if (!isValidFileEntryName(name)) return@launch onResult(false)
-        val target = "$targetDir/$name"
-        if (target == clip.sourcePath || target.startsWith("${clip.sourcePath.trimEnd('/')}/")) {
+        val target = childPathPrefix(targetDir) + name
+        if (target == clip.sourcePath || target.startsWith(childPathPrefix(clip.sourcePath.trimEnd('/')))) {
             return@launch onResult(false)
         }
         if (withContext(Dispatchers.IO) { fileAccess.exists(target) }) {
@@ -1292,6 +1235,7 @@ class AIAgentViewModel @Inject constructor(
     }
 
     private val _compactingSessions = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    private val compactionUsage = CompactionUsageTracker()
     private val _contextUsages = MutableStateFlow<Map<String, AgentEvent.ContextUsage>>(emptyMap())
     val contextUsages: StateFlow<Map<String, AgentEvent.ContextUsage>> = _contextUsages.asStateFlow()
 
@@ -1498,10 +1442,6 @@ class AIAgentViewModel @Inject constructor(
         private const val WAKE_LOCK_RENEW_MARGIN_MS = 10 * 60 * 1000L
         /** 从后台任务通知文本中提取 <title> 内容，供系统通知正文展示。 */
         val TASK_NOTIFICATION_TITLE_REGEX = Regex("<title>([^<]+)</title>")
-        /** 文件浏览排序：目录在前，同类按名称不区分大小写。 */
-        val BROWSE_ORDER: Comparator<FileEntry> =
-            compareByDescending<FileEntry> { it.isDirectory }
-                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }
 
         /** 写文件会连珠触发多个 inotify 事件，合并后再重读目录。 */
         const val BROWSE_DEBOUNCE_MS = 300L
@@ -1624,6 +1564,11 @@ class AIAgentViewModel @Inject constructor(
             scheduledRunBus.requests.collect { request -> runScheduledTask(request) }
         }
         viewModelScope.launch { awaitingPermissionSessionIds.collect { agentPermissionNotifier.sync(it) } }
+        // 提问 / 计划审批这两类待批事件只做后台提示，点通知回到会话，用户处理完状态清空后自动撤下。
+        viewModelScope.launch {
+            combine(askUserQuestionManager.pendingQuestion, planApprovalManager.pendingApproval) { q, p -> q to p }
+                .collect { (question, plan) -> agentPermissionNotifier.syncPrompts(question, plan) }
+        }
         viewModelScope.launch { agentPermissionNotifier.replies.collect { r -> enqueueAgentRequest(request = r.text, projectRoot = workspaceOf(r.sessionId), targetSessionId = r.sessionId) } }
     }
 
@@ -2140,13 +2085,11 @@ class AIAgentViewModel @Inject constructor(
                     }
                     AgentEvent.CompactionFinished -> {
                         setCompacting(sessionId, false)
-                        _contextUsages.value = _contextUsages.value - sessionId
+                        _contextUsages.value = compactionUsage.afterCompaction(sessionId, _contextUsages.value)
                     }
-                    is AgentEvent.ContextUsage -> {
-                        _contextUsages.value = _contextUsages.value + (sessionId to event)
-                    }
+                    is AgentEvent.ContextUsage -> _contextUsages.value = compactionUsage.report(sessionId, event, _contextUsages.value)
                     // 压缩失败与采样循环中止都落库为无配对的 TOOL 消息（界面各渲染成卡片/提示行），落库在 runner 里做
-                    is AgentEvent.CompactionFailed -> setCompacting(sessionId, false)
+                    is AgentEvent.CompactionFailed -> { compactionUsage.markFailed(sessionId); setCompacting(sessionId, false) }
                     is AgentEvent.SamplingLoopDetected -> Unit
                     is AgentEvent.AssistantText -> {
                         val reasoningDuration = currentReasoningStart?.let { System.currentTimeMillis() - it }
@@ -2232,7 +2175,7 @@ class AIAgentViewModel @Inject constructor(
                                 }
                             }
                         }
-                        stewardBridge.onTurnFinished(viewModelScope, sessionId) { next -> enqueueAgentRequest(next, projectRoot = projectRoot, isAutoTrigger = true, targetSessionId = sessionId) }
+                        turnEndBridge.onTurnFinished(viewModelScope, sessionId) { next -> enqueueAgentRequest(next, projectRoot = projectRoot, isAutoTrigger = true, targetSessionId = sessionId) }
                     }
                     is AgentEvent.ModeChanged -> {
                         // 模式切换事件：PlanApprovalManager 已在 workflow 层面挂起等待用户批准
@@ -2510,19 +2453,19 @@ class AIAgentViewModel @Inject constructor(
 
     // region 会话管理
 
-    /** 新建会话；若当前会话还是空的则直接复用，避免堆积空会话。 */
+    /** 新建会话；当前会话为空则复用，否则切到工作区里已存在的空会话，都没有才新建。 */
     fun newSession() = viewModelScope.launch {
         if (_currentWorkspace.value.isBlank()) return@launch
-        val curId = _currentSessionId.value
-        if (curId != null && sessionUseCase.isSessionEmpty(curId)) {
-            setAgentState(curId, AgentUIState.Idle)
+        val reusableId = _currentSessionId.value?.takeIf { sessionUseCase.isSessionEmpty(it) }
+            ?: sessionUseCase.getEmptySessionOfWorkspace(_currentWorkspace.value)?.id
+        if (reusableId != null) {
+            setAgentState(reusableId, AgentUIState.Idle)
+            _currentSessionId.value = reusableId
             return@launch
         }
-        // 新会话时异步重连未连接的 MCP server，让 manageMcp 新增的配置真正生效；
-        // 不阻塞会话创建——MCP 环境未就绪/超时时不能卡住「新建会话」。
+        // 新会话时异步重连未连接的 MCP server（让 manageMcp 新增的配置真正生效）；不阻塞会话创建，避免卡住「新建会话」。
         mcpManager.reconnectUnconnectedAsync()
-        val sid = createAndUpsertSession(_currentWorkspace.value)
-        _currentSessionId.value = sid
+        _currentSessionId.value = createAndUpsertSession(_currentWorkspace.value)
     }
 
     fun setCurrentSessionId(id: String) {
@@ -2948,7 +2891,8 @@ class AIAgentViewModel @Inject constructor(
         checkpointManager.setActiveCheckpointId(sessionId, null)
 
         val checkpoint = checkpointDao.getCheckpointBySessionAndMessage(sessionId, messageId)
-        val targetMsgEntity = messagePersistenceUseCase.restore(agentMessageDao.getMessageById(messageId) ?: return@launch)
+        // 压缩标记/摘要行不承载可回退的内容：退到它们会撤销压缩并把保留的 tail 删空。
+        val targetMsgEntity = messagePersistenceUseCase.restore(agentMessageDao.getMessageById(messageId)?.takeUnless { it.isCompactionMarker || it.isContextSummary } ?: return@launch)
         val attachments = targetMsgEntity.toUIMessage().attachments
 
         var conflicts: List<String> = emptyList()

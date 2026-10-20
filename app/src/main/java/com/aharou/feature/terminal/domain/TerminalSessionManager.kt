@@ -206,6 +206,9 @@ class TerminalSessionManager @Inject constructor(
                 command = command,
                 startedAt = System.currentTimeMillis(),
                 notifyOnExit = notify,
+                // 该入口只由 AI 工具调用（用户手动开标签走 createInteractiveTab），故恒为 AI 创建；
+                // 回合结束的自动清理只认这个标记 + notify=true + 已结束三条。
+                createdByAgent = true,
                 sourceSessionId = sourceSessionId,
                 workspacePath = workspace,
                 client = client,
@@ -306,6 +309,25 @@ class TerminalSessionManager @Inject constructor(
             it.title = title
             bumpRevision()
         }
+    }
+
+    /**
+     * 关闭本轮 AI 留给自己的临时标签（已结束的一次性任务），返回关闭数量。
+     *
+     * 只看 [isFinishedOneShotAgentTab]：用户标签、常驻服务、还在跑的一律不动。
+     * 当前激活标签若命中也会关；关闭后 activeTabId 回落到剩余标签（列表空则置 null，
+     * 终端页已有「没有打开的标签 + 新建标签」兜底）。
+     */
+    override fun closeFinishedAgentTabs(): Int {
+        val targets = _tabs.value.filter { it.isFinishedOneShotAgentTab() }
+        if (targets.isEmpty()) return 0
+        targets.forEach { closeTab(it.id) }
+        FileLogger.i(
+            TAG,
+            "回合结束自动关闭临时标签 ${targets.size} 个：" +
+                targets.joinToString { "${it.id}(${it.command?.take(30) ?: it.title})" }
+        )
+        return targets.size
     }
 
     private suspend fun ensureContainer() {

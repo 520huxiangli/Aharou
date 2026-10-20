@@ -20,6 +20,10 @@ import kotlin.coroutines.suspendCoroutine
  * Funnels every aharou-config write through user confirmation. Mirrors
  * iOS `ConfigConfirmationGate`.
  *
+ * 例外：AUTO 模式下不敏感的变更会在入队前被 [autoApprovePolicy] 直接判为已批准
+ * （见 [ConfigAutoApprovePolicy]），既不占前橱、也不起动超时计时；敏感字段与读明文
+ * 永远得人点。
+ *
  * The gate is a single global queue: at most one confirm dialog shows
  * at a time. Subsequent requests stack up so the agent can fire a
  * rapid sequence of writes and the user reviews them one by one in
@@ -63,6 +67,20 @@ object ConfigConfirmationGate {
     @Volatile
     var cancelNotification: ((String) -> Unit)? = null
 
+    /**
+     * AUTO 模式下「非敏感配置修改不弹窗」的判定钩子，由
+     * [ConfigAutoApprovePolicy] 注入（与 [backgroundNotifier] 同一种注入风格，
+     * 闸门本身保持无 Context 依赖、可单测）。返回 true 时 [requestConfirmation]
+     * 不入队，直接按「已批准」返回，弹窗与 120 秒计时都不会发生。
+     *
+     * null 表示任何请求都必须人工确认——这是默认值，也是策略未接线时的安全兜底。
+     */
+    @Volatile
+    var autoApprovePolicy: ((PendingConfigChange) -> Boolean)? = null
+
+    /** 审计行里的来源标记：这次修改没弹窗，由 AUTO 模式策略自动批准。 */
+    const val AUTO_APPROVE_CAPTION: String = "auto-approved (AUTO mode)"
+
     /** Ids we've already posted a background notification for, so a change that
      *  surfaces in the background AND later triggers a didEnterBackground pass
      *  isn't notified twice. Cleared per-id in [resolve]. */
@@ -90,9 +108,20 @@ object ConfigConfirmationGate {
     /**
      * Suspend until the user resolves the request (approve / reject /
      * per-row reject) or the timeout fires.
+     *
+     * @param autoMode 发起这次请求的**会话**是否处于 AUTO 模式（由 `config` 工具从
+     *   `AgentContext.mode` 传入，会话级、并行安全：每个请求按自己会话的模式判定，
+     *   不受界面当前选中哪个会话影响）。只有它为真且 [autoApprovePolicy] 判定不敏感时
+     *   才自动批准。
      */
-    suspend fun requestConfirmation(change: PendingConfigChange): ConfirmOutcome =
-        suspendCoroutine { cont ->
+    suspend fun requestConfirmation(change: PendingConfigChange, autoMode: Boolean = false): ConfirmOutcome {
+        // 自动批准必须发生在入队之前：一旦进队就会占用前橱、弹窗、启动超时计时，
+        // 而 AUTO 模式下用户本就没打算看这些弹窗。
+        if (autoMode && !change.alwaysConfirm && autoApprovePolicy?.invoke(change) == true) {
+            FileLogger.i(TAG, "auto-approved ${change.items.joinToString { it.path }}")
+            return ConfirmOutcome.Approved(change.items, auto = true)
+        }
+        return suspendCoroutine { cont ->
             scope.launch {
                 mutex.withLock {
                     awaiters[change.id] = cont
@@ -113,6 +142,7 @@ object ConfigConfirmationGate {
                 }
             }
         }
+    }
 
     /** UI callback: user tapped "Apply" with the post-toggle item state. */
     fun userApprove(items: List<PendingConfigChangeItem>) {

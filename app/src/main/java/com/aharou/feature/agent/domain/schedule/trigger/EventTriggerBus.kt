@@ -10,12 +10,14 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -41,6 +43,9 @@ class EventTriggerBus @Inject constructor(
 
     /** 投递都丢到这个协程里跑，绝不在系统回调（主线程）上等。 */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** 本次进程是否已投递过「应用启动」触发：进程重建才会重置，见 [postAppStart]。 */
+    private val appStartDispatched = AtomicBoolean(false)
 
     /**
      * 通知事件入口。**立即返回**：本方法在系统通知回调的主线程上被调用，任何等待都会拖慢
@@ -68,6 +73,25 @@ class EventTriggerBus @Inject constructor(
         dispatch(ScheduledTaskEntity.TYPE_BOOT, EventPayload(timeMillis = System.currentTimeMillis())) { true }
         runCatching { scheduler.ensureScheduled(context) }
             .onFailure { FileLogger.e(TAG, "开机恢复自动化任务调度失败", it) }
+    }
+
+    /**
+     * App 启动入口：本进程启动后投递一次 app_start 类任务。
+     *
+     * 与 [postBoot] 同一套语义——只认启用中的任务，把 nextRunAt 拨到当下再交给 Worker 认领；
+     * 开机时工作区与容器同样未必就绪，这里不对就绪状态另作等待，拉起容器交给会话层按普通对话去做。
+     *
+     * `onCreate` 每个进程本就只跑一次，[appStartDispatched] 再兜一道：将来若从别的启动点
+     * （Activity 重建、配置变更）再调到，也只认第一次。
+     */
+    fun postAppStart() {
+        if (!appStartDispatched.compareAndSet(false, true)) return
+        scope.launch {
+            // 稍等片刻再投递：会话层（AIAgentViewModel）在 Activity 起来后才订阅 ScheduledRunBus，
+            // 订阅前投递的请求会被无 replay 的 SharedFlow 直接丢弃——任务记成「已派发」却没人跑。
+            delay(APP_START_SETTLE_MS)
+            dispatch(ScheduledTaskEntity.TYPE_APP_START, EventPayload(timeMillis = System.currentTimeMillis())) { true }
+        }
     }
 
     /** 周期检查发现状态变化时调用：电量/充电变化看 battery 类任务，WiFi 变化看 network 类任务。 */
@@ -154,6 +178,9 @@ class EventTriggerBus @Inject constructor(
 
     private companion object {
         const val TAG = "EventTriggerBus"
+
+        /** App 启动投递前的静置时长，等会话层先订阅上总线，见 [postAppStart]。 */
+        const val APP_START_SETTLE_MS = 5_000L
     }
 }
 

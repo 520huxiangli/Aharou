@@ -5,7 +5,7 @@ This page explains what every button and area on the main screen does.
 ## Top Title Bar
 
 - **Menu button** (top-left): opens the sidebar, where you manage your session list and browse files.
-- **New session**: starts a new conversation.
+- **New session**: starts a new conversation. If the current workspace still holds an empty session that never received a message (ghost sessions excluded), you're switched to it instead of creating another one.
 - **Git entry**: jumps to the Git version management page.
 - **Terminal entry**: jumps to the terminal page.
 - **Browser entry**: opens the built-in browser (a floating panel on phones, a right-hand pane on large screens).
@@ -141,13 +141,14 @@ Every AI reply is wrapped in a **task folding** header (**since 1.13.0**) that g
 - The folding header shows the state of the turn: "Running" while it is going, and "Completed in Xs" (X is the turn's duration) once it finishes; tap it to expand or collapse.
 - **The task collapses automatically once it finishes**, leaving only the final answer; expanded, you can look back over the turn's process (thinking, tool calls, intermediate content).
 - After you expand or collapse it manually it stays the way you chose (switching sessions, or scrolling away and back, doesn't change it); the automatic collapse only happens if you never touched it.
+- Opening an older log loads only the most recent part of the chat; scrolling to the top keeps pulling earlier content in. If the window happens to start in the middle of a turn, that leading chunk of process folds into a header too (the full turn's duration isn't available there, so it just says "Completed"); once loading reaches that turn's start, it merges into the turn's normal folding.
 - If the AI answered in one go, with neither thinking nor tool calls, no folding header is shown at all, as before.
 
 **Every message you send** keeps the send time and the "Copy / Revert / More" buttons below it, so you can copy or revert any one of them at any time. **AI replies carry "Copy / More" only on the newest one in the whole conversation** (a turn may take several steps with tool calls in between, so the buttons hang on the last step only, rather than every past reply carrying its own duplicate row of toolbar-style buttons that chops the chat log into pieces; and they **appear only when the turn completed normally** — an active pause or an error doesn't leave them on half-finished output). To copy an earlier reply, scroll it to the newest position first. Each turn's usage (`↑input ↓output`), cache hit rate and duration count as information, and are aggregated per turn below that turn's last reply, turn by turn.
 
 The AI's thinking process takes a line of its own and is **collapsed by default**; collapsed, it is a single line: a thinking icon at the start plus a one-line preview — while thinking is in progress it shows the line being written (scrolling with the content), and once thinking ends it stays on the first line of the thinking, truncated with `…` if it doesn't fit. Tap that line to expand the full text at any time, and tap again to collapse. Expanded, the thinking content scrolls inside a fixed-height window (so it doesn't stretch the whole page at once), with a vertical line on the left marking this as thinking.
 
-While waiting for the model, a status line shows at the bottom of the message area: a white highlight sweeps back and forth across the text, followed by three bouncing dots (the dots don't take part in the highlight). When the model is preparing a tool call (the tool name arrives first while the arguments are still streaming in, which can take several seconds), this line names what is about to happen instead of always saying "Thinking" — for example `Editing file`, `Running command`, `Searching the web`.
+While waiting for the model, a status line shows at the bottom of the message area: a white highlight sweeps back and forth across the text, followed by three bouncing dots (the dots don't take part in the highlight). When the model is preparing a tool call (the tool name arrives first while the arguments are still streaming in, which can take several seconds), this line names what is about to happen instead of always saying "Thinking" — for example `Editing file`, `Running command`, `Searching the web`, `Viewing image`, `Browsing the web`, `Asking the user`.
 
 Tool calls are folded into one line per "consecutive batch":
 

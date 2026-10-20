@@ -26,6 +26,7 @@ import com.aharou.feature.agent.domain.container.ContainerOsDetector
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.agent.domain.container.RootfsSource
+import com.aharou.feature.agent.domain.container.sha256For
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.mcp.McpScope
@@ -511,6 +512,9 @@ class SettingsViewModel @Inject constructor(
 
         /** 技能压缩包导入接受的扩展名（小写，不含点）。 */
         val ZIP_EXTENSIONS = setOf("zip")
+
+        /** 只有官方源与自建源才做 SHA-256 校验：第三方镜像有没有重打包未实测，字节未必与官方一致。 */
+        val CHECKSUM_SOURCE_IDS = setOf("official", "aharou")
     }
 
     /** 终端个性化配置。 */
@@ -2392,6 +2396,34 @@ class SettingsViewModel @Inject constructor(
         return line.contains("[$serverName]") || line.contains("mcp__${serverName}__")
     }
 
+    /**
+     * 标准日志行的开头（时间 + 等级），用于区分堆栈续行。与 FileLogger 落盘格式对齐：
+     * 头行固定以 `yyyy-MM-dd HH:mm:ss.SSS LEVEL [tag] ` 起头，堆栈续行（`\tat ...`、`Caused by:`）不带该前缀。
+     * 锚定行首：时间戳只会出现在行首，不锚定就会把续行中间碰巧出现的“时间 + 等级”误当成新头行，
+     * 连带把它后面的堆栈当成“另一条不保留的行”丢掉。
+     * 注意：续行自身以时间戳开头时（MCP 把服务端原始日志原样写进消息）仍会被当成头行，
+     * 这是无标记格式的固有歧义，与上游行为一致。
+     */
+    private val logLinePrefixRegex = Regex("""^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (?:VERBOSE|DEBUG|INFO|WARN|ERROR) """)
+
+    /**
+     * 按 MCP server 过滤日志：命中的标准日志行连同其后的堆栈续行一并保留。
+     * 堆栈续行本身不含 tag 与 server 名，逐行匹配会把报错的堆栈整段丢掉。
+     */
+    private fun filterMcpServerLines(rawLines: List<String>, serverName: String): List<String> {
+        val result = ArrayList<String>()
+        var keepContinuation = false
+        for (line in rawLines) {
+            if (logLinePrefixRegex.containsMatchIn(line)) {
+                keepContinuation = isMcpServerLogLine(line, serverName)
+                if (keepContinuation) result.add(line)
+            } else if (keepContinuation) {
+                result.add(line)
+            }
+        }
+        return result
+    }
+
     fun refreshLogs(filterServerName: String? = _logViewerState.value.filterServerName, silent: Boolean = false) {
         loadLogs(
             filterServerName = filterServerName?.takeIf { it.isNotBlank() },
@@ -2436,7 +2468,7 @@ class SettingsViewModel @Inject constructor(
                     val filteredLines = if (filterServerName.isNullOrBlank()) {
                         rawLines
                     } else {
-                        rawLines.filter { line -> isMcpServerLogLine(line, filterServerName) }
+                        filterMcpServerLines(rawLines, filterServerName)
                     }
                     val visibleLines = filteredLines.takeLast(MAX_LOG_LINES)
 
@@ -2761,17 +2793,23 @@ class SettingsViewModel @Inject constructor(
             else -> "tar.gz"
         }
         val fileName = "download_${entry.id}_${entry.version}_${System.currentTimeMillis()}.$suffix"
+        // 官方/自建源拿清单里的哈希强制校验；第三方源与无哈希的条目（Debian）传 null 跳过
+        val expectedSha256 = entry.sha256For(ContainerImageCatalog.CURRENT_ABI)
+            .takeIf { sourceId in CHECKSUM_SOURCE_IDS }
         downloadJob = viewModelScope.launch {
             _containerImageDownload.value =
                 ContainerImageDownloadUiState.Downloading(entry.id, entry.name, entry.version, sourceId, 0, 0)
             try {
-                val uri = containerImageDownloader.download(url, fileName) { read, total ->
+                val uri = containerImageDownloader.download(url, fileName, expectedSha256) { read, total ->
                     _containerImageDownload.value = ContainerImageDownloadUiState.Downloading(
                         entry.id, entry.name, entry.version, sourceId, read, total
                     )
                 }
-                // 下载完成即持久化记录，安装与否都保留，跨重启可见。
-                containerSettingsRepository.upsertDownloadedImage(DownloadedImageRecord(entry.id, uri))
+                // 下载完成即持久化记录，安装与否都保留，跨重启可见。版本一并记下：目录版本会随上游刷新，
+                // 磁盘上的文件不会跟着变，靠它才能提示「有新版」而不是一直显示「已下载」。
+                containerSettingsRepository.upsertDownloadedImage(
+                    DownloadedImageRecord(entry.id, uri, version = entry.version)
+                )
                 _containerImageDownload.value =
                     ContainerImageDownloadUiState.Done(entry.id, entry.name, entry.version, uri)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2795,18 +2833,22 @@ class SettingsViewModel @Inject constructor(
      */
     fun importDownloadedImage(entryId: String, fileUri: String) {
         val entry = _imageCatalog.value.firstOrNull { it.id == entryId } ?: return
+        val record = _downloadedImages.value[entryId]
         viewModelScope.launch {
             val profile = ContainerProfile(
                 id = "custom-${System.currentTimeMillis()}",
-                name = "${entry.name} ${entry.version}",
+                // 用**下载时**记录的版本命名：目录版本可能已被上游刷新，而磁盘上的文件不会跟着变
+                name = entry.displayLabel(record?.version?.takeIf { it.isNotBlank() }),
                 rootfsSource = RootfsSource.LocalFile(fileUri),
                 shellPath = null,
                 extraArgs = ContainerProfile.DEFAULT_PROOT_ARGS,
                 isBuiltin = false
             )
             containerSettingsRepository.upsertCustomProfile(profile)
-            // 保留已下载记录，仅标记已导入；UI 状态不消失。
-            containerSettingsRepository.upsertDownloadedImage(DownloadedImageRecord(entryId, fileUri, installed = true))
+            // 保留已下载记录（含下载时的版本号，供「有新版」判定），仅标记已导入；UI 状态不消失。
+            containerSettingsRepository.upsertDownloadedImage(
+                DownloadedImageRecord(entryId, fileUri, version = record?.version.orEmpty(), installed = true)
+            )
             _containerImageDownload.value = ContainerImageDownloadUiState.Idle
         }
     }

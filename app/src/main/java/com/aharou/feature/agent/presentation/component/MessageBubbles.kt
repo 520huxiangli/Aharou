@@ -661,10 +661,11 @@ internal fun TurnCollapseHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = if (running) {
-                stringResource(R.string.chat_turn_running)
-            } else {
-                stringResource(R.string.chat_turn_completed, durationMs?.let { formatTaskDuration(it) } ?: "")
+            text = when {
+                running -> stringResource(R.string.chat_turn_running)
+                durationMs != null -> stringResource(R.string.chat_turn_completed, formatTaskDuration(durationMs))
+                // 拿不到耗时（被窗口截断的半轮、消息缺时间戳）时只说「已完成」，不留空档
+                else -> stringResource(R.string.chat_turn_completed_plain)
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelMedium,

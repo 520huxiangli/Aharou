@@ -64,6 +64,7 @@ import com.aharou.feature.agent.domain.provider.AllKeysFailedException
 import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.KeySwitchOutcome
 import com.aharou.feature.agent.domain.provider.isKeySwitchFailure
+import com.aharou.feature.agent.domain.provider.isQuotaExhausted
 import com.aharou.feature.agent.domain.provider.OpenAIAdapter
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.ModelContextPolicy
@@ -309,7 +310,7 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
         val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
-            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context) }, tools = requestTools(tools), onEvent = onEvent)
+            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context, consumeInbox = false) }, tools = requestTools(tools), onEvent = onEvent)
         return result.compacted
     }
 
@@ -339,7 +340,11 @@ class StatefulAgentWorkflow @Inject constructor(
                     if (!error.isKeySwitchFailure(config.effectiveKeySwitchStatusCodes)) {
                         null
                     } else {
-                        val switched = keyRotator.reportFailure(config.id, sessionId, failedKey, triedKeys)
+                        val switched = keyRotator.reportFailure(
+                            config.id, sessionId, failedKey, triedKeys,
+                            // 额度耗尽用长冷却：这类 Key 不会几分钟就恢复，否则会被周期性反复重试。
+                            quotaExhausted = error.isQuotaExhausted()
+                        )
                         if (switched == null) {
                             val e = error.enrichWithHttpErrorBody()  // 原始异常此处确定被丢弃，读走 errorBody 无副作用；enrich 后 message 才带上游响应体 detail
                             throw AllKeysFailedException(

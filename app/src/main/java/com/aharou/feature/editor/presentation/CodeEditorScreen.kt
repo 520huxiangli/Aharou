@@ -18,13 +18,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -33,13 +30,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -68,11 +65,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
-import com.aharou.core.util.LineDiff
 import com.aharou.feature.editor.data.EditorSettings
 import com.aharou.feature.editor.domain.EditorSessionManager
 import com.aharou.feature.editor.domain.TextMateSetup
 import com.aharou.feature.editor.domain.diagnostics.EditorDiagnostics
+import com.aharou.feature.editor.presentation.component.EditorCloseTabDialog
+import com.aharou.feature.editor.presentation.component.EditorFileTitleBar
+import com.aharou.feature.editor.presentation.component.EditorSaveConflictDialog
+import com.aharou.feature.editor.presentation.component.EditorUnsavedDialog
 import com.aharou.feature.editor.presentation.component.MarkdownPreviewWebView
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
@@ -108,6 +108,7 @@ fun CodeEditorScreen(
     initialLine: Int = 0,
     embedded: Boolean = false,
     onAddSelectionToInput: (String) -> Unit,
+    leaveGuard: EditorLeaveGuard? = null,
     viewModel: CodeEditorViewModel = hiltViewModel()
 ) {
     // 标签页会话：外部每次带新 path 进编辑器都开（或激活）一个标签页，
@@ -122,15 +123,20 @@ fun CodeEditorScreen(
     val normalizedActivePath = viewModel.displayPath(activePath)
     LaunchedEffect(activePath) { viewModel.load(activePath) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // 文档版本：只在装载出新文档时变，用于让编辑器按文档重建（见下面 key(documentVersion)）。
+    val documentVersion by viewModel.documentVersion.collectAsStateWithLifecycle()
 
     val editorRef = remember { mutableStateOf<CodeEditor?>(null) }
     var canUndo by remember { mutableStateOf(false) }
     var canRedo by remember { mutableStateOf(false) }
-    var dirty by remember { mutableStateOf(false) }
+    // 脏标记的 State 单独留一份引用：注册给宿主的回调要读「调用时」的值，不能捕获布尔快照。
+    val dirtyState = remember { mutableStateOf(false) }
+    var dirty by dirtyState
     // 已保存（或刚加载）的内容。脏标记按与它的差异判定，撤销回原样时才能自行复位。
     val baselineText = remember { mutableStateOf("") }
     var pendingSaveText by remember { mutableStateOf("") }
-    var pendingExit by remember { mutableStateOf(false) }
+    // 待确认的离开动作（关页面 / 大屏右栏换文件），保存成功后执行。
+    var pendingLeave by remember { mutableStateOf<PendingLeave?>(null) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var showCloseTabDialog by remember { mutableStateOf(false) }
     var pendingCloseTab by remember { mutableStateOf<String?>(null) }
@@ -156,11 +162,33 @@ fun CodeEditorScreen(
         canUndo = false
         canRedo = false
         dirty = snapshots[activePath]?.dirty == true
-        pendingExit = false
+        pendingLeave = null
         cursorLine = snapshots[activePath]?.cursorLine ?: 1
         cursorColumn = snapshots[activePath]?.cursorColumn ?: 1
         editorFind.close()
         previewMode = false
+    }
+
+    // 大屏右栏宿主（点文件树 / 点聊天里的路径链接）要换文件时，先过这里：无脏数据直接放行，
+    // 有脏数据复用同一套保存提示，确认后再换，避免静默丢弃未保存的修改。
+    LaunchedEffect(leaveGuard) {
+        leaveGuard?.register { onLeave ->
+            if (!dirtyState.value) {
+                onLeave()
+            } else {
+                pendingLeave = PendingLeave(R.string.editor_save_and_switch, onLeave)
+                showUnsavedDialog = true
+            }
+        }
+    }
+    // 脏状态实时上报给宿主。
+    LaunchedEffect(leaveGuard, dirty) { leaveGuard?.isDirty = dirtyState.value }
+    // 离开组合（右栏切到终端、收起等）时撤掉上报与处理，不拿旧状态拦人。
+    DisposableEffect(leaveGuard) {
+        onDispose {
+            leaveGuard?.register(null)
+            leaveGuard?.isDirty = false
+        }
     }
 
     val context = LocalContext.current
@@ -179,14 +207,15 @@ fun CodeEditorScreen(
                         dirty = false
                     }
                     Toast.makeText(context, savedText, Toast.LENGTH_SHORT).show()
-                    if (pendingExit && result.path == activePath) {
-                        pendingExit = false
-                        onBack()
+                    // 待确认的离开动作只跟着「当前标签」走：保存的是别的标签时不能顺手把页面换掉。
+                    pendingLeave?.let { leave ->
+                        pendingLeave = null
+                        if (result.path == activePath) leave.action()
                     }
                 }
-                is SaveResult.Conflict -> { pendingExit = false; saveConflictDiskContent = result.diskContent }
+                is SaveResult.Conflict -> { pendingLeave = null; saveConflictDiskContent = result.diskContent }
                 is SaveResult.Error -> {
-                    pendingExit = false
+                    pendingLeave = null
                     Toast.makeText(
                         context,
                         result.detail ?: saveFailedText,
@@ -207,6 +236,7 @@ fun CodeEditorScreen(
         if (editorFind.visible) {
             editorFind.close()
         } else if (dirty) {
+            pendingLeave = PendingLeave(R.string.editor_save_and_exit) { onBack() }
             showUnsavedDialog = true
         } else {
             onBack()
@@ -374,7 +404,7 @@ fun CodeEditorScreen(
                     EditorFindBar(editorFind)
                 }
                 HorizontalDivider(thickness = 0.5.dp)
-                FileTitleBar(
+                EditorFileTitleBar(
                     fileName = activePath.substringAfterLast('/'),
                     dirty = dirty,
                     line = cursorLine,
@@ -416,7 +446,12 @@ fun CodeEditorScreen(
                 val surfaceState = remember(activePath, s.content) {
                     snapshots[activePath]?.let { s.copy(content = it.content) } ?: s
                 }
-                key(activePath) {
+                // 按「文档」重建编辑器：大屏右栏常驻在聊天页里，切文件时这个组合位置不变，
+                // AndroidView 的 factory 不会重跑，而内容与语法语言只在 factory 里设，
+                // 不重建就会一直显示上一个文件的内容（标题已是新文件）。
+                // 不用 activePath 作 key：路径先变、内容后到，会先用旧内容白建一次；
+                // 也不用 content：保存成功后 ViewModel 会改写 uiState 的内容，那样每次保存都重建编辑器。
+                key(documentVersion) {
                 EditorSurface(
                     state = surfaceState,
                     modifier = Modifier.fillMaxSize(),
@@ -487,75 +522,54 @@ fun CodeEditorScreen(
     }
 
     if (showCloseTabDialog) {
-        AlertDialog(
-            onDismissRequest = {
+        EditorCloseTabDialog(
+            fileName = pendingCloseTab?.substringAfterLast('/') ?: "",
+            onDiscard = {
+                val target = pendingCloseTab
                 showCloseTabDialog = false
                 pendingCloseTab = null
+                target?.let { performCloseTab(it) }
             },
-            title = { Text(stringResource(R.string.editor_close_tab_unsaved_title)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.editor_close_tab_unsaved_message,
-                        pendingCloseTab?.substringAfterLast('/') ?: ""
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val target = pendingCloseTab
-                    showCloseTabDialog = false
-                    pendingCloseTab = null
-                    target?.let { performCloseTab(it) }
-                }) { Text(stringResource(R.string.editor_close_tab_discard)) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showCloseTabDialog = false
-                    pendingCloseTab = null
-                }) { Text(stringResource(R.string.common_cancel)) }
+            onDismiss = {
+                showCloseTabDialog = false
+                pendingCloseTab = null
             }
         )
     }
 
     saveConflictDiskContent?.let { disk ->
-        AlertDialog(
-            onDismissRequest = { saveConflictDiskContent = null },
-            title = { Text(stringResource(R.string.editor_save_conflict_title)) },
-            text = {
-                Text(
-                    stringResource(R.string.editor_save_conflict_message) + "\n\n" + LineDiff.toUnified(disk, pendingSaveText),
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                )
+        EditorSaveConflictDialog(
+            diskContent = disk,
+            localContent = pendingSaveText,
+            onOverwrite = { saveConflictDiskContent = null; viewModel.saveForce(activePath, pendingSaveText) },
+            onUseDisk = {
+                saveConflictDiskContent = null
+                dirty = false
+                EditorSessionManager.forget(activePath)
+                viewModel.reloadFromDisk(activePath)
             },
-            confirmButton = { TextButton(onClick = { saveConflictDiskContent = null; viewModel.saveForce(activePath, pendingSaveText) }) { Text(stringResource(R.string.editor_save_conflict_overwrite)) } },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { saveConflictDiskContent = null }) { Text(stringResource(R.string.common_cancel)) }
-                    TextButton(onClick = { saveConflictDiskContent = null; dirty = false; EditorSessionManager.forget(activePath); viewModel.reloadFromDisk(activePath) }) { Text(stringResource(R.string.editor_save_conflict_discard)) }
-                }
-            }
+            onDismiss = { saveConflictDiskContent = null }
         )
     }
 
     if (showUnsavedDialog) {
-        AlertDialog(
-            onDismissRequest = { showUnsavedDialog = false },
-            title = { Text(stringResource(R.string.editor_unsaved_title)) },
-            text = { Text(stringResource(R.string.editor_unsaved_message)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    showUnsavedDialog = false
-                    pendingExit = true
-                    requestSave()
-                }) { Text(stringResource(R.string.editor_save_and_exit)) }
+        EditorUnsavedDialog(
+            confirmLabelRes = pendingLeave?.confirmLabelRes ?: R.string.editor_save_and_exit,
+            onSave = {
+                showUnsavedDialog = false
+                requestSave()
             },
-            dismissButton = {
-                TextButton(onClick = {
-                    showUnsavedDialog = false
-                    onBack()
-                }) { Text(stringResource(R.string.editor_dont_save)) }
+            onDiscard = {
+                showUnsavedDialog = false
+                pendingLeave?.let { leave ->
+                    pendingLeave = null
+                    leave.action()
+                }
+            },
+            // 取消：丢掉待执行的离开动作，留在当前文件。
+            onDismiss = {
+                showUnsavedDialog = false
+                pendingLeave = null
             }
         )
     }
@@ -629,49 +643,6 @@ private fun EditorTabBar(
                 }
             }
         }
-    }
-}
-
-/** 导航栏下方的文件名小栏：左侧文件名（未保存时名前加星号），右侧行:列与文件编码。 */
-@Composable
-private fun FileTitleBar(fileName: String, dirty: Boolean, line: Int, column: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .height(FILE_TITLE_BAR_HEIGHT)
-            .padding(horizontal = FILE_TITLE_HORIZONTAL_PADDING),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (dirty) {
-            Text(
-                text = "*",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(end = 2.dp)
-            )
-        }
-        Text(
-            text = fileName,
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = FontFamily.Monospace,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = "$line:$column",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = Spacing.sm)
-        )
-        Text(
-            text = FILE_ENCODING,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = Spacing.md)
-        )
     }
 }
 
@@ -959,13 +930,6 @@ private const val UNDO_MERGE_WINDOW_MS = 500L
 
 /** 行号左侧预留间距（sp）。 */
 private const val LINE_NUMBER_MARGIN_SP = 2f
-
-/** 文件名小栏高度与左右内边距。 */
-private val FILE_TITLE_BAR_HEIGHT = 16.dp
-private val FILE_TITLE_HORIZONTAL_PADDING = 12.dp
-
-/** 文件读写统一按 UTF-8，小栏右侧展示用。 */
-private const val FILE_ENCODING = "UTF-8"
 
 /** 垂直额外视口空间系数（占编辑器高度的比例，取值 [0,1]），用于底部过度滚动。 */
 private const val VERTICAL_EXTRA_SPACE_FACTOR = 0.5f

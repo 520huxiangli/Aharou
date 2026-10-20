@@ -298,6 +298,10 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var scheduledTaskScheduler: com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 
+    /** 「应用启动」触发：进程启动后投递一次，语义同「开机」（只认启用中的任务）。 */
+    @Inject
+    lateinit var eventTriggerBus: com.aharou.feature.agent.domain.schedule.trigger.EventTriggerBus
+
     /** 记忆自动同步调度：默认开启的开关只有在这里排一次才真正生效，否则从没碰过设置页的用户永远不会同步。 */
     @Inject
     lateinit var memorySyncScheduler: com.aharou.feature.agent.domain.memory.MemorySyncScheduler
@@ -588,10 +592,11 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 子代理任务状态机：启动即收尾上次进程遗留的「运行中」任务（标为中断并通知父会话），
         // 随后常驻订阅子代理事件写状态。走 IO 作用域，失败只记日志，不阻塞启动。
         subAgentTaskTracker.start(appScope)
-        // 定时任务：启动时按已有任务排好周期检查（无启用任务则取消），失败只记日志。
+        // 定时任务：启动时排好周期检查（无启用任务则取消），并投递一次「应用启动」触发。
         appScope.launch {
             runCatching { scheduledTaskScheduler.ensureScheduled(this@AIEditorApp) }
                 .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
+            eventTriggerBus.postAppStart()
         }
         // 记忆自动同步：每次启动重排一次（CANCEL_AND_REENQUEUE，会重建任务并归零状态，
         // 否则一条 FAILED 的旧任务会永远卡着不执行）。

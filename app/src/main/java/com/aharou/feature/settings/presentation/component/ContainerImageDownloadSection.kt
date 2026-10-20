@@ -54,6 +54,8 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
+import com.aharou.feature.agent.domain.container.ContainerImageEolStatus
+import com.aharou.feature.agent.domain.container.hasNewerVersion
 import com.aharou.feature.settings.data.repository.DownloadedImageRecord
 import com.aharou.feature.settings.presentation.ContainerImageDownloadUiState
 import compose.icons.FeatherIcons
@@ -77,6 +79,41 @@ private fun distroLogo(distro: String): Painter? = when (distro) {
     "debian" -> painterResource(R.drawable.logo_debian)
     "centos" -> painterResource(R.drawable.logo_centos)
     else -> null
+}
+
+/** 行内小标签（支持状态、已下载共用一套视觉：淡色底 + 语义色字）。 */
+@Composable
+private fun ImageTag(text: String, color: Color, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(color.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color
+        )
+    }
+}
+
+/**
+ * 支持状态标签（见 [ContainerImageEolStatus]）：仅在常规支持期已近或已过时显示，
+ * 「支持中」「无数据」不出标签——正常条目不该被加噪音。配色只用主题语义色：
+ * 即将到期用 warning，常规支持已结束（含只剩延伸支持）用 error。
+ */
+@Composable
+private fun EolStatusTag(entry: ContainerImageEntry, modifier: Modifier = Modifier) {
+    val (labelRes, color) = when (entry.eolStatus()) {
+        ContainerImageEolStatus.ENDING_SOON ->
+            R.string.container_image_eol_ending_soon to MaterialTheme.semanticColors.warning
+        ContainerImageEolStatus.EXTENDED_ONLY ->
+            R.string.container_image_eol_extended_only to MaterialTheme.colorScheme.error
+        ContainerImageEolStatus.END_OF_LIFE ->
+            R.string.container_image_eol_end_of_life to MaterialTheme.colorScheme.error
+        ContainerImageEolStatus.SUPPORTED, ContainerImageEolStatus.NO_DATA -> return
+    }
+    ImageTag(text = stringResource(labelRes), color = color, modifier = modifier)
 }
 
 /**
@@ -132,6 +169,7 @@ internal fun ContainerImageDownloadSection(
                         entry = entry,
                         state = state,
                         isDownloaded = record != null && fileExists,
+                        hasNewerVersion = hasNewerVersion(record?.version, entry.version),
                         onOpenDetail = { detailEntry = entry },
                         onDelete = { deleteEntry = entry }
                     )
@@ -145,6 +183,7 @@ internal fun ContainerImageDownloadSection(
             entry = entry,
             state = state,
             record = downloadedImages[entry.id],
+            hasNewerVersion = hasNewerVersion(downloadedImages[entry.id]?.version, entry.version),
             sourceUnavailable = entry.id in sourceUnavailableIds,
             sourceName = selectedSourceName,
             onDownload = { onDownload(entry) },
@@ -165,7 +204,7 @@ internal fun ContainerImageDownloadSection(
         AlertDialog(
             onDismissRequest = { deleteEntry = null },
             title = { Text(stringResource(R.string.container_download_delete_title)) },
-            text = { Text(stringResource(R.string.container_download_delete_confirm, "${entry.name} ${entry.version}")) },
+            text = { Text(stringResource(R.string.container_download_delete_confirm, entry.displayLabel())) },
             confirmButton = {
                 TextButton(onClick = {
                     onDelete(entry.id)
@@ -185,6 +224,7 @@ private fun DownloadImageRow(
     entry: ContainerImageEntry,
     state: ContainerImageDownloadUiState,
     isDownloaded: Boolean,
+    hasNewerVersion: Boolean,
     onOpenDetail: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -237,26 +277,30 @@ private fun DownloadImageRow(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "${entry.name} ${entry.version}",
+                        text = entry.displayLabel(),
                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    EolStatusTag(entry, Modifier.padding(start = 6.dp))
                     if (isDownloaded) {
-                        Box(
-                            modifier = Modifier
-                                .padding(start = 6.dp)
-                                .background(MaterialTheme.semanticColors.success.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.container_download_done),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.semanticColors.success
-                            )
-                        }
+                        ImageTag(
+                            text = stringResource(
+                                if (hasNewerVersion) {
+                                    R.string.container_download_newer_available
+                                } else {
+                                    R.string.container_download_done
+                                }
+                            ),
+                            color = if (hasNewerVersion) {
+                                MaterialTheme.semanticColors.warning
+                            } else {
+                                MaterialTheme.semanticColors.success
+                            },
+                            modifier = Modifier.padding(start = 6.dp)
+                        )
                     }
                 }
                 downloading?.takeIf { it.entryId == entry.id }?.let { d ->
@@ -308,6 +352,7 @@ private fun ImageDetailSheet(
     entry: ContainerImageEntry,
     state: ContainerImageDownloadUiState,
     record: DownloadedImageRecord?,
+    hasNewerVersion: Boolean,
     sourceUnavailable: Boolean,
     sourceName: String,
     onDownload: () -> Unit,
@@ -362,16 +407,32 @@ private fun ImageDetailSheet(
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
-                    Text(
-                        text = "${entry.name} ${entry.version}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = entry.displayLabel(),
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        EolStatusTag(entry, Modifier.padding(start = 6.dp))
+                    }
                     if (isDownloaded) {
                         Text(
-                            text = stringResource(R.string.container_download_done),
+                            text = stringResource(
+                                if (hasNewerVersion) {
+                                    R.string.container_download_newer_available
+                                } else {
+                                    R.string.container_download_done
+                                }
+                            ),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.semanticColors.success
+                            color = if (hasNewerVersion) {
+                                MaterialTheme.semanticColors.warning
+                            } else {
+                                MaterialTheme.semanticColors.success
+                            }
                         )
                     }
                 }

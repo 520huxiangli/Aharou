@@ -2,9 +2,11 @@ package com.aharou.feature.settings.data.remote
 
 import android.content.Context
 import android.net.Uri
+import com.aharou.R
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +38,11 @@ class ContainerImageDownloader @Inject constructor(
     suspend fun download(
         url: String,
         fileName: String,
+        /**
+         * 官方公布的 SHA-256；为空表示不校验（上游没给校验和，或当前镜像源不可信其字节一致）。
+         * 不符会删掉半成品并抛 [IOException]，避免把被截断/篡改的 rootfs 交给安装器解压。
+         */
+        expectedSha256: String? = null,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
     ): String = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "rootfs_images").apply { mkdirs() }
@@ -56,15 +63,24 @@ class ContainerImageDownloader @Inject constructor(
                         val total = body.contentLength()
                         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                         var read = 0L
+                        // 边写盘边算摘要，不回头再读一遍文件
+                        val digest = MessageDigest.getInstance("SHA-256")
                         body.byteStream().use { input ->
                             dest.outputStream().use { output ->
                                 while (true) {
                                     val n = input.read(buffer)
                                     if (n < 0) break
                                     output.write(buffer, 0, n)
+                                    digest.update(buffer, 0, n)
                                     read += n
                                     onProgress(read, total)
                                 }
+                            }
+                        }
+                        if (!expectedSha256.isNullOrBlank()) {
+                            val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                            if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                                throw IOException(context.getString(R.string.container_download_checksum_failed))
                             }
                         }
                         cont.resume(Uri.fromFile(dest).toString())

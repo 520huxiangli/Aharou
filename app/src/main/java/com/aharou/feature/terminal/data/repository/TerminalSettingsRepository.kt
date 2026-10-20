@@ -1,6 +1,7 @@
 package com.aharou.feature.terminal.data.repository
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -11,6 +12,7 @@ import com.aharou.feature.terminal.domain.model.TerminalThemePreset
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,6 +44,7 @@ class TerminalSettingsRepository @Inject constructor(
         val FONT_SIZE_SP_KEY = intPreferencesKey("terminal_font_size_sp")
         val CURSOR_STYLE_KEY = intPreferencesKey("terminal_cursor_style")
         val FONT_PATH_KEY = stringPreferencesKey("terminal_font_path")
+        val AUTO_CLOSE_AGENT_TABS_KEY = booleanPreferencesKey("auto_close_finished_agent_tabs")
     }
 
     val settingsFlow: Flow<TerminalSettings> = context.terminalDataStore.data.map { prefs ->
@@ -73,4 +76,20 @@ class TerminalSettingsRepository @Inject constructor(
     suspend fun setFontPath(path: String) {
         context.terminalDataStore.edit { it[FONT_PATH_KEY] = path }
     }
+
+    /**
+     * AI 回合结束后是否自动关闭它为一次性任务创建的、已结束的终端标签。未设置时回退到 true。
+     *
+     * 默认开启：AI 用 `terminal`/`Bash` 执行的任务越来越多，标签不收拾会无尽堆积；
+     * 关闭后行为完全回到「标签一直留在列表里等人手动关」。
+     */
+    val autoCloseFinishedAgentTabsFlow: Flow<Boolean> =
+        context.terminalDataStore.data.map { it[AUTO_CLOSE_AGENT_TABS_KEY] ?: true }
+
+    suspend fun setAutoCloseFinishedAgentTabs(enabled: Boolean) {
+        context.terminalDataStore.edit { it[AUTO_CLOSE_AGENT_TABS_KEY] = enabled }
+    }
+
+    /** 回合收尾时读一次开关（避免在事件处理路径上常驻收集）。 */
+    suspend fun autoCloseFinishedAgentTabs(): Boolean = autoCloseFinishedAgentTabsFlow.first()
 }

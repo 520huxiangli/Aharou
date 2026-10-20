@@ -113,7 +113,8 @@ class RemoteTerminalSessionManager @Inject constructor(
             notify = notify,
             title = title,
             sourceSessionId = sourceSessionId,
-            workspacePath = workspacePath
+            workspacePath = workspacePath,
+            createdByAgent = true
         )
         FileLogger.i(TAG, "后台命令标签 $id: $command")
         return id
@@ -129,7 +130,8 @@ class RemoteTerminalSessionManager @Inject constructor(
         notify: Boolean,
         title: String?,
         sourceSessionId: String?,
-        workspacePath: String? = null
+        workspacePath: String? = null,
+        createdByAgent: Boolean = false
     ): String {
         val id = nextId()
         // sshj startSession/startShell 走网络 I/O，必须离开主线程，否则 NetworkOnMainThreadException。
@@ -163,6 +165,7 @@ class RemoteTerminalSessionManager @Inject constructor(
             command = command,
             startedAt = System.currentTimeMillis(),
             notifyOnExit = notify,
+            createdByAgent = createdByAgent,
             sourceSessionId = sourceSessionId,
             workspacePath = wsPath,
             runState = RunState.Running
@@ -235,6 +238,19 @@ class RemoteTerminalSessionManager @Inject constructor(
             it.title = title
             bumpRevision()
         }
+    }
+
+    /** 与本地 [TerminalSessionManager.closeFinishedAgentTabs] 同义：只清 AI 创建、notify=true、已结束的标签。 */
+    override fun closeFinishedAgentTabs(): Int {
+        val targets = _tabs.value.filter { it.isFinishedOneShotAgentTab() }
+        if (targets.isEmpty()) return 0
+        targets.forEach { closeTab(it.id) }
+        FileLogger.i(
+            TAG,
+            "回合结束自动关闭远程临时标签 ${targets.size} 个：" +
+                targets.joinToString { "${it.id}(${it.command?.take(30) ?: it.title})" }
+        )
+        return targets.size
     }
 
     /** 向当前活动标签写入文本（额外按键行：方向键/Tab 等）。 */

@@ -17,15 +17,25 @@ fun VaultRepository.execArgs(
 ): Map<String, JsonElement> =
     if (toolAcceptsSecrets && hasPlaceholders(args)) resolveMap(args) else args
 
-/** 工具结果整体脱敏：递归处理 JSON 文本叶子与消息/错误文本，命中库内值即替换为掩码。 */
-fun ToolResult.redactWith(vault: VaultRepository): ToolResult = when (this) {
-    is ToolResult.Success -> copy(data = data.redactWith(vault))
-    is ToolResult.Partial -> copy(data = data.redactWith(vault), message = vault.redact(message))
-    is ToolResult.Error -> copy(message = vault.redact(message))
+/**
+ * 工具结果整体脱敏：递归处理 JSON 文本叶子与消息/错误文本，命中库内值即替换为掩码。
+ *
+ * 唯一例外是 [ToolResult.Success.plaintextApproved]——由工具在「用户当面批准读明文」之后置位
+ * （当前只有 config 的 reveal 敏感字段分支）。这类结果原样返回：用户刚亲自点头，再抹掉等于白批。
+ * 该标记是结果上的类型化字段，不参与序列化，模型既看不到也无法通过在参数里塞内容来伪造。
+ */
+fun ToolResult.redactWith(vault: VaultRepository): ToolResult = redactUsing(vault::redact)
+
+/** [redactWith] 的纯函数内核：脱敏动作由 [redactor] 提供，便于单测脱离 VaultRepository。 */
+internal fun ToolResult.redactUsing(redactor: (String) -> String): ToolResult = when (this) {
+    is ToolResult.Success ->
+        if (plaintextApproved) this else copy(data = data.redactUsing(redactor))
+    is ToolResult.Partial -> copy(data = data.redactUsing(redactor), message = redactor(message))
+    is ToolResult.Error -> copy(message = redactor(message))
 }
 
-private fun JsonElement.redactWith(vault: VaultRepository): JsonElement = when (this) {
-    is JsonObject -> JsonObject(mapValues { it.value.redactWith(vault) })
-    is JsonArray -> JsonArray(map { it.redactWith(vault) })
-    is JsonPrimitive -> if (isString) JsonPrimitive(vault.redact(content)) else this
+private fun JsonElement.redactUsing(redactor: (String) -> String): JsonElement = when (this) {
+    is JsonObject -> JsonObject(mapValues { it.value.redactUsing(redactor) })
+    is JsonArray -> JsonArray(map { it.redactUsing(redactor) })
+    is JsonPrimitive -> if (isString) JsonPrimitive(redactor(content)) else this
 }

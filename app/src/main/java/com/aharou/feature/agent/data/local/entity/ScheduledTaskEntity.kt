@@ -107,6 +107,9 @@ data class ScheduledTaskEntity(
         /** 开机触发。 */
         const val TYPE_BOOT = "boot"
 
+        /** App 启动触发：本进程启动后触发一次。 */
+        const val TYPE_APP_START = "app_start"
+
         /** 同一任务上一次派发还没跑完就跳过本次。 */
         const val RUN_SINGLE = "single"
     }

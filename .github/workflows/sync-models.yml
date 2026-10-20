@@ -40,19 +40,39 @@ jobs:
           # 机器产物不落在 master（否则每次提交都会触发一轮 CI + Beta 构建）。
           cp data/models.json "$RUNNER_TEMP/models.json"
 
-          # 与 data 分支现存文件比对，无变化则跳过（避免无意义提交）。
-          git fetch origin data || true
-          if git show origin/data:data/models.json > "$RUNNER_TEMP/models.old.json" 2>/dev/null; then
-            if cmp -s "$RUNNER_TEMP/models.old.json" data/models.json; then
+          # 远端已有 data 分支时必须能取到，取不到就中止发布：绝不能退化成空树快照，
+          # 那会把分支上已发布的其它数据文件删掉。只有远端确实还没有该分支时才从空树首次创建。
+          # git ls-remote --exit-code --heads origin data 的退出码：0 = 有该分支，2 = 没有，其它 = 无法确认。
+          set +e
+          git ls-remote --exit-code --heads origin data > /dev/null 2>&1
+          ls_remote_code=$?
+          set -e
+          case "$ls_remote_code" in
+            0) base_tree="origin/data" ;;
+            2) base_tree=""; echo "远端尚无 data 分支，将首次创建" ;;
+            *) echo "无法确认 data 分支状态（git ls-remote 退出码 $ls_remote_code），中止发布以免覆盖已有数据"; exit 1 ;;
+          esac
+
+          if [ -n "$base_tree" ]; then
+            git fetch origin data
+            # 与 data 分支现存文件比对，无变化则跳过（避免无意义提交）。
+            if git show origin/data:data/models.json > "$RUNNER_TEMP/models.old.json" 2>/dev/null \
+               && cmp -s "$RUNNER_TEMP/models.old.json" data/models.json; then
               echo "模型元数据无变动，跳过提交"
               exit 0
             fi
           fi
 
-          # orphan 分支承载数据：每次覆盖成单个提交，data 分支始终只有最新快照。
-          git checkout --orphan data-snapshot
-          git rm -rf --cached . > /dev/null
-          git clean -fdx > /dev/null
+          # orphan 分支承载数据：每次覆盖成单个提交，data 分支始终只有最新快照；
+          # 但树基于 origin/data 增量重建，只覆盖本次负责的 data/models.json。
+          # 临时分支名带 PID + 随机后缀：checkout --orphan 遇到同名分支会直接 fatal，固定名字会让重跑炸掉。
+          snapshot_branch="data-snapshot-$$-$RANDOM"
+          git checkout --orphan "$snapshot_branch"
+          if [ -n "$base_tree" ]; then
+            git read-tree "$base_tree"
+          else
+            git read-tree --empty
+          fi
           mkdir -p data
           cp "$RUNNER_TEMP/models.json" data/models.json
           git add data/models.json

@@ -19,10 +19,16 @@
           artifact/<suite>/rootfs.debian_version 给出版本号，rootfs.tar.xz 是产物
   base 官方在前、国内镜像兜底；三类发行版在官方与镜像上的相对路径一致（实测过）。
 
+EOL 标注：版本之外还同步每个分支的支持周期（endoflife.date 的结构化 API），写入条目的
+  `eol`（常规支持结束）与 `supportEnds`（延伸支持结束，仅有两段式支持周期的发行版才有）。
+  拿不到 EOL 数据时**保留清单现值**、不影响版本同步，也不让整趟跑挂。
+
 清单约定（动手改之前先读）：
   - `sizeBytes` 取 **arm64** 那份产物的字节数（现有 12 条的实测值全部等于 arm64 产物），不是两份之和
   - `path` 与 `paths.*` 里的 {abi} 由 abiNames 替换（alpine aarch64 / ubuntu arm64+amd64 /
     debian arm64v8+amd64）；cnb 上的资产名就是 `paths.aharou` 替换后的字符串
+  - `eol` / `supportEnds` 为 `yyyy-MM-dd`；`supportEnds` 只在该发行版确有延伸支持期时下发
+    （Alpine、非 LTS 的 Ubuntu 没有），且恒不早于 `eol`
   - 两份清单（assets 内置 + data 远端）必须逐字节一致，本脚本改完会自行比对
 """
 
@@ -72,6 +78,18 @@ DISCOVERY_BASES = {
 }
 
 HREF_RE = re.compile(r'href="([^"]+)"')
+
+# EOL 数据源：endoflife.date 的结构化 API（一个发行版一个 slug）。
+# 注意 alpine 的 slug 是 alpine-linux——写成 alpine 会 404（实测）。
+# 字段口径：`eol` 是常规支持结束，`extendedSupport` 是延伸支持结束（Ubuntu 的 ESM / Debian 的 LTS），
+# 后者为 false 表示该分支没有延伸支持期（Alpine 全部、Ubuntu 非 LTS）。
+EOL_API = {
+    "alpine": "https://endoflife.date/api/alpine-linux.json",
+    "ubuntu": "https://endoflife.date/api/ubuntu.json",
+    "debian": "https://endoflife.date/api/debian.json",
+}
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 # ---------------------------------------------------------------- 网络基础
@@ -268,6 +286,77 @@ def report_unlisted_series(data: dict) -> None:
         print("\n上游有、清单里没有的分支（是否收录你定）：" + "、".join(sorted(set(hints))))
 
 
+# ---------------------------------------------------------------- EOL 标注
+
+def fetch_eol_cycles(distro: str) -> dict:
+    """拉一个发行版的支持周期表：{cycle: {"eol": ..., "supportEnds": ...}}。
+
+    任何环节失败都返回空表（而不是抛异常）：EOL 只是界面上的一句标注，
+    拿不到就该保留清单现值，不能让整趟版本同步跟着挂。
+    只收 `yyyy-MM-dd` 格式的日期；上游给 false / 缺字段的分支不写 supportEnds。
+    """
+    url = EOL_API.get(distro)
+    if not url:
+        return {}
+    try:
+        rows = json.loads(http_text(url))
+    except Exception as e:  # noqa: BLE001 — 降级：保留清单里已有的 EOL
+        print(f"  [警告] 取 {distro} 的 EOL 数据失败，保留清单现值：{e}")
+        return {}
+    if not isinstance(rows, list):
+        print(f"  [警告] {distro} 的 EOL 响应不是列表，保留清单现值")
+        return {}
+
+    out = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cycle = str(row.get("cycle") or "").strip()
+        if not cycle:
+            continue
+        info = {}
+        if isinstance(row.get("eol"), str) and DATE_RE.match(row["eol"]):
+            info["eol"] = row["eol"]
+        if isinstance(row.get("extendedSupport"), str) and DATE_RE.match(row["extendedSupport"]):
+            info["supportEnds"] = row["extendedSupport"]
+        if info:
+            out[cycle] = info
+    return out
+
+
+def sync_eol_fields(data: dict, targets: list) -> list:
+    """把 EOL 标注同步进清单条目（原地改 [data]），返回发生变化的 (id, 旧值, 新值) 列表。
+
+    只覆盖拿得到的字段：分支在 API 里查不到或字段缺失时保留清单现值——
+    一次网络抖动不该把已有标注清空（那是最难发现的静默丢数据）。
+    API 明确表示没有延伸支持期（如 Alpine）时删掉 supportEnds 键，而不是留个空串。
+    """
+    distros = sorted({e.get("distro") for e in targets if e.get("distro") in EOL_API})
+    by_distro = {}
+    if distros:
+        # 与版本探测同理：三四个请求串行要好几秒，并行一下。
+        with ThreadPoolExecutor(max_workers=len(distros)) as ex:
+            for d, rows in zip(distros, ex.map(fetch_eol_cycles, distros)):
+                by_distro[d] = rows
+
+    changed = []
+    for entry in targets:
+        info = (by_distro.get(entry.get("distro")) or {}).get(series_of(entry))
+        if not info:
+            continue
+        before = (entry.get("eol"), entry.get("supportEnds"))
+        if "eol" in info:
+            entry["eol"] = info["eol"]
+        if "supportEnds" in info:
+            entry["supportEnds"] = info["supportEnds"]
+        else:
+            entry.pop("supportEnds", None)
+        after = (entry.get("eol"), entry.get("supportEnds"))
+        if after != before:
+            changed.append((entry.get("id"), before, after))
+    return changed
+
+
 def probe_versions(entry: dict) -> tuple:
     """只探版本（1~2 个请求），返回 (info, error)。「无更新」这条便宜路径上不碰产物体积。"""
     errs = []
@@ -323,7 +412,9 @@ def fetch_checksums(entry: dict, info: dict) -> dict:
             if len(parts) >= 2:
                 table[parts[-1].lstrip("*")] = parts[0].lower()
         for abi in ABIS:
-            out[abi] = table.get(f"ubuntu-base-{ver}-base-{entry['abiNames'][abi]}")
+            # SHA256SUMS 里的文件名带 .tar.gz（如 ubuntu-base-24.04.3-base-amd64.tar.gz），
+            # 少这个后缀 key 永远对不上，Ubuntu 会一直拿不到哈希。
+            out[abi] = table.get(f"ubuntu-base-{ver}-base-{entry['abiNames'][abi]}.tar.gz")
         return out
     if d == "debian":
         suite = suite_of(entry)
@@ -333,6 +424,35 @@ def fetch_checksums(entry: dict, info: dict) -> dict:
             out[abi] = txt.split()[0].lower()
         return out
     raise RuntimeError(f"未知发行版：{d}")
+
+
+def backfill_checksums(latest: list) -> list:
+    """给「已是最新」但清单里缺 SHA-256 的条目补官方哈希，返回 [(entry, hashes)]。
+
+    只补缺的：两个 ABI 都已有哈希的条目直接跳过，不重复打扰上游；
+    取不到就保留清单现值——没哈希时 App 侧只是跳过校验，不算失败。
+    """
+    out = []
+    for entry, info in latest:
+        if entry["distro"] == "debian":
+            continue
+        have = entry.get("sha256ByAbi") or {}
+        if all(have.get(abi) for abi in ABIS):
+            continue
+        try:
+            hashes = {abi: h for abi, h in fetch_checksums(entry, info).items() if h}
+        except Exception as e:  # noqa: BLE001 — 单个条目取不到不该让整次同步失败
+            print(f"[{entry['id']}] 取官方 SHA256 失败：{e}（清单现值保持不变）")
+            continue
+        if hashes:
+            out.append((entry, hashes))
+    return out
+
+
+def write_backfills(backfills: list) -> None:
+    """把补齐的哈希写回清单条目（写入口径与 apply_changes 一致）。"""
+    for entry, hashes in backfills:
+        entry["sha256ByAbi"] = {abi: hashes[abi] for abi in ABIS if abi in hashes}
 
 
 # ---------------------------------------------------------------- cnb 侧
@@ -481,7 +601,8 @@ def save_manifests(data: dict) -> bool:
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     for p in MANIFESTS:
         tmp = p + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        # 显式 LF：Windows 下默认会写成 CRLF，与仓库里的 LF 版本逐字节不同，跑一次就是全文件 diff。
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.replace(tmp, p)
     after = []
@@ -520,6 +641,7 @@ def main() -> int:
           + (f"（仅 {args.distro}）" if args.distro else ""))
 
     changes, failures = [], []
+    latest = []  # 已是最新的条目：仍要拿它们补 SHA-256（见 backfill_checksums）
     todo = []
     for entry in targets:  # 先做纯本地的模板自检，坏条目不必浪费请求
         eid = entry.get("id", "?")
@@ -552,6 +674,7 @@ def main() -> int:
             continue
         if not is_newer(info["version"], entry["version"]):
             print(f"[{eid}] 已最新 {entry['version']}（上游 {info['version']}）")
+            latest.append((entry, info))
             continue
 
         # 有新版本才去 HEAD 产物体积（这一步只为报体积与后续幂等判断，不下载）
@@ -566,11 +689,39 @@ def main() -> int:
               f"{urllib.parse.urlsplit(info['base']).netloc}，{info['extra']}）")
         changes.append({"entry": entry, "info": info})
 
+    # EOL 标注独立于版本：没新版也可能过期。拿不到数据时这两行什么都不动。
+    eol_changes = sync_eol_fields(data, targets)
+    if eol_changes:
+        print(f"\nEOL 标注更新 {len(eol_changes)} 条：")
+        for eid, before, after in eol_changes:
+            print(f"  {eid}  常规支持结束 {before[0] or '—'} → {after[0] or '—'}"
+                  f"｜延伸支持结束 {before[1] or '—'} → {after[1] or '—'}")
+
+    # 版本没变也要补哈希：清单里的 sha256ByAbi 全靠这里生成，不补的话现有条目
+    # 要等到下次版本变更才写得进去。
+    hash_backfills = backfill_checksums(latest)
+
     # 无论有没有新版都提一句：上游新分支不该被静默漏掉
     report_unlisted_series(data)
 
     if not changes:
         print("\n全部已最新，无需同步。")
+        pending = []
+        pending_ids = [c[0] for c in eol_changes] + [e["id"] for e, _ in hash_backfills]
+        if eol_changes:
+            pending.append(f"{len(eol_changes)} 条 EOL 标注")
+        if hash_backfills:
+            pending.append(f"{len(hash_backfills)} 条 SHA-256")
+        if pending:
+            if not args.apply:
+                print(f"但清单有 {'、'.join(pending)} 待更新（dry-run 不改清单；加 --apply 写入）。")
+            else:
+                write_backfills(hash_backfills)
+                if save_manifests(data):
+                    print(f"仅清单字段变更，已写入（两份一致）：{', '.join(pending_ids)}")
+                    print("清单： " + " / ".join(os.path.relpath(p, ROOT) for p in MANIFESTS))
+                else:
+                    return 1
         if failures:
             print(f"另有 {len(failures)} 条探测/自检失败，见上。")
             return 1
@@ -587,6 +738,13 @@ def main() -> int:
     if not args.apply:
         print(f"\ndry-run 结束：{len(changes)} 条待更新，未下载未上传。"
               f"（加 --apply 执行；清单 sizeBytes 取 arm64 产物字节数）")
+        extras = []
+        if eol_changes:
+            extras.append(f"{len(eol_changes)} 条 EOL 标注")
+        if hash_backfills:
+            extras.append(f"{len(hash_backfills)} 条 SHA-256")
+        if extras:
+            print(f"另有 {'、'.join(extras)} 一并写入。")
         if failures:
             print(f"另有 {len(failures)} 条探测/自检失败，见上——失败项不会被同步。")
             return 1
@@ -597,10 +755,14 @@ def main() -> int:
         return 1
 
     applied, failed = apply_changes(changes)
-    if applied and not save_manifests(data):
+    write_backfills(hash_backfills)
+    touched = [c["entry"]["id"] for c in applied] + [e["id"] for e, _ in hash_backfills]
+    if touched and not save_manifests(data):
         return 1
-    if applied:
-        print(f"\n清单已更新（两份一致）：{', '.join(c['entry']['id'] for c in applied)}")
+    if touched:
+        print(f"\n清单已更新（两份一致）：{', '.join(touched)}")
+        if eol_changes:
+            print(f"其中含 {len(eol_changes)} 条 EOL 标注变更。")
         print("清单： " + " / ".join(os.path.relpath(p, ROOT) for p in MANIFESTS))
     if failed:
         print(f"\n完成但有失败：成功 {len(applied)} 条，失败 {len(failed)} 条 → {'；'.join(failed)}")
@@ -625,17 +787,22 @@ def apply_changes(changes: list) -> tuple:
         entry, info = c["entry"], c["info"]
         eid = entry["id"]
         print(f"\n[{eid}] {entry['version']} → {info['version']}")
+        # 官方 SHA256 在「cnb 上已有同体积资产、跳过下载」那条捷径上也要取：
+        # 否则清单里的 sha256ByAbi 永远写不进去。Debian 的地址是 Jenkins lastSuccessfulBuild，
+        # 同版本重跑会换字节，写死哈希会把合法下载判成校验失败，故不记录。
+        hashes = {}
+        if entry["distro"] != "debian":
+            try:
+                hashes = {abi: h for abi, h in fetch_checksums(entry, info).items() if h}
+            except Exception as e:  # noqa: BLE001 — 官方没给校验文件不该阻塞上传，但要打出来
+                print(f"  [警告] 取官方 SHA256 失败：{e}（本次不做校验）")
+        info["hashes"] = hashes
+
         names = {abi: asset_name(entry, abi) for abi in ABIS}
         if all(assets.get(names[abi]) == info["sizes"][abi] for abi in ABIS):
             print("  cnb 上两个 ABI 的同名资产都在且体积一致，跳过下载与上传")
             applied.append(c)
             continue
-
-        hashes = {}
-        try:
-            hashes = fetch_checksums(entry, info)
-        except Exception as e:  # noqa: BLE001 — 官方没给校验文件不该阻塞上传，但要打出来
-            print(f"  [警告] 取官方 SHA256 失败：{e}（本次不做校验）")
 
         tmpdir = tempfile.mkdtemp(prefix=f"cimg-{eid}-")
         ok = True
@@ -688,6 +855,9 @@ def apply_changes(changes: list) -> tuple:
         e["version"] = info["version"]
         e["path"] = path_for(e, info["version"])
         e["sizeBytes"] = info["sizes"]["arm64"]  # 与现有 12 条一致：取 arm64 产物
+        hashes = info.get("hashes") or {}
+        if hashes:  # 取不到就保留现值：没哈希时 App 侧只是跳过校验
+            e["sha256ByAbi"] = {abi: hashes[abi] for abi in ABIS if abi in hashes}
     return applied, failed
 
 

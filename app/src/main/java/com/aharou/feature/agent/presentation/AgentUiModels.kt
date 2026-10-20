@@ -8,25 +8,54 @@ import com.aharou.feature.workspace.domain.WorkspaceSearchHit
 import kotlinx.serialization.Serializable
 
 /**
+ * 侧边栏文件树的根节点：工作区根与当前容器根各一个。
+ * 根节点不可重命名/删除，只能在其下新建。
+ */
+@Immutable
+sealed interface FileTreeRoot {
+    /** 根节点显示名。 */
+    val label: String
+
+    /** 工作区根：显示名固定为 `workspace`，对应容器路径 `~/workspace`。 */
+    data object Workspace : FileTreeRoot {
+        override val label: String = "workspace"
+    }
+
+    /**
+     * 当前容器根，对应容器内 `/`。
+     * 图标与「容器与镜像」列表一致：[osId] 识别到系统时用该系统 logo，
+     * 未识别时 [remote] 为真用服务器图标、为假用硬盘图标。
+     */
+    data class Container(
+        override val label: String,
+        val osId: String?,
+        val remote: Boolean
+    ) : FileTreeRoot
+}
+
+/**
  * 侧边栏文件树的一个可见节点（已按展开状态扁平化，携带 [depth] 供 UI 缩进）。
- * 从工作区根就地展开：只有 [FileBrowseState.Success] 里出现的节点才是当前可见的。
+ * 从工作区根与当前容器根就地展开：只有 [FileBrowseState.Success] 里出现的节点才是当前可见的。
  */
 @Immutable
 data class FileTreeNode(
     val entry: FileEntry,
-    /** 容器绝对路径（如 `~/workspace/app/src`）；[isRoot] 时为工作区根。 */
+    /** 容器绝对路径（如 `~/workspace/app/src`、`/etc/apk`）；根节点为其根路径（`~/workspace`、`/`）。 */
     val path: String,
     /** 缩进层级：根为 0，其直接子项为 1，依此类推。 */
     val depth: Int,
-    /** 工作区根节点：不可重命名/删除，只能在其下新建。 */
-    val isRoot: Boolean,
+    /** 根节点信息；非根节点为 null。 */
+    val root: FileTreeRoot? = null,
     /** 目录是否已展开；非目录恒为 false。 */
     val isExpanded: Boolean,
-    /** 展开该目录时读取子项失败（如权限不足）；根读取失败走 [FileBrowseState.Error]。 */
+    /** 展开该目录时读取子项失败（如权限不足）；工作区根读取失败走 [FileBrowseState.Error]。 */
     val hasError: Boolean = false,
     /** 被工作区根 .gitignore 命中：UI 以橙色弱化显示（类 VSCode）。 */
     val ignored: Boolean = false
 )
+
+/** 文件树一行的显示名：根节点用根标签（工作区根 `workspace` / 当前容器名），其余用条目名。 */
+val FileTreeNode.displayName: String get() = root?.label ?: entry.name
 
 /** 文件浏览剪切板：一次只能持有一项，复制或剪切后待粘贴。 */
 @Immutable

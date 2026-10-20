@@ -107,7 +107,9 @@ class ProviderKeyRotator @Inject constructor() {
         providerId: String,
         sessionId: String?,
         key: String,
-        triedKeys: Set<String> = emptySet()
+        triedKeys: Set<String> = emptySet(),
+        /** 额度耗尽时用长冷却：这类 Key 不会几分钟就恢复，按普通冷却会周期性反复试。 */
+        quotaExhausted: Boolean = false
     ): KeySwitchResult? {
         synchronized(lock) {
             val setup = setups[providerId] ?: return null
@@ -115,8 +117,12 @@ class ProviderKeyRotator @Inject constructor() {
 
             // 先确认有可切换的候选，没有就别冷却——把最后一个可用 Key 冷却只会让用户在一段时间内完全不可用
             val next = pick(providerId, setup.keys, setup.strategy, exclude = triedKeys + key) ?: return null
-            if (setup.cooldownMillis > 0) {
-                cooldownUntil[stateKey(providerId, key)] = System.currentTimeMillis() + setup.cooldownMillis
+            val cooldownMillis = if (quotaExhausted) QUOTA_EXHAUSTED_COOLDOWN_MS else setup.cooldownMillis
+            if (cooldownMillis > 0) {
+                cooldownUntil[stateKey(providerId, key)] = System.currentTimeMillis() + cooldownMillis
+                if (quotaExhausted) {
+                    FileLogger.i(TAG, "Key ${key.masked()} 额度耗尽，冷却 ${cooldownMillis / 3_600_000L} 小时")
+                }
             }
             sessionId?.let { sessionKeys[sessionBinding(providerId, it)] = next }
             lastSelected[providerId] = next
@@ -187,5 +193,8 @@ class ProviderKeyRotator @Inject constructor() {
     private companion object {
         const val TAG = "ProviderKeyRotator"
         const val MAX_TRACKED_SESSIONS = 200
+
+        /** 额度耗尽的 Key 冷却 6 小时：这类账号不会几分钟就恢复，用普通冷却会周期性反复试。 */
+        const val QUOTA_EXHAUSTED_COOLDOWN_MS = 6 * 60 * 60 * 1000L
     }
 }

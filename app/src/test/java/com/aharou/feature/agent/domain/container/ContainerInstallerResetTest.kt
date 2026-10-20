@@ -133,8 +133,24 @@ class ContainerInstallerResetTest {
     private fun fakeRootfs(dir: File, marker: String): File {
         File(dir, "usr/bin").mkdirs()
         File(dir, "usr/bin/busybox").writeText("bin")
-        File(dir, marker).writeText("alpine-3.21.3-v6")
+        File(dir, marker).writeText("alpine-3.24.2-v7")
         return dir
+    }
+
+    /**
+     * 已发布出去的标记值必须继续被认作「已安装」。
+     *
+     * 回归点：`INSTALL_VERSION` 是**重装触发器**，值一变，所有已装用户下次进容器就会被整体清空重装——
+     * 容器里 `apk add` 装的包、初始化菜单装的 Android / Flutter SDK、JDK 全没，且清理前没有任何预警。
+     * 这里刻意把标记字面量写死，就是为了让「顺手把标记跟着 assets 的 Alpine 版本一起 +1」这种改动
+     * 在单测阶段就被拦住。若确实要强制重装，请连同本测试一起改，并在发版说明里写明用户代价。
+     */
+    @Test
+    fun 已发布的安装标记必须继续被认作已安装() {
+        val rootfs = File(filesDir, "rootfs").apply { mkdirs() }
+        File(rootfs, ".installed").writeText("alpine-3.24.2-v7")
+
+        assertTrue("改了 INSTALL_VERSION 会让所有老用户被静默清空重装", installer.isInstalled())
     }
 
     private class FakeContext(private val files: File, private val cache: File) : ContextWrapper(null) {

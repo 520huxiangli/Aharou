@@ -109,6 +109,17 @@ class SessionUseCase @Inject constructor(
         return chatSessionDao.getRootSessionsByWorkspaceOnce(workspacePath).firstOrNull()
     }
 
+    /**
+     * 工作区里一条「还没发过消息」的根会话，供新建会话时复用，避免每点一次「新建」就多插一条空会话。
+     *
+     * 排除隐身会话：隐身开关是按会话记的（[ChatSessionEntity.ghostMode]），复用一条带隐身标记的
+     * 旧会话，会让用户以为的新会话实际是隐身会话。
+     */
+    suspend fun getEmptySessionOfWorkspace(workspacePath: String): ChatSessionEntity? {
+        return chatSessionDao.getRootSessionsByWorkspaceOnce(workspacePath)
+            .firstOrNull { session -> !session.ghostMode && !agentMessageDao.hasMessages(session.id) }
+    }
+
     /** 工作区里最近更新的根会话（忽略置顶），供启动时进入最近会话。 */
     suspend fun getMostRecentSessionOfWorkspace(workspacePath: String): ChatSessionEntity? {
         return chatSessionDao.getLatestRootSessionByWorkspace(workspacePath)

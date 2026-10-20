@@ -61,6 +61,15 @@ class CodeEditorViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<EditorUiState>(EditorUiState.Loading)
     val uiState: StateFlow<EditorUiState> = _uiState.asStateFlow()
 
+    /**
+     * 文档版本：每次真正装载出一份文档（读盘完成或命中缓存）时自增，供编辑器页按「文档」重建编辑器。
+     *
+     * 不能改用 [EditorUiState.Success.content] 当身份：保存成功后 [markSaved] 也会改写它，那样每次保存
+     * 都会重建编辑器、丢掉撤销栈与光标位置；版本号只在装载文档时变。
+     */
+    private val _documentVersion = MutableStateFlow(0)
+    val documentVersion: StateFlow<Int> = _documentVersion.asStateFlow()
+
     private val _saveEvents = Channel<SaveResult>(Channel.BUFFERED)
     val saveEvents = _saveEvents.receiveAsFlow()
 
@@ -104,6 +113,7 @@ class CodeEditorViewModel @Inject constructor(
         currentPath = path
         loadedStates[path]?.let { cached ->
             _uiState.value = cached
+            _documentVersion.value++
             return
         }
         _uiState.value = EditorUiState.Loading
@@ -140,7 +150,10 @@ class CodeEditorViewModel @Inject constructor(
             loadedStates[path] = state
             if (state is EditorUiState.Success) refreshBaseline(path)
             // 读盘期间用户可能已切到别的标签页，只在仍停留在这个路径时更新界面。
-            if (currentPath == path) _uiState.value = state
+            if (currentPath == path) {
+                _uiState.value = state
+                _documentVersion.value++
+            }
         }
     }
 

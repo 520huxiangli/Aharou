@@ -5,6 +5,7 @@ import com.aharou.feature.agent.domain.model.AgentMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -15,7 +16,15 @@ sealed class ToolResult {
     @SerialName("success")
     data class Success(
         val data: JsonElement,
-        val images: List<AgentImage> = emptyList()
+        val images: List<AgentImage> = emptyList(),
+        /**
+         * 结果里的明文是「用户当面点头放行」的（当前只有 config 的 reveal 在确认面板通过后置位）。
+         *
+         * 置位的路径**不参与序列化**（模型既看不到、也无法伪造），只在本进程内告诉
+         * [com.aharou.feature.vault.redactWith] 跳过凭据脱敏：用户刚亲自批准读取，再把值换成
+         * `[REDACTED:NAME]` 等于让他白批一次。默认 false，普通工具结果照旧脱敏。
+         */
+        @Transient val plaintextApproved: Boolean = false
     ) : ToolResult()
 
     @Serializable

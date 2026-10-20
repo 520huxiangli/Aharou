@@ -26,6 +26,12 @@ The app ships with an Alpine image; on first launch it is added to the list and 
 Local container preparation (extracting the rootfs and installing base tools) is triggered the first time you enter the **terminal page**. So on first use, open the terminal page and complete initialization; after that the AI can execute commands, manage Git and use local MCP normally.
 :::
 
+::: info The built-in container is not replaced when you update the app
+A newer app version may ship a newer Alpine image, but **updating the app never touches the container you're already using** — the tools and package-mirror settings inside it stick around as they are.
+
+To move to a newer base image, use **Reset** on that container under "Settings → More → Container & Images": resetting deletes its rootfs directory (including the tools and configs installed inside), and the next terminal visit unpacks and initializes it again. **Workspace files and AI configuration (skills, MCP, memory) are not affected** — they live outside the container. A freshly installed app initializes straight onto the latest built-in image.
+:::
+
 ## First-Terminal Initialization Menu
 
 Whether it's the built-in Alpine or an image you imported yourself, the first time you enter the terminal after the rootfs is extracted a menu pops up with four options:
@@ -125,6 +131,17 @@ The built-in Alpine is enough for most cases, but if you want Debian / Ubuntu, o
 
 Downloaded images can be imported again; swipe left to delete the downloaded image file.
 
+- If a downloaded image shows **Update available**, the catalog version is newer than the one you downloaded (upstream shipped a new version or patch). Download and import it again; delete the old file first to free up space.
+- Downloads are verified for integrity automatically: Alpine and Ubuntu publish official SHA-256 checksums, and a mismatch shows **checksum failed** and deletes the partial file — just retry. Debian publishes no checksum, so it isn't verified. Switching to a third-party mirror (Huawei Cloud / Aliyun / Tencent Cloud) also skips verification, since those mirrors haven't been confirmed byte-for-byte.
+
+The image list labels each version with its support status, based on the distribution's official lifecycle:
+
+- **Ending soon**: regular support ends within 30 days — move to a newer version.
+- **Extended support only**: regular support has ended and only the extended phase is left (Ubuntu ESM, Debian LTS, and so on). These usually still get security updates but shouldn't be used long-term.
+- **End of life**: both regular and extended support have ended; no more security updates — don't use it for new environments.
+
+Versions still in regular support carry no label. Prefer versions with a long support window so you don't have to switch again soon.
+
 ### Option 2: Manually Import an Image File
 
 When you need a specific version or distribution, you can prepare a rootfs image yourself and import it.
@@ -220,6 +237,24 @@ Example usage: put your usual build script in the shared area, then tell the AI 
 
 ::: warning The shared area is not in backups
 "Backup & Restore" does not include files in the shared area; keep a separate copy of anything important.
+:::
+
+### Cross-workspace inbox
+
+Workspaces are deliberately isolated: chats and memories are invisible across them. To have the AI in workspace A leave a note for workspace B ("TODO.md item 5 is ready", "assets are in `~/shared/drafts`"), use the inbox:
+
+- Location: `~/shared/inbox/`, one file per workspace, named like `software-1a2b3c4d.md` (directory name + a short hash). The file only appears once something is actually written to it, so unused workspaces don't collect empty files.
+- One message per line: `- 2026-10-20 15:40 [Software] TODO.md updated, item 5 is ready`. Both you and the AI can read and write it directly.
+- Leaving a note: just tell the AI "leave a note for the writing workspace: assets are in ~/shared/drafts" — it finds the right file itself.
+- Receiving: the other workspace gets one summary notice ("N new messages" plus the contents) at the start of its next turn, so you don't have to switch workspaces to remind it. It is a message board, not a live chat — if you need it done right now, say so there.
+- Only put genuinely cross-workspace information in it (what changed, what to do next); don't dump whole conversations in.
+
+::: tip Moving the workspace or clearing the inbox
+The inbox identity is the full workspace path: renaming or moving the directory gives it a new identity, so it can no longer read the old inbox (the old file stays in `~/shared/inbox/`). To clear it, delete the file. Read progress is stored separately in app data; wiping app data resets it to 0, so existing messages are announced once more (nothing is lost).
+:::
+
+::: warning Local workspaces only
+The inbox lives in the shared area (`/root/shared` in the container). A remote SSH workspace's `~/shared` lives on the server and is a different directory, so remote workspaces don't take part in the inbox for now.
 :::
 
 ## What Happens If You Delete Everything

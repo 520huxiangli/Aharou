@@ -60,4 +60,6 @@ class DelegatingTerminalSessionProvider @Inject constructor(
     override fun listTabs(): List<TabInfo> = delegate().listTabs()
 
     override fun closeTab(id: String): Boolean = delegate().closeTab(id)
+
+    override fun closeFinishedAgentTabs(): Int = delegate().closeFinishedAgentTabs()
 }

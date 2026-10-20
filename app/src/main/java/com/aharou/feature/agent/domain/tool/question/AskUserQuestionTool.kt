@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.question
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolParameter
@@ -94,7 +95,13 @@ class AskUserQuestionTool @Inject constructor(
         )
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun execute(args: Map<String, JsonElement>): ToolResult = run(args, sessionId = "")
+
+    /** 统一工作流走这里：带上会话 id，通知栏才能标出这笔提问属于哪个会话。 */
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
+        run(args, context.sessionId.orEmpty())
+
+    private suspend fun run(args: Map<String, JsonElement>, sessionId: String): ToolResult {
         val questionsJson = args["questions"]?.jsonArray
         if (questionsJson == null || questionsJson.isEmpty()) {
             return ToolResult.Error("缺少必需参数: questions（至少包含一个问题）", "MISSING_QUESTIONS")
@@ -163,7 +170,7 @@ class AskUserQuestionTool @Inject constructor(
         }
 
         val requestId = UUID.randomUUID().toString()
-        val pending = PendingUserQuestion(id = requestId, questions = questions)
+        val pending = PendingUserQuestion(id = requestId, questions = questions, sessionId = sessionId)
 
         FileLogger.d(TAG, "ask_user_question 发起: ${questions.size} 个问题，等待用户回答...")
 

@@ -301,7 +301,10 @@ private val SUPPORTED_IMAGE_MIME_TYPES = setOf(
     "image/webp"
 )
 
-private const val MAX_IMAGE_UPLOAD_BYTES = 5L * 1024 * 1024
+// 选图门槛只影响「能不能选进来」，不是模型上限：图片进请求前会经 ImageCompressor 采样解码
+// （inSampleSize）并压到最长边 1536 / 目标 ~512KB。20MB 已经覆盖手机原图（12MP 常见 4~8MB）；
+// 再往上加只会让 base64 字符串在选中到发送之间常驻内存更久。
+private const val MAX_IMAGE_UPLOAD_BYTES = 20L * 1024 * 1024
 internal const val MAX_PENDING_ATTACHMENTS = 8
 
 internal fun formatBytes(bytes: Long): String {

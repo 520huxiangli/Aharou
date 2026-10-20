@@ -98,6 +98,16 @@ class GitViewModel @Inject constructor(
         val hasRemote: Boolean = false,
         /** 是否已配置全局署名 user.name（git config --global），控制提交按钮可用性；无署名提交会成为失败提交。 */
         val hasIdentity: Boolean = false,
+        /** 工作区里发现的 git 仓库路径列表（工作区根 + 一层子目录）。 */
+        val repos: List<String> = emptyList(),
+        /** 当前选中的 git 仓库路径；null 表示未选中（工作区根与子目录都不是仓库）。 */
+        val currentRepo: String? = null,
+        /** 工作区根的一层直接子目录（仓库选择弹窗展示扫描范围）。 */
+        val subdirs: List<String> = emptyList(),
+        /** 当前工作区根路径（仓库选择弹窗的基准目录）。 */
+        val workspaceRoot: String = "",
+        /** 是否显示仓库选择弹窗。 */
+        val repoPickerVisible: Boolean = false,
         /** 当前在详情弹层中查看的提交 hash；null 表示未打开。 */
         val commitDetailHash: String? = null,
         /** 已懒加载的提交文件清单，按 hash 缓存。 */
@@ -223,14 +233,26 @@ class GitViewModel @Inject constructor(
         _state.update { it.copy(loading = true, toast = null) }
         viewModelScope.launch {
             try {
-                if (!repository.isRepo()) {
-                    _state.update { it.copy(loading = false, notARepo = true) }
+                // 先发现工作区里的仓库（根 + 一层子目录），选中当前或默认仓库——后续所有 git 命令
+                // 都在选中仓库里跑（工作区根不是仓库、而某个子目录才是时也能用）。
+                val repos = repository.discoverRepos()
+                val subdirs = repository.listSubdirectories()
+                val root = repository.workspaceRoot()
+                val previous = repository.currentRepoPath
+                // 已选仓库不在了（切了工作区 / 目录被删）就回退：根仓库优先，否则第一个子目录仓库。
+                val effectiveRepo = previous?.takeIf { it in repos } ?: repos.firstOrNull()
+                if (effectiveRepo != previous) clearRepoScopedState()
+                repository.setRepoPath(effectiveRepo)
+                if (effectiveRepo == null) {
+                    _state.update {
+                        it.copy(loading = false, notARepo = true, repos = repos, subdirs = subdirs, workspaceRoot = root, currentRepo = null)
+                    }
                     return@launch
                 }
                 val snap = loadSnapshot(includeIdentity = true)
                 val commits = snap.graph.toGitCommits()
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity, untrackedDirFiles = snap.untrackedDirFiles, branchesLoaded = false, branchesLoading = false, branches = emptyList(), tags = emptyList())
+                    it.copy(loading = false, notARepo = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity, untrackedDirFiles = snap.untrackedDirFiles, branchesLoaded = false, branchesLoading = false, branches = emptyList(), tags = emptyList(), repos = repos, subdirs = subdirs, workspaceRoot = root, currentRepo = effectiveRepo)
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
                 loadBranches()
@@ -239,6 +261,21 @@ class GitViewModel @Inject constructor(
                 FileLogger.e(TAG, "刷新失败", e)
                 _state.update { it.copy(loading = false, toast = context.getString(R.string.git_toast_refresh_failed, e.message)) }
             }
+        }
+    }
+
+    /**
+     * 清掉与「哪个仓库」强相关的缓存（提交详情、已展开的未跟踪目录、储藏列表）。切仓库后这些
+     * 数据都属于旧仓库，留着会跟新仓库的内容混在一起。
+     */
+    private fun clearRepoScopedState() {
+        _state.update {
+            it.copy(
+                commitDetailHash = null,
+                commitFiles = emptyMap(),
+                stashes = emptyList(),
+                untrackedDirFiles = emptyMap()
+            )
         }
     }
 
@@ -366,8 +403,58 @@ class GitViewModel @Inject constructor(
             }
         }
     }
+    /**
+     * 初始化 / 克隆成功后重新发现仓库：这两步都让当前工作区根成为仓库，重扫一遍把仓库列表、
+     * 子目录与当前仓库对齐（不走 [refresh]，免得把刚设好的成功提示 toast 清掉）。
+     */
+    private suspend fun resyncRepoDiscovery() {
+        val repos = repository.discoverRepos()
+        val root = repository.workspaceRoot()
+        val subdirs = repository.listSubdirectories()
+        val current = root.takeIf { it in repos } ?: repos.firstOrNull()
+        if (current != repository.currentRepoPath) clearRepoScopedState()
+        repository.setRepoPath(current)
+        _state.update {
+            it.copy(repos = repos, currentRepo = current, subdirs = subdirs, workspaceRoot = root)
+        }
+    }
+
     /** 在当前工作区执行 `git init` 初始化仓库；成功后 runAction 末尾自动刷新（notARepo 翻 false）。 */
-    fun initRepo() = runAction(R.string.git_action_init, { repository.initRepo() })
+    fun initRepo() = runAction(
+        R.string.git_action_init,
+        { repository.initRepo() },
+        onComplete = { resyncRepoDiscovery() }
+    )
+
+    /** 显示仓库选择弹窗（列出工作区根与其一层子目录，仅 Git 仓库可点选）。 */
+    fun showRepoPicker() = _state.update { it.copy(repoPickerVisible = true) }
+
+    /** 关闭仓库选择弹窗。 */
+    fun hideRepoPicker() = _state.update { it.copy(repoPickerVisible = false) }
+
+    /**
+     * 切换到指定路径的 git 仓库（从发现列表选择）。先校验目标目录处于 git 工作树内，
+     * 通过后记为当前仓库并刷新；校验失败只 toast，不动当前状态。
+     */
+    fun switchRepo(path: String) {
+        if (_state.value.busy) return
+        _state.update { it.copy(repoPickerVisible = false) }
+        viewModelScope.launch {
+            try {
+                if (!repository.isGitRepo(path)) {
+                    _state.update { it.copy(toast = context.getString(R.string.git_toast_not_repo)) }
+                    return@launch
+                }
+                if (repository.currentRepoPath != path) clearRepoScopedState()
+                repository.setRepoPath(path)
+                refresh()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                FileLogger.e(TAG, "切换仓库失败", e)
+                _state.update { it.copy(toast = context.getString(R.string.git_toast_switch_repo_failed, e.message ?: "")) }
+            }
+        }
+    }
 
     /**
      * 克隆仓库。
@@ -405,9 +492,12 @@ class GitViewModel @Inject constructor(
                     sessionUseCase.newSessionEntity(target.path).copy(title = target.name)
                 )
                 workspaceRepository.switchToNewWorkspace(target.path)
+                // 工作区已换：旧工作区里选中的仓库路径作废，否则后续 git 命令会在旧仓库里跑。
+                repository.setRepoPath(null)
                 output
             }
-        }
+        },
+        onComplete = { resyncRepoDiscovery() }
     )
     fun pull() {
         if (!_state.value.hasRemote) {

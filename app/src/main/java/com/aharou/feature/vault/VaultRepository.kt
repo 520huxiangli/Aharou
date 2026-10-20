@@ -47,11 +47,32 @@ class VaultRepository @Inject constructor(
         /** 占位符语法 `{{vault:NAME}}`，花括号内允许空白。 */
         val PLACEHOLDER_REGEX = Regex("""\{\{\s*vault:([A-Za-z0-9_.-]+)\s*\}\}""")
 
-        /** 短于该长度的值不脱敏（1~2 字符不是密钥，掩掉会把普通词也抹掉）。 */
-        private const val REDACT_MIN_CHARS = 3
+        /** 短于该长度的值不当凭据处理：8 位以下多是普通词与变量名，掩掉只会误伤代码与输出。 */
+        private const val REDACT_MIN_CHARS = 8
 
-        /** 值达到该长度整串子串替换；更短的只按整 token 替换，避免改写词中片段。 */
-        private const val REDACT_FULL_MATCH_CHARS = 6
+        /** 达到该长度的值一律脱敏：这么长的串按普通词误伤的几率极低，宁可多掩一层。 */
+        private const val REDACT_ALWAYS_CHARS = 20
+
+        /**
+         * 纯函数：值是否「长得像凭据」，只有像才参与脱敏。
+         *
+         * 规则按长度分三档：
+         * - <8：不脱敏。`dongwu` 这类普通词、短变量名都在这一档；
+         * - ≥20：一律脱敏。长到这个量级的东西几乎不可能是自然语言词；
+         * - 8~19：必须同时包含大写字母与（数字或符号）。真密钥基本都有这两类字符，
+         *   而纯小写词（`dongwu`）、下划线标识符（`attached_equip`）、驼峰标识符
+         *   （`HistoryPhase`）恰好各自缺一项，于是不会被误伤。
+         *
+         * 代价是「8~19 位但没有大写」（如全小写十六进制）的密钥不达标不入脱敏，
+         * 这属于为了不误伤代码而接受的风险：这类值本身也极容易被当成普通词。
+         */
+        fun looksLikeCredential(value: String): Boolean {
+            if (value.length < REDACT_MIN_CHARS) return false
+            if (value.length >= REDACT_ALWAYS_CHARS) return true
+            val hasUpper = value.any { it.isUpperCase() }
+            val hasDigitOrSymbol = value.any { it.isDigit() || (!it.isLetterOrDigit() && !it.isWhitespace()) }
+            return hasUpper && hasDigitOrSymbol
+        }
     }
 
     /** 全部名字（有序）。 */
@@ -101,23 +122,13 @@ class VaultRepository @Inject constructor(
         args.mapValues { resolveElement(it.value, strict) }
 
     /**
-     * 把文本里出现的任何库内值替换为 `[REDACTED:NAME]`。先按值长度降序（一个值包含另一个时不至于留半截）；
-     * ≥6 字符整串子串替换，3~5 字符只按整 token 替换（词边界），<3 字符不脱敏。
+     * 把文本里看起来像凭据的库内值替换为 `[REDACTED:NAME]`。命中条件见 [looksLikeCredential]。
+     * 替换顺序仍是长值优先（见 [redactText]），一个值包含另一个时才不会留下半截。
      */
     fun redact(text: String): String {
         if (text.isEmpty()) return text
-        val secrets = synchronized(lock) { load().entries.sortedByDescending { it.value.length } }
-        var result = text
-        for ((name, secret) in secrets) {
-            if (secret.length < REDACT_MIN_CHARS) continue
-            val mark = "[REDACTED:$name]"
-            result = if (secret.length >= REDACT_FULL_MATCH_CHARS) {
-                result.replace(secret, mark)
-            } else {
-                result.replace(Regex("""(?<![\w.+-])${Regex.escape(secret)}(?![\w.+-])"""), mark)
-            }
-        }
-        return result
+        val secrets = synchronized(lock) { load().map { (name, value) -> name to value } }
+        return redactText(text, secrets)
     }
 
     private fun load(): Map<String, String> {
@@ -137,4 +148,22 @@ class VaultRepository @Inject constructor(
         prefs.edit().putString(KEY_BLOB, KeystoreCipher.encryptString(json.toString())).apply()
         cache = data
     }
+}
+
+/**
+ * 纯函数：把 [secrets] 里「看起来像凭据」的值按 `[REDACTED:NAME]` 替掉。
+ *
+ * 按值长度降序替换（一个值包含另一个时，长的那段先被换掉，短值就不会留下半截）；
+ * 是否算凭据由 [VaultRepository.looksLikeCredential] 判定。与 Android 无关，便于单测。
+ */
+internal fun redactText(text: String, secrets: List<Pair<String, String>>): String {
+    if (text.isEmpty()) return text
+    val ordered = secrets
+        .filter { it.second.isNotEmpty() && VaultRepository.looksLikeCredential(it.second) }
+        .sortedByDescending { it.second.length }
+    var result = text
+    for ((name, secret) in ordered) {
+        if (secret in result) result = result.replace(secret, "[REDACTED:$name]")
+    }
+    return result
 }

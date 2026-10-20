@@ -9,16 +9,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.AppThemePreset
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.isDynamicColorSupported
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.settings.data.repository.AppThemeMode
+import com.aharou.feature.settings.presentation.TerminalCleanupSettingsViewModel
 import com.aharou.feature.terminal.data.repository.TerminalSettings
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.User
@@ -184,8 +189,10 @@ internal fun SettingsGeneralGroupScreen(
     onOpenTheme: () -> Unit,
     onOpenTerminalSettingsSheet: () -> Unit,
     onOpenLanguageSheet: () -> Unit,
-    onOpen: (SettingsSection) -> Unit
+    onOpen: (SettingsSection) -> Unit,
+    cleanupViewModel: TerminalCleanupSettingsViewModel = hiltViewModel()
 ) {
+    val autoCloseAgentTabs by cleanupViewModel.autoCloseFinishedAgentTabs.collectAsStateWithLifecycle()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -228,6 +235,18 @@ internal fun SettingsGeneralGroupScreen(
                         text = stringResource(terminalSettings.theme.nameRes),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.semanticColors.subtleText
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Clock,
+                title = stringResource(R.string.settings_auto_close_agent_tabs_title),
+                subtitle = stringResource(R.string.settings_auto_close_agent_tabs_subtitle),
+                trailing = {
+                    AppSwitch(
+                        checked = autoCloseAgentTabs,
+                        onCheckedChange = { cleanupViewModel.setAutoCloseFinishedAgentTabs(it) }
                     )
                 }
             )

@@ -243,7 +243,7 @@ class ToolOutputStoreTest {
     @Test
     fun boundTextIncludesEscapingAndMetadataInItsBudgetAndStoresRawText() {
         val small = store.boundText("test", "small-text", "ok")
-        assertEquals(StoredToolOutput("ok", false, 2), small)
+        assertEquals(StoredToolOutput("ok", false, 2, 1), small)
         val raw = "\"\\\n\u0001".repeat(10_000)
         val stored = store.boundText("test", "raw-text", raw)
         assertTrue(stored.truncated)
@@ -287,6 +287,116 @@ class ToolOutputStoreTest {
         ))))
     }
 
+    @Test
+    fun partialMessageLinesWinOverSmallData() {
+        val message = numberedLines(count = 2_500, width = 8)
+        val original = ToolResult.Partial(JsonObject(mapOf("done" to JsonPrimitive(false))), message)
+        val processed = store.process("test", "partial-lines", original) as ToolResult.Partial
+        assertBounded(processed)
+        assertEquals(JsonPrimitive(false), processed.data.jsonObject["done"])
+        assertEquals(JsonPrimitive(2_500), processed.data.jsonObject["output_total_lines"])
+        assertEquals(2_500, markerTotalLines(processed.message))
+    }
+
+    @Test
+    fun errorMessageLinesDriveOutputTotalLines() {
+        val message = numberedLines(count = 2_000, width = 8)
+        val processed = store.process("test", "error-lines", ToolResult.Error(message, "REMOTE_FAILED")) as ToolResult.Error
+        assertBounded(processed)
+        assertEquals("REMOTE_FAILED", processed.code)
+        val metadata = Json.parseToJsonElement(processed.message.substringAfterLast('\n')).jsonObject
+        assertEquals(JsonPrimitive(2_000), metadata["output_total_lines"])
+        assertEquals(2_000, markerTotalLines(processed.message))
+        // 错误结果的正文就是 message，行号必须指回 message 而不是单行的 JSON 传输串。
+        assertOmittedRangeMatchesSlices(message, processed.message.substringBeforeLast('\n'))
+    }
+
+    @Test
+    fun untruncatedResultsCarryNoLineMetadataAndStillCountLines() {
+        val short = ToolResult.Success(JsonPrimitive("a\nb\nc"))
+        assertSame(short, store.process("test", "short-lines", short))
+        assertTrue(archives.isEmpty())
+        // 不截断就不动结果（沿用既有行为），但 boundText 仍报真实行数，字段不会拿 0 充数。
+        assertEquals(StoredToolOutput("a\nb\nc", false, 5, 3), store.boundText("test", "short-raw", "a\nb\nc"))
+        assertTrue(archives.isEmpty())
+    }
+
+    @Test
+    fun truncatedPreviewNamesTheOmittedLineRangeAndTotalLines() {
+        val text = numberedLines(count = 4_000, width = 8)
+        val processed = store.process("test", "line-range", ToolResult.Success(JsonPrimitive(text))) as ToolResult.Success
+        assertBounded(processed)
+        assertArchive(ToolResult.Success(JsonPrimitive(text)), processed.data)
+        assertEquals(JsonPrimitive(4_000), processed.data.jsonObject["output_total_lines"])
+        val preview = processed.data.jsonObject.getValue("output").jsonPrimitive.content
+        assertOmittedRangeMatchesSlices(text, preview)
+        assertTrue(preview.startsWith("line 0001: "))
+        assertTrue(preview.endsWith("line 4000: aaaaaaaa\n"))
+        assertTrue(preview.contains("of 4000,"))
+    }
+
+    @Test
+    fun crlfLoneCrAndTrailingNewlineFollowReadFileLineNumbers() {
+        val crlf = numberedLines(count = 4_000, width = 8, ending = "\r\n")
+        val crlfStored = store.boundText("test", "crlf", crlf)
+        assertTrue(crlfStored.truncated)
+        assertEquals(4_000, crlfStored.totalLines)
+        assertEquals(crlf, assertArchivedRaw(crlfStored))
+        assertOmittedRangeMatchesSlices(crlf, crlfStored.preview)
+        assertTrue(crlfStored.preview.endsWith("line 4000: aaaaaaaa\r\n"))
+
+        // 末尾无换行不多算一行，末尾有换行也不多算一行（与 BufferedReader.readLine 一致）。
+        val noTrailing = numberedLines(count = 4_000, width = 8).trimEnd('\n')
+        assertEquals(4_000, store.boundText("test", "no-trailing", noTrailing).totalLines)
+        assertEquals(StoredToolOutput("a\nb\nc", false, 5, 3), store.boundText("test", "lf", "a\nb\nc"))
+        assertEquals(StoredToolOutput("a\nb\nc\n", false, 6, 3), store.boundText("test", "lf-tail", "a\nb\nc\n"))
+        assertEquals(StoredToolOutput("a\r\nb\r\nc", false, 7, 3), store.boundText("test", "crlf-small", "a\r\nb\r\nc"))
+        assertEquals(StoredToolOutput("a\rb", false, 3, 2), store.boundText("test", "lone-cr", "a\rb"))
+        assertEquals(StoredToolOutput("", false, 0, 0), store.boundText("test", "empty", ""))
+    }
+
+    @Test
+    fun singleOmittedLineIsReportedAsOneLine() {
+        val text = "x".repeat(60_000)
+        val stored = store.boundText("test", "one-line", text)
+        assertTrue(stored.truncated)
+        assertEquals(1, stored.totalLines)
+        assertTrue(stored.preview.contains("...[output truncated; omitted line 1 of 1, "))
+        assertEquals(text, assertArchivedRaw(stored))
+        assertOmittedRangeMatchesSlices(text, stored.preview)
+    }
+
+    @Test
+    fun wideEmojiLinesKeepSurrogatesAndLineNumbers() {
+        val text = (1..4_000).joinToString("\n") { "row $it 汉字😀😀" }
+        val stored = store.boundText("test", "emoji-lines", text)
+        assertEquals(4_000, stored.totalLines)
+        assertValidSurrogates(stored.preview)
+        assertEquals(text, assertArchivedRaw(stored))
+        assertOmittedRangeMatchesSlices(text, stored.preview)
+    }
+
+    @Test
+    fun multiFieldResultReportsLongestFieldLinesAndPerFieldRanges() {
+        val manyLinesField = numberedLines(count = 1_500, width = 8)
+        val wideField = numberedLines(count = 600, width = 50)
+        val original = ToolResult.Success(JsonObject(mapOf(
+            "stdout" to JsonPrimitive(manyLinesField),
+            "nested" to JsonObject(mapOf("stderr" to JsonPrimitive(wideField)))
+        )))
+        val processed = store.process("test", "multi-field-lines", original) as ToolResult.Success
+        assertBounded(processed)
+        assertArchive(original, processed.data)
+        val data = processed.data.jsonObject
+        assertEquals(JsonPrimitive(1_500), data["output_total_lines"])
+        val stdout = data.getValue("stdout").jsonPrimitive.content
+        val stderr = data.getValue("nested").jsonObject.getValue("stderr").jsonPrimitive.content
+        assertEquals(1_500, markerTotalLines(stdout))
+        assertEquals(600, markerTotalLines(stderr))
+        assertOmittedRangeMatchesSlices(manyLinesField, stdout)
+        assertOmittedRangeMatchesSlices(wideField, stderr)
+    }
+
     private fun assertBounded(result: ToolResult) {
         assertTrue("Text transport exceeds 40000 characters", textTransport(result).length <= 40_000)
     }
@@ -296,6 +406,64 @@ class ToolOutputStoreTest {
         assertTrue(path.startsWith("/home/remote/.aharou/tool-output/"))
         assertEquals(original.toTransportString(), archives.getValue(path))
         assertEquals(JsonPrimitive(original.toTransportString().length), data.jsonObject["output_total_chars"])
+        // 既有字段一个都不能少，新行数字段与它们并存。
+        assertTrue(data.jsonObject.containsKey("output_truncated"))
+        assertTrue(data.jsonObject.containsKey("output_total_lines"))
+    }
+
+    private fun assertArchivedRaw(stored: StoredToolOutput): String {
+        val path = requireNotNull(stored.outputPath)
+        assertTrue(path.startsWith("/home/remote/.aharou/tool-output/"))
+        return archives.getValue(path)
+    }
+
+    /**
+     * 从预览里取出 head/tail 两段（它们必须是正文的前缀/后缀），再用这两段反算被省掉的行区间，
+     * 验证标记里的行号确实指向「没给你的那几行」，而不是一个看着像行号的数字。
+     */
+    private fun assertOmittedRangeMatchesSlices(text: String, preview: String) {
+        val markerStart = preview.indexOf("...[output truncated; omitted ")
+        assertTrue("预览缺少截断标记", markerStart > 2)
+        val markerEnd = preview.indexOf("]...\n\n", markerStart)
+        assertTrue("截断标记没有收尾", markerEnd > markerStart)
+        val head = preview.substring(0, markerStart - 2)
+        val tail = preview.substring(markerEnd + 6)
+        assertTrue("head 必须是正文前缀", text.startsWith(head))
+        assertTrue("tail 必须是正文后缀", text.endsWith(tail))
+        val omitted = text.substring(head.length, text.length - tail.length)
+        val marker = preview.substring(markerStart, markerEnd)
+        val chars = Regex(", (\\d+) characters").find(marker)?.groupValues?.get(1)?.toInt()
+        assertEquals(omitted.length, chars)
+        val expectedStart = 1 + head.count { it == '\n' }
+        val expectedEnd = expectedStart + omitted.count { it == '\n' } - if (omitted.endsWith('\n')) 1 else 0
+        assertEquals(expectedStart, markerStartLine(marker))
+        assertEquals(expectedEnd, markerEndLine(marker))
+        assertTrue(expectedEnd >= expectedStart)
+    }
+
+    private fun markerStartLine(marker: String): Int =
+        Regex("omitted (?:lines (\\d+)-(\\d+)|line (\\d+)) of").find(marker)
+            ?.groupValues?.let { if (it[1].isNotEmpty()) it[1].toInt() else it[3].toInt() }
+            ?: error("标记里没有行号: $marker")
+
+    private fun markerEndLine(marker: String): Int =
+        Regex("omitted (?:lines (\\d+)-(\\d+)|line (\\d+)) of").find(marker)
+            ?.groupValues?.let { if (it[2].isNotEmpty()) it[2].toInt() else it[3].toInt() }
+            ?: error("标记里没有行号: $marker")
+
+    private fun markerTotalLines(text: String): Int =
+        Regex("omitted (?:lines \\d+-\\d+|line \\d+) of (\\d+),").find(text)
+            ?.groupValues?.get(1)?.toInt()
+            ?: error("标记里没有总行数")
+
+    private fun numberedLines(count: Int, width: Int, ending: String = "\n"): String = buildString {
+        repeat(count) { index ->
+            append("line ")
+            append((index + 1).toString().padStart(4, '0'))
+            append(": ")
+            append("a".repeat(width))
+            append(ending)
+        }
     }
 
     private fun textTransport(result: ToolResult): String = when (result) {

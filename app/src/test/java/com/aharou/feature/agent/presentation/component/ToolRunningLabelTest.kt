@@ -20,9 +20,24 @@ class ToolRunningLabelTest {
 
     @Test
     fun fileReadingTools_mapToReadingFile() {
-        listOf("readFile", "list", "sendFile", "viewImage").forEach { name ->
+        listOf("readFile", "list", "sendFile").forEach { name ->
             assertEquals(name, R.string.chat_status_reading_file, toolRunningLabelRes(name))
         }
+    }
+
+    @Test
+    fun imageTools_mapToViewingImage() {
+        assertEquals(R.string.chat_status_viewing_image, toolRunningLabelRes("viewImage"))
+    }
+
+    @Test
+    fun browserTool_mapsToBrowsingWeb() {
+        assertEquals(R.string.chat_status_browsing_web, toolRunningLabelRes("browser"))
+    }
+
+    @Test
+    fun askUserQuestionTool_mapsToAskingUser() {
+        assertEquals(R.string.chat_status_asking_user, toolRunningLabelRes("askUserQuestion"))
     }
 
     @Test

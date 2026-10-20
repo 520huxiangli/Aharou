@@ -32,7 +32,39 @@ fun Throwable.isKeySwitchFailure(statusCodes: Set<Int> = DEFAULT_KEY_SWITCH_STAT
     return KEY_FAILURE_MESSAGES.any { text.contains(it) }
 }
 
+/**
+ * 额度耗尽（余额/配额用尽）：与临时限流（429 速率）要分开——它不会几分钟就恢复，
+ * 按普通冷却处理会每个冷却周期把这个号重新拉出来试一遍，用户看到的就是「没积分的号反复连」。
+ */
+fun Throwable.isQuotaExhausted(): Boolean {
+    var current: Throwable? = this
+    var depth = 0
+    while (current != null && depth < MAX_CAUSE_DEPTH) {
+        if (current is HttpException && current.code() == 402) return true
+        if (current is StreamApiException && current.code?.lowercase() in QUOTA_STREAM_CODES) return true
+        current = current.cause
+        depth++
+    }
+    val text = message?.lowercase() ?: return false
+    return QUOTA_MESSAGES.any { text.contains(it) }
+}
+
 private const val MAX_CAUSE_DEPTH = 5
+
+private val QUOTA_STREAM_CODES = setOf(
+    "insufficient_quota",
+    "quota_exceeded",
+    "usage_limit_reached",
+    "usage_not_included"
+)
+
+private val QUOTA_MESSAGES = listOf(
+    "insufficient_quota",
+    "insufficient balance",
+    "quota exceeded",
+    "余额不足",
+    "额度已用尽"
+)
 
 private val KEY_FAILURE_STREAM_CODES = setOf(
     "insufficient_quota",

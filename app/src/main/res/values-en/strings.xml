@@ -699,6 +699,7 @@
     <string name="editor_unsaved_title">Unsaved changes</string>
     <string name="editor_unsaved_message">This file has unsaved changes. Save them?</string>
     <string name="editor_save_and_exit">Save and exit</string>
+    <string name="editor_save_and_switch">Save and switch</string>
     <string name="editor_dont_save">Don\'t save</string>
     <string name="editor_close_tab">Close tab</string>
     <string name="editor_close_tab_unsaved_title">This file has unsaved changes</string>
@@ -784,7 +785,10 @@
     <string name="chat_status_running_command">Running command</string>
     <string name="chat_status_editing_file">Editing file</string>
     <string name="chat_status_reading_file">Reading file</string>
+    <string name="chat_status_viewing_image">Viewing image</string>
     <string name="chat_status_searching_web">Searching the web</string>
+    <string name="chat_status_browsing_web">Controlling browser</string>
+    <string name="chat_status_asking_user">Asking user</string>
     <string name="chat_status_generating_image">Generating image</string>
     <string name="chat_status_updating_todo">Updating to-dos</string>
     <string name="chat_status_starting_subagent">Starting sub-agent</string>
@@ -795,6 +799,7 @@
     <string name="chat_tool_calls_count">%1$d tool calls</string>
     <string name="chat_turn_running">Running</string>
     <string name="chat_turn_completed">Completed in %1$s</string>
+    <string name="chat_turn_completed_plain">Completed</string>
     <string name="chat_context_usage">Context %1$d%% used</string>
     <string name="chat_bg_command_done">Background command completed</string>
     <string name="chat_bg_commands_done">%1$d background tasks completed</string>
@@ -966,9 +971,14 @@
     <string name="container_download_failed">Download failed: %1$s</string>
     <string name="container_download_list_empty">No images available</string>
     <string name="container_download_done">Downloaded</string>
+    <string name="container_download_newer_available">Update available</string>
+    <string name="container_download_checksum_failed">Checksum mismatch - the file may be truncated or tampered with. Please retry.</string>
     <string name="container_download_size">Size: %1$s</string>
     <string name="container_download_delete_title">Delete downloaded image</string>
     <string name="container_download_delete_confirm">Delete the downloaded file for "%1$s"? Imported containers will not be able to extract again.</string>
+    <string name="container_image_eol_ending_soon">Support ending soon</string>
+    <string name="container_image_eol_extended_only">Extended support only</string>
+    <string name="container_image_eol_end_of_life">No longer supported</string>
 
     <!-- Credential Editor -->
     <string name="credential_edit">Edit Credential</string>
@@ -1091,9 +1101,10 @@
     <string name="git_files_changed">%1$s files changed</string>
     <string name="git_no_files_changed">No files changed in this commit</string>
     <string name="git_loading_files">Loading changed files...</string>
-    <string name="git_not_a_repo">Current workspace is not a Git repository</string>
-    <string name="git_init_desc">Initialization will create .git here, after which you can stage, commit, and link remotes.</string>
-    <string name="git_init_repo">Initialize Git Repository</string>
+    <string name="git_not_a_repo">Current workspace is not a Git repository yet</string>
+    <string name="git_init_desc_primary">Initialize a new repository here to start version control</string>
+    <string name="git_init_desc_secondary">Or pick an existing repository from a subdirectory</string>
+    <string name="git_init_repo">Initialize New Repository</string>
     <string name="git_clone_repo">Clone Remote Repository</string>
     <string name="git_clone_dialog_title">Clone Git Repository</string>
     <string name="git_clone_desc">If the current workspace is empty, clone straight into it (no new workspace, no rename). Otherwise a dedicated workspace is created and switched to. For private repos, configure credentials via the key icon first.</string>
@@ -1134,6 +1145,13 @@
     <string name="git_toast_action_failed">%1$s failed: %2$s</string>
     <string name="git_toast_checkout_success">Switched to %1$s</string>
     <string name="git_toast_checkout_failed">Switch failed: %1$s</string>
+    <string name="git_switch_repo">Switch repository</string>
+    <string name="git_pick_existing_repo">Pick Existing Repository</string>
+    <string name="git_repo_selector_title">Select Repository</string>
+    <string name="git_repo_not_repo">Not a repo</string>
+    <string name="git_pick_repo_empty">No directories available in the current workspace</string>
+    <string name="git_toast_not_repo">This directory is not a Git repository</string>
+    <string name="git_toast_switch_repo_failed">Switch repository failed: %1$s</string>
     <string name="git_toast_diff_failed">Failed to load diff</string>
     <string name="git_toast_path_copied">Path copied</string>
     <string name="git_action_stage_all">Stage all</string>
@@ -1441,6 +1459,7 @@
     <string name="scheduled_tasks_trigger_battery">On battery change</string>
     <string name="scheduled_tasks_trigger_network">On network change</string>
     <string name="scheduled_tasks_trigger_boot">On boot</string>
+    <string name="scheduled_tasks_trigger_app_start">On app start</string>
     <string name="scheduled_tasks_trigger_package">Source app</string>
     <string name="scheduled_tasks_trigger_package_hint">Enter the app package (e.g. com.tencent.mm); leave empty for any app. Turn on notification access in App permissions first</string>
     <string name="scheduled_tasks_trigger_battery_below">Battery threshold (%)</string>
@@ -1449,6 +1468,7 @@
     <string name="scheduled_tasks_trigger_ssid">Wi-Fi name</string>
     <string name="scheduled_tasks_trigger_ssid_hint">Leave empty for any network change</string>
     <string name="scheduled_tasks_trigger_boot_hint">Fires once after the device finishes booting</string>
+    <string name="scheduled_tasks_trigger_app_start_hint">Fires once after the app starts; a background restart also counts as a start</string>
     <string name="scheduled_tasks_conditions">Trigger conditions (optional)</string>
     <string name="scheduled_tasks_condition_window_from">From</string>
     <string name="scheduled_tasks_condition_window_to">To</string>
@@ -1467,6 +1487,7 @@
     <string name="scheduled_tasks_desc_network">On network change · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_desc_network_ssid">When connected to %1$s · ran %2$d times (%3$s)</string>
     <string name="scheduled_tasks_desc_boot">On boot · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_app_start">On app start · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_skipped_condition">Conditions not met</string>
     <string name="scheduled_tasks_skipped_debounce">In the debounce window</string>
     <string name="scheduled_tasks_skipped_running">Previous run still going</string>
@@ -1614,6 +1635,10 @@
     <string name="agent_perm_action_reject">Deny</string>
     <string name="agent_perm_action_reply">Reply</string>
     <string name="agent_perm_reply_hint">Type a message to send to this session</string>
+    <string name="agent_prompt_question_title">%1$s is waiting for your answer</string>
+    <string name="agent_prompt_question_body">%1$d questions awaiting your answer: %2$s</string>
+    <string name="agent_prompt_plan_title">%1$s has a plan awaiting approval</string>
+    <string name="agent_prompt_plan_body">The plan is ready and runs once you approve it</string>
     <string name="artifact_view_code">View code</string>
     <string name="artifact_preview_failed">Failed to render. Switch to View code to see the source.</string>
     <string name="artifact_saved_to">Saved to %1$s</string>
@@ -1900,6 +1925,8 @@
 
     <!-- Terminal Settings & Themes -->
     <string name="terminal_settings_title">Terminal Settings</string>
+    <string name="settings_auto_close_agent_tabs_title">Clean up temporary terminals after a task</string>
+    <string name="settings_auto_close_agent_tabs_subtitle">Closes only the one-shot tabs the AI opened and that have already finished. Tabs you open yourself and long-running services are left alone.</string>
     <string name="terminal_theme_title">Color Theme</string>
     <string name="terminal_font_size_title">Font Size</string>
     <string name="terminal_cursor_style_title">Cursor Style</string>

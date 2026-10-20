@@ -379,6 +379,12 @@ private fun eventDescription(task: ScheduledTaskEntity, limitText: String): Stri
         )
     }
 
+    ScheduledTaskEntity.TYPE_APP_START -> stringResource(
+        R.string.scheduled_tasks_desc_app_start,
+        task.runCount,
+        limitText
+    )
+
     else -> stringResource(R.string.scheduled_tasks_desc_boot, task.runCount, limitText)
 }
 
@@ -398,6 +404,7 @@ private fun triggerLabel(type: String): Int = when (type) {
     ScheduledTaskEntity.TYPE_BATTERY -> R.string.scheduled_tasks_trigger_battery
     ScheduledTaskEntity.TYPE_NETWORK -> R.string.scheduled_tasks_trigger_network
     ScheduledTaskEntity.TYPE_BOOT -> R.string.scheduled_tasks_trigger_boot
+    ScheduledTaskEntity.TYPE_APP_START -> R.string.scheduled_tasks_trigger_app_start
     else -> R.string.scheduled_tasks_trigger_time
 }
 
@@ -625,6 +632,12 @@ private fun ScheduledTaskEditorSheet(
                         supportingText = {
                             Text(stringResource(R.string.scheduled_tasks_trigger_ssid_hint))
                         }
+                    )
+
+                    ScheduledTaskEntity.TYPE_APP_START -> Text(
+                        text = stringResource(R.string.scheduled_tasks_trigger_app_start_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     else -> Text(

@@ -96,6 +96,7 @@ import com.aharou.feature.agent.presentation.FileBrowseState
 import com.aharou.feature.agent.presentation.FileSearchState
 import com.aharou.feature.agent.presentation.FileSearchViewModel
 import com.aharou.feature.agent.presentation.FileTreeNode
+import com.aharou.feature.agent.presentation.displayName
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.workspace.domain.model.Workspace
 import compose.icons.FeatherIcons
@@ -911,11 +912,9 @@ private fun FileBrowserTab(
                 val maxContentPx = remember(state.nodes, textStyle) {
                     with(density) {
                         val widest = state.nodes.maxByOrNull { node ->
-                            val label = if (node.isRoot) WORKSPACE_LABEL else node.entry.name
-                            node.depth * 4 + label.sumOf { ch -> if (ch.code > 0x2E80) 2 else 1 }
+                            node.depth * 4 + node.displayName.sumOf { ch -> if (ch.code > 0x2E80) 2 else 1 }
                         } ?: return@with 0
-                        val label = if (widest.isRoot) WORKSPACE_LABEL else widest.entry.name
-                        val textW = textMeasurer.measure(label, textStyle).size.width
+                        val textW = textMeasurer.measure(widest.displayName, textStyle).size.width
                         (FILE_TREE_ROW_OVERHEAD.toPx() + (Spacing.lg * widest.depth).toPx() + textW).toInt()
                     }
                 }
@@ -1004,12 +1003,12 @@ private fun FileBrowserTab(
             clipboard = clipboard,
             onNewFile = {
                 menuNode = null
-                if (!node.isRoot && node.path !in expandedPaths) onToggleExpand(node.path)
+                if (node.root == null && node.path !in expandedPaths) onToggleExpand(node.path)
                 creating = CreateTarget(node.path, CreateKind.FILE)
             },
             onNewFolder = {
                 menuNode = null
-                if (!node.isRoot && node.path !in expandedPaths) onToggleExpand(node.path)
+                if (node.root == null && node.path !in expandedPaths) onToggleExpand(node.path)
                 creating = CreateTarget(node.path, CreateKind.FOLDER)
             },
             onRename = {
@@ -1176,7 +1175,7 @@ private fun FileTreeActionSheet(
                 .padding(bottom = Spacing.xl)
         ) {
             Text(
-                text = if (node.isRoot) WORKSPACE_LABEL else node.entry.name,
+                text = node.displayName,
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -1208,7 +1207,7 @@ private fun FileTreeActionSheet(
                     onClick = onNewFolder
                 )
             }
-            if (!node.isRoot) {
+            if (node.root == null) {
                 SheetActionRow(
                     icon = FeatherIcons.MessageSquare,
                     label = stringResource(R.string.common_add_to_input),
@@ -1267,7 +1266,7 @@ private fun FileTreeRow(
             showExpanding = false
         }
     }
-    val isDotfile = !node.isRoot && node.entry.name.startsWith(".")
+    val isDotfile = node.root == null && node.entry.name.startsWith(".")
     val decorationColor: Color? = when {
         node.hasError -> MaterialTheme.colorScheme.error
         node.ignored -> FileTreeIgnoredColor
@@ -1316,7 +1315,7 @@ private fun FileTreeRow(
         }
         Spacer(Modifier.width(Spacing.sm))
         Text(
-            text = if (node.isRoot) WORKSPACE_LABEL else node.entry.name,
+            text = node.displayName,
             style = MaterialTheme.typography.bodyMedium,
             color = decorationColor ?: MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -1325,9 +1324,11 @@ private fun FileTreeRow(
     }
 }
 
-/** 文件树行的类型图标：目录用文件夹，文件按扩展名挑选单色线性图标。[decorationColor] 非空时统一染色（.gitignore/dotfile 弱化）。 */
+/** 文件树行的类型图标：目录用文件夹，文件按扩展名挑选单色线性图标。容器根用「容器与镜像」列表同款图标。
+ * [decorationColor] 非空时统一染色（.gitignore/dotfile 弱化）。 */
 @Composable
 private fun FileTreeIcon(node: FileTreeNode, decorationColor: Color?) {
+    if (FileTreeRootIcon(node, decorationColor ?: MaterialTheme.colorScheme.primary)) return
     val vector = if (node.entry.isDirectory) {
         FeatherIcons.Folder
     } else {
@@ -1345,9 +1346,6 @@ private fun FileTreeIcon(node: FileTreeNode, decorationColor: Color?) {
 
 /** .gitignore 命中条目的弱化色（橙，类 VSCode）。 */
 private val FileTreeIgnoredColor = Color(0xFFCC8844)
-
-/** 文件树根节点显示名，对应容器路径 `~/workspace`。 */
-private const val WORKSPACE_LABEL = "workspace"
 
 /** 文件树一行除缩进与文本外的固定宽度开销（start 8 + 箭头 16 + 4 + 图标 20 + 8 + end 12），供预算整树统一行宽。 */
 private val FILE_TREE_ROW_OVERHEAD = 68.dp

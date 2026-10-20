@@ -79,6 +79,12 @@ class ContextCompactor @Inject constructor(
         const val MAX_SUMMARY_BLOCKS = 32
 
         /**
+         * 压缩目标占「可压缩空间」的比例（可压缩空间 = 触发线 − 固定开销）。剩下的差额就是压缩后
+         * 距离触发线的余量：留不够的话压完仍贴着触发线，下一轮立刻又压（连续压缩）。
+         */
+        const val COMPACTION_TARGET_PERCENT = 60
+
+        /**
          * 摘要正文要在压缩目标里预留的份额：尾部预算不给它留位的话，
          * 压完之后「固定开销 + 摘要 + 保留段」仍会顶破目标。
          */
@@ -115,8 +121,8 @@ class ContextCompactor @Inject constructor(
             "系统提示与工具定义就占满了压缩目标，没给历史留出空间。请关掉不用的 MCP 连接器或技能后重试，或换成上下文窗口更大的模型。"
         const val RETAINED_REASON =
             "能压缩的内容都压完了，最近这段（多为刚跑完的工具输出或图片）仍然装不下。可以新建会话接着聊，或换成上下文窗口更大的模型。"
-        const val NOT_SMALLER_REASON =
-            "摘要加进来之后整体仍未降到预算内（多半是最近这段内容本身就大）。可以新建会话接着聊，或换成上下文窗口更大的模型。"
+        const val OVER_BUDGET_REASON =
+            "压缩后的摘要与保留内容仍装不进当前模型的输入预算。可以关掉不用的 MCP 连接器或技能，或换成上下文窗口更大的模型。"
         const val ALREADY_FAILED_REASON =
             "这段历史刚压缩失败过，本轮不再重复尝试。"
 
@@ -180,7 +186,7 @@ class ContextCompactor @Inject constructor(
         val raw = error.message ?: return error.javaClass.simpleName
         return when {
             raw.contains("Recent task material") -> RETAINED_REASON
-            raw.contains("Summary, recent task material") -> NOT_SMALLER_REASON
+            raw.contains("Summary and retained history") -> OVER_BUDGET_REASON
             raw.contains("already failed compaction") -> ALREADY_FAILED_REASON
             else -> raw
         }
@@ -255,9 +261,11 @@ class ContextCompactor @Inject constructor(
                 val threshold = (inputBudget * hardThresholdPercent / 100.0).toInt()
                 // 系统提示与工具定义压不掉，必须先扣掉再算目标：不扣的话小窗口模型
                 // （或窗口元数据落到兜底值时）目标会被它们吃满，摘要写出来照样过不了校验。
+                // 基准取「触发线」而不是「窗口」：压缩后整请求 = 固定开销 + 摘要 + 保留段，
+                // 只有把可压缩部分压到触发线以下并留出余量，才不会下一轮立刻又被触发。
                 val fixedOverhead = CompactionText.estimateRequest(systemPrompt, tools, emptyList())
-                val squeezableBudget = (inputBudget - fixedOverhead).coerceAtLeast(0)
-                val targetTokens = (squeezableBudget * minOf(70, (hardThresholdPercent - 10).coerceAtLeast(0)) / 100.0).toInt()
+                val squeezableBudget = (threshold - fixedOverhead).coerceAtLeast(0)
+                val targetTokens = (squeezableBudget * COMPACTION_TARGET_PERCENT / 100.0).toInt()
                 val softThreshold = (inputBudget * generalSettingsRepository.softCompactionThresholdPercent() / 100.0).toInt()
                 val reachedHard = currentTokens >= threshold || currentTokens >= inputBudget
                 if (!force && !reachedHard && currentTokens >= softThreshold) {
@@ -367,10 +375,16 @@ class ContextCompactor @Inject constructor(
                     AgentMessage.AssistantMessage(id = summaryId, content = summary)
                 ) + tail
                 val compactedTokens = CompactionText.estimateRequest(systemPrompt, tools, compacted)
-                // 只要「确实变小」且没超出能发出去的输入预算就放行：原先还额外要求 ≤ 目标，
-                // 差几个 token 就整轮作废并把这段历史拉黑，用户连点重试也永远失败。
-                check(compactedTokens < estimatedTokens && compactedTokens <= targetTokens) {
-                    "Summary, recent task material and request overhead exceed the compaction target or do not reduce usage"
+                // 摘要由模型生成，长度不受控：短历史里摘要可能比被替换的原消息更长，压缩没有收益。
+                // 这不是失败，只是不该落库，静默保留原历史。
+                if (compactedTokens >= estimatedTokens) {
+                    FileLogger.i(TAG, "压缩未缩减 token（$estimatedTokens → $compactedTokens），保留原历史")
+                    return@withTimeoutOrNull PreparationResult(null, unchanged)
+                }
+                // 落库门槛只看「装不装得进输入预算」：targetTokens 是留给保留段用的额度，
+                // 拿来当门槛会让固定开销大的窗口恒不成立（128k 窗口 + 约 5 万固定开销就是那种情形）。
+                check(compactedTokens <= inputBudget) {
+                    "Summary and retained history do not fit the main model input budget"
                 }
                 PreparationResult(PreparedCompaction(compacted, headIds, markerId, summaryId, summary, anchorTs, block, compactedTokens))
             }
@@ -777,7 +791,9 @@ internal object CompactionText {
                         if (tokens(label + remaining.substring(0, mid) + "\n[unit continues]\n") <= budget) low = mid else high = mid - 1
                     }
                     if (low > 0 && low < remaining.length && remaining[low - 1].isHighSurrogate() && remaining[low].isLowSurrogate()) low--
-                    check(low > 0) { "Summary budget cannot hold a history fragment" }
+                    check(low > 0) {
+                        "Summary budget ($budget tokens) is too small to hold even the first fragment of the current history unit"
+                    }
                     result.append(label).append(remaining.substring(0, low)).append("\n[unit continues]\n")
                     offset += low
                     break

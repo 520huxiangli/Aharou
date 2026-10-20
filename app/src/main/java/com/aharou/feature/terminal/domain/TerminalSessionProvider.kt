@@ -49,4 +49,11 @@ interface TerminalSessionProvider {
 
     /** 关闭并销毁标签。返回是否成功。 */
     fun closeTab(id: String): Boolean
+
+    /**
+     * 关闭「AI 创建 + 一次性任务（notify=true）+ 已结束」的终端标签，返回关闭数量。
+     *
+     * 专供 AI 回合结束时的自动清理：用户手动开的标签与常驻服务永远不会被选中。
+     */
+    fun closeFinishedAgentTabs(): Int
 }

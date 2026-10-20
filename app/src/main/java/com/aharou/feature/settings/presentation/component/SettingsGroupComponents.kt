@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -267,7 +268,11 @@ internal fun ModelSearchField(
         color = MaterialTheme.semanticColors.capsuleSurface
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = Spacing.md, vertical = 10.dp),
+            // 行高固定：尾部控件（清除按钮的 IconButton 自带最小触摸目标）可能比正文行高更高，
+            // 若由内容撑高，有无尾部控件时高度不一致，输入后整条搜索框会突然变高。
+            modifier = Modifier
+                .heightIn(min = 40.dp)
+                .padding(horizontal = Spacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(

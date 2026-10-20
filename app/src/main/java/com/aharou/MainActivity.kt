@@ -92,6 +92,7 @@ import com.aharou.feature.agent.presentation.component.DrawerSearchOpenRequest
 import com.aharou.feature.agent.presentation.component.chatImageLoader
 import com.aharou.feature.agent.presentation.component.openSentAttachment
 import com.aharou.feature.editor.presentation.CodeEditorScreen
+import com.aharou.feature.editor.presentation.EditorLeaveGuard
 import com.aharou.feature.browser.presentation.BrowserScreen
 import com.aharou.feature.git.presentation.GitViewModel
 import com.aharou.feature.credentials.presentation.component.CredentialScreen
@@ -660,6 +661,8 @@ fun AppNavigation(
     var paneEditorPath by rememberSaveable { mutableStateOf("") }
     var paneEditorLine by rememberSaveable { mutableIntStateOf(0) }
     var paneSplit by rememberSaveable { mutableFloatStateOf(DEFAULT_PANE_SPLIT) }
+    // 右栏编辑器有未保存修改时，换文件前先弹保存提示（窄窗全屏编辑器由返回键拦截，不经过这里）。
+    val editorLeaveGuard = remember { EditorLeaveGuard() }
 
     // Aharou：浏览器面板 + 工具消息快捷入口（地球 / 在终端运行）
     // 面板只在用户主动打开时弹出；Agent 浏览网页的过程在底部小屏幕（浮动工具条缩略图）里围观。
@@ -677,9 +680,19 @@ fun AppNavigation(
     // 打开文件：大屏进右栏，窄窗跳全屏编辑器页。
     val openFile: (String, Int, Boolean) -> Unit = { filePath, line, fromDrawer ->
         if (expanded) {
-            paneEditorPath = filePath
-            paneEditorLine = line
-            paneKind = WorkbenchPaneKind.EDITOR
+            val apply = {
+                paneEditorPath = filePath
+                paneEditorLine = line
+                paneKind = WorkbenchPaneKind.EDITOR
+            }
+            // 重复点同一个文件：内容不换，只是重新走到目标行（交给编辑器的行定位 effect），
+            // 不必问「要不要保存」——保存与否都不影响结果。
+            if (paneKind == WorkbenchPaneKind.EDITOR && paneEditorPath == filePath) {
+                apply()
+            } else {
+                // 编辑器里有未保存修改时，由编辑器先弹保存提示，确认后再换。
+                editorLeaveGuard.requestLeave(apply)
+            }
             // 常驻侧栏不需要关；平板竖屏等仍用 modal 抽屉的情况下选完文件要收起。
             if (!permanentDrawer) scope.launch { drawerState.close() }
         } else {
@@ -724,7 +737,13 @@ fun AppNavigation(
     // 终端 / Git：大屏在右栏内开合切换，窄窗跳全屏页。
     val openWorkbench: (WorkbenchPaneKind) -> Unit = { target ->
         if (expanded) {
-            paneKind = if (paneKind == target) WorkbenchPaneKind.NONE else target
+            val next = if (paneKind == target) WorkbenchPaneKind.NONE else target
+            // 从编辑器切走（含再点一次图标收起）同样会丢掉未保存的修改，走同一套确认。
+            if (paneKind == WorkbenchPaneKind.EDITOR && next != WorkbenchPaneKind.EDITOR) {
+                editorLeaveGuard.requestLeave { paneKind = next }
+            } else {
+                paneKind = next
+            }
         } else {
             // 窄屏：跳全屏路由。若浏览器正以 sheet 形式开着，先收起它——
             // 否则路由过渡那几百毫秒里 sheet 与全屏页会同时合成，同一个 WebView 被抢挂载。
@@ -885,6 +904,7 @@ fun AppNavigation(
                             editorLine = paneEditorLine,
                             onClose = { paneKind = WorkbenchPaneKind.NONE },
                             onOpenFile = { path -> openFile(path, 0, false) },
+                            editorLeaveGuard = editorLeaveGuard,
                             onAddSelectionToInput = { text ->
                                 agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
                             },

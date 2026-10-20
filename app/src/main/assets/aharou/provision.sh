@@ -8,7 +8,8 @@
 # 由 App 启动时提取到 ~/.aicode/provision.sh（容器内 /root/.aicode/provision.sh，经 -b 绑定可见）；
 # 公共能力（包管理器探测/包名映射/版本探测/换源/场景）在 lib/env-common.sh，与本脚本一并提取。
 # 修改包清单/安装逻辑/镜像源后，需同步在 LinuxContainerEngine.PROVISION_VERSION 上 +1 触发存量设备重跑。
-# 注意：apk 源分支 v3.24 需与 assets 内 alpine-rootfs 版本（ContainerInstaller.INSTALL_VERSION）保持一致。
+# 注意：apk 源分支 v3.24 需与 assets 内 alpine-rootfs 的 Alpine 分支一致（见 ContainerInstaller.ROOTFS_ASSET_VERSION）。
+# 不用 ContainerInstaller.INSTALL_VERSION 对照：那是「是否需要重装」的标记，刻意与 assets 的 Alpine 版本解耦。
 
 PROVISION_VERSION="provision-script-v13"
 PROVISION_SKIPPED="provision-script-skipped"
@@ -142,10 +143,14 @@ for g in $(id -G 2>/dev/null); do
 done
 
 # ── 基础依赖兜底：无论用户当初选了哪种初始化方式（自动 / 自定义 / 手动安装 / 退出），
-# 这里都检测一次——基础工具缺哪个补哪个，Node.js 缺了才装；全部在位则零动作（不联网）。
+# 这里都检测一次——基础工具缺哪个补哪个，Node.js / Python 3 缺了才装；全部在位则零动作（不联网）。
+# python3 与 node 同为沙箱基础依赖：编辑器 .py 诊断、面板脚本、技能脚本都要它，
+# 只靠初始化菜单（install_optional_tools）装会让「手动安装」过的容器永远缺，
+# 面板脚本一跑就 `/bin/sh: python3: not found`，点重试也没用。
 # 静默失败，不阻塞进入 shell。放在 MARKER 检查之前，手动安装的设备也会被兜到。──
 ensure_base_tools || true
 ensure_runtime node node || true
+ensure_runtime python python3 || true
 
 # 已按当前版本完成或用户选择手动安装（跳过）则直接退出
 if [ -f "$MARKER" ]; then

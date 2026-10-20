@@ -28,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -54,6 +55,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -75,7 +77,9 @@ import com.aharou.feature.git.presentation.PullRequestViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Activity
 import compose.icons.feathericons.ArrowLeft
+import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.Download
+import compose.icons.feathericons.Folder
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.GitCommit
 import compose.icons.feathericons.Key
@@ -153,7 +157,9 @@ fun GitScreen(
             diffData = state.diffData,
             filePath = state.diffPath,
             onBack = { viewModel.clearDiff() },
-            onOpenInEditor = onOpenFile
+            onOpenInEditor = onOpenFile?.let { open ->
+                { path: String -> open(repoRelativeToWorkspace(path, state.currentRepo, state.workspaceRoot)) }
+            }
         )
         return
     }
@@ -162,7 +168,37 @@ fun GitScreen(
         containerColor = settingsPageBackground(),
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.git_title)) },
+                title = {
+                    Column {
+                        Text(stringResource(R.string.git_title))
+                        val currentRepo = state.currentRepo
+                        // 仓库名只在需要区别时显示：有多个仓库可选，或当前仓库不是工作区根
+                        // （说明正在用子目录里的仓库）。点一下弹出仓库选择弹层。
+                        val root = state.workspaceRoot.trimEnd('/')
+                        if (!state.notARepo && currentRepo != null &&
+                            (state.repos.size > 1 || currentRepo.trimEnd('/') != root)
+                        ) {
+                            Row(
+                                modifier = Modifier.clickable { viewModel.showRepoPicker() },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = repoDisplayName(currentRepo),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Icon(
+                                    imageVector = FeatherIcons.ChevronDown,
+                                    contentDescription = stringResource(R.string.git_switch_repo),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = settingsPageBackground(),
                     titleContentColor = MaterialTheme.colorScheme.onBackground
@@ -212,7 +248,8 @@ fun GitScreen(
                     busy = state.busy,
                     cloneProgress = state.cloneProgress,
                     onInit = viewModel::initRepo,
-                    onClone = viewModel::cloneRepo
+                    onClone = viewModel::cloneRepo,
+                    onPickExisting = viewModel::showRepoPicker
                 )
                 else -> HorizontalPager(
                     state = pagerState,
@@ -315,6 +352,17 @@ fun GitScreen(
             )
         }
     }
+    }
+
+    if (state.repoPickerVisible) {
+        GitRepoPickerSheet(
+            workspaceRoot = state.workspaceRoot,
+            subdirs = state.subdirs,
+            repos = state.repos,
+            currentRepo = state.currentRepo,
+            onSelect = viewModel::switchRepo,
+            onDismiss = viewModel::hideRepoPicker
+        )
     }
 
     if (showPullConfirm) {
@@ -495,13 +543,14 @@ private fun CloneProgress(progress: Int?) {
     }
 }
 
-/** 非仓库态：文案 + 「初始化 Git 仓库」/「克隆远程仓库」按钮（成功后自动刷新进仓库态）。 */
+/** 非仓库态：文案 + 「初始化新仓库」/「克隆远程仓库」/「选择已有仓库」按钮（成功后自动刷新进仓库态）。 */
 @Composable
 private fun NotARepoState(
     busy: Boolean,
     cloneProgress: Int?,
     onInit: () -> Unit,
-    onClone: (workspaceName: String, url: String) -> Unit
+    onClone: (workspaceName: String, url: String) -> Unit,
+    onPickExisting: () -> Unit
 ) {
     var showCloneDialog by remember { mutableStateOf(false) }
 
@@ -517,7 +566,12 @@ private fun NotARepoState(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                stringResource(R.string.git_init_desc),
+                stringResource(R.string.git_init_desc_primary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                stringResource(R.string.git_init_desc_secondary),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -539,6 +593,11 @@ private fun NotARepoState(
                         Spacer(Modifier.width(Spacing.xs))
                         Text(stringResource(R.string.git_clone_repo))
                     }
+                }
+                OutlinedButton(onClick = onPickExisting) {
+                    Icon(FeatherIcons.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text(stringResource(R.string.git_pick_existing_repo))
                 }
             }
         }

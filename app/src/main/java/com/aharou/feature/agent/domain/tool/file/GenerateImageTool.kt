@@ -12,6 +12,7 @@ import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.provider.bearerTokenOrNull
 import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.isKeySwitchFailure
+import com.aharou.feature.agent.domain.provider.isQuotaExhausted
 import com.aharou.feature.agent.domain.provider.joinUrl
 import com.aharou.feature.agent.domain.provider.parseInteractionSteps
 import com.aharou.feature.agent.domain.provider.resolveCustomHeaders
@@ -261,7 +262,7 @@ class GenerateImageTool @Inject constructor(
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
             if (activeApiKey.isNotEmpty() && enriched.isKeySwitchFailure()) {
-                keyRotator.reportFailure(lastProviderId, context.sessionId, activeApiKey)
+                keyRotator.reportFailure(lastProviderId, context.sessionId, activeApiKey, quotaExhausted = enriched.isQuotaExhausted())
             }
             FileLogger.e(TAG, "generateImage 失败", enriched)
             AILogger.logError(context.sessionId, lastProviderId, enriched, seq)
@@ -420,7 +421,8 @@ class GenerateImageTool @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            if (enriched.isKeySwitchFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey)
+            if (enriched.isKeySwitchFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey,
+                quotaExhausted = enriched.isQuotaExhausted())
             FileLogger.e(TAG, "generateImage(Gemini) 失败", enriched)
             AILogger.logError(sessionId, provider.id, enriched, lastSeq)
             if (agentImages.isNotEmpty()) {
@@ -488,7 +490,8 @@ class GenerateImageTool @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            if (enriched.isKeySwitchFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey)
+            if (enriched.isKeySwitchFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey,
+                quotaExhausted = enriched.isQuotaExhausted())
             FileLogger.e(TAG, "generateImage(Gemini) 失败", enriched)
             AILogger.logError(sessionId, provider.id, enriched, lastSeq)
             if (agentImages.isNotEmpty()) {

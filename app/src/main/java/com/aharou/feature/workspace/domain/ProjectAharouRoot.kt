@@ -6,8 +6,6 @@ import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import java.io.File
-import java.math.BigInteger
-import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,14 +37,12 @@ class ProjectAharouRoot @Inject constructor(
             File(workspacePath, AHAROU_DIR)
         }
 
-    /** 远程项目级资源在私有目录下的标识：项目名 + 「IP:端口:路径」哈希前 8 位。 */
+    /** 远程项目级资源在私有目录下的标识：项目名 + 「IP:端口:路径」哈希前 8 位（算法见 [WorkspaceIdentity]）。 */
     fun projectKey(workspacePath: String): String {
         val name = workspacePath.trimEnd('/').substringAfterLast('/').ifBlank { "default" }
         val cfg = remoteSshConnection.config
         val identity = if (cfg != null) "${cfg.host}:${cfg.port}:$workspacePath" else workspacePath
-        val digest = MessageDigest.getInstance("MD5").digest(identity.toByteArray(Charsets.UTF_8))
-        val hash = BigInteger(1, digest).toString(16).padStart(32, '0').take(8)
-        return "$name-$hash"
+        return "$name-${WorkspaceIdentity.shortHash(identity)}"
     }
 
     private fun isRemote(): Boolean =

@@ -200,6 +200,72 @@ class ToolGroupExpansionTest {
         assertEquals(1, items.groupItems().size)
     }
 
+    // ---- 窗口按条数截断：最前面那一截半轮 ----
+
+    @Test
+    fun truncatedWindow_foldsLeadingHalfTurn() {
+        // 窗口从某一轮中间切开时，最前面那段缺的是轮首用户消息、不是折叠头：
+        // 过程项同样要折进折叠头，不能摊在历史最前面
+        val messages = listOf(
+            assistant("a1"),
+            tool("t1"), tool("t2"),
+            user("u0"),
+            AgentUIMessage(id = "a2", role = MessageRole.ASSISTANT, content = "答"),
+        )
+        val rendered = items(messages)
+        val heads = rendered.filter { it.turnHeader != null }
+        assertEquals("只有截断那一截需要补折叠头", 1, heads.size)
+        val leading = heads.first().turnHeader!!
+        assertEquals("turn:head:t2", leading.key)
+        assertFalse(leading.running)
+        assertFalse("默认收起", leading.expanded)
+        assertEquals(listOf("a1", "toolgroup:t1"), heads.first().turnProcess.map { it.key })
+        assertFalse("过程项不再占顶层 item", rendered.any { it.key == "a1" || it.key == "toolgroup:t1" })
+    }
+
+    @Test
+    fun truncatedWindow_keepsTrailingAnswerVisible() {
+        // 这一截的结尾通常就是上一轮的最终回复：它照旧常显，不跟着过程一起折起来
+        val messages = listOf(
+            tool("t1"), tool("t2"),
+            AgentUIMessage(id = "a9", role = MessageRole.ASSISTANT, content = "上一轮的答案"),
+            user("u0"),
+            AgentUIMessage(id = "a2", role = MessageRole.ASSISTANT, content = "本轮答案"),
+        )
+        val rendered = items(messages)
+        val leadingHead = rendered.first { it.turnHeader?.key == "turn:head:a9" }
+        assertEquals(listOf("toolgroup:t1"), leadingHead.turnProcess.map { it.key })
+        assertTrue("上一轮答案常显", rendered.any { it.key == "a9" })
+        assertFalse(rendered.first { it.key == "a9" }.reasoningVisible)
+    }
+
+    @Test
+    fun truncatedWindow_headKeySurvivesOlderMessagesPrepended() {
+        // 窗口继续向前补加载（新消息插在块首）时块尾不变、key 不变，手动展开态跟着保住
+        val older = listOf(assistant("m0"), tool("m1"))
+        val tail = listOf(assistant("a1"), tool("t1"), tool("t2"), user("u0"))
+        val before = items(tail, turnOverrides = mapOf("turn:head:t2" to true))
+        val after = items(older + tail, turnOverrides = mapOf("turn:head:t2" to true))
+        assertTrue(before.first { it.turnHeader?.key == "turn:head:t2" }.turnHeader!!.expanded)
+        assertTrue(after.first { it.turnHeader?.key == "turn:head:t2" }.turnHeader!!.expanded)
+    }
+
+    @Test
+    fun truncatedWindow_persistentLeadingStaysTopLevel() {
+        // 压缩卡片 / 后台通知 / 带附件工具在这一截里同样不参与折叠
+        val notice = AgentUIMessage(id = "n1", role = MessageRole.USER, content = "done")
+            .copy(isBackgroundNotification = true)
+        val messages = listOf(
+            assistant("a1"),
+            tool("t1"), tool("t2"),
+            notice,
+            user("u0"),
+        )
+        val rendered = items(messages)
+        assertTrue("后台通知常显", rendered.any { it.key == "n1" })
+        assertEquals("turn:head:n1", rendered.first { it.turnHeader != null }.turnHeader!!.key)
+    }
+
     @Test
     fun plainTextTurn_hasNoHeader() {
         // 无过程（无思考、无工具）的纯文本轮：退化为现状，不加折叠头

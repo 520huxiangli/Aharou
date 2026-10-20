@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -202,6 +203,13 @@ private const val REASONING_CONTENT_TYPE = "reasoning"
 internal fun turnKeyOf(firstMessageId: String): String = "turn:$firstMessageId"
 
 /**
+ * 被窗口截断、找不到轮首的那一截过程（见 [buildChatItems]）的折叠头 key。
+ *
+ * 取块尾消息 id 而非块首：窗口继续向前补加载时新消息插在块首，块尾不变、key 保持稳定。
+ */
+internal fun leadingHeadKey(lastMessage: AgentUIMessage): String = "turn:head:${lastMessage.id}"
+
+/**
  * 整轮任务折叠头 item 的渲染状态。非空即表示这是一条「执行中 / 已完成」头行。
  *
  * [endMessageId] 是轮末助手消息 id，据此查本轮耗时（见 [computeTaskDurations]，口径一致）。
@@ -216,79 +224,6 @@ internal data class TurnHeaderState(
 )
 
 /**
- * 分组展开时成员行的左缩进：分组头与成员行行首元素原本左右完全对齐（同一格 16dp 图标 + 同一间距），
- * 看不出从属关系；给成员整行缩进一级，分组头是父、成员行是子，层级一眼可辨。
- * 固定取 16dp（不用 [Spacing.lg]：紧凑密度下它只有 14dp，缩进会随屏幕形态忽大忽小）。
- */
-private val ToolGroupMemberPadding = PaddingValues(start = 16.dp)
-
-/**
- * 该消息是否参与「连续工具调用」分组。
- *
- * 上下文压缩失败/摘要、后台通知这些 TOOL 消息各有专用渲染分支（见 [AgentMessageItem] 的早退），
- * 混进分组会被当成普通工具行，故一并排除；普通消息（用户/助手）天然打断分组。
- *
- * **带附件的工具（`sendFile` / `generateImage`）也不分组**：它们产出的文件行就是结果本身，
- * 折进「N 次工具调用」后随分组默认收起，等于把发来的文件藏起来；留作顶层 item 才常显。
- */
-private fun AgentUIMessage.isGroupableTool(): Boolean =
-    role == MessageRole.TOOL && !isCompactionFailure && !isContextSummary &&
-        !isCompactionMarker && !isBackgroundNotification && !isSamplingLoopStop && attachments.isEmpty()
-
-/** 分组标识：取组内首条消息 id，保证一批工具调用在追加过程中 item key 稳定（不会重建导致视口跳动）。 */
-private fun toolGroupKey(first: AgentUIMessage): String = "toolgroup:${first.id}"
-
-/**
- * 该助手消息是否会渲染出「气泡下方的元信息行」——即能不能承接那排「复制 / 更多」按钮。
- *
- * 压缩标记、上下文摘要、压缩失败、后台通知条在 [AgentMessageItem] 里各有专用渲染分支并提前
- * return，不产生这一行；纯思考无正文的助手消息同理（没有正文可复制）。把「最新一条」的按钮
- * 挂到它们身上，整段会话就一个按钮都不剩。
- */
-private fun AgentUIMessage.rendersActionRow(): Boolean =
-    role == MessageRole.ASSISTANT &&
-        !isCompactionMarker && !isContextSummary && !isCompactionFailure && !isBackgroundNotification &&
-        !isSamplingLoopStop &&
-        (content.hasVisibleContent() || attachments.isNotEmpty())
-
-/**
- * 单条消息（非工具分组）在一次渲染中占据的 item：
- * 超长助手正文拆成多条有界 chunk，其余消息 1:1。
- */
-private fun messageRenderItems(message: AgentUIMessage, showSoulHeader: Boolean = false): List<ChatRenderItem> {
-    val canSplit = message.role == MessageRole.ASSISTANT &&
-        !message.isCompactionMarker &&
-        !message.isContextSummary &&
-        !message.isCompactionFailure &&
-        !message.isSamplingLoopStop &&
-        !message.isBackgroundNotification &&
-        message.content.length > CHUNK_SPLIT_THRESHOLD_CHARS
-    if (!canSplit) {
-        return listOf(
-            ChatRenderItem(message = message, key = message.id, contentType = message.role.name, showSoulHeader = showSoulHeader)
-        )
-    }
-    val slices = splitLongContent(message.content)
-    if (slices.size <= 1) {
-        // 只拆出一块（如无空行的超长单段）：等同普通消息。
-        return listOf(
-            ChatRenderItem(message = message, key = message.id, contentType = message.role.name, showSoulHeader = showSoulHeader)
-        )
-    }
-    return slices.mapIndexed { idx, slice ->
-        ChatRenderItem(
-            message = message,
-            key = "${message.id}#chunk$idx",
-            contentType = "assistant-chunk",
-            slice = slice,
-            isChunkHeader = idx == 0,
-            isChunkFooter = idx == slices.lastIndex,
-            showSoulHeader = showSoulHeader && idx == 0,
-        )
-    }
-}
-
-/**
  * 消息列表 → LazyColumn item 列表。
  *
  * 三件事：**整轮任务折叠**、长文拆块、**连续工具调用分组**。
@@ -297,6 +232,10 @@ private fun messageRenderItems(message: AgentUIMessage, showSoulHeader: Boolean 
  * 轮头（携带过程项，仅当该轮有过程或正在运行）→ 常显项与结果」。过程项挂在轮头 item 内，整轮展开时
  * 随折叠头一起平滑展开；压缩摘要/后台通知/带附件工具等常显项不参与折叠。
  * 结果 = 轮内最后一条有可见正文的普通助手消息（其思考抽为过程项）。
+ *
+ * 轮首之前剩下的散消息同样按「一轮过程」处理：消息按条数截断加载，窗口边界常切在某一轮中间，
+ * 这一段缺的是轮首用户消息而不是折叠头——原样常显会在历史最前面摊开一整轮过程。它们补一个不带
+ * 耗时的折叠头（key 见 [leadingHeadKey]），默认收起。
  *
  * 轮头展开态：没手动记录时「末轮且 agent 忙」默认展开、其余默认收起（[activeTurnKey]）；
  * 一旦用户在 [turnOverrides] 里点过，就以其选择为准，任务完成自动收起不会覆盖它。
@@ -314,8 +253,29 @@ internal fun buildChatItems(
 ): List<ChatRenderItem> {
     val items = ArrayList<ChatRenderItem>(messages.size)
     val (leading, turns) = splitChatTurns(messages)
-    // 轮首之前的散消息（会话开头就出现的助手/工具输出，罕见）不折叠，原样常显。
-    leading.forEach { items += messageRenderItems(it) }
+    if (leading.isNotEmpty()) {
+        val headKey = leadingHeadKey(leading.last())
+        // 这一截通常结尾就是上一轮的最终回复（窗口从某一轮中间切开）：它照旧常显，
+        // 只有它的思考与更早的过程步骤折进折叠头，与完整轮次的呈现一致。
+        val resultId = leading.last().takeIf { it.isResultCandidate() }?.id
+        // 身份行不在这里补：这一截的轮首助手消息已被窗口切掉，给它挂身份行等于把身份行挂到轮中间。
+        val process = buildTurnProcessItems(leading, resultId, groupOverrides, soulHeaderId = null)
+        if (process.isNotEmpty()) {
+            items += ChatRenderItem(
+                message = leading.last(),
+                key = "$headKey#header",
+                contentType = TURN_HEADER_CONTENT_TYPE,
+                turnHeader = TurnHeaderState(
+                    key = headKey,
+                    endMessageId = null,
+                    running = false,
+                    expanded = turnOverrides[headKey] ?: false,
+                ),
+                turnProcess = process,
+            )
+        }
+        items += buildTurnPersistentItems(leading, resultId, soulHeaderId = null)
+    }
     for (turn in turns) {
         items += messageRenderItems(turn.userMessage, showSoulHeader = true)
         val endAssistant = turn.messages.lastOrNull {
@@ -379,16 +339,6 @@ private fun splitChatTurns(messages: List<AgentUIMessage>): Pair<List<AgentUIMes
     user?.let { turns += ChatTurn(turnKeyOf(it.id), it, body?.toList().orEmpty()) }
     return leading to turns
 }
-
-/** 该消息在整轮折叠里是否「常显」——不参与过程折叠，无论轮展开与否都显示。 */
-private fun AgentUIMessage.isPersistentInTurn(): Boolean =
-    isCompactionMarker || isContextSummary || isCompactionFailure || isBackgroundNotification ||
-        isSamplingLoopStop ||
-        (role == MessageRole.TOOL && attachments.isNotEmpty())
-
-/** 能否作为一轮的「结果」：最后一条有可见正文的普通助手消息。 */
-private fun AgentUIMessage.isResultCandidate(): Boolean =
-    role == MessageRole.ASSISTANT && !isPersistentInTurn() && content.hasVisibleContent()
 
 /**
  * 轮内「过程」项（保持原序）：思考、连续工具调用分组、中间助手正文。挂在轮头 item 内一起展开。
@@ -1001,13 +951,16 @@ fun AIChatPanel(
         }
     }
 
-    // 兜底收尾：整轮结束（isBusy 变 false）或末尾已是 TOOL 行时清空 retained，避免停止生成后思考气泡残留。
-    val lastMessageRole = messages.lastOrNull()?.role
-    LaunchedEffect(isBusy, lastMessageRole) {
-        if (!isBusy || lastMessageRole == MessageRole.TOOL) {
-            retainedStreamingText = null
-            retainedStreamingReasoning = null
-        }
+    // retained 快照只在「流式已结束、落库消息尚未出现」的短窗口里兜底，撑住底部气泡不闪空；
+    // 末尾消息一旦出现或更替（有新消息落库），或整轮结束，兜底使命即结束。
+    // 不能只按 lastMessage.role 判定：多步工具回合里末尾在 TOOL→TOOL 之间来回，role 不变则本 effect
+    // 不重启；而助手消息落库又常与紧随其后的工具消息被合并派发，UI 观察不到「助手消息成为末尾」
+    // 那一帧，isAssistantSettled 的前缀校验恒不成立——两条清除路径同时失效，旧思考/正文就会一直
+    // 挂在尾巴上、新内容反而出现在它上方。改按末尾消息 id 判定，任何新消息落库都会触发清空。
+    val lastMessage = messages.lastOrNull()
+    LaunchedEffect(isBusy, lastMessage?.id) {
+        retainedStreamingText = null
+        retainedStreamingReasoning = null
     }
 
     val displayStreamingText = if (isAssistantSettled) null else (streamingText ?: retainedStreamingText)
@@ -1485,12 +1438,16 @@ fun AIChatPanel(
         ) {
         // 大屏正文列限宽居中：铺满整个平板宽度会让一行文字过长、气泡横跨全屏，读起来很累。
         // 窄窗下 readableContentMaxWidth() 返回 Dp.Unspecified，widthIn 不产生任何约束。
-        Box(
+        // 键盘弹出时窗口会 resize（manifest 是 adjustResize）。悬浮层必须知道自己最多能占多高，
+        // 否则「提问面板（上限 480dp）+ 输入框 + 横幅」会顶出可视区、顶部被裁——用户看到的就是
+        // 点输入框后整页被顶上去。
+        BoxWithConstraints(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .widthIn(max = readableContentMaxWidth())
                 .fillMaxSize()
         ) {
+            val floatingLayerMaxHeight = maxHeight
             // 内容层：消息列表延伸到屏幕底部，输入框悬浮其上，滚动时卡片可滑入输入框后面
             Column(modifier = Modifier.fillMaxSize()) {
             GhostModeIndicator(isGhost = ghostMode, onToggle = viewModel::setGhostMode)
@@ -1613,6 +1570,9 @@ fun AIChatPanel(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    // 高度封顶在可用高度内：内部 weight 才会真正生效，提问面板会按剩余空间收缩
+                    // （它自己已有 verticalScroll），而不是把顶部顶到屏幕外。
+                    .heightIn(max = floatingLayerMaxHeight)
                     // 实测悬浮层实际高度作为滚动留白，横幅/面板/输入框任何形态都不遮挡最后一条
                     .onGloballyPositioned { if (it.size.height > 0) floatingLayerHeightPx = it.size.height }
             ) {
@@ -1786,7 +1746,7 @@ fun AIChatPanel(
                         settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
                     }
                 },
-                tokenEstimated = contextUsages[currentSessionId]?.estimated == true,
+                tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
                 tokenProgress = run {
                     val contextLimit = activeModelMetadata?.let {
                         com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)

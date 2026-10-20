@@ -24,6 +24,28 @@ class SubAgentWriteLease @Inject constructor() {
         leases.remove(sessionId)
     }
 
+    /**
+     * 运行期追加可写路径（与已声明的合并，不是覆盖），返回合并后的完整集合。
+     *
+     * 给「派发时把路径猜窄了、子代理写到租约外被拦」兜底：主会话收到求助后追加即可，
+     * 不必重派一个同样的任务（重派还要再烧一遍上下文）。
+     */
+    fun grant(sessionId: String, paths: Set<String>): Set<String> {
+        val merged = (leases[sessionId].orEmpty() + paths).toSet()
+        if (leases.size > MAX_ENTRIES && !leases.containsKey(sessionId)) leases.clear()
+        leases[sessionId] = merged
+        return merged
+    }
+
+    /**
+     * 追加的写范围是否与**其它**仍在运行的租约重叠（不含 [sessionId] 自己）。
+     * 运行期追加要过这道检查，规则与派发时一致。
+     */
+    fun conflictFor(sessionId: String, writePaths: Set<String>, activeSessionIds: Set<String>): String? =
+        leases.entries.firstOrNull { (id, existing) ->
+            id != sessionId && id in activeSessionIds && WriteLease.overlaps(writePaths, existing)
+        }?.key
+
     /** 该会话声明的可写路径；未登记（主会话、或派发时未声明）返回 null 表示不限制。 */
     fun pathsFor(sessionId: String?): Set<String>? = sessionId?.let { leases[it] }
 

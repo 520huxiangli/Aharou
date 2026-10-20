@@ -52,6 +52,12 @@ class TerminalTab(
     /** 标签创建时刻（epoch 毫秒）；0 表示未知。桌宠等 UI 用它算「已跑多久」。 */
     val startedAt: Long = 0L,
     val notifyOnExit: Boolean = false,
+    /**
+     * 是否由 AI 的工具调用创建（`terminal` 的 start、`Bash` 的 background）。
+     *
+     * 用户手动开的交互标签恒为 false；AI 回合结束的自动清理只认 true 的标签。
+     */
+    val createdByAgent: Boolean = false,
     /** 发起该后台命令的会话 id；交互标签为 null。回调据此路由回原会话。 */
     val sourceSessionId: String? = null,
     /**
@@ -102,6 +108,16 @@ fun TerminalTab.toTabInfo(): TabInfo = TabInfo(
     workspacePath = workspacePath,
     startedAt = startedAt
 )
+
+/**
+ * 回合结束后能否自动关闭该标签：AI 创建 + 一次性任务（notify=true）+ 已无进程在跑，三条缺一不可。
+ *
+ * - 用户手动开的交互标签 createdByAgent=false；
+ * - 常驻服务（dev server 等）notifyOnExit=false，命令跑完后 `exec shell` 让它一直 Running；
+ * - 仍在跑的标签 runState 还是 Running，真实进程也可能还活着（双检 session.isRunning）。
+ */
+fun TerminalTab.isFinishedOneShotAgentTab(): Boolean =
+    createdByAgent && notifyOnExit && runState is RunState.Finished && !session.isRunning
 
 /** 正在运行的后台标签摘要；桌宠等系统级 UI 用它展示「后台任务」。 */
 fun List<TerminalTab>.runningBackgroundTabInfos(): List<TabInfo> =

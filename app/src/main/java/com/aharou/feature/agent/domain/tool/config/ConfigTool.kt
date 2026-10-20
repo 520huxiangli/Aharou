@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.tool.config
 
 import android.content.Context
 import com.aharou.core.config.ConfigAccess
+import com.aharou.core.config.confirm.ConfigAutoApprovePolicy
 import com.aharou.core.config.confirm.ConfigConfirmationGate
 import com.aharou.core.config.ConfigField
 import com.aharou.core.config.ConfigRegistry
@@ -17,6 +18,8 @@ import com.aharou.core.config.confirm.ConfirmOutcome
 import com.aharou.core.config.confirm.PendingConfigChange
 import com.aharou.core.config.confirm.PendingConfigChangeItem
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -38,6 +41,8 @@ import javax.inject.Inject
  *
  * 让 Agent 读写「Aharou 自身设置」：list 列字段 / get 读值 / set 写值。
  * set 全流程：模式校验 → 最多 120 秒的确认弹窗（用户批）→ 生效并落审计（可回滚）。
+ * AUTO 模式下非敏感字段的修改不再弹窗（由 [com.aharou.core.config.confirm.ConfigAutoApprovePolicy]
+ * 在闸门入队前自动批准，审计里标 auto-approved）；敏感字段与 reveal 照旧得用户点头。
  * 注：人格 SOUL.md 与记忆等外置文件（容器内 /root/.aharou/ 目录）无需本工具，文件与 shell 可直接读写。
  */
 class ConfigTool @Inject constructor(
@@ -53,6 +58,17 @@ class ConfigTool @Inject constructor(
 
         /** 审计行标记：这条记录来自「读取明文」而不是「修改」，值一律留打码。 */
         const val CAPTION_REVEAL = "reveal"
+
+        /** 未弹窗的来源说明：普通会话里用户亲自点的，AUTO 模式下非敏感修改自动放行。 */
+        const val NOTE_USER_CONFIRMED = "（用户已确认）"
+        const val NOTE_AUTO_APPROVED = "（AUTO 模式已自动批准，未弹确认）"
+
+        init {
+            // AUTO 模式的自动批准策略装到闸门上（幂等，类加载时即生效）。
+            // AIEditorApp 已顶到 1000 行门禁，放不进启动注入处；这里挂在工具的类加载上，
+            // 而 config 工具必然在任何 requestConfirmation 之前被实例化。
+            ConfigAutoApprovePolicy.install()
+        }
     }
 
     override val name = "config"
@@ -63,7 +79,8 @@ class ConfigTool @Inject constructor(
             "action=set 修改字段（path + value，value 为 JSON 编码，如 \"🦊\"、\"zh\"、true）；" +
             "action=add 在集合下新增一项（path=集合名、value=新项 JSON）；action=remove 删除集合下的一项（path=集合名、id）。" +
             "action=logs 读应用日志（只读）；date=yyyy-MM-dd（缺省今天，只保留最近 7 天）、query=关键词过滤、limit=最多返回行数（默认 $DEFAULT_LOG_LINES）均可选。" +
-            "set/add/remove/reveal 都会弹出确认面板，用户同意后生效，并写审计、可回滚。"
+            "set/add/remove 与 reveal 都要确认：AUTO 模式下非敏感字段的修改直接生效（不弹窗，审计里标 auto-approved），" +
+            "敏感字段（密钥 / 密码 / 凭据）与集合的增删、以及 reveal 读明文一律照旧弹确认面板；用户同意后才生效，并写审计、可回滚。"
 
     override val capabilities = setOf(ToolCapability.MODIFY_AGENT_CONFIG)
 
@@ -80,7 +97,14 @@ class ConfigTool @Inject constructor(
         "limit" to ToolParameter("limit", ParameterType.STRING, "logs：最多返回多少行，默认 $DEFAULT_LOG_LINES，上限 $MAX_LOG_LINES（尾部优先）", false),
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
+        executeInternal(args, autoMode = context.mode == AgentMode.AUTO)
+
+    /** 无上下文的兜底路径（正常不会走到）：拿不到会话模式，一律按「必须人工确认」处理。 */
+    override suspend fun execute(args: Map<String, JsonElement>): ToolResult =
+        executeInternal(args, autoMode = false)
+
+    private suspend fun executeInternal(args: Map<String, JsonElement>, autoMode: Boolean): ToolResult {
         val action = (args["action"] as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()
             ?: return ToolResult.Error("缺少 action（list / get / set）", "MISSING_ACTION")
         val path = (args["path"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
@@ -93,15 +117,15 @@ class ConfigTool @Inject constructor(
                 "set" -> {
                     val raw = (args["value"] as? JsonPrimitive)?.contentOrNull
                         ?: return ToolResult.Error("set 需要 value（JSON 编码）", "MISSING_VALUE")
-                    setField(registry, path, raw)
+                    setField(registry, path, raw, autoMode)
                 }
                 "add" -> {
                     val raw = (args["value"] as? JsonPrimitive)?.contentOrNull
-                    addChild(registry, path, raw)
+                    addChild(registry, path, raw, autoMode)
                 }
                 "remove" -> {
                     val id = (args["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
-                    removeChild(registry, path, id)
+                    removeChild(registry, path, id, autoMode)
                 }
                 "logs" -> readLogs(
                     date = (args["date"] as? JsonPrimitive)?.contentOrNull,
@@ -245,6 +269,11 @@ class ConfigTool @Inject constructor(
      * 所以真值回传前要让用户看见「要给谁、拿去干什么」并点头。非敏感字段直接返回，不必多问一次。
      *
      * 审计只记打码值 + 行为标记（不落明文）：审计库本身不该成为第二处明文副本。
+     *
+     * 用户批准后的结果标上 [ToolResult.Success.plaintextApproved]：返回值随后会经过
+     * [com.aharou.feature.vault.redactWith]，标记让那次脱敏跳过——否则凭据库里存过的值
+     * 会被替换成 `[REDACTED:NAME]`，用户批了也拿不到。标记只在敏感字段经确认面板放行这一条
+     * 路径上置位：get / list / logs / set 的返回值仍照旧脱敏。
      */
     private suspend fun revealField(registry: ConfigRegistry, path: String): ToolResult {
         if (path.isBlank()) return ToolResult.Error("需要 path", "MISSING_PATH")
@@ -273,15 +302,20 @@ class ConfigTool @Inject constructor(
         val change = PendingConfigChange(
             items = listOf(item),
             caption = "Aharou 想读取这项设置的明文",
+            // 读明文属于敏感动作，AUTO 模式不代用户点头。
+            alwaysConfirm = true,
         )
         return when (val outcome = ConfigConfirmationGate.requestConfirmation(change)) {
             is ConfirmOutcome.Approved -> {
                 appendAudit(field, masked, masked, ConfigAuditStatus.APPLIED, System.currentTimeMillis(), CAPTION_REVEAL)
-                ToolResult.Success(buildJsonObject {
-                    put("path", field.path)
-                    put("value", value.jsonString())
-                    put("sensitive", true)
-                })
+                ToolResult.Success(
+                    data = buildJsonObject {
+                        put("path", field.path)
+                        put("value", value.jsonString())
+                        put("sensitive", true)
+                    },
+                    plaintextApproved = true,
+                )
             }
             ConfirmOutcome.Rejected -> {
                 appendAudit(field, masked, masked, ConfigAuditStatus.REJECTED, null, CAPTION_REVEAL)
@@ -294,7 +328,7 @@ class ConfigTool @Inject constructor(
         }
     }
 
-    private suspend fun setField(registry: ConfigRegistry, path: String, rawValue: String): ToolResult {
+    private suspend fun setField(registry: ConfigRegistry, path: String, rawValue: String, autoMode: Boolean): ToolResult {
         if (path.isBlank()) return ToolResult.Error("需要 path", "MISSING_PATH")
         val field = registry.resolveField(path)
             ?: return ToolResult.Error("未知字段：$path", "UNKNOWN_PATH")
@@ -321,12 +355,15 @@ class ConfigTool @Inject constructor(
             items = listOf(item),
             caption = "Aharou 想修改自己的设置",
         )
-        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change)) {
+        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change, autoMode)) {
             is ConfirmOutcome.Approved -> {
                 field.write(parsed)
-                appendAudit(field, old, parsed, ConfigAuditStatus.APPLIED, System.currentTimeMillis())
+                appendAudit(
+                    field, old, parsed, ConfigAuditStatus.APPLIED, System.currentTimeMillis(),
+                    if (outcome.auto) ConfigConfirmationGate.AUTO_APPROVE_CAPTION else null,
+                )
                 ToolResult.Success(buildJsonObject {
-                    put("message", "已修改 ${field.path}（用户已确认）")
+                    put("message", "已修改 ${field.path}${approvalNote(outcome.auto)}")
                     put("value", parsed.jsonString())
                 })
             }
@@ -346,11 +383,15 @@ class ConfigTool @Inject constructor(
         return if (s.length <= 80) s else s.take(77) + "…"
     }
 
+    /** 工具结果里的批准来源：用户亲自点的，还是 AUTO 模式下自动放行的。 */
+    private fun approvalNote(auto: Boolean): String =
+        if (auto) NOTE_AUTO_APPROVED else NOTE_USER_CONFIRMED
+
     /**
      * 在集合下新增一项。payload 走 [ConfigValue.redactingSecrets] 后进确认弹窗：
      * 真实（未打码）的值仍传给集合的 add() 落盘，只有给用户看的副本被遮住。
      */
-    private suspend fun addChild(registry: ConfigRegistry, basePath: String, rawPayload: String?): ToolResult {
+    private suspend fun addChild(registry: ConfigRegistry, basePath: String, rawPayload: String?, autoMode: Boolean): ToolResult {
         if (basePath.isBlank()) return ToolResult.Error("需要 path（集合名，如 providers）", "MISSING_PATH")
         val coll = registry.collection(basePath)
             ?: return ToolResult.Error("未知集合：$basePath（先用 action=list 看看）", "UNKNOWN_COLLECTION")
@@ -372,11 +413,11 @@ class ConfigTool @Inject constructor(
             items = listOf(item),
             caption = "Aharou 想新增一项${coll.displayName}",
         )
-        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change)) {
+        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change, autoMode)) {
             is ConfirmOutcome.Approved -> {
                 val newId = coll.add(payload)
                 ToolResult.Success(buildJsonObject {
-                    put("message", "已在 $basePath 新增一项（用户已确认）")
+                    put("message", "已在 $basePath 新增一项${approvalNote(outcome.auto)}")
                     put("id", newId)
                 })
             }
@@ -390,7 +431,7 @@ class ConfigTool @Inject constructor(
      * 与 set/add 不同，这里不写审计行——审计表以「字段路径 old→new」为粒度，
      * 而删除的是一整条结构化记录，用同一形状记录反而会误导（见 [ConfigCollection] 首段说明）。
      */
-    private suspend fun removeChild(registry: ConfigRegistry, basePath: String, id: String): ToolResult {
+    private suspend fun removeChild(registry: ConfigRegistry, basePath: String, id: String, autoMode: Boolean): ToolResult {
         if (basePath.isBlank()) return ToolResult.Error("需要 path（集合名，如 providers）", "MISSING_PATH")
         if (id.isBlank()) return ToolResult.Error("remove 需要 id", "MISSING_ID")
         val coll = registry.collection(basePath)
@@ -412,11 +453,11 @@ class ConfigTool @Inject constructor(
             items = listOf(item),
             caption = "Aharou 想删除一项${coll.displayName}",
         )
-        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change)) {
+        return when (val outcome = ConfigConfirmationGate.requestConfirmation(change, autoMode)) {
             is ConfirmOutcome.Approved -> {
                 coll.remove(id)
                 ToolResult.Success(buildJsonObject {
-                    put("message", "已从 $basePath 删除 $id（用户已确认）")
+                    put("message", "已从 $basePath 删除 $id${approvalNote(outcome.auto)}")
                 })
             }
             ConfirmOutcome.Rejected -> ToolResult.Error("用户驳回了这次删除：$basePath.$id", "USER_REJECTED")

@@ -38,6 +38,11 @@ class GitRepository @Inject constructor(
     private val engine: CommandEngine,
     private val workspaceRepository: WorkspaceRepository
 ) {
+    /** 当前选中的 git 仓库路径；null 表示未指定（用工作区根）。由 [setRepoPath] 写入、[repoCwd] 读取。 */
+    @Volatile
+    var currentRepoPath: String? = null
+        private set
+
     private companion object {
         /** 提交拓扑图每页加载条数。首批与每次「加载更多」都取这么多条，超过的需滚到底再拉。 */
         const val GRAPH_PAGE_SIZE = 100
@@ -57,6 +62,57 @@ class GitRepository @Inject constructor(
     ): String = gitRaw(args)
 
     /**
+     * 当前 git 命令的执行目录：选中了子目录仓库用其路径，否则工作区根。
+     * 所有真正执行 git（含读工作区文件）的位置都走它——切到子目录仓库后 status/log/stage 等
+     * 必须落在那个仓库里，而不是工作区根。
+     *
+     * 选中路径不在当前工作区下（用户切了工作区、本类又是单例，旧选择会残留）时不认它，
+     * 回到工作区根，避免命令被发到另一个工作区的仓库里。
+     */
+    private fun repoCwd(): String {
+        val root = workspaceRepository.currentPath()
+        val selected = currentRepoPath ?: return root
+        val rootPrefix = root.trimEnd('/')
+        return if (selected == rootPrefix || selected.startsWith("$rootPrefix/")) selected else root
+    }
+
+    /** 设置当前选中的 git 仓库路径（null 回到工作区根）。 */
+    fun setRepoPath(path: String?) {
+        currentRepoPath = path
+    }
+
+    /** 当前工作区根路径（git 命令的默认执行目录，也是仓库扫描的基准目录）。 */
+    fun workspaceRoot(): String = workspaceRepository.currentPath()
+
+    /**
+     * 扫描工作区根的一层直接子目录，返回「绝对路径 → 自身是否仓库根」。
+     * 实现在 [GitRepoDiscovery]：远程模式下不能用本地 File 列目录，得走 engine 在容器/远端里扫。
+     */
+    private suspend fun scanDirectSubdirs(): List<Pair<String, Boolean>> =
+        GitRepoDiscovery.scan(engine, workspaceRepository.currentPath())
+
+    /**
+     * 发现工作区里的 git 仓库：工作区根 + 一层直接子目录，根优先、子目录按名称排序。
+     * 工作区根沿用 [isGitRepo]（处于某仓库工作树内即算仓库，与改动前的 [isRepo] 一致），
+     * 子目录只认自身是仓库根（见 [scanDirectSubdirs]）。
+     */
+    suspend fun discoverRepos(): List<String> {
+        val root = workspaceRepository.currentPath()
+        val repos = mutableListOf<String>()
+        if (isGitRepo(root)) repos.add(root)
+        repos += scanDirectSubdirs().filter { (_, isRepo) -> isRepo }.map { (path, _) -> path }
+        return repos
+    }
+
+    /** 指定路径是否处于 git 工作树内（供切换仓库前校验）。异常（SSH 未连接、目录不存在等）返回 false。 */
+    suspend fun isGitRepo(path: String): Boolean = runCatching {
+        engine.runCommandSyncUnbounded("git rev-parse --is-inside-work-tree", path).output.trim() == "true"
+    }.getOrElse { false }
+
+    /** 列出工作区根的一层直接子目录（仓库选择弹窗展示扫描范围）。 */
+    suspend fun listSubdirectories(): List<String> = scanDirectSubdirs().map { (path, _) -> path }
+
+    /**
      * 执行一条 `git` **写**子命令，据退出码判成败：非零（真实失败）抛 [GitCommandFailureException]
      * 携带 git 输出文本，上层 [com.aharou.feature.git.presentation.GitViewModel.runAction] 据此如实显示
      * 「失败 + 原因」而非误报成功。代表场景：未配置署名提交、未授权推送、合并冲突。空退出码（超时/异常）
@@ -72,7 +128,7 @@ class GitRepository @Inject constructor(
     ): String {
         // 用不限幅执行：diff 内容/文件内容可能远超 AI 工具链路的 4 万字符限幅，
         // 截断占位符会混入 diff 数据流被 UI 渲染成伪 diff 行。
-        val result = engine.runCommandSyncUnbounded(buildGitCommand(args), workspaceRepository.currentPath(), timeoutMs)
+        val result = engine.runCommandSyncUnbounded(buildGitCommand(args), repoCwd(), timeoutMs)
         if (result.outputTruncated) throw GitOutputTooLargeException()
         if (result.exitCode == 0) return result.output
         throw GitCommandFailureException(result.output.ifBlank { "git 退出码 ${result.exitCode}" })
@@ -80,7 +136,7 @@ class GitRepository @Inject constructor(
 
     /** 拼命令并跑（不判退出码），[git] 与 [gitChecked] 复用。 */
     private suspend fun gitRaw(args: Array<out String>): String {
-        val result = engine.runCommandSyncUnbounded(buildGitCommand(args), workspaceRepository.currentPath())
+        val result = engine.runCommandSyncUnbounded(buildGitCommand(args), repoCwd())
         if (result.outputTruncated) throw GitOutputTooLargeException()
         return result.output
     }
@@ -91,7 +147,7 @@ class GitRepository @Inject constructor(
         args.forEach { append(' '); append(shellQuote(it)) }
     }
 
-    /** 当前工作区是否处于一个 git 工作树内。SSH 未连接等异常时返回 false 而非抛出，避免 UI 崩溃。 */
+    /** 当前选中的仓库（未选中时是工作区根）是否处于一个 git 工作树内。SSH 未连接等异常时返回 false 而非抛出，避免 UI 崩溃。 */
     suspend fun isRepo(): Boolean {
         return runCatching { git("rev-parse", "--is-inside-work-tree").trim() == "true" }
             .getOrElse { false }
@@ -122,6 +178,8 @@ class GitRepository @Inject constructor(
      * 能逐行拿到 `--progress` 写往 stderr 的阶段百分比，[onProgress] 据此驱动进度条。
      *
      * @param targetPath 克隆目标目录，同时也是本次命令的挂载点。默认当前工作区。
+     *   这里**有意**不用 [repoCwd]：克隆永远落在工作区根或新建的独立工作区（目录得是空的），
+     *   而「当前选中的仓库」是已经存在的仓库，克隆到它里面既不合语义也会撞上非空目录。
      *   由「克隆到新工作区」传入尚未切入的新目录，这样克隆失败时不会把用户的挂载点与
      *   会话一起带走（切工作区会触发 AI 页按工作区重选会话）。
      * @param onProgress 总进度百分比（0–100，已按阶段加权，见 [parseCloneProgress]）。
@@ -136,7 +194,7 @@ class GitRepository @Inject constructor(
         var exitCode: Int? = null
         engine.runCommandStream(
             command,
-            targetPath ?: workspaceRepository.currentPath(),
+            targetPath ?: workspaceRoot(),
             600_000L
         )
             .collect { event ->
@@ -588,12 +646,12 @@ class GitRepository @Inject constructor(
         if (normalized.isBlank()) return ""
         // 先检查 .gitignore 是否已有该规则
         val checkCmd = "grep -F -x -- ${shellQuote(normalized)} .gitignore"
-        val checkResult = engine.runCommandSyncUnbounded(checkCmd, workspaceRepository.currentPath())
+        val checkResult = engine.runCommandSyncUnbounded(checkCmd, repoCwd())
         if (checkResult.exitCode == 0) return normalized // 已存在，无需重复追加
 
         // 不存在则通过 printf 安全追加（如果文件不存在则自动创建）
         val appendCmd = "printf '%s\\n' ${shellQuote(normalized)} >> .gitignore"
-        val appendResult = engine.runCommandSyncUnbounded(appendCmd, workspaceRepository.currentPath())
+        val appendResult = engine.runCommandSyncUnbounded(appendCmd, repoCwd())
         if (appendResult.exitCode != 0) {
             throw GitCommandFailureException(appendResult.output.ifBlank { "写入 .gitignore 失败" })
         }
@@ -794,7 +852,7 @@ class GitRepository @Inject constructor(
     suspend fun worktreeFileContent(path: String): String {
         val local = withContext(Dispatchers.IO) {
             runCatching {
-                java.io.File(workspaceRepository.currentPath(), path)
+                java.io.File(repoCwd(), path)
                     .takeIf { it.isFile }
                     ?.also { if (it.length() > MAX_DIFF_FILE_BYTES) throw GitOutputTooLargeException() }
                     ?.readText()
@@ -806,7 +864,7 @@ class GitRepository @Inject constructor(
         if (local != null) return local
         val result = engine.runCommandSyncUnbounded(
             "cat -- ${shellQuote(path)}",
-            workspaceRepository.currentPath()
+            repoCwd()
         )
         if (result.outputTruncated) throw GitOutputTooLargeException()
         return if (result.exitCode == 0) result.output else ""

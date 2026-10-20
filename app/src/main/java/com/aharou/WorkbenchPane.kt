@@ -11,6 +11,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.aharou.feature.credentials.presentation.CredentialViewModel
 import com.aharou.feature.credentials.presentation.component.CredentialScreen
 import com.aharou.feature.editor.presentation.CodeEditorScreen
+import com.aharou.feature.editor.presentation.EditorLeaveGuard
 import com.aharou.feature.browser.presentation.BrowserScreen
 import com.aharou.feature.browser.presentation.BrowserViewModel
 import com.aharou.feature.git.presentation.GitViewModel
@@ -29,6 +30,8 @@ internal enum class WorkbenchPaneKind { NONE, EDITOR, TERMINAL, GIT, BROWSER }
  *
  * ViewModel 挂在聊天页的 NavBackStackEntry 上，右栏在几种内容间切换不会销毁它们——
  * 终端会话本身归单例 TerminalSessionManager 所有，与这里的作用域无关。
+ *
+ * [editorLeaveGuard] 供编辑器向宿主上报脏状态：右栏编辑器里有未保存修改时，换文件前先弹保存提示。
  */
 @Composable
 internal fun WorkbenchPaneContent(
@@ -40,6 +43,7 @@ internal fun WorkbenchPaneContent(
     onSendToChat: (String) -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
     onTakeoverAgent: () -> Unit = {},
+    editorLeaveGuard: EditorLeaveGuard? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -51,7 +55,8 @@ internal fun WorkbenchPaneContent(
                 initialLine = editorLine,
                 onBack = onClose,
                 embedded = true,
-                onAddSelectionToInput = onAddSelectionToInput
+                onAddSelectionToInput = onAddSelectionToInput,
+                leaveGuard = editorLeaveGuard
             )
 
             WorkbenchPaneKind.TERMINAL -> {
