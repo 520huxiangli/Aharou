@@ -23,7 +23,7 @@ class GitRepositoryRepoDiscoveryTest {
     private val root = "/root/workspace"
 
     /**
-     * 扫描命令（`for d in */ …`）回 [scanResult]；`rev-parse --is-inside-work-tree` 按 [insideWorkTree]
+     * 扫描命令（`for d in` 加通配符那条）回 [scanResult]；`rev-parse --is-inside-work-tree` 按 [insideWorkTree]
      * 判定；其余 git 命令回 [gitOutput]。
      */
     private fun createEngine(
