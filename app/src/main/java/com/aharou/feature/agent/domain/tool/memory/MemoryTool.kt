@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.memory
 
 import com.aharou.core.memory.MemoryTraceLog
+import com.aharou.core.memory.MemoryUsageStore
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.memory.Memory
@@ -8,6 +9,7 @@ import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.recencyFactor
 import com.aharou.feature.agent.domain.memory.MemorySyncManager
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.agent.domain.memory.MemoryType
@@ -40,6 +42,7 @@ class MemoryTool @Inject constructor(
     private val chatSessionDao: ChatSessionDao,
     private val memorySyncManager: MemorySyncManager,
     private val memorySyncSettings: MemorySyncSettings,
+    private val memoryUsageStore: MemoryUsageStore,
 ) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
@@ -49,6 +52,12 @@ class MemoryTool @Inject constructor(
 
         /** 上次发起同步的时刻（进程内）；成功完成的时间另由 lastSyncAt 持久化。 */
         val lastSyncAttemptAt = AtomicLong(0L)
+
+        /** 检索放宽时用来切词。 */
+        private val WHITESPACE = Regex("\\s+")
+
+        /** 「冷记忆」判定：超过这么多天没被 read 过就算。 */
+        private const val STALE_DAYS = 30L
     }
 
     override val name = "memory"
@@ -58,12 +67,13 @@ class MemoryTool @Inject constructor(
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         return when (args["action"]?.jsonPrimitive?.contentOrNull) {
             "read", "list", "search" -> setOf(ToolCapability.READ_AGENT_CONFIG)
+            "stats" -> setOf(ToolCapability.READ_AGENT_CONFIG)
             else -> capabilities
         }
     }
     override val description =
         "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案；" +
-            "sync=立刻把记忆同步到用户配置的仓库）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+            "sync=立刻把记忆同步到用户配置的仓库；stats=使用统计与冷记忆清单；undo=回滚到最近一次归档）。发现新的用户偏好、项目约定或架构决策时主动记录。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -90,7 +100,7 @@ class MemoryTool @Inject constructor(
             name = "action",
             type = ParameterType.STRING,
             description = "操作类型：read=读取记忆正文；save=保存（创建或全量覆盖）；edit=局部编辑已有正文；delete=删除；list=列出所有记忆摘要",
-            enum = listOf("read", "save", "edit", "delete", "list", "search", "log", "fact", "mindstream", "core", "sync"),
+            enum = listOf("read", "save", "edit", "delete", "list", "search", "log", "fact", "mindstream", "core", "sync", "stats", "undo"),
             required = true
         ),
         "name" to ToolParameter(
@@ -192,6 +202,8 @@ class MemoryTool @Inject constructor(
                 "mindstream" -> handleMindstream(args)
                 "core" -> handleCore(args)
                 "sync" -> handleSync()
+                "stats" -> handleStats(context.projectRoot, requestedScope)
+                "undo" -> handleUndo(memoryName, scope, context.projectRoot)
                 else -> ToolResult.Error("不支持的操作: $action", "UNSUPPORTED_ACTION")
             }
         } catch (e: Exception) {
@@ -202,7 +214,7 @@ class MemoryTool @Inject constructor(
 
     /** 该动作是否会写记忆（core 带 content 才写，不带 content 是读）。 */
     private fun writesMemory(action: String, args: Map<String, JsonElement>): Boolean = when (action) {
-        "save", "edit", "delete", "log", "fact", "mindstream" -> true
+        "save", "edit", "delete", "log", "fact", "mindstream", "undo" -> true
         "core" -> !args["content"]?.jsonPrimitive?.contentOrNull.isNullOrEmpty()
         else -> false
     }
@@ -281,36 +293,97 @@ class MemoryTool @Inject constructor(
         if (limit !in 1..50 || (args.containsKey("limit") && (args["limit"] as? JsonPrimitive)?.intOrNull == null)) {
             return ToolResult.Error("limit 必须为 1–50 的整数", "INVALID_LIMIT")
         }
-        // 与仓储层同一套切词：中文拆成字符二元组，停用词与单字噪音在那边已统一丢弃。
-        val terms = memoryRepository.termsOf(query).distinct()
-        if (terms.isEmpty()) {
-            return ToolResult.Success(JsonPrimitive("没有匹配「$query」的记忆。可先用 action=list 看全部名称。"))
-        }
-        val matched = memoryRepository.listMemories(projectRoot, scope).mapNotNull { m ->
-            val indexed = buildSet {
-                m.keywords.forEach { addAll(memoryRepository.termsOf(it)) }
-                addAll(memoryRepository.termsOf("${m.name} ${m.description}"))
-                addAll(memoryRepository.termsOf(m.content))
+        // 与仓储层同一套切词；命中后按「命中数 × 时间衰减」排序，近代改动更可能仍然有效。
+        val candidates = memoryRepository.listMemories(projectRoot, scope)
+        var matched = matchMemories(candidates, query, limit)
+        if (matched.isEmpty()) {
+            // 一次不中就减词重试，不要直接向模型报「没有」——用户用的词往往比记忆里的长。
+            val relaxed = relaxedQueryOf(query)
+            if (relaxed.isNotBlank()) {
+                FileLogger.i(TAG, "放宽检索：$query → $relaxed")
+                matched = matchMemories(candidates, relaxed, limit)
             }
-            val hits = terms.count { it in indexed }
-            if (hits > 0) m to hits else null
-        }.sortedWith(
-            // 命中越多越靠前；打平看最近改动，再按名称，保证同一 query 每次结果顺序一致。
-            compareByDescending<Pair<Memory, Int>> { it.second }
-                .thenByDescending { it.first.file?.lastModified() ?: 0L }
-                .thenBy { it.first.name.lowercase() }
-        ).take(limit)
+        }
 
         if (matched.isEmpty()) {
             return ToolResult.Success(JsonPrimitive("没有匹配「$query」的记忆。可先用 action=list 看全部名称。"))
         }
-        val text = matched.joinToString("\n") { (m, _) ->
+        val text = matched.joinToString("\n") { m ->
             val kws = if (m.keywords.isEmpty()) "" else " [关键词: ${m.keywords.joinToString(", ")}]"
             "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}${if (m.pending) "/待确认" else ""}): ${m.description}$kws"
         }
         return ToolResult.Success(
             JsonPrimitive("匹配「$query」的记忆（最多 $limit 条）：\n$text\n\n用 action=read + name=<名称> + scope=<作用域> 取完整正文。")
         )
+    }
+
+    /**
+     * 按「命中数 × 时间衰减」降序；打平看最近改动，再按名称，保证同一 query 每次顺序稳定。
+     * 衰减系数复用仓储层的 [recencyFactor]，两处共用一套阈值，避免检索与注入排序漂移。
+     */
+    private fun matchMemories(candidates: List<Memory>, query: String, limit: Int): List<Memory> {
+        val terms = memoryRepository.termsOf(query).distinct()
+        if (terms.isEmpty()) return emptyList()
+        return candidates.mapNotNull { m ->
+            val indexed = buildSet {
+                m.keywords.forEach { addAll(memoryRepository.termsOf(it)) }
+                addAll(memoryRepository.termsOf("${m.name} ${m.description}"))
+                addAll(memoryRepository.termsOf(m.content))
+            }
+            val hits = terms.count { it in indexed }
+            if (hits > 0) Triple(m, hits, hits * recencyFactor(m)) else null
+        }.sortedWith(
+            compareByDescending<Triple<Memory, Int, Double>> { it.third }
+                .thenByDescending { it.first.file?.lastModified() ?: 0L }
+                .thenBy { it.first.name.lowercase() }
+        ).take(limit).map { it.first }
+    }
+
+    /** 去掉最长的一个词重试一次；只剩一个词时返回空串，不再放宽。 */
+    private fun relaxedQueryOf(query: String): String {
+        val tokens = query.split(WHITESPACE).filter { it.isNotBlank() }
+        if (tokens.size < 2) return ""
+        val longest = tokens.indices.maxByOrNull { tokens[it].length } ?: return ""
+        return tokens.filterIndexed { index, _ -> index != longest }.joinToString(" ")
+    }
+
+    /**
+     * 使用统计：把「哪条从来没人读」振出来。
+     *
+     * 计数由 [MemoryUsageStore] 在 read 成功时累积（不写回记忆文件，避免刷 mtime 影响遗忘判定）；
+     * 这里只做汇总，供归档决策参考。search 命中不计数——索引命中不等于真用过。
+     */
+    private fun handleStats(projectRoot: String?, scope: MemoryScope?): ToolResult {
+        val memories = memoryRepository.listMemories(projectRoot, scope)
+        if (memories.isEmpty()) return ToolResult.Success(JsonPrimitive("当前没有任何记忆。"))
+        val staleCutoff = System.currentTimeMillis() - STALE_DAYS * 24L * 60L * 60L * 1_000L
+        val neverUsed = memories.filter { memoryUsageStore.useCount(it.scope.name, it.name) == 0 }
+        val stale = memories.filter {
+            val last = memoryUsageStore.lastUsedAt(it.scope.name, it.name)
+            last == 0L || last < staleCutoff
+        }
+        val text = buildString {
+            append("记忆使用统计：共 ${memories.size} 条，从未被 read 的 ${neverUsed.size} 条，$STALE_DAYS 天未读的 ${stale.size} 条。")
+            if (neverUsed.isNotEmpty()) {
+                append("\n\n从未取用（归档候选，最多列 30 条）：")
+                neverUsed.take(30).forEach { append("\n- ${it.name}（${it.scope.name.lowercase()}/${it.type.key}）") }
+                if (neverUsed.size > 30) append("\n…其余 ${neverUsed.size - 30} 条未列出")
+            }
+        }
+        return ToolResult.Success(JsonPrimitive(text))
+    }
+
+    /**
+     * 回滚到最近一次归档快照。
+     *
+     * 覆盖写（save / edit / 恢复归档）之前都会自动留档，所以写错了直接 undo 即可，
+     * 不需要用户去设置页的归档列表里翻。
+     */
+    private fun handleUndo(name: String?, scope: MemoryScope, projectRoot: String?): ToolResult {
+        if (name.isNullOrEmpty()) return ToolResult.Error("undo 操作需要 name 参数", "MISSING_NAME")
+        val restored = memoryRepository.restoreLatestArchive(name, scope, projectRoot)
+            ?: return ToolResult.Error("「$name」没有可回滚的归档快照（或恢复失败）", "UNDO_UNAVAILABLE")
+        return ToolResult.Success(JsonPrimitive("已把「$name」回滚到最近一次归档（$restored）。"))
     }
 
     private fun handleRead(name: String?, scope: MemoryScope?, projectRoot: String?): ToolResult {

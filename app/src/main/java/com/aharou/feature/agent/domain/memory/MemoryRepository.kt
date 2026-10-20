@@ -137,6 +137,8 @@ class MemoryRepository @Inject constructor(
      * 命中它说明不了什么；专有词（「PRoot」「bge-m3」）只出现在少数条目里，命中它才是强信号。
      * 单用命中计数时这两者等价，清单就会被通用条目挤满。
      *
+     * 最后再乘时间衰减（见 [recencyFactor]）：近期改动过的更可能仍然有效，命中再强也抵不过时效。
+     *
      * [total] 为候选条目总数，[frequencies] 为 term → 文档频数（见 [documentFrequencies]）。
      */
     private fun relevanceScore(
@@ -153,7 +155,7 @@ class MemoryRepository @Inject constructor(
         score += weightedHits(
             termsOf(memory.description), query, total, frequencies, MAX_DESCRIPTION_HITS
         ) * DESCRIPTION_HIT_WEIGHT
-        return score
+        return score * recencyFactor(memory)
     }
 
     /** [terms] 去重后，取出现在 [query] 里的词，按稀有度（IDF）降序累加，最多 [cap] 个。 */
@@ -401,4 +403,55 @@ class MemoryRepository @Inject constructor(
         MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
             ?.let { projectSource(it).restoreArchive(fileName) } ?: false
     }
+
+    /**
+     * 回滚一条记忆到最近一次归档快照（覆盖写之前会自动留档，所以不需要额外备份）。
+     *
+     * 按「同名 + 时间最新」取，调用方不用知道归档文件名。恢复成功返回被用的归档文件名；
+     * 没有可用的归档时返回 null。
+     */
+    fun restoreLatestArchive(name: String, scope: MemoryScope, projectRoot: String?): String? {
+        val prefix = MemorySource.sanitizeName(name) + "-"
+        val latest = listArchive(scope, projectRoot)
+            .filter { it.fileName.startsWith(prefix, ignoreCase = true) }
+            .maxByOrNull { it.modifiedAt }
+            ?: return null
+        return if (restoreArchive(latest.fileName, scope, projectRoot)) latest.fileName else null
+    }
 }
+
+/**
+ * 时间衰减系数：近期改动过的条目更可能仍然有效，命中强度按年龄打折。
+ *
+ * 取不到文件或 mtime（内存构造、远端同步中）时返回 1.0——缺时间信息不该变成降权理由。
+ * 提成顶层纯函数是为了让检索（MemoryTool.handleSearch）与注入排序共用一套口径，
+ * 两边各写一套阈值必然随时间漂移。
+ */
+internal fun recencyFactor(memory: Memory): Double {
+    val lastModified = memory.file?.lastModified() ?: return RECENCY_FACTOR_FRESH
+    if (lastModified <= 0L) return RECENCY_FACTOR_FRESH
+    val age = System.currentTimeMillis() - lastModified
+    if (age < 0L) return RECENCY_FACTOR_FRESH
+    return when {
+        age <= RECENCY_FRESH_MILLIS -> RECENCY_FACTOR_FRESH
+        age <= RECENCY_MONTH_MILLIS -> RECENCY_FACTOR_MONTH
+        age <= RECENCY_QUARTER_MILLIS -> RECENCY_FACTOR_QUARTER
+        else -> RECENCY_FACTOR_OLD
+    }
+}
+
+private const val DAY_MILLIS = 24L * 60L * 60L * 1_000L
+
+/** 一周内改动过：仍按满权重计。 */
+private const val RECENCY_FRESH_MILLIS = 7L * DAY_MILLIS
+
+/** 一个月内改动过。 */
+private const val RECENCY_MONTH_MILLIS = 30L * DAY_MILLIS
+
+/** 一个季度内改动过。 */
+private const val RECENCY_QUARTER_MILLIS = 90L * DAY_MILLIS
+
+private const val RECENCY_FACTOR_FRESH = 1.0
+private const val RECENCY_FACTOR_MONTH = 0.85
+private const val RECENCY_FACTOR_QUARTER = 0.7
+private const val RECENCY_FACTOR_OLD = 0.5
