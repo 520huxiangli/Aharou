@@ -115,6 +115,24 @@ class MemoryPromptRendererTest {
     }
 
     @Test
+    fun longBodyFallsBackToIndexWholeInsteadOfBeingTruncated() {
+        // 截断出来的半截正文模型读不懂，白占常驻预算；整条退回索引并在行里点明全文可取。
+        val body = "x".repeat(1_500)
+        val long = Memory("long-note", "long index", MemoryScope.PROJECT, content = body, type = MemoryType.IDENTITY)
+        val short = memory("short-note", type = MemoryType.IDENTITY)
+
+        val output = MemoryPromptRenderer.render(listOf(long, short))
+
+        assertFalse(output.contains(body))
+        assertFalse(output.contains("x".repeat(900)))
+        assertTrue(output.contains("- long-note: long index（正文较长未内联"))
+        assertTrue(output.contains("memory(action=read)"))
+        // 超长条目不能两边都丢：进索引，且不挡后面的条目内联。
+        assertTrue(output.contains("### short-note"))
+        assertTrue(output.contains("private body"))
+    }
+
+    @Test
     fun lowercaseNamesAreNotMistakenForCoreArchives() {
         val regular = (0 until 20).map { memory("regular-$it", description = "x".repeat(500)) }
         val output = MemoryPromptRenderer.render(regular + memory("lowercase_name", description = "x".repeat(500)))
