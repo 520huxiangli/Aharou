@@ -2,6 +2,8 @@ package com.aharou.core.memory
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.SecretMasker
+import com.aharou.core.util.TextSanitizer
 import com.aharou.core.util.writeTextSafely
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONArray
@@ -281,11 +283,11 @@ class AharouMemoryStore @Inject constructor(
         if (!isMemoryEnabled()) return null
         ensureExists()
         val sb = StringBuilder()
-        val core = File(dir, "CORE.md").takeIf { it.exists() }?.readText()?.trim()
+        val core = File(dir, "CORE.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)
         if (!core.isNullOrEmpty()) sb.append("### 核心档案\n").append(core).append("\n")
-        val global = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()?.trim()
+        val global = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)
         if (!global.isNullOrEmpty()) sb.append("\n### 全局记忆\n").append(global).append("\n")
-        val log = runCatching { dailyLog() }.getOrNull()?.trim()
+        val log = runCatching { dailyLog() }.getOrNull()?.trim()?.let(::sanitizeForPrompt)
         if (!log.isNullOrEmpty()) {
             val tail = if (log.length <= MAX_LOG_TAIL_CHARS) log else "…" + log.takeLast(MAX_LOG_TAIL_CHARS)
             sb.append("\n### 今天日志\n").append(tail).append("\n")
@@ -293,4 +295,13 @@ class AharouMemoryStore @Inject constructor(
         if (sb.isEmpty()) return null
         return "## 记忆（持久，跨会话；更新用 memory 工具或直接读写 ~/.aharou/memory/）\n" + sb
     }
+
+    /**
+     * 注入前消毒 + 掩码。
+     *
+     * 核心档案（CORE / GLOBAL / 今日日志）最常写凭据与服务器信息，跟普通条目一样不能原文
+     * 发给模型；但文件本身一字不改，`memory(action=core)` 与 `readCore()` 仍拿到真值。
+     */
+    private fun sanitizeForPrompt(text: String): String =
+        SecretMasker.mask(TextSanitizer.sanitize(text))
 }

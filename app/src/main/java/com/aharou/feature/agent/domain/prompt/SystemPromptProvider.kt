@@ -2,6 +2,8 @@ package com.aharou.feature.agent.domain.prompt
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.SecretMasker
+import com.aharou.core.util.TextSanitizer
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.inbox.InboxDirectory
@@ -436,7 +438,8 @@ class SystemPromptProvider @Inject constructor(
     private inner class CoreArchiveSource : PromptSource {
         override fun build(ctx: AgentContext): String? = runCatching {
             if (!aharouMemoryStore.isMemoryEnabled()) return@runCatching null
-            val core = aharouMemoryStore.readCore()?.trim().orEmpty()
+            val core = aharouMemoryStore.readCore()?.trim()
+                ?.let { SecretMasker.mask(TextSanitizer.sanitize(it)) }.orEmpty()
             if (core.isEmpty()) return@runCatching null
             "## 记忆（持久，跨会话）\n### 核心档案\n$core"
         }.getOrNull()

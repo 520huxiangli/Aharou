@@ -2,6 +2,8 @@ package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.memory.AharouMemoryStore
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.SecretMasker
+import com.aharou.core.util.TextSanitizer
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import java.text.SimpleDateFormat
@@ -107,10 +109,11 @@ class MemoryDistiller @Inject constructor(
         previousDistilled()?.let {
             append("## 上一轮已经蒸馏出的要点\n")
             append("请在此基础上更新：仍然成立的保留、已经过期的删掉、本轮新出现的补上；不要在条目上重复叙述。\n\n")
-            append(it).append("\n\n")
+            append(SecretMasker.mask(TextSanitizer.sanitize(it))).append("\n\n")
         }
         append("## 本轮新增流水\n")
-        append(source)
+        // 流水是 AI 自己写的，可能把令牌或私钥抄进去；送去模型前同样要消毒并掩码。
+        append(SecretMasker.mask(TextSanitizer.sanitize(source)))
     }
 
     /** 取 GLOBAL.md 里最后一段「蒸馏要点」，用于增量更新。 */
