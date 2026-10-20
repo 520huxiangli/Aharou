@@ -1,5 +1,7 @@
 package com.aharou.feature.agent.domain.tool.editor
 
+import com.aharou.feature.agent.domain.inbox.SharedInbox
+import com.aharou.feature.agent.domain.inbox.SharedInboxEvents
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -63,7 +65,8 @@ private const val TAG = "EditFileTool"
 class EditFileTool @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val fileLock: WorkspaceFileLock,
-    private val versions: FileVersionRegistry
+    private val versions: FileVersionRegistry,
+    private val inboxEvents: SharedInboxEvents
 ) : AgentTool() {
     override val name = "editFile"
     override val description =
@@ -360,6 +363,7 @@ class EditFileTool @Inject constructor(
             })
 
             FileLogger.v(TAG, "edit_file 成功 path=$path edits=${edits.size} replacements=$totalReplacements")
+            if (SharedInbox.isInboxPath(path)) inboxEvents.notifyChanged()
             ToolResult.Success(
                 JsonObject(mapOf(
                     "status" to JsonPrimitive("edited"),

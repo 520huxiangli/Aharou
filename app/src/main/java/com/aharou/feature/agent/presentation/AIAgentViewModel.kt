@@ -44,6 +44,7 @@ import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ChatSession
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.inbox.InboxDirectory
+import com.aharou.feature.agent.domain.inbox.SharedInboxDelivery
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import com.aharou.feature.agent.domain.notification.AgentNotificationFormatter
@@ -188,6 +189,7 @@ class AIAgentViewModel @Inject constructor(
     private val scheduledRunBus: ScheduledRunBus,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val sharedInbox: SharedInbox,
+    private val sharedInboxDelivery: SharedInboxDelivery,
     private val inboxDirectory: InboxDirectory,
     private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
@@ -1535,6 +1537,8 @@ class AIAgentViewModel @Inject constructor(
 
         // 进入/切换工作区就把信箱未读投到该工作区的「默认会话」（最近更新的那个），
         // 不必用户先在这个工作区发一句话、由那一轮去捞。没有会话就不投，不凭空造空会话。
+        // 来信不必等切工作区：写入工具与目录监听发出信号后，直接投到目标工作区的默认会话。
+        sharedInboxDelivery.bind { path -> deliverInboxToDefaultSession(path) }
         viewModelScope.launch {
             _currentWorkspace.collectLatest { path ->
                 if (path.isNotBlank()) withContext(Dispatchers.IO) { deliverInboxToDefaultSession(path) }
@@ -1693,12 +1697,7 @@ class AIAgentViewModel @Inject constructor(
         )
     }
 
-    /**
-     * 把某工作区信箱的未读投到它的默认会话——最近更新的那个根会话。
-     *
-     * 工作区里还没任何会话时不投：不为一条留言凭空造一个会话（用户切过去只会看到一个空壳，
-     * 而它下次真的开始聊时又会在轮首拿到这批消息）。
-     */
+    /** 把某工作区信箱的未读投到它的默认会话（最近更新的那个）；还没有会话时不投，不凭空造空壳会话。 */
     private suspend fun deliverInboxToDefaultSession(workspacePath: String) {
         val unread = runCatching { sharedInbox.peek(workspacePath) }.getOrNull().orEmpty()
         if (unread.isEmpty()) return

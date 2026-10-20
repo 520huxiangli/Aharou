@@ -1,5 +1,7 @@
 package com.aharou.feature.agent.domain.tool.file
 
+import com.aharou.feature.agent.domain.inbox.SharedInbox
+import com.aharou.feature.agent.domain.inbox.SharedInboxEvents
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -249,7 +251,8 @@ class ReadFileTool @Inject constructor(
 class WriteFileTool @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val fileLock: WorkspaceFileLock,
-    private val versions: FileVersionRegistry
+    private val versions: FileVersionRegistry,
+    private val inboxEvents: SharedInboxEvents
 ) : AgentTool() {
     override val name = "writeFile"
     override val description = "写入完整文件内容，文件不存在时自动创建（含父目录）。局部修改请用 editFile。"
@@ -289,9 +292,11 @@ class WriteFileTool @Inject constructor(
             FileLogger.w(TAG, "write_file 缺少 path 参数")
             return ToolResult.Error("路径参数缺失", "MISSING_PATH")
         }
-        return withWriteGuards(access, path, context.sessionId) {
+        val result = withWriteGuards(access, path, context.sessionId) {
             performWrite(access, path, args, context.writePaths)
         }
+        if (result is ToolResult.Success && SharedInbox.isInboxPath(path)) inboxEvents.notifyChanged()
+        return result
     }
 
     /**

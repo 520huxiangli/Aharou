@@ -247,7 +247,7 @@ Workspaces are deliberately isolated: chats and memories are invisible across th
 - One message per line: `- 2026-10-20 15:40 [Software] TODO.md updated, item 5 is ready`. Both you and the AI can read and write it directly.
 - Door numbers: each workspace's own address is in its system prompt; the **directory of every workspace** is `~/shared/inbox/workspaces.md` (maintained by the app, updated as workspaces are added or removed — manual edits get overwritten). To leave a note, the AI looks it up instead of guessing a filename.
 - Leaving a note: just tell the AI "leave a note for the writing workspace: assets are in ~/shared/drafts" — it finds the right file itself.
-- Receiving: switching back to that workspace shows the unread messages as a notice in its **most recent chat**, without you having to send a message first; they also show up at the start of its next turn. Each batch is announced once; it is a message board, not a live chat — if you need it done right now, say so there.
+- Receiving: a message is delivered to the target workspace's **most recent chat** as soon as it is written — if that chat is idle it starts a turn right away, otherwise delivery waits for the running turn to end, so you never have to switch workspaces. Switching back or starting a new turn there also picks up anything unread. Nothing is delivered while the app process is dead; messages wait for the next launch. Each batch is announced once; it is a message board, not a live chat — if you need it done right now, say so there.
 - Only put genuinely cross-workspace information in it (what changed, what to do next); don't dump whole conversations in.
 
 ::: tip Moving the workspace or clearing the inbox

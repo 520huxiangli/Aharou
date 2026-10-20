@@ -105,6 +105,12 @@ class SharedInbox @Inject constructor(
         /** 已读位置的读改写要串行：同一工作区可能有两个会话同时开轮。 */
         private val lock = Any()
 
+        /** 写入路径是否落在共享区信箱目录：写入工具据此判断要不要通知投递。 */
+        fun isInboxPath(path: String): Boolean {
+            val normalized = path.replace('\\', '/').trim()
+            return normalized.contains("shared/$INBOX_DIR/") && normalized.endsWith(".md")
+        }
+
         /** 把文件正文切成消息行：去掉首尾空白与空行。 */
         fun splitMessages(text: String): List<String> =
             text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
