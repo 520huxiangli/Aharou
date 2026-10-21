@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.file
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.inbox.SharedInboxEvents
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -252,7 +253,8 @@ class WriteFileTool @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val fileLock: WorkspaceFileLock,
     private val versions: FileVersionRegistry,
-    private val inboxEvents: SharedInboxEvents
+    private val inboxEvents: SharedInboxEvents,
+    private val writeLease: SubAgentWriteLease
 ) : AgentTool() {
     override val name = "writeFile"
     override val description = "写入完整文件内容，文件不存在时自动创建（含父目录）。局部修改请用 editFile。"
@@ -293,7 +295,13 @@ class WriteFileTool @Inject constructor(
             return ToolResult.Error("路径参数缺失", "MISSING_PATH")
         }
         val result = withWriteGuards(access, path, context.sessionId) {
-            performWrite(access, path, args, context.writePaths)
+            // 实时查租约：grant 可能在本轮中途追加过路径，而 context.writePaths 是轮首快照，
+            // 读快照会让主会话的 grant 对正在跑的轮次不生效。未登记时退回快照（主会话为 null）。
+            performWrite(
+                access, path, args,
+                writeLease.pathsFor(context.sessionId) ?: context.writePaths,
+                context.sessionId, context.projectRoot
+            )
         }
         if (result is ToolResult.Success && SharedInbox.isInboxPath(path)) inboxEvents.notifyChanged()
         return result
@@ -360,10 +368,12 @@ class WriteFileTool @Inject constructor(
         access: FileAccessProvider,
         path: String,
         args: Map<String, JsonElement>,
-        writePaths: Set<String>?
+        writePaths: Set<String>?,
+        sessionId: String?,
+        workspaceRoot: String?
     ): ToolResult {
         return try {
-            WriteLease.denialReason(writePaths, path)?.let { reason ->
+            WriteLease.denialReason(writePaths, path, sessionId, workspaceRoot)?.let { reason ->
                 FileLogger.w(TAG, "write_file 被写路径租约拒绝: $path ($reason)")
                 return ToolResult.Error("${WriteLease.DENIAL_PREFIX}：$reason", "WRITE_LEASE_DENIED")
             }

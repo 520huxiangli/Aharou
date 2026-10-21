@@ -1263,7 +1263,8 @@ public final class TerminalView extends View {
         if (mTextSelectionCursorController != null) {
             // Might solve the following exception
             // android.view.WindowLeaked: Activity com.termux.app.TermuxActivity has leaked window android.widget.PopupWindow
-            stopTextSelectionMode();
+            // 用强制隐藏绕过 hide() 的 300ms 抑制，确保 PopupWindow/ActionMode 一定被回收。
+            mTextSelectionCursorController.hideImmediately();
 
             getViewTreeObserver().removeOnTouchModeChangeListener(mTextSelectionCursorController);
             mTextSelectionCursorController.onDetached();

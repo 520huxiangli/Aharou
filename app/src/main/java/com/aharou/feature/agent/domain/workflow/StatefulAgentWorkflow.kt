@@ -16,6 +16,8 @@ import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.model.GoalStatus
+import com.aharou.feature.agent.domain.tool.goal.GOAL_STATUS_TOOL_NAME
 import com.aharou.feature.agent.domain.notification.AgentEventInjector
 import com.aharou.feature.agent.domain.notification.AgentNotificationCenter
 import com.aharou.feature.agent.domain.notification.AgentNotificationKind
@@ -300,13 +302,17 @@ class StatefulAgentWorkflow @Inject constructor(
         val context = AgentContext(null, null, session?.workspacePath.orEmpty(), null,
             history = history, sessionId = sessionId, mode = domain?.mode ?: AgentMode.BUILD,
             modeBeforePlan = domain?.modeBeforePlan, reasoningEffort = domain?.reasoningEffort?.apiValue,
-            lastInputTokens = session?.lastInputTokens ?: 0, agentDefinition = definition)
+            lastInputTokens = session?.lastInputTokens ?: 0, agentDefinition = definition,
+            goal = domain?.goal?.takeIf { it.isNotBlank() }, goalStatus = domain?.goalStatus)
         val allTools = toolRegistry.getAvailableTools()
         val tools = when {
             definition != null -> definition.filterToolNames(allTools.map { it.name }).toSet()
                 .let { allowed -> allTools.filter { it.name in allowed } }
             session?.parentId != null -> allTools // 子代理可再派子代理，递归由 MAX_SUBAGENT_DEPTH 兜底
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
+        }.let { list ->
+            if (domain?.goalStatus == GoalStatus.ACTIVE) list.filterNot { it.name == "planMode" }
+            else list.filterNot { it.name == GOAL_STATUS_TOOL_NAME }
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
         val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
@@ -887,7 +893,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 // 含密钥占位符但工具未 opt-in：绝不拿字面量去跑，直接拒绝并说明。
                 PermissionVerdict.Deny("工具「${toolCall.name}」的参数含密钥占位符，但该工具不接受密钥：密钥只供给配置了它的连接器，绝不给命令或脚本。请改用配置了该密钥的连接器。", "VAULT_PLACEHOLDER_REJECTED")
             } else {
-                gate.evaluate(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.mode,
+                gate.evaluate(tool, toolCall.id, toolCall.arguments, argsPreview, currentContext.permissionMode,
                     currentContext.sessionId, currentContext.projectRoot, currentContext)
             }
             when (verdict) {

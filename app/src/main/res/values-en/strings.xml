@@ -529,6 +529,9 @@
     <string name="agent_compaction_failed">Compaction failed: %1$s</string>
     <!-- About -->
     <string name="about_version">Version</string>
+    <string name="about_current_version">Current version</string>
+    <string name="about_latest_version">Latest version</string>
+    <string name="about_version_not_checked">Not checked</string>
     <string name="about_github_repo">GitHub Repository</string>
     <string name="about_license">Open Source License</string>
     <string name="about_description">Aharou · Android Agent — everyday assistant × coding copilot</string>
@@ -800,6 +803,36 @@
     <string name="chat_turn_running">Running</string>
     <string name="chat_turn_completed">Completed in %1$s</string>
     <string name="chat_turn_completed_plain">Completed</string>
+
+    <!-- Goal -->
+    <string name="chat_goal_label">Goal</string>
+    <string name="chat_goal_none">This session has no goal. Set a persistent one with /goal &lt;description&gt;.</string>
+    <string name="chat_goal_summary">Goal status: %1$s, %2$d turns run\n%3$s</string>
+    <string name="chat_goal_cleared">Goal cleared.</string>
+    <string name="chat_goal_started_notice">Goal set. Starting autonomous execution.</string>
+    <string name="chat_goal_paused_notice">Goal paused. Later replies will not auto-continue.</string>
+    <string name="chat_goal_resumed_notice">Goal resumed. Continuing automatically.</string>
+    <string name="chat_goal_blocked_notice">No progress for %1$d consecutive turns; the goal is marked as blocked.</string>
+    <string name="chat_goal_exhausted_notice">The turn or token budget is used up, so the loop stopped. Adjust the budget and run /goal resume.</string>
+    <string name="chat_goal_status_active">Active</string>
+    <string name="chat_goal_status_paused">Paused</string>
+    <string name="chat_goal_status_completed">Completed</string>
+    <string name="chat_goal_status_blocked">Blocked</string>
+    <string name="chat_goal_status_exhausted">Budget used up</string>
+    <string name="chat_goal_pause">Pause</string>
+    <string name="chat_goal_resume">Resume</string>
+    <string name="chat_goal_clear">Clear</string>
+    <string name="chat_goal_turn_badge">turn %1$d</string>
+    <string name="slash_command_goal_desc">Set a persistent session goal that keeps running automatically (/goal to view, pause/resume/clear to control)</string>
+    <string name="settings_general_goal">Goal</string>
+    <string name="settings_goal_max_turns">Max continuation turns</string>
+    <string name="settings_goal_max_turns_desc">How many turns one goal may run automatically before it stops</string>
+    <string name="settings_goal_max_tokens">Token budget</string>
+    <string name="settings_goal_max_tokens_desc">Total input plus output tokens the goal loop may spend</string>
+    <string name="settings_goal_turns_value">%1$d turns</string>
+    <string name="settings_goal_tokens_value">%1$d tokens</string>
+    <string name="settings_goal_turns_input_hint">Enter an integer of at least 1</string>
+    <string name="settings_goal_tokens_input_hint">Enter an integer of at least 1000</string>
     <string name="chat_context_usage">Context %1$d%% used</string>
     <string name="chat_bg_command_done">Background command completed</string>
     <string name="chat_bg_commands_done">%1$d background tasks completed</string>
@@ -1202,6 +1235,8 @@
     <string name="git_conflicted_count">Conflicts (%1$s)</string>
     <string name="git_conflict_detected">Merge Conflicts Detected</string>
     <string name="git_conflict_hint">Resolve conflicts in editor then stage the files, or abort the merge.</string>
+    <string name="git_merge_pending_title">Merge Pending Commit</string>
+    <string name="git_merge_pending_hint">No unresolved conflicts. Review and stage the changes you want to keep, then commit to finish the merge.</string>
     <string name="git_action_abort_merge">Abort Merge</string>
     <string name="git_abort_merge_confirm">Abort the current merge? Unresolved changes will be discarded and the working tree will be restored.</string>
     <string name="git_action_use_ours">Use Ours</string>
@@ -1634,6 +1669,8 @@
     <string name="agent_perm_action_allow">Allow</string>
     <string name="agent_perm_action_reject">Deny</string>
     <string name="agent_perm_action_reply">Reply</string>
+    <string name="agent_perm_action_approve_plan">Approve</string>
+    <string name="agent_perm_action_refine_plan">Decline</string>
     <string name="agent_perm_reply_hint">Type a message to send to this session</string>
     <string name="agent_prompt_question_title">%1$s is waiting for your answer</string>
     <string name="agent_prompt_question_body">%1$d questions awaiting your answer: %2$s</string>
@@ -1825,6 +1862,10 @@
     <string name="ftp_password_hint">Generated automatically and stored encrypted on this device; you can change it</string>
     <string name="ftp_allow_anonymous">Allow Anonymous</string>
     <string name="ftp_anonymous_desc">Connect without username and password</string>
+    <string name="ftp_reserved_username">"anonymous" is a reserved username, please choose another</string>
+    <string name="ftp_password_required">A password is required when a username is set</string>
+    <string name="ftp_anonymous_confirm_title">Enable anonymous access?</string>
+    <string name="ftp_anonymous_confirm_message">Any device on the same network can read and write the shared directory without credentials. Enable it only briefly on a trusted network.</string>
     <string name="ftp_auto_start">Auto-start on app launch</string>
     <string name="ftp_auto_start_desc">Automatically start FTP service in background on app launch</string>
     <string name="ftp_config_saved">Configuration saved</string>
@@ -2093,6 +2134,37 @@
     <string name="git_error_merge_conflict">The merge produced conflicts. Review and resolve them on the status page</string>
     <string name="git_error_local_changes_merge">You have uncommitted local changes. Commit or stash them before merging</string>
     <string name="git_error_no_local_changes_stash">There are no local changes to stash</string>
+    <string name="git_error_not_a_repository">This directory is not a Git repository. Initialize one or switch to the right directory</string>
+    <string name="git_error_repo_ownership">Git detected an unexpected owner for the repository directory (common on external storage) and refused the operation</string>
+    <string name="git_error_repo_locked">Another Git operation is using this repository. Wait for it to finish and try again</string>
+    <string name="git_error_index_corrupt">The Git index file is corrupted. Reopen the repository or rebuild the index</string>
+    <string name="git_error_write_failed">Failed to write files into the repository. Check storage permission, whether the folder is read-only, or free space</string>
+    <string name="git_error_branch_already_exists">A branch with that name already exists. Use another name or delete the old branch first</string>
+    <string name="git_error_invalid_branch_name">That branch name is invalid. Avoid spaces and special characters such as colons</string>
+    <string name="git_error_tag_already_exists">A tag with that name already exists. Use another name or delete the old tag first</string>
+    <string name="git_error_pathspec_not_found">The specified file or path does not exist or is not tracked by Git</string>
+    <string name="git_error_untracked_overwritten">Untracked files would be overwritten. Move or delete them before continuing</string>
+    <string name="git_error_detached_head">You are not on any branch right now (detached HEAD). Switch to a branch before continuing</string>
+    <string name="git_error_merge_unresolved">The previous merge still has unresolved conflicts. Resolve them or abort the merge first</string>
+    <string name="git_error_unrelated_histories">The two branches share no history and cannot be merged directly</string>
+    <string name="git_error_not_mergeable_ref">Nothing to merge: the target is neither a branch nor a commit</string>
+    <string name="git_error_fast_forward_impossible">Fast-forward is not possible because the branches have diverged. Use a regular merge instead</string>
+    <string name="git_error_nothing_to_commit">There are no changes to commit</string>
+    <string name="git_error_empty_commit_message">The commit message cannot be empty</string>
+    <string name="git_error_no_upstream">The current branch has no upstream branch. Push it and set the upstream first</string>
+    <string name="git_error_pull_branch_unspecified">No remote branch was specified to pull. Choose a branch and pull again</string>
+    <string name="git_error_divergent_branches">Local and remote branches have diverged. Pull and merge (or rebase) before pushing</string>
+    <string name="git_error_remote_hook_declined">The remote rejected this push, possibly due to branch protection or a server-side hook</string>
+    <string name="git_error_remote_branch_missing">The remote does not have this branch. Check the name or push it first</string>
+    <string name="git_error_credentials_missing">This operation needs remote credentials but cannot prompt for them. Configure your account or token in “Credentials &amp; Identity” first</string>
+    <string name="git_error_http_status">The remote server rejected this request. Check your credentials or repository access</string>
+    <string name="git_error_dns_failed">Could not resolve the remote repository address. Check your network connection or proxy settings</string>
+    <string name="git_error_tls_failed">Could not establish a secure connection to the remote (certificate verification or TLS handshake failed)</string>
+    <string name="git_error_connection_failed">Failed to connect to the remote repository or it timed out. Check your network or proxy</string>
+    <string name="git_error_connection_interrupted">The connection to the remote repository was interrupted. Try again</string>
+    <string name="git_error_unable_to_access">Unable to access the remote repository. Check the network, proxy, or repository address</string>
+    <string name="git_error_lfs_required">This repository uses Git LFS, but git-lfs is unavailable here, so large files cannot be fetched</string>
+    <string name="git_error_no_stash_entries">There are no stash entries available</string>
 
     <!-- Remote server delete confirmation -->
     <string name="remote_delete_connection_confirm">Delete connection “%1$s”? Sync configurations using it will become unavailable.</string>

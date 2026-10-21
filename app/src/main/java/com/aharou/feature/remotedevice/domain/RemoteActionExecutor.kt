@@ -114,8 +114,14 @@ class RemoteActionExecutor @Inject constructor(
         const val MAX_DEVICE_LOCKS = 64
     }
 
-    /** 每台设备一把锁：同一台设备的动作串行执行，避免多张审批同时挂起把用户淹没。 */
+    /** 每台设备一把短动作锁：串行执行，避免多张审批同时挂起把用户淹没。 */
     private val deviceLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * 整轮问 AI 的长任务用独立锁：与短动作共用一把时，一次 ask_ai 会把它后面的
+     * send_message 全堵到超时——投递只需要落库+通知，本不该等任何 AI 回合。
+     */
+    private val deviceLongLocks = ConcurrentHashMap<String, Mutex>()
 
     /**
      * 把对端给的路径解析成本机绝对路径。
@@ -130,14 +136,32 @@ class RemoteActionExecutor @Inject constructor(
         action: RemoteAction,
         rawArgs: Map<String, JsonElement>,
         caller: RemotePairedDevice
-    ): RemoteActionResult = lockFor(caller).withLock { runAction(action, rawArgs, caller) }
+    ): RemoteActionResult {
+        val isLongTask = action.name == RemoteActionCatalog.ACTION_ASK_AI
+        val lock = lockFor(if (isLongTask) deviceLongLocks else deviceLocks, caller)
+        val queuedAt = System.currentTimeMillis()
+        return lock.withLock {
+            FileLogger.i(
+                TAG,
+                "远端动作开始: ${action.name}（${caller.deviceName}），等锁 ${System.currentTimeMillis() - queuedAt}ms"
+            )
+            try {
+                runAction(action, rawArgs, caller)
+            } finally {
+                FileLogger.i(
+                    TAG,
+                    "远端动作结束: ${action.name}（${caller.deviceName}），总耗时 ${System.currentTimeMillis() - queuedAt}ms"
+                )
+            }
+        }
+    }
 
     private fun deviceKey(caller: RemotePairedDevice): String =
         caller.deviceId.ifBlank { caller.tokenHint }
 
-    private fun lockFor(caller: RemotePairedDevice): Mutex {
-        if (deviceLocks.size > MAX_DEVICE_LOCKS) deviceLocks.clear()
-        return deviceLocks.getOrPut(deviceKey(caller)) { Mutex() }
+    private fun lockFor(locks: ConcurrentHashMap<String, Mutex>, caller: RemotePairedDevice): Mutex {
+        if (locks.size > MAX_DEVICE_LOCKS) locks.clear()
+        return locks.getOrPut(deviceKey(caller)) { Mutex() }
     }
 
     private suspend fun runAction(

@@ -5,6 +5,7 @@ import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.presentation.MessageRole
 import java.util.UUID
@@ -116,8 +117,8 @@ class SessionUseCase @Inject constructor(
      * 旧会话，会让用户以为的新会话实际是隐身会话。
      */
     suspend fun getEmptySessionOfWorkspace(workspacePath: String): ChatSessionEntity? {
-        return chatSessionDao.getRootSessionsByWorkspaceOnce(workspacePath)
-            .firstOrNull { session -> !session.ghostMode && !agentMessageDao.hasMessages(session.id) }
+        // 单次子查询完成（含排除隐身会话），不再把全部根会话拉回内存逐条查。
+        return chatSessionDao.getEmptyRootSessionByWorkspace(workspacePath)
     }
 
     /** 工作区里最近更新的根会话（忽略置顶），供启动时进入最近会话。 */
@@ -196,6 +197,19 @@ class SessionUseCase @Inject constructor(
 
     suspend fun getSessionById(id: String): ChatSessionEntity? {
         return chatSessionDao.getById(id)
+    }
+
+    /** 设定/修改会话目标：同时重置轮数与 token 基线。 */
+    suspend fun updateGoal(sessionId: String, goal: String?, status: GoalStatus?, startInput: Int, startOutput: Int) {
+        chatSessionDao.updateGoal(sessionId, goal, status?.name, startInput, startOutput)
+    }
+
+    suspend fun updateGoalStatus(sessionId: String, status: GoalStatus?) {
+        chatSessionDao.updateGoalStatus(sessionId, status?.name)
+    }
+
+    suspend fun incrementGoalTurn(sessionId: String) {
+        chatSessionDao.incrementGoalTurn(sessionId)
     }
 
     suspend fun updateMode(sessionId: String, mode: String) {

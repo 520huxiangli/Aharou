@@ -347,13 +347,13 @@ internal fun StatusTab(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    stringResource(R.string.git_conflict_detected),
+                                    stringResource(R.string.git_merge_pending_title),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.semanticColors.warning
                                 )
                                 Text(
-                                    stringResource(R.string.git_conflict_hint),
+                                    stringResource(R.string.git_merge_pending_hint),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

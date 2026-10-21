@@ -1,5 +1,7 @@
 package com.aharou.feature.terminal.domain
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import com.aharou.core.util.FileLogger
@@ -73,6 +75,17 @@ class RemoteTerminalSessionManager @Inject constructor(
 
     private val monitorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    init {
+        // 离开远程模式时连接会被断开，残留的 shell 标签就是一排点不动的死标签。
+        // 自己收掉而不留给调用方：切换模式的入口不止一处，靠调用方记得关必然漏。
+        monitorScope.launch {
+            // StateFlow 已自带去重，不需要 distinctUntilChanged（对它用该操作符是空操作且已弃用）。
+            modeHolder.mode.collect { m ->
+                if (m != ExecutionMode.REMOTE_SSH) closeAllTabs()
+            }
+        }
+    }
+
     val activeTab: TerminalTab? get() = _tabs.value.firstOrNull { it.id == _activeTabId.value }
 
     fun tab(id: String): TerminalTab? = _tabs.value.firstOrNull { it.id == id }
@@ -80,6 +93,20 @@ class RemoteTerminalSessionManager @Inject constructor(
     /** 仅当当前模式是 REMOTE_SSH 且已连接时才可使用。 */
     private fun ensureRemote(): Boolean =
         modeHolder.currentMode() == ExecutionMode.REMOTE_SSH && connection.isConnected()
+
+    /**
+     * 关闭全部远程标签。切离开 REMOTE_SSH 时调：连接断开后这些 shell 通道已失效，
+     * 留在列表里只会在下次切回远程时变成一排点不动的死标签。
+     * 不向外发 completed 事件：关标签不是「命令跑完」，否则 AI 会收到假的后台完成通知。
+     */
+    fun closeAllTabs() {
+        if (_tabs.value.isEmpty()) return
+        _tabs.value.forEach { tab -> runCatching { tab.session.finishIfRunning() } }
+        _tabs.value = emptyList()
+        _activeTabId.value = null
+        bumpRevision()
+        FileLogger.i(TAG, "已关闭全部远程终端标签（离开远程模式）")
+    }
 
     /** 终端页进入时调用：没有任何标签则建一个交互 shell。幂等。 */
     suspend fun ensureInitialTab() {
@@ -403,8 +430,19 @@ class RemoteTerminalSessionManager @Inject constructor(
             }
         }
 
-        override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {}
-        override fun onPasteTextFromClipboard(session: TerminalSession?) {}
+        override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
+            if (text.isNullOrEmpty()) return
+            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("terminal", text))
+        }
+
+        override fun onPasteTextFromClipboard(session: TerminalSession?) {
+            val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            val text = cm?.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString() ?: return
+            if (text.isEmpty()) return
+            val bytes = text.toByteArray(Charsets.UTF_8)
+            session?.write(bytes, 0, bytes.size)
+        }
         override fun onBell(session: TerminalSession) {}
         override fun onColorsChanged(session: TerminalSession) {}
         override fun onTerminalCursorStateChange(state: Boolean) {}

@@ -44,6 +44,8 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.feature.settings.data.repository.UpdateChannel
+import com.aharou.feature.settings.data.repository.VersionCheckSnapshot
+import com.aharou.feature.settings.data.repository.VersionCheckState
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Book
 import compose.icons.feathericons.Check
@@ -68,7 +70,8 @@ internal fun AboutSection(
     onSelectChannel: (UpdateChannel) -> Unit,
     onToggleAutoDownload: (Boolean) -> Unit,
     onToggleAutoInstall: (Boolean) -> Unit,
-    onCheckUpdate: () -> Unit
+    onCheckUpdate: () -> Unit,
+    latestVersionCheck: VersionCheckSnapshot = VersionCheckSnapshot()
 ) {
     val context = LocalContext.current
     var showChannelSheet by remember { mutableStateOf(false) }
@@ -111,6 +114,25 @@ internal fun AboutSection(
                 trailing = {
                     Text(
                         text = "v${appInfo.name}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.semanticColors.subtleText
+                    )
+                }
+            )
+            SettingsDivider()
+            // 最新版本：未检查/失败时不编造版本号，只说状态
+            SettingsRow(
+                icon = FeatherIcons.RefreshCw,
+                title = stringResource(R.string.about_latest_version),
+                onClick = onCheckUpdate,
+                trailing = {
+                    Text(
+                        text = when (latestVersionCheck.state) {
+                            VersionCheckState.NEW_VERSION -> "v${latestVersionCheck.latestVersion}"
+                            VersionCheckState.UP_TO_DATE -> stringResource(R.string.about_up_to_date)
+                            VersionCheckState.ERROR -> stringResource(R.string.about_check_failed)
+                            VersionCheckState.NONE -> stringResource(R.string.about_version_not_checked)
+                        },
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.semanticColors.subtleText
                     )

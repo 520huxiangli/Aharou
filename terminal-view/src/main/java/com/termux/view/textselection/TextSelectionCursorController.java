@@ -62,6 +62,19 @@ public class TextSelectionCursorController implements CursorController {
             return false;
         }
 
+        return doHide();
+    }
+
+    /**
+     * 跳过 300ms 抑制的强制隐藏。视图 detach 时必须走这里：否则长按选中后 300ms 内切页，
+     * hide() 因时间抑制直接返回，PopupWindow 与 ActionMode 不被回收，触发 WindowLeaked。
+     */
+    public boolean hideImmediately() {
+        if (!isActive()) return false;
+        return doHide();
+    }
+
+    private boolean doHide() {
         mStartHandle.hide();
         mEndHandle.hide();
 

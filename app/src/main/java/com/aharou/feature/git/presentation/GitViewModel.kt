@@ -256,6 +256,8 @@ class GitViewModel @Inject constructor(
                 }
                 // 页面已打开：后台拉取全量分支/标签，用户切到 BRANCHES tab 时无需再等。
                 loadBranches()
+                // 储藏列表不在 status 里，不随刷新拉一次的话首次打开储藏面板永远是空的。
+                loadStashes()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 FileLogger.e(TAG, "刷新失败", e)

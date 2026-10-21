@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.tool.mcp
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
+import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.mcp.McpScope
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -21,7 +22,9 @@ import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 class ManageMcpTool @Inject constructor(
-    private val mcpConfigRepository: McpConfigRepository
+    private val mcpConfigRepository: McpConfigRepository,
+    // 用 Lazy 断环：McpManager 依赖工具注册表，而注册表里有本工具，直接注入会形成循环。
+    private val mcpManager: dagger.Lazy<McpManager>
 ) : AgentTool() {
     private companion object {
         const val TAG = "ManageMcpTool"
@@ -122,7 +125,13 @@ class ManageMcpTool @Inject constructor(
             when (action) {
                 "list" -> {
                     val servers = readServers()
-                    ToolResult.Success(JsonPrimitive(mcpConfigRepository.serialize(servers)))
+                    val config = mcpConfigRepository.serialize(servers)
+                    // 运行状态一并给出：否则只能靠外部现象（比如端口在不在）反推 server 死活。
+                    val live = mcpManager.get().statuses.value.joinToString("；") { s ->
+                        val err = s.error?.takeIf { it.isNotBlank() }?.let { "——$it" }.orEmpty()
+                        "${s.name}=${s.state}$err"
+                    }
+                    ToolResult.Success(JsonPrimitive(if (live.isBlank()) config else "$config\n\n运行状态：$live"))
                 }
                 "remove" -> {
                     val name = args["server_name"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("remove 缺少 server_name")

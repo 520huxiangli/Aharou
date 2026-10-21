@@ -61,6 +61,20 @@ val AgentMessage.id: String
         is AgentMessage.ToolResultMessage -> messageId
     }
 
+/**
+ * 一个工作区的标识：名称（列表里查不到名称时为 null）+ 绝对路径。
+ *
+ * 只用于让模型知道「当前是哪个仓库」——`~/workspace` 是容器内的固定别名，
+ * 指着同一个字符串，光看它认不出背后是哪个仓库。
+ */
+data class WorkspaceRef(
+    val name: String?,
+    val path: String
+) {
+    /** 喂给模型的可读形式，如「Aharou（/data/data/.../projects/Aharou）」。 */
+    fun display(): String = if (name.isNullOrBlank()) path else "$name（$path）"
+}
+
 data class AgentContext(
     val currentFile: String?,
     val selectedCode: String?,
@@ -96,5 +110,22 @@ data class AgentContext(
      * 本轮实际运行的模型身份；null 时不注入「当前模型身份」段。
      * 有了它，模型自报能力时有据可依，不必靠翻记忆或调 config 工具。
      */
-    val modelIdentity: ModelIdentity? = null
-)
+    val modelIdentity: ModelIdentity? = null,
+    /** 会话级持续目标正文（goal），仅在本轮有目标时非空。 */
+    val goal: String? = null,
+    /** 目标状态；为 [GoalStatus.ACTIVE] 时授权强度提为 AUTO（见 [permissionMode]）。 */
+    val goalStatus: GoalStatus? = null,
+    /** 会话绑定工作区的名称（列表里查不到时为空）；与 [projectRoot] 一起说明「当前是哪个仓库」。 */
+    val workspaceName: String? = null,
+    /** 与上一轮相比工作区变过时，这里是上一轮的工作区；未变时为 null（系统提示据此追加一次性切换提示）。 */
+    val workspaceSwitchedFrom: WorkspaceRef? = null,
+    /** 界面当前选中的工作区；与会话绑定的 [projectRoot] 不一致时非空，用于提醒别按错仓库操作。 */
+    val selectedWorkspace: WorkspaceRef? = null
+) {
+    /**
+     * 实际用于权限判定的模式：goal 激活时不改变用户看到的 [mode]，只把授权强度提为 AUTO。
+     * 目标循环是用户亲自设定的持续作业，每轮都要重复审批等于把功能用废。
+     */
+    val permissionMode: AgentMode
+        get() = if (goalStatus == GoalStatus.ACTIVE) AgentMode.AUTO else mode
+}

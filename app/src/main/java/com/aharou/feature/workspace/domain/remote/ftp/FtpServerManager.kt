@@ -22,13 +22,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.ftpserver.FtpServer
 import org.apache.ftpserver.FtpServerFactory
+import org.apache.ftpserver.ftplet.Authentication
 import org.apache.ftpserver.ftplet.Authority
+import org.apache.ftpserver.ftplet.User
+import org.apache.ftpserver.ftplet.UserManager
 import org.apache.ftpserver.listener.ListenerFactory
-import org.apache.ftpserver.usermanager.ClearTextPasswordEncryptor
-import org.apache.ftpserver.usermanager.PropertiesUserManagerFactory
+import org.apache.ftpserver.usermanager.UsernamePasswordAuthentication
 import org.apache.ftpserver.usermanager.impl.BaseUser
 import org.apache.ftpserver.usermanager.impl.ConcurrentLoginPermission
+import org.apache.ftpserver.usermanager.impl.TransferRatePermission
 import org.apache.ftpserver.usermanager.impl.WritePermission
+import com.aharou.R
+import java.util.concurrent.ConcurrentHashMap
 import java.io.File
 import java.net.Inet4Address
 import java.security.SecureRandom
@@ -158,13 +163,24 @@ class FtpServerManager @Inject constructor(
     }
 
     suspend fun saveConfig(port: Int, username: String, password: String, isAnonymous: Boolean, autoStart: Boolean) = withContext(Dispatchers.IO) {
+        val trimmedName = username.trim()
+        // 保留名与空口令在这里挡住：内存用户表按名字存键，用户名写成 anonymous 会和匿名入口撞名。
+        if (trimmedName.equals("anonymous", ignoreCase = true)) {
+            _errorMessage.value = context.getString(R.string.ftp_reserved_username)
+            return@withContext
+        }
+        if (trimmedName.isNotEmpty() && password.isBlank()) {
+            _errorMessage.value = context.getString(R.string.ftp_password_required)
+            return@withContext
+        }
         val wasRunning = _isRunning.value
+        _errorMessage.value = null
         if (wasRunning) {
             stopServerInternal()
         }
 
         _port.value = port
-        _username.value = username
+        _username.value = trimmedName
         _password.value = password
         _isAnonymous.value = isAnonymous
         _autoStart.value = autoStart
@@ -172,7 +188,7 @@ class FtpServerManager @Inject constructor(
 
         context.ftpServerDataStore.edit { prefs ->
             prefs[PORT_KEY] = port
-            prefs[USERNAME_KEY] = username
+            prefs[USERNAME_KEY] = trimmedName
             // 只保护静态存储；Apache FtpServer 比对用的是内存里的明文。
             prefs[PASSWORD_KEY] = KeystoreCipher.encryptString(password)
             prefs[ANONYMOUS_KEY] = isAnonymous
@@ -208,18 +224,14 @@ class FtpServerManager @Inject constructor(
             listenerFactory.port = _port.value
             serverFactory.addListener("default", listenerFactory.createListener())
 
-            val userManagerFactory = PropertiesUserManagerFactory()
-            val propFile = File(context.cacheDir, "ftp_users.properties")
-            if (!propFile.exists()) {
-                propFile.createNewFile()
-            }
-            userManagerFactory.file = propFile
-            userManagerFactory.passwordEncryptor = ClearTextPasswordEncryptor()
-            val userManager = userManagerFactory.createUserManager()
+            val userManager = InMemoryUserManager()
+            // 旧版本把账号（含明文口令）写在这里，启动时清掉，免得继续被别人读到。
+            runCatching { File(context.cacheDir, "ftp_users.properties").delete() }
 
             val authorities = ArrayList<Authority>()
             authorities.add(WritePermission())
             authorities.add(ConcurrentLoginPermission(20, 20))
+            authorities.add(TransferRatePermission(0, 0))
 
             // 正常用户
             if (_username.value.isNotBlank()) {
@@ -253,6 +265,28 @@ class FtpServerManager @Inject constructor(
             _errorMessage.value = e.message ?: "启动失败，可能端口被占用"
             _isRunning.value = false
             return false
+        }
+    }
+
+    /**
+     * 账号只存内存：旧实现用 PropertiesUserManager 把明文口令写进 cacheDir，且改用户名后
+     * 旧条目不会被清理（旧账号仍能登录）。内存表随服务重启重建，撤销即时生效。
+     */
+    private class InMemoryUserManager : UserManager {
+        private val users = ConcurrentHashMap<String, User>()
+
+        override fun getUserByName(name: String?): User? = name?.let { users[it] }
+        override fun getAllUserNames(): Array<String> = users.keys.toTypedArray()
+        override fun delete(name: String?) { name?.let { users.remove(it) } }
+        override fun save(user: User) { users[user.name] = user }
+        override fun doesExist(name: String?): Boolean = name != null && users.containsKey(name)
+        override fun getAdminName(): String = "admin"
+        override fun isAdmin(login: String?): Boolean = false
+
+        override fun authenticate(authentication: Authentication?): User? {
+            val auth = authentication as? UsernamePasswordAuthentication ?: return null
+            val user = users[auth.username] ?: return null
+            return if (auth.password == user.password) user else null
         }
     }
 

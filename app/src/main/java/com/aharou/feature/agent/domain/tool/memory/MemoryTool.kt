@@ -10,9 +10,11 @@ import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemorySyncManager
+import com.aharou.feature.agent.domain.memory.MemorySyncOutcome
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.prompt.MemoryPromptRenderer
 import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -57,6 +59,12 @@ class MemoryTool @Inject constructor(
 
         /** 「冷记忆」判定：超过这么多天没被 read 过就算。 */
         private const val STALE_DAYS = 30L
+
+        /** `sync` 明细里最多列多少个文件名 / 失败项，超过只报总数。 */
+        private const val SYNC_DETAIL_LIST_LIMIT = 20
+
+        /** `stats` 里「被预算挤出」与「不走预算」的 identity 条目最多列多少条。 */
+        private const val STATS_LIST_LIMIT = 30
     }
 
     override val name = "memory"
@@ -72,7 +80,8 @@ class MemoryTool @Inject constructor(
     }
     override val description =
         "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案；" +
-            "sync=立刻把记忆同步到用户配置的仓库；stats=使用统计与冷记忆清单；undo=回滚到最近一次归档）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+            "sync=立刻把记忆同步到用户配置的仓库（返回收上的文件清单与跳过/失败分类）；" +
+            "stats=使用统计、冷记忆清单与常驻正文预算占用；undo=回滚到最近一次归档）。发现新的用户偏好、项目约定或架构决策时主动记录。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -252,10 +261,44 @@ class MemoryTool @Inject constructor(
             }
             if (at.isNotBlank()) append("；上次同步时间：$at")
         }
+        val detail = syncDetailOf(outcome)
+        val text = when {
+            detail.isNotEmpty() -> "$summary\n\n$detail"
+            outcome.success -> "$summary\n\n本轮没有收集到文件（本机正文都未变，或没有可同步的条目）。"
+            else -> summary
+        }
         return if (outcome.success) {
-            ToolResult.Success(JsonPrimitive(summary))
+            ToolResult.Success(JsonPrimitive(text))
         } else {
-            ToolResult.Error(summary, "SYNC_FAILED")
+            ToolResult.Error(text, "SYNC_FAILED")
+        }
+    }
+
+    /**
+     * 同步明细：收上了哪些文件、跳过了什么、哪里写盘失败。
+     *
+     * 只列真实拿得到的分类：collect 的内容未变跳过与写盘失败、distribute 的本机改动保留与补回失败。
+     * 拿不到原因的分类一律不编——读者会拿它去查为什么某条记忆没同步上去。
+     */
+    private fun syncDetailOf(outcome: MemorySyncOutcome): String = buildString {
+        val files = outcome.collectedFiles
+        if (files.isNotEmpty()) {
+            append("收上的文件（仓库内路径，最多列 $SYNC_DETAIL_LIST_LIMIT 个）：")
+            files.take(SYNC_DETAIL_LIST_LIMIT).forEach { append("\n- $it") }
+            if (files.size > SYNC_DETAIL_LIST_LIMIT) append("\n…等 ${files.size} 个")
+        }
+        val skipped = buildList {
+            if (outcome.unchangedSkipped > 0) add("内容未变跳过 ${outcome.unchangedSkipped} 个")
+            if (outcome.localKept > 0) add("本机有改动、保留本机 ${outcome.localKept} 个")
+            if (outcome.failedWrites.isNotEmpty()) add("写入失败 ${outcome.failedWrites.size} 个")
+        }
+        if (skipped.isNotEmpty()) {
+            if (isNotEmpty()) append("\n\n")
+            append("跳过与失败：").append(skipped.joinToString("，"))
+            outcome.failedWrites.take(SYNC_DETAIL_LIST_LIMIT).forEach { append("\n- $it") }
+            if (outcome.failedWrites.size > SYNC_DETAIL_LIST_LIMIT) {
+                append("\n…等 ${outcome.failedWrites.size} 个失败项")
+            }
         }
     }
 
@@ -325,7 +368,7 @@ class MemoryTool @Inject constructor(
     }
 
     /**
-     * 使用统计：把「哪条从来没人读」振出来。
+     * 使用统计：把「哪条从来没人读」振出来，并附上常驻正文预算的占用情况。
      *
      * 计数由 [MemoryUsageStore] 在 read 成功时累积（不写回记忆文件，避免刷 mtime 影响遗忘判定）；
      * 这里只做汇总，供归档决策参考。search 命中不计数——索引命中不等于真用过。
@@ -346,8 +389,51 @@ class MemoryTool @Inject constructor(
                 neverUsed.take(30).forEach { append("\n- ${it.name}（${it.scope.name.lowercase()}/${it.type.key}）") }
                 if (neverUsed.size > 30) append("\n…其余 ${neverUsed.size - 30} 条未列出")
             }
+            append(inlineBudgetSection(projectRoot))
         }
         return ToolResult.Success(JsonPrimitive(text))
+    }
+
+    /**
+     * 常驻正文预算的占用情况：哪些 identity 条目真进了系统提示的常驻段，哪些被预算挤回索引。
+     *
+     * 预算判定不在这里重写：候选取注入侧同一份（[MemoryRepository.listMemoriesForPrompt]），
+     * 切分逻辑与两个上限常量全部复用 [MemoryPromptRenderer.inlineBudgetReport]，两边口径锁在一处。
+     * 注入侧总是全局 + 项目一起排序、共用一份预算，所以这里不受 scope 参数影响。
+     */
+    private fun inlineBudgetSection(projectRoot: String?): String {
+        val report = MemoryPromptRenderer.inlineBudgetReport(
+            memoryRepository.listMemoriesForPrompt(projectRoot)
+        )
+        return buildString {
+            append("\n\n常驻正文预算（identity 类，全局与项目共用一份：单条上限 ${report.singleEntryLimit} 字符、")
+            append("总预算 ${report.totalLimit} 字符）：")
+            if (report.identityTotal == 0) {
+                append("当前没有 identity 条目，无需常驻。")
+                return@buildString
+            }
+            append("identity 共 ${report.identityTotal} 条，实际常驻 ${report.inlined.size} 条，")
+            append("被预算挤出 ${report.squeezed.size} 条。")
+            if (report.squeezed.isNotEmpty()) {
+                append("\n被挤出（最多列 $STATS_LIST_LIMIT 条；按无提问时的排序估算，实际注入顺序随会话提问重排，谁被挤出会变）：")
+                report.squeezed.take(STATS_LIST_LIMIT).forEach { (name, reason) ->
+                    append("\n- $name —— $reason")
+                }
+                if (report.squeezed.size > STATS_LIST_LIMIT) {
+                    append("\n…其余 ${report.squeezed.size - STATS_LIST_LIMIT} 条未列出")
+                }
+                append("\n这些条目的正文不在本轮上下文里；要确认某条约定是否还算数，用 memory(action=read, name=...) 取全文。")
+            }
+            if (report.notBudgeted.isNotEmpty()) {
+                append("\n另有 ${report.notBudgeted.size} 条 identity 不走常驻预算（不计入「被挤出」）：")
+                report.notBudgeted.take(STATS_LIST_LIMIT).forEach { (name, reason) ->
+                    append("\n- $name —— $reason")
+                }
+                if (report.notBudgeted.size > STATS_LIST_LIMIT) {
+                    append("\n…其余 ${report.notBudgeted.size - STATS_LIST_LIMIT} 条未列出")
+                }
+            }
+        }
     }
 
     /**

@@ -119,7 +119,10 @@ class BrowserUseManager(
                 useWideViewPort = true
                 builtInZoomControls = false
                 setSupportMultipleWindows(true)
-                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                // 兼容模式：https 页面不再执行 http 明文脚本/XHR（可被中间人篡改），
+                // 图片等被动内容仍按浏览器策略放行。与另两处 WebView 的 NEVER_ALLOW 相比，
+                // 这里保留兼容层是给「https 外壳 + http 子资源」的站点留余地。
+                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 val ua = customUA ?: profile.userAgentString
                 if (ua != null) userAgentString = ua
             }.enableLocalHtmlPreview()

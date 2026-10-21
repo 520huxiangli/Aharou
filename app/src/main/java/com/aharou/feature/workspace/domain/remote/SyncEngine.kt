@@ -6,6 +6,7 @@ import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
@@ -356,8 +357,15 @@ class SyncEngine(
         }
     }
 
-    fun shutdown() {
+    suspend fun shutdown() {
+        _connectionState.value = SyncConnectionState.DISCONNECTED
         scope.cancel()
+        // 只 cancel scope 不会断开底层 SSH/FTP 连接：syncClient 持有独立 client，
+        // 断开挂载后它就是一条无人回收的服务端会话。取消后的清理必须不可取消。
+        withContext(NonCancellable) {
+            runCatching { syncClient.disconnect() }
+                .onFailure { FileLogger.w(TAG, "Sync: 关闭同步连接失败: ${it.message}") }
+        }
     }
 
     private suspend fun forceReconnect() {

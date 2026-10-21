@@ -567,7 +567,10 @@ class TerminalSessionTool @Inject constructor(
 
         val maxOverlap = minOf(previous.length, current.length)
         for (length in maxOverlap downTo 1) {
-            if (previous.endsWith(current.take(length))) {
+            // 逐个长度比时不能先 current.take(length)（长 transcript 上 O(n²) 分配）；
+            // 重叠区间的首字符必然相同，先用它预筛再交给 regionMatches 逐字符比对。
+            if (previous[previous.length - length] != current[0]) continue
+            if (previous.regionMatches(previous.length - length, current, 0, length)) {
                 return current.substring(length)
             }
         }

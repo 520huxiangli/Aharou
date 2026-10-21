@@ -14,6 +14,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 | --- | --- |
 | Chat & workspace | Title bar, sidebar, toolbar, message queue, folding long pastes, workspace switching |
 | Modes (three modes) | Permission control and use cases for Build / Plan / Auto |
+| Session goals | Give a session a long-running goal that continues automatically after each turn, with pause / resume / clear and turn plus token budgets |
 | Checkpoints & undo | Automatic snapshot before AI edits, one-tap safe rollback |
 | Terminal | Multi-tab sessions, auxiliary key bar, color and font settings |
 | Voice calls & reading aloud | Hands-free voice calls with floating-window subtitles, AI reply reading and auto read-aloud (voice input has been retired; the mic in the input bar only toggles calls) |
@@ -29,7 +30,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 
 | Entry | Description |
 | --- | --- |
-| Preferences | Global preferences: invalid model cleanup, startup session, enter to send, first-byte and interval timeouts, retry count, auto-compaction threshold, sendFile per-file limit |
+| Preferences | Global preferences: invalid model cleanup, startup session, enter to send, first-byte and interval timeouts, retry count, auto-compaction threshold, sendFile per-file limit, goal turn and token budgets |
 | Appearance, background image, language | Light/dark theme, preset color schemes, Monet color extraction, background image and multiple languages |
 | Terminal settings | Terminal colors, font size and cursor style |
 | Accessibility & floating window | Accessibility service (screen reading, tapping, screenshots) and the status-capsule floating window |

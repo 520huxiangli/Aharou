@@ -773,6 +773,8 @@ class SettingsViewModel @Inject constructor(
 
     private val _autoInstallEnabled = MutableStateFlow(updateCheckSettingsRepository.autoInstallEnabled)
     val autoInstallEnabled: StateFlow<Boolean> = _autoInstallEnabled.asStateFlow()
+    /** 关于页只读展示：最近一次检查结果（含手动检查），初值来自持久化记录。 */
+    val lastVersionCheck = updateCheckSettingsRepository.lastCheckSnapshot
 
     private val _keepaliveEnabled = MutableStateFlow(false)
     val keepaliveEnabled: StateFlow<Boolean> = _keepaliveEnabled.asStateFlow()
@@ -812,6 +814,12 @@ class SettingsViewModel @Inject constructor(
 
     private val _deleteExternalWorkspaceSessions = MutableStateFlow(false)
     val deleteExternalWorkspaceSessions: StateFlow<Boolean> = _deleteExternalWorkspaceSessions.asStateFlow()
+
+    private val _goalMaxTurns = MutableStateFlow(50)
+    val goalMaxTurns: StateFlow<Int> = _goalMaxTurns.asStateFlow()
+
+    private val _goalMaxTokens = MutableStateFlow(500_000)
+    val goalMaxTokens: StateFlow<Int> = _goalMaxTokens.asStateFlow()
 
     private val _themeMode = MutableStateFlow(AppThemeMode.AUTO)
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
@@ -1270,6 +1278,18 @@ class SettingsViewModel @Inject constructor(
             launch {
                 generalSettingsRepository.deleteExternalWorkspaceSessionsFlow.collectLatest {
                     _deleteExternalWorkspaceSessions.value = it
+                }
+            }
+
+            launch {
+                generalSettingsRepository.goalMaxTurnsFlow.collectLatest {
+                    _goalMaxTurns.value = it
+                }
+            }
+
+            launch {
+                generalSettingsRepository.goalMaxTokensFlow.collectLatest {
+                    _goalMaxTokens.value = it
                 }
             }
 
@@ -2207,7 +2227,7 @@ class SettingsViewModel @Inject constructor(
                 _updateCheckState.value = UpdateCheckUiState.Checking
             }
             val result = updateCheckService.checkForUpdate(
-                currentVersion = currentVersionName(),
+                currentVersion = updateCheckSettingsRepository.currentVersionName(),
                 channel = updateCheckSettingsRepository.channel
             )
             _updateCheckState.value = when (result) {
@@ -2239,7 +2259,7 @@ class SettingsViewModel @Inject constructor(
             }
             // 无论结果如何，都刷新 ~/.aharou/update-info.json 供 AI 读取
             updateCheckSettingsRepository.writeUpdateInfo(
-                currentVersion = currentVersionName(),
+                currentVersion = updateCheckSettingsRepository.currentVersionName(),
                 channel = updateCheckSettingsRepository.channel,
                 result = result
             )
@@ -2380,10 +2400,6 @@ class SettingsViewModel @Inject constructor(
         updateCheckSettingsRepository.channel = channel
         _updateCheckChannel.value = channel
     }
-
-    private fun currentVersionName(): String = runCatching {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
-    }.getOrDefault("unknown")
 
     /**
      * 判断日志行是否属于某个 MCP server：只认 MCP 组件写下的日志（tag 以 `Mcp` 开头，
@@ -2581,6 +2597,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 目标（goal）自动续跑最多多少轮。 */
+    fun setGoalMaxTurns(turns: Int) {
+        viewModelScope.launch {
+            generalSettingsRepository.setGoalMaxTurns(turns)
+        }
+    }
+
+    /** 目标循环的 token 预算。 */
+    fun setGoalMaxTokens(tokens: Int) {
+        viewModelScope.launch {
+            generalSettingsRepository.setGoalMaxTokens(tokens)
+        }
+    }
+
     fun setThemeMode(mode: AppThemeMode) {
         viewModelScope.launch {
             themeSettingsRepository.setThemeMode(mode)
@@ -2686,6 +2716,8 @@ class SettingsViewModel @Inject constructor(
             withResetProgress(profile) { onProgress ->
                 containerInstaller.resetRootfs(profile, onProgress)
             }
+            // rootfs 重建后 stdio server 还挂在旧根上；同 profile 重置不触发 profile flow，需主动重载。
+            mcpManager.reloadStdioServers()
         }
     }
 

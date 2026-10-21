@@ -47,24 +47,9 @@ internal object MemoryPromptRenderer {
         val longBodies = memories.filter(::shouldInline)
             .filter { inlineBody(it).length > MAX_INLINE_ENTRY_CHARS }
             .mapTo(HashSet()) { it.name.lowercase() }
-        val inlined = mutableListOf<Memory>()
-        val inlineText = buildString {
-            for (memory in memories) {
-                if (!shouldInline(memory)) continue
-                val body = inlineBody(memory)
-                // 超长整条跳过而非截断：半截正文模型用不上，还会挤占常驻预算；
-                // 索引行带上 LONG_BODY_LABEL，模型按需 read 即可拿到全文。
-                if (body.length > MAX_INLINE_ENTRY_CHARS) continue
-                val block = inlineBlock(memory, body)
-                // 单条撑不下就跳过这条继续试后面的：直接 break 会把排在它后面、本来塞得下的
-                // 短条目一起退回索引，而顺序由相关度决定，模型看到的内联条目会无缘无故变来变去。
-                if (length + block.length > MAX_INLINE_CHARS) continue
-                if (isNotEmpty()) append("\n\n")
-                append(block)
-                inlined += memory
-            }
-        }
-        val inlinedNames = inlined.mapTo(HashSet()) { it.name.lowercase() }
+        val plan = planInline(memories)
+        val inlineText = plan.blocks.joinToString("\n\n")
+        val inlinedNames = plan.inlined.mapTo(HashSet()) { it.name.lowercase() }
         val rest = memories.filterNot { it.name.lowercase() in inlinedNames }
 
         return listOf(
@@ -72,6 +57,89 @@ internal object MemoryPromptRenderer {
             renderIndex(rest, longBodies)
         ).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
+
+    /**
+     * 内联与索引的唯一切分实现：[render] 与 [inlineBudgetReport] 都走这里，两处口径因此不可能漂移。
+     *
+     * 逐条尝试：单条超长整条跳过而非截断（半截正文模型用不上，还会挤占常驻预算；索引行带上
+     * [LONG_BODY_LABEL]，模型按需 read 即可拿到全文）；累计撑不下也跳过这条继续试后面的——
+     * 直接 break 会把排在它后面、本来塞得下的短条目一起退回索引，而顺序由相关度决定，
+     * 模型看到的内联条目会无缘无故变来变去。
+     */
+    private fun planInline(memories: List<Memory>): InlinePlan {
+        val blocks = mutableListOf<String>()
+        val inlined = mutableListOf<Memory>()
+        val squeezed = mutableListOf<SqueezedInline>()
+        // 累计长度按拼接后的实际字符数算（含块间空行），与原先 buildString 的 length 同一口径。
+        var length = 0
+        for (memory in memories) {
+            if (!shouldInline(memory)) continue
+            val body = inlineBody(memory)
+            if (body.length > MAX_INLINE_ENTRY_CHARS) {
+                squeezed += SqueezedInline(memory, InlineSkipReason.TOO_LONG, body.length)
+                continue
+            }
+            val block = inlineBlock(memory, body)
+            if (length + block.length > MAX_INLINE_CHARS) {
+                squeezed += SqueezedInline(memory, InlineSkipReason.BUDGET_FULL, body.length)
+                continue
+            }
+            if (blocks.isNotEmpty()) length += 2
+            length += block.length
+            blocks += block
+            inlined += memory
+        }
+        return InlinePlan(blocks, inlined, squeezed)
+    }
+
+    /**
+     * 盘点常驻正文预算：哪些 identity 条目真的进了常驻段，哪些被预算挤回索引。
+     *
+     * 只读用途（memory action=stats 展示），不参与注入渲染；判定与两个上限全部复用
+     * [planInline] 与 [MAX_INLINE_CHARS] / [MAX_INLINE_ENTRY_CHARS]，不在这里另立一套数字。
+     * 传入的清单应当与注入侧同源（`listMemoriesForPrompt`），否则「常驻几条」对不上。
+     */
+    fun inlineBudgetReport(memories: List<Memory>): InlineBudgetReport {
+        val plan = planInline(memories)
+        return InlineBudgetReport(
+            identityTotal = memories.count { it.type == MemoryType.IDENTITY },
+            inlined = plan.inlined.map { it.name },
+            squeezed = plan.squeezed.map { entry ->
+                entry.memory.name to when (entry.reason) {
+                    InlineSkipReason.TOO_LONG ->
+                        "单条超限（正文 ${entry.bodyChars} 字符 > 单条上限 $MAX_INLINE_ENTRY_CHARS）"
+                    InlineSkipReason.BUDGET_FULL ->
+                        "总量超限（常驻总预算 $MAX_INLINE_CHARS 字符已被排在前面的条目占完）"
+                }
+            },
+            notBudgeted = memories
+                .filter { it.type == MemoryType.IDENTITY && !shouldInline(it) }
+                .map { memory ->
+                    memory.name to if (memory.pending) {
+                        "待确认，按规则不内联（非预算原因）"
+                    } else {
+                        "核心档案，正文另走 AharouMemoryStore 通路"
+                    }
+                },
+            singleEntryLimit = MAX_INLINE_ENTRY_CHARS,
+            totalLimit = MAX_INLINE_CHARS,
+        )
+    }
+
+    /** 常驻正文排布的结论：[blocks] 与 [inlined] 一一对应，[squeezed] 是被预算挡在外面的条目。 */
+    private data class InlinePlan(
+        val blocks: List<String>,
+        val inlined: List<Memory>,
+        val squeezed: List<SqueezedInline>,
+    )
+
+    private class SqueezedInline(
+        val memory: Memory,
+        val reason: InlineSkipReason,
+        val bodyChars: Int,
+    )
+
+    private enum class InlineSkipReason { TOO_LONG, BUDGET_FULL }
 
     /**
      * 在已渲染的清单末尾附一行规模反馈：告诉模型清单是有硬上限的抽样。
@@ -172,3 +240,22 @@ internal object MemoryPromptRenderer {
         return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
     }
 }
+
+/**
+ * 常驻正文预算的盘点结果（只读，供 memory action=stats 展示）。
+ *
+ * @param identityTotal 清单里 identity 类条目的总数。
+ * @param inlined 真正进了常驻段的条目名。
+ * @param squeezed 被预算挤回索引的条目：名称 → 已含具体数字的原因。
+ * @param notBudgeted identity 类但按规则不走常驻预算的条目（待确认 / 核心档案）：名称 → 原因。
+ * @param singleEntryLimit 单条常驻正文上限。
+ * @param totalLimit 常驻正文总预算。
+ */
+internal data class InlineBudgetReport(
+    val identityTotal: Int,
+    val inlined: List<String>,
+    val squeezed: List<Pair<String, String>>,
+    val notBudgeted: List<Pair<String, String>>,
+    val singleEntryLimit: Int,
+    val totalLimit: Int,
+)

@@ -232,22 +232,19 @@ class TaskTool @Inject constructor(
             "roles" -> listRoles(args)
             "team" -> listTeam(context)
             "tell" -> tellSibling(args, context)
-            "grant" -> grantWrite(args)
+            "grant" -> grantWrite(args, context.projectRoot)
             else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant", "INVALID_ARGS")
         }
     }
 
     /** 运行期追加写权限：子代理被租约拦住来求助时，主会话放行即可，不必重派；冲突规则同派发。 */
-    private fun grantWrite(args: Map<String, JsonElement>): ToolResult {
+    private suspend fun grantWrite(args: Map<String, JsonElement>, workspaceRoot: String?): ToolResult {
         val id = (args["id"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
         if (id.isEmpty()) return ToolResult.Error("grant 需要 id（子代理会话 id）", "MISSING_ID")
         val paths = stringSetOf(args["writePaths"]).orEmpty().filter { it.isNotBlank() }.toSet()
         if (paths.isEmpty()) return ToolResult.Error("grant 需要非空 writePaths", "MISSING_WRITEPATHS")
         subAgentWriteLease.conflictFor(id, paths, eventBus.activeSubSessionIds.value)?.let { conflictId ->
-            return ToolResult.Error(
-                "追加的写范围与在跑的子代理 $conflictId 重叠，等它结束后再追加",
-                "WRITE_CONFLICT"
-            )
+            return conflictError(conflictId, paths, WriteLease.NEXT_GRANT, workspaceRoot)
         }
         val merged = subAgentWriteLease.grant(id, paths)
         FileLogger.i("TaskTool", "追加写租约 $id += ${paths.joinToString(", ")}（合并后：${merged.joinToString(", ")}）")
@@ -255,6 +252,13 @@ class TaskTool @Inject constructor(
             put("id", JsonPrimitive(id))
             put("writePaths", buildJsonArray { merged.sorted().forEach { add(JsonPrimitive(it)) } })
         })
+    }
+
+    /** 与在跑子代理写冲突的报错：说清是谁（标题取得到就带上）、它占着什么、你申请什么。 */
+    private suspend fun conflictError(conflictId: String, mine: Set<String>, next: String, root: String?): ToolResult.Error {
+        val title = sessionUseCase.getSessionById(conflictId)?.title
+        val theirs = subAgentWriteLease.pathsFor(conflictId)
+        return ToolResult.Error(WriteLease.conflictMessage(conflictId, title, mine, theirs, next, root), "WRITE_CONFLICT")
     }
 
     /**
@@ -319,8 +323,7 @@ class TaskTool @Inject constructor(
         for ((layerIndex, layer) in layers.withIndex()) {
             overlappingPair(layer)?.let { (a, b) ->
                 return ToolResult.Error(
-                    "同一层的「${a.id}」与「${b.id}」写范围相交，并发会互相踩：" +
-                        "把其中一个改成只读（writePaths=[]），或用 dependsOn 把它们串到不同层",
+                    WriteLease.layerConflictMessage(a.id, a.writePaths, b.id, b.writePaths, context.projectRoot),
                     "WRITE_CONFLICT"
                 )
             }
@@ -563,10 +566,7 @@ class TaskTool @Inject constructor(
         val subSession = createMutex.withLock {
             if (writePaths != null && writePaths.isNotEmpty()) {
                 subAgentWriteLease.conflictingSession(writePaths, eventBus.activeSubSessionIds.value)?.let { conflictId ->
-                    return ToolResult.Error(
-                        "与在跑的子代理 $conflictId 的可写路径冲突：等它结束后再派发，或改成只读（writePaths=[]）并行。",
-                        "WRITE_CONFLICT"
-                    )
+                    return conflictError(conflictId, writePaths, WriteLease.NEXT_CREATE, context.projectRoot)
                 }
             }
             sessionUseCase.newSubSessionEntity(

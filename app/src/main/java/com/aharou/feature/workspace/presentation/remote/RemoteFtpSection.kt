@@ -17,6 +17,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AppSwitch
@@ -67,6 +69,7 @@ fun WiFiFtpServerSection(
     var editUsername by remember(username) { mutableStateOf(username) }
     var editPassword by remember(password) { mutableStateOf(password) }
     var editAnonymous by remember(isAnonymous) { mutableStateOf(isAnonymous) }
+    var showAnonymousConfirm by remember { mutableStateOf(false) }
     var editAutoStart by remember(autoStart) { mutableStateOf(autoStart) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val clipboard = LocalClipboard.current
@@ -244,7 +247,13 @@ fun WiFiFtpServerSection(
                         Text(text = stringResource(R.string.ftp_allow_anonymous), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                         Text(text = stringResource(R.string.ftp_anonymous_desc), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    AppSwitch(checked = editAnonymous, onCheckedChange = { editAnonymous = it })
+                    AppSwitch(
+                        checked = editAnonymous,
+                        // 开启匿名 = 同网段任何人都能读写共享目录，先二次确认一次。
+                        onCheckedChange = { enabled ->
+                            if (enabled) showAnonymousConfirm = true else editAnonymous = false
+                        }
+                    )
                 }
 
                 Row(
@@ -274,5 +283,24 @@ fun WiFiFtpServerSection(
                 }
             }
         }
+    }
+
+    if (showAnonymousConfirm) {
+        AlertDialog(
+            onDismissRequest = { showAnonymousConfirm = false },
+            title = { Text(stringResource(R.string.ftp_anonymous_confirm_title)) },
+            text = { Text(stringResource(R.string.ftp_anonymous_confirm_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    editAnonymous = true
+                    showAnonymousConfirm = false
+                }) { Text(stringResource(R.string.ftp_allow_anonymous)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAnonymousConfirm = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }

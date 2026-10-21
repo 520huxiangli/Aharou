@@ -1,6 +1,8 @@
 package com.aharou.feature.agent.presentation
 
+import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.steward.StewardController
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -17,6 +19,7 @@ import kotlinx.coroutines.launch
 class StewardBridge @Inject constructor(
     private val stewardController: StewardController,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
+    private val sessionUseCase: SessionUseCase,
 ) {
 
     /**
@@ -33,6 +36,8 @@ class StewardBridge @Inject constructor(
     ) {
         if (!stewardController.enabled) return
         scope.launch {
+            // goal 与 steward 都挂在「一轮结束」后追加一轮，同时开会双倍续跑、互抢队列：goal 优先。
+            if (sessionUseCase.getSessionById(sessionId)?.goalStatus == GoalStatus.ACTIVE.name) return@launch
             val lastReport = messagePersistenceUseCase.getMessagesOnce(sessionId)
                 .lastOrNull { it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank() }
                 ?.content.orEmpty()

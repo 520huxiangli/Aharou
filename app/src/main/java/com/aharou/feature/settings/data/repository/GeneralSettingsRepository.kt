@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.aharou.core.datastore.preferencesCorruptionHandler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -13,7 +14,10 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.generalDataStore by preferencesDataStore(name = "general_prefs")
+private val Context.generalDataStore by preferencesDataStore(
+    name = "general_prefs",
+    corruptionHandler = preferencesCorruptionHandler
+)
 
 /** App 启动（含切换工作区）时进入哪个会话。 */
 enum class StartupSessionMode {
@@ -51,6 +55,14 @@ class GeneralSettingsRepository @Inject constructor(
         val SENDFILE_MAX_SIZE_MB_KEY = intPreferencesKey("sendfile_max_size_mb")
         val DELETE_EXTERNAL_WORKSPACE_SESSIONS_KEY = booleanPreferencesKey("delete_external_workspace_sessions")
         val OCR_FOR_TEXT_ONLY_MODELS_KEY = booleanPreferencesKey("ocr_for_text_only_models")
+        val GOAL_MAX_TURNS_KEY = intPreferencesKey("goal_max_turns")
+        val GOAL_MAX_TOKENS_KEY = intPreferencesKey("goal_max_tokens")
+
+        /** 目标循环默认最多续跑 50 轮；够跑完一个中等任务，又不至于失控烧 token。 */
+        const val DEFAULT_GOAL_MAX_TURNS = 50
+
+        /** 目标循环默认 token 预算 50 万（输入+输出合计，按目标设定时的基线算增量）。 */
+        const val DEFAULT_GOAL_MAX_TOKENS = 500_000
 
         /** 首字超时默认 120 秒：要拦住「服务端一直不回」，也不能误杀慢启动的渠道。 */
         const val DEFAULT_FIRST_BYTE_TIMEOUT_SEC = 120
@@ -170,6 +182,28 @@ class GeneralSettingsRepository @Inject constructor(
 
     /** 装配 provider 前读取一次最大重试次数。 */
     suspend fun maxNetworkRetries(): Int = maxNetworkRetriesFlow.first()
+
+    // ===== 会话级持续目标（goal）预算 =====
+
+    val goalMaxTurnsFlow: Flow<Int> = context.generalDataStore.data.map {
+        (it[GOAL_MAX_TURNS_KEY] ?: DEFAULT_GOAL_MAX_TURNS).coerceAtLeast(1)
+    }
+
+    val goalMaxTokensFlow: Flow<Int> = context.generalDataStore.data.map {
+        (it[GOAL_MAX_TOKENS_KEY] ?: DEFAULT_GOAL_MAX_TOKENS).coerceAtLeast(1_000)
+    }
+
+    suspend fun setGoalMaxTurns(turns: Int) {
+        context.generalDataStore.edit { it[GOAL_MAX_TURNS_KEY] = turns.coerceAtLeast(1) }
+    }
+
+    suspend fun setGoalMaxTokens(tokens: Int) {
+        context.generalDataStore.edit { it[GOAL_MAX_TOKENS_KEY] = tokens.coerceAtLeast(1_000) }
+    }
+
+    suspend fun goalMaxTurns(): Int = goalMaxTurnsFlow.first()
+
+    suspend fun goalMaxTokens(): Int = goalMaxTokensFlow.first()
 
     /** 备份快照：最大重试次数。 */
     suspend fun maxNetworkRetriesSnapshot(): Int = maxNetworkRetriesFlow.first()

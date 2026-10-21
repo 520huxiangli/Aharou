@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.aharou.core.datastore.preferencesCorruptionHandler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -11,7 +12,10 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-private val Context.toolSafetyDataStore by preferencesDataStore(name = "tool_safety_prefs")
+private val Context.toolSafetyDataStore by preferencesDataStore(
+    name = "tool_safety_prefs",
+    corruptionHandler = preferencesCorruptionHandler
+)
 
 /**
  * 持久化「禁用安全拦截」开关，默认关闭。

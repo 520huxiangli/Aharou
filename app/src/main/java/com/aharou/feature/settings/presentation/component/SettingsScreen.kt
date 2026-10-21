@@ -236,6 +236,8 @@ fun SettingsScreen(
     val softCompactionThresholdPercent by viewModel.softCompactionThresholdPercent.collectAsStateWithLifecycle()
     val sendFileMaxSizeMb by viewModel.sendFileMaxSizeMb.collectAsStateWithLifecycle()
     val deleteExternalWorkspaceSessions by viewModel.deleteExternalWorkspaceSessions.collectAsStateWithLifecycle()
+    val goalMaxTurns by viewModel.goalMaxTurns.collectAsStateWithLifecycle()
+    val goalMaxTokens by viewModel.goalMaxTokens.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val themePresetId by viewModel.themePresetId.collectAsStateWithLifecycle()
     val dynamicColorEnabled by viewModel.dynamicColorEnabled.collectAsStateWithLifecycle()
@@ -976,7 +978,11 @@ fun SettingsScreen(
                     sendFileMaxSizeMb = sendFileMaxSizeMb,
                     onSetSendFileMaxSizeMb = { viewModel.setSendFileMaxSizeMb(it) },
                     deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
-                    onToggleDeleteExternalWorkspaceSessions = { viewModel.setDeleteExternalWorkspaceSessions(it) }
+                    onToggleDeleteExternalWorkspaceSessions = { viewModel.setDeleteExternalWorkspaceSessions(it) },
+                    goalMaxTurns = goalMaxTurns,
+                    onSetGoalMaxTurns = { viewModel.setGoalMaxTurns(it) },
+                    goalMaxTokens = goalMaxTokens,
+                    onSetGoalMaxTokens = { viewModel.setGoalMaxTokens(it) }
                 )
                 SettingsSection.AccountCenter -> com.aharou.feature.account.presentation.AccountCenterScreen()
                 SettingsSection.Providers -> ProvidersSection(
@@ -1332,7 +1338,7 @@ fun SettingsScreen(
                     onSelectChannel = { viewModel.setUpdateCheckChannel(it) },
                     onToggleAutoDownload = { viewModel.setAutoDownloadEnabled(it) },
                     onToggleAutoInstall = { viewModel.setAutoInstallEnabled(it) },
-                    onCheckUpdate = { viewModel.checkUpdate(manual = true) }
+                    onCheckUpdate = { viewModel.checkUpdate(manual = true) }, latestVersionCheck = viewModel.lastVersionCheck.collectAsStateWithLifecycle().value
                 )
             }
         }

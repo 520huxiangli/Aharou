@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.editor
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.inbox.SharedInboxEvents
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -66,7 +67,8 @@ class EditFileTool @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val fileLock: WorkspaceFileLock,
     private val versions: FileVersionRegistry,
-    private val inboxEvents: SharedInboxEvents
+    private val inboxEvents: SharedInboxEvents,
+    private val writeLease: SubAgentWriteLease
 ) : AgentTool() {
     override val name = "editFile"
     override val description =
@@ -214,7 +216,12 @@ class EditFileTool @Inject constructor(
         val path = args["path"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("路径参数缺失", "MISSING_PATH")
         return withEditGuards(access, path, context.sessionId) {
-            performEdit(access, path, args, context.writePaths)
+            // 实时查租约：同 writeFile，grant 要能在本轮内生效。
+            performEdit(
+                access, path, args,
+                writeLease.pathsFor(context.sessionId) ?: context.writePaths,
+                context.sessionId, context.projectRoot
+            )
         }
     }
 
@@ -289,10 +296,12 @@ class EditFileTool @Inject constructor(
         access: FileAccessProvider,
         path: String,
         args: Map<String, JsonElement>,
-        writePaths: Set<String>?
+        writePaths: Set<String>?,
+        sessionId: String?,
+        workspaceRoot: String?
     ): ToolResult {
         return try {
-            WriteLease.denialReason(writePaths, path)?.let { reason ->
+            WriteLease.denialReason(writePaths, path, sessionId, workspaceRoot)?.let { reason ->
                 FileLogger.w(TAG, "edit_file 被写路径租约拒绝: $path ($reason)")
                 return ToolResult.Error("${WriteLease.DENIAL_PREFIX}：$reason", "WRITE_LEASE_DENIED")
             }

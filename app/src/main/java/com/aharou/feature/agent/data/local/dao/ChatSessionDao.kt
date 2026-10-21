@@ -91,4 +91,27 @@ interface ChatSessionDao {
 
     @Query("UPDATE chat_sessions SET lastInputTokens = :lastInputTokens WHERE id = :id")
     suspend fun updateLastInputTokens(id: String, lastInputTokens: Int)
+
+    /** 设定/修改目标：同时重置轮数与 token 基线。 */
+    @Query("UPDATE chat_sessions SET goal = :goal, goalStatus = :status, goalTurnCount = 0, goalStartInputTokens = :startInput, goalStartOutputTokens = :startOutput WHERE id = :id")
+    suspend fun updateGoal(id: String, goal: String?, status: String?, startInput: Int, startOutput: Int)
+
+    @Query("UPDATE chat_sessions SET goalStatus = :status WHERE id = :id")
+    suspend fun updateGoalStatus(id: String, status: String?)
+
+    @Query("UPDATE chat_sessions SET goalTurnCount = goalTurnCount + 1 WHERE id = :id")
+    suspend fun incrementGoalTurn(id: String)
+
+    /**
+     * 工作区里最近更新、且一条消息都还没有的根会话（排除隐身会话）。
+     *
+     * 用子查询代替「取全部根会话再逐条 hasMessages」：后者是 O(会话数) 次查库，
+     * 会话多了会明显拖慢「新建会话」这个高频操作。
+     */
+    @Query(
+        "SELECT * FROM chat_sessions WHERE workspacePath = :workspacePath AND parentId IS NULL " +
+            "AND ghostMode = 0 AND id NOT IN (SELECT DISTINCT sessionId FROM agent_messages) " +
+            "ORDER BY updatedAt DESC LIMIT 1"
+    )
+    suspend fun getEmptyRootSessionByWorkspace(workspacePath: String): ChatSessionEntity?
 }

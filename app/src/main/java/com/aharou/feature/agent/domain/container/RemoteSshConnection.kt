@@ -4,13 +4,16 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.shellQuote
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.credentials.domain.model.GitCredential
+import com.aharou.feature.settings.data.repository.ExecutionMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -70,6 +73,14 @@ class RemoteSshConnection @Inject constructor(
     /** 重连成功后回调，供工作区重新加载。由 [startSupervisor] 注册。 */
     private var onReconnected: (suspend () -> Unit)? = null
     private var supervisorJob: Job? = null
+    private var modeJob: Job? = null
+
+    /**
+     * 当前是否处于远程执行模式。切回本地后「断线即重连」的所有入口都要据它空转，
+     * 否则 supervisor 被停掉了，网络恢复 / 回到前台仍会把 SSH 连接建回来。
+     */
+    @Volatile
+    private var remoteModeEnabled = false
 
     /** 远程服务器上的真实 home 路径（连接成功后查 $HOME 缓存），供文件工具展开 ~。 */
     @Volatile
@@ -229,19 +240,62 @@ class RemoteSshConnection @Inject constructor(
 
     /** 若已配置但未连接，立即尝试重连一次。返回是否最终连通。供 App 回到前台时主动触发。 */
     suspend fun tryReconnectIfDisconnected(): Boolean {
+        // 本地模式下没有远程连接要恢复：网络恢复、回到前台都会调到这里，放行就会把刚断开的连接重连回来。
+        if (!remoteModeEnabled) return false
         val cfg = config ?: return false
         if (isConnected()) return true
         _connectionState.value = ConnectionState.CONNECTING
-        return runCatching { connect(cfg) }
-            .onSuccess {
-                FileLogger.i(TAG, "SSH 重连成功（前台触发）")
-                runCatching { onReconnected?.invoke() }
+        return try {
+            connect(cfg)
+            FileLogger.i(TAG, "SSH 重连成功（前台触发）")
+            try {
+                onReconnected?.invoke()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 回调里的取消同样要透传：吞掉会让已取消的重连继续往下走，把取消记成一次回调失败。
+                throw e
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "SSH 已重连但重连后回调失败", e)
             }
-            .onFailure {
-                FileLogger.w(TAG, "SSH 重连失败（前台触发）", it)
-                _connectionState.value = ConnectionState.FAILED
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消必须原样透传：吐成「重连失败」会把 stopSupervisor 的取消当成一次真正的连接失败。
+            throw e
+        } catch (e: Exception) {
+            FileLogger.w(TAG, "SSH 重连失败（前台触发）", e)
+            _connectionState.value = ConnectionState.FAILED
+            false
+        }
+    }
+
+    /**
+     * 按执行模式驱动连接监督：远程模式下定期探活、断线自动重连；切回本地则停监督并断开连接。
+     *
+     * 由连接管理器自己盯执行模式，是因为「SSH 只在远程模式下有存在意义」是连接的固有约束：
+     * 交给调用方每次记得停，漏一处就会在本地模式下继续探活重连、远程终端的 shell 会话也一直
+     * 挂在服务器上。[config] 故意保留：它还被路径解析、项目级配置目录的哈希等读，
+     * 清掉会让切回远程的瞬间算出一套不同的路径。
+     *
+     * 幂等：重复调用不会起多个模式监听；仅需在 App 启动时调用一次。
+     */
+    fun superviseByExecutionMode(
+        scope: CoroutineScope,
+        mode: Flow<ExecutionMode>,
+        onReconnected: suspend () -> Unit
+    ) {
+        this.onReconnected = onReconnected
+        if (modeJob != null) return
+        modeJob = scope.launch {
+            mode.collect { m ->
+                remoteModeEnabled = m == ExecutionMode.REMOTE_SSH
+                if (remoteModeEnabled) {
+                    startSupervisor(scope, onReconnected)
+                } else {
+                    // 先停再断：否则探活协程会在断开后立刻重连。
+                    stopSupervisor()
+                    disconnect()
+                }
             }
-            .isSuccess
+        }
     }
 
     /**
@@ -272,6 +326,16 @@ class RemoteSshConnection @Inject constructor(
                 }
             }
         }
+    }
+
+    /**
+     * 停止连接监督。切回非远程执行模式时调用：supervisor 只服务远程模式，
+     * 留着会在本地模式下继续探活并按退避重连，把已经无用的远程连接重新建起来。
+     * 幂等：supervisor 本来就没跑时直接返回。
+     */
+    fun stopSupervisor() {
+        supervisorJob?.cancel()
+        supervisorJob = null
     }
 
     /**
@@ -370,8 +434,9 @@ class RemoteSshConnection @Inject constructor(
      * 写 `~/.aharou/git-credentials`（store 格式）+ `~/.aharou/gitconfig` + `~/.aharou/gitconfig.credential`。
      *
      * 生效机制：[RemoteSshEngine] 执行命令时注入 `GIT_CONFIG_GLOBAL=$HOME/.aharou/gitconfig`，其中
-     * `[include] path=~/.gitconfig` 保留服务器用户自己的全局配置（署名等），`[includeIf "gitdir:<工作区根>/"]`
-     * 限定只有工作区根目录下的仓库才加载 store helper——不影响用户在服务器上手动 git，也不影响其它目录的仓库。
+     * `[include] path=~/.gitconfig` 保留服务器用户自己的全局配置（署名等），`[includeIf "gitdir:<远程工作区父目录>/"]`
+     * 限定只有工作区父目录下的仓库才加载 store helper——不影响用户在服务器上手动 git，也不影响其它目录的仓库。
+     * 用父目录而不是单个工作区：切工作区时不用重新上传，也不会因为漏上传而认证失败。
      *
      * @param credentials 要注入的凭据列表（每 host 一条）。
      * @param workspaceRoot 远程工作区根路径（AI 的 ~/workspace 映射目录），限定注入范围。
@@ -380,7 +445,12 @@ class RemoteSshConnection @Inject constructor(
         val client = sshClient ?: return
         val home = remoteHome ?: return
         val aharouDir = home.trimEnd('/') + "/.aharou"
-        val wsRoot = workspaceRoot.trimEnd('/').ifEmpty { return }
+        // 注入范围用「远程工作区父目录」而不是单个工作区：includeIf 只认一个目录时，
+        // 切到新工作区就不命中了，漏重新上传一次就 push 认证失败。父目录下都是用户自己的
+        // 工作区仓库，放宽到这一层不会把凭据递给无关仓库。
+        val wsRoot = config?.remoteWorkspacePath?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: workspaceRoot.trimEnd('/').ifEmpty { return }
         withContext(Dispatchers.IO) {
             runCatching {
                 val mkdirSession = client.startSession()
@@ -404,7 +474,7 @@ class RemoteSshConnection @Inject constructor(
                 val gitconfig = buildString {
                     append("[include]\n")
                     append("    path = ~/.gitconfig\n")
-                    append("[includeIf \"gitdir:$wsRoot/\"]\n")
+                    append("[includeIf \"gitdir:${gitConfigValue(wsRoot)}/\"]\n")
                     append("    path = ~/.aharou/gitconfig.credential\n")
                 }
                 writeRemoteFile(client, "$aharouDir/gitconfig", gitconfig)
@@ -446,11 +516,26 @@ class RemoteSshConnection @Inject constructor(
     /** exec + printf 写一个文本文件到远程，内容与路径都由 [shellQuote] 转义。 */
     private suspend fun writeRemoteFile(client: SSHClient, dest: String, content: String) {
         val session = client.startSession()
-        session.exec("printf %s ${shellQuote(content)} > ${shellQuote(dest)}").join()
+        // 写临时文件再 mv 覆盖：直接 `>` 写会在中途断连时留下空或半截文件，凭据/ gitconfig
+        // 一次写坏后续 git 操作就报看不懂的错。mv 同分区是原子替换。
+        val tmp = "$dest.tmp"
+        session.exec(
+            "printf %s ${shellQuote(content)} > ${shellQuote(tmp)} && mv -f ${shellQuote(tmp)} ${shellQuote(dest)}"
+        ).join()
         session.close()
     }
 
     private fun enc(part: String): String = java.net.URLEncoder.encode(part, "UTF-8")
+
+    /**
+     * gitconfig 双引号值的转义：`gitdir:` 后面跟的是用户自己填的远程路径，带着引号或反斜杠时
+     * 会把整个 includeIf 段写坏（轻则凭据注入失效，重则后续段落被当成新键）。
+     */
+    private fun gitConfigValue(value: String): String = value
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
 
     /** 与 app 侧一致的编码：base64 后整体反转（属混淆，非加密）。 */
     private fun encodeCreds(plain: String): String =

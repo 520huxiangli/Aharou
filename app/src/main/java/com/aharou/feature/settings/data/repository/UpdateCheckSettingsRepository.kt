@@ -6,12 +6,27 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 
 /** 更新通道：正式版（仅正式版）/ 测试版（仅测试包，含 beta 与 RC）。 */
 enum class UpdateChannel {
     STABLE, LATEST
 }
+
+/** 最近一次版本检查的状态；[NONE] 表示这台设备上还从未检查过。 */
+enum class VersionCheckState { NONE, UP_TO_DATE, NEW_VERSION, ERROR }
+
+/**
+ * 设置页展示用的检查结果快照：[latestVersion] 只在 [VersionCheckState.NEW_VERSION] 时有值 ——
+ * 检查失败或从未检查时给 null，界面据此显示「检查失败 / 未检查」，而不是一个猜出来的版本号。
+ */
+data class VersionCheckSnapshot(
+    val state: VersionCheckState = VersionCheckState.NONE,
+    val latestVersion: String? = null
+)
 
 /**
  * 「自动检查更新」偏好存储：开关、更新通道、上次检测日期统一存 SharedPreferences
@@ -92,6 +107,40 @@ class UpdateCheckSettingsRepository @Inject constructor(
             prefs.edit().putString(KEY_LAST_NOTIFIED_TAG, value).commit()
         }
 
+    /** 最近一次检查结果的快照，供设置页只读展示；重启后从持久化记录恢复。 */
+    private val _lastCheckSnapshot = MutableStateFlow(readCheckSnapshot())
+    val lastCheckSnapshot: StateFlow<VersionCheckSnapshot> = _lastCheckSnapshot.asStateFlow()
+
+    private fun readCheckSnapshot(): VersionCheckSnapshot = VersionCheckSnapshot(
+        state = prefs.getString(KEY_LAST_RESULT_STATE, null)
+            ?.let { runCatching { VersionCheckState.valueOf(it) }.getOrNull() }
+            ?: VersionCheckState.NONE,
+        latestVersion = prefs.getString(KEY_LAST_RESULT_TAG, null)
+    )
+
+    /** 当前安装包的 versionName（读 PackageManager），失败返回 "unknown"。 */
+    fun currentVersionName(): String = runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+    }.getOrDefault("unknown")
+
+    /**
+     * 记录最近一次检查结果，供设置页展示「最新版本 / 已是最新 / 检查失败」。
+     * 用 commit() 同步落盘：刚检查完进程就被回收时，展示不该退回「未检查」。
+     */
+    private fun recordCheckSnapshot(result: UpdateCheckResult) {
+        val state = when (result) {
+            is UpdateCheckResult.UpToDate -> VersionCheckState.UP_TO_DATE
+            is UpdateCheckResult.NewVersion -> VersionCheckState.NEW_VERSION
+            is UpdateCheckResult.Error -> VersionCheckState.ERROR
+        }
+        val tag = (result as? UpdateCheckResult.NewVersion)?.info?.latestTag
+        prefs.edit()
+            .putString(KEY_LAST_RESULT_STATE, state.name)
+            .putString(KEY_LAST_RESULT_TAG, tag)
+            .commit()
+        _lastCheckSnapshot.value = VersionCheckSnapshot(state, tag)
+    }
+
     /**
      * 记录最近一次更新包下载用了哪个源，写到 `~/.aharou/last-update-download.json`。
      *
@@ -118,6 +167,7 @@ class UpdateCheckSettingsRepository @Inject constructor(
      * 写入失败静默，不影响检测流程。
      */
     fun writeUpdateInfo(currentVersion: String, channel: UpdateChannel, result: UpdateCheckResult) {
+        recordCheckSnapshot(result)
         runCatching {
             val dir = File(context.filesDir, "aharou").apply { mkdirs() }
             val obj = JSONObject()
@@ -160,5 +210,7 @@ class UpdateCheckSettingsRepository @Inject constructor(
         const val KEY_AUTO_INSTALL = "auto_install_enabled"
         const val KEY_DOWNLOADED_TAG = "downloaded_update_tag"
         const val KEY_DOWNLOADED_PATH = "downloaded_update_path"
+        const val KEY_LAST_RESULT_STATE = "last_check_result_state"
+        const val KEY_LAST_RESULT_TAG = "last_check_result_tag"
     }
 }

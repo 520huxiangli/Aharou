@@ -273,12 +273,18 @@ class WorkspaceRepository @Inject constructor(
         }
         val wsRoot = pathHomeResolver.expandHome(cfg.remoteWorkspacePath.trimEnd('/'))
         return runCatching {
-            // ls -d */ 列出子目录，取基名
-            val output = execRemote("ls -d ${wsRoot}/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null")
+            // 逐个目录输出完整路径：`ls -d */ | xargs -n1 basename` 会按空白把含空格的目录名
+            // （如 `new api`）拆成两条，列表里就会出现两个指向不存在路径的假工作区。
+            val output = execRemote(
+                "for d in ${shellQuote(wsRoot)}/*/; do [ -d \"\$d\" ] && printf '%s\\n' \"\${d%/}\"; done 2>/dev/null"
+            )
             if (output.isBlank()) emptyList()
             else output.lines().filter { it.isNotBlank() }
-                .sortedBy { it.lowercase() }
-                .map { Workspace(name = it.trim(), path = "$wsRoot/${it.trim()}", type = WorkspaceType.REMOTE) }
+                .sortedBy { it.substringAfterLast('/').lowercase() }
+                .map {
+                    val path = it.trim()
+                    Workspace(name = path.substringAfterLast('/'), path = path, type = WorkspaceType.REMOTE)
+                }
         }.getOrElse {
             FileLogger.w(TAG, "远程工作区列表失败: $wsRoot", it)
             emptyList()

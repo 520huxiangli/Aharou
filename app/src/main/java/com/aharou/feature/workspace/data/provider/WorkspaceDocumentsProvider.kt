@@ -99,7 +99,7 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
             add(Root.COLUMN_SUMMARY, null)
             add(
                 Root.COLUMN_FLAGS,
-                Root.FLAG_SUPPORTS_CREATE or Root.FLAG_SUPPORTS_SEARCH or Root.FLAG_SUPPORTS_IS_CHILD,
+                Root.FLAG_SUPPORTS_SEARCH or Root.FLAG_SUPPORTS_IS_CHILD,
             )
             add(Root.COLUMN_TITLE, title)
             add(Root.COLUMN_MIME_TYPES, ALL_MIME_TYPES)
@@ -123,12 +123,12 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         val parent = fileForDocId(parentDocumentId)
         // 根目录（filesDir 本身）只放出白名单子目录，隐藏 rootfs/数据库等内部目录；
         // 其余层级照常列出全部内容。
-        val children = if (parent.path == rootDir().path) {
+        val children = if (parent.canonicalFile == rootDir()) {
             exposedChildren()
         } else {
             parent.listFiles()?.toList() ?: emptyList()
         }
-        children.forEach { child -> includeFile(result, null, child) }
+        children.filter { isWithinExposedRoots(it) }.forEach { child -> includeFile(result, null, child) }
         return result
     }
 
@@ -148,6 +148,11 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         displayName: String,
     ): String {
         val parent = fileForDocId(parentDocumentId)
+        // 根的 CREATE flag 已去掉，但客户端仍可直接调到这里，必须再拦一次：
+        // filesDir 根上随手建目录会混进内部文件之间，也会让后续白名单校验失效。
+        if (parent.canonicalFile == rootDir()) {
+            throw FileNotFoundException("Cannot create documents in the root directory")
+        }
         // parent 已是校验过的规范路径；displayName 来自外部，只取 basename 再拼接，杜绝含 `/` 与 `..` 的逃逸。
         val safeName = File(displayName).name
         if (safeName.isEmpty() || safeName == "." || safeName == "..") {
@@ -170,6 +175,11 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
 
     override fun deleteDocument(documentId: String) {
         val file = fileForDocId(documentId)
+        // 根 docId 就是 filesDir 本身，不拦的话一次 deleteRecursively 会连数据库、
+        // rootfs、凭据一起清掉。
+        if (file.canonicalFile == rootDir()) {
+            throw FileNotFoundException("Cannot delete the root directory")
+        }
         if (!file.deleteRecursively()) {
             throw FileNotFoundException("Failed to delete document: $documentId")
         }
@@ -187,20 +197,19 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         val root = fileForDocId(rootId)
         val rootCanonical = root.canonicalPath
         // 从根（filesDir）搜索时只下钻白名单子目录，避免扫到 rootfs 等内部目录；其余层级照常。
-        val seeds = if (root.path == rootDir().path) exposedChildren() else listOf(root)
+        val seeds = if (root.canonicalFile == rootDir()) exposedChildren() else listOf(root)
         val pending = LinkedList<File>().apply { addAll(seeds) }
+        val visited = HashSet<String>()
         val needle = query.lowercase()
 
         while (pending.isNotEmpty() && result.count < MAX_SEARCH_RESULTS) {
             val file = pending.removeFirst()
-            // 仅在根目录内搜索，避免 symlink 指向外部导致扫到整个磁盘
-            val insideRoot = try {
-                val path = file.canonicalPath
-                path == rootCanonical || path.startsWith(rootCanonical + File.separator)
-            } catch (e: Exception) {
-                false
-            }
-            if (!insideRoot) continue
+            // 白名单 + 归属双重校验：symlink 指向外面、或自指成环都要在这里被挡住（visited 防环）。
+            val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
+            if (!isWithinExposedRoots(file) ||
+                (canonical != rootCanonical && !canonical.startsWith(rootCanonical + File.separator)) ||
+                !visited.add(canonical)
+            ) continue
             if (file.isDirectory) {
                 file.listFiles()?.let { pending.addAll(it) }
             } else if (file.name.lowercase().contains(needle)) {
@@ -224,29 +233,38 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
     /** 允许根目录（filesDir）的规范路径，作为全部 docId 的包含校验基准。 */
     private fun rootDir(): File = baseDir().canonicalFile
 
-    /** [file] 的规范路径是否等于允许根或位于其子层（前缀带分隔符，避免 /foo 命中 /foobar）。 */
-    private fun isInsideRoot(file: File): Boolean {
-        val rootPath = try {
-            rootDir().path
-        } catch (e: IOException) {
-            return false
+    /**
+     * 对外暴露的子目录名白名单（相对 filesDir），与 [exposedChildren] 一致。
+     *
+     * 刻意不整体放开 `aharou-global/`——它下面还有 memory，里面有凭据类文件。
+     */
+    private fun exposedRootNames(): List<String> = listOf("projects", "aharou", "aharou-global/shared")
+
+    /**
+     * [file] 是否在允许根（filesDir 本身）或其白名单子目录内。
+     *
+     * docId 就是绝对路径，单靠「在 filesDir 之内」拦不住构造出的
+     * databases、shared_prefs、aharou-global/memory 等内部路径：
+     * 拿到本 provider 树授权的客户端能直接读写它们。因此归属校验必须收敛到白名单。
+     */
+    private fun isWithinExposedRoots(file: File): Boolean {
+        val base = runCatching { rootDir().path }.getOrNull() ?: return false
+        val target = runCatching { file.canonicalPath }.getOrNull() ?: return false
+        if (target == base) return true
+        return exposedRootNames().any { name ->
+            val rootPath = runCatching { File(base, name).canonicalPath }.getOrNull() ?: return@any false
+            target == rootPath || target.startsWith(rootPath + File.separator)
         }
-        val targetPath = try {
-            file.canonicalPath
-        } catch (e: IOException) {
-            return false
-        }
-        return targetPath == rootPath || targetPath.startsWith(rootPath + File.separator)
     }
 
-    /** docId 统一按规范路径解析；解析结果必须仍在允许根目录内，否则拒绝（挡 `..` 与 symlink 逃逸）。 */
+    /** docId 统一按规范路径解析；解析结果必须落在白名单子目录内，否则拒绝（挡 `..`、symlink 与内部目录）。 */
     private fun fileForDocId(docId: String): File {
         val file = try {
             File(docId).canonicalFile
         } catch (e: IOException) {
             throw FileNotFoundException("Invalid document id: $docId")
         }
-        if (!isInsideRoot(file)) throw FileNotFoundException("$docId outside allowed root")
+        if (!isWithinExposedRoots(file)) throw FileNotFoundException("$docId outside exposed roots")
         if (!file.exists()) throw FileNotFoundException("${file.absolutePath} not found")
         return file
     }
@@ -273,12 +291,15 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
         val resolvedDocId = docId ?: docIdForFile(resolvedFile)
 
         var flags = 0
+        val isExposedRoot = resolvedFile.canonicalFile == rootDir()
         if (resolvedFile.isDirectory) {
-            if (resolvedFile.canWrite()) flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
+            if (!isExposedRoot && resolvedFile.canWrite()) flags = flags or Document.FLAG_DIR_SUPPORTS_CREATE
         } else if (resolvedFile.canWrite()) {
             flags = flags or Document.FLAG_SUPPORTS_WRITE
         }
-        if (resolvedFile.parentFile?.canWrite() == true) flags = flags or Document.FLAG_SUPPORTS_DELETE
+        if (!isExposedRoot && resolvedFile.parentFile?.canWrite() == true) {
+            flags = flags or Document.FLAG_SUPPORTS_DELETE
+        }
 
         val mime = mimeType(resolvedFile)
         if (mime.startsWith("image/")) flags = flags or Document.FLAG_SUPPORTS_THUMBNAIL

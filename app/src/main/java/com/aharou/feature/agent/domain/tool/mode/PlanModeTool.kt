@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.mode
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -72,6 +73,12 @@ class PlanModeTool @Inject constructor(
 
         val sessionEntity = chatSessionDao.getById(sessionId)
             ?: return ToolResult.Error("找不到会话记录", "SESSION_NOT_FOUND")
+
+        // 目标循环期间禁切 PLAN：自主执行中途变成只读会让目标停在半截。工具清单里已经
+        // 剔了 planMode，这里再拦一道（清单可能来自旧快照）。
+        if (sessionEntity.goalStatus == GoalStatus.ACTIVE.name) {
+            return ToolResult.Error("当前会话有进行中的目标（goal），不能切换 PLAN 模式；先用 goalStatus 结束目标", "GOAL_ACTIVE")
+        }
 
         // 进入 PLAN 时记下当时的模式，退出时恢复到它：从 AUTO 进入 PLAN 的规划往返结束后应回到 AUTO，
         // 而不是一律落回 BUILD。该字段只在处于 PLAN 时被读取，每次进入 PLAN 都会覆写，因此无需在退出时清理。

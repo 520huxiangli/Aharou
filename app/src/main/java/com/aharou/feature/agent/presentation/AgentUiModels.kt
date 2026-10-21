@@ -2,7 +2,10 @@ package com.aharou.feature.agent.presentation
 
 import androidx.compose.runtime.Immutable
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.agent.domain.model.ChatSession
+import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
+import com.aharou.feature.agent.presentation.component.ChatRenderItem
 import com.aharou.feature.workspace.domain.FileEntry
 import com.aharou.feature.workspace.domain.WorkspaceSearchHit
 import kotlinx.serialization.Serializable
@@ -285,6 +288,28 @@ fun CharSequence.hasVisibleContent(): Boolean {
 @Immutable
 data class RunningToolOutput(val messageId: String, val text: String, val toolName: String = "", val toolArgs: String = "")
 
+/**
+ * 输入框上方目标卡片的数据：会话语义上的「持续目标」降到 UI 只需要这三项。
+ * 由 [sessionGoalUi] 从会话状态派生，没有目标的会话为 null（卡片不占高度）。
+ */
+@Immutable
+data class SessionGoalUi(
+    val text: String,
+    val status: GoalStatus,
+    val turnCount: Int
+)
+
+/** 会话状态 → 目标卡片数据；没有目标（或只剩空白）时返回 null。 */
+fun ChatSession?.sessionGoalUi(): SessionGoalUi? {
+    val session = this ?: return null
+    val text = session.goal?.takeIf { it.isNotBlank() } ?: return null
+    return SessionGoalUi(
+        text = text,
+        status = session.goalStatus ?: GoalStatus.ACTIVE,
+        turnCount = session.goalTurnCount
+    )
+}
+
 data class QueuedRequest(
     val id: String,
     val request: String,
@@ -294,5 +319,80 @@ data class QueuedRequest(
     val projectRoot: String,
     val inputImages: List<AgentImage> = emptyList(),
     val inputAttachments: List<AgentAttachment> = emptyList(),
-    val isAutoTrigger: Boolean = false
+    val isAutoTrigger: Boolean = false,
+    /** 目标续跑轮：不落用户消息（否则每轮都往历史里塞一条伪用户消息）。 */
+    val persistUserMessage: Boolean = true
 )
+
+/** 工具调用分组头 item 的 contentType。 */
+internal const val TOOL_GROUP_CONTENT_TYPE = "tool-group"
+
+/** 整轮折叠头 item 的 contentType。 */
+internal const val TURN_HEADER_CONTENT_TYPE = "turn-header"
+
+/** 整轮展开时，被抽为独立过程项的「轮末助手思考」的 contentType。 */
+internal const val REASONING_CONTENT_TYPE = "reasoning"
+
+/**
+ * 整轮任务折叠头 item 的渲染状态。非空即表示这是一条「执行中 / 已完成」头行。
+ *
+ * [endMessageId] 是轮末助手消息 id，据此查本轮耗时（口径与耗时计算函数一致）。
+ */
+internal data class TurnHeaderState(
+    val key: String,
+    val endMessageId: String?,
+    /** 该轮是否仍在执行（末轮且 agent 忙）。 */
+    val running: Boolean,
+    /** 展开态（已含用户手动覆盖的结果）。 */
+    val expanded: Boolean,
+)
+
+/**
+ * 被窗口截断、找不到轮首的那一截过程（见 buildChatItems）的折叠头 key。
+ *
+ * 取块尾消息 id 而非块首：窗口继续向前补加载时新消息插在块首，块尾不变、key 保持稳定。
+ */
+internal fun leadingHeadKey(lastMessage: AgentUIMessage): String = "turn:head:${lastMessage.id}"
+
+/** 过程项超过这个条数就改懒渲染（见 [flattenLongProcesses]）。 */
+private const val INLINE_PROCESS_ITEM_LIMIT = 8
+
+/**
+ * 长过程改懒渲染：轮头/工具分组的过程项超过 [INLINE_PROCESS_ITEM_LIMIT] 时不再内联展开，
+ * 而是把它们平铺成主列表的独立 item，交给 LazyColumn 按可见范围组合（点开时不再一次性全量测量）。
+ *
+ * 展开态、顺序与层级全部沿用原渲染：[ChatRenderItem.turnProcess] 清空只是拆掉内联那层容器，
+ * 子项（含身份行标记、常显项位置）原样落到顶层；分组已展开时成员行也一并平铺，
+ * 由 [ChatRenderItem.groupMember] 让 UI 补回缩进。折叠头收起时不产出任何子项。
+ */
+internal fun flattenLongProcesses(items: List<ChatRenderItem>): List<ChatRenderItem> = buildList {
+    for (item in items) {
+        val processSize = item.turnProcess.sumOf { it.toolGroup?.size ?: 1 }
+        if (item.turnHeader == null || processSize <= INLINE_PROCESS_ITEM_LIMIT) {
+            add(item)
+            continue
+        }
+        add(item.copy(turnProcess = emptyList(), lazyProcess = true))
+        if (!item.turnHeader.expanded) continue
+        for (child in item.turnProcess) {
+            val group = child.toolGroup
+            if (group == null) {
+                add(child)
+            } else {
+                add(child.copy(lazyProcess = true))
+                if (child.groupExpanded) {
+                    group.forEach { member ->
+                        add(
+                            ChatRenderItem(
+                                message = member,
+                                key = member.id,
+                                contentType = member.role.name,
+                                groupMember = true,
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

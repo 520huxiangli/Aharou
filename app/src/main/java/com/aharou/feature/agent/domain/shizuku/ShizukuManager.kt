@@ -68,6 +68,12 @@ class ShizukuManager @Inject constructor(
 
         val MANAGER_PACKAGES = listOf(SHIZUKU_PACKAGE, SHEVERY_PACKAGE)
 
+        /**
+         * Shizuku 对外暴露的 API 权限名。改包名的 fork 依然声明这个名字（权限名与包名解耦），
+         * 所以它能用来反查「哪个应用是 Shizuku 管理器」。
+         */
+        const val SHIZUKU_PERMISSION = "moe.shizuku.manager.permission.API_V23"
+
         const val PERMISSION_REQUEST_CODE = 1001
 
         /** 服务身份 tag：不设时用类名，类名经 R8 混淆后不稳定，故显式固定。 */
@@ -95,6 +101,10 @@ class ShizukuManager @Inject constructor(
 
     @Volatile
     private var pendingBind: CompletableDeferred<IShizukuShellService>? = null
+
+    /** 反查命中过的管理器包名。扫描要遍历全部已装应用，命中后缓存，避免每次刷新状态重扫。 */
+    @Volatile
+    private var discoveredManagerPackage: String? = null
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener { refreshState() }
 
@@ -182,9 +192,40 @@ class ShizukuManager @Inject constructor(
         return if (granted) ShizukuState.READY else ShizukuState.PERMISSION_DENIED
     }
 
-    /** 已安装的管理器包名（官方或兼容分支），都没装返回 null。 */
-    private fun findManagerPackage(): String? = MANAGER_PACKAGES.firstOrNull { pkg ->
-        runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+    /**
+     * 已安装的管理器包名，都没装返回 null。
+     *
+     * 两级判定：先查白名单里的已知包名（常见情况，无需遍历已装应用），
+     * 再按 [SHIZUKU_PERMISSION] 反查——换过包名的 fork 不在白名单里，
+     * 但只要它还声明 Shizuku 的 API 权限就能被认出来。
+     */
+    private fun findManagerPackage(): String? {
+        MANAGER_PACKAGES.firstOrNull { pkg ->
+            runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+        }?.let { return it }
+        return findPackageDeclaringShizukuPermission()
+    }
+
+    /**
+     * 按权限名反查声明了 Shizuku API 权限的包。
+     *
+     * 看的是「声明的权限」（[android.content.pm.PackageInfo.permissions]）而不是「请求的权限」：
+     * 权限是管理器自己定义的，而请求它的应用（包括本 App，依赖库的 manifest 会合并出这条
+     * uses-permission）用请求列表会被误判成管理器。自身包名仍显式排除，防御本 App 将来自己声明同权限。
+     *
+     * targetSdk 30+ 的包可见性限制下，未在 `<queries>` 声明该权限时 getInstalledPackages 只能看到
+     * 本 App 与系统应用，所以 manifest 里同步加了对应声明。
+     */
+    @Suppress("DEPRECATION")
+    private fun findPackageDeclaringShizukuPermission(): String? {
+        discoveredManagerPackage?.let { return it }
+        val installed = runCatching {
+            context.packageManager.getInstalledPackages(PackageManager.GET_PERMISSIONS)
+        }.getOrNull() ?: return null
+        return installed.firstOrNull { info ->
+            info.packageName != context.packageName &&
+                info.permissions?.any { it.name == SHIZUKU_PERMISSION } == true
+        }?.packageName?.also { discoveredManagerPackage = it }
     }
 
     /** 申请 Shizuku 授权。需在主线程调用（Shizuku 内部要求）。 */

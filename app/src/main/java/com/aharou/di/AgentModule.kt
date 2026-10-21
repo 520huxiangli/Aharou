@@ -105,6 +105,8 @@ import com.aharou.feature.agent.domain.tool.mcp.ManageMcpTool
 import com.aharou.feature.agent.domain.tool.memory.MemoryTool
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.domain.tool.mode.PlanModeTool
+import com.aharou.feature.agent.domain.tool.goal.GoalStatusTool
+import com.aharou.feature.agent.domain.tool.goal.GOAL_STATUS_TOOL_NAME
 import com.aharou.feature.agent.domain.tool.search.WebFetchTool
 import com.aharou.feature.agent.domain.tool.search.WebSearchTool
 import com.aharou.feature.agent.domain.tool.session.SessionTool
@@ -416,6 +418,7 @@ object AgentModule {
         webSearchTool: WebSearchTool,
         webFetchTool: WebFetchTool,
         planModeTool: PlanModeTool,
+        goalStatusTool: GoalStatusTool,
         todoTool: TodoTool,
         memoryTool: MemoryTool,
         taskTool: TaskTool,
@@ -451,6 +454,7 @@ object AgentModule {
             register("websearch", webSearchTool)
             register("webfetch", webFetchTool)
             register("planMode", planModeTool)
+            register(GOAL_STATUS_TOOL_NAME, goalStatusTool)
             register("todo", todoTool)
             register("memory", memoryTool)
             register("task", taskTool)

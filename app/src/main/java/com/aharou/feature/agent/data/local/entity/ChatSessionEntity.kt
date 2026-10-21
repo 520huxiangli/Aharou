@@ -5,6 +5,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ChatSession
+import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 
 @Entity(
@@ -34,7 +35,12 @@ data class ChatSessionEntity(
     /** 子代理会话：派生子代理的类型（如 coder / researcher）；null 表示普通根会话。 */
     val subagentType: String? = null,
     /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
-    val ghostMode: Boolean = false
+    val ghostMode: Boolean = false,
+    val goal: String? = null,
+    val goalStatus: String? = null,
+    val goalTurnCount: Int = 0,
+    val goalStartInputTokens: Int = 0,
+    val goalStartOutputTokens: Int = 0
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
@@ -53,7 +59,12 @@ data class ChatSessionEntity(
         isPinned = isPinned,
         parentId = parentId,
         subagentType = subagentType,
-        ghostMode = ghostMode
+        ghostMode = ghostMode,
+        goal = goal,
+        goalStatus = goalStatus?.let { runCatching { GoalStatus.valueOf(it) }.getOrNull() },
+        goalTurnCount = goalTurnCount,
+        goalStartInputTokens = goalStartInputTokens,
+        goalStartOutputTokens = goalStartOutputTokens
     )
 
     companion object {
@@ -74,7 +85,12 @@ data class ChatSessionEntity(
             isPinned = session.isPinned,
             parentId = session.parentId,
             subagentType = session.subagentType,
-            ghostMode = session.ghostMode
+            ghostMode = session.ghostMode,
+            goal = session.goal,
+            goalStatus = session.goalStatus?.name,
+            goalTurnCount = session.goalTurnCount,
+            goalStartInputTokens = session.goalStartInputTokens,
+            goalStartOutputTokens = session.goalStartOutputTokens
         )
     }
 }

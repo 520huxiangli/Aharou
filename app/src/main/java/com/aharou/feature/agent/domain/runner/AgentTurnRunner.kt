@@ -8,8 +8,11 @@ import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.model.GoalStatus
+import com.aharou.feature.agent.domain.tool.goal.GOAL_STATUS_TOOL_NAME
 import com.aharou.feature.agent.domain.model.ModelIdentity
 import com.aharou.feature.agent.domain.model.ReasoningEffort
+import com.aharou.feature.agent.domain.model.WorkspaceRef
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
@@ -32,6 +35,7 @@ import com.aharou.feature.settings.data.repository.ModelReasoningEffortRepositor
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -101,6 +105,27 @@ class AgentTurnRunner @Inject constructor(
 
     /** 当前工作区路径；工作区还没就绪时为空串。 */
     fun currentWorkspacePath(): String = workspaceRepository.current.value?.path.orEmpty()
+
+    /**
+     * 会话上一轮看到的工作区（只存进程内）。
+     *
+     * 切区后 `~/workspace` 背后的仓库换了，但历史消息里的路径与仓库名还是旧的，
+     * 模型会当成现状。这里给每个会话留一个「上次看到的工作区」，本轮不一样就在系统提示末尾
+     * 追加一段切换提示。不落库：重启 App 后无非是少一次提醒，不会误报成「刚切过」。
+     */
+    private val lastWorkspaceBySession = ConcurrentHashMap<String, WorkspaceRef>()
+
+    private companion object {
+        /** 会话→工作区记录的条数上限：超过就整体清空，仅防长期累积；正常会话数远小于此。 */
+        const val MAX_TRACKED_WORKSPACES = 256
+    }
+
+    /** 工作区路径 → 带名称的标识；名称查不到（工作区列表还没加载）时只靠路径。 */
+    private fun workspaceRef(path: String): WorkspaceRef =
+        WorkspaceRef(
+            name = workspaceRepository.workspaces.value.firstOrNull { it.path == path }?.name,
+            path = path
+        )
 
     /** 取该工作区最近聊过的会话，没有就建一个。不碰调用方的「当前会话」缓存。 */
     suspend fun ensureSession(workspacePath: String): String {
@@ -200,6 +225,22 @@ class AgentTurnRunner @Inject constructor(
         }
         val isSub = sessionEntity?.parentId != null
 
+        // 工作区：名称 + 路径一起给模型——`~/workspace` 是每个工作区都有的别名，光看它认不出是哪个仓库。
+        // 上一轮与本轮不是同一个（本会话中途切了区）时把旧的那个带进上下文，由系统提示追加一段切换提醒。
+        val workspace = turn.projectRoot.takeIf { it.isNotBlank() }?.let(::workspaceRef)
+        val previousWorkspace = workspace?.let { lastWorkspaceBySession.put(sessionId, it) }
+        val switchedFrom =
+            if (workspace != null && previousWorkspace != null && previousWorkspace.path != workspace.path) {
+                previousWorkspace
+            } else {
+                null
+            }
+        if (lastWorkspaceBySession.size > MAX_TRACKED_WORKSPACES) lastWorkspaceBySession.clear()
+        // 界面选中的工作区与会话绑定的不是同一个：本会话仍按自己绑定的那个执行，但要提醒模型别弄混。
+        val selectedWorkspace = workspaceRepository.current.value
+            ?.takeIf { workspace != null && it.path != workspace.path }
+            ?.let { WorkspaceRef(it.name, it.path) }
+
         val agentContext = AgentContext(
             currentFile = turn.currentFile,
             selectedCode = turn.selectedCode,
@@ -216,6 +257,11 @@ class AgentTurnRunner @Inject constructor(
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
+            goal = sessionDomain?.goal?.takeIf { it.isNotBlank() },
+            goalStatus = sessionDomain?.goalStatus,
+            workspaceName = workspace?.name,
+            workspaceSwitchedFrom = switchedFrom,
+            selectedWorkspace = selectedWorkspace,
             // 模型身份：会话上就存着 provider / model，顺手带进上下文，供系统提示词注入。
             modelIdentity = sessionEntity?.model?.takeIf { it.isNotBlank() }
                 ?.let { ModelIdentity(modelId = it, providerId = sessionEntity.providerId) },
@@ -229,6 +275,11 @@ class AgentTurnRunner @Inject constructor(
             }
             isSub -> allTools // 子代理可再派子代理，递归由 MAX_SUBAGENT_DEPTH 兜底
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
+        }.let { list ->
+            // 目标循环与 PLAN 互斥（自动执行中途切成只读会让目标停在半截）；
+            // 没有目标时不给 goalStatus 工具，避免模型凭空调它。
+            if (sessionDomain?.goalStatus == GoalStatus.ACTIVE) list.filterNot { it.name == "planMode" }
+            else list.filterNot { it.name == GOAL_STATUS_TOOL_NAME }
         }
 
         // 工具参数预览：结束时只有部分事件带 argsPreview，缺失时回退到开始时记下的那份

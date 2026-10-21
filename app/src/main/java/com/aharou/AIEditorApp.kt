@@ -510,9 +510,9 @@ class AIEditorApp : Application(), Configuration.Provider {
             val mode = executionModeRepository.executionModeFlow.first()
             executionModeHolder.setMode(mode)
         }
-        // SSH 连接监督常驻（config 为空时空转）：定期探活、断线自动重连，重连成功后重载工作区与同步文档。
+        // SSH 连接监督只在远程模式下常驻：切回本地时停监督并断开（原因见 RemoteSshConnection.superviseByExecutionMode）
         appScope.launch {
-            remoteSshConnection.startSupervisor(appScope) {
+            remoteSshConnection.superviseByExecutionMode(appScope, executionModeHolder.mode) {
                 runCatching { workspaceRepository.initialize() }
                     .onFailure { FileLogger.w(TAG, "SSH 重连后重新加载工作区失败", it) }
                 syncDocsToRemote()
@@ -526,7 +526,7 @@ class AIEditorApp : Application(), Configuration.Provider {
                 executionModeHolder.mode
             ) { config, mode -> config to mode }.collect { (config, mode) ->
                 if (mode != com.aharou.feature.settings.data.repository.ExecutionMode.REMOTE_SSH) return@collect
-                if (config == null || config == remoteSshConnection.config) return@collect
+                if (config == null || (config == remoteSshConnection.config && remoteSshConnection.isConnected())) return@collect // 配置没变且仍连着才跳过；切回远程时连接已断，需重连
                 runCatching {
                     remoteSshConnection.connect(config)
                     // 连接成功后同步内置文档到远程 ~/.aharou/docs/，供 AI 查阅。

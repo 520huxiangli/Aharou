@@ -101,7 +101,14 @@ import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.AIAgentViewModel
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.QueuedRequest
+import com.aharou.feature.agent.presentation.REASONING_CONTENT_TYPE
+import com.aharou.feature.agent.presentation.TOOL_GROUP_CONTENT_TYPE
+import com.aharou.feature.agent.presentation.TURN_HEADER_CONTENT_TYPE
+import com.aharou.feature.agent.presentation.TurnHeaderState
+import com.aharou.feature.agent.presentation.flattenLongProcesses
 import com.aharou.feature.agent.presentation.hasVisibleContent
+import com.aharou.feature.agent.presentation.leadingHeadKey
+import com.aharou.feature.agent.presentation.sessionGoalUi
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.presentation.ReadAloudViewModel
@@ -188,40 +195,14 @@ internal data class ChatRenderItem(
     val turnProcess: List<ChatRenderItem> = emptyList(),
     /** 是否渲染消息自带的思考块；结果块把思考抽为过程项后传 false。 */
     val reasoningVisible: Boolean = true,
+    /** 长过程已平铺进主列表（见 [flattenLongProcesses]）：折叠头不再内联渲染 [turnProcess]。 */
+    val lazyProcess: Boolean = false,
+    /** 工具分组平铺后的成员行：作为主列表的独立 item 渲染，需缩进一级（[ToolGroupMemberPadding]）。 */
+    val groupMember: Boolean = false,
 )
-
-/** 工具调用分组头 item 的 contentType。 */
-private const val TOOL_GROUP_CONTENT_TYPE = "tool-group"
-
-/** 整轮折叠头 item 的 contentType。 */
-private const val TURN_HEADER_CONTENT_TYPE = "turn-header"
-
-/** 整轮展开时，被抽为独立过程项的「轮末助手思考」的 contentType。 */
-private const val REASONING_CONTENT_TYPE = "reasoning"
 
 /** 轮首用户消息 id → 整轮折叠的持久化 key（与 ViewModel.turnExpansionOverrides 同口径）。 */
 internal fun turnKeyOf(firstMessageId: String): String = "turn:$firstMessageId"
-
-/**
- * 被窗口截断、找不到轮首的那一截过程（见 [buildChatItems]）的折叠头 key。
- *
- * 取块尾消息 id 而非块首：窗口继续向前补加载时新消息插在块首，块尾不变、key 保持稳定。
- */
-internal fun leadingHeadKey(lastMessage: AgentUIMessage): String = "turn:head:${lastMessage.id}"
-
-/**
- * 整轮任务折叠头 item 的渲染状态。非空即表示这是一条「执行中 / 已完成」头行。
- *
- * [endMessageId] 是轮末助手消息 id，据此查本轮耗时（见 [computeTaskDurations]，口径一致）。
- */
-internal data class TurnHeaderState(
-    val key: String,
-    val endMessageId: String?,
-    /** 该轮是否仍在执行（末轮且 agent 忙）。 */
-    val running: Boolean,
-    /** 展开态（已含用户手动覆盖的结果）。 */
-    val expanded: Boolean,
-)
 
 /**
  * 消息列表 → LazyColumn item 列表。
@@ -235,7 +216,8 @@ internal data class TurnHeaderState(
  *
  * 轮首之前剩下的散消息同样按「一轮过程」处理：消息按条数截断加载，窗口边界常切在某一轮中间，
  * 这一段缺的是轮首用户消息而不是折叠头——原样常显会在历史最前面摊开一整轮过程。它们补一个不带
- * 耗时的折叠头（key 见 [leadingHeadKey]），默认收起。
+ * 耗时的折叠头（key 见 [leadingHeadKey]），默认收起；窗口里一个轮首都找不到时块尾会随工具输出移动，
+ * 改用 [sessionId] 作折叠 key。
  *
  * 轮头展开态：没手动记录时「末轮且 agent 忙」默认展开、其余默认收起（[activeTurnKey]）；
  * 一旦用户在 [turnOverrides] 里点过，就以其选择为准，任务完成自动收起不会覆盖它。
@@ -250,11 +232,16 @@ internal fun buildChatItems(
     groupOverrides: Map<String, Boolean>,
     turnOverrides: Map<String, Boolean> = emptyMap(),
     activeTurnKey: String? = null,
+    sessionId: String? = null,
 ): List<ChatRenderItem> {
     val items = ArrayList<ChatRenderItem>(messages.size)
     val (leading, turns) = splitChatTurns(messages)
     if (leading.isNotEmpty()) {
-        val headKey = leadingHeadKey(leading.last())
+        val headKey = if (turns.isEmpty() && sessionId != null) {
+            "turn:head:session:$sessionId"
+        } else {
+            leadingHeadKey(leading.last())
+        }
         // 这一截通常结尾就是上一轮的最终回复（窗口从某一轮中间切开）：它照旧常显，
         // 只有它的思考与更早的过程步骤折进折叠头，与完整轮次的呈现一致。
         val resultId = leading.last().takeIf { it.isResultCandidate() }?.id
@@ -482,6 +469,7 @@ fun AIChatPanel(
     val messageEntryDelays = remember(messages, entryScheduler) { entryScheduler.schedule(messages) }
     val currentSessionState by viewModel.currentSessionState.collectAsStateWithLifecycle()
     val currentSession = currentSessionState
+    val sessionGoal = currentSession.sessionGoalUi()
     val sessionInputTokens = currentSession?.totalInputTokens ?: 0
     val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
     val sessionLastInputTokens = currentSession?.lastInputTokens ?: 0
@@ -631,6 +619,7 @@ fun AIChatPanel(
     // 连续的工具调用折成一个「N 次工具调用」分组；chatItems 的顺序即 LazyColumn item 顺序。
     // 提到这里（而不是 LazyColumn 分支内）是因为 isFarFromBottom 的「布局是否对应当前消息」判定
     // 需要它：分组会让 item 数 ≠ 消息数 + 1，不能再拿消息数当期望值。
+    // 过程项过多的长轮再平铺成独立 item（见 flattenLongProcesses），交给 LazyColumn 按可见范围组合。
     // 末轮且 agent 忙 = 当前正在跑的那一轮：它的折叠头默认展开（显示「执行中」），收工后自动收起。
     val activeTurnKey = remember(messages, isBusy) {
         if (!isBusy) {
@@ -640,12 +629,17 @@ fun AIChatPanel(
                 ?.let { turnKeyOf(it.id) }
         }
     }
-    val chatItems = remember(messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey) {
-        buildChatItems(
-            messages = messages,
-            groupOverrides = toolGroupOverrideSnapshot,
-            turnOverrides = turnOverrideSnapshot,
-            activeTurnKey = activeTurnKey,
+    val chatItems = remember(
+        messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, currentSessionId
+    ) {
+        flattenLongProcesses(
+            buildChatItems(
+                messages = messages,
+                groupOverrides = toolGroupOverrideSnapshot,
+                turnOverrides = turnOverrideSnapshot,
+                activeTurnKey = activeTurnKey,
+                sessionId = currentSessionId,
+            )
         )
     }
     // 每轮任务的总耗时（用户发送 → 本轮 AI 收工）与 token 合计，都只挂在轮末助手气泡下方
@@ -1179,10 +1173,13 @@ fun AIChatPanel(
 
     // 内容变化信号旁路：文本/思考/消息条数变化时立即校准一次，不等下一帧——
     // 与常驻校准循环互为补充，覆盖「无动画帧」的间隙，杜绝跟丢窗口。
+    // 条数经 rememberUpdatedState 间接读：messages 是组合期捕获的普通 List，直接读 .size 的
+    // snapshotFlow 只会记住 effect 启动那一刻的条数，之后条数变化永远不触发校准。
+    val latestMessageCount = rememberUpdatedState(messages.size)
     LaunchedEffect(listState, messagesReady) {
         if (!messagesReady) return@LaunchedEffect
         snapshotFlow {
-            Triple(streamingText?.length, streamingReasoning?.length, messages.size)
+            Triple(streamingText?.length, streamingReasoning?.length, latestMessageCount.value)
         }.collect { calibrateToAnchor() }
     }
 
@@ -1292,8 +1289,9 @@ fun AIChatPanel(
         }
     }
 
-    // 渲染一条 item。轮头 / 工具分组的展开内容与折叠头在同一 Composable 内用 AnimatedVisibility
-    // 整体展开（而非逐个列表项各自 placement 动画）：高度平滑撑开、内容跟着一起走，手感是一个整体。
+    // 短过程整体展开（与折叠头同一 Composable 内 AnimatedVisibility，手感是一个整体）；
+    // 长过程（> INLINE_PROCESS_ITEM_LIMIT 项）已由 [flattenLongProcesses] 平铺成主列表 item，
+    // 交给 LazyColumn 按可见范围组合，避免点开时一次性全量测量。
     @Composable
     fun RenderChatItem(item: ChatRenderItem) {
         val header = item.turnHeader
@@ -1310,7 +1308,7 @@ fun AIChatPanel(
                     }
                 )
                 AnimatedVisibility(
-                    visible = header.expanded,
+                    visible = header.expanded && !item.lazyProcess,
                     enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                     exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                 ) {
@@ -1340,7 +1338,7 @@ fun AIChatPanel(
                     }
                 )
                 AnimatedVisibility(
-                    visible = item.groupExpanded,
+                    visible = item.groupExpanded && !item.lazyProcess,
                     enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
                     exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
                 ) {
@@ -1393,6 +1391,7 @@ fun AIChatPanel(
                     isReadingAloud = readingText == message.content,
                     showSoulHeader = item.showSoulHeader,
                     reasoningVisible = item.reasoningVisible,
+                    contentPadding = if (item.groupMember) ToolGroupMemberPadding else PaddingValues(0.dp),
                     onRewindClick = { viewModel.openRewindMenu(it) },
                     onMoreClick = { messageForMenu = it },
                     toolExpandedOverride = toolGroupOverrideSnapshot[message.id],
@@ -1742,6 +1741,9 @@ fun AIChatPanel(
                     dashboardState = currentDashboardState,
                     todoItems = currentTodoItems,
                     sessionId = currentSessionId.orEmpty(),
+                    sessionGoal = sessionGoal,
+                    onSetGoalPaused = { paused -> viewModel.setGoalPaused(paused) },
+                    onClearGoal = { viewModel.clearGoal() },
                     onTodoExpandedChange = { todoExpanded = it },
                     // 键盘弹出不再强制收起：面板自己会在展开前先收键盘（不然点了没反应）。
                     // 这里只保留弹窗/提问/审批这类遮罩场景的强制收起。

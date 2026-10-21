@@ -11,6 +11,7 @@ import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -57,8 +58,12 @@ class McpManager @Inject constructor(
         /** 断线自动重连的退避序列（毫秒）：第 1/2/3 次分别为 5s / 15s / 60s。 */
         val RECONNECT_DELAYS_MS = longArrayOf(5_000L, 15_000L, 60_000L)
 
-        /** 连续重连多少次仍失败就停止自动重连（不无限热循环）。 */
+        /** 连续重连多少次仍失败就转入低频重试（不无限热循环）。 */
         const val MAX_RECONNECT_ATTEMPTS = 3
+
+        /** 快速重试用尽后的低频重试间隔：装包重启时 stdio server（如容器里的 bridge）起得慢，
+         *  只试三次会一直停在 FAILED，直到用户新建会话或手动重载。 */
+        const val SLOW_RETRY_MS = 10 * 60 * 1000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -71,6 +76,9 @@ class McpManager @Inject constructor(
 
     /** 各 server 连续重连失败次数：用于退避与上限，连上即清零。 */
     private val reconnectAttempts = mutableMapOf<String, Int>()
+
+    /** 低频兜底重试的协程（每 server 至多一个，避免重复排队）。 */
+    private val slowRetries = mutableMapOf<String, Job>()
 
     private val _statuses = MutableStateFlow<List<McpServerStatus>>(emptyList())
     val statuses: StateFlow<List<McpServerStatus>> = _statuses.asStateFlow()
@@ -290,7 +298,7 @@ class McpManager @Inject constructor(
      * 容器相关配置变化后重建所有 stdio server（HTTP 不依赖容器，不动）。
      * 旧进程钉在旧容器的 rootfs 上，必须 teardown 后才能用新容器拉起；单个 server 失败不影响其它。
      */
-    private suspend fun reloadStdioServers() = reloadMutex.withLock {
+    suspend fun reloadStdioServers() = reloadMutex.withLock {
         val servers = configRepository.getEffectiveServers().filter { it.enabled && it.isStdio }
         if (servers.isEmpty()) return@withLock
         FileLogger.i(TAG, "容器配置变化，重建 ${servers.size} 个 stdio MCP server")
@@ -348,10 +356,10 @@ class McpManager @Inject constructor(
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             FileLogger.w(
                 TAG,
-                "[$serverName] 已连续重连 $MAX_RECONNECT_ATTEMPTS 次仍未成功，停止自动重连" +
-                    "（下次新会话或设置里手动重载会再试）"
+                "[$serverName] 快速重连已用完，转入低频重试（每 ${SLOW_RETRY_MS / 1000} 秒一次，直到连上或被禁用）"
             )
             reconnectAttempts.remove(serverName)
+            scheduleSlowRetry(serverName)
             return
         }
         reconnectAttempts[serverName] = attempt
@@ -376,6 +384,27 @@ class McpManager @Inject constructor(
                 scheduleReconnect(serverName, attempt + 1)
             }
         }
+    }
+
+    /** 快速重试用尽后的低频兜底重试：直到连上、被禁用或被删除。同 server 至多一个在跑。 */
+    private fun scheduleSlowRetry(serverName: String) {
+        if (synchronized(slowRetries) { slowRetries[serverName]?.isActive == true }) return
+        val job = scope.launch {
+            delay(SLOW_RETRY_MS)
+            synchronized(slowRetries) { slowRetries.remove(serverName) }
+            val cfg = configRepository.getEffectiveServers().firstOrNull { it.name == serverName } ?: return@launch
+            if (!cfg.enabled) return@launch
+            reloadMutex.withLock {
+                val alive = synchronized(activeClients) { activeClients[serverName]?.isAlive == true }
+                if (alive) return@withLock
+                FileLogger.i(TAG, "[$serverName] 低频重试")
+                teardownServer(serverName)
+                reconnectOne(cfg)
+            }
+            val connected = _statuses.value.firstOrNull { it.name == serverName }?.state == McpServerStatus.State.CONNECTED
+            if (!connected) scheduleSlowRetry(serverName)
+        }
+        synchronized(slowRetries) { slowRetries[serverName] = job }
     }
 
     private fun teardown() {

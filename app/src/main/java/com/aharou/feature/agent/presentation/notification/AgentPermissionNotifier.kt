@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -20,6 +21,7 @@ import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
+import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalRequest
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestion
 import com.aharou.feature.widget.WidgetActions
@@ -46,8 +48,10 @@ data class AgentPermissionReply(val sessionId: String, val text: String)
  * 动作统一由 [AgentPermissionActionReceiver] 广播回填，走与 App 内弹窗完全相同的
  * `resolve` 入口，避免另起一套逻辑导致状态分叉。
  *
- * 另外两类待批事件——`askUserQuestion` 提问与退出 PLAN 的计划审批——必须回界面作答，
- * 这里只做后台提示（[syncPrompts]），点通知回到对应会话，不给动作按钮。
+ * 另外两类待批事件走 [syncPrompts]：`askUserQuestion` 提问必须回界面作答，通知只做提示、
+ * 点通知回到对应会话；退出 PLAN 的计划审批另挂「批准 / 拒绝」两个动作，直接回填
+ * [com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager.resolve]，同样无需回 App。
+ * 动作里编入请求 id（extras + data 双写），陈旧通知点不出误批。
  *
  * 通知权限被拒时 [NotificationManagerCompat.notify] 会抛 SecurityException，这里静默吞掉，
  * 不影响原授权流程。
@@ -89,7 +93,9 @@ class AgentPermissionNotifier @Inject constructor(
         val requestId: String,
         val titleRes: Int,
         val body: String,
-        val bigText: String
+        val bigText: String,
+        /** 计划审批请求 id：非空时给该通知挂「批准 / 拒绝」动作，其它提示类通知为 null。 */
+        val planRequestId: String? = null
     )
 
     init {
@@ -202,13 +208,16 @@ class AgentPermissionNotifier @Inject constructor(
         }
         pendingPlanApproval?.takeIf { it.sessionId.isNotBlank() }?.let { plan ->
             val reason = plan.reason.trim()
+            // 身份用请求 id：理由雷同的不同请求也必须重新提示并替换旧通知条。
+            val planId = plan.id.ifBlank { null }
             notices += PromptNotice(
                 kind = KIND_PLAN,
                 sessionId = plan.sessionId,
-                requestId = reason.ifBlank { KIND_PLAN },
+                requestId = planId ?: reason.ifBlank { KIND_PLAN },
                 titleRes = R.string.agent_prompt_plan_title,
                 body = context.getString(R.string.agent_prompt_plan_body),
-                bigText = reason
+                bigText = reason,
+                planRequestId = planId
             )
         }
         return notices
@@ -240,7 +249,7 @@ class AgentPermissionNotifier @Inject constructor(
         // 取标题期间状态可能已清空或被前台撤销：确认仍需要展示再发。
         val stillNeeded = synchronized(promptLock) { shownPrompts[notice.kind]?.first == notice.requestId }
         if (!stillNeeded || inForeground()) return
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setContentTitle(context.getString(notice.titleRes, title))
             .setContentText(notice.body)
@@ -252,7 +261,12 @@ class AgentPermissionNotifier @Inject constructor(
             .setOngoing(false)
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
-            .build()
+        // 计划审批：与工具授权一致，先拒绝后批准（左侧为否定动作）。
+        notice.planRequestId?.let { planId ->
+            builder.addAction(planAction(planId, PlanApprovalChoice.REFINE))
+            builder.addAction(planAction(planId, PlanApprovalChoice.APPROVE))
+        }
+        val notification = builder.build()
         runCatching { NotificationManagerCompat.from(context).notify(id, notification) }
             .onFailure { FileLogger.w(TAG, "发送待处理通知失败: sid=${notice.sessionId} kind=${notice.kind}") }
     }
@@ -407,6 +421,46 @@ class AgentPermissionNotifier @Inject constructor(
             .build()
     }
 
+    /**
+     * 计划审批动作：`(kind=plan, requestId, choice)` 同时写进 extras 与 [Intent.data]。
+     *
+     * data 参与 PendingIntent 的等价性比较（extras 不参与），只靠 extras 会让 `FLAG_UPDATE_CURRENT`
+     * 复用旧 PendingIntent 并覆盖 extras——旧通知的按钮就会批到新请求上，这正是工具授权踩过的坑。
+     */
+    private fun planAction(requestId: String, choice: PlanApprovalChoice): NotificationCompat.Action {
+        val approve = choice == PlanApprovalChoice.APPROVE
+        return NotificationCompat.Action(
+            if (approve) android.R.drawable.ic_menu_save
+            else android.R.drawable.ic_menu_close_clear_cancel,
+            context.getString(
+                if (approve) R.string.agent_perm_action_approve_plan
+                else R.string.agent_perm_action_refine_plan
+            ),
+            PendingIntent.getBroadcast(
+                context,
+                planRequestCode(requestId, choice),
+                Intent(context, AgentPermissionActionReceiver::class.java)
+                    .setAction(ACTION_PLAN_DECISION)
+                    .setData(planActionData(requestId, choice))
+                    .putExtra(EXTRA_KIND, KIND_PLAN)
+                    .putExtra(EXTRA_REQUEST_ID, requestId)
+                    .putExtra(EXTRA_PLAN_CHOICE, choice.name),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        )
+    }
+
+    /** 动作 data：`aharou-plan://plan/<requestId>/<CHOICE>`，三段都参与 PendingIntent 等价性比较。 */
+    private fun planActionData(requestId: String, choice: PlanApprovalChoice): Uri =
+        Uri.Builder().scheme(PLAN_SCHEME)
+            .authority(KIND_PLAN)
+            .appendPath(requestId)
+            .appendPath(choice.name)
+            .build()
+
+    private fun planRequestCode(requestId: String, choice: PlanApprovalChoice): Int =
+        "$KIND_PLAN|$requestId|${choice.name}".hashCode()
+
     /** 每个动作各自的 requestCode：同一会话的三种动作互不相同，不同会话也不撞。 */
     private fun requestCode(sessionId: String, requestId: String, action: String): Int =
         "$action|$sessionId|$requestId".hashCode()
@@ -437,14 +491,20 @@ class AgentPermissionNotifier @Inject constructor(
         const val EXTRA_SESSION_ID = "com.aharou.extra.PERMISSION_SESSION_ID"
         const val EXTRA_REQUEST_ID = "com.aharou.extra.PERMISSION_REQUEST_ID"
         const val EXTRA_IS_BATCH = "com.aharou.extra.PERMISSION_IS_BATCH"
+        const val EXTRA_KIND = "com.aharou.extra.PERMISSION_KIND"
+        const val EXTRA_PLAN_CHOICE = "com.aharou.extra.PLAN_APPROVAL_CHOICE"
         const val ACTION_ALLOW = "com.aharou.action.PERMISSION_ALLOW"
         const val ACTION_REJECT = "com.aharou.action.PERMISSION_REJECT"
         const val ACTION_REPLY = "com.aharou.action.PERMISSION_REPLY"
+        const val ACTION_PLAN_DECISION = "com.aharou.action.PLAN_DECISION"
         const val KEY_REPLY = "com.aharou.extra.PERMISSION_REPLY_TEXT"
 
         /** 提示类通知的两种类型，同时用作「同一类型只保留最新一条」的键。 */
         private const val KIND_QUESTION = "question"
-        private const val KIND_PLAN = "plan"
+        const val KIND_PLAN = "plan"
+
+        /** 计划审批动作 data 的 scheme，与工具授权的 data-less intent 区分开。 */
+        private const val PLAN_SCHEME = "aharou-plan"
         private const val TAG = "AgentPermission"
         private const val NOTIFICATION_BASE = 210000
         private const val REQUEST_OPEN_APP = 210000

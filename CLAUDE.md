@@ -115,6 +115,8 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 **文档目录约定**：`docs-site/docs/` 是文档唯一事实源，`guide/` 放功能说明、`advanced/` 放环境搭建与进阶教程。构建时由 `syncAiDocs` task（已挂 `preBuild`）生成进 APK 的 `assets/docs/`，AI 在容器内看到的是 `~/.aharou/docs/{guide,advanced}/*.md`（`~/.aicode/docs` 是同一份的兼容旧路径）。**面向用户书写**：讲清怎么做、会看到什么、出错怎么办；变量名、错误码、内部实现路径属于 `prompts/`，别写进用户文档。
 
+**容器镜像清单由脚本生成，禁止手改**：`app/src/main/assets/container-images.json` 与 `data/container-images.json` 都由 `scripts/sync-container-images.py` 生成（拉上游版本 → 校验和 → 上传 cnb → 改写两份清单），手改会被下次同步覆盖，且校验和与产物会对不上。
+
 ## Git 提交规范
 
 Conventional Commits，格式 `<type>(<scope>): <subject>`，正文空行隔开。校验脚本在 `.githooks/commit-msg`，但 **hook 需要先启用才生效**：`git config core.hooksPath .githooks`（新 clone 后不会自动启用，没配就相当于没有校验）。

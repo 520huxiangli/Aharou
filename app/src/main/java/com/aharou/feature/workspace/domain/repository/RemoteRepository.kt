@@ -26,9 +26,11 @@ import com.aharou.feature.workspace.domain.remote.SyncIndexStore
 import com.aharou.feature.workspace.domain.remote.ftp.FtpSyncClient
 import com.aharou.feature.workspace.domain.remote.sftp.SftpSyncClient
 import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -43,6 +46,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -76,6 +80,10 @@ class RemoteRepository @Inject constructor(
     /** 每个挂载的本地文件变更订阅协程，断开挂载时取消。 */
     private val watchJobs = ConcurrentHashMap<String, Job>()
 
+    /** 每个挂载最近一次连接尝试的令牌；断开或切走工作区时移除，在途的旧尝试据此判定自己已作废。 */
+    private val connectAttempts = ConcurrentHashMap<String, Long>()
+    private val attemptSeq = AtomicLong()
+
     init {
         // 跟随当前工作区：App 启动（工作区就绪）与切换工作区时，自动断开非当前工作区的挂载、
         // 连接当前工作区里勾了「应用启动时自动连接」的挂载（失败退避重试直到成功）。
@@ -91,6 +99,8 @@ class RemoteRepository @Inject constructor(
     /** 把激活挂载集合对齐到当前工作区。 */
     private suspend fun syncMountsToWorkspace(workspacePath: String) {
         val mounts = dao.getAllMountsOnce()
+        // 0. 作废不属于当前工作区的连接尝试：它们是在旧工作区里发起的，连上后不能算当前工作区的挂载。
+        mounts.filterNot { belongsTo(it, workspacePath) }.forEach { connectAttempts.remove(it.id) }
         // 1. 断开不属于当前工作区的激活挂载（含手动连接的，保证切换后只同步当前工作区）
         activeEngineIds.value
             .filter { activeId ->
@@ -116,6 +126,8 @@ class RemoteRepository @Inject constructor(
                 if (mountId in activeEngineIds.value) break
                 val result = connectMount(mountId)
                 if (result.isSuccess) break
+                // 作废不是失败：工作区已切走时不要按退避去重试一个不该连的挂载。
+                if (result.exceptionOrNull() is MountConnectCancelledException) break
                 FileLogger.w(TAG, "自动连接挂载 ${mount.localMountPath} 失败: ${result.exceptionOrNull()?.message}，${backoffMs / 1000}s 后重试")
                 delay(backoffMs)
                 backoffMs = (backoffMs * 2).coerceAtMost(5 * 60_000L)
@@ -190,10 +202,10 @@ class RemoteRepository @Inject constructor(
     suspend fun deleteConnection(id: String) {
         val entity = dao.getConnectionById(id)
         if (entity != null) {
-            // Associated mounts will cascade delete in DB, but we should disconnect them
-            val mounts = dao.getMountsByConnectionId(id)
-            // Just disconnect everything from memory to be safe, cascading handles DB
-            activeEngines.keys.forEach { mountId -> disconnectMount(mountId) }
+            // 关联挂载在 DB 里会级联删除，但需先断开内存中的同步引擎。
+            // 只能断这条连接下的挂载：遍历全部 activeEngines 会把其它连接的挂载一起断开，
+            // 而且是在遍历 map 的同时改它。
+            dao.getMountsByConnectionId(id).first().forEach { disconnectMount(it.id) }
             dao.deleteConnection(entity)
         }
     }
@@ -238,7 +250,12 @@ class RemoteRepository @Inject constructor(
     }
 
     suspend fun connectMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        // 建连是长耗时的网络动作，期间用户可能切走了工作区，也可能又发起了一次连接或手动断开。
+        // 「尝试令牌 + 工作区快照」就是回来时判定这次尝试是否已作废的依据。
+        val attempt = beginConnectAttempt(mountId)
+        val workspaceSnapshot = workspaceRepository.currentPath()
         var client: RemoteSyncClient? = null
+        var published = false
         try {
             // 已存在旧连接时先清理，避免重复/并发连接泄漏 engine
             activeEngines[mountId]?.shutdown()
@@ -260,7 +277,18 @@ class RemoteRepository @Inject constructor(
             val auth = resolveAuth(connEntity)
 
             client.connect(conn.host, conn.port, conn.username, auth)
-            
+
+            // 建连期间工作区被切走，或这个挂载已有更新的尝试：这条连接不属于任何要展示的挂载。
+            // 既不能发布（发布后没谁会再来断开它，在服务器上就是一条没人回收的会话），
+            // 也不能当成一次普通连接失败——用户什么都没做错。
+            if (!isAttemptCurrent(mountId, attempt) ||
+                workspaceRepository.currentPath() != workspaceSnapshot
+            ) {
+                abortConnectAttempt(mountId, false, client)
+                FileLogger.i(TAG, "挂载连接已作废（工作区已切换或有更新的尝试）: $mountId")
+                return@withContext Result.failure(MountConnectCancelledException(mountId))
+            }
+
             val engine = SyncEngine(
                 mount = mount, 
                 connection = conn, 
@@ -274,19 +302,55 @@ class RemoteRepository @Inject constructor(
             // 移除默认的全量下载以免覆盖本地修改，交由用户手动点击同步
 
             activeEngines[mountId] = engine
+            published = true
             activeEngineIds.update { it + mountId }
             startLocalWatching(mountId, mount, engine)
             startStateWatch(mountId, engine)
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            // 取消必须原样透传：吞成 Result.failure 会让调用方把「协程被取消」当成一次普通的连接失败。
+            abortConnectAttempt(mountId, published, client)
+            throw e
         } catch (e: Exception) {
-            // 客户端内部失败时未必来得及关掉已建立的连接（如 SFTP 认证失败时字段未赋值），此处兜底关闭
-            runCatching { client?.disconnect() }
+            abortConnectAttempt(mountId, published, client)
             // 挂载连接不弹确认：提示用户先去连接配置页测试连通性完成确认
             val pending = hostKeyVerifier.consumePending()
             if (pending != null) {
                 Result.failure(Exception("主机密钥未确认，请先在「连接配置」页测试连通性完成确认"))
             } else {
                 Result.failure(Exception(friendlySshError(e), e))
+            }
+        }
+    }
+
+    /** 登记一次新的连接尝试并返回它的令牌（同一挂载的旧令牌随之作废）。 */
+    private fun beginConnectAttempt(mountId: String): Long {
+        val token = attemptSeq.incrementAndGet()
+        connectAttempts[mountId] = token
+        return token
+    }
+
+    /** 该令牌是否仍是这个挂载最新的一次尝试（断开/切走工作区会把它移除）。 */
+    private fun isAttemptCurrent(mountId: String, token: Long): Boolean =
+        connectAttempts[mountId] == token
+
+    /**
+     * 失败/被取消时的收尾：已发布的 engine 摘掉并连 client 一起断，没发布出去的 client 直接关。
+     * 清理放在 [NonCancellable] 里——协程已取消时 withContext 会立刻抛，连接就漏在服务器上了。
+     */
+    private suspend fun abortConnectAttempt(
+        mountId: String,
+        enginePublished: Boolean,
+        client: RemoteSyncClient?
+    ) {
+        withContext(NonCancellable) {
+            if (enginePublished) {
+                watchJobs.remove(mountId)?.cancel()
+                stopStateWatch(mountId)
+                activeEngines.remove(mountId)?.let { runCatching { it.shutdown() } }
+                activeEngineIds.update { it - mountId }
+            } else if (client != null) {
+                runCatching { client.disconnect() }
             }
         }
     }
@@ -315,6 +379,8 @@ class RemoteRepository @Inject constructor(
     }
 
     suspend fun disconnectMount(mountId: String) {
+        // 先作废在途的连接尝试：否则它连上后会把刚断开的挂载重新发布成激活状态。
+        connectAttempts.remove(mountId)
         autoConnectJobs[mountId]?.cancel()
         autoConnectJobs.remove(mountId)
         watchJobs.remove(mountId)?.cancel()
@@ -472,3 +538,9 @@ class HostKeyConfirmationRequiredException(
     val fingerprint: String,
     val changed: Boolean
 ) : Exception("SSH 主机密钥需要确认: $host:$port")
+
+/**
+ * 连接尝试在建立过程中被作废（连接期间切走了工作区 / 已发起新的尝试 / 用户断开）。
+ * 这不是连接失败，调用方应静默丢弃，不要弹错误提示。
+ */
+class MountConnectCancelledException(val mountId: String) : Exception("挂载连接已取消: $mountId")

@@ -57,7 +57,7 @@ fun mergeModelMetadata(
     base: ModelMetadata?,
     custom: ModelMetadata?
 ): ModelMetadata {
-    val a = base ?: ModelMetadata(
+    val a = base?.copy(id = model) ?: ModelMetadata(
         id = model,
         displayName = model,
         contextTokens = 0,

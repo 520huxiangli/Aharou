@@ -66,6 +66,10 @@ private val PENDING_LINE = Regex("(?im)^pending:\\s*true\\s*\$")
  * @param conflicts 本轮两侧都改过、已按「保留本机 + 归档远端 + 新条目标待确认」处理的条目数。
  * @param pendingDeletions 上次提交里存在、本次远端与本机都不存在的条目（仓库相对路径），
  *   疑似在其他设备被删除；**仅报告，不执行任何删除**，删不删由用户决定。
+ * @param collectedFiles 本轮实际写盘的文件（仓库相对路径，新增与更新合并），供 `memory sync` 列出明细。
+ * @param unchangedSkipped 收集时内容与本机相同、因此未写盘的条目数。
+ * @param localKept 分发时因本机改过而按规则保留本机版本、没拿仓库版本覆盖的条目数。
+ * @param failedWrites 写盘失败项（「仓库相对路径：原因」），收集与分发两阶段合并。
  */
 data class MemorySyncOutcome(
     val success: Boolean,
@@ -73,6 +77,10 @@ data class MemorySyncOutcome(
     val collected: Int = 0,
     val conflicts: Int = 0,
     val pendingDeletions: List<String> = emptyList(),
+    val collectedFiles: List<String> = emptyList(),
+    val unchangedSkipped: Int = 0,
+    val localKept: Int = 0,
+    val failedWrites: List<String> = emptyList(),
 )
 
 /**
@@ -138,7 +146,10 @@ class MemorySyncManager @Inject constructor(
             val basePaths = repoPathsUnder(repoDir, GLOBAL_DIR) + repoPathsUnder(repoDir, PROJECTS_DIR)
             val localPaths = mutableSetOf<String>()
             val locallyModified = mutableSetOf<String>()
-            val collected = collect(repoDir, localPaths, locallyModified)
+            val collectDetail = collect(repoDir, localPaths, locallyModified)
+            var distributeDetail = DistributeDetail()
+            val collectedCount = collectDetail.copied.size
+
 
             // 本机删掉的条目要同步成仓库里的删除。否则：collect 只收「本机存在」的文件，
             // 仓库里那份一直留着 → addAndCommit 把它当原样提交 → distribute 又照仓库把它写回本机，
@@ -158,7 +169,7 @@ class MemorySyncManager @Inject constructor(
             val ls = run("git ls-remote --heads origin ${quote("refs/heads/$branch")}")
             if (ls.exitCode != 0) {
                 val reason = ls.output.trim().takeLast(400).ifBlank { "git 退出码 ${ls.exitCode}" }
-                return finish(MemorySyncOutcome(false, "无法访问远端仓库：$reason", collected))
+                return finish(outcomeOf(false, "无法访问远端仓库：$reason", collectDetail, distributeDetail))
             }
             val remoteRef = ls.output.lineSequence()
                 .map { it.trim() }
@@ -173,7 +184,7 @@ class MemorySyncManager @Inject constructor(
                 val fetch = run("git fetch --quiet origin ${quote(branch)}")
                 if (fetch.exitCode != 0) {
                     val reason = fetch.output.trim().takeLast(400).ifBlank { "git 退出码 ${fetch.exitCode}" }
-                    return finish(MemorySyncOutcome(false, "拉取远端失败：$reason", collected))
+                    return finish(outcomeOf(false, "拉取远端失败：$reason", collectDetail, distributeDetail))
                 }
                 remotePaths = readRemotePaths(remoteRef)
                 // 把本地提交重放到远端最新提交之上：rebase 的三方基正是「上次与远端共享的提交」，
@@ -185,36 +196,60 @@ class MemorySyncManager @Inject constructor(
                     if (conflictedPaths().isEmpty() && !rebaseInProgress(repoDir)) {
                         // 不是冲突能解释的失败（无共同祖先、工作树不干净、网络等）：干净中止并回报。
                         val reason = rebase.output.trim().takeLast(400).ifBlank { "git 退出码 ${rebase.exitCode}" }
-                        return finish(MemorySyncOutcome(false, "拉取失败：$reason", collected))
+                        return finish(outcomeOf(false, "拉取失败：$reason", collectDetail, distributeDetail))
                     }
                     val resolution = resolveRebaseConflicts(repoDir, locallyModified)
                     conflicts = resolution.conflicts
                     val failure = resolution.failure
                     if (failure != null) {
-                        return finish(MemorySyncOutcome(false, failure, collected, conflicts))
+                        return finish(outcomeOf(false, failure, collectDetail, distributeDetail, conflicts))
                     }
                 }
             }
 
             // 冲突归档与 rebase 结束后的收尾是在上一步之后写进工作树的，单独补一次提交。
             addAndCommit()
-            val restored = distribute(repoDir, locallyModified)
+            distributeDetail = distribute(repoDir, locallyModified)
+            val restored = distributeDetail.restored
             val push = run("git push -u origin ${quote(branch)}")
             if (push.exitCode != 0) {
                 val reason = push.output.trim().takeLast(400).ifBlank { "git 退出码 ${push.exitCode}" }
-                return finish(MemorySyncOutcome(false, "推送失败：$reason", collected, conflicts))
+                return finish(outcomeOf(false, "推送失败：$reason", collectDetail, distributeDetail, conflicts))
             }
             // 删除同步：本机真实删除的条目已在 collect 之后从仓库移除（见 deletedLocally）；
             // 这里只报告「base 有、本机与远端都没了」的条目，那是别的设备的删除，本机不跟随。
             val pending = if (remoteRef != null) pendingDeletions(basePaths, localPaths, remotePaths) else emptyList()
-            val message = successMessage(collected, restored, conflicts, pending.size)
-            finish(MemorySyncOutcome(true, message, collected, conflicts, pending))
+            val message = successMessage(collectedCount, restored, conflicts, pending.size)
+            finish(outcomeOf(true, message, collectDetail, distributeDetail, conflicts, pending))
         } catch (e: Exception) {
             FileLogger.w(TAG, "记忆同步失败: ${e.message}", e)
             val reason = e.message.orEmpty().take(400).ifBlank { "同步失败" }
             finish(MemorySyncOutcome(false, reason))
         }
     }
+
+    /**
+     * 把收集/补回明细一并带进结果：失败分支同样要能说出「收到了哪些、哪里写失败」。
+     * 集中一处构造，免得新增明细字段时哪个分支漏了。
+     */
+    private fun outcomeOf(
+        success: Boolean,
+        message: String,
+        collectDetail: CollectDetail,
+        distributeDetail: DistributeDetail,
+        conflicts: Int = 0,
+        pending: List<String> = emptyList(),
+    ): MemorySyncOutcome = MemorySyncOutcome(
+        success = success,
+        message = message,
+        collected = collectDetail.copied.size,
+        conflicts = conflicts,
+        pendingDeletions = pending,
+        collectedFiles = collectDetail.copied,
+        unchangedSkipped = collectDetail.unchanged,
+        localKept = distributeDetail.localKept,
+        failedWrites = collectDetail.failed + distributeDetail.failed,
+    )
 
     /** 统一收尾：把结果落到设置里（供界面回显），成功才更新 lastSyncAt。 */
     private fun finish(outcome: MemorySyncOutcome): MemorySyncOutcome {
@@ -256,57 +291,91 @@ class MemorySyncManager @Inject constructor(
     }
 
     /**
-     * 收集：把各来源的记忆拷进仓库工作树，返回本轮实际写盘（新增或内容更新）的文件数。
+     * 收集：把各来源的记忆拷进仓库工作树。
      *
      * 只覆盖内容不同的同名文件、不清理仓库里已有的内容——别的设备推上来的项目目录得留着。
      * 同时回填两组仓库相对路径：所有本地条目的 [localPaths]，以及本机改动过的 [locallyModified]
      * （后者决定分发时哪些本地文件绝不被仓库版本覆盖）。
      */
-    private fun collect(repoDir: File, localPaths: MutableSet<String>, locallyModified: MutableSet<String>): Int {
-        var copied = 0
+    private fun collect(
+        repoDir: File,
+        localPaths: MutableSet<String>,
+        locallyModified: MutableSet<String>,
+    ): CollectDetail {
+        val copied = mutableListOf<String>()
+        var unchanged = 0
+        val failed = mutableListOf<String>()
         localRoots().forEach { root ->
             walkFiles(root.dir) { src, relWithin ->
                 val rel = "${root.repoPrefix}/$relWithin"
                 localPaths += rel
                 val target = File(repoDir, rel)
                 // 跳过判据只看内容：长度相同不代表内容相同，mtime 跨设备、拷来拷去都不可信。
-                if (sameContent(target, src)) return@walkFiles
+                if (sameContent(target, src)) {
+                    unchanged++
+                    return@walkFiles
+                }
                 runCatching {
                     target.parentFile?.mkdirs()
                     src.copyTo(target, overwrite = true)
                     locallyModified += rel
-                    copied++
-                }.onFailure { FileLogger.w(TAG, "拷贝失败: ${src.absolutePath}", it) }
+                    copied += rel
+                }.onFailure {
+                    failed += "$rel：${it.message ?: it.javaClass.simpleName}"
+                    FileLogger.w(TAG, "拷贝失败: ${src.absolutePath}", it)
+                }
             }
         }
-        FileLogger.i(TAG, "收集完成：$copied 个文件")
-        return copied
+        FileLogger.i(TAG, "收集完成：${copied.size} 个文件（内容未变跳过 $unchanged 个）")
+        return CollectDetail(copied, unchanged, failed)
     }
 
     /**
-     * 分发：把仓库里的最新内容带回本机，返回实际写盘（补回或更新）的条数。
+     * 分发：把仓库里的最新内容带回本机，返回补回明细。
      *
      * 只动**本机没改过**的条目（[locallyModified] 之外）：本机改过的一律保留，冲突条目也在其中。
      * 于是「远端改了、本机没改」会更新本机；「双方都改」保持本机不变（远端版本已在 archive/）。
      */
-    private fun distribute(repoDir: File, locallyModified: Set<String>): Int {
+    private fun distribute(repoDir: File, locallyModified: Set<String>): DistributeDetail {
         var restored = 0
+        var localKept = 0
+        val failed = mutableListOf<String>()
         localRoots().forEach { root ->
             val repoRoot = File(repoDir, root.repoPrefix)
             walkFiles(repoRoot) { repoFile, relWithin ->
                 val rel = "${root.repoPrefix}/$relWithin"
-                if (rel in locallyModified) return@walkFiles
+                if (rel in locallyModified) {
+                    localKept++
+                    return@walkFiles
+                }
                 val target = File(root.dir, relWithin)
                 if (sameContent(target, repoFile)) return@walkFiles
                 runCatching {
                     target.parentFile?.mkdirs()
                     repoFile.copyTo(target, overwrite = true)
                     restored++
-                }.onFailure { FileLogger.w(TAG, "补回失败: ${target.absolutePath}", it) }
+                }.onFailure {
+                    failed += "$rel：${it.message ?: it.javaClass.simpleName}"
+                    FileLogger.w(TAG, "补回失败: ${target.absolutePath}", it)
+                }
             }
         }
-        return restored
+        return DistributeDetail(restored, localKept, failed)
     }
+
+    /** collect 的明细：[copied] 实际写盘的文件（仓库相对路径），[unchanged] 内容未变跳过数，[failed] 写盘失败项。 */
+    private data class CollectDetail(
+        val copied: List<String> = emptyList(),
+        val unchanged: Int = 0,
+        val failed: List<String> = emptyList(),
+    )
+
+    /** distribute 的明细：[restored] 补回本机的条目数，[localKept] 本机改过而保留本机版本数，[failed] 补回失败项。 */
+    private data class DistributeDetail(
+        val restored: Int = 0,
+        val localKept: Int = 0,
+        val failed: List<String> = emptyList(),
+    )
 
     /**
      * 处理 rebase 冲突：**保留本机版本、把远端版本另存进该条目的 `archive/`**，直到 rebase 结束。

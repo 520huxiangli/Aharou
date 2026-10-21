@@ -76,5 +76,8 @@ jobs:
           mkdir -p data
           cp "$RUNNER_TEMP/models.json" data/models.json
           git add data/models.json
+          # data 分支也带上 vercel.json：Vercel 监听 docs-site，而 orphan 分支里缺这个文件时
+          # 读不到 git.deploymentEnabled=false，每次推送都会起一次秒失败的部署（失败通知天天响）。
+          if [ -f docs-site/vercel.json ]; then git add -f docs-site/vercel.json; fi
           git commit -m "chore(data): 同步 models.dev 完整元数据"
           git push -f origin HEAD:data
