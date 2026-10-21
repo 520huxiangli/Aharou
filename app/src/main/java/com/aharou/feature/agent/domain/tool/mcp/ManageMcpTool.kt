@@ -153,8 +153,9 @@ class ManageMcpTool @Inject constructor(
                     val entries = mcpConfigRepository.getEffectiveEntriesFor(effectiveWs)
                     val config = mcpConfigRepository.serialize(entries.map { it.server })
                     val origin = entries.joinToString("；") { entry ->
-                        "${entry.server.name}=" + if (entry.scope == McpScope.PROJECT) "项目" else "全局" +
-                            (if (entry.server.keepAlive) "（保活）" else "")
+                        val scopeLabel = if (entry.scope == McpScope.PROJECT) "项目" else "全局"
+                        val keepAliveLabel = if (entry.server.keepAlive) "（保活）" else ""
+                        "${entry.server.name}=$scopeLabel$keepAliveLabel"
                     }
                     val live = mcpManager.get().statusesFor(effectiveWs).joinToString("；") { s ->
                         val err = s.error?.takeIf { it.isNotBlank() }?.let { "——$it" }.orEmpty()

@@ -341,12 +341,11 @@ class McpConfigRepository @Inject constructor(
         getEffectiveEntriesFor(workspacePath).map { it.server }
 
     suspend fun getEffectiveEntriesFor(workspacePath: String): List<McpServerEntry> {
-        ensureGlobalLoaded()
-        ensureProjectLoaded(workspacePath)
-        return merge(
-            parse(globalState.value ?: DEFAULT_JSON),
-            parse(getProjectState(workspacePath).value ?: DEFAULT_JSON)
-        )
+        // 直接读磁盘：调用方问的是「文件里现在有什么」。内存快照靠文件监听刷新，
+        // 监听未触发时会落后于外部编辑（实测过：磁盘删了两项，list 仍显示五项）。
+        val global = withContext(Dispatchers.IO) { load(globalFile) }
+        val project = withContext(Dispatchers.IO) { load(projectFileForPath(workspacePath)) }
+        return merge(parse(global), parse(project))
     }
 
     /** 当前项目生效的合并条目（含来源作用域），供设置页列表标注使用。 */
