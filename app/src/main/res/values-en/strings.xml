@@ -2798,6 +2798,7 @@
     <string name="account_avatar_error_unreadable">Could not read that image, try another one</string>
     <string name="account_avatar_error_too_large">Image is too large, try a smaller one</string>
     <string name="settings_telegram_bot">Telegram bot</string>
+    <string name="im_attachment_only_hint">(The user sent an attachment without any text.)</string>
     <string name="im_pairing_prompt">This chat is not paired with Aharou yet. Pairing code: %1$s\nApprove it in the app under Settings → %2$s. The code is good for 10 minutes.</string>
     <string name="im_telegram_tool_running">Using %1$s…</string>
     <string name="im_telegram_error">Error: %1$s</string>

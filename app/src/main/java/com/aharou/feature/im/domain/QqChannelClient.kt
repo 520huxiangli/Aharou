@@ -36,9 +36,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.MultipartBody
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -47,7 +44,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
 /** QQ 开放平台返回的业务错误。 */
-class QqApiException(message: String) : RuntimeException(message)
+class QqApiException(message: String, val code: Long = 0L) : RuntimeException(message)
 
 /**
  * QQ 机器人通道（QQ 开放平台 / `q.qq.com`）。
@@ -367,6 +364,7 @@ class QqChannelClient @Inject constructor(
             ?: return dropEvent("缺少 author.openid（t=$type）")
         val text = d["content"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         // 附件：QQ 给的是直链 + 元信息（content_type / filename / size）
+        val rawAttachments = (d["attachments"] as? kotlinx.serialization.json.JsonArray)?.size ?: 0
         val attachments = (d["attachments"] as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { it as? JsonObject }
             ?.mapNotNull { att ->
@@ -388,6 +386,10 @@ class QqChannelClient @Inject constructor(
                 )
             }
             .orEmpty()
+        // 有附件字段却取不到直链时，这里能直接看出来（而不是只看到「空消息」）
+        if (rawAttachments > 0) {
+            FileLogger.i(TAG, "事件附件 $rawAttachments 个，可直接下载 ${attachments.size} 个（t=$type）")
+        }
         // 纯图片/文件也是有效消息
         if (text.isBlank() && attachments.isEmpty()) {
             return dropEvent("非文本且无附件（t=$type）")
@@ -461,9 +463,11 @@ class QqChannelClient @Inject constructor(
     }
 
     /**
-     * 发媒体。QQ 走富媒体接口 `/v2/{groups|users}/{openid}/files`，multipart 上传。
+     * 发媒体。
      *
-     * `file_type`：1 图片、2 视频、3 语音、4 文件；`srv_send_msg=true` 表示直接发出去。
+     * QQ 的上传接口只支持 url / file_data(≤5MB) / 分片 upload_id，没有 multipart 文件字段，
+     * 因此统一走官方分片上传：upload_prepare → 分片 PUT → upload_part_finish → files 合并，
+     * 拿到 file_info 后再以 msg_type=7 发消息。
      */
     override suspend fun sendMedia(
         cfg: ImChannelConfig,
@@ -475,33 +479,177 @@ class QqChannelClient @Inject constructor(
         val c = cfg.requireQq()
         val token = runCatching { accessToken(c) }.getOrNull() ?: return null
         val (kindStr, target) = splitChatId(chatId)
-        val path = if (kindStr == "group") "/v2/groups/$target/files" else "/v2/users/$target/files"
+        val scope = if (kindStr == "group") "groups" else "users"
         val fileType = when (kind) {
             ImAttachment.Kind.IMAGE -> 1
             ImAttachment.Kind.VIDEO -> 2
             ImAttachment.Kind.AUDIO -> 3
             ImAttachment.Kind.FILE -> 4
         }
-        val form = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("file_type", fileType.toString())
-            .addFormDataPart("srv_send_msg", "true")
-            .addFormDataPart("file", file.name, file.asRequestBody("application/octet-stream".toMediaTypeOrNull()))
-            .build()
-        val request = Request.Builder()
-            .url(urlFor(c, path))
-            .header("Authorization", "QQBot $token")
-            .post(form)
-            .build()
+        if (caption.isNotBlank()) {
+            // 富媒体消息带正文时部分客户端不展示说明文字，单独发一条更稳
+            runCatching { send(cfg, chatId, caption) }
+        }
         return withContext(Dispatchers.IO) {
             runCatching {
-                clientFor(c).newCall(request).execute().use { resp ->
-                    val raw = resp.body?.string().orEmpty()
-                    val root = json.parseToJsonElement(raw) as? JsonObject ?: return@use null
-                    root["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val fileInfo = uploadMedia(c, token, scope, target, file, fileType)
+                val ref = lastInbound?.takeIf { it.chatId == chatId && !it.expired() && it.remaining() > 0 }
+                val body = buildJsonObject {
+                    if (ref != null) {
+                        put("msg_id", ref.msgId)
+                        put("msg_seq", ref.nextSeq())
+                    }
+                    put("msg_type", 7)
+                    put("media", buildJsonObject { put("file_info", fileInfo) })
                 }
+                apiPost(c, token, "/v2/$scope/$target/messages", body)
+                    .get("id")?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                FileLogger.w(TAG, "发送媒体失败：${redact(e.message.orEmpty(), c)}")
             }.getOrNull()
         }
+    }
+
+    /**
+     * 分片上传，返回 file_info；小文件同样走这条（官方没有整文件 multipart 上传）。
+     *
+     * 平台对图片编码挑剔，同一张 jpg 可能返回 850019；此时先转 PNG 重试，
+     * 仍不行就降级成普通文件——宁可发文件卡片，也不能静默发不出去。
+     */
+    private suspend fun uploadMedia(
+        cfg: QqConfig,
+        token: String,
+        scope: String,
+        target: String,
+        file: File,
+        fileType: Int
+    ): String {
+        return try {
+            uploadMediaOnce(cfg, token, scope, target, file, fileType)
+        } catch (e: QqApiException) {
+            if (fileType != 1 || e.code != CODE_FORMAT_UNSUPPORTED) throw e
+            val png = transcodeToPng(file)
+            if (png != null) {
+                val info = runCatching { uploadMediaOnce(cfg, token, scope, target, png, 1) }.getOrNull()
+                png.delete()
+                if (info != null) return info
+            }
+            FileLogger.w(TAG, "图片格式被平台拒绝（${e.message}），降级为文件发送：${file.name}")
+            uploadMediaOnce(cfg, token, scope, target, file, 4)
+        }
+    }
+
+    private suspend fun uploadMediaOnce(
+        cfg: QqConfig,
+        token: String,
+        scope: String,
+        target: String,
+        file: File,
+        fileType: Int
+    ): String {
+        val prepared = apiPost(
+            cfg,
+            token,
+            "/v2/$scope/$target/upload_prepare",
+            buildJsonObject {
+                put("file_type", fileType)
+                put("file_size", file.length().toString())
+                put("file_name", file.name)
+                put("md5", digestHex(file, "MD5"))
+                put("sha1", digestHex(file, "SHA-1"))
+                put("md5_10m", digestHex(file, "MD5", MD5_10M))
+            }
+        )
+        val uploadId = prepared["upload_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        if (uploadId.isBlank()) throw QqApiException("预上传未返回 upload_id")
+        val parts = prepared["parts"] as? kotlinx.serialization.json.JsonArray
+            ?: throw QqApiException("预上传未返回分片列表")
+        val defaultBlock = prepared["block_size"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        var offset = 0L
+        parts.mapNotNull { it as? JsonObject }
+            .sortedBy { it["index"]?.jsonPrimitive?.intOrNull ?: Int.MAX_VALUE }
+            .forEach { part ->
+                val index = part["index"]?.jsonPrimitive?.intOrNull ?: return@forEach
+                val url = part["presigned_url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                if (url.isBlank()) throw QqApiException("分片 $index 缺少预签名地址")
+                val blockSize = part["block_size"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                    ?: defaultBlock
+                    ?: (file.length() - offset)
+                val length = minOf(blockSize, file.length() - offset).toInt()
+                if (length <= 0) return@forEach
+                val chunkMd5 = putChunk(file, offset, length, url)
+                apiPost(
+                    cfg,
+                    token,
+                    "/v2/$scope/$target/upload_part_finish",
+                    buildJsonObject {
+                        put("upload_id", uploadId)
+                        put("part_index", index)
+                        put("block_size", blockSize.toString())
+                        put("md5", chunkMd5)
+                    }
+                )
+                offset += length
+            }
+        val merged = apiPost(
+            cfg,
+            token,
+            "/v2/$scope/$target/files",
+            buildJsonObject {
+                put("file_type", fileType)
+                put("file_name", file.name)
+                put("upload_id", uploadId)
+                put("srv_send_msg", false)
+            }
+        )
+        return merged["file_info"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: throw QqApiException("上传合并未返回 file_info")
+    }
+
+    /** 把图片重新编码成 PNG：部分 jpg 的编码/EXIF 不被 QQ 接受，重编码后能正常当图片发。 */
+    private fun transcodeToPng(file: File): File? = runCatching {
+        val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return null
+        val target = File(context.cacheDir, "qq_upload_${System.currentTimeMillis()}.png")
+        target.outputStream().use { out ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        }
+        bitmap.recycle()
+        target
+    }.getOrNull()
+
+    /** 把 [length] 字节从 [offset] 处 PUT 到预签名地址，返回该分片 MD5。 */
+    private fun putChunk(file: File, offset: Long, length: Int, url: String): String {
+        val bytes = ByteArray(length)
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            raf.seek(offset)
+            raf.readFully(bytes)
+        }
+        val request = Request.Builder()
+            .url(url)
+            .put(bytes.toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        baseClient.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) throw QqApiException("分片上传失败：HTTP ${resp.code}")
+        }
+        return java.security.MessageDigest.getInstance("MD5").digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /** 计算文件摘要；[limit] 用于 md5_10m（前 [MD5_10M] 字节）。 */
+    private fun digestHex(file: File, algorithm: String, limit: Long = Long.MAX_VALUE): String {
+        val digest = java.security.MessageDigest.getInstance(algorithm)
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            var remaining = limit
+            while (remaining > 0) {
+                val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+                remaining -= read
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     // ── HTTP ───────────────────────────────────────────────
@@ -556,7 +704,7 @@ class QqChannelClient @Inject constructor(
             val code = root["code"]?.jsonPrimitive?.longOrNull ?: 0L
             if (code != 0L) {
                 val msg = root["message"]?.jsonPrimitive?.contentOrNull ?: "code=$code"
-                throw QqApiException(redact(msg, cfg))
+                throw QqApiException(redact(msg, cfg), code)
             }
             root
         }
@@ -616,6 +764,12 @@ class QqChannelClient @Inject constructor(
         /** 被动回复凭据有效期与次数上限（平台限制）。 */
         private const val PASSIVE_TTL_MS = 5 * 60 * 1000L
         private const val MAX_PASSIVE_REPLIES = 5
+
+        /** 富媒体预上传要求单独提供前 10002432 字节的 MD5。 */
+        private const val MD5_10M = 10_002_432L
+
+        /** 平台认为图片格式不支持时的错误码，可降级为普通文件。 */
+        private const val CODE_FORMAT_UNSUPPORTED = 850019L
 
         /**
          * 订阅的 intents 位：只需要 GROUP_AND_C2C_EVENT（1<<25）。

@@ -146,7 +146,7 @@ class ImBotBridge (
         if (!file.exists() || !file.isFile) return false
         val cfg = settings.currentConfig()
         if (!cfg.enabled || !cfg.ready) return false
-        return runCatching { channel.sendMedia(cfg, chatId, file, kind, caption) }.getOrNull() != null
+        return runCatching { channel.sendMedia(cfg, chatId, file, kind, caption) }.getOrNull()?.isNotBlank() == true
     }
 
     /** 重新拉一次本渠道的已配对名单（approve/deny/remove 后调）。 */
@@ -221,19 +221,23 @@ class ImBotBridge (
                 return
             }
             val text = stripMention(msg.text)
-            if (text.isBlank()) {
-                FileLogger.d(TAG, "[$channelId] 消息正文为空（附件 ${msg.attachments.size} 个），忽略")
+            // 只发图片/文件、不带文字也是有效消息：补一句占位提示再交给 agent，
+            // 否则纯附件消息会被当成空消息丢掉
+            val attachmentOnly = text.isBlank() && msg.attachments.isNotEmpty()
+            if (text.isBlank() && !attachmentOnly) {
+                FileLogger.d(TAG, "[$channelId] 消息正文为空且无附件，忽略")
                 return
             }
+            val prompt = if (attachmentOnly) imText("im_attachment_only_hint") else text
             FileLogger.d(
                 TAG,
-                "[$channelId] 处理消息 chat=${msg.chatId} 长度=${text.length} 附件=${msg.attachments.size}"
+                "[$channelId] 处理消息 chat=${msg.chatId} 长度=${prompt.length} 附件=${msg.attachments.size}"
             )
             // 记下最近活跃聊天，sendFile 这类无 chatId 的调用要靠它
             lastActiveChat = msg.chatId
             // 无按钮平台的审批回复：先当审批处理，不是审批词再走正常对话
-            if (consumeApprovalReply(msg.chatId, text)) return
-            runTurn(cfg, msg.chatId, text, msg.attachments)
+            if (!attachmentOnly && consumeApprovalReply(msg.chatId, text)) return
+            runTurn(cfg, msg.chatId, prompt, msg.attachments)
         }.onFailure { e ->
             if (e is CancellationException) throw e
             FileLogger.w(TAG, "[$channelId] 处理消息失败：${channel.redact(e.message.orEmpty(), cfg)}")
@@ -342,7 +346,11 @@ class ImBotBridge (
         if (attachments.isEmpty()) return emptyList()
         val dir = File(context.filesDir, "aharou/im_files").apply { mkdirs() }
         return attachments.mapNotNull { att ->
-            val file = runCatching { channel.downloadAttachment(cfg, att) }.getOrNull() ?: return@mapNotNull null
+            val file = runCatching { channel.downloadAttachment(cfg, att) }.getOrNull()
+            if (file == null) {
+                FileLogger.w(TAG, "[$channelId] 附件下载失败：${att.fileName.ifBlank { att.mimeType }}")
+                return@mapNotNull null
+            }
             val name = att.fileName.ifBlank { file.name }
             val target = File(dir, "${System.currentTimeMillis()}-$name")
             val moved = runCatching {

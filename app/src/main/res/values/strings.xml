@@ -2797,6 +2797,7 @@
     <string name="account_avatar_error_unreadable">这张图读不出来，换一张试试</string>
     <string name="account_avatar_error_too_large">图片太大了，换张小一点的</string>
     <string name="settings_telegram_bot">Telegram 机器人</string>
+    <string name="im_attachment_only_hint">（对方发来附件，没有文字说明）</string>
     <string name="im_pairing_prompt">这个聊天还没有和 Aharou 配对。配对码：%1$s\n在 App 的「设置 → %2$s」里通过。10 分钟内有效。</string>
     <string name="im_telegram_tool_running">正在使用 %1$s…</string>
     <string name="im_telegram_error">出错了：%1$s</string>
