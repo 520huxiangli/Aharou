@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import com.aharou.R
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMode
@@ -28,6 +29,7 @@ import com.aharou.feature.remotedevice.server.RemoteMcpServer
 import com.aharou.feature.remotedevice.server.TransferDirection
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.FileAccessProvider
+import com.aharou.feature.workspace.domain.model.Workspace
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.UUID
@@ -156,12 +158,12 @@ class RemoteActionExecutor @Inject constructor(
                 RemoteActionCatalog.ACTION_PUSH_FILE -> RemotePushFileTool { path ->
                     "${RemoteMcpServer.UPLOAD_PATH}/${tickets.issue(resolveTransferPath(path), TransferDirection.UPLOAD).id}"
                 }
-                RemoteActionCatalog.ACTION_SEND_MESSAGE -> RemoteSendMessageTool { text ->
-                    deliverMessage(text, caller)
+                RemoteActionCatalog.ACTION_SEND_MESSAGE -> RemoteSendMessageTool { text, workspace, sessionId ->
+                    deliverMessage(text, workspace, sessionId, caller)
                 }
                 RemoteActionCatalog.ACTION_READ_LOGS -> RemoteReadLogsTool()
-                RemoteActionCatalog.ACTION_ASK_AI -> RemoteAskAiTool { text, timeoutMs ->
-                    askAi(text, timeoutMs, caller)
+                RemoteActionCatalog.ACTION_ASK_AI -> RemoteAskAiTool { text, timeoutMs, workspace, sessionId ->
+                    askAi(text, timeoutMs, workspace, sessionId, caller)
                 }
                 else -> RemoteInfoTool { deviceInfo(caller) }
             }
@@ -243,26 +245,101 @@ class RemoteActionExecutor @Inject constructor(
     // ── 审批 ──────────────────────────────────────────────────────
 
     /**
-     * 把对端的传话投到本机「当前会话」：取该工作区最近更新的会话（服务端看不到 UI 当前的会话，
-     * 最近更新的是最接近的一个）；一个会话都没有时新建。
+     * 一次目标解析的结果：要么给出工作区 + 会话，要么给出错误码与原因。
+     */
+    private class TargetResolution(
+        val workspace: Workspace? = null,
+        val session: ChatSessionEntity? = null,
+        val error: String? = null,
+        val errorCode: String? = null
+    )
+
+    /**
+     * 解析 `workspace` / `session_id` 两个投递目标参数。
+     *
+     * - 工作区按目录名精确匹配；只写不带哈希的部分（如 `小染`）时按前缀匹配，命中多个就报错要求写全名；
+     * - 只给 session_id 时以该会话所属工作区为准，避免「会话在 A 工作区、却按当前工作区找会话」；
+     * - 两者都不给 = 本机当前工作区最近活跃会话（没有则新建），与旧行为一致；
+     * - 找不到目标一律报错，**不静默回退到当前会话**——静默兜底正是「投错地方」的根源。
+     */
+    private suspend fun resolveTarget(workspaceHint: String?, sessionHint: String?): TargetResolution {
+        val all = workspaceRepository.workspaces.value
+        val known = sessionHint?.let { sessions.getSessionById(it) }
+        if (sessionHint != null && known == null) {
+            return TargetResolution(error = "找不到会话「$sessionHint」", errorCode = "SESSION_NOT_FOUND")
+        }
+        val workspace = when {
+            workspaceHint == null && known != null ->
+                all.firstOrNull { it.path == known.workspacePath } ?: workspaceRepository.current.value
+            workspaceHint == null -> workspaceRepository.current.value
+            else -> {
+                val exact = all.firstOrNull { it.name == workspaceHint || it.path == workspaceHint }
+                val matches = if (exact != null) listOf(exact) else all.filter { it.name.startsWith("$workspaceHint-") }
+                when {
+                    matches.size == 1 -> matches.first()
+                    matches.isEmpty() -> return TargetResolution(
+                        error = "找不到工作区「$workspaceHint」；现有：${all.joinToString(" / ") { it.name }}",
+                        errorCode = "WORKSPACE_NOT_FOUND"
+                    )
+                    else -> return TargetResolution(
+                        error = "工作区「$workspaceHint」匹配到多个：${matches.joinToString(" / ") { it.name }}，请写全名",
+                        errorCode = "WORKSPACE_AMBIGUOUS"
+                    )
+                }
+            }
+        } ?: return TargetResolution(
+            error = "本机没有选中的工作区；请先在本机打开一个工作区，或用 workspace 指定",
+            errorCode = "WORKSPACE_NOT_FOUND"
+        )
+        if (!workspace.available) {
+            return TargetResolution(
+                error = "工作区「${workspace.name}」当前不可用（目录被移动或删除）",
+                errorCode = "WORKSPACE_UNAVAILABLE"
+            )
+        }
+        if (known != null && known.workspacePath.isNotBlank() && known.workspacePath != workspace.path) {
+            val owner = all.firstOrNull { it.path == known.workspacePath }?.name ?: known.workspacePath
+            return TargetResolution(
+                error = "会话「${known.id}」属于工作区「$owner」，与指定的「${workspace.name}」不一致",
+                errorCode = "SESSION_WORKSPACE_MISMATCH"
+            )
+        }
+        val session = known ?: sessions.getMostRecentSessionOfWorkspace(workspace.path)
+            ?: sessions.newSessionEntity(workspace.path).also { sessions.upsertSession(it) }
+        return TargetResolution(workspace = workspace, session = session)
+    }
+
+    /**
+     * 把对端的传话投到指定工作区/会话，并回传实际投递到哪。
      *
      * 消息以 assistant 身份落库并标 `isContextExcluded`——它只是「收到一条」，不该混进本机 AI
-     * 的上下文回放，免得模型把自己没说过的话当成自己说过的。返回落库的会话 id。
+     * 的上下文回放，免得模型把自己没说过的话当成自己说过的。
      */
-    private suspend fun deliverMessage(text: String, caller: RemotePairedDevice): String {
-        val workspacePath = workspaceRepository.currentPath()
-        val sessionId = sessions.getMostRecentSessionOfWorkspace(workspacePath)?.id
-            ?: sessions.newSessionEntity(workspacePath).also { sessions.upsertSession(it) }.id
+    private suspend fun deliverMessage(
+        text: String,
+        workspaceHint: String?,
+        sessionHint: String?,
+        caller: RemotePairedDevice
+    ): ToolResult {
+        val target = resolveTarget(workspaceHint, sessionHint)
+        target.error?.let { return ToolResult.Error(it, target.errorCode ?: "TARGET_INVALID") }
+        val workspace = target.workspace ?: return ToolResult.Error("没有可投递的工作区", "WORKSPACE_NOT_FOUND")
+        val session = target.session ?: return ToolResult.Error("没有可投递的会话", "SESSION_NOT_FOUND")
         val from = caller.deviceName.ifBlank { caller.deviceId }
         messages.persist(
-            sessionId = sessionId,
+            sessionId = session.id,
             role = MessageRole.ASSISTANT,
             content = "【来自「$from」的传话】\n$text",
             isContextExcluded = true
         )
-        sessions.touch(sessionId, System.currentTimeMillis())
+        sessions.touch(session.id, System.currentTimeMillis())
         messageNotifier.notify(from, text)
-        return sessionId
+        return ToolResult.Success(buildJsonObject {
+            put("delivered", "ok")
+            put("workspace", workspace.name)
+            put("session_id", session.id)
+            put("session_title", session.title)
+        })
     }
 
     /**
@@ -274,14 +351,24 @@ class RemoteActionExecutor @Inject constructor(
      * 前缀必须写明来源并点明「不是本机用户说的」：远端内容一旦进了上下文就可能左右模型判断，
      * 至少让它知道自己是在替第三方转述，涉及改动文件、执行命令、读敏感内容时该先问过本机用户。
      */
-    private suspend fun askAi(text: String, timeoutMs: Long, caller: RemotePairedDevice): String {
-        val workspacePath = workspaceRepository.currentPath()
-        val sessionId = sessions.getMostRecentSessionOfWorkspace(workspacePath)?.id
-            ?: sessions.newSessionEntity(workspacePath).also { sessions.upsertSession(it) }.id
+    private suspend fun askAi(
+        text: String,
+        timeoutMs: Long,
+        workspaceHint: String?,
+        sessionHint: String?,
+        caller: RemotePairedDevice
+    ): ToolResult {
         if (!settings.current().allowRemoteAskAi) {
-            return "本机没有开放「远端向 AI 提问」——跨设备协作里那个开关默认是关的。" +
-                "可以改用 send_message 把话投给本机用户，或请他到设置里打开这项授权。"
+            return ToolResult.Error(
+                "本机没有开放「远端向 AI 提问」——跨设备协作里那个开关默认是关的。" +
+                    "可以改用 send_message 把话投给本机用户，或请他到设置里打开这项授权。",
+                "REMOTE_ASK_AI_DISABLED"
+            )
         }
+        val target = resolveTarget(workspaceHint, sessionHint)
+        target.error?.let { return ToolResult.Error(it, target.errorCode ?: "TARGET_INVALID") }
+        val workspace = target.workspace ?: return ToolResult.Error("没有可投递的工作区", "WORKSPACE_NOT_FOUND")
+        val session = target.session ?: return ToolResult.Error("没有可投递的会话", "SESSION_NOT_FOUND")
         // 以本机用户的口吻投递：这是开关明确授权的语义——本机用户表态「这些设备可以当我自己来问」。
         // 因此不再加「来自外部设备」的标注（那会让模型一律当不可信输入挡回）。代价写进了设置项描述：
         // 已配对设备能借本机 AI 的手办事；不过工具调用仍走本机权限引擎，该审批的照旧。
@@ -290,7 +377,7 @@ class RemoteActionExecutor @Inject constructor(
         var reply = ""
         val finished = withTimeoutOrNull(timeoutMs) {
             agentTurnRunner.run(
-                AgentTurnRequest(sessionId = sessionId, text = prompt, skipTitleUpdate = true)
+                AgentTurnRequest(sessionId = session.id, text = prompt, skipTitleUpdate = true)
             ).collect { event ->
                 when (event) {
                     is AgentEvent.AssistantText -> reply = event.content
@@ -301,12 +388,18 @@ class RemoteActionExecutor @Inject constructor(
             }
             true
         }
-        sessions.touch(sessionId, System.currentTimeMillis())
-        return when {
+        sessions.touch(session.id, System.currentTimeMillis())
+        val body = when {
             finished == null -> "已投递给本机 AI，但 ${timeoutMs / 1000} 秒内没跑完；回复请到本机会话里看。"
             reply.isBlank() -> "本机 AI 这一轮没有产出文本回复。"
             else -> reply
         }
+        return ToolResult.Success(buildJsonObject {
+            put("reply", body)
+            put("workspace", workspace.name)
+            put("session_id", session.id)
+            put("session_title", session.title)
+        })
     }
 
     /**

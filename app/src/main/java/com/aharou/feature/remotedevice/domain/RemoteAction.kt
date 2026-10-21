@@ -206,16 +206,31 @@ class RemoteActionCatalog @Inject constructor(
         RemoteAction(
             name = ACTION_SEND_MESSAGE,
             kind = RemoteActionKind.MESSAGE,
-            description = "给这台设备的 Aharou 投一条**聊天消息**：直接出现在其当前会话里，并弹一条系统通知" +
-                "（不是写文件——用户打开 App 就能看到）。参数 text 为纯文本正文。",
+            description = "给这台设备的 Aharou 投一条**聊天消息**：直接出现在指定会话里，并弹一条系统通知" +
+                "（不是写文件——用户打开 App 就能看到）。参数 text 为纯文本正文；" +
+                "workspace 指定投给哪个工作区（目录名如 `小染-076a5120`，也可省略哈希只写 `小染`），" +
+                "session_id 指定具体会话；两者都不传则投给本机当前工作区最近活跃的会话。" +
+                "返回里带实际投递到的 workspace 与 session_id，便于核对；目标找不到会直接报错，不会退回当前会话。",
             toolName = null,
-            allowedArgs = setOf("text"),
+            allowedArgs = setOf("text", "workspace", "session_id"),
             inlineParams = mapOf(
                 "text" to ToolParameter(
                     name = "text",
                     type = ParameterType.STRING,
                     description = "消息正文（纯文本，建议一两句话以内）",
                     required = true
+                ),
+                "workspace" to ToolParameter(
+                    name = "workspace",
+                    type = ParameterType.STRING,
+                    description = "目标工作区的目录名（如 `小染-076a5120`；唯一时也可只写 `小染`）；不传=本机当前工作区",
+                    required = false
+                ),
+                "session_id" to ToolParameter(
+                    name = "session_id",
+                    type = ParameterType.STRING,
+                    description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
+                    required = false
                 )
             )
         ),
@@ -257,7 +272,7 @@ class RemoteActionCatalog @Inject constructor(
                 "AI 会当成用户说的来回答。text 为提问正文；timeout_seconds 为最长等待秒数（默认 60，上限 100），" +
                 "超时则返回「已投递，稍后到本机会话里看」。",
             toolName = null,
-            allowedArgs = setOf("text", "timeout_seconds"),
+            allowedArgs = setOf("text", "timeout_seconds", "workspace", "session_id"),
             inlineParams = mapOf(
                 "text" to ToolParameter(
                     name = "text",
@@ -269,6 +284,18 @@ class RemoteActionCatalog @Inject constructor(
                     name = "timeout_seconds",
                     type = ParameterType.INTEGER,
                     description = "最长等待秒数，默认 60，上限 100",
+                    required = false
+                ),
+                "workspace" to ToolParameter(
+                    name = "workspace",
+                    type = ParameterType.STRING,
+                    description = "目标工作区的目录名（如 `小染-076a5120`；唯一时也可只写 `小染`）；不传=本机当前工作区",
+                    required = false
+                ),
+                "session_id" to ToolParameter(
+                    name = "session_id",
+                    type = ParameterType.STRING,
+                    description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
                     required = false
                 )
             )
@@ -424,16 +451,28 @@ class RemotePushFileTool(
  * 与其它动作的区别在于它不碰文件系统——落到的是会话消息与一条系统通知，用户打开 App 就能在聊天里看到。
  */
 class RemoteSendMessageTool(
-    private val deliver: suspend (String) -> String
+    private val deliver: suspend (text: String, workspace: String?, sessionId: String?) -> ToolResult
 ) : AgentTool() {
     override val name = "remote_send_message"
-    override val description = "给本机 Aharou 的当前会话投一条消息（会出现在聊天里并弹通知）"
+    override val description = "给本机 Aharou 指定工作区/会话投一条消息（会出现在聊天里并弹通知）"
     override val parameters: Map<String, ToolParameter> = mapOf(
         "text" to ToolParameter(
             name = "text",
             type = ParameterType.STRING,
             description = "消息正文",
             required = true
+        ),
+        "workspace" to ToolParameter(
+            name = "workspace",
+            type = ParameterType.STRING,
+            description = "目标工作区目录名（如 小染-076a5120，唯一时也可只写 小染）；不传=当前工作区",
+            required = false
+        ),
+        "session_id" to ToolParameter(
+            name = "session_id",
+            type = ParameterType.STRING,
+            description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
+            required = false
         )
     )
     override val permissionPolicy = ToolPermissionPolicy.ASK
@@ -442,7 +481,7 @@ class RemoteSendMessageTool(
     override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
         val text = (args["text"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
         if (text.isEmpty()) return ToolResult.Error("缺少参数: text", "MISSING_TEXT")
-        return ToolResult.Success(buildJsonObject { put("delivered", deliver(text)) })
+        return deliver(text, args.optionalString("workspace"), args.optionalString("session_id"))
     }
 }
 
@@ -513,7 +552,7 @@ class RemoteReadLogsTool : AgentTool() {
  * 这条恰恰相反——它就是要进上下文、要模型回应。两条并存、各管一头，别混。
  */
 class RemoteAskAiTool(
-    private val ask: suspend (String, Long) -> String
+    private val ask: suspend (text: String, timeoutMs: Long, workspace: String?, sessionId: String?) -> ToolResult
 ) : AgentTool() {
     override val name = "remote_ask_ai"
     override val description = "把一段提问发给本机 Aharou 的 AI（进其上下文、跑一轮，并返回回复正文）"
@@ -529,6 +568,18 @@ class RemoteAskAiTool(
             type = ParameterType.INTEGER,
             description = "最长等待秒数，默认 $DEFAULT_SECONDS，上限 $MAX_SECONDS",
             required = false
+        ),
+        "workspace" to ToolParameter(
+            name = "workspace",
+            type = ParameterType.STRING,
+            description = "目标工作区目录名（如 小染-076a5120，唯一时也可只写 小染）；不传=当前工作区",
+            required = false
+        ),
+        "session_id" to ToolParameter(
+            name = "session_id",
+            type = ParameterType.STRING,
+            description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
+            required = false
         )
     )
     override val permissionPolicy = ToolPermissionPolicy.ASK
@@ -539,8 +590,12 @@ class RemoteAskAiTool(
         if (text.isEmpty()) return ToolResult.Error("缺少参数: text", "MISSING_TEXT")
         val seconds = (args["timeout_seconds"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
             ?: DEFAULT_SECONDS
-        val reply = ask(text, seconds.coerceIn(5, MAX_SECONDS) * 1000)
-        return ToolResult.Success(buildJsonObject { put("reply", reply) })
+        return ask(
+            text,
+            seconds.coerceIn(5, MAX_SECONDS) * 1000,
+            args.optionalString("workspace"),
+            args.optionalString("session_id")
+        )
     }
 
     private companion object {
@@ -548,3 +603,7 @@ class RemoteAskAiTool(
         const val MAX_SECONDS = 100L
     }
 }
+
+/** 可选字符串参数：缺省、空白、非字符串都归一成 null。 */
+private fun Map<String, JsonElement>.optionalString(key: String): String? =
+    (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.ifBlank { null }
