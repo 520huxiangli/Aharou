@@ -250,28 +250,6 @@ class ConfigAppFields @Inject constructor(
         )
 
         registry.register(
-            DataStoreIntField(
-                path = "app.goal_max_turns",
-                displayName = "目标最多续跑轮数",
-                description = "一个会话目标最多自动推进多少轮，用完即停。默认 50，最小 1。",
-                flow = generalSettings.goalMaxTurnsFlow,
-                setter = { generalSettings.setGoalMaxTurns(it) },
-                minValue = 1,
-            ),
-        )
-
-        registry.register(
-            DataStoreIntField(
-                path = "app.goal_max_tokens",
-                displayName = "目标 token 预算",
-                description = "目标循环消耗的输入与输出 token 总量上限，用完即停。默认 500000，最小 1000。",
-                flow = generalSettings.goalMaxTokensFlow,
-                setter = { generalSettings.setGoalMaxTokens(it) },
-                minValue = 1_000,
-            ),
-        )
-
-        registry.register(
             DataStoreBoolField(
                 path = "app.disable_safety_interception",
                 displayName = "禁用安全拦截",

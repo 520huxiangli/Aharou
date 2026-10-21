@@ -2,8 +2,6 @@ package com.aharou.feature.agent.presentation
 
 import androidx.compose.runtime.Immutable
 import com.aharou.feature.agent.domain.model.AgentImage
-import com.aharou.feature.agent.domain.model.ChatSession
-import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.agent.presentation.component.ChatRenderItem
 import com.aharou.feature.workspace.domain.FileEntry
@@ -287,28 +285,6 @@ fun CharSequence.hasVisibleContent(): Boolean {
  */
 @Immutable
 data class RunningToolOutput(val messageId: String, val text: String, val toolName: String = "", val toolArgs: String = "")
-
-/**
- * 输入框上方目标卡片的数据：会话语义上的「持续目标」降到 UI 只需要这三项。
- * 由 [sessionGoalUi] 从会话状态派生，没有目标的会话为 null（卡片不占高度）。
- */
-@Immutable
-data class SessionGoalUi(
-    val text: String,
-    val status: GoalStatus,
-    val turnCount: Int
-)
-
-/** 会话状态 → 目标卡片数据；没有目标（或只剩空白）时返回 null。 */
-fun ChatSession?.sessionGoalUi(): SessionGoalUi? {
-    val session = this ?: return null
-    val text = session.goal?.takeIf { it.isNotBlank() } ?: return null
-    return SessionGoalUi(
-        text = text,
-        status = session.goalStatus ?: GoalStatus.ACTIVE,
-        turnCount = session.goalTurnCount
-    )
-}
 
 data class QueuedRequest(
     val id: String,

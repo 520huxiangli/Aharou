@@ -403,7 +403,8 @@ class MemoryTool @Inject constructor(
      */
     private fun inlineBudgetSection(projectRoot: String?): String {
         val report = MemoryPromptRenderer.inlineBudgetReport(
-            memoryRepository.listMemoriesForPrompt(projectRoot)
+            // 统计要看全部候选，不能被注入上限截断：截断后口径会变成「前 60 条里有多少 identity」。
+            memoryRepository.listMemoriesForPrompt(projectRoot, limit = Int.MAX_VALUE)
         )
         return buildString {
             append("\n\n常驻正文预算（identity 类，全局与项目共用一份：单条上限 ${report.singleEntryLimit} 字符、")

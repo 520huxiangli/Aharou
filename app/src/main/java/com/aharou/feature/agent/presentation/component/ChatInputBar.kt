@@ -44,10 +44,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -109,7 +105,6 @@ import com.aharou.feature.voice.presentation.VoiceMicButton
 import com.aharou.feature.agent.domain.command.SlashCommand
 import com.aharou.feature.agent.domain.command.SlashCommandKind
 import com.aharou.feature.agent.domain.model.AgentMode
-import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.domain.permission.PermissionChoice
@@ -118,7 +113,6 @@ import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalRequest
 import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.QueuedRequest
-import com.aharou.feature.agent.presentation.SessionGoalUi
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
@@ -206,11 +200,6 @@ internal fun ChatInputBar(
     todoItems: List<TodoItem> = emptyList(),
     sessionId: String = "",
     onTodoExpandedChange: (Boolean) -> Unit = {},
-    /** 当前会话的持续目标；null 时不渲染目标条、不占高度。 */
-    sessionGoal: SessionGoalUi? = null,
-    /** 目标条上的暂停 / 继续：入参 true 表示暂停。 */
-    onSetGoalPaused: (Boolean) -> Unit = {},
-    onClearGoal: () -> Unit = {},
     forceCollapseDashboard: Boolean = false,
     /** 消息列表正在滚动时内容区淡出到 40%，停止滚动恢复；用于长列表阅读时降低底部干扰（同 git 页 tab 栏）。 */
     isScrolling: Boolean = false,
@@ -371,15 +360,6 @@ internal fun ChatInputBar(
                         }
                     }
                 }
-            }
-
-            if (sessionGoal != null) {
-                SessionGoalBar(
-                    goal = sessionGoal,
-                    onPauseToggle = onSetGoalPaused,
-                    onClear = onClearGoal,
-                    modifier = Modifier.padding(bottom = Spacing.sm)
-                )
             }
 
             if (queuedRequests.isNotEmpty()) {
@@ -1298,106 +1278,3 @@ internal fun PlanApprovalPanel(
         }
     }
 }
-
-/**
- * 会话目标条：输入框上方一行，目标正文（单行省略）+ 轮次 + 状态徽标 + 暂停/继续与清除。
- * 只在会话有目标时由调用方渲染，没有目标不占高度。
- */
-@Composable
-private fun SessionGoalBar(
-    goal: SessionGoalUi,
-    onPauseToggle: (Boolean) -> Unit,
-    onClear: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val isActive = goal.status == GoalStatus.ACTIVE
-    val statusColor = when (goal.status) {
-        GoalStatus.ACTIVE -> MaterialTheme.colorScheme.primary
-        GoalStatus.COMPLETED -> MaterialTheme.semanticColors.success
-        GoalStatus.PAUSED -> MaterialTheme.semanticColors.subtleText
-        GoalStatus.BLOCKED, GoalStatus.EXHAUSTED -> MaterialTheme.colorScheme.error
-    }
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(Radius.md),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Row(
-            modifier = Modifier.padding(start = Spacing.md, end = Spacing.xs, top = Spacing.xs, bottom = Spacing.xs),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            Text(
-                text = stringResource(R.string.chat_goal_label),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = goal.text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (goal.turnCount > 0) {
-                Text(
-                    text = stringResource(R.string.chat_goal_turn_badge, goal.turnCount),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.semanticColors.subtleText,
-                    maxLines = 1
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(Radius.xs),
-                color = statusColor.copy(alpha = 0.12f)
-            ) {
-                Text(
-                    text = goalStatusLabel(goal.status),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                )
-            }
-            IconButton(
-                onClick = { onPauseToggle(isActive) },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    imageVector = if (isActive) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                    contentDescription = stringResource(
-                        if (isActive) R.string.chat_goal_pause else R.string.chat_goal_resume
-                    ),
-                    tint = statusColor,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-            IconButton(
-                onClick = onClear,
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Close,
-                    contentDescription = stringResource(R.string.chat_goal_clear),
-                    tint = MaterialTheme.semanticColors.subtleText,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-/** 状态文案：与 `goalStatus` 枚举一一对应。 */
-@Composable
-private fun goalStatusLabel(status: GoalStatus): String = stringResource(
-    when (status) {
-        GoalStatus.ACTIVE -> R.string.chat_goal_status_active
-        GoalStatus.PAUSED -> R.string.chat_goal_status_paused
-        GoalStatus.COMPLETED -> R.string.chat_goal_status_completed
-        GoalStatus.BLOCKED -> R.string.chat_goal_status_blocked
-        GoalStatus.EXHAUSTED -> R.string.chat_goal_status_exhausted
-    }
-)

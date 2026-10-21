@@ -8,8 +8,6 @@ import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMode
-import com.aharou.feature.agent.domain.model.GoalStatus
-import com.aharou.feature.agent.domain.tool.goal.GOAL_STATUS_TOOL_NAME
 import com.aharou.feature.agent.domain.model.ModelIdentity
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.agent.domain.model.WorkspaceRef
@@ -257,8 +255,6 @@ class AgentTurnRunner @Inject constructor(
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
-            goal = sessionDomain?.goal?.takeIf { it.isNotBlank() },
-            goalStatus = sessionDomain?.goalStatus,
             workspaceName = workspace?.name,
             workspaceSwitchedFrom = switchedFrom,
             selectedWorkspace = selectedWorkspace,
@@ -275,11 +271,6 @@ class AgentTurnRunner @Inject constructor(
             }
             isSub -> allTools // 子代理可再派子代理，递归由 MAX_SUBAGENT_DEPTH 兜底
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
-        }.let { list ->
-            // 目标循环与 PLAN 互斥（自动执行中途切成只读会让目标停在半截）；
-            // 没有目标时不给 goalStatus 工具，避免模型凭空调它。
-            if (sessionDomain?.goalStatus == GoalStatus.ACTIVE) list.filterNot { it.name == "planMode" }
-            else list.filterNot { it.name == GOAL_STATUS_TOOL_NAME }
         }
 
         // 工具参数预览：结束时只有部分事件带 argsPreview，缺失时回退到开始时记下的那份

@@ -138,7 +138,21 @@ class ManageMcpTool @Inject constructor(
                         val err = s.error?.takeIf { it.isNotBlank() }?.let { "——$it" }.orEmpty()
                         "${s.name}=${s.state}$err"
                     }
-                    ToolResult.Success(JsonPrimitive(if (live.isBlank()) config else "$config\n\n运行状态：$live"))
+                    // 两个工作区可能不同（跨设备会话跑在别的工作区）：写清楚哪份配置、哪套连接在生效，
+                    // 否则调用方会以为「我配的这个没生效」，实则生效的是活动工作区那一套。
+                    val header = buildString {
+                        append("配置：本工作区")
+                        targetWorkspace?.let { append("（$it）") }
+                        append("\n")
+                    }
+                    val active = mcpManager.get().activeWorkspacePath
+                    val activeLine = if (active.isBlank()) "" else "\n\n生效中的连接：活动工作区（$active）"
+                    ToolResult.Success(
+                        JsonPrimitive(
+                            header + config +
+                                (if (live.isBlank()) "" else "\n\n运行状态：$live") + activeLine
+                        )
+                    )
                 }
                 "remove" -> {
                     val name = args["server_name"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("remove 缺少 server_name")

@@ -33,28 +33,5 @@ data class ChatSession(
     /** 子代理会话：派生子代理的类型（如 coder / researcher）；null 表示普通根会话。 */
     val subagentType: String? = null,
     /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
-    val ghostMode: Boolean = false,
-    /** 会话级持续目标（goal）：空串/null 表示没有目标。 */
-    val goal: String? = null,
-    /** 目标当前状态；为 [GoalStatus.ACTIVE] 时每轮结束自动续跑。 */
-    val goalStatus: GoalStatus? = null,
-    /** 已自动续跑的轮数。 */
-    val goalTurnCount: Int = 0,
-    /** 设定目标时的输入/输出 token 基线，用于算预算消耗。 */
-    val goalStartInputTokens: Int = 0,
-    val goalStartOutputTokens: Int = 0
+    val ghostMode: Boolean = false
 )
-
-/** 会话级持续目标的状态。 */
-enum class GoalStatus {
-    /** 进行中：每轮结束自动续跑 */
-    ACTIVE,
-    /** 用户暂停 */
-    PAUSED,
-    /** AI 判定目标已达成 */
-    COMPLETED,
-    /** AI 判定受阻 */
-    BLOCKED,
-    /** 轮数或 token 预算耗尽 */
-    EXHAUSTED
-}

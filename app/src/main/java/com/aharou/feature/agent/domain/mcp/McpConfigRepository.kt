@@ -219,6 +219,9 @@ class McpConfigRepository @Inject constructor(
      *  否则工具会回「添加成功」而磁盘上什么都没变。 */
     suspend fun setGlobalServers(servers: List<McpServerConfig>): Boolean {
         return mutex.withLock {
+            // 写前与磁盘对齐：调用方拿的是内存快照，而用户可能在容器里直接改过 mcp.json，
+            // 直接用旧快照整表覆盖会把他刚删/刚加的 server 抹掉（已发生过：删了 bot 又自己回来）。
+            if (!alignWithDiskLocked()) return@withLock false
             // serialize 会做 Keystore 加密，放到 IO 线程；别在（可能为 Main 的）调用方线程上做。
             val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
@@ -238,6 +241,7 @@ class McpConfigRepository @Inject constructor(
         workspacePath: String = workspaceRepository.currentPath()
     ): Boolean {
         return mutex.withLock {
+            if (!alignWithDiskLocked(workspacePath)) return@withLock false
             val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(workspacePath), json) }) {
                 getProjectState(workspacePath).value = json
@@ -250,9 +254,50 @@ class McpConfigRepository @Inject constructor(
         }
     }
 
+    /**
+     * 写前对齐：磁盘内容与内存不一致（外部直接改过文件）时，以磁盘为准刷新内存并拒绝本次写入。
+     *
+     * 拒绝而不是合并：调用方拿的是整表快照，合并语义不明确；让它重试一次，第二次读到新内存后
+     * 自然基于最新内容做修改。
+     *
+     * @return true 表示内存与磁盘一致，可以继续写。
+     */
+    private suspend fun alignWithDiskLocked(workspacePath: String? = null): Boolean {
+        val onDisk = withContext(Dispatchers.IO) { load(globalFile) }
+        if (onDisk != (globalState.value ?: DEFAULT_JSON)) {
+            globalState.value = onDisk
+            FileLogger.w(TAG, "全局 MCP 配置在内存外被改动，已以磁盘为准刷新，拒绝本次覆盖；请重试")
+            return false
+        }
+        if (workspacePath != null) {
+            val state = getProjectState(workspacePath)
+            if (state.value == null) return true
+            val projectOnDisk = withContext(Dispatchers.IO) { load(projectFileForPath(workspacePath)) }
+            if (projectOnDisk != state.value) {
+                state.value = projectOnDisk
+                FileLogger.w(TAG, "项目 MCP 配置在内存外被改动（$workspacePath），已刷新，拒绝本次覆盖；请重试")
+                return false
+            }
+        }
+        return true
+    }
+
     /** 当前项目生效的合并配置（项目优先覆盖同名），供 [McpManager] 连接使用。 */
     suspend fun getEffectiveServers(): List<McpServerConfig> =
         getEffectiveEntries().map { it.server }
+
+    /** 按**指定工作区**读合并配置：[McpManager] 按工作区维护连接时用它，不能用 currentPath。 */
+    suspend fun getEffectiveServersFor(workspacePath: String): List<McpServerConfig> =
+        getEffectiveEntriesFor(workspacePath).map { it.server }
+
+    suspend fun getEffectiveEntriesFor(workspacePath: String): List<McpServerEntry> {
+        ensureGlobalLoaded()
+        ensureProjectLoaded(workspacePath)
+        return merge(
+            parse(globalState.value ?: DEFAULT_JSON),
+            parse(getProjectState(workspacePath).value ?: DEFAULT_JSON)
+        )
+    }
 
     /** 当前项目生效的合并条目（含来源作用域），供设置页列表标注使用。 */
     suspend fun getEffectiveEntries(): List<McpServerEntry> {

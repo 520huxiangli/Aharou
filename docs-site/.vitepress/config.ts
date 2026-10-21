@@ -64,7 +64,6 @@ export default defineConfig({
               text: 'Core Workflows',
               items: [
                 { text: 'Chat Interface', link: '/en/guide/chat' },
-                { text: 'Session Goals', link: '/en/guide/goal' },
                 { text: 'Home-screen Widget', link: '/en/guide/widget' }
               ]
             },
@@ -146,7 +145,6 @@ export default defineConfig({
           items: [
             { text: '聊天界面导览', link: '/guide/chat' },
             { text: '三种模式（Build / Plan / Auto）', link: '/guide/modes' },
-            { text: '会话目标（goal）', link: '/guide/goal' },
             { text: '检查点与撤销', link: '/guide/checkpoint' },
             { text: '终端', link: '/guide/terminal' },
             { text: '语音通话与朗读', link: '/guide/voice' },

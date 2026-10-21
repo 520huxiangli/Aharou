@@ -27,8 +27,4 @@ abstract class SlashCommandModule {
     @Binds
     @IntoSet
     abstract fun bindUsageCommandHandler(handler: UsageCommandHandler): ActionCommandHandler
-
-    @Binds
-    @IntoSet
-    abstract fun bindGoalCommandHandler(handler: GoalCommandHandler): ActionCommandHandler
 }

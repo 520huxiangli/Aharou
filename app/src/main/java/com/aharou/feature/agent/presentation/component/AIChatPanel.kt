@@ -108,7 +108,6 @@ import com.aharou.feature.agent.presentation.TurnHeaderState
 import com.aharou.feature.agent.presentation.flattenLongProcesses
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.agent.presentation.leadingHeadKey
-import com.aharou.feature.agent.presentation.sessionGoalUi
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.presentation.ReadAloudViewModel
@@ -469,7 +468,6 @@ fun AIChatPanel(
     val messageEntryDelays = remember(messages, entryScheduler) { entryScheduler.schedule(messages) }
     val currentSessionState by viewModel.currentSessionState.collectAsStateWithLifecycle()
     val currentSession = currentSessionState
-    val sessionGoal = currentSession.sessionGoalUi()
     val sessionInputTokens = currentSession?.totalInputTokens ?: 0
     val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
     val sessionLastInputTokens = currentSession?.lastInputTokens ?: 0
@@ -1741,9 +1739,6 @@ fun AIChatPanel(
                     dashboardState = currentDashboardState,
                     todoItems = currentTodoItems,
                     sessionId = currentSessionId.orEmpty(),
-                    sessionGoal = sessionGoal,
-                    onSetGoalPaused = { paused -> viewModel.setGoalPaused(paused) },
-                    onClearGoal = { viewModel.clearGoal() },
                     onTodoExpandedChange = { todoExpanded = it },
                     // 键盘弹出不再强制收起：面板自己会在展开前先收键盘（不然点了没反应）。
                     // 这里只保留弹窗/提问/审批这类遮罩场景的强制收起。

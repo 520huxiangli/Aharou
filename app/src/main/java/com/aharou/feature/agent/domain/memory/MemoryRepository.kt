@@ -68,7 +68,14 @@ class MemoryRepository @Inject constructor(
      * 排序稳定：相关度 → mtime 倒序 → name 升序，三层都确定，保证同一 (projectRoot, query)
      * 每次渲染顺序一致，不因目录扫描顺序抖动，避免无谓地打断 KV Cache。
      */
-    fun listMemoriesForPrompt(projectRoot: String?, query: String? = null): List<Memory> {
+    fun listMemoriesForPrompt(
+        projectRoot: String?,
+        query: String? = null,
+        // 默认只取注入上限：超过上限的条目本来就不会进系统提示。
+        // 「常驻预算盘点」这类统计要传大值，否则只能看到被截断后的那一截，
+        // 数出来的 identity 条数会远小于实际（曾经只报出 7 条而实际 18 条）。
+        limit: Int = MAX_INJECTED_MEMORIES
+    ): List<Memory> {
         val normalizedQuery = query?.trim()?.lowercase().orEmpty()
         return listMemories(projectRoot)
             // 事件类（某次测试结果、某天的排查记录）只留档：它们不是跨会话仍成立的知识，
@@ -95,7 +102,7 @@ class MemoryRepository @Inject constructor(
                     .thenByDescending { it.first.file?.lastModified() ?: 0L }
                     .thenBy { it.first.name.lowercase() }
             )
-            .take(MAX_INJECTED_MEMORIES)
+            .take(limit)
             .map { it.first }
     }
 

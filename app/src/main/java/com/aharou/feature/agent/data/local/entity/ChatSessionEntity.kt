@@ -5,7 +5,6 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.model.ChatSession
-import com.aharou.feature.agent.domain.model.GoalStatus
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 
 @Entity(
@@ -36,6 +35,7 @@ data class ChatSessionEntity(
     val subagentType: String? = null,
     /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
     val ghostMode: Boolean = false,
+    // 以下 5 列为兼容已发布的迁移 73 保留（列已建在库表里，迁移不可回滚），业务逻辑不再读写。
     val goal: String? = null,
     val goalStatus: String? = null,
     val goalTurnCount: Int = 0,
@@ -59,12 +59,7 @@ data class ChatSessionEntity(
         isPinned = isPinned,
         parentId = parentId,
         subagentType = subagentType,
-        ghostMode = ghostMode,
-        goal = goal,
-        goalStatus = goalStatus?.let { runCatching { GoalStatus.valueOf(it) }.getOrNull() },
-        goalTurnCount = goalTurnCount,
-        goalStartInputTokens = goalStartInputTokens,
-        goalStartOutputTokens = goalStartOutputTokens
+        ghostMode = ghostMode
     )
 
     companion object {
@@ -85,12 +80,7 @@ data class ChatSessionEntity(
             isPinned = session.isPinned,
             parentId = session.parentId,
             subagentType = session.subagentType,
-            ghostMode = session.ghostMode,
-            goal = session.goal,
-            goalStatus = session.goalStatus?.name,
-            goalTurnCount = session.goalTurnCount,
-            goalStartInputTokens = session.goalStartInputTokens,
-            goalStartOutputTokens = session.goalStartOutputTokens
+            ghostMode = session.ghostMode
         )
     }
 }

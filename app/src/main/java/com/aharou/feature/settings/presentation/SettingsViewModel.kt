@@ -815,12 +815,6 @@ class SettingsViewModel @Inject constructor(
     private val _deleteExternalWorkspaceSessions = MutableStateFlow(false)
     val deleteExternalWorkspaceSessions: StateFlow<Boolean> = _deleteExternalWorkspaceSessions.asStateFlow()
 
-    private val _goalMaxTurns = MutableStateFlow(50)
-    val goalMaxTurns: StateFlow<Int> = _goalMaxTurns.asStateFlow()
-
-    private val _goalMaxTokens = MutableStateFlow(500_000)
-    val goalMaxTokens: StateFlow<Int> = _goalMaxTokens.asStateFlow()
-
     private val _themeMode = MutableStateFlow(AppThemeMode.AUTO)
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
 
@@ -1278,18 +1272,6 @@ class SettingsViewModel @Inject constructor(
             launch {
                 generalSettingsRepository.deleteExternalWorkspaceSessionsFlow.collectLatest {
                     _deleteExternalWorkspaceSessions.value = it
-                }
-            }
-
-            launch {
-                generalSettingsRepository.goalMaxTurnsFlow.collectLatest {
-                    _goalMaxTurns.value = it
-                }
-            }
-
-            launch {
-                generalSettingsRepository.goalMaxTokensFlow.collectLatest {
-                    _goalMaxTokens.value = it
                 }
             }
 
@@ -2594,20 +2576,6 @@ class SettingsViewModel @Inject constructor(
     fun setDeleteExternalWorkspaceSessions(enabled: Boolean) {
         viewModelScope.launch {
             generalSettingsRepository.setDeleteExternalWorkspaceSessions(enabled)
-        }
-    }
-
-    /** 目标（goal）自动续跑最多多少轮。 */
-    fun setGoalMaxTurns(turns: Int) {
-        viewModelScope.launch {
-            generalSettingsRepository.setGoalMaxTurns(turns)
-        }
-    }
-
-    /** 目标循环的 token 预算。 */
-    fun setGoalMaxTokens(tokens: Int) {
-        viewModelScope.launch {
-            generalSettingsRepository.setGoalMaxTokens(tokens)
         }
     }
 

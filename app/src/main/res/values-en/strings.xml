@@ -804,35 +804,6 @@
     <string name="chat_turn_completed">Completed in %1$s</string>
     <string name="chat_turn_completed_plain">Completed</string>
 
-    <!-- Goal -->
-    <string name="chat_goal_label">Goal</string>
-    <string name="chat_goal_none">This session has no goal. Set a persistent one with /goal &lt;description&gt;.</string>
-    <string name="chat_goal_summary">Goal status: %1$s, %2$d turns run\n%3$s</string>
-    <string name="chat_goal_cleared">Goal cleared.</string>
-    <string name="chat_goal_started_notice">Goal set. Starting autonomous execution.</string>
-    <string name="chat_goal_paused_notice">Goal paused. Later replies will not auto-continue.</string>
-    <string name="chat_goal_resumed_notice">Goal resumed. Continuing automatically.</string>
-    <string name="chat_goal_blocked_notice">No progress for %1$d consecutive turns; the goal is marked as blocked.</string>
-    <string name="chat_goal_exhausted_notice">The turn or token budget is used up, so the loop stopped. Adjust the budget and run /goal resume.</string>
-    <string name="chat_goal_status_active">Active</string>
-    <string name="chat_goal_status_paused">Paused</string>
-    <string name="chat_goal_status_completed">Completed</string>
-    <string name="chat_goal_status_blocked">Blocked</string>
-    <string name="chat_goal_status_exhausted">Budget used up</string>
-    <string name="chat_goal_pause">Pause</string>
-    <string name="chat_goal_resume">Resume</string>
-    <string name="chat_goal_clear">Clear</string>
-    <string name="chat_goal_turn_badge">turn %1$d</string>
-    <string name="slash_command_goal_desc">Set a persistent session goal that keeps running automatically (/goal to view, pause/resume/clear to control)</string>
-    <string name="settings_general_goal">Goal</string>
-    <string name="settings_goal_max_turns">Max continuation turns</string>
-    <string name="settings_goal_max_turns_desc">How many turns one goal may run automatically before it stops</string>
-    <string name="settings_goal_max_tokens">Token budget</string>
-    <string name="settings_goal_max_tokens_desc">Total input plus output tokens the goal loop may spend</string>
-    <string name="settings_goal_turns_value">%1$d turns</string>
-    <string name="settings_goal_tokens_value">%1$d tokens</string>
-    <string name="settings_goal_turns_input_hint">Enter an integer of at least 1</string>
-    <string name="settings_goal_tokens_input_hint">Enter an integer of at least 1000</string>
     <string name="chat_context_usage">Context %1$d%% used</string>
     <string name="chat_bg_command_done">Background command completed</string>
     <string name="chat_bg_commands_done">%1$d background tasks completed</string>

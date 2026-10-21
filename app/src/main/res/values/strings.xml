@@ -804,35 +804,6 @@
     <string name="chat_turn_completed">已完成 %1$s</string>
     <string name="chat_turn_completed_plain">已完成</string>
 
-    <!-- 会话目标（Goal） -->
-    <string name="chat_goal_label">目标</string>
-    <string name="chat_goal_none">当前会话没有目标。用 /goal &lt;目标描述&gt; 设定一个持续目标。</string>
-    <string name="chat_goal_summary">目标状态：%1$s，已续跑 %2$d 轮\n%3$s</string>
-    <string name="chat_goal_cleared">已清除当前目标。</string>
-    <string name="chat_goal_started_notice">已设定目标，开始自动推进。</string>
-    <string name="chat_goal_paused_notice">目标已暂停，之后的对话不会再自动续跑。</string>
-    <string name="chat_goal_resumed_notice">目标已恢复，继续自动推进。</string>
-    <string name="chat_goal_blocked_notice">连续 %1$d 轮没有任何进展，目标已标记为受阻。</string>
-    <string name="chat_goal_exhausted_notice">目标的轮数或 token 预算已用完，自主循环停止；可调整预算后 /goal resume。</string>
-    <string name="chat_goal_status_active">进行中</string>
-    <string name="chat_goal_status_paused">已暂停</string>
-    <string name="chat_goal_status_completed">已完成</string>
-    <string name="chat_goal_status_blocked">受阻</string>
-    <string name="chat_goal_status_exhausted">预算耗尽</string>
-    <string name="chat_goal_pause">暂停</string>
-    <string name="chat_goal_resume">继续</string>
-    <string name="chat_goal_clear">清除</string>
-    <string name="chat_goal_turn_badge">第 %1$d 轮</string>
-    <string name="slash_command_goal_desc">设定会话持续目标，自动循环推进（/goal 查看，pause/resume/clear 控制）</string>
-    <string name="settings_general_goal">目标（goal）</string>
-    <string name="settings_goal_max_turns">最多续跑轮数</string>
-    <string name="settings_goal_max_turns_desc">一个目标最多自动推进这么多轮，用完即停</string>
-    <string name="settings_goal_max_tokens">token 预算</string>
-    <string name="settings_goal_max_tokens_desc">目标循环消耗的输入与输出 token 总量上限</string>
-    <string name="settings_goal_turns_value">%1$d 轮</string>
-    <string name="settings_goal_tokens_value">%1$d tokens</string>
-    <string name="settings_goal_turns_input_hint">输入不小于 1 的整数</string>
-    <string name="settings_goal_tokens_input_hint">输入不小于 1000 的整数</string>
     <string name="chat_context_usage">上下文已用 %1$d%%</string>
     <string name="chat_bg_command_done">后台命令已完成</string>
     <string name="chat_bg_commands_done">%1$d 个后台任务已完成</string>

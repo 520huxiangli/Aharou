@@ -63,11 +63,7 @@ internal fun GeneralSettingsSection(
     sendFileMaxSizeMb: Int,
     onSetSendFileMaxSizeMb: (Int) -> Unit,
     deleteExternalWorkspaceSessions: Boolean,
-    onToggleDeleteExternalWorkspaceSessions: (Boolean) -> Unit,
-    goalMaxTurns: Int,
-    onSetGoalMaxTurns: (Int) -> Unit,
-    goalMaxTokens: Int,
-    onSetGoalMaxTokens: (Int) -> Unit
+    onToggleDeleteExternalWorkspaceSessions: (Boolean) -> Unit
 ) {
     var showStartupSessionSheet by remember { mutableStateOf(false) }
     var editingFirstByteTimeout by remember { mutableStateOf(false) }
@@ -76,8 +72,6 @@ internal fun GeneralSettingsSection(
     var editingCompactionThreshold by remember { mutableStateOf(false) }
     var editingSoftCompactionThreshold by remember { mutableStateOf(false) }
     var editingSendFileMaxSize by remember { mutableStateOf(false) }
-    var editingGoalMaxTurns by remember { mutableStateOf(false) }
-    var editingGoalMaxTokens by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -234,37 +228,6 @@ internal fun GeneralSettingsSection(
                 }
             )
         }
-
-        SettingsGroupHeader(text = stringResource(R.string.settings_general_goal))
-        SettingsGroup {
-            SettingsRow(
-                icon = null,
-                title = stringResource(R.string.settings_goal_max_turns),
-                subtitle = stringResource(R.string.settings_goal_max_turns_desc),
-                onClick = { editingGoalMaxTurns = true },
-                trailing = {
-                    Text(
-                        text = stringResource(R.string.settings_goal_turns_value, goalMaxTurns),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = null,
-                title = stringResource(R.string.settings_goal_max_tokens),
-                subtitle = stringResource(R.string.settings_goal_max_tokens_desc),
-                onClick = { editingGoalMaxTokens = true },
-                trailing = {
-                    Text(
-                        text = stringResource(R.string.settings_goal_tokens_value, goalMaxTokens),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.semanticColors.subtleText
-                    )
-                }
-            )
-        }
     }
 
     if (showStartupSessionSheet) {
@@ -358,34 +321,6 @@ internal fun GeneralSettingsSection(
                 editingSendFileMaxSize = false
             },
             onDismiss = { editingSendFileMaxSize = false }
-        )
-    }
-
-    if (editingGoalMaxTurns) {
-        NumberInputDialog(
-            title = stringResource(R.string.settings_goal_max_turns),
-            initialValue = goalMaxTurns,
-            hint = stringResource(R.string.settings_goal_turns_input_hint),
-            minValue = 1,
-            onConfirm = {
-                onSetGoalMaxTurns(it)
-                editingGoalMaxTurns = false
-            },
-            onDismiss = { editingGoalMaxTurns = false }
-        )
-    }
-
-    if (editingGoalMaxTokens) {
-        NumberInputDialog(
-            title = stringResource(R.string.settings_goal_max_tokens),
-            initialValue = goalMaxTokens,
-            hint = stringResource(R.string.settings_goal_tokens_input_hint),
-            minValue = 1000,
-            onConfirm = {
-                onSetGoalMaxTokens(it)
-                editingGoalMaxTokens = false
-            },
-            onDismiss = { editingGoalMaxTokens = false }
         )
     }
 }
