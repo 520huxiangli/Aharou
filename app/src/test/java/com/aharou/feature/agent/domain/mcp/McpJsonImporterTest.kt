@@ -37,7 +37,7 @@ class McpJsonImporterTest {
     private fun stubNewGlobal() {
         coEvery { repo.findEntry(any()) } returns null
         coEvery { repo.getGlobalServers() } returns emptyList()
-        coEvery { repo.setGlobalServers(any()) } returns Unit
+        coEvery { repo.setGlobalServers(any()) } returns true
     }
 
     // ---- 真实 parse 的读法 ----
@@ -157,7 +157,7 @@ class McpJsonImporterTest {
         every { repo.parse(any()) } returns listOf(incoming)
         coEvery { repo.findEntry("bar") } returns McpServerEntry(previous, McpScope.GLOBAL)
         coEvery { repo.getGlobalServers() } returns listOf(previous)
-        coEvery { repo.setGlobalServers(any()) } returns Unit
+        coEvery { repo.setGlobalServers(any()) } returns true
 
         val outcome = importer.import("""{"mcpServers":{"bar":{"url":"https://new.example.com/mcp"}}}""")
 
