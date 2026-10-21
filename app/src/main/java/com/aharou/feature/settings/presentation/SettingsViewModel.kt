@@ -2263,28 +2263,49 @@ class SettingsViewModel @Inject constructor(
      */
     fun downloadUpdate() {
         val state = _updateCheckState.value as? UpdateCheckUiState.NewVersion ?: return
-        val assetName = state.apkAssetName
-        if (assetName.isNullOrBlank()) {
-            _updateDownloadState.value = UpdateDownloadUiState.Failed("no apk asset in release")
-            return
-        }
         if (updateDownloadJob?.isActive == true) return
         updateDownloadJob = viewModelScope.launch {
             _updateDownloadState.value = UpdateDownloadUiState.Resolving
-            val candidates = UpdateDownloadSource.candidates(state.latestTag, assetName)
+            // 资产可能在「发现新版本」那一刻还没同步到位（发布主源的资产滞后于 release）。
+            // 不能拿状态里那个 null 直接报错：那样用户退出重进、再点下载都是一样的失败。
+            // 这里现场重查一次，拿到资产就用（并回写状态，让后续点击也正常）。
+            var effective = state
+            if (effective.apkAssetName.isNullOrBlank()) {
+                val fresh = runCatching {
+                    updateCheckService.checkForUpdate(
+                        currentVersion = updateCheckSettingsRepository.currentVersionName(),
+                        channel = updateCheckSettingsRepository.channel
+                    )
+                }.getOrNull()
+                val freshInfo = (fresh as? UpdateCheckResult.NewVersion)?.info
+                if (freshInfo?.apkAssetName.isNullOrBlank()) {
+                    _updateDownloadState.value = UpdateDownloadUiState.Failed("no apk asset in release")
+                    return@launch
+                }
+                effective = UpdateCheckUiState.NewVersion(
+                    latestTag = freshInfo!!.latestTag,
+                    changelog = freshInfo.changelog,
+                    apkAssetName = freshInfo.apkAssetName,
+                    apkAssetSize = freshInfo.apkAssetSize,
+                    apkAssetDigest = freshInfo.apkAssetDigest
+                )
+                _updateCheckState.value = effective
+            }
+            val assetName = effective.apkAssetName.orEmpty()
+            val candidates = UpdateDownloadSource.candidates(effective.latestTag, assetName)
             // 记下实际命中的候选（候选列表失败会静默换下一个源，不记就无从得知走的哪条）
             var usedSource = ""
             try {
                 val file = updateApkDownloader.download(
                     candidates = candidates,
                     fileName = assetName,
-                    expectedSize = state.apkAssetSize,
-                    expectedSha256 = state.apkAssetDigest,
+                    expectedSize = effective.apkAssetSize,
+                    expectedSha256 = effective.apkAssetDigest,
                     onSource = { url ->
                         usedSource = url
                         _updateDownloadState.value = UpdateDownloadUiState.Downloading(
                             bytesRead = 0L,
-                            totalBytes = state.apkAssetSize,
+                            totalBytes = effective.apkAssetSize,
                             sourceUrl = url
                         )
                     },
@@ -2293,12 +2314,12 @@ class SettingsViewModel @Inject constructor(
                         _updateDownloadState.value = UpdateDownloadUiState.Downloading(read, total, source)
                     }
                 )
-                updateCheckSettingsRepository.downloadedTag = state.latestTag
+                updateCheckSettingsRepository.downloadedTag = effective.latestTag
                 updateCheckSettingsRepository.downloadedPath = file.absolutePath
-                updateCheckSettingsRepository.writeDownloadRecord(state.latestTag, usedSource, file.absolutePath)
-                FileLogger.i("UpdateDownload", "已下载 $state.latestTag，来源=$usedSource")
-                _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, state.latestTag)
-                maybeAutoInstall(file.absolutePath, state.latestTag)
+                updateCheckSettingsRepository.writeDownloadRecord(effective.latestTag, usedSource, file.absolutePath)
+                FileLogger.i("UpdateDownload", "已下载 $effective.latestTag，来源=$usedSource")
+                _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, effective.latestTag)
+                maybeAutoInstall(file.absolutePath, effective.latestTag)
             } catch (e: CancellationException) {
                 _updateDownloadState.value = UpdateDownloadUiState.Idle
                 throw e

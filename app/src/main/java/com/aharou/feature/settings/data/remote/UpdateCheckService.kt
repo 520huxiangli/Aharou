@@ -87,8 +87,19 @@ class UpdateCheckService @Inject constructor(
                 } else {
                     val versionUpdates = updates.map { toVersionUpdate(it) }
                     val latest = updates.first()
-                    val apkAsset = latest.assets.firstOrNull {
+                    var apkAsset = latest.assets.firstOrNull {
                         it.name == UpdateDownloadSource.pickApkAsset(latest.assets.map { a -> a.name })
+                    }
+                    // 主源（cnb）的资产可能晚于 release 创建几秒到几分钟同步到位：那一刻列表里有更新
+                    // 日志却没有包，直接弹「发现新版本」会让下载必然失败（报 no apk asset）。
+                    // 这里按 tag 回退到 GitHub 源再找一次。
+                    if (apkAsset == null) {
+                        val fallback = (fetchGithubProxiedReleases() ?: fetchGithubReleases())
+                            ?.firstOrNull { it.rawTag == latest.rawTag }
+                        val fallbackNames = fallback?.assets?.map { it.name }.orEmpty()
+                        apkAsset = fallback?.assets?.firstOrNull {
+                            it.name == UpdateDownloadSource.pickApkAsset(fallbackNames)
+                        }
                     }
                     UpdateCheckResult.NewVersion(
                         UpdateInfo(
