@@ -49,8 +49,8 @@ data class McpServerStatus(
  * 连接常驻；但**工具表只挂当前活动工作区的那一套**：工具名是 `mcp__server__tool`，
  * 两个工作区有同名 server 时必须二选一，不能同时注册。
  *
- * 资源控制：非活动工作区的连接空闲超过 [IDLE_EVICT_MS] 就回收（配置留着，切回来重连），
- * 同时最多保留 [MAX_RUNTIMES] 个工作区的连接，超出按最久未用淘汰。
+ * 连接生命周期：连上就一直保持，不因切工作区或空闲时间被主动拆掉；只有配置变更、容器切换、
+ * 进程死亡（自报重连）或 App 退出才会断开。
  */
 // reloadMutex 串行化重连，避免设置页连点导致并发注册/反注册竞态。
 @Singleton
@@ -75,16 +75,19 @@ class McpManager @Inject constructor(
 
         /** 快速重试用尽后的低频重试间隔：装包重启时 stdio server（如容器里的 bridge）起得慢，
          *  只试三次会一直停在 FAILED，直到用户新建会话或手动重载。 */
+        /** 非活动工作区的连接空闲超过这个时长就拆掉（开了保活的 server 不受影响）。 */
+        const val IDLE_EVICT_MS = 15 * 60 * 1000L
+
+        /** 空闲检查的轮询间隔。 */
+        const val EVICT_CHECK_MS = 5 * 60 * 1000L
+
         const val SLOW_RETRY_MS = 10 * 60 * 1000L
 
         /** 非活动工作区的连接空闲多久回收：常驻是为了切回来即用，不是为了永久占住进程。 */
-        const val IDLE_EVICT_MS = 15 * 60 * 1000L
 
         /** 同时保留连接的工作区上限：每个工作区都可能是一批 stdio 进程，必须有上限。 */
-        const val MAX_RUNTIMES = 4
 
         /** 空闲回收的检查间隔。 */
-        const val EVICT_CHECK_MS = 5 * 60 * 1000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -94,7 +97,12 @@ class McpManager @Inject constructor(
     private class WorkspaceRuntime(val path: String) {
         val clients = mutableMapOf<String, McpClient>()
         var statuses: List<McpServerStatus> = emptyList()
-        var lastActiveAt: Long = System.currentTimeMillis()
+
+        /** 每个 server 最后一次被调用的时间：空闲回收按它判定，工作区切换不重置。 */
+        val lastUsed = mutableMapOf<String, Long>()
+
+        /** 配置里开了保活开关的 server 名：空闲回收跳过它们。 */
+        val keepAliveNames = mutableSetOf<String>()
     }
 
     private val runtimes = mutableMapOf<String, WorkspaceRuntime>()
@@ -104,6 +112,8 @@ class McpManager @Inject constructor(
 
     /** server → 已注册的命名空间工具名（`mcp__server__tool`）；只反映活动工作区。 */
     private val registeredToolNames = mutableMapOf<String, List<String>>()
+    /** 已注册的 server 属于哪个工作区：拆某个工作区的连接时只摘它自己的工具。 */
+    private val registeredToolOwner = mutableMapOf<String, String>()
 
     /** 各 server 连续重连失败次数，键为「工作区|server」：不同工作区的同名 server 各自计数。 */
     private val reconnectAttempts = mutableMapOf<String, Int>()
@@ -118,6 +128,10 @@ class McpManager @Inject constructor(
 
     /** 实际正在生效的工作区（工具表挂着的那一套）：与「本会话所属工作区」可能不同，工具提示要用。 */
     val activeWorkspacePath: String get() = activeWorkspace
+
+    /** 指定工作区的连接状态：工具按「会话所属工作区」读取，不拿全局活动工作区的那份。 */
+    fun statusesFor(workspacePath: String): List<McpServerStatus> =
+        synchronized(runtimes) { runtimes[workspacePath]?.statuses.orEmpty() }
 
     /**
      * 由会话切换驱动：MCP 工具应该跟着「当前会话所属工作区」走，而不是跟着全局活动工作区。
@@ -144,6 +158,13 @@ class McpManager @Inject constructor(
                 reload()
             }
         }
+        // 空闲回收：非活动工作区放久了就拆连接（保活的 server 除外），避免每个工作区都常驻一批进程。
+        scope.launch {
+            while (true) {
+                delay(EVICT_CHECK_MS)
+                evictIdleServers()
+            }
+        }
         // 容器 profile 切换：stdio server 的进程跑在旧容器的 rootfs 上，所有工作区都要重建；HTTP 不受影响。
         scope.launch {
             containerSettingsRepository.activeProfileIdFlow.drop(1).collect {
@@ -158,13 +179,6 @@ class McpManager @Inject constructor(
                 }
             }
         }
-        // 空闲回收：非活动工作区的连接放久了就拆掉，避免每个工作区都常驻一批 stdio 进程。
-        scope.launch {
-            while (true) {
-                delay(EVICT_CHECK_MS)
-                evictIdleRuntimes()
-            }
-        }
     }
 
     private suspend fun onActiveWorkspaceChanged(path: String) = reloadMutex.withLock {
@@ -172,19 +186,16 @@ class McpManager @Inject constructor(
         FileLogger.i(TAG, "活动工作区切换为 $path，切换 MCP 工具表")
         activeWorkspace = path
         val runtime = runtimes.getOrPut(path) { WorkspaceRuntime(path) }
-        runtime.lastActiveAt = System.currentTimeMillis()
-        // 先摘掉上一工作区的工具（连接保留），再挂上本工作区的：同名 server 不能同时注册两份。
-        synchronized(registeredToolNames) {
-            registeredToolNames.values.flatten().forEach { toolRegistry.unregister(it) }
-            registeredToolNames.clear()
-        }
+        // 切过来算在用：该工作区现有的连接计时一并刷新，别刚切过来就被回收。
+        val now = System.currentTimeMillis()
+        synchronized(runtimes) { runtime.clients.keys.forEach { runtime.lastUsed[it] = now } }
+        // 工具表的差异替换交给 registerToolsLocked：这里不再先全摘，否则共用 server 会空窗。
         if (runtime.statuses.isEmpty()) {
             loadWorkspaceLocked(path)
         } else {
             registerToolsLocked(path)
             _statuses.value = runtime.statuses
         }
-        enforceRuntimeLimitLocked()
     }
 
     /** 重载**活动工作区**（设置页手动重连、配置变更）。 */
@@ -233,15 +244,22 @@ class McpManager @Inject constructor(
     private fun registerToolsLocked(path: String) {
         val runtime = runtimes[path] ?: return
         synchronized(registeredToolNames) {
-            registeredToolNames.values.flatten().forEach { toolRegistry.unregister(it) }
-            registeredToolNames.clear()
+            val wanted = mutableSetOf<String>()
+            // 先挂新的（同名直接覆盖），最后再摘多余的：共用的 server（全局）在切换过程中不会消失，
+            // 否则每切一次会话，工具表里那些两份工作区都有的工具都会短暂空窗。
             runtime.clients.forEach { (serverName, client) ->
                 val status = runtime.statuses.firstOrNull { it.name == serverName } ?: return@forEach
                 if (status.state != McpServerStatus.State.CONNECTED) return@forEach
-                val tools = client.tools.map { tool -> McpTool(client, tool) }
+                val tools = client.tools.map { tool -> newTool(client, tool, path, serverName) }
                 if (tools.isEmpty()) return@forEach
                 tools.forEach { toolRegistry.register(it.name, it) }
                 registeredToolNames[serverName] = tools.map { it.name }
+                registeredToolOwner[serverName] = path
+                wanted += serverName
+            }
+            registeredToolNames.keys.filter { it !in wanted }.forEach { server ->
+                registeredToolNames.remove(server)?.forEach { toolRegistry.unregister(it) }
+                registeredToolOwner.remove(server)
             }
         }
     }
@@ -288,18 +306,25 @@ class McpManager @Inject constructor(
             val client = McpClient(serverName = cfg.name, transport = t).also { created = it }
             client.connect()
 
-            val tools = client.tools.map { tool -> McpTool(client, tool) }
+            val tools = client.tools.map { tool -> newTool(client, tool, workspacePath, cfg.name) }
             val enabledTools = tools.filter { it.remoteName !in cfg.disabledTools }
             synchronized(runtimes) {
-                runtimes[workspacePath]?.clients?.put(cfg.name, client)
+                runtimes[workspacePath]?.let { rt ->
+                rt.clients[cfg.name] = client
+                rt.lastUsed[cfg.name] = System.currentTimeMillis()
+                if (cfg.keepAlive) rt.keepAliveNames += cfg.name else rt.keepAliveNames -= cfg.name
+            }
             }
             if (workspacePath == activeWorkspace) {
                 // 重连成功时先清同名旧工具再注册新的：旧连接被 close 后，注册表里那些
                 // McpTool 还指着已关闭的 transport，调用时就会报「transport 已关闭」。
                 synchronized(registeredToolNames) {
-                    registeredToolNames.remove(cfg.name)?.forEach { toolRegistry.unregister(it) }
+                    if (registeredToolOwner[cfg.name] == workspacePath) {
+                        registeredToolNames.remove(cfg.name)?.forEach { toolRegistry.unregister(it) }
+                    }
                     enabledTools.forEach { toolRegistry.register(it.name, it) }
                     registeredToolNames[cfg.name] = enabledTools.map { it.name }
+                    registeredToolOwner[cfg.name] = workspacePath
                 }
             }
             FileLogger.i(
@@ -420,10 +445,23 @@ class McpManager @Inject constructor(
     private fun teardownServerLocked(path: String, name: String) {
         val client = synchronized(runtimes) { runtimes[path]?.clients?.remove(name) }
         synchronized(registeredToolNames) {
-            registeredToolNames.remove(name)?.forEach { toolRegistry.unregister(it) }
+            // 同名 server 可能已被别的工作区接管（工具表只挂一套），不是自己挂的就不要摘。
+            if (registeredToolOwner[name] == path) {
+                registeredToolNames.remove(name)?.forEach { toolRegistry.unregister(it) }
+                registeredToolOwner.remove(name)
+            }
         }
         runCatching { client?.close() }
     }
+
+    /** 构造带「重连 + 使用登记」回调的 MCP 工具。 */
+    private fun newTool(client: McpClient, tool: McpToolDescriptor, path: String, server: String): McpTool =
+        McpTool(
+            client = client,
+            descriptor = tool,
+            onReconnect = { ensureClient(path, server) },
+            onUsed = { touch(path, server) }
+        )
 
     /** 拆掉某工作区的全部连接（释放进程、清状态）。 */
     private fun teardownWorkspaceLocked(path: String) {
@@ -435,12 +473,54 @@ class McpManager @Inject constructor(
             snapshot
         }
         synchronized(registeredToolNames) {
-            registeredToolNames.values.flatten().forEach { toolRegistry.unregister(it) }
-            registeredToolNames.clear()
+            // 只摘属于该工作区的工具：以前是全摘，回收一个空闲工作区会把活动工作区的工具一起弄没。
+            registeredToolOwner.filterValues { it == path }.keys.toList().forEach { server ->
+                registeredToolNames.remove(server)?.forEach { toolRegistry.unregister(it) }
+                registeredToolOwner.remove(server)
+            }
         }
         clients.forEach { runCatching { it.close() } }
         if (path == activeWorkspace) _statuses.value = emptyList()
     }
+
+    /** 按 server 判空闲：超过 [IDLE_EVICT_MS] 没被调用就拆（保活的不拆），下次调用自动重连。 */
+    private fun evictIdleServers() {
+        scope.launch {
+            reloadMutex.withLock {
+                val now = System.currentTimeMillis()
+                val victims = synchronized(runtimes) {
+                    runtimes.values.flatMap { rt ->
+                        rt.clients.keys.filter { name ->
+                            name !in rt.keepAliveNames && now - (rt.lastUsed[name] ?: now) > IDLE_EVICT_MS
+                        }.map { name -> rt.path to name }
+                    }
+                }
+                victims.forEach { (path, name) ->
+                    FileLogger.i(TAG, "[$path] $name 空闲超过 15 分钟，回收连接（再次调用时自动重连）")
+                    teardownServerLocked(path, name)
+                }
+            }
+        }
+    }
+
+    /** 工具调用前登记使用时间。 */
+    private fun touch(workspacePath: String, serverName: String) {
+        synchronized(runtimes) {
+            runtimes[workspacePath]?.lastUsed?.put(serverName, System.currentTimeMillis())
+        }
+    }
+
+    /** 连接被空闲回收后按需重连，供工具调用失败时重试。 */
+    private suspend fun ensureClient(workspacePath: String, serverName: String): McpClient? =
+        reloadMutex.withLock {
+            synchronized(runtimes) { runtimes[workspacePath]?.clients?.get(serverName) }
+                ?.let { return@withLock it }
+            val cfg = runCatching { configRepository.getEffectiveServersFor(workspacePath) }
+                .getOrNull()?.firstOrNull { it.name == serverName && it.enabled }
+                ?: return@withLock null
+            runCatching { connectOne(cfg, workspacePath) }
+            synchronized(runtimes) { runtimes[workspacePath]?.clients?.get(serverName) }
+        }
 
     /**
      * stdio 进程死亡 / 管道断开：摘掉该工作区这条连接、反注册工具、状态置 FAILED，再按退避重连。
@@ -540,41 +620,4 @@ class McpManager @Inject constructor(
         synchronized(slowRetries) { slowRetries[key] = job }
     }
 
-    /** 回收空闲的非活动工作区连接，并强制保留数上限。 */
-    private fun evictIdleRuntimes() {
-        scope.launch {
-            reloadMutex.withLock {
-                val now = System.currentTimeMillis()
-                val idle = synchronized(runtimes) {
-                    runtimes.values.filter { runtime ->
-                        runtime.path != activeWorkspace &&
-                            runtime.clients.isNotEmpty() &&
-                            now - runtime.lastActiveAt > IDLE_EVICT_MS
-                    }.map { it.path }
-                }
-                idle.forEach { path ->
-                    FileLogger.i(TAG, "[$path] 空闲超时，回收 MCP 连接（配置保留）")
-                    teardownWorkspaceLocked(path)
-                }
-                enforceRuntimeLimitLocked()
-            }
-        }
-    }
-
-    /** 超出保留上限时淘汰最久未用的非活动工作区。 */
-    private fun enforceRuntimeLimitLocked() {
-        val candidates = synchronized(runtimes) {
-            runtimes.values.filter { it.path != activeWorkspace && it.clients.isNotEmpty() }
-                .sortedBy { it.lastActiveAt }
-        }
-        var overflow = synchronized(runtimes) {
-            runtimes.values.count { it.clients.isNotEmpty() } - MAX_RUNTIMES
-        }
-        for (runtime in candidates) {
-            if (overflow <= 0) break
-            FileLogger.i(TAG, "[${runtime.path}] 超出工作区保留上限，回收 MCP 连接")
-            teardownWorkspaceLocked(runtime.path)
-            overflow--
-        }
-    }
 }

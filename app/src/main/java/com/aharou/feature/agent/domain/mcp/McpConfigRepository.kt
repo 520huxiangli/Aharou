@@ -215,6 +215,56 @@ class McpConfigRepository @Inject constructor(
         return parse(getProjectState(workspacePath).value ?: DEFAULT_JSON)
     }
 
+    /**
+     * 「读磁盘 → 变换 → 写回」在锁内一气做完：调用方不再拿内存快照去整表覆盖。
+     *
+     * 这是修「外部改动被抹掉」的根治办法：旧写法是工具先读内存、改完再写盘，中间任何外部改动
+     * （容器里编辑、别的代码路径写入）都会被这份旧快照整片覆盖；「写前对齐」只能挡住检查那一刻
+     * 已变的情况，挡不住「检查之后、写入之前又变」。
+     *
+     * @return [McpUpdateOutcome.NOT_FOUND] 表示 transform 返回 null（调用方据此报「未找到」）。
+     */
+    suspend fun updateGlobalServers(
+        transform: (List<McpServerConfig>) -> List<McpServerConfig>?
+    ): McpUpdateOutcome = mutex.withLock {
+        val diskJson = withContext(Dispatchers.IO) { load(globalFile) }
+        val next = transform(parse(diskJson)) ?: return@withLock McpUpdateOutcome.NOT_FOUND
+        writeGlobalLocked(next)
+    }
+
+    suspend fun updateProjectServers(
+        workspacePath: String,
+        transform: (List<McpServerConfig>) -> List<McpServerConfig>?
+    ): McpUpdateOutcome = mutex.withLock {
+        val diskJson = withContext(Dispatchers.IO) { load(projectFileForPath(workspacePath)) }
+        val next = transform(parse(diskJson)) ?: return@withLock McpUpdateOutcome.NOT_FOUND
+        writeProjectLocked(workspacePath, next)
+    }
+
+    private suspend fun writeGlobalLocked(servers: List<McpServerConfig>): McpUpdateOutcome {
+        val json = withContext(Dispatchers.IO) { serialize(servers) }
+        return if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
+            globalState.value = json
+            selfChanges.tryEmit(Unit)
+            McpUpdateOutcome.OK
+        } else {
+            FileLogger.w(TAG, "全局 MCP 配置未能落盘，保持原状态")
+            McpUpdateOutcome.WRITE_FAILED
+        }
+    }
+
+    private suspend fun writeProjectLocked(workspacePath: String, servers: List<McpServerConfig>): McpUpdateOutcome {
+        val json = withContext(Dispatchers.IO) { serialize(servers) }
+        return if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(workspacePath), json) }) {
+            getProjectState(workspacePath).value = json
+            selfChanges.tryEmit(Unit)
+            McpUpdateOutcome.OK
+        } else {
+            FileLogger.w(TAG, "项目 MCP 配置未能落盘（$workspacePath），保持原状态")
+            McpUpdateOutcome.WRITE_FAILED
+        }
+    }
+
     /** @return 是否真的落盘成功。写失败时只记日志、保留原状态，调用方必须据此报错——
      *  否则工具会回「添加成功」而磁盘上什么都没变。 */
     suspend fun setGlobalServers(servers: List<McpServerConfig>): Boolean {
@@ -353,6 +403,7 @@ class McpConfigRepository @Inject constructor(
                         }
                     }
                     put("enabled", server.enabled)
+                    if (server.keepAlive) put("keepAlive", true)
                     if (server.disabledTools.isNotEmpty()) {
                         putJsonArray("disabledTools") { server.disabledTools.forEach { add(it) } }
                     }
@@ -373,6 +424,8 @@ class McpConfigRepository @Inject constructor(
         return servers.mapNotNull { (name, element) ->
             val obj = element as? JsonObject ?: return@mapNotNull null
             val enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true
+            // 旧配置没有这个字段，按 false 读（等价于原来的行为）。
+            val keepAlive = (obj["keepAlive"] as? JsonPrimitive)?.booleanOrNull ?: false
 
             val command = (obj["command"] as? JsonPrimitive)?.contentOrNull
             val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
@@ -395,6 +448,7 @@ class McpConfigRepository @Inject constructor(
                         args = args,
                         env = env,
                         enabled = enabled,
+                        keepAlive = keepAlive,
                         disabledTools = disabledTools
                     )
                 }
@@ -407,6 +461,7 @@ class McpConfigRepository @Inject constructor(
                         url = url,
                         headers = headers,
                         enabled = enabled,
+                        keepAlive = keepAlive,
                         disabledTools = disabledTools,
                         oauth = parseOAuth(obj["oauth"] as? JsonObject)
                     )
@@ -488,4 +543,16 @@ class McpConfigRepository @Inject constructor(
         project.forEach { byName[it.name] = McpServerEntry(it, McpScope.PROJECT) }
         return byName.values.toList()
     }
+}
+
+/** 「读磁盘 → 变换 → 写回」的结果。 */
+enum class McpUpdateOutcome {
+    /** 已落盘。 */
+    OK,
+
+    /** transform 返回 null：目标项不存在，调用方应报「未找到」。 */
+    NOT_FOUND,
+
+    /** 落盘失败；内存与磁盘都保持原状。 */
+    WRITE_FAILED
 }

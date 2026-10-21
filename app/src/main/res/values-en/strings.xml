@@ -1256,6 +1256,8 @@
     <string name="mcp_scope_project">Project</string>
     <string name="mcp_basic_settings">Basic Settings</string>
     <string name="mcp_enabled">Enabled</string>
+    <string name="mcp_keep_alive">Keep alive</string>
+    <string name="mcp_keep_alive_hint">When on, the connection stays open; when off, it disconnects after 15 minutes of inactivity and reconnects when called</string>
     <string name="mcp_name_hint">e.g. fetch, github, gitlab</string>
     <string name="mcp_name_invalid">Name can only contain letters, digits, underscores, and hyphens</string>
     <string name="mcp_transport_type">Transport Type</string>

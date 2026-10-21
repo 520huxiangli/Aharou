@@ -13,6 +13,9 @@ data class McpServerConfig(
     val env: Map<String, String> = emptyMap(),
     val enabled: Boolean = true,
     val disabledTools: Set<String> = emptySet(),
+    // 保活：开着就一直连着，不因空闲被回收；关着（默认）按空闲超时回收。
+    // 旧配置无此字段时按 false 读，等价于原来的行为。
+    val keepAlive: Boolean = false,
     // OAuth 授权配置（仅远程 HTTP 形态用）；为 null 表示该 server 不走 OAuth。旧配置无此块时保持 null。
     val oauth: McpOAuthConfig? = null
 ) {

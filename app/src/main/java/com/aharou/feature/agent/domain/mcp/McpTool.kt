@@ -29,8 +29,12 @@ import java.security.MessageDigest
  *   避免多个 server 工具重名；真正调用时用原始 [remoteName] 走 tools/call。
  */
 class McpTool(
-    private val client: McpClient,
-    private val descriptor: McpToolDescriptor
+    private var client: McpClient,
+    private val descriptor: McpToolDescriptor,
+    /** 连接被空闲回收拆掉后，调用时用它重新连上（返回 null 表示重连失败）。 */
+    private val onReconnect: (suspend () -> McpClient?)? = null,
+    /** 每次调用前通知一次，回收逻辑据此判断这个 server 还在被使用。 */
+    private val onUsed: (() -> Unit)? = null
 ) : AgentTool() {
 
     companion object {
@@ -90,9 +94,30 @@ class McpTool(
     }
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+        onUsed?.invoke()
+        return try {
+            callOn(client, args)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (first: Exception) {
+            // 连接可能已被空闲回收拆掉：重连一次再试，别让回收变成随机报错。
+            val fresh = onReconnect?.invoke()
+            if (fresh == null || fresh === client) {
+                FileLogger.e(TAG, "MCP 工具调用失败: $name", first)
+                return ToolResult.Error("MCP 工具执行失败: ${first.message}")
+            }
+            client = fresh
+            runCatching { callOn(fresh, args) }.getOrElse { e ->
+                FileLogger.e(TAG, "重连后调用仍失败: $name", e)
+                ToolResult.Error("MCP 工具执行失败: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun callOn(target: McpClient, args: Map<String, JsonElement>): ToolResult {
         return try {
             FileLogger.d(TAG, "调用 MCP 工具 $name (remote=$remoteName) args=${args.keys}")
-            val call = client.callTool(remoteName, JsonObject(args))
+            val call = target.callTool(remoteName, JsonObject(args))
             if (call.isError) {
                 ToolResult.Error(call.text)
             } else {

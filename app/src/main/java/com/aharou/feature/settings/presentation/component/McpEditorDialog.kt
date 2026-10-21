@@ -85,6 +85,7 @@ fun McpServerEditDialog(
 
     var name by remember { mutableStateOf(seed?.name ?: "") }
     var enabled by remember { mutableStateOf(seed?.enabled ?: true) }
+    var keepAlive by remember { mutableStateOf(seed?.keepAlive ?: false) }
     var isStdio by remember { mutableStateOf(seed?.isStdio ?: false) }
     // 作用域：新增默认当前项目，编辑保持原作用域。
     var scope by remember { mutableStateOf(initialScope ?: McpScope.PROJECT) }
@@ -250,6 +251,30 @@ fun McpServerEditDialog(
                                     AppSwitch(
                                         checked = enabled,
                                         onCheckedChange = { enabled = it }
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 44.dp)
+                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = stringResource(R.string.mcp_keep_alive),
+                                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = stringResource(R.string.mcp_keep_alive_hint),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    AppSwitch(
+                                        checked = keepAlive,
+                                        onCheckedChange = { keepAlive = it }
                                     )
                                 }
                             }
@@ -451,6 +476,7 @@ fun McpServerEditDialog(
                                         .filter { it.first.isNotEmpty() }
                                         .toMap(),
                                     enabled = enabled,
+                                    keepAlive = keepAlive,
                                     disabledTools = disabledToolsSet.toSet()
                                 )
                             } else {
@@ -462,6 +488,7 @@ fun McpServerEditDialog(
                                         .filter { it.first.isNotEmpty() }
                                         .toMap(),
                                     enabled = enabled,
+                                    keepAlive = keepAlive,
                                     disabledTools = disabledToolsSet.toSet(),
                                     // 保留既有 oauth 块（目录 OAuth 项预填的、或已授权 server 的令牌），避免编辑时丢失。
                                     oauth = seed?.oauth

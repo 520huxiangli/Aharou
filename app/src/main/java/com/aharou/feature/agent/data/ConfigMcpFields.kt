@@ -57,7 +57,7 @@ class ConfigMcpFields @Inject constructor(
         override val basePath = "mcp.servers"
         override val displayName = "MCP 服务器"
         override val description =
-            "全局 mcp.json 里的 server。子字段：url / headers / command / args / env / enabled / disabled_tools / oauth（只读：status / client_id / authorization_server / 授权与令牌端点 / scope / expires_at，以及存在时才出现的 access_token / refresh_token / client_secret）。"
+            "全局 mcp.json 里的 server。子字段：url / headers / command / args / env / enabled / keep_alive / disabled_tools / oauth（只读：status / client_id / authorization_server / 授权与令牌端点 / scope / expires_at，以及存在时才出现的 access_token / refresh_token / client_secret）。"
 
         override fun childIds(): List<String> = servers().map { it.name }
 
@@ -181,6 +181,19 @@ class ConfigMcpFields @Inject constructor(
                         val b = (v as? ConfigValue.Bool)?.value
                             ?: throw ConfigError.TypeMismatch("boolean")
                         mutate(forId) { it.copy(enabled = b) }
+                    },
+                ),
+                ClosureField(
+                    path = "$path.keep_alive",
+                    displayName = "保活（$forId）",
+                    description = "true 时连接一直保持；false（默认）时空闲 15 分钟断开，下次调用自动重连。",
+                    valueSchema = ConfigSchema.Bool,
+                    revertable = true,
+                    reader = { ConfigValue.Bool(server(forId)?.keepAlive ?: false) },
+                    writer = { v ->
+                        val b = (v as? ConfigValue.Bool)?.value
+                            ?: throw ConfigError.TypeMismatch("boolean")
+                        mutate(forId) { it.copy(keepAlive = b) }
                     },
                 ),
             ) + oauthFields
