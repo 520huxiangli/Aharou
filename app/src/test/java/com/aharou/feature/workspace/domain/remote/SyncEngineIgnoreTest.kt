@@ -4,6 +4,7 @@ import com.aharou.feature.workspace.domain.model.RemoteConnection
 import com.aharou.feature.workspace.domain.model.RemoteMount
 import com.aharou.feature.workspace.domain.model.RemoteProtocol
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -27,7 +28,8 @@ class SyncEngineIgnoreTest {
 
     @After
     fun tearDown() {
-        syncEngines.forEach { it.shutdown() }
+        // shutdown 现在是 suspend（内部要在 NonCancellable 里断开底层连接）。
+        runBlocking { syncEngines.forEach { it.shutdown() } }
         syncEngines.clear()
     }
 
