@@ -210,34 +210,42 @@ class McpConfigRepository @Inject constructor(
         return parse(globalState.value ?: DEFAULT_JSON)
     }
 
-    suspend fun getProjectServers(): List<McpServerConfig> {
-        val path = workspaceRepository.currentPath()
-        ensureProjectLoaded(path)
-        return parse(getProjectState(path).value ?: DEFAULT_JSON)
+    suspend fun getProjectServers(workspacePath: String = workspaceRepository.currentPath()): List<McpServerConfig> {
+        ensureProjectLoaded(workspacePath)
+        return parse(getProjectState(workspacePath).value ?: DEFAULT_JSON)
     }
 
-    suspend fun setGlobalServers(servers: List<McpServerConfig>) {
-        mutex.withLock {
+    /** @return 是否真的落盘成功。写失败时只记日志、保留原状态，调用方必须据此报错——
+     *  否则工具会回「添加成功」而磁盘上什么都没变。 */
+    suspend fun setGlobalServers(servers: List<McpServerConfig>): Boolean {
+        return mutex.withLock {
             // serialize 会做 Keystore 加密，放到 IO 线程；别在（可能为 Main 的）调用方线程上做。
             val json = withContext(Dispatchers.IO) { serialize(servers) }
             if (withContext(Dispatchers.IO) { writeFile(globalFile, json) }) {
                 globalState.value = json
                 selfChanges.tryEmit(Unit)
+                true
             } else {
                 FileLogger.w(TAG, "全局 MCP 配置未能落盘，保持原状态")
+                false
             }
         }
     }
 
-    suspend fun setProjectServers(servers: List<McpServerConfig>) {
-        val path = workspaceRepository.currentPath()
-        mutex.withLock {
+    /** @return 是否真的落盘成功（口径同 [setGlobalServers]）。 */
+    suspend fun setProjectServers(
+        servers: List<McpServerConfig>,
+        workspacePath: String = workspaceRepository.currentPath()
+    ): Boolean {
+        return mutex.withLock {
             val json = withContext(Dispatchers.IO) { serialize(servers) }
-            if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(path), json) }) {
-                getProjectState(path).value = json
+            if (withContext(Dispatchers.IO) { writeFile(projectFileForPath(workspacePath), json) }) {
+                getProjectState(workspacePath).value = json
                 selfChanges.tryEmit(Unit)
+                true
             } else {
-                FileLogger.w(TAG, "项目 MCP 配置未能落盘，保持原状态")
+                FileLogger.w(TAG, "项目 MCP 配置未能落盘（$workspacePath），保持原状态")
+                false
             }
         }
     }

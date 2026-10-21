@@ -194,6 +194,10 @@ class McpManager @Inject constructor(
             val enabledTools = tools.filter { it.remoteName !in cfg.disabledTools }
             val registeredNames = enabledTools.map { it.name }
             synchronized(activeClients) {
+                // 重连成功时先清同名旧工具再注册新的：旧连接被 close 后，注册表里那些
+                // McpTool 还指着已关闭的 transport，调用时就会报「transport 已关闭」——
+                // 表现是「刚注册成功却一调就失败」。
+                registeredToolNames.remove(cfg.name)?.forEach { toolRegistry.unregister(it) }
                 activeClients[cfg.name] = client
                 enabledTools.forEach { toolRegistry.register(it.name, it) }
                 registeredToolNames[cfg.name] = registeredNames

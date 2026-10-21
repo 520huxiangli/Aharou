@@ -5,6 +5,8 @@ import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.mcp.McpScope
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
+import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.tool.AbstractContextualTool
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -25,7 +27,7 @@ class ManageMcpTool @Inject constructor(
     private val mcpConfigRepository: McpConfigRepository,
     // 用 Lazy 断环：McpManager 依赖工具注册表，而注册表里有本工具，直接注入会形成循环。
     private val mcpManager: dagger.Lazy<McpManager>
-) : AgentTool() {
+) : AbstractContextualTool() {
     private companion object {
         const val TAG = "ManageMcpTool"
     }
@@ -109,17 +111,22 @@ class ManageMcpTool @Inject constructor(
         )
     }
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
         val action = args["action"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("缺少 action 参数")
         val scope = resolveScope(args)
         val scopeLabel = if (scope == McpScope.PROJECT) "当前项目" else "全局"
+        // 项目级配置写到「本会话所属工作区」，不是全局活动工作区：多工作区并行时，
+        // 后者会把配置静默写进别人正在用的工作区。
+        val targetWorkspace = context.projectRoot.takeIf { it.isNotBlank() }
 
         suspend fun readServers(): List<McpServerConfig> =
-            if (scope == McpScope.PROJECT) mcpConfigRepository.getProjectServers() else mcpConfigRepository.getGlobalServers()
+            if (scope == McpScope.PROJECT) mcpConfigRepository.getProjectServers(targetWorkspace ?: "")
+            else mcpConfigRepository.getGlobalServers()
 
-        suspend fun writeServers(servers: List<McpServerConfig>) {
-            if (scope == McpScope.PROJECT) mcpConfigRepository.setProjectServers(servers) else mcpConfigRepository.setGlobalServers(servers)
-        }
+        /** 写盘并回读校验：写失败必须报错，不能回「成功」而磁盘没变。 */
+        suspend fun writeServers(servers: List<McpServerConfig>): Boolean =
+            if (scope == McpScope.PROJECT) mcpConfigRepository.setProjectServers(servers, targetWorkspace ?: "")
+            else mcpConfigRepository.setGlobalServers(servers)
 
         return try {
             when (action) {
@@ -138,7 +145,7 @@ class ManageMcpTool @Inject constructor(
                     val servers = readServers().toMutableList()
                     val removed = servers.removeIf { it.name == name }
                     if (removed) {
-                        writeServers(servers)
+                        if (!writeServers(servers)) return ToolResult.Error("写入$scopeLabel 配置失败，请检查文件权限或容器状态；改动未生效")
                         ToolResult.Success(JsonPrimitive("已成功移除 $scopeLabel MCP server: $name"))
                     } else {
                         ToolResult.Error("未找到 $scopeLabel MCP server: $name")
@@ -167,8 +174,8 @@ class ManageMcpTool @Inject constructor(
 
                     servers.removeIf { it.name == name }
                     servers.add(newServer)
-                    writeServers(servers)
-                    
+                    if (!writeServers(servers)) return ToolResult.Error("写入$scopeLabel 配置失败，请检查文件权限或容器状态；改动未生效")
+
                     ToolResult.Success(JsonPrimitive("成功添加 $scopeLabel 本地 MCP server: $name。配置将在下一次会话生效。若命令依赖 Node/Python 等运行时，请通过命令工具在用户确认后安装。"))
                 }
                 "add_http" -> {
@@ -190,7 +197,7 @@ class ManageMcpTool @Inject constructor(
 
                     servers.removeIf { it.name == name }
                     servers.add(newServer)
-                    writeServers(servers)
+                    if (!writeServers(servers)) return ToolResult.Error("写入$scopeLabel 配置失败，请检查文件权限或容器状态；改动未生效")
                     
                     ToolResult.Success(JsonPrimitive("成功添加 $scopeLabel HTTP MCP server: $name. 配置将在下一次会话生效。"))
                 }

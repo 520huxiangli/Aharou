@@ -51,6 +51,7 @@ import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Download
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Terminal
+import compose.icons.feathericons.Upload
 import com.aharou.R
 
 /**
@@ -67,7 +68,8 @@ internal fun McpSection(
     onEdit: (McpServerEntry) -> Unit,
     onDelete: (String, McpScope) -> Unit,
     onBrowseDirectory: () -> Unit,
-    onImportJson: () -> Unit
+    onImportJson: () -> Unit,
+    onExportJson: () -> Unit
 ) {
     val context = LocalContext.current
     val oauthController = remember(context) {
@@ -96,6 +98,14 @@ internal fun McpSection(
                 title = stringResource(R.string.mcp_import_json),
                 subtitle = stringResource(R.string.mcp_import_json_hint),
                 onClick = onImportJson
+            )
+            SettingsDivider()
+            // 导出：把当前生效配置吐成标准 mcpServers JSON，方便分享给别人或备份
+            SettingsRow(
+                icon = FeatherIcons.Upload,
+                title = stringResource(R.string.mcp_export_json),
+                subtitle = stringResource(R.string.mcp_export_json_hint),
+                onClick = onExportJson
             )
         }
 

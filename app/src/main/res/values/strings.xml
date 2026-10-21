@@ -1605,6 +1605,13 @@
     <string name="mcp_browse_directory_hint">从常用远程 MCP 服务器中一键添加</string>
     <string name="mcp_import_json">从 JSON 导入</string>
     <string name="mcp_import_json_hint">粘贴标准 mcpServers 配置一键添加</string>
+    <string name="mcp_export_json">导出配置</string>
+    <string name="mcp_export_json_hint">生成标准 mcpServers JSON，可复制或分享</string>
+    <string name="mcp_export_json_title">导出 MCP 配置</string>
+    <string name="mcp_export_json_desc">这是当前生效的配置（项目级同名覆盖全局）。密钥以占位符引用的会原样保留；如果你直接写的是明文密钥，导出内容里也会有，分享前请确认。</string>
+    <string name="mcp_export_json_copy">复制到剪贴板</string>
+    <string name="mcp_export_json_copied">已复制</string>
+    <string name="mcp_export_json_share">分享</string>
     <string name="mcp_import_json_title">导入 MCP 配置</string>
     <string name="mcp_import_json_placeholder">{ "mcpServers": { "name": { "command": "npx", "args": ["-y", "..."] } } }</string>
     <string name="mcp_import_json_action">导入</string>

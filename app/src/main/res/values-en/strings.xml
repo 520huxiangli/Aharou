@@ -1605,6 +1605,13 @@
     <string name="mcp_browse_directory_hint">Add popular remote MCP servers in one tap</string>
     <string name="mcp_import_json">Import from JSON</string>
     <string name="mcp_import_json_hint">Paste a standard mcpServers config to add servers</string>
+    <string name="mcp_export_json">Export config</string>
+    <string name="mcp_export_json_hint">Generate a standard mcpServers JSON you can copy or share</string>
+    <string name="mcp_export_json_title">Export MCP config</string>
+    <string name="mcp_export_json_desc">This is the config currently in effect (project entries override global ones by name). Keys referenced as placeholders stay as placeholders; if you wrote a plain-text key yourself, it will be included, so check before sharing.</string>
+    <string name="mcp_export_json_copy">Copy to clipboard</string>
+    <string name="mcp_export_json_copied">Copied</string>
+    <string name="mcp_export_json_share">Share</string>
     <string name="mcp_import_json_title">Import MCP config</string>
     <string name="mcp_import_json_placeholder">{ "mcpServers": { "name": { "command": "npx", "args": ["-y", "..."] } } }</string>
     <string name="mcp_import_json_action">Import</string>

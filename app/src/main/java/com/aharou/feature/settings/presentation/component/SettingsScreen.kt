@@ -305,6 +305,7 @@ fun SettingsScreen(
     var providerPresetPrefill by remember { mutableStateOf<ProviderPreset?>(null) }
     var mcpDialogRequest by remember { mutableStateOf<McpDialogRequest?>(null) }
     var showMcpImportSheet by remember { mutableStateOf(false) }
+    var showMcpExportSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(onboardingStep) {
         when (onboardingStep) {
@@ -1080,7 +1081,8 @@ fun SettingsScreen(
                     onEdit = { mcpDialogRequest = McpDialogRequest(editing = it, prefill = null) },
                     onDelete = { name, scope -> viewModel.deleteMcpServer(name, scope) },
                     onBrowseDirectory = { section = SettingsSection.Connectors },
-                    onImportJson = { showMcpImportSheet = true }
+                    onImportJson = { showMcpImportSheet = true },
+                    onExportJson = { showMcpExportSheet = true }
                 )
                 SettingsSection.Connectors -> ConnectorsSection(languageTag = languageTag)
                 SettingsSection.RemoteDevice -> RemoteDeviceSection()
@@ -1372,6 +1374,10 @@ fun SettingsScreen(
             onDismiss = { showMcpImportSheet = false },
             onImported = { viewModel.reloadMcp() }
         )
+    }
+
+    if (showMcpExportSheet) {
+        McpJsonExportSheet(onDismiss = { showMcpExportSheet = false })
     }
 
     if (showAddProviderSheet) {
