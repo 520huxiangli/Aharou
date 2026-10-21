@@ -43,6 +43,27 @@ class SecretMaskerTest {
     }
 
     @Test
+    fun `全角冒号的赋值也会被掩码`() {
+        // 记忆正文用全角冒号写凭据是常态，半角正则盖不到
+        val out = SecretMasker.mask("- Token：fyhFkIDYtw3mAwAf11c5adCssiF")
+        assertFalse(out.contains("fyhFkIDYtw3mAwAf11c5adCssiF"))
+        assertTrue(out.contains("Token：[已脱敏: fyhF…"))
+    }
+
+    @Test
+    fun `中文关键词的赋值也会被掩码`() {
+        val out = SecretMasker.mask("密码：Abcd1234efgh")
+        assertFalse(out.contains("Abcd1234efgh"))
+        assertTrue(out.contains("密码：[已脱敏: Abcd…"))
+    }
+
+    @Test
+    fun `中文关键词后无值时不误伤`() {
+        val text = "凭据与流程全在案：服务器密码与连接方式见 SECRETS.md"
+        assertEquals(text, SecretMasker.mask(text))
+    }
+
+    @Test
     fun `IP 不被掩码`() {
         val text = "服务器 1.117.60.254 上的服务归小染"
         assertEquals(text, SecretMasker.mask(text))

@@ -21,8 +21,8 @@ internal object MemoryPromptRenderer {
 
     private const val GLOBAL_HEADER = "全局记忆 (跨项目个人偏好，需要详情时用 memory(action=read, name=xxx, scope=global))："
     private const val PROJECT_HEADER = "项目记忆 (当前项目专属，需要详情时用 memory(action=read, name=xxx, scope=project))："
-    private const val OMISSION_NOTICE = "部分记忆索引因 8000 字符总预算未注入；memory(action=list) 仍可查看完整清单，再用 memory(action=read, name=..., scope=...) 读取正文。"
-    private const val SCALE_NOTICE = "当前项目记忆 %d 条，注入清单 %d 条；其余需用 memory search 取回"
+    private const val OMISSION_NOTICE = "部分记忆索引因 $MAX_INDEX_CHARS 字符总预算未注入；memory(action=list) 仍可查看完整清单，再用 memory(action=read, name=..., scope=...) 读取正文。"
+    private const val SCALE_NOTICE = "记忆库共 %d 条（含仅归档的事件、已过期与陈旧条目），本轮注入清单 %d 条；其余需用 memory search 取回"
     private const val INLINE_HEADER = "以下条目的正文已直接给出（长期约定与红线，不必再 memory read）："
 
     /**
@@ -56,7 +56,9 @@ internal object MemoryPromptRenderer {
                 // 索引行带上 LONG_BODY_LABEL，模型按需 read 即可拿到全文。
                 if (body.length > MAX_INLINE_ENTRY_CHARS) continue
                 val block = inlineBlock(memory, body)
-                if (length + block.length > MAX_INLINE_CHARS) break
+                // 单条撑不下就跳过这条继续试后面的：直接 break 会把排在它后面、本来塞得下的
+                // 短条目一起退回索引，而顺序由相关度决定，模型看到的内联条目会无缘无故变来变去。
+                if (length + block.length > MAX_INLINE_CHARS) continue
                 if (isNotEmpty()) append("\n\n")
                 append(block)
                 inlined += memory
@@ -106,7 +108,8 @@ internal object MemoryPromptRenderer {
         SecretMasker.mask(TextSanitizer.sanitize(memory.content.trim()))
 
     private fun inlineBlock(memory: Memory, body: String): String = buildString {
-        append("### ").append(memory.name)
+        // name 来自 frontmatter 自由文本（容器内可写），与正文同属不可信输入，口径不能不一样。
+        append("### ").append(SecretMasker.mask(TextSanitizer.sanitize(memory.name)))
         if (memory.description.isNotBlank()) {
             append(" —— ").append(SecretMasker.mask(TextSanitizer.sanitize(memory.description)))
         }
@@ -137,7 +140,7 @@ internal object MemoryPromptRenderer {
             if (isNotEmpty()) append("\n\n")
             append(if (scope == MemoryScope.GLOBAL) GLOBAL_HEADER else PROJECT_HEADER)
             scoped.forEach {
-                append("\n- ${it.name}: ${SecretMasker.mask(TextSanitizer.sanitize(it.description.ifBlank { "无" }))}${pendingLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
+                append("\n- ${SecretMasker.mask(TextSanitizer.sanitize(it.name))}: ${SecretMasker.mask(TextSanitizer.sanitize(it.description.ifBlank { "无" }))}${pendingLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
             }
         }
     }

@@ -44,6 +44,10 @@ class GlobalMemorySource @Inject constructor(
     ) != null
 
     override fun deleteMemory(name: String): Boolean = synchronized(MemoryFileStorage.lock) {
-        MemorySource.resolveMemoryFile(memoryRoot, name).delete()
+        val file = MemorySource.resolveMemoryFile(memoryRoot, name)
+        if (!file.isFile) return@synchronized false
+        // 删除是全链路唯一没有回滚路径的写操作：先留一份归档，误删还能用 memory(action=undo) 拉回。
+        MemorySource.archiveExistingFile(memoryRoot, name)
+        file.delete()
     }
 }

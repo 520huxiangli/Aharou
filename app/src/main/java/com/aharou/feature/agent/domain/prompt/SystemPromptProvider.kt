@@ -355,7 +355,10 @@ class SystemPromptProvider @Inject constructor(
             }
             val memories = try {
                 memoryRepository.listMemoriesForPrompt(ctx.projectRoot, query)
-            } catch (e: Exception) { return null }
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "生成记忆清单失败，本轮不注入清单: ${e.message}", e)
+                return null
+            }
             // 清单末尾附一行规模反馈：注入有 60 条硬上限，让模型知道看到的只是一部分抽样，
             // 其余要靠 memory(action=search) 取回。总数取不到时退化为只报清单内的条数。
             val totalInScope = try {
@@ -424,7 +427,9 @@ class SystemPromptProvider @Inject constructor(
     /** 记忆（核心档案 + 今日日志尾巴）：外置文件在 filesDir/aharou-global/memory（容器内可读写）。 */
     private inner class AharouMemorySource : PromptSource {
         override fun build(ctx: AgentContext): String? =
-            runCatching { aharouMemoryStore.buildPromptSection() }.getOrNull()
+            runCatching { aharouMemoryStore.buildPromptSection() }
+                .onFailure { FileLogger.w(TAG, "读取核心档案失败，本轮不注入 CORE/GLOBAL: ${it.message}", it) }
+                .getOrNull()
                 ?.takeIf { it.isNotBlank() }
     }
 

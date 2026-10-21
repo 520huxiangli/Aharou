@@ -65,6 +65,11 @@ class ProjectMemorySource(
     } != null
 
     override fun deleteMemory(name: String): Boolean = synchronized(MemoryFileStorage.lock) {
-        root?.let { MemorySource.resolveMemoryFile(it, name).delete() } ?: false
+        val dir = root ?: return@synchronized false
+        val file = MemorySource.resolveMemoryFile(dir, name)
+        if (!file.isFile) return@synchronized false
+        // 删除是全链路唯一没有回滚路径的写操作：先留一份归档，误删还能用 memory(action=undo) 拉回。
+        MemorySource.archiveExistingFile(dir, name)
+        file.delete()
     }
 }

@@ -19,12 +19,15 @@ internal object SecretMasker {
         out = BEARER_TOKEN.replace(out) { m ->
             "${m.groupValues[1]}${m.groupValues[2]}${maskValue(m.groupValues[3])}"
         }
-        out = ASSIGNED_SECRET.replace(out) { m ->
-            val quote = m.groupValues[3]
-            "${m.groupValues[1]}${m.groupValues[2]}$quote${maskValue(m.groupValues[4])}$quote"
-        }
+        out = ASSIGNED_SECRET.replace(out, ::maskAssigned)
+        out = ASSIGNED_SECRET_CN.replace(out, ::maskAssigned)
         out = PREFIXED_KEY.replace(out) { m -> maskValue(m.value) }
         return out
+    }
+
+    private fun maskAssigned(m: MatchResult): String {
+        val quote = m.groupValues[3]
+        return "${m.groupValues[1]}${m.groupValues[2]}$quote${maskValue(m.groupValues[4])}$quote"
     }
 
     /** 保留前 4 位与长度：主人问「是哪个令牌」时分得清，又不给出可用信息。 */
@@ -38,7 +41,15 @@ internal object SecretMasker {
         Regex("(?i)\\b(bearer)(\\s+)([A-Za-z0-9._~+/=-]{12,})")
 
     private val ASSIGNED_SECRET = Regex(
-        "(?i)\\b(password|passwd|token|api[_-]?key|apikey|secret|access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\\b(\\s*[=:]\\s*)([\"']?)([A-Za-z0-9._~+/=@#$%^&*-]{8,})\\3"
+        "(?i)\\b(password|passwd|token|api[_-]?key|apikey|secret|access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\\b(\\s*[=:：＝]\\s*)([\"']?)([A-Za-z0-9._~+/=@#$%^&*-]{8,})\\3"
+    )
+
+    /**
+     * 中文关键词单列一条：`\b` 在汉字与全角冒号之间不成立，塞进上面那条会整条失效。
+     * 记忆正文用全角冒号写凭据是常态（`- Token：xxx`），漏了这条等于掩码对最该保护的那几行不起作用。
+     */
+    private val ASSIGNED_SECRET_CN = Regex(
+        "(密码|口令|令牌|密钥|秘钥|私钥|访问令牌|访问密钥)(\\s*[=:：＝]\\s*)([\"']?)([A-Za-z0-9._~+/=@#$%^&*-]{8,})\\3"
     )
 
     private val PREFIXED_KEY = Regex("\\b(sk-(?:ant-|proj-)?[A-Za-z0-9_-]{12,})")

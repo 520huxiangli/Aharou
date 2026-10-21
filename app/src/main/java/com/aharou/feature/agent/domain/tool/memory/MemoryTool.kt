@@ -9,7 +9,6 @@ import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
-import com.aharou.feature.agent.domain.memory.recencyFactor
 import com.aharou.feature.agent.domain.memory.MemorySyncManager
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.agent.domain.memory.MemoryType
@@ -275,10 +274,8 @@ class MemoryTool @Inject constructor(
     /**
      * 按关键词检索记忆。
      *
-     * 打分口径只有一套，就在 MemoryRepository 里（keywords > 名称 > 描述，带 IDF 与 CJK bigram）；
-     * 这里复用它的切词（[MemoryRepository.termsOf]）对候选做命中筛选，按「命中的检索词个数」粗排，
-     * 不再自带一套 substring 权重——两套打分必然随时间漂移，同一个关键词在 search 与提示词注入
-     * 清单里会给出不同答案。
+     * 打分口径只有一套，就在 MemoryRepository 里（keywords > 名称 > 描述，带 IDF、CJK bigram
+     * 与时间衰减）；这里只负责取候选与放宽重试，不再自带一套 substring 权重。
      *
      * 候选取自 [MemoryRepository.listMemories]，scope 非空时就是严格单作用域视图（同名不折叠），
      * 作用域筛选因此真正生效。
@@ -293,15 +290,15 @@ class MemoryTool @Inject constructor(
         if (limit !in 1..50 || (args.containsKey("limit") && (args["limit"] as? JsonPrimitive)?.intOrNull == null)) {
             return ToolResult.Error("limit 必须为 1–50 的整数", "INVALID_LIMIT")
         }
-        // 与仓储层同一套切词；命中后按「命中数 × 时间衰减」排序，近代改动更可能仍然有效。
+        // 候选取全量后交给仓储层排序：IDF 加权 + 时间衰减，噪声（只有 bigram 碎片命中）在那边被挡掉。
         val candidates = memoryRepository.listMemories(projectRoot, scope)
-        var matched = matchMemories(candidates, query, limit)
+        var matched = memoryRepository.searchMemories(query, candidates, limit)
         if (matched.isEmpty()) {
             // 一次不中就减词重试，不要直接向模型报「没有」——用户用的词往往比记忆里的长。
             val relaxed = relaxedQueryOf(query)
             if (relaxed.isNotBlank()) {
                 FileLogger.i(TAG, "放宽检索：$query → $relaxed")
-                matched = matchMemories(candidates, relaxed, limit)
+                matched = memoryRepository.searchMemories(relaxed, candidates, limit)
             }
         }
 
@@ -310,33 +307,13 @@ class MemoryTool @Inject constructor(
         }
         val text = matched.joinToString("\n") { m ->
             val kws = if (m.keywords.isEmpty()) "" else " [关键词: ${m.keywords.joinToString(", ")}]"
-            "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}${if (m.pending) "/待确认" else ""}): ${m.description}$kws"
+            // 过期的短期记忆不进注入，但仍在库里、能搜到：不标注的话模型会把它当现行知识用。
+            val expired = if (memoryRepository.isExpired(m)) "/已过期" else ""
+            "- ${m.name} (${m.scope.name.lowercase()}/${m.type.key}${if (m.pending) "/待确认" else ""}$expired): ${m.description}$kws"
         }
         return ToolResult.Success(
             JsonPrimitive("匹配「$query」的记忆（最多 $limit 条）：\n$text\n\n用 action=read + name=<名称> + scope=<作用域> 取完整正文。")
         )
-    }
-
-    /**
-     * 按「命中数 × 时间衰减」降序；打平看最近改动，再按名称，保证同一 query 每次顺序稳定。
-     * 衰减系数复用仓储层的 [recencyFactor]，两处共用一套阈值，避免检索与注入排序漂移。
-     */
-    private fun matchMemories(candidates: List<Memory>, query: String, limit: Int): List<Memory> {
-        val terms = memoryRepository.termsOf(query).distinct()
-        if (terms.isEmpty()) return emptyList()
-        return candidates.mapNotNull { m ->
-            val indexed = buildSet {
-                m.keywords.forEach { addAll(memoryRepository.termsOf(it)) }
-                addAll(memoryRepository.termsOf("${m.name} ${m.description}"))
-                addAll(memoryRepository.termsOf(m.content))
-            }
-            val hits = terms.count { it in indexed }
-            if (hits > 0) Triple(m, hits, hits * recencyFactor(m)) else null
-        }.sortedWith(
-            compareByDescending<Triple<Memory, Int, Double>> { it.third }
-                .thenByDescending { it.first.file?.lastModified() ?: 0L }
-                .thenBy { it.first.name.lowercase() }
-        ).take(limit).map { it.first }
     }
 
     /** 去掉最长的一个词重试一次；只剩一个词时返回空串，不再放宽。 */

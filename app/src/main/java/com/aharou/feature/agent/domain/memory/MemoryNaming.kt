@@ -8,6 +8,8 @@ package com.aharou.feature.agent.domain.memory
  * 解析（[MemoryParser]）与注入清单过滤、遗忘判定（[MemoryRepository]）共用这一处判定，避免两处漂移。
  */
 internal fun isCoreArchiveName(name: String): Boolean {
-    val base = name.substringBeforeLast('.').uppercase()
+    // 直接看名字本身：先 uppercase 再判 isUpperCase 是恒真，会把每个纯字母数字的名字都
+    // 当成核心档案——后果不只是多占几行索引，isStale 靠它豁免遗忘，等于全库都不再陈旧。
+    val base = name.substringBeforeLast('.')
     return base.isNotEmpty() && base.all { it.isUpperCase() || it.isDigit() || it == '_' }
 }

@@ -2,6 +2,8 @@ package com.aharou.core.soul
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.SecretMasker
+import com.aharou.core.util.TextSanitizer
 import com.aharou.core.util.writeTextSafely
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -526,7 +528,7 @@ object SystemPromptBuilder {
             // [T-agent-prompt-consistency-pass] Mirrors iOS SoulStore: a user-authored
             // style that prescribes a reply language is the more specific preference
             // and wins over the base prompt's match-the-user's-language default.
-            return "\n\nResponse style (from SOUL.md `style` — apply to every reply unless the user explicitly asks otherwise; if it prescribes a reply language, it overrides the default match-the-user's-language rule):\n$s"
+            return "\n\nResponse style (from SOUL.md `style` — apply to every reply unless the user explicitly asks otherwise; if it prescribes a reply language, it overrides the default match-the-user's-language rule):\n${SecretMasker.mask(TextSanitizer.sanitize(s))}"
         }
 
         // [T-soul-lang-injection 2026-09-28] 与 style 同一类问题的另一半：`lang` 一直被解析、
@@ -560,7 +562,7 @@ object SystemPromptBuilder {
             return identityTrimmed + extraBlocks + "\n\n" + soulEditHint + "\n\n"
         }
 
-        val personality = scrubInjections(trimmed)
+        val personality = SecretMasker.mask(scrubInjections(TextSanitizer.sanitize(trimmed)))
 
         // Strip the trailing space we'd otherwise leave hanging at the
         // end of the first paragraph when a personality block follows.

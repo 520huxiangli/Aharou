@@ -183,6 +183,36 @@ class MemoryPromptRendererTest {
         assertEquals("ab", MemoryPromptRenderer.expandOnce("a${variable}b$variable", variable, null))
     }
 
+    @Test
+    fun indexAndInlineNameGoThroughMasking() {
+        // name 来自 frontmatter 自由文本（容器内可写），与正文同属不可信输入，口径必须一致
+        val leaking = Memory(
+            "leak-sk-ant-api03-abcdefghijklmnop",
+            "摘要",
+            MemoryScope.GLOBAL,
+            content = "正文",
+            type = MemoryType.IDENTITY
+        )
+
+        val output = MemoryPromptRenderer.render(listOf(leaking))
+
+        assertFalse(output.contains("sk-ant-api03-abcdefghijklmnop"))
+        assertTrue(output.contains("[已脱敏: sk-a…"))
+    }
+
+    @Test
+    fun inlineBudgetSkipDoesNotDropLaterShortEntries() {
+        // 攒满内联预算后遇到撑不下的条目应该跳过它继续试，不能把后面塞得下的短条目一起牺牲
+        val fat = (1..4).map {
+            Memory("fat-$it", "摘要", MemoryScope.GLOBAL, content = "A".repeat(880), type = MemoryType.IDENTITY)
+        }
+        val slim = Memory("slim", "摘要", MemoryScope.GLOBAL, content = "SHORT-BODY", type = MemoryType.IDENTITY)
+
+        val output = MemoryPromptRenderer.render(fat + slim)
+
+        assertTrue(output.contains("SHORT-BODY"))
+    }
+
     private fun memory(
         name: String,
         scope: MemoryScope = MemoryScope.GLOBAL,

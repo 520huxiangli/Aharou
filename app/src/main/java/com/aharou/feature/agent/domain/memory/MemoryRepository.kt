@@ -102,7 +102,7 @@ class MemoryRepository @Inject constructor(
     /**
      * 短期记忆是否已过期。取不到过期时间时视为永久——宁可多注入也不能把长期知识误判成过期。
      */
-    private fun isExpired(memory: Memory): Boolean {
+    internal fun isExpired(memory: Memory): Boolean {
         val at = memory.expiresAt ?: return false
         return at > 0L && System.currentTimeMillis() > at
     }
@@ -215,7 +215,15 @@ class MemoryRepository @Inject constructor(
      * 二元组（bigram），弥补中文无空格分词——整串 CJK 词几乎不会原样出现在用户输入里，
      * bigram 才是能对上的最小单位。单字与停用词噪音太大，直接丢弃。
      */
-    internal fun termsOf(text: String): List<String> {
+    internal fun termsOf(text: String): List<String> = rawTermsOf(text) + bigramsOf(text)
+
+    /**
+     * 原始词：实体串 + 按「非字母数字」切分后的词。
+     *
+     * 检索噪音就靠这个区分——用户输的整串中文词几乎不会原样出现在条目里，能对上的只有
+     * bigram 碎片（「完全生僻词」撞上「完全」），所以只有原始词命中才算真匹配。
+     */
+    private fun rawTermsOf(text: String): List<String> {
         if (text.isBlank()) return emptyList()
         val terms = ArrayList<String>()
         terms += MemoryEntities.extract(text)
@@ -223,17 +231,88 @@ class MemoryRepository @Inject constructor(
             val token = raw.lowercase()
             if (token.length < MIN_TERM_LENGTH || token in STOP_WORDS) continue
             terms += token
-            if (token.length >= CJK_BIGRAM_MIN_LENGTH && token.all { isCjk(it) }) {
-                for (i in 0 until token.length - 1) {
-                    terms += token.substring(i, i + 2)
-                }
+        }
+        return terms
+    }
+
+    /** 纯 CJK 词的字符二元组：弥补中文无空格分词，整串中文词几乎不会原样出现在用户输入里。 */
+    private fun bigramsOf(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val terms = ArrayList<String>()
+        for (raw in TERM_SPLIT.split(text)) {
+            val token = raw.lowercase()
+            if (token.length < MIN_TERM_LENGTH || token in STOP_WORDS) continue
+            if (token.length < CJK_BIGRAM_MIN_LENGTH || !token.all { isCjk(it) }) continue
+            for (i in 0 until token.length - 1) {
+                terms += token.substring(i, i + 2)
             }
         }
         return terms
     }
 
-    /** 是否 CJK 汉字（Unicode 基本区）：只有纯汉字的词才需要展开 bigram。 */
+    /**
+     * 是否 CJK 汉字（Unicode 基本区）：只有纯汉字的词才需要展开 bigram。
+     */
     private fun isCjk(ch: Char): Boolean = ch.code in 0x4E00..0x9FFF
+
+    /** 条目全文索引：关键词、名称、描述与正文的切词合集，检索命中判定用。 */
+    private fun indexTermsOf(memory: Memory): Set<String> = buildSet {
+        memory.keywords.forEach { addAll(termsOf(it)) }
+        addAll(termsOf(memory.name))
+        addAll(termsOf(memory.description))
+        addAll(termsOf(memory.content))
+    }
+
+    /**
+     * 长 CJK 词在条目索引里的 bigram 覆盖率。
+     *
+     * 「记忆同步」对不上条目里的整串「记忆同步的周期设置」，但它的二元组全在；「完全生僻词」
+     * 只在撞上「完全」时才中一个。用比例而不是绝对命中数分得开两种情况。非 CJK 词只认整词。
+     */
+    private fun coverageOf(term: String, indexed: Set<String>): Double {
+        if (term.length < CJK_BIGRAM_MIN_LENGTH || !term.all { isCjk(it) }) return 0.0
+        var hits = 0
+        for (i in 0 until term.length - 1) {
+            if (term.substring(i, i + 2) in indexed) hits++
+        }
+        return hits.toDouble() / (term.length - 1)
+    }
+
+    /**
+     * `memory` 工具 search 动作的排序。
+     *
+     * 与注入排序共用同一套 IDF 与时间衰减（打分口径只许一处），但匹配方向相反：注入时拿「任务
+     * 文本」去找条目，检索时拿「用户输入」去找条目，所以这里按「query 的词是否出现在条目索引里」计分。
+     *
+     * 入围门槛不是分数，而是「至少有一个原始词命中」：实测 608 条语料里，纯噪音查询（乱码 +
+     * 生僻词）的命中全部来自 bigram 碎片，而分数高低跟语料规模挂钩、换个作用域组合就变，拿绝对值
+     * 当门槛分不开噪音与单关键词查询（如 `PRoot`）。bigram 一律降为加分项，不再单独决定入围。
+     */
+    internal fun searchMemories(query: String, candidates: List<Memory>, limit: Int): List<Memory> {
+        val raw = rawTermsOf(query).distinct()
+        if (raw.isEmpty() || candidates.isEmpty()) return emptyList()
+        val rawSet = raw.toHashSet()
+        val bigrams = bigramsOf(query).distinct().filterNot { it in rawSet }
+        val total = candidates.size
+        val frequencies = documentFrequencies(candidates)
+        return candidates.mapNotNull { memory ->
+            val indexed = indexTermsOf(memory)
+            val exactHits = raw.filter { it in indexed }
+            // 中文词在条目里是一条整串（切词不细分汉字），整串对不上是常态，所以再看 bigram
+            // 覆盖率：真讲同一件事的词大部分二元组都在，碎片撞车只会中一两个。
+            val qualified = exactHits.isNotEmpty() ||
+                raw.any { coverageOf(it, indexed) >= MIN_TERM_COVERAGE }
+            if (!qualified) return@mapNotNull null
+            val score = exactHits.sumOf { idf(it, total, frequencies) } +
+                BIGRAM_HIT_DISCOUNT * bigrams.filter { it in indexed }.sumOf { idf(it, total, frequencies) }
+            val weighted = score * recencyFactor(memory)
+            if (weighted < MIN_SEARCH_SCORE) null else memory to weighted
+        }.sortedWith(
+            compareByDescending<Pair<Memory, Double>> { it.second }
+                .thenByDescending { it.first.file?.lastModified() ?: 0L }
+                .thenBy { it.first.name.lowercase() }
+        ).take(limit).map { it.first }
+    }
 
     private companion object {
         /** 近重复提示的最低相关度：至少命中一个关键词或名称才值得提醒，避免提示噪声。 */
@@ -263,6 +342,15 @@ class MemoryRepository @Inject constructor(
 
         /** 参与命中的最短词长：单字噪音太大，不值得计入。 */
         const val MIN_TERM_LENGTH = 2
+
+        /** bigram 命中只算加分，权重减半：碎片撞上的概率太高，不该与整词命中同权。 */
+        const val BIGRAM_HIT_DISCOUNT = 0.5
+
+        /** 长 CJK 词算「命中」所需的最小 bigram 覆盖率：一半以上，碎片撞车通常只中一两个。 */
+        const val MIN_TERM_COVERAGE = 0.5
+
+        /** 检索分数的下限（已含时间衰减）：只挡「超常见词 × 极旧条目」的组合，噪音靠原始词命中拦。 */
+        const val MIN_SEARCH_SCORE = 1.0
 
         /** CJK 词至少这么长才展开 bigram（两字词本身就是它的大二元组，无需重复展开）。 */
         const val CJK_BIGRAM_MIN_LENGTH = 3
@@ -424,8 +512,11 @@ class MemoryRepository @Inject constructor(
  * 时间衰减系数：近期改动过的条目更可能仍然有效，命中强度按年龄打折。
  *
  * 取不到文件或 mtime（内存构造、远端同步中）时返回 1.0——缺时间信息不该变成降权理由。
- * 提成顶层纯函数是为了让检索（MemoryTool.handleSearch）与注入排序共用一套口径，
- * 两边各写一套阈值必然随时间漂移。
+ * 提成顶层纯函数是为了让检索与注入排序共用一套口径，两边各写一套阈值必然随时间漂移。
+ *
+ * 刻意只看 mtime、不像 [MemoryRepository.isStale] 那样把 lastUsedAt 也算进来：两者回答的
+ * 不是同一个问题——这里问「内容新不新」（读得多但没改过的旧知识依然是旧的），那里问「要不要
+ * 遗忘」（被反复取用说明仍有价值）。把两套口径合并会让「经常 read 的老条目」在排序上被人为加热。
  */
 internal fun recencyFactor(memory: Memory): Double {
     val lastModified = memory.file?.lastModified() ?: return RECENCY_FACTOR_FRESH
