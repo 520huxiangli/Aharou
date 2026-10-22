@@ -126,6 +126,11 @@ jobs:
 
       # 发版质量门禁：跑单元测试，失败即中止，避免发出回归包。
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关，跑全 flavor 6 变体是重复编译。
+      - name: Authorize build (CI 例外)
+        run: |
+          mkdir -p .aharou
+          printf 'authorized_by: CI\nquote: "workflow ${{ github.workflow }} run ${{ github.run_id }}"\nat: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .aharou/build-allowed
+
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 

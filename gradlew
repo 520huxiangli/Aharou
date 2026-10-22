@@ -1,4 +1,30 @@
 #!/bin/sh
+#
+# 编译闸门（硬拦截）：没有 .aharou/build-allowed 就拒绝执行任何 Gradle 任务。
+# 为什么要有它：AI 多次未获授权就起构建，规则和记忆都拦不住，只能在这里拦。
+# 授权方式：用户明确说「编译」后创建该文件；构建结束立即删除。
+# CI 例外：.github/workflows 里的构建步骤会先创建该文件。
+#
+_repo_dir=$(cd "$(dirname "$0")" && pwd)
+_gate="$_repo_dir/.aharou/build-allowed"
+_deny() {
+  cat >&2 <<'MSG'
+[拒绝] 编译未获授权。
+
+授权文件 .aharou/build-allowed 必须写明来源，空文件无效：
+  authorized_by: 主人
+  quote: "编吧"
+  at: 2026-10-22T10:40
+
+得到主人明确同意后写入上述内容，构建结束后删除该文件。
+MSG
+  exit 1
+}
+[ -f "$_gate" ] || _deny
+grep -q 'authorized_by:' "$_gate" || _deny
+grep -q 'at:' "$_gate" || _deny
+# 审计留痕：谁批的、什么授权原话、跑了什么任务。伪造授权会在这里留下无出处的记录。
+{ echo "[$(date '+%Y-%m-%d %H:%M:%S')] task=$* | $(tr '\n' ' ' < "$_gate")"; } >> "$_repo_dir/.aharou/build-audit.log" 2>/dev/null
 
 #
 # Copyright © 2015-2021 the original authors.

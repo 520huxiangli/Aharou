@@ -275,7 +275,10 @@ class EditFileTool @Inject constructor(
             .getOrNull() ?: return null
         if (recorded == current) return null
         FileLogger.w(TAG, "edit_file 拒绝过期写: $key（记录版本与当前不一致）")
-        return ToolResult.Error(staleFileMessage(key), STALE_FILE_CODE)
+        // 带上冲突来源：模型不用把整文件重读一遍才知道是谁改的、改完多少行。
+        val writer = versions.lastWriter(key)
+        val currentLines = runCatching { runFileOpWithTimeout { access.readLines(path).count() } }.getOrNull()
+        return ToolResult.Error(staleFileMessage(key, writer, currentLines), STALE_FILE_CODE)
     }
 
     /** 写成功后登记新指纹（供本会话后续编辑做基线）。登记失败只记日志，不改变写入结果。 */
@@ -288,7 +291,10 @@ class EditFileTool @Inject constructor(
         runCatching { runFileOpWithTimeout { access.fingerprint(path) } }
             .onFailure { FileLogger.w(TAG, "edit_file 写后登记版本失败: $key", it) }
             .getOrNull()
-            ?.let { versions.record(sessionId, key, it) }
+            ?.let {
+                versions.record(sessionId, key, it)
+                versions.recordWriter(key, sessionId?.takeIf { id -> id.isNotBlank() } ?: "未知会话")
+            }
     }
 
     /** 真正的编辑逻辑：不涉及锁与版本，纯粹按 [args] 完成一次「读-改-写」。 */

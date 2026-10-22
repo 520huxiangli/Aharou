@@ -91,7 +91,12 @@ jobs:
 
       # 构建 universal beta（arm64-v8a + x86_64，含两套容器镜像的通用包）。
       # --stacktrace：失败时输出完整调用栈，便于定位 OOM/内存类根因。
-      - name: Build universal beta APK
+      - name: Authorize build (CI 例外)
+        run: |
+          mkdir -p .aharou
+          printf 'authorized_by: CI\nquote: "workflow ${{ github.workflow }} run ${{ github.run_id }}"\nat: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .aharou/build-allowed
+
+      - name: Build beta APK
         run: ./gradlew :app:assembleUniversalBeta --stacktrace
 
       # 产物重命名为 Aharou-universal-beta-<sha7>.apk，短 sha 便于区分每次构建。

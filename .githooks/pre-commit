@@ -1,0 +1,9 @@
+#!/bin/sh
+# 提交前强制校验任务清单：还有未勾选项（- [ ]）就拒绝提交，并列出没做完的事。
+# 目的不是限制用户，而是拦住「口头说做完了」——清单没勾完就不允许落成一次提交。
+root=$(git rev-parse --show-toplevel) || exit 1
+python3 "$root/scripts/check_task_list.py" || {
+  echo "" >&2
+  echo "提交被拒绝：任务清单还有未完成项。做完并把 .aharou/task-list.md 里对应项改成 - [x] 再提交。" >&2
+  exit 1
+}

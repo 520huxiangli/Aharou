@@ -24,6 +24,17 @@ const val STALE_FILE_CODE = "STALE_FILE"
  *
  * @param displayPath 给模型看的逻辑路径（`~/workspace/...`），不是宿主物理路径。
  */
-fun staleFileMessage(displayPath: String): String =
-    "文件已被其他会话或用户修改，你手上的内容已过期，本次修改未写入。" +
-        "请先重新读取该文件，再基于最新内容重做修改。（文件：$displayPath）"
+fun staleFileMessage(
+    displayPath: String,
+    lastWriter: String? = null,
+    currentLines: Int? = null,
+): String {
+    // 带出来源，调用方才不用整文件重读一遍才知道冲突在哪：只影响提示，不改变拒绝写入的语义。
+    val extras = buildList {
+        lastWriter?.takeIf { it.isNotBlank() }?.let { add("最后写入：$it") }
+        currentLines?.let { add("当前 $it 行") }
+    }.joinToString("；")
+    val tail = if (extras.isEmpty()) "" else "；$extras"
+    return "文件已被其他会话或用户修改，你手上的内容已过期，本次修改未写入。" +
+        "请先重新读取该文件，再基于最新内容重做修改。（文件：$displayPath$tail）"
+}

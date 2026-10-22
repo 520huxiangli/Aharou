@@ -271,7 +271,7 @@ class SystemPromptProvider @Inject constructor(
             // 提示词已经带上这批消息，就立刻从信箱里清掉，避免下一轮重复注入
             val delivered = unread
             if (consume) {
-                runCatching { sharedInbox.dropDelivered(ctx.projectRoot, delivered.size) }
+                runCatching { sharedInbox.dropDelivered(ctx.projectRoot, delivered.size, channel = "system_prompt", sessionId = ctx.sessionId) }
                     .onFailure { FileLogger.w(TAG, "清理已投递信箱消息失败: ${it.message}", it) }
             }
             if (delivered.isEmpty()) return null

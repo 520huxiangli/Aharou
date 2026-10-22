@@ -75,7 +75,18 @@ class FileVersionRegistry @Inject constructor() {
         for (map in sessions.values) {
             synchronized(map) { map[key] = fingerprint }
         }
+        recordWriter(key, "用户/编辑器")
     }
+
+    /** 逻辑路径 → 最后一次写入者（会话标识或「用户/编辑器」），冲突时告诉调用方是谁改的。 */
+    private val writers = ConcurrentHashMap<String, String>()
+
+    fun recordWriter(key: String, writer: String) {
+        if (key.isEmpty() || writer.isBlank()) return
+        writers[key] = writer
+    }
+
+    fun lastWriter(key: String): String? = writers[key]
 
     /** 忘记某会话对某路径的记录（如文件被删除、或回滚后需要重新建立基线）。 */
     fun forget(sessionId: String, key: String) {

@@ -1741,7 +1741,7 @@ class AIAgentViewModel @Inject constructor(
             fromParent = false
         )
         // 投递完成后才从信箱里清掉这几行：反过来做的话，投递途中出任何岔子都会把消息丢掉
-        runCatching { sharedInbox.dropDelivered(projectRoot, unread.size) }
+        runCatching { sharedInbox.dropDelivered(projectRoot, unread.size, channel = "session_start", sessionId = sessionId) }
     }
 
     private suspend fun deliverAgentMessage(
