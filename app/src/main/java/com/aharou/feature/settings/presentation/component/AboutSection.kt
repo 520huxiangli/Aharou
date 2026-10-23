@@ -417,7 +417,10 @@ internal fun splitVersion(v: String): Pair<String, String> {
     val clean = v.substringBefore('+') // 去掉构建哈希如 +g04bc2fa
     val base = clean.substringBefore('-')
     val pre = if (clean.contains('-')) clean.substringAfter('-') else ""
-    return base to pre
+    // -dirty 只表示构建时工作区有 git 看不到的改动（常见于 CI chmod 改权限位），
+    // 不代表版本比正式版低；不剥掉会让本地构建的包永远提示有新版。
+    val normalized = pre.split('-').filter { it.isNotBlank() && it != "dirty" }.joinToString("-")
+    return base to normalized
 }
 
 private data class AppVersion(val name: String, val code: Long)

@@ -76,7 +76,11 @@ jobs:
           echo "app/keystore.properties generated"
 
       - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
+        run: |
+          chmod +x ./gradlew
+          # API 推送会丢文件执行位；不关掉 fileMode，chmod 会让 git 判定工作区脏，
+          # 版本号被挂上 -dirty，装上去之后会一直提示有新版。
+          git config core.fileMode false
 
       # beta 包同样过三道门禁（完整历史已拉，迁移对账的 git tag 判定可用）：
       # 迁移编号对账、官方技能自检、架构门禁。

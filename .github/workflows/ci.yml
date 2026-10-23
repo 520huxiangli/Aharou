@@ -67,7 +67,11 @@ jobs:
             robolectric-${{ runner.os }}-
 
       - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
+        run: |
+          chmod +x ./gradlew
+          # API 推送会丢文件执行位；不关掉 fileMode，chmod 会让 git 判定工作区脏，
+          # 版本号被挂上 -dirty，装上去之后会一直提示有新版。
+          git config core.fileMode false
 
       # 迁移版本号对账：编号连续、SCHEMA_VERSION 一致、已发布迁移未被篡改/复用
       # （hotfix 合流后 master 未把未发布迁移后移会在这里被拦）。

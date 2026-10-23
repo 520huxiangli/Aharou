@@ -61,6 +61,19 @@ class AboutSectionVersionTest {
         assertEquals("dev.2", pre)
     }
 
+    @Test
+    fun splitVersion_ignoresDirtySuffix() {
+        val (base, pre) = splitVersion("2.37.3-dirty")
+        assertEquals("2.37.3", base)
+        assertEquals("", pre)
+    }
+
+    @Test
+    fun compareVersions_dirtyEqualsRelease() {
+        assertEquals(0, compareVersions("2.37.3-dirty", "2.37.3"))
+        assertEquals(0, compareVersions("2.37.3", "2.37.3-dirty"))
+    }
+
     // ---- compareVersions ----
 
     @Test
