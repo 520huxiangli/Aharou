@@ -20,6 +20,17 @@
         <item name="android:windowBackground">@drawable/splash_background</item>
     </style>
 
+    <!-- 系统助手浮层：透明窗口浮在来源应用之上。背景与遮罩都交给 Compose 画，
+         系统这边不能带底色，否则会盖住下面的应用。 -->
+    <style name="Theme.AICode.Assistant" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <color name="primary">#007ACC</color>
     <color name="splash_background_color">#F9FAFA</color>
 </resources>

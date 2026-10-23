@@ -136,6 +136,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     AccountCenter(R.string.account_entry_title),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
+    AssistantDigital(R.string.assistant_digital_title),
     Mcp(R.string.settings_mcp), Connectors(R.string.settings_connectors),
     Skills(R.string.settings_skills),
     SkillDetail(R.string.settings_skills), SkillEditor(R.string.settings_skills),
@@ -257,7 +258,6 @@ fun SettingsScreen(
     val voiceTtsVoice by viewModel.voiceTtsVoice.collectAsStateWithLifecycle()
     val autoReadAloud by viewModel.autoReadAloud.collectAsStateWithLifecycle()
     val voiceWakeEnabled by viewModel.voiceWakeEnabled.collectAsStateWithLifecycle()
-    val isDefaultAssistant by viewModel.isDefaultAssistant.collectAsStateWithLifecycle()
     val ocrForTextOnlyModels by viewModel.ocrForTextOnlyModels.collectAsStateWithLifecycle()
     val voiceModelStatus by viewModel.voiceModelStatus.collectAsStateWithLifecycle()
     val voiceModelState by viewModel.voiceModelState.collectAsStateWithLifecycle()
@@ -980,6 +980,7 @@ fun SettingsScreen(
                     onToggleDeleteExternalWorkspaceSessions = { viewModel.setDeleteExternalWorkspaceSessions(it) }
                 )
                 SettingsSection.AccountCenter -> com.aharou.feature.account.presentation.AccountCenterScreen()
+                SettingsSection.AssistantDigital -> AssistantDigitalScreen()
                 SettingsSection.Providers -> ProvidersSection(
                     providers = providers,
                     onEdit = {
@@ -1011,36 +1012,6 @@ fun SettingsScreen(
                     onToggleAutoReadAloud = { viewModel.toggleAutoReadAloud() },
                     voiceWakeEnabled = voiceWakeEnabled,
                     onToggleVoiceWake = { viewModel.toggleVoiceWake() },
-                    isDefaultAssistant = isDefaultAssistant,
-                    onRequestDefaultAssistant = {
-                        // 优先用特权通道直接设：ColorOS 的助手设置页不认第三方，
-                        // 走 RoleManager/系统页都落不了地。没权限时才退回系统页面。
-                        scope.launch {
-                            if (viewModel.applyDefaultAssistant()) {
-                                viewModel.refreshDefaultAssistant()
-                                Toast.makeText(
-                                    context,
-                                    context.getString(R.string.voice_assistant_set_ok),
-                                    Toast.LENGTH_LONG
-                                ).show()
-                                return@launch
-                            }
-                            // 必须用 Activity 的 context 启动：application context + NEW_TASK
-                            // 会被系统（尤其 ColorOS）当成后台启动 Activity 默默拦掉。
-                            val intent = viewModel.defaultAssistantIntent()
-                            val opened = intent != null &&
-                                runCatching { context.startActivity(intent) }.isSuccess
-                            Toast.makeText(
-                                context,
-                                context.getString(
-                                    if (opened) R.string.voice_assistant_opened
-                                    else R.string.voice_assistant_open_failed
-                                ),
-                                Toast.LENGTH_LONG
-                            ).show()
-                            viewModel.refreshDefaultAssistant()
-                        }
-                    },
                     ocrForTextOnlyModels = ocrForTextOnlyModels,
                     onToggleOcrForTextOnlyModels = { viewModel.toggleOcrForTextOnlyModels() },
                     voiceModelStatus = voiceModelStatus,

@@ -65,7 +65,6 @@ import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
 import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Type
-import compose.icons.feathericons.Users
 import compose.icons.feathericons.Volume2
 
 /**
@@ -92,8 +91,6 @@ internal fun DefaultModelsSection(
     onToggleAutoReadAloud: () -> Unit = {},
     voiceWakeEnabled: Boolean = false,
     onToggleVoiceWake: () -> Unit = {},
-    isDefaultAssistant: Boolean = false,
-    onRequestDefaultAssistant: () -> Unit = {},
     ocrForTextOnlyModels: Boolean = true,
     onToggleOcrForTextOnlyModels: () -> Unit = {},
     voiceModelStatus: VoiceModelStatus,
@@ -310,19 +307,6 @@ internal fun DefaultModelsSection(
                         // 同自动朗读：不拿界面上的 checked 当真值，统一读存储再取反，
                         // 否则界面状态一过期就会「只能开、关不掉」。
                         onCheckedChange = { onToggleVoiceWake() }
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Users,
-                title = stringResource(R.string.voice_assistant_title),
-                subtitle = stringResource(R.string.voice_assistant_summary),
-                onClick = onRequestDefaultAssistant,
-                trailing = {
-                    Text(
-                        if (isDefaultAssistant) stringResource(R.string.voice_assistant_yes)
-                        else stringResource(R.string.voice_assistant_set)
                     )
                 }
             )

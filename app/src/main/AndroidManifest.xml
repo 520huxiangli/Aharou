@@ -304,10 +304,55 @@
             </intent-filter>
         </service>
 
+        <!-- exported 必须为 true：系统（system uid）要去绑定它才能派发会话，
+             实际访问控制由 BIND_VOICE_INTERACTION（signature|privileged）兜住，第三方拿不到该权限。 -->
         <service
             android:name="com.aharou.feature.voice.assistant.AharouVoiceSessionService"
-            android:exported="false"
+            android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
+
+        <!-- 重启/升级后把电源键监听拉回来（getevent 进程随重启消失）。 -->
+        <receiver
+            android:name="com.aharou.feature.voice.assistant.PowerKeyBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 长按电源键唤起：靠 Shizuku 跑 getevent 监听电源键（普通应用读不到 /dev/input）。 -->
+        <service
+            android:name="com.aharou.feature.voice.assistant.PowerKeyWatcherService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="通过 Shizuku 监视电源键长按，用于在任意应用里唤起助手浮层" />
+        </service>
+
+        <!-- 下拉快捷磁贴：ColorOS 把长按电源独占给自家小布，三方应用只能靠磁贴自己留一个常驻入口。 -->
+        <service
+            android:name="com.aharou.feature.voice.assistant.AssistantTileService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/assistant_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- 助手浮层：由上面的会话经 startAssistantActivity 拉起，窗口由系统按助手规则摆好。
+             只由本应用启动，不进最近任务。 -->
+        <activity
+            android:name="com.aharou.feature.voice.assistant.presentation.AssistantOverlayActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity="com.aharou.assistant.overlay"
+            android:theme="@style/Theme.AICode.Assistant"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- 官方要求数字助手必须同时提供识别服务（见 AOSP 语音交互简介）；
              实际识别走自有引擎，这里只做合法占位。 -->

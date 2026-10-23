@@ -8,5 +8,14 @@
         <item name="android:windowBackground">@drawable/splash_background</item>
     </style>
 
+    <style name="Theme.AICode.Assistant" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
     <color name="splash_background_color">#121212</color>
 </resources>

@@ -46,6 +46,7 @@ import compose.icons.feathericons.MessageCircle
 import compose.icons.feathericons.Monitor
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.PieChart
+import compose.icons.feathericons.Power
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Save
 import compose.icons.feathericons.Server
@@ -96,6 +97,12 @@ internal fun SettingsAharouGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.MessageSquare,
                 title = stringResource(SettingsSection.Prompts.titleRes),
                 onClick = { onOpen(SettingsSection.Prompts) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Power,
+                title = stringResource(R.string.assistant_digital_title),
+                onClick = { onOpen(SettingsSection.AssistantDigital) }
             )
             SettingsDivider()
             SettingsRow(

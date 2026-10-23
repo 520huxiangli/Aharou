@@ -3,6 +3,7 @@ package com.aharou.feature.settings.data
 import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreStrField
+import com.aharou.feature.settings.data.repository.AssistantOverlaySettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceSttSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceWakeSettingsRepository
@@ -24,6 +25,7 @@ class ConfigVoiceFields @Inject constructor(
     private val ttsSettings: VoiceTtsSettingsRepository,
     private val sttSettings: VoiceSttSettingsRepository,
     private val wakeSettings: VoiceWakeSettingsRepository,
+    private val overlaySettings: AssistantOverlaySettingsRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -98,6 +100,34 @@ class ConfigVoiceFields @Inject constructor(
                 description = "常驻监听麦克风、用唤醒词唤起语音输入。默认关闭。",
                 flow = wakeSettings.enabledFlow,
                 setter = { wakeSettings.setEnabled(it) },
+            ),
+        )
+        registry.register(
+            DataStoreBoolField(
+                path = "voice.assistant_screen_text",
+                displayName = "助手浮层附带屏幕文本",
+                description = "系统助手浮层唤起时，把当前屏幕上的可见文字当作上下文发给模型。关掉后仍能对话，只是模型不知道你正看着什么。",
+                flow = overlaySettings.screenTextFlow,
+                setter = { overlaySettings.setScreenText(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "voice.assistant_screenshot",
+                displayName = "助手浮层附带截图",
+                description = "把当前屏幕截图当作图片附件发给模型，能理解画面内容。比文本更耗流量，且画面内容会整个离开设备，默认关闭。",
+                flow = overlaySettings.screenshotFlow,
+                setter = { overlaySettings.setScreenshot(it) },
+            ),
+        )
+        registry.register(
+            DataStoreBoolField(
+                path = "voice.assistant_power_key",
+                displayName = "长按电源键唤起助手",
+                description = "靠 Shizuku 监听电源键，按住约 0.8 秒弹出助手浮层；短按不受影响。需保持 Shizuku 就绪。",
+                flow = overlaySettings.powerKeyFlow,
+                setter = { overlaySettings.setPowerKey(it) },
             ),
         )
     }

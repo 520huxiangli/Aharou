@@ -5,15 +5,13 @@ import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
 
 /**
- * 语音交互会话的宿主，由系统在真正发生语音交互时绑定。
+ * 语音交互会话的宿主，由系统在真正发生交互时绑定（长按电源 / 主屏助手手势 / 锁屏唤起）。
  *
- * 系统只保证它在单次会话期间活着，所以这里不持有任何常驻状态。
- * 当前实现不做独立的话术界面：长按唤起后仍由 [com.aharou.feature.voice.call.VoiceCallService]
- * 与桌宠小染承担听说的全部流程，这个会话只负责把系统的调用接住，避免默认助手
- * 因缺少 sessionService 而不可用。
+ * 系统只保证它在单次会话期间活着，所以这里不持有任何常驻状态；
+ * 会话本身负责接住 Assist 数据并把界面交给浮层 Activity，见 [AharouAssistantSession]。
  */
 class AharouVoiceSessionService : VoiceInteractionSessionService() {
 
     override fun onNewSession(args: Bundle?): VoiceInteractionSession =
-        VoiceInteractionSession(this)
+        AharouAssistantSession(this)
 }
