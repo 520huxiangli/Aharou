@@ -101,19 +101,26 @@ jobs:
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关（flavor 仅影响 abiFilters/assets），
       # 跑全 flavor 6 变体是重复编译，无额外覆盖。
       - name: Run unit tests
+        # runner 只有 7GB 内存，项目 gradle.properties 写的 6GB 堆把 daemon + test worker 一起推过了头，
+        # 表现为测试进程还没跑出任何报告就崩（日志里只有任务开始那一行）。
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m"
         run: ./gradlew :app:testUniversalDebugUnitTest || touch /tmp/unit-tests-failed
 
-      # 失败原因写进步骤摘要：GitHub 的日志接口会截断长日志，单测挂在哪一条
-      # 从日志里看不到（之前只能拿到 exit code 1）；摘要会在 run 页面顶部直接显示。
+      # 失败原因写进步骤摘要 + 错误注解：GitHub 的日志接口会截断长日志，单测挂在哪一条
+      # 从日志里看不到（之前只能拿到 exit code 1），而注解能通过 API 直接读到。
       - name: Summarize unit test failures
         if: always()
         run: |
           {
             echo '### 单测结果'
             if compgen -G "app/build/test-results/testUniversalDebugUnitTest/*.xml" > /dev/null; then
-              grep -l '<failure' app/build/test-results/testUniversalDebugUnitTest/*.xml | sed 's#.*/##' || echo '没有失败用例文件'
-              grep -h -o 'testcase name="[^"]*"[^>]*>' app/build/test-results/testUniversalDebugUnitTest/*.xml > /dev/null 2>&1 || true
+              for f in $(grep -l '<failure' app/build/test-results/testUniversalDebugUnitTest/*.xml); do
+                echo "::error title=单测失败::$(basename "$f")"
+                echo "失败文件: $(basename "$f")"
+              done
             else
+              echo '::error title=单测无报告::测试进程在写出报告前就崩了（OOM / 超时）'
               echo '没有生成测试报告：测试进程可能在写出报告前就崩了（OOM / 超时）'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
