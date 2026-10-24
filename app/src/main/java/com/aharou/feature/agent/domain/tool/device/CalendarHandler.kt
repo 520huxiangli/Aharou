@@ -10,8 +10,9 @@ import androidx.core.content.ContextCompat
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.tool.ToolResult
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.TimeZone
 import javax.inject.Inject
@@ -34,12 +35,20 @@ class CalendarHandler @Inject constructor(
         const val DEFAULT_LIMIT = 20
         const val MAX_LIMIT = 100
 
+        /**
+         * 时间格式器。`SimpleDateFormat` 不可跨线程共享，而本类是单例、下面两个方法都跑在
+         * `Dispatchers.IO` 上——共享一个实例会输出错乱的时间串。`DateTimeFormatter` 不可变且线程安全。
+         */
+        val TIME_FORMATTER: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)
+
         const val PERMISSION_HINT =
             "没有日历权限。到系统设置给 Aharou 开「日历」（读事件要读权限、建事件要写权限），" +
                 "或用设置里的「应用权限」一键跳转。"
     }
 
-    private val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    private fun formatTime(epochMs: Long): String =
+        Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).format(TIME_FORMATTER)
 
     private fun has(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -87,8 +96,8 @@ class CalendarHandler @Inject constructor(
                         items.forEach { row ->
                             add(buildJsonObject {
                                 put("title", row[0].toString())
-                                put("begin", formatter.format(Date(row[1] as Long)))
-                                put("end", formatter.format(Date(row[2] as Long)))
+                                put("begin", formatTime(row[1] as Long))
+                                put("end", formatTime(row[2] as Long))
                                 put("all_day", row[3] as Boolean)
                                 if (row[4].toString().isNotEmpty()) put("location", row[4].toString())
                                 if (row[5].toString().isNotEmpty()) put("calendar", row[5].toString())
@@ -141,8 +150,8 @@ class CalendarHandler @Inject constructor(
                     ToolResult.Success(buildJsonObject {
                         put("message", "已加入日历")
                         put("title", title)
-                        put("begin", formatter.format(Date(beginMs)))
-                        put("end", formatter.format(Date(endMs)))
+                        put("begin", formatTime(beginMs))
+                        put("end", formatTime(endMs))
                         put("event_id", ContentUris.parseId(uri))
                     })
                 }

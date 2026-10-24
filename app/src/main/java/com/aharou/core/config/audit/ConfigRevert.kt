@@ -17,8 +17,12 @@ object ConfigRevert {
     private const val TAG = "ConfigRevert"
 
     /**
+     * 撤销不可重入：先查状态再写、再标记，三步之间没有锁。连点两次或 UI 与 agent 同时撤销，
+     * 会写出两条反向审计记录、把旧值写两遍。
+     *
      * @return null = 成功；非空 = 用户可读的失败原因。
      */
+    @Synchronized
     fun revert(entryId: String, actorRaw: String, sessionId: String?): String? {
         val log = ConfigAuditLog.get()
         val entry = log.get(entryId) ?: return "找不到该记录"

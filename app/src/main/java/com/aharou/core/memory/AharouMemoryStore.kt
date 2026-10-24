@@ -47,6 +47,15 @@ class AharouMemoryStore @Inject constructor(
         /** 上次 AI 蒸馏时间（毫秒），用于「距上次多久才再蒸一次」。 */
         private const val KEY_LAST_DISTILL_AT = "last_distill_at_ms"
 
+        /**
+         * 读改写类操作的进程内互斥。
+         *
+         * 本类有几处直接在外部 new 实例（配置通道、设置页），所以锁必须挂在 companion 上，
+         * 锁实例自己挡不住跨实例并发。这些方法都是「读整个文件 → 改 → 整文件写回」，
+         * 不加锁时后写的会把先写的条目直接覆盖掉。
+         */
+        private val FILE_LOCK = Any()
+
         private val DEFAULT_CORE = """
             # 核心档案
 
@@ -124,7 +133,8 @@ class AharouMemoryStore @Inject constructor(
      * 一天最多跑一次，免得每次拼提示词都扫目录。
      */
     fun distillLogsIfNeeded() {
-        runCatching {
+        synchronized(FILE_LOCK) {
+            runCatching {
             val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
             if (prefs.getString(KEY_LAST_DISTILL, null) == today) return
             prefs.edit().putString(KEY_LAST_DISTILL, today).apply()
@@ -145,13 +155,14 @@ class AharouMemoryStore @Inject constructor(
                     runCatching { src.delete() }
                 }
             }
-        }.onFailure { FileLogger.w(TAG, "日志蒸馏失败: ${it.message}") }
+            }.onFailure { FileLogger.w(TAG, "日志蒸馏失败: ${it.message}") }
+        }
     }
 
     fun file(name: String): File = File(dir, name)
 
     /** 追加一条每日日志（按天归档；返回写入的文件）。 */
-    fun appendDailyLog(entry: String): File {
+    fun appendDailyLog(entry: String): File = synchronized(FILE_LOCK) {
         val now = Date()
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(now)
         val time = SimpleDateFormat("HH:mm", Locale.US).format(now)
@@ -159,11 +170,15 @@ class AharouMemoryStore @Inject constructor(
         dir.mkdirs()
         if (!target.exists()) target.writeTextSafely("# $day 日志\n\n", TAG)
         target.appendText("- [$time] ${entry.trim()}\n")
-        return target
+        target
     }
 
-    /** 追加一条事实到事实库。 */
-    fun appendFact(fact: String, source: String? = null) {
+    /**
+     * 追加一条事实到事实库。
+     *
+     * @return 是否写入成功——失败以前只在日志里留一句，调用方（memory 工具）会报错「已写入」。
+     */
+    fun appendFact(fact: String, source: String? = null): Boolean = synchronized(FILE_LOCK) {
         runCatching {
             dir.mkdirs()
             val target = File(dir, "facts.json")
@@ -175,18 +190,26 @@ class AharouMemoryStore @Inject constructor(
                     .put("text", fact.trim())
             )
             target.writeTextSafely(arr.toString(), TAG)
-        }.onFailure { FileLogger.w(TAG, "appendFact failed: ${it.message}") }
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "appendFact failed: ${it.message}")
+            false
+        }
     }
 
-    /** 追加一条心流（想法/心情的顺滑记录）。 */
-    fun appendMindstream(text: String) {
+    /** 追加一条心流（想法/心情的顺滑记录）；返回是否写入成功。 */
+    fun appendMindstream(text: String): Boolean = synchronized(FILE_LOCK) {
         runCatching {
             dir.mkdirs()
             val line = JSONObject()
                 .put("t", System.currentTimeMillis())
                 .put("text", text.trim())
             File(dir, "mindstream.jsonl").appendText(line.toString() + "\n")
-        }.onFailure { FileLogger.w(TAG, "appendMindstream failed: ${it.message}") }
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "appendMindstream failed: ${it.message}")
+            false
+        }
     }
 
     /** 读某天日志（默认今天）。 */
@@ -214,21 +237,46 @@ class AharouMemoryStore @Inject constructor(
      * 边界仍然很清楚：只动自己那一段，其余内容一字不动（上一轮要点也在被删的旧段里，
      * 但已由调用方先回嘿给模型合并过了）。写前备一份 `GLOBAL.md.bak-<yyyy-MM-dd>`（当天已存在则不覆盖）。
      */
-    fun upsertGlobalSection(marker: String, title: String, body: String): Boolean = runCatching {
-        dir.mkdirs()
-        val target = File(dir, "GLOBAL.md")
-        val existing = if (target.exists()) target.readText() else ""
-        if (target.exists()) {
+    fun upsertGlobalSection(marker: String, title: String, body: String): Boolean = synchronized(FILE_LOCK) {
+        runCatching {
+            dir.mkdirs()
+            val target = File(dir, "GLOBAL.md")
+            val existing = if (target.exists()) target.readText() else ""
+            if (target.exists()) {
+                val bak = File(dir, "GLOBAL.md.bak-${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}")
+                if (!bak.exists()) target.copyTo(bak, overwrite = false)
+            }
+            val merged = removeSections(existing, marker).trimEnd() +
+                "\n\n## " + title + "\n\n" + body.trim() + "\n"
+            target.writeText(merged)
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "upsertGlobalSection failed: ${it.message}")
+            false
+        }
+    }
+
+    /**
+     * 只删掉 GLOBAL.md 里以 [marker] 开头的段，其余内容一字不动。
+     *
+     * 用于「旧蒸馏散文段已拆成条目」后的收尾：不删的话同一批内容会在提示词里注入两遍。
+     * 返回是否真的删掉了东西（没有该段时 false，调用方据此决定要不要打日志）。
+     */
+    fun removeGlobalSection(marker: String): Boolean = synchronized(FILE_LOCK) {
+        runCatching {
+            val target = File(dir, "GLOBAL.md")
+            if (!target.exists()) return@runCatching false
+            val existing = target.readText()
+            val merged = removeSections(existing, marker).trimEnd()
+            if (merged == existing.trimEnd()) return@runCatching false
             val bak = File(dir, "GLOBAL.md.bak-${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}")
             if (!bak.exists()) target.copyTo(bak, overwrite = false)
+            target.writeTextSafely(if (merged.isEmpty()) "" else "$merged\n", TAG)
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "removeGlobalSection failed: ${it.message}")
+            false
         }
-        val merged = removeSections(existing, marker).trimEnd() +
-            "\n\n## " + title + "\n\n" + body.trim() + "\n"
-        target.writeText(merged)
-        true
-    }.getOrElse {
-        FileLogger.w(TAG, "upsertGlobalSection failed: ${it.message}")
-        false
     }
 
     /** 删掉所有以 [marker] 开头的 Markdown 段（含其正文，直到下一个同级 `## ` 标题）。 */
@@ -269,10 +317,12 @@ class AharouMemoryStore @Inject constructor(
 
     /** 覆盖写核心档案（CORE.md）。 */
     fun writeCore(text: String) {
-        runCatching {
-            dir.mkdirs()
-            File(dir, "CORE.md").writeTextSafely(text, TAG)
-        }.onFailure { FileLogger.w(TAG, "writeCore failed: ${it.message}") }
+        synchronized(FILE_LOCK) {
+            runCatching {
+                dir.mkdirs()
+                File(dir, "CORE.md").writeTextSafely(text, TAG)
+            }.onFailure { FileLogger.w(TAG, "writeCore failed: ${it.message}") }
+        }
     }
 
     /**

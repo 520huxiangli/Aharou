@@ -32,6 +32,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -122,6 +124,8 @@ fun TerminalScreen(
     val activeTabId by viewModel.activeTabId.collectAsStateWithLifecycle()
     val revision by viewModel.revision.collectAsStateWithLifecycle()
     val creatingTab by viewModel.creatingTab.collectAsStateWithLifecycle()
+    val tabError by viewModel.tabError.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
     val terminalSettings by viewModel.terminalSettings.collectAsStateWithLifecycle()
     var showToolsSheet by remember { mutableStateOf(false) }
 
@@ -134,8 +138,16 @@ fun TerminalScreen(
         onInitCommandConsumed()
     }
 
+    // 新建标签失败：以前只落日志，界面只看得到转圈结束；现在直接把原因弹出来。
+    LaunchedEffect(tabError) {
+        val message = tabError ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message)
+        viewModel.clearTabError()
+    }
+
     Scaffold(
         containerColor = TerminalBg,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TerminalTopBar(
@@ -350,7 +362,7 @@ private fun TabChip(
         )
         Box(
             modifier = Modifier
-                .size(22.dp)
+                .size(28.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onClose),
             contentAlignment = Alignment.Center

@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -43,6 +44,7 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.X
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Search
 
@@ -302,7 +304,19 @@ internal fun ModelSearchField(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            trailing?.invoke()
+            if (trailing != null) {
+                trailing()
+            } else if (query.isNotEmpty()) {
+                // 默认给一键清空：全站六处搜索框均未自行传入，逐字长按退格才能清完。
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = FeatherIcons.X,
+                        contentDescription = stringResource(R.string.common_clear),
+                        tint = MaterialTheme.semanticColors.subtleText,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         }
     }
 }

@@ -124,6 +124,19 @@ class AgentDefinitionTest {
         assertEquals(allTools, def().filterToolNames(allTools))
     }
 
+    /** 从 Claude Code 导入的角色用 Read/Write/Edit/Grep/Glob 这套名字，应映射成本应用的工具名。 */
+    @Test
+    fun filter_claudeCodeToolNamesMapToAppTools() {
+        val result = def(
+            allowed = listOf("WebFetch", "WebSearch", "Read", "Write", "Edit")
+        ).filterToolNames(allTools + listOf("websearch", "webfetch"))
+
+        assertEquals(
+            listOf("readFile", "writeFile", "editFile", "websearch", "webfetch"),
+            result
+        )
+    }
+
     @Test
     fun filter_allowlistKeepsOnlyListed() {
         assertEquals(

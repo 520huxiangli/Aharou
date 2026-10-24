@@ -90,13 +90,33 @@ data class AgentDefinition(
     }
 
     private fun matches(pattern: String, toolName: String): Boolean {
-        val p = pattern.trim()
+        val p = canonicalToolName(pattern.trim())
         if (p.isEmpty()) return false
         if (p.endsWith("*")) return toolName.startsWith(p.dropLast(1), ignoreCase = true)
         return toolName.equals(p, ignoreCase = true)
     }
 
     companion object {
+        /**
+         * 从 Claude Code 生态导入的角色文件用 `Read` / `Write` / `Edit` / `Grep` / `Glob` 这套
+         * 工具名，与本应用的 `readFile` / `writeFile` / … 对不上。白名单非空时只保留命中的工具，
+         * 对不上就等于把其余工具全挡掉：角色声明了读写文件，却只剩下 `WebFetch` / `WebSearch` 可用。
+         * 这里做一次等价映射，让旧名字按本应用的工具名参与匹配。
+         */
+        private val TOOL_ALIASES = mapOf(
+            "read" to "readFile",
+            "write" to "writeFile",
+            "edit" to "editFile",
+            "multiedit" to "editFile",
+            "notebookedit" to "editFile",
+            "grep" to "search",
+            "glob" to "list",
+            "ls" to "list",
+        )
+
+        private fun canonicalToolName(name: String): String =
+            TOOL_ALIASES[name.lowercase()] ?: name
+
         /** 省略 `inject` 时的默认注入项：精简基线 + 技能 + 记忆 + 项目规则。 */
         val DEFAULT_INJECT: Set<InjectPart> = setOf(
             InjectPart.BASE,

@@ -1,6 +1,5 @@
 package com.aharou.feature.settings.presentation.component
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,11 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,11 +34,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppSwitch
+import com.aharou.core.ui.AppTextField
+import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.feature.settings.data.repository.EnvVarRepository
 import com.aharou.feature.settings.presentation.EnvVarsViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Plus
-import compose.icons.feathericons.Trash2
 
 /**
  * 设置页「环境变量」分区（自 上游项目 的 Environment Variables 移植·适配）。
@@ -87,12 +83,15 @@ internal fun EnvVarsSection(viewModel: EnvVarsViewModel = hiltViewModel()) {
             SettingsGroup {
                 entries.forEachIndexed { index, entry ->
                     if (index > 0) SettingsDivider()
-                    EnvVarRow(
-                        entry = entry,
-                        onClick = { editing = entry },
+                    SwipeToDeleteRow(
                         onDelete = { deleting = entry },
-                        onToggleEnabled = { enabled -> viewModel.setEnabled(entry.name, enabled) },
-                    )
+                        onClick = { editing = entry },
+                    ) {
+                        EnvVarRow(
+                            entry = entry,
+                            onToggleEnabled = { enabled -> viewModel.setEnabled(entry.name, enabled) },
+                        )
+                    }
                 }
             }
         }
@@ -156,14 +155,11 @@ internal fun EnvVarsSection(viewModel: EnvVarsViewModel = hiltViewModel()) {
 @Composable
 private fun EnvVarRow(
     entry: EnvVarRepository.EnvVar,
-    onClick: () -> Unit,
-    onDelete: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
             .padding(horizontal = Spacing.lg, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -201,15 +197,6 @@ private fun EnvVarRow(
             checked = entry.enabled,
             onCheckedChange = onToggleEnabled,
         )
-        Spacer(Modifier.width(Spacing.xs))
-        IconButton(onClick = onDelete) {
-            Icon(
-                imageVector = FeatherIcons.Trash2,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
-            )
-        }
     }
 }
 
@@ -241,24 +228,24 @@ private fun EnvVarEditDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
+                AppTextField(
                     value = name,
                     onValueChange = { name = it; error = null },
-                    label = { Text(stringResource(R.string.envvars_name)) },
-                    singleLine = true,
+                    label = stringResource(R.string.envvars_name),
                     enabled = initial == null,
-                    modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
+                AppTextField(
                     value = value,
                     onValueChange = { value = it; error = null },
-                    label = { Text(stringResource(R.string.envvars_value)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    label = stringResource(R.string.envvars_value),
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = secret, onCheckedChange = { secret = it })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(text = stringResource(R.string.envvars_secret), fontSize = 13.sp)
+                    AppSwitch(checked = secret, onCheckedChange = { secret = it })
                 }
                 error?.let {
                     Text(

@@ -62,6 +62,14 @@ class TerminalViewModel @Inject constructor(
     private val _creatingTab = MutableStateFlow(false)
     val creatingTab: StateFlow<Boolean> = _creatingTab.asStateFlow()
 
+    /** 新建标签失败的原因；UI 弹完提示后调 [clearTabError] 清掉，避免重组时重复弹。 */
+    private val _tabError = MutableStateFlow<String?>(null)
+    val tabError: StateFlow<String?> = _tabError.asStateFlow()
+
+    fun clearTabError() {
+        _tabError.value = null
+    }
+
     /** 容器初始化实时进度（解压/部署/装包），Loading 阶段用它展示细粒度文案。 */
     val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
 
@@ -117,6 +125,10 @@ class TerminalViewModel @Inject constructor(
                 if (isRemote()) remoteManager.createInteractiveTab() else localManager.createInteractiveTab()
             } catch (e: Exception) {
                 FileLogger.e(TAG, "新建标签失败", e)
+                _tabError.value = context.getString(
+                    R.string.terminal_new_tab_failed,
+                    e.message ?: context.getString(R.string.terminal_prepare_error_unknown)
+                )
             } finally {
                 _creatingTab.value = false
             }

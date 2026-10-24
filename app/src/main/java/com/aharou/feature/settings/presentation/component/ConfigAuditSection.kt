@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,6 +40,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aharou.core.theme.Radius
+import com.aharou.core.theme.semanticColors
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
@@ -110,31 +113,31 @@ internal fun ConfigAuditSection() {
             )
             Spacer(Modifier.weight(1f))
             if (entries.any { isSensitivePath(it.key) }) {
-                Icon(
-                    imageVector = if (revealSensitive) FeatherIcons.EyeOff else FeatherIcons.Eye,
-                    contentDescription = stringResource(
-                        if (revealSensitive) {
-                            R.string.config_audit_hide_sensitive
-                        } else {
-                            R.string.config_audit_reveal_sensitive
-                        }
-                    ),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clickable { revealSensitive = !revealSensitive },
-                )
+                IconButton(onClick = { revealSensitive = !revealSensitive }) {
+                    Icon(
+                        imageVector = if (revealSensitive) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                        contentDescription = stringResource(
+                            if (revealSensitive) {
+                                R.string.config_audit_hide_sensitive
+                            } else {
+                                R.string.config_audit_reveal_sensitive
+                            }
+                        ),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
             if (entries.isNotEmpty()) {
                 Spacer(Modifier.width(16.dp))
-                Icon(
-                    imageVector = FeatherIcons.Trash2,
-                    contentDescription = stringResource(R.string.config_audit_clear_all),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .size(20.dp)
-                        .clickable { clearConfirm = true },
-                )
+                IconButton(onClick = { clearConfirm = true }) {
+                    Icon(
+                        imageVector = FeatherIcons.Trash2,
+                        contentDescription = stringResource(R.string.config_audit_clear_all),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
             }
         }
 
@@ -319,7 +322,7 @@ private fun AuditRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+            .background(MaterialTheme.semanticColors.cardSurface, RoundedCornerShape(Radius.sm))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -392,7 +395,7 @@ private fun AuditRow(
                 Text(
                     text = stringResource(R.string.config_audit_reverted_label),
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF8E5CD9),
+                    color = MaterialTheme.semanticColors.info,
                 )
             }
             else -> Unit
@@ -411,10 +414,10 @@ private fun actorLabel(actor: ConfigAuditActor): String = when (actor) {
 @Composable
 private fun StatusBadge(status: ConfigAuditStatus) {
     val color = when (status) {
-        ConfigAuditStatus.APPLIED -> Color(0xFF388E3C)
-        ConfigAuditStatus.REJECTED -> Color(0xFF757575)
-        ConfigAuditStatus.TIMEOUT -> Color(0xFFE65100)
-        ConfigAuditStatus.REVERTED -> Color(0xFF8E5CD9)
+        ConfigAuditStatus.APPLIED -> MaterialTheme.semanticColors.success
+        ConfigAuditStatus.REJECTED -> MaterialTheme.semanticColors.subtleText
+        ConfigAuditStatus.TIMEOUT -> MaterialTheme.semanticColors.warning
+        ConfigAuditStatus.REVERTED -> MaterialTheme.semanticColors.info
     }
     val label = when (status) {
         ConfigAuditStatus.APPLIED -> stringResource(R.string.config_audit_status_applied)

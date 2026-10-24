@@ -605,7 +605,9 @@ class MemoryTool @Inject constructor(
     private fun handleFact(args: Map<String, JsonElement>): ToolResult {
         val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
         if (content.isNullOrEmpty()) return ToolResult.Error("fact 操作需要 content 参数", "MISSING_CONTENT")
-        aharouMemory.appendFact(content, source = "agent")
+        if (!aharouMemory.appendFact(content, source = "agent")) {
+            return ToolResult.Error("写入事实库失败，请查看日志。", "FACT_WRITE_FAILED")
+        }
         return ToolResult.Success(JsonPrimitive("已写入事实库。"))
     }
 
@@ -613,7 +615,9 @@ class MemoryTool @Inject constructor(
     private fun handleMindstream(args: Map<String, JsonElement>): ToolResult {
         val content = args["content"]?.jsonPrimitive?.contentOrNull?.trim()
         if (content.isNullOrEmpty()) return ToolResult.Error("mindstream 操作需要 content 参数", "MISSING_CONTENT")
-        aharouMemory.appendMindstream(content)
+        if (!aharouMemory.appendMindstream(content)) {
+            return ToolResult.Error("写入心流失败，请查看日志。", "MINDSTREAM_WRITE_FAILED")
+        }
         return ToolResult.Success(JsonPrimitive("已写入心流。"))
     }
 

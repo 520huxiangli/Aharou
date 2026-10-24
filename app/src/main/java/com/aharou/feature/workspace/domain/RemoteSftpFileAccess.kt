@@ -124,8 +124,19 @@ class RemoteSftpFileAccess @Inject constructor(
             }
             try {
                 while (true) {
-                    val line = onSftp { reader.readLine() } ?: break
-                    yield(line.text)
+                    // 每行一次 runBlocking + 加锁，大文件逐行读时调度开销很大：一次读一批，
+                    // 锁的获取次数从「每行一次」降到「每批一次」；读不满一批就说明到文件尾了。
+                    val batch = onSftp {
+                        val lines = ArrayList<String>(READ_BATCH_LINES)
+                        while (lines.size < READ_BATCH_LINES) {
+                            val line = reader.readLine() ?: break
+                            lines.add(line.text)
+                        }
+                        lines
+                    }
+                    if (batch.isEmpty()) break
+                    for (line in batch) yield(line)
+                    if (batch.size < READ_BATCH_LINES) break
                 }
             } finally {
                 runCatching { onSftp { reader.close() } }
@@ -456,6 +467,9 @@ class RemoteSftpFileAccess @Inject constructor(
     private fun tmpPathFor(remote: String) = "$remote$TMP_FILE_SUFFIX"
 
     private companion object {
+
+        /** 远程逐行读的批量大小：一批一次锁，避免每行一次 runBlocking + 加锁。 */
+        const val READ_BATCH_LINES = 256
         /** 原子写临时文件后缀（远端用「目标名 + 后缀」，与本地 `File.createTempFile` 策略不同）。 */
         const val TMP_FILE_SUFFIX = ".aicode-part"
     }

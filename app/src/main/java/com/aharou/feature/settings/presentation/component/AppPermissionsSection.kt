@@ -37,11 +37,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.shell.HostShellMode
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
 import com.aharou.feature.agent.domain.tool.device.DeviceNotificationListener
+import com.aharou.feature.terminal.domain.KeepaliveStatus
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
 import compose.icons.feathericons.Calendar
@@ -483,6 +489,16 @@ internal fun BackgroundRunSection(
     var pendingNotificationToggle by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
     var showNetworkGuide by remember { mutableStateOf(false) }
 
+    // 保活到底有没有生效：服务那边只 Promise 到日志是不够的，这里把真实状态摆到开关下面。
+    val keepaliveStatus = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            KeepaliveStatusEntryPoint::class.java
+        ).keepaliveStatus()
+    }
+    val keepaliveRunning by keepaliveStatus.running.collectAsStateWithLifecycle()
+    val keepaliveError by keepaliveStatus.lastError.collectAsStateWithLifecycle()
+
     // Android 13 起通知是运行时权限：被拒（含永久拒绝、系统不再弹框）时只能引导去系统设置手动开启。
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -517,7 +533,15 @@ internal fun BackgroundRunSection(
             SettingsRow(
                 icon = FeatherIcons.RefreshCw,
                 title = stringResource(R.string.settings_keepalive_title),
-                subtitle = stringResource(R.string.settings_keepalive_subtitle),
+                subtitle = when {
+                    !keepaliveEnabled -> stringResource(R.string.settings_keepalive_subtitle)
+                    keepaliveError != null -> stringResource(
+                        R.string.settings_keepalive_failed,
+                        keepaliveError.orEmpty()
+                    )
+                    keepaliveRunning -> stringResource(R.string.settings_keepalive_running)
+                    else -> stringResource(R.string.settings_keepalive_waiting)
+                },
                 trailing = {
                     AppSwitch(
                         checked = keepaliveEnabled,
@@ -718,4 +742,13 @@ private fun NetworkGuideSheet(onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * 保活服务不在 Compose 的 ViewModel 图里（是 Android Service），状态持有者只能经 EntryPoint 取。
+ */
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface KeepaliveStatusEntryPoint {
+    fun keepaliveStatus(): KeepaliveStatus
 }

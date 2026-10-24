@@ -18,12 +18,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -33,7 +33,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,6 +65,9 @@ import com.aharou.core.soul.SoulMetadata
 import com.aharou.core.soul.SoulStore
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AdaptiveModalBottomSheet
+import com.aharou.core.ui.AppTextField
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.Edit2
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -218,7 +220,7 @@ internal fun SoulSettingsSection() {
                         SoulIconGlyph(icon = icon, sizeDp = 30.dp, emojiSp = 22.sp)
                         // 铅笔角标：图标可点这件事要看得出来。
                         Icon(
-                            imageVector = Icons.Filled.Edit,
+                            imageVector = FeatherIcons.Edit2,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier
@@ -288,19 +290,15 @@ internal fun SoulSettingsSection() {
                     .padding(horizontal = Spacing.lg, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(
+                AppTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text(stringResource(R.string.soul_field_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    label = stringResource(R.string.soul_field_name),
                 )
-                OutlinedTextField(
+                AppTextField(
                     value = style,
                     onValueChange = { style = it },
-                    label = { Text(stringResource(R.string.soul_field_style)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
+                    label = stringResource(R.string.soul_field_style),
                 )
                 SoulLangPicker(lang = lang, onLangChange = { lang = it })
             }
@@ -314,7 +312,7 @@ internal fun SoulSettingsSection() {
                     .fillMaxWidth()
                     .padding(horizontal = Spacing.lg, vertical = 12.dp),
             ) {
-                OutlinedTextField(
+                AppTextField(
                     value = body,
                     onValueChange = { body = it },
                     modifier = Modifier
@@ -323,7 +321,8 @@ internal fun SoulSettingsSection() {
                     textStyle = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
                     ),
-                    placeholder = { Text(stringResource(R.string.soul_body_placeholder)) },
+                    placeholder = stringResource(R.string.soul_body_placeholder),
+                    singleLine = false,
                 )
                 Spacer(Modifier.height(6.dp))
                 val overLimit = bodyLimitCheck.isOverLimit
@@ -337,7 +336,7 @@ internal fun SoulSettingsSection() {
                 Text(
                     text = indicatorText,
                     fontSize = 12.sp,
-                    color = if (overLimit) Color(0xFFFF3B30) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (overLimit) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     text = stringResource(R.string.soul_personality_footer),
@@ -480,7 +479,8 @@ internal fun SoulEmojiPickerSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp),
+                .padding(bottom = 28.dp)
+                .imePadding(),
         ) {
             Text(
                 text = stringResource(R.string.soul_icon_emoji_title),
@@ -525,12 +525,10 @@ internal fun SoulEmojiPickerSheet(
                 Spacer(Modifier.height(8.dp))
             }
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
+            AppTextField(
                 value = draft,
                 onValueChange = { draft = SoulIcon.normalizeEmojiInput(it) },
-                label = { Text(stringResource(R.string.soul_icon_emoji_field)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
+                label = stringResource(R.string.soul_icon_emoji_field),
             )
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

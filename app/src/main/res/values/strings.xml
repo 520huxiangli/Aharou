@@ -346,6 +346,9 @@
     <string name="provider_register_now">立即注册</string>
     <string name="settings_keepalive_title">后台运行保活</string>
     <string name="settings_keepalive_subtitle">显示前台通知，防止后台被杀</string>
+    <string name="settings_keepalive_running">前台服务运行中</string>
+    <string name="settings_keepalive_waiting">等待前台服务启动</string>
+    <string name="settings_keepalive_failed">上次启动失败：%1$s</string>
     <string name="settings_screen_on_title">屏幕常亮</string>
     <string name="settings_screen_on_subtitle">App 在前台时不自动息屏</string>
     <string name="settings_agent_sound_title">Agent 完成通知</string>
@@ -865,6 +868,8 @@
     <string name="container_health_attention_count">%1$d 项待处理</string>
     <string name="container_health_tools_missing_names">缺少：%1$s</string>
     <string name="container_health_run">开始体检</string>
+    <string name="container_health_check_failed">体检没跑完：%1$s</string>
+    <string name="container_health_check_unknown_error">未知错误</string>
     <string name="container_health_rerun">重新体检</string>
     <string name="container_health_title_storage">共享存储访问权限</string>
     <string name="container_health_storage_ok">已授予</string>
@@ -1217,6 +1222,11 @@
 
     <!-- Git Commit Enhancements -->
     <string name="git_commit_ai_generate">AI 生成</string>
+    <string name="git_precheck_run">跑门禁</string>
+    <string name="git_precheck_running">检查中…</string>
+    <string name="git_precheck_pass">门禁检查通过</string>
+    <string name="git_precheck_failed">门禁检查未通过</string>
+    <string name="git_precheck_none">仓库里没有门禁脚本（scripts/check_*.py）</string>
     <string name="git_commit_generating">正在生成…</string>
     <string name="git_commit_amend">追加到上次提交 (--amend)</string>
     <string name="git_toast_no_diff_for_commit">暂存区与工作区均无差异，无法生成提交信息</string>
@@ -1418,7 +1428,7 @@
 
     <!-- Scheduled Tasks -->
     <string name="settings_scheduled_tasks">自动化任务</string>
-    <string name="scheduled_tasks_intro">让 AI 按你定的时间自动干活：可以按周期重复、每天固定时刻、或只跑一次。选定时刻的任务会走系统精确闹钟（Android 12 及以上需授权「精确闹钟」），周期下限 %1$d 分钟。</string>
+    <string name="scheduled_tasks_intro">让 AI 按你定的时间或事件自动干活：可以按周期重复、每天固定时刻、只跑一次，也可以等某件事发生再跑（收到通知、电量变化、WiFi 连上或断开、开机、打开 Aharou）。选定时刻的任务会走系统精确闹钟（Android 12 及以上需授权「精确闹钟」），周期下限 %1$d 分钟。</string>
     <string name="scheduled_tasks_list_header">任务列表</string>
     <string name="scheduled_tasks_empty">还没有定时任务</string>
     <string name="scheduled_tasks_add">新建自动化任务</string>
@@ -1474,7 +1484,7 @@
     <string name="scheduled_tasks_trigger_battery_below_hint">填 0-100 之间的百分比，留空表示不用这个条件</string>
     <string name="scheduled_tasks_trigger_on_charging">插电触发</string>
     <string name="scheduled_tasks_trigger_ssid">WiFi 名</string>
-    <string name="scheduled_tasks_trigger_ssid_hint">留空表示任意网络变化</string>
+    <string name="scheduled_tasks_trigger_ssid_hint">留空表示任意 WiFi 变化</string>
     <string name="scheduled_tasks_trigger_boot_hint">开机或重启完成后触发一次</string>
     <string name="scheduled_tasks_trigger_app_start_hint">App 启动后触发一次；在后台被系统重新拉起也算一次启动</string>
     <string name="scheduled_tasks_conditions">触发条件（可选）</string>
@@ -1493,7 +1503,7 @@
     <string name="scheduled_tasks_desc_battery_charging">开始充电时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_desc_battery">电量变化时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_desc_network">网络变化时 · 已运行 %1$d 次（%2$s）</string>
-    <string name="scheduled_tasks_desc_network_ssid">连接 %1$s 时 · 已运行 %2$d 次（%3$s）</string>
+    <string name="scheduled_tasks_desc_network_ssid">连接或离开 %1$s 时 · 已运行 %2$d 次（%3$s）</string>
     <string name="scheduled_tasks_desc_boot">开机时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_desc_app_start">应用启动时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_skipped_condition">条件不满足</string>
@@ -1935,6 +1945,7 @@
     <string name="tool_action_open_terminal">在终端中运行</string>
     <string name="terminal_prepare_error_unknown">未知错误</string>
     <string name="terminal_start_failed">无法启动终端：\n%1$s</string>
+    <string name="terminal_new_tab_failed">新建终端标签失败：%1$s</string>
     <string name="terminal_retry">重试</string>
     <string name="terminal_no_open_tabs">没有打开的终端标签</string>
     <string name="terminal_close_tab">关闭标签</string>
@@ -2008,6 +2019,11 @@
     <string name="workspace_name_exists">已存在同名工作区</string>
     <string name="workspace_rename_title">重命名工作区</string>
     <string name="workspace_rename_failed">重命名失败：名称不合法、已重名，或目录状态不允许</string>
+    <string name="workspace_rename_invalid">重命名失败：名称不合法（只能用字母、数字、下划线和短横线）</string>
+    <string name="workspace_rename_dir_conflict">重命名失败：目标目录已存在，或原目录已不存在</string>
+    <string name="workspace_rename_dir_failed">重命名失败：无法重命名目录，请检查文件是否被占用</string>
+    <string name="workspace_rename_remote_failed">重命名失败：远程目录移动失败，请检查连接与服务器权限</string>
+    <string name="workspace_rename_migrate_failed">重命名失败：会话记录迁移失败，目录已回滚</string>
     <string name="workspace_rename_external_hint">只改列表里显示的名字，不会重命名设备上的目录。</string>
     <string name="workspace_remote_root_create_failed">远程工作区目录创建失败，请检查路径与服务器权限</string>
     <string name="workspace_remote_default_create_failed">远程默认工作区创建失败，请检查服务器权限与磁盘空间</string>
@@ -2789,7 +2805,7 @@
     <string name="chat_long_session_new">新开会话</string>
     <string name="memory_distill_title">立即蒸馏</string>
     <string name="memory_distill_subtitle">现在就跑一次：把近期记录提炼成长期要点，追加到 GLOBAL.md</string>
-    <string name="memory_distill_written">蒸馏完成，已写入 GLOBAL.md</string>
+    <string name="memory_distill_written">蒸馏完成，已写成记忆条目</string>
     <string name="memory_distill_nothing">没有新的可提炼内容（或供应商未配）</string>
     <string name="memory_recall_title">检索测试</string>
     <string name="memory_recall_subtitle">输入一句话或一个域名，看它会召回哪些记忆摘要</string>

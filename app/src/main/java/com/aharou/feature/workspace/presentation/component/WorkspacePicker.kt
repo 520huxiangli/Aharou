@@ -185,7 +185,12 @@ private fun WorkspaceSelectionHost(
             onRename = { ws, newName ->
                 viewModel.renameWorkspace(ws.name, newName) { renamed ->
                     if (renamed == null) {
-                        Toast.makeText(context, R.string.workspace_rename_failed, Toast.LENGTH_LONG).show()
+                        // 具体原因由 repository 给出（名称非法 / 重名 / 目录状态 / 迁移失败），
+                        // 拿不到时才退回笼统文案。
+                        val message = viewModel.renameError()
+                            ?: context.getString(R.string.workspace_rename_failed)
+                        viewModel.consumeRenameError()
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                     }
                 }
             },

@@ -100,9 +100,17 @@ class WorkspaceViewModel @Inject constructor(
             .onFailure { FileLogger.w(TAG, "删除工作区失败: $name", it) }
     }
 
-    /** 重命名工作区；[onResult] 收到改名后的工作区（失败为 null）。 */
+    /**
+     * 重命名工作区；[onResult] 收到改名后的工作区（失败为 null）。
+     * 失败时具体原因由 [renameError] 给出（名称非法 / 重名 / 目录状态 / 迁移失败各有文案）。
+     */
     fun renameWorkspace(oldName: String, newName: String, onResult: (Workspace?) -> Unit = {}) = viewModelScope.launch {
         val ws = runCatching { repository.renameWorkspace(oldName, newName) }.getOrNull()
         onResult(ws)
     }
+
+    /** 上一次重命名失败的原因；UI 弹完提示后调 [consumeRenameError]。 */
+    fun renameError(): String? = repository.renameError.value
+
+    fun consumeRenameError() = repository.consumeRenameError()
 }

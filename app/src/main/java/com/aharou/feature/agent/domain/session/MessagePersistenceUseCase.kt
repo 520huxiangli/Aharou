@@ -22,6 +22,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.util.LinkedHashMap
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -40,7 +41,17 @@ class MessagePersistenceUseCase @Inject constructor(
     /** agent_messages 表变更版本号：任何写路径（含 rewind 删除、压缩标记、冷启动清理）触发递增，
      *  作为 [buildHistory] 缓存的失效信号。InvalidationTracker 监听表级变更，覆盖所有 DAO 写入。 */
     private val dbVersion = java.util.concurrent.atomic.AtomicLong(0)
-    private val historyCache = HashMap<String, HistoryEntry>()
+
+    /**
+     * 历史消息缓存：只留最近访问的若干会话。
+     *
+     * 以前是无限增长的 HashMap——用户切过的历史会话，整份消息列表会一直留在内存里直到进程结束
+     * （一个会话几千条消息很常见）。用 access-order 的 LinkedHashMap 做 LRU，超上限自动淘汰最旧的。
+     */
+    private val historyCache = object : LinkedHashMap<String, HistoryEntry>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, HistoryEntry>?): Boolean =
+            size > MAX_CACHED_HISTORY_SESSIONS
+    }
 
     private class HistoryEntry(
         val version: Long,
@@ -300,6 +311,9 @@ class MessagePersistenceUseCase @Inject constructor(
         const val CONTENT_TRUNCATED_MARKER = "…[内容过长，已截断]"
         /** 图片 base64 缓存条目上限。 */
         private const val MAX_IMAGE_CACHE_ENTRIES = 12
+
+        /** 历史消息缓存保留的会话数：按最近访问淘汰，不设上限时内存只增不减。 */
+        private const val MAX_CACHED_HISTORY_SESSIONS = 8
         /** 图片 base64 缓存总字节上限（base64 为原始大小的 ~4/3，48MB 约可存 36MB 原始图片）。 */
         private const val MAX_IMAGE_CACHE_BYTES = 48L * 1024 * 1024
 

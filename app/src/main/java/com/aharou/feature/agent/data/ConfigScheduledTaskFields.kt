@@ -86,15 +86,87 @@ class ConfigScheduledTaskFields @Inject constructor(
                 scalar(
                     "$basePath.$forId.interval_minutes",
                     "周期分钟（$forId）",
-                    "低于 ${ScheduledTaskScheduler.MIN_INTERVAL_MINUTES} 会被收敛；改周期会按新周期重排下次运行。",
+                    "低于 ${ScheduledTaskScheduler.MIN_INTERVAL_MINUTES} 会被收敛；区间任务改周期会按新周期重排下次运行（daily / once 不看这个值）。",
                     schema = ConfigSchema.Int(min = 1),
                 ) { ConfigValue.Int(t.intervalMinutes) } write { v ->
                     val minutes = ScheduledTaskScheduler.normalizeInterval(intOf(v))
-                    mutate(forId) {
-                        it.copy(
+                    val at = now()
+                    mutate(forId) { task ->
+                        task.copy(
                             intervalMinutes = minutes,
-                            nextRunAt = ScheduledTaskScheduler.nextRunAfter(now(), minutes),
-                            updatedAt = now(),
+                            nextRunAt = if (TriggerType.isTimeTrigger(task) &&
+                                task.scheduleType == ScheduledTaskEntity.TYPE_INTERVAL
+                            ) {
+                                ScheduledTaskScheduler.nextRunAfter(at, minutes)
+                            } else {
+                                task.nextRunAt
+                            },
+                            updatedAt = at,
+                        )
+                    }
+                },
+
+                scalar(
+                    "$basePath.$forId.schedule_type",
+                    "运行方式（$forId）",
+                    "trigger_type 为 time 时有效：interval 按周期重复 / daily 每天固定时刻 / once 只跑一次。" +
+                        "改动后按新运行方式重排下次运行；事件类触发不看这个字段。",
+                    schema = ConfigSchema.StrEnum(SCHEDULE_TYPES),
+                ) { ConfigValue.Str(t.scheduleType) } write { v ->
+                    val type = strOf(v)
+                    val at = now()
+                    mutate(forId) { task ->
+                        val updated = task.copy(scheduleType = type, updatedAt = at)
+                        updated.copy(
+                            nextRunAt = if (TriggerType.isTimeTrigger(task)) {
+                                ScheduledTaskScheduler.nextRunFor(updated, at)
+                            } else {
+                                task.nextRunAt
+                            }
+                        )
+                    }
+                },
+
+                scalar(
+                    "$basePath.$forId.daily_minute_of_day",
+                    "每天时刻（$forId）",
+                    "schedule_type 为 daily 时有效：当天第几分钟（0=00:00、510=08:30）；改动后重排下次运行。",
+                    schema = ConfigSchema.Int(min = 0, max = 24 * 60 - 1),
+                ) { ConfigValue.Int(t.dailyMinuteOfDay) } write { v ->
+                    val minute = intOf(v).coerceIn(0, 24 * 60 - 1)
+                    val at = now()
+                    mutate(forId) { task ->
+                        val updated = task.copy(dailyMinuteOfDay = minute, updatedAt = at)
+                        updated.copy(
+                            nextRunAt = if (TriggerType.isTimeTrigger(task) &&
+                                task.scheduleType == ScheduledTaskEntity.TYPE_DAILY
+                            ) {
+                                ScheduledTaskScheduler.nextDailyOccurrence(minute, at)
+                            } else {
+                                task.nextRunAt
+                            }
+                        )
+                    }
+                },
+
+                scalar(
+                    "$basePath.$forId.once_at_millis",
+                    "单次时刻（$forId）",
+                    "schedule_type 为 once 时有效：epoch 毫秒字符串（与 next_run_at 同一口径），0 表示未设置；" +
+                        "改动后重排下次运行。",
+                ) { ConfigValue.Str(t.onceAtMillis.toString()) } write { v ->
+                    val millis = parseOnceAt(strOf(v))
+                    val at = now()
+                    mutate(forId) { task ->
+                        val updated = task.copy(onceAtMillis = millis, updatedAt = at)
+                        updated.copy(
+                            nextRunAt = if (TriggerType.isTimeTrigger(task) &&
+                                task.scheduleType == ScheduledTaskEntity.TYPE_ONCE
+                            ) {
+                                millis
+                            } else {
+                                task.nextRunAt
+                            }
                         )
                     }
                 },
@@ -123,8 +195,8 @@ class ConfigScheduledTaskFields @Inject constructor(
                     "$basePath.$forId.trigger_type",
                     "触发方式（$forId）",
                     "time 到点（按任务的运行方式：周期 / 每天定时 / 只跑一次）｜notification 收到通知｜" +
-                        "battery 电量变化｜network 网络变化｜boot 开机。改成事件类后不再按时间自动跑，" +
-                        "要等事件发生才跑；改回 time 会按运行方式重排下次运行。",
+                        "battery 电量变化｜network WiFi 连上或断开｜boot 开机｜app_start 应用启动。" +
+                        "改成事件类后不再按时间自动跑，要等事件发生才跑；改回 time 会按运行方式重排下次运行。",
                     schema = ConfigSchema.StrEnum(TriggerType.ALL),
                 ) { ConfigValue.Str(t.triggerType) } write { v ->
                     val type = strOf(v)
@@ -173,7 +245,7 @@ class ConfigScheduledTaskFields @Inject constructor(
                 scalar(
                     "$basePath.$forId.trigger_ssid",
                     "WiFi 名（$forId）",
-                    "触发方式为 network 时有效：只匹配这个名字的 WiFi；留空表示任意网络变化都触发。",
+                    "触发方式为 network 时有效：连上或离开这个 WiFi 时触发；留空表示任意 WiFi 变化都触发。",
                 ) { ConfigValue.Str(t.triggerSsid) } write { v ->
                     mutate(forId) { it.copy(triggerSsid = strOf(v).trim(), updatedAt = now()) }
                 },
@@ -260,6 +332,22 @@ class ConfigScheduledTaskFields @Inject constructor(
             val prompt = (obj["prompt"] as? ConfigValue.Str)?.value?.trim().orEmpty()
             if (prompt.isBlank()) throw ConfigError.InvalidValue("缺少 prompt")
 
+            val scheduleType = (obj["schedule_type"] as? ConfigValue.Str)?.value?.trim()
+                ?.ifEmpty { ScheduledTaskEntity.TYPE_INTERVAL }
+                ?: ScheduledTaskEntity.TYPE_INTERVAL
+            if (scheduleType !in SCHEDULE_TYPES) {
+                throw ConfigError.InvalidValue(
+                    "schedule_type 取值非法：$scheduleType；可用 ${SCHEDULE_TYPES.joinToString("/")}"
+                )
+            }
+            val dailyMinuteOfDay = (obj["daily_minute_of_day"] as? ConfigValue.Int)?.value
+                ?: (9 * 60)
+            val onceAtMillis = parseOnceAt((obj["once_at_millis"] as? ConfigValue.Str)?.value.orEmpty())
+            // once 没给时刻就永远跑不了：建的时候直接拦下，别建出一个永不触发的任务。
+            if (scheduleType == ScheduledTaskEntity.TYPE_ONCE && onceAtMillis <= 0L) {
+                throw ConfigError.InvalidValue("schedule_type 为 once 时需要 once_at_millis（epoch 毫秒）")
+            }
+
             val saved = runBlocking {
                 val base = tasks.save(
                     existing = null,
@@ -269,6 +357,9 @@ class ConfigScheduledTaskFields @Inject constructor(
                     workspacePath = (obj["workspace_path"] as? ConfigValue.Str)?.value?.ifBlank { null },
                     intervalMinutes = (obj["interval_minutes"] as? ConfigValue.Int)?.value
                         ?: ScheduledTaskScheduler.MIN_INTERVAL_MINUTES,
+                    scheduleType = scheduleType,
+                    dailyMinuteOfDay = dailyMinuteOfDay,
+                    onceAtMillis = onceAtMillis,
                     maxRuns = (obj["max_runs"] as? ConfigValue.Int)?.value ?: 0,
                     enabled = (obj["enabled"] as? ConfigValue.Bool)?.value ?: true,
                 )
@@ -317,8 +408,7 @@ class ConfigScheduledTaskFields @Inject constructor(
             runBlocking { tasks.delete(id) }
         }
 
-        /** 一个读写标量字段：省掉逐个重复的 ClosureField 样板。 */
-        private fun scalar(
+        /** 一个读写标量字段：省掉逐个重复的 ClosureField 样板。 */        private fun scalar(
             path: String,
             displayName: String,
             description: String,
@@ -342,5 +432,24 @@ class ConfigScheduledTaskFields @Inject constructor(
                 writer = writer,
             )
         }
+    }
+
+    /** once_at_millis 收 epoch 毫秒字符串；空串表示未设置。 */
+    private fun parseOnceAt(raw: String): Long {
+        val text = raw.trim()
+        if (text.isEmpty()) return 0L
+        val millis = text.toLongOrNull()
+            ?: throw ConfigError.InvalidValue("once_at_millis 需要 epoch 毫秒数字（如 1792838400000）：$text")
+        if (millis < 0) throw ConfigError.InvalidValue("once_at_millis 不能为负：$text")
+        return millis
+    }
+
+    private companion object {
+        /** schedule_type 的合法取值，与设置页的「运行方式」一致。 */
+        val SCHEDULE_TYPES = listOf(
+            ScheduledTaskEntity.TYPE_INTERVAL,
+            ScheduledTaskEntity.TYPE_DAILY,
+            ScheduledTaskEntity.TYPE_ONCE,
+        )
     }
 }

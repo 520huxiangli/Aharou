@@ -40,6 +40,9 @@ class TerminalKeepaliveService : Service() {
     @Inject
     lateinit var keepaliveSettings: KeepaliveSettingsRepository
 
+    @Inject
+    lateinit var keepaliveStatus: KeepaliveStatus
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** 前台保活期间持有的 Wi-Fi 锁：避免切后台/息屏后 Wi-Fi 进入省电使长连接被回收。 */
@@ -67,6 +70,7 @@ class TerminalKeepaliveService : Service() {
     override fun onDestroy() {
         serviceScope.cancel()
         releaseWifiLocks()
+        keepaliveStatus.markStopped()
         super.onDestroy()
     }
 
@@ -193,8 +197,14 @@ class TerminalKeepaliveService : Service() {
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
             )
-        }.onSuccess { acquireWifiLocks() }
-            .onFailure { FileLogger.e(TAG, "startForeground failed", it) }
+        }.onSuccess {
+            acquireWifiLocks()
+            keepaliveStatus.markRunning()
+        }
+            .onFailure {
+                FileLogger.e(TAG, "startForeground failed", it)
+                keepaliveStatus.markFailure(it.message?.take(MAX_STATUS_ERROR_CHARS) ?: it.javaClass.simpleName)
+            }
     }
 
     /**
@@ -227,6 +237,9 @@ class TerminalKeepaliveService : Service() {
         private const val TAG = "TerminalKeepaliveService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "terminal_service"
+
+        /** 状态提示里那行错误原因的截断长度：设置页只做一行副文案，过长的堆栈没意义。 */
+        private const val MAX_STATUS_ERROR_CHARS = 120
         const val ACTION_START_SESSION = "com.aharou.agent.action.START_SESSION"
 
         /** 本次会话属于哪个工作区（绝对路径）；旧调用方不传时只算总数。 */

@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -36,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppTextField
+import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.core.ui.dialogTextFieldColors
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
@@ -44,7 +43,6 @@ import com.aharou.feature.settings.presentation.component.SettingsRow
 import com.aharou.feature.vault.VaultRepository
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Plus
-import compose.icons.feathericons.Trash2
 
 /**
  * 设置页「凭据库」分区：通用密钥库的增删。列表只显示名字与 `{{vault:名字}}` 占位符，
@@ -86,7 +84,9 @@ internal fun VaultSection(viewModel: VaultViewModel = hiltViewModel()) {
             SettingsGroup {
                 names.forEachIndexed { index, name ->
                     if (index > 0) SettingsDivider()
-                    VaultRow(name = name, onDelete = { deleting = name })
+                    SwipeToDeleteRow(onDelete = { deleting = name }) {
+                        VaultRow(name = name)
+                    }
                 }
             }
         }
@@ -131,9 +131,9 @@ internal fun VaultSection(viewModel: VaultViewModel = hiltViewModel()) {
     }
 }
 
-/** 单条凭据行：名字 + `{{vault:名字}}` 占位符；值不显示，右侧删除。 */
+/** 单条凭据行：名字 + `{{vault:名字}}` 占位符；值不显示，删除走左滑。 */
 @Composable
-private fun VaultRow(name: String, onDelete: () -> Unit) {
+private fun VaultRow(name: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -157,15 +157,6 @@ private fun VaultRow(name: String, onDelete: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
-            )
-        }
-        Spacer(Modifier.width(Spacing.sm))
-        IconButton(onClick = onDelete) {
-            Icon(
-                imageVector = FeatherIcons.Trash2,
-                contentDescription = stringResource(R.string.common_delete),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
             )
         }
     }

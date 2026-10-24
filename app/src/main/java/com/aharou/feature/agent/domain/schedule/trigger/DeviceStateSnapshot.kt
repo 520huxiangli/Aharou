@@ -57,7 +57,8 @@ data class DeviceStateSnapshot(
  * 一次状态比对的结果：当前状态 + 与上次快照相比变了什么。
  *
  * [previous] 为 null 表示首次运行——只记基线，所有变化判定都为 false（没有「上次」可比）。
- * 每项判定都要求两次都读得到：读失败与「真的变了」必须分开，否则一次读失败就会误报事件。
+ * 电量与充电状态要求两次都读得到：读失败与「真的变了」必须分开，否则一次读失败就会误报事件。
+ * WiFi 没有「读失败」的独立信号（没连与读不到都是空串），靠「两边都是空串时不可能变化」兜住。
  */
 data class DeviceStateCheck(
     val current: DeviceStateSnapshot,
@@ -80,10 +81,11 @@ data class DeviceStateCheck(
     /** 本次插上充电（上次明确没在充、这次明确在充）。 */
     val chargingStarted: Boolean = chargingAfter == true && chargingBefore == false
 
-    /** WiFi 名变了；两次都读得到才算，理由见 [DeviceStateSnapshot.ssid]。 */
-    val ssidChanged: Boolean = ssidBefore?.isNotEmpty() == true &&
-        current.ssid.isNotEmpty() &&
-        ssidBefore != current.ssid
+    /**
+     * WiFi 名变了：连上（空串→名字）、断开（名字→空串）、换网（A→B）都算。
+     * 只在有上一次基线时比对；没连 WiFi 与读不到 SSID 都是空串，缺定位权限时两边恒为空，不会误报。
+     */
+    val ssidChanged: Boolean = ssidBefore != null && ssidBefore != current.ssid
 
     val hasChanges: Boolean get() = batteryChanged || chargingChanged || ssidChanged
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -35,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
+import com.aharou.core.ui.SegmentedTabs
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.aharou.core.ui.AppSwitch
@@ -51,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
@@ -61,7 +62,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.aharou.feature.settings.presentation.component.rememberSheetFlingFix
 import com.aharou.feature.agent.domain.container.SshLoginKey
 import com.aharou.feature.workspace.domain.model.RemoteConnection
 import com.aharou.feature.workspace.domain.model.RemoteMount
@@ -123,47 +123,6 @@ private fun SheetTitle(text: String) {
             textAlign = TextAlign.Center
         )
         Spacer(modifier = Modifier.size(36.dp))
-    }
-}
-
-/** 紧凑分段选择器：样式与 MCP 编辑弹窗的分段控件一致。 */
-@Composable
-private fun CompactSegments(
-    selected: Int,
-    onSelect: (Int) -> Unit,
-    tabs: List<String>,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                RoundedCornerShape(12.dp)
-            )
-            .padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(3.dp)
-    ) {
-        tabs.forEachIndexed { index, title ->
-            val isSelected = index == selected
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent)
-                    .clickable { onSelect(index) }
-                    .padding(vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                    ),
-                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
     }
 }
 
@@ -235,7 +194,6 @@ fun AddRemoteConnectionDialog(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
-    val flingFix = rememberSheetFlingFix(sheetState)
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -253,7 +211,7 @@ fun AddRemoteConnectionDialog(
                 text = if (initialConnection != null) stringResource(R.string.remote_edit_connection) else stringResource(R.string.remote_add_connection)
             )
 
-            CompactSegments(
+            SegmentedTabs(
                 selected = when (protocol) {
                     RemoteProtocol.SFTP -> 0
                     RemoteProtocol.FTP -> 1
@@ -273,7 +231,7 @@ fun AddRemoteConnectionDialog(
                     }
                     protocol = newProtocol
                 },
-                tabs = listOf("SFTP", "FTP"),
+                labels = listOf("SFTP", "FTP"),
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
 
@@ -283,13 +241,13 @@ fun AddRemoteConnectionDialog(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .nestedScroll(flingFix)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .imePadding()
                         .navigationBarsPadding(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -310,10 +268,10 @@ fun AddRemoteConnectionDialog(
 
                     // 仅 SFTP 支持密钥认证；FTP 只有密码
                     if (protocol == RemoteProtocol.SFTP) {
-                        CompactSegments(
+                        SegmentedTabs(
                             selected = authMethod,
                             onSelect = { authMethod = it },
-                            tabs = listOf(
+                            labels = listOf(
                                 stringResource(R.string.remote_auth_password),
                                 stringResource(R.string.remote_auth_key)
                             )
@@ -475,7 +433,6 @@ fun AddRemoteMountDialog(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
-    val flingFix = rememberSheetFlingFix(sheetState)
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -497,13 +454,13 @@ fun AddRemoteMountDialog(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .nestedScroll(flingFix)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .imePadding()
                         .navigationBarsPadding(),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -676,9 +633,22 @@ fun RemoteDirectoryBrowserDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 val loadError = error
                 if (isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 } else if (loadError != null) {
-                    Text(stringResource(R.string.remote_load_failed, loadError), color = MaterialTheme.colorScheme.error)
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.remote_load_failed, loadError),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 } else {
                     LazyColumn {
                         if (currentPath != "/") {

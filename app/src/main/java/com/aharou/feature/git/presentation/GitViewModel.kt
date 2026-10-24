@@ -63,7 +63,8 @@ class GitViewModel @Inject constructor(
     private val themeSettings: ThemeSettingsRepository,
     private val agentWorkflow: AgentWorkflow,
     private val workspaceRepository: WorkspaceRepository,
-    private val sessionUseCase: SessionUseCase
+    private val sessionUseCase: SessionUseCase,
+    private val preCommitController: PreCommitCheckController,
 ) : ViewModel() {
 
     private companion object {
@@ -375,6 +376,15 @@ class GitViewModel @Inject constructor(
             }
         }
     }
+    /** 提交弹窗的「跑门禁」状态与动作，实体在 [PreCommitCheckController]。 */
+    val preCheck: StateFlow<PreCommitCheckController.State> = preCommitController.state
+
+    fun runPreCommitChecks() {
+        viewModelScope.launch { preCommitController.run() }
+    }
+
+    fun clearPreCheck() = preCommitController.clear()
+
     fun commit(message: String, amend: Boolean = false) =
         runAction(R.string.git_action_commit, { repository.commit(message, amend) })
 

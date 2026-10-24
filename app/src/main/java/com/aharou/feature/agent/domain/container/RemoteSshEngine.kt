@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -82,10 +83,17 @@ class RemoteSshEngine @Inject constructor(
                 runCatching { session.close() }
             }
         }
-        val cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-            if (cause is CancellationException && session.isOpen) {
-                FileLogger.i(TAG, "命令被取消，关闭 session: ${sanitizeCommandForLog(command)}")
-                runCatching { session.close() }
+        // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消就立刻走到 finally。
+        // 不能用 invokeOnCompletion——它只在 job 完成时回调，而命令卡在阻塞读流上时协程停在
+        // cancelling 永不完成，钩子便永远不触发，session 也就关不掉（本地引擎踩过同一个坑）。
+        val cancellationCloser = CoroutineScope(currentCoroutineContext()).launch {
+            try {
+                awaitCancellation()
+            } finally {
+                if (session.isOpen) {
+                    FileLogger.i(TAG, "命令被取消，关闭 session: ${sanitizeCommandForLog(command)}")
+                    runCatching { session.close() }
+                }
             }
         }
         try {
@@ -120,7 +128,7 @@ class RemoteSshEngine @Inject constructor(
                 send(CommandEvent.Exit(null))
             }
         } finally {
-            cancellationHook?.dispose()
+            cancellationCloser.cancel()
             watchdog.cancel()
             watchScope.cancel()
             runCatching { session.close() }

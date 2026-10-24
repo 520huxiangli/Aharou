@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -73,6 +75,7 @@ import com.aharou.feature.settings.presentation.component.settingsPageBackground
 import com.aharou.feature.git.domain.model.GitStatus
 import com.aharou.feature.git.domain.model.GitTab
 import com.aharou.feature.git.presentation.GitViewModel
+import com.aharou.feature.git.presentation.PreCommitCheckController
 import com.aharou.feature.git.presentation.PullRequestViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Activity
@@ -410,9 +413,15 @@ fun GitScreen(
     }
 
     if (showCommitDialog) {
+        val preCheck by viewModel.preCheck.collectAsStateWithLifecycle()
         CommitDialog(
             isGenerating = state.generatingCommitMessage,
-            onDismiss = { showCommitDialog = false },
+            preCheck = preCheck,
+            onRunChecks = viewModel::runPreCommitChecks,
+            onDismiss = {
+                showCommitDialog = false
+                viewModel.clearPreCheck()
+            },
             onGenerateAiMessage = viewModel::generateCommitMessage,
             onConfirm = { msg, amend ->
                 showCommitDialog = false
@@ -691,6 +700,8 @@ private fun CloneRepoDialog(
 @Composable
 private fun CommitDialog(
     isGenerating: Boolean,
+    preCheck: PreCommitCheckController.State,
+    onRunChecks: () -> Unit,
     onDismiss: () -> Unit,
     onGenerateAiMessage: ((String) -> Unit) -> Unit,
     onConfirm: (String, Boolean) -> Unit
@@ -839,6 +850,39 @@ private fun CommitDialog(
                             checked = amend,
                             onCheckedChange = { amend = it }
                         )
+                    }
+                }
+
+                // 提交前门禁：在容器里跑仓库自带的检查脚本（架构/迁移/技能），只读不拦提交。
+                Text(
+                    text = stringResource(
+                        if (preCheck.running) R.string.git_precheck_running else R.string.git_precheck_run
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (preCheck.running) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable(enabled = !preCheck.running) { onRunChecks() },
+                )
+                preCheck.text?.let { text ->
+                    Surface(
+                        color = MaterialTheme.semanticColors.mutedSurface,
+                        shape = RoundedCornerShape(Radius.sm),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .heightIn(max = 140.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(Spacing.sm)
+                        ) {
+                            Text(
+                                text = text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (preCheck.passed) MaterialTheme.semanticColors.success
+                                else MaterialTheme.colorScheme.error,
+                            )
+                        }
                     }
                 }
             }

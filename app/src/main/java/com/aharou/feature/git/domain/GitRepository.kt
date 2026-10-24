@@ -36,7 +36,8 @@ private const val TAG = "GitRepository"
 @Singleton
 class GitRepository @Inject constructor(
     private val engine: CommandEngine,
-    private val workspaceRepository: WorkspaceRepository
+    private val workspaceRepository: WorkspaceRepository,
+    private val preCommitChecker: PreCommitChecker,
 ) {
     /** 当前选中的 git 仓库路径；null 表示未指定（用工作区根）。由 [setRepoPath] 写入、[repoCwd] 读取。 */
     @Volatile
@@ -381,6 +382,11 @@ class GitRepository @Inject constructor(
         val skip = existingCommits.size
         val logRaw = runCatching { git("log", "--pretty=format:%H%x1f%h%x1f%an%x1f%ar%x1f%s%x1f%P%x1f%b", "--skip", skip.toString(), "-n", limit.toString()) }
             .getOrDefault("")
+        if (logRaw.startsWith("fatal:") && !isEmptyRepoFatal(logRaw)) {
+            // 空仓库是正常的「没有提交」；其余 fatal（不是仓库、SSH 断开）必须抛出来——
+            // 否则界面把「读失败」显示成「没有提交」，用户以为仓库空了。
+            throw GitCommandFailureException(logRaw.lineSequence().first())
+        }
         if (logRaw.isBlank() || logRaw.startsWith("fatal:")) {
             return@withContext if (existingCommits.isEmpty()) GitGraph.EMPTY
             else GitGraphBuilder.buildGraph(existingCommits, refs, hasMore = false)
@@ -560,10 +566,7 @@ class GitRepository @Inject constructor(
      * 分支取 `git rev-parse --abbrev-ref HEAD`。凭据仍由容器 credential.helper 链兜底注入。
      */
     suspend fun push(): String {
-        val hasUpstream = runCatching { git("rev-parse", "--abbrev-ref", "@{upstream}").trim() }
-            .getOrDefault("")
-            .takeIf { it.isNotBlank() && it != "HEAD" && !it.startsWith("fatal") } != null
-        if (hasUpstream) return gitChecked("push")
+        if (upstreamRef() != null) return gitChecked("push")
         val remote = git("remote").split('\n').firstOrNull { it.removeSuffix("\r").isNotBlank() }?.removeSuffix("\r")?.trim()
             ?: throw GitCommandFailureException("未配置远程仓库")
         val branch = git("rev-parse", "--abbrev-ref", "HEAD").removeSuffix("\r").trim()
@@ -572,15 +575,35 @@ class GitRepository @Inject constructor(
         return gitChecked("push", "--set-upstream", remote, branch)
     }
 
+    /** 空仓库时 `git log` 的 fatal 文案（这几种属于「还没有提交」，不是读失败）。 */
+    private fun isEmptyRepoFatal(raw: String): Boolean {
+        val lower = raw.lowercase()
+        return lower.contains("does not have any commits yet") ||
+            lower.contains("bad default revision") ||
+            lower.contains("unknown revision")
+    }
+
+    /**
+     * 当前分支的 upstream 引用；没有建立跟踪关系时返回 null。
+     *
+     * [git] 把 stderr 折进返回文本，「没有 upstream」与「命令真的失败」都长成 `fatal:`。
+     * 只看前缀会把仓库异常（不是仓库、SSH 断开）误判成「没有 upstream」，随后 [push] 会
+     * 带 `--set-upstream` 重写跟踪关系——推错分支比报错更难发现，所以这里让真失败抛出来。
+     */
+    private suspend fun upstreamRef(): String? {
+        val raw = git("rev-parse", "--abbrev-ref", "@{upstream}").trim()
+        if (raw.isBlank() || raw == "HEAD") return null
+        if (!raw.startsWith("fatal")) return raw
+        if (raw.contains("no upstream configured", ignoreCase = true)) return null
+        throw GitCommandFailureException(raw.lineSequence().first())
+    }
+
     /**
      * 当前是否为 master 分支的首次推送（即当前分支为 master 且尚未建立 upstream 跟踪关系）。
      * 供 UI 弹窗询问用户是否重命名为现代通用的 main 分支。
      */
     suspend fun isFirstPushOfMaster(): Boolean {
-        val hasUpstream = runCatching { git("rev-parse", "--abbrev-ref", "@{upstream}").trim() }
-            .getOrDefault("")
-            .takeIf { it.isNotBlank() && it != "HEAD" && !it.startsWith("fatal") } != null
-        if (hasUpstream) return false
+        if (upstreamRef() != null) return false
         val branch = git("rev-parse", "--abbrev-ref", "HEAD").removeSuffix("\r").trim()
         return branch == "master"
     }
@@ -636,6 +659,9 @@ class GitRepository @Inject constructor(
      */
     suspend fun resetToCommit(commitHash: String, mode: String = "mixed"): String =
         gitChecked("reset", "--$mode", commitHash)
+
+    /** 提交前门禁：脚本探测与执行都在 [PreCommitChecker]，这里只负责把当前仓库目录传进去。 */
+    suspend fun runPreCommitChecks(): PreCommitChecker.Result = preCommitChecker.run(repoCwd())
 
     /**
      * 将忽略规则追加到工作区的 .gitignore 文件中。

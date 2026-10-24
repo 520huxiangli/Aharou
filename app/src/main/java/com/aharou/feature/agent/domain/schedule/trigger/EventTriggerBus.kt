@@ -155,9 +155,15 @@ class EventTriggerBus @Inject constructor(
         (task.triggerOnCharging && check.chargingStarted) ||
             (task.triggerBatteryBelow >= 0 && check.droppedBelow(task.triggerBatteryBelow))
 
-    /** 只在 ssid 真的变了时才会被问到，所以这里不必再判变化，只看名字对不对得上。 */
-    private fun matchesNetwork(task: ScheduledTaskEntity, check: DeviceStateCheck): Boolean =
-        task.triggerSsid.isEmpty() || task.triggerSsid.equals(check.current.ssid, ignoreCase = true)
+    /**
+     * 只在 ssid 真的变了时才会被问到，所以这里不必再判变化：名字留空就是任意 WiFi 变化都算；
+     * 填了名字则要求这次变化涉及它——连上它（当前是它）或从它离开（上一次是它）都算。
+     */
+    private fun matchesNetwork(task: ScheduledTaskEntity, check: DeviceStateCheck): Boolean {
+        if (task.triggerSsid.isEmpty()) return true
+        return task.triggerSsid.equals(check.current.ssid, ignoreCase = true) ||
+            task.triggerSsid.equals(check.previous?.ssid.orEmpty(), ignoreCase = true)
+    }
 
     /**
      * 防抖：同一任务在一个窗口内被事件重复命中也只算一次。

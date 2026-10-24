@@ -346,6 +346,9 @@
     <string name="provider_register_now">Register</string>
     <string name="settings_keepalive_title">Background keepalive</string>
     <string name="settings_keepalive_subtitle">Foreground notification prevents background kill</string>
+    <string name="settings_keepalive_running">Foreground service is running</string>
+    <string name="settings_keepalive_waiting">Waiting for the foreground service</string>
+    <string name="settings_keepalive_failed">Last start failed: %1$s</string>
     <string name="settings_screen_on_title">Keep screen on</string>
     <string name="settings_screen_on_subtitle">Screen stays awake while the app is in the foreground</string>
     <string name="settings_agent_sound_title">Agent completion notification</string>
@@ -865,6 +868,8 @@
     <string name="container_health_attention_count">%1$d item(s) need attention</string>
     <string name="container_health_tools_missing_names">Missing: %1$s</string>
     <string name="container_health_run">Run Check</string>
+    <string name="container_health_check_failed">Health check did not finish: %1$s</string>
+    <string name="container_health_check_unknown_error">Unknown error</string>
     <string name="container_health_rerun">Run Check Again</string>
     <string name="container_health_title_storage">Shared storage access</string>
     <string name="container_health_storage_ok">Granted</string>
@@ -1217,6 +1222,11 @@
 
     <!-- Git Commit Enhancements -->
     <string name="git_commit_ai_generate">AI Generate</string>
+    <string name="git_precheck_run">Run checks</string>
+    <string name="git_precheck_running">Checking…</string>
+    <string name="git_precheck_pass">Repository checks passed</string>
+    <string name="git_precheck_failed">Repository checks failed</string>
+    <string name="git_precheck_none">No check scripts in this repo (scripts/check_*.py)</string>
     <string name="git_commit_generating">Generating…</string>
     <string name="git_commit_amend">Amend last commit (--amend)</string>
     <string name="git_toast_no_diff_for_commit">No changes found to generate commit message</string>
@@ -1418,7 +1428,7 @@
 
     <!-- Scheduled Tasks -->
     <string name="settings_scheduled_tasks">Automation tasks</string>
-    <string name="scheduled_tasks_intro">Let the AI do work on your schedule: repeat on an interval, run daily at a fixed time, or run once. Tasks with a fixed time use system exact alarms (Android 12+ needs the exact alarm permission); the shortest interval is %1$d minutes.</string>
+    <string name="scheduled_tasks_intro">Let the AI work on your schedule or when something happens: repeat on an interval, run daily at a fixed time, run once, or wait for an event (notification received, battery change, Wi-Fi connect or disconnect, boot, app opened). Tasks with a fixed time use system exact alarms (Android 12+ needs the exact alarm permission); the shortest interval is %1$d minutes.</string>
     <string name="scheduled_tasks_list_header">Tasks</string>
     <string name="scheduled_tasks_empty">No scheduled tasks yet</string>
     <string name="scheduled_tasks_add">New automation task</string>
@@ -1474,7 +1484,7 @@
     <string name="scheduled_tasks_trigger_battery_below_hint">Any percentage from 0 to 100; leave empty to skip this condition</string>
     <string name="scheduled_tasks_trigger_on_charging">When plugged in</string>
     <string name="scheduled_tasks_trigger_ssid">Wi-Fi name</string>
-    <string name="scheduled_tasks_trigger_ssid_hint">Leave empty for any network change</string>
+    <string name="scheduled_tasks_trigger_ssid_hint">Leave empty for any Wi-Fi change</string>
     <string name="scheduled_tasks_trigger_boot_hint">Fires once after the device finishes booting</string>
     <string name="scheduled_tasks_trigger_app_start_hint">Fires once after the app starts; a background restart also counts as a start</string>
     <string name="scheduled_tasks_conditions">Trigger conditions (optional)</string>
@@ -1493,7 +1503,7 @@
     <string name="scheduled_tasks_desc_battery_charging">When charging starts · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_desc_battery">On battery change · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_desc_network">On network change · ran %1$d times (%2$s)</string>
-    <string name="scheduled_tasks_desc_network_ssid">When connected to %1$s · ran %2$d times (%3$s)</string>
+    <string name="scheduled_tasks_desc_network_ssid">When connecting to or leaving %1$s · ran %2$d times (%3$s)</string>
     <string name="scheduled_tasks_desc_boot">On boot · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_desc_app_start">On app start · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_skipped_condition">Conditions not met</string>
@@ -1935,6 +1945,7 @@
     <string name="tool_action_open_terminal">Run in terminal</string>
     <string name="terminal_prepare_error_unknown">Unknown error</string>
     <string name="terminal_start_failed">Cannot start terminal:\n%1$s</string>
+    <string name="terminal_new_tab_failed">Failed to create a terminal tab: %1$s</string>
     <string name="terminal_retry">Retry</string>
     <string name="terminal_no_open_tabs">No open terminal tabs</string>
     <string name="terminal_close_tab">Close Tab</string>
@@ -2008,6 +2019,11 @@
     <string name="workspace_name_exists">A workspace with this name already exists</string>
     <string name="workspace_rename_title">Rename Workspace</string>
     <string name="workspace_rename_failed">Rename failed: invalid or duplicate name, or the directory state disallows it</string>
+    <string name="workspace_rename_invalid">Rename failed: invalid name (letters, digits, underscores and dashes only)</string>
+    <string name="workspace_rename_dir_conflict">Rename failed: the target directory already exists, or the source is gone</string>
+    <string name="workspace_rename_dir_failed">Rename failed: could not rename the directory — check whether files are in use</string>
+    <string name="workspace_rename_remote_failed">Rename failed: could not move the remote directory — check the connection and server permissions</string>
+    <string name="workspace_rename_migrate_failed">Rename failed: session records could not be migrated, the directory was rolled back</string>
     <string name="workspace_rename_external_hint">Only the name shown in the list changes; the directory on your device is not renamed.</string>
     <string name="workspace_remote_root_create_failed">Failed to create the remote workspace directory. Check the path and server permissions.</string>
     <string name="workspace_remote_default_create_failed">Failed to create the default remote workspace. Check server permissions and disk space.</string>
@@ -2790,7 +2806,7 @@
     <string name="chat_long_session_new">New session</string>
     <string name="memory_distill_title">Distill now</string>
     <string name="memory_distill_subtitle">Run a distillation pass now: condense recent logs into long-term notes appended to GLOBAL.md</string>
-    <string name="memory_distill_written">Distillation done — written to GLOBAL.md</string>
+    <string name="memory_distill_written">Distillation done — saved as memory entries</string>
     <string name="memory_distill_nothing">Nothing new to distill (or no provider configured)</string>
     <string name="memory_recall_title">Recall test</string>
     <string name="memory_recall_subtitle">Type a sentence or a domain to see which memory summaries get recalled</string>

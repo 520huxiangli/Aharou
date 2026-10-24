@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -63,6 +65,15 @@ class WorkspaceRepository @Inject constructor(
     private val sessionUseCase: SessionUseCase,
     private val generalSettingsRepository: GeneralSettingsRepository
 ) {
+    /**
+     * 外部工作区记录的读改写互斥。
+     *
+     * `readExternalWorkspaces()` 与 `writeExternalWorkspaces()` 是两次独立操作，中间夹着
+     * 「判重 / 改名 / 过滤」的真实判断；不加锁时两个并发操作（选择器回调与刷新）会读到同一份
+     * 旧快照，后写的把先写的记录直接覆盖掉，表现为「刚加的工作区不见了」。
+     */
+    private val externalMutex = Mutex()
+
     /** 操作失败时给 UI 的提示文案（目录不可写/无法解析/删除失败等），消费后置 null。 */
     private val _addError = MutableStateFlow<String?>(null)
     val addError: StateFlow<String?> = _addError.asStateFlow()
@@ -70,6 +81,20 @@ class WorkspaceRepository @Inject constructor(
     /** UI 消费添加失败提示后调用，清除待展示的文案。 */
     fun consumeAddError() {
         _addError.value = null
+    }
+
+    /**
+     * 重命名失败的具体原因。
+     *
+     * 重命名有六条失败路径（名称非法 / 重名 / 目录状态 / 目录重命名失败 / 远程移动失败 /
+     * 会话记录迁移失败），以前它们通通 `return null`，界面只能弹一句「名称不合法、已重名，
+     * 或目录状态不允许」——三条都可能，用户无从判断该改哪个。
+     */
+    private val _renameError = MutableStateFlow<String?>(null)
+    val renameError: StateFlow<String?> = _renameError.asStateFlow()
+
+    fun consumeRenameError() {
+        _renameError.value = null
     }
 
     companion object {
@@ -467,10 +492,20 @@ class WorkspaceRepository @Inject constructor(
             releaseUriGrant(uri, uriFlags)
             return@withContext null
         }
-        val allNames = (_workspaces.value.map { it.name } + existing.map { it.name }).toSet()
-        val baseName = sanitize(dir.name).ifBlank { DEFAULT_WORKSPACE }
-        val name = uniqueName(baseName, allNames)
-        writeExternalWorkspaces(existing + ExternalWorkspaceRecord(name, path, uri.toString()))
+        val name = externalMutex.withLock {
+            val latest = readExternalWorkspaces()
+            if (latest.any { it.path == path }) return@withLock null
+            val allNames = (_workspaces.value.map { it.name } + latest.map { it.name }).toSet()
+            val baseName = sanitize(dir.name).ifBlank { DEFAULT_WORKSPACE }
+            val candidate = uniqueName(baseName, allNames)
+            writeExternalWorkspaces(latest + ExternalWorkspaceRecord(candidate, path, uri.toString()))
+            candidate
+        } ?: run {
+            _addError.value = context.getString(R.string.workspace_external_exists)
+            FileLogger.w(TAG, "添加本地工作区失败：目录已是工作区 $path")
+            releaseUriGrant(uri, uriFlags)
+            return@withContext null
+        }
         refreshWorkspaces()
         val created = _workspaces.value.firstOrNull { it.path == path }
         FileLogger.i(TAG, "添加本地工作区: $name ($path)")
@@ -487,9 +522,12 @@ class WorkspaceRepository @Inject constructor(
     suspend fun deleteWorkspace(name: String) = withContext(Dispatchers.IO) {
         val target = _workspaces.value.firstOrNull { it.name == name }
         if (isLocal() && target?.type == WorkspaceType.EXTERNAL_LOCAL) {
-            val records = readExternalWorkspaces()
-            val removed = records.firstOrNull { it.name == name }
-            writeExternalWorkspaces(records.filterNot { it.name == name })
+            val removed = externalMutex.withLock {
+                val records = readExternalWorkspaces()
+                val hit = records.firstOrNull { it.name == name }
+                if (hit != null) writeExternalWorkspaces(records.filterNot { it.name == name })
+                hit
+            }
             removed?.let { record ->
                 runCatching {
                     context.contentResolver.releasePersistableUriPermission(
@@ -537,14 +575,17 @@ class WorkspaceRepository @Inject constructor(
      * @return 改名后的 [Workspace]；名称非法、重名或改名失败返回 null。
      */
     suspend fun renameWorkspace(oldName: String, rawNewName: String): Workspace? = withContext(Dispatchers.IO) {
+        _renameError.value = null
         val target = _workspaces.value.firstOrNull { it.name == oldName } ?: return@withContext null
         val newName = sanitize(rawNewName)
         if (newName.isEmpty()) {
+            _renameError.value = context.getString(R.string.workspace_rename_invalid)
             FileLogger.w(TAG, "重命名工作区失败：名称非法 '$rawNewName'")
             return@withContext null
         }
         if (newName == oldName) return@withContext target
         if (_workspaces.value.any { it.name != oldName && it.name.equals(newName, ignoreCase = true) }) {
+            _renameError.value = context.getString(R.string.workspace_name_exists)
             FileLogger.w(TAG, "重命名工作区失败：已存在 '$newName'")
             return@withContext null
         }
@@ -554,10 +595,12 @@ class WorkspaceRepository @Inject constructor(
                 val oldDir = File(projectsRoot, oldName)
                 val newDir = File(projectsRoot, newName)
                 if (!oldDir.isDirectory || newDir.exists()) {
+                    _renameError.value = context.getString(R.string.workspace_rename_dir_conflict)
                     FileLogger.w(TAG, "重命名工作区失败：目录状态不允许 $oldName -> $newName")
                     return@withContext null
                 }
                 if (!oldDir.renameTo(newDir)) {
+                    _renameError.value = context.getString(R.string.workspace_rename_dir_failed)
                     FileLogger.e(TAG, "重命名工作区失败：无法重命名目录 ${oldDir.absolutePath}")
                     return@withContext null
                 }
@@ -565,14 +608,18 @@ class WorkspaceRepository @Inject constructor(
             }
 
             WorkspaceType.EXTERNAL_LOCAL -> {
-                val records = readExternalWorkspaces()
-                if (records.none { it.path == target.path }) {
+                val renamed = externalMutex.withLock {
+                    val records = readExternalWorkspaces()
+                    if (records.none { it.path == target.path }) return@withLock false
+                    writeExternalWorkspaces(
+                        records.map { if (it.path == target.path) it.copy(name = newName) else it }
+                    )
+                    true
+                }
+                if (!renamed) {
                     FileLogger.w(TAG, "重命名工作区失败：外部工作区记录不存在 ${target.path}")
                     return@withContext null
                 }
-                writeExternalWorkspaces(
-                    records.map { if (it.path == target.path) it.copy(name = newName) else it }
-                )
                 target.path
             }
 
@@ -591,7 +638,10 @@ class WorkspaceRepository @Inject constructor(
                     FileLogger.e(TAG, "重命名工作区失败：远程 mv ${target.path} -> $newRemotePath", it)
                     false
                 }
-                if (!moved) return@withContext null
+                if (!moved) {
+                    _renameError.value = context.getString(R.string.workspace_rename_remote_failed)
+                    return@withContext null
+                }
                 newRemotePath
             }
         }
@@ -604,6 +654,7 @@ class WorkspaceRepository @Inject constructor(
                     -1
                 }
             if (migrated < 0) {
+                _renameError.value = context.getString(R.string.workspace_rename_migrate_failed)
                 runCatching {
                     when (target.type) {
                         WorkspaceType.INTERNAL ->

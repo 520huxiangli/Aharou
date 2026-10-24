@@ -1,5 +1,7 @@
 package com.aharou.core.config
 
+import androidx.annotation.WorkerThread
+
 /**
  * One configurable setting. Concrete kinds: [com.aharou.core.config.fields.DataStoreBoolField]
  * etc. for DataStore-backed scalars; [com.aharou.core.config.fields.ClosureField]
@@ -24,9 +26,11 @@ interface ConfigField {
     val revertable: Boolean
 
     /** Read the current value. May throw [ConfigError] on backend failure. */
+    @WorkerThread
     fun read(): ConfigValue
 
     /** Apply [value]. Schema validation runs in the bridge before this. */
+    @WorkerThread
     fun write(value: ConfigValue)
 
     /** Top-level scope = first dot segment. Used for audit `--scope` filtering. */

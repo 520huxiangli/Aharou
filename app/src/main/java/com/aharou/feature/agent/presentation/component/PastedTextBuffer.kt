@@ -247,7 +247,7 @@ internal fun PastedTextChip(
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .size(20.dp)
+                .size(24.dp)
                 .background(MaterialTheme.colorScheme.surface, CircleShape)
                 .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
                 .clip(CircleShape)

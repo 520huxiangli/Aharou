@@ -59,11 +59,13 @@ internal fun ContainerHealthSection() {
     var installingId by remember { mutableStateOf<String?>(null) }
     // 安装结果的提示文案。key 是体检项 id，重新体检时清空。
     var installMessage by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // 体检本身没跑起来的原因：以前被 getOrNull() 吞成空报告，看起来像「什么都没查到」。
+    var checkError by remember { mutableStateOf<String?>(null) }
 
     SettingsGroup {
         SettingsRow(
             title = stringResource(R.string.container_health_section),
-            subtitle = report?.let { overallSubtitle(it) },
+            subtitle = checkError ?: report?.let { overallSubtitle(it) },
             trailing = {
                 if (running) {
                     CircularProgressIndicator(
@@ -75,8 +77,11 @@ internal fun ContainerHealthSection() {
                         onClick = {
                             running = true
                             installMessage = null
+                            checkError = null
                             scope.launch {
-                                report = runCatching { doctor.check() }.getOrNull()
+                                report = runCatching { doctor.check() }
+                                    .onFailure { checkError = describeCheckFailure(context, it) }
+                                    .getOrNull()
                                 running = false
                             }
                         }
@@ -110,7 +115,9 @@ internal fun ContainerHealthSection() {
                             installMessage = item.id to text
                             installingId = null
                             // 装完直接重测：用户关心的是「现在齐了没」，不该让他再点一次。
-                            report = runCatching { doctor.check() }.getOrNull()
+                            report = runCatching { doctor.check() }
+                                .onFailure { checkError = describeCheckFailure(context, it) }
+                                .getOrNull()
                         }
                     }
                 }
@@ -118,6 +125,12 @@ internal fun ContainerHealthSection() {
         }
     }
 }
+
+private fun describeCheckFailure(context: android.content.Context, error: Throwable): String =
+    context.getString(
+        R.string.container_health_check_failed,
+        error.message ?: context.getString(R.string.container_health_check_unknown_error)
+    )
 
 /**
  * 把安装结果转成给用户看的一句话。
