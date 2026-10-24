@@ -88,6 +88,9 @@ class ShizukuManager @Inject constructor(
         /** 命令超时上限（毫秒），与 [com.aharou.feature.agent.domain.container.CommandEngine.MAX_TIMEOUT_MS] 对齐。 */
         const val MAX_TIMEOUT_MS = 1_800_000L
 
+        /** App 侧等待 AIDL 返回的宽限：命令本身已在 service 侧限时，这里只兜 binder 往返与进程启动。 */
+        const val AIDL_GRACE_MS = 5_000L
+
         const val DOWNLOAD_URL = "https://shizuku.rikka.app/download/"
     }
 
@@ -255,13 +258,19 @@ class ShizukuManager @Inject constructor(
     suspend fun runCommand(command: String, timeoutMs: Long): ShizukuCommandResult {
         val service = ensureBound()
         val timeout = timeoutMs.coerceIn(1_000L, MAX_TIMEOUT_MS).toInt()
-        return withContext(Dispatchers.IO) {
-            val bundle = service.exec(command, timeout)
-            ShizukuCommandResult(
-                output = bundle.getString(ShizukuShellService.KEY_OUTPUT).orEmpty(),
-                exitCode = bundle.getInt(ShizukuShellService.KEY_EXIT_CODE, ShizukuShellService.EXIT_FAILURE)
-            )
-        }
+        // service.exec 是同步 AIDL：Shizuku 进程被系统冻结时会一直阻塞在 binder 上，
+        // 而协程取消不会让那次调用结束（阻塞的是 IO 线程）。必须自己停止等待，
+        // 否则调用方（远端动作的设备锁、影子屏启动）会被一起挂死。
+        val bundle = withTimeoutOrNull(timeout + AIDL_GRACE_MS) {
+            withContext(Dispatchers.IO) { service.exec(command, timeout) }
+        } ?: return ShizukuCommandResult(
+            output = "Shizuku 调用超时：${timeout + AIDL_GRACE_MS}ms 内未返回（Shizuku 可能已被系统冻结，检查它是否还在运行）",
+            exitCode = ShizukuShellService.EXIT_TIMEOUT
+        )
+        return ShizukuCommandResult(
+            output = bundle.getString(ShizukuShellService.KEY_OUTPUT).orEmpty(),
+            exitCode = bundle.getInt(ShizukuShellService.KEY_EXIT_CODE, ShizukuShellService.EXIT_FAILURE)
+        )
     }
 
     /** 幂等绑定 UserService，返回可用的 AIDL 代理。超时后重试一次再报错。 */

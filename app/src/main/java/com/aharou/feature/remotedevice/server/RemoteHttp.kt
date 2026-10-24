@@ -172,7 +172,7 @@ internal fun isPrivatePeer(address: InetAddress?): Boolean {
  *
  * 默认沿用 [isPrivatePeer]；开启跨设备协作的「允许公网对端」后放行任意来源——跨网络协助时对端
  * 必然是公网地址（IPv6 全球单播，或经组网工具的地址），不放开就永远只能在同一 WiFi 里用。
- * 放开的代价：准入只剩配对码与试错节流，所以该开关默认关、由用户按需开。
+ * 放开的代价：准入只剩配对码与试错节流，所以该开关默认开、介意时由用户关闭。
  */
 internal fun isAllowedPeer(address: InetAddress?, allowPublicPeer: Boolean): Boolean {
     if (address == null) return false

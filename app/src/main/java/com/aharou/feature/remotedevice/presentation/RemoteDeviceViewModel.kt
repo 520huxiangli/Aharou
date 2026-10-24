@@ -25,8 +25,12 @@ sealed interface AssistUiState {
     data object Idle : AssistUiState
     data object Working : AssistUiState
 
-    /** 结果提示；[ok] 决定用正色还是警示色。 */
-    data class Done(val message: String, val ok: Boolean) : AssistUiState
+    /** 结果提示；[ok] 决定正/警示色，[error] 决定文案，[detail] 是文案里的变量（地址/状态码/服务器名）。 */
+    data class Done(
+        val ok: Boolean,
+        val error: RemoteDeviceController.AssistError? = null,
+        val detail: String = ""
+    ) : AssistUiState
 }
 
 /**
@@ -98,9 +102,9 @@ class RemoteDeviceViewModel @Inject constructor(
         _assist.value = AssistUiState.Working
         _assist.value = when (val outcome = controller.acceptAssistance(host, port, code)) {
             is RemoteDeviceController.AssistOutcome.Ok ->
-                AssistUiState.Done("配对成功，已登记为 MCP 服务器「${outcome.serverName}」", ok = true)
-            is RemoteDeviceController.AssistOutcome.Rejected -> AssistUiState.Done(outcome.reason, ok = false)
-            is RemoteDeviceController.AssistOutcome.Unreachable -> AssistUiState.Done(outcome.reason, ok = false)
+                AssistUiState.Done(ok = true, detail = outcome.serverName)
+            is RemoteDeviceController.AssistOutcome.Failed ->
+                AssistUiState.Done(ok = false, error = outcome.code, detail = outcome.detail)
         }
     }
 

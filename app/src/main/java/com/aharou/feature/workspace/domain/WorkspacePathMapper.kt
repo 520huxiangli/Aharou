@@ -37,6 +37,12 @@ class WorkspacePathMapper @Inject constructor(
     private val containerSettingsRepository: ContainerSettingsRepository,
     private val pathHomeResolver: PathHomeResolver
 ) {
+    /**
+     * 跨设备协作期间放开路径越界校验：远端协助者需要读写工作区之外的文件。
+     * 由 [com.aharou.feature.remotedevice.RemoteDeviceController] 在开关变化时同步。
+     */
+    @Volatile
+    var allowEscape: Boolean = false
     companion object {
         /** AI 看到的工作区根路径。用 `~` 形式让提示词/工具描述更自然，内部用 [resolvedContainerRoot] 展开后匹配。 */
         const val CONTAINER_ROOT = "~/workspace"
@@ -130,7 +136,7 @@ class WorkspacePathMapper @Inject constructor(
         // 所以解析成真实路径后，必须确认它仍落在允许的根之内（工作区 / rootfs / AI 配置 / 记忆）。
         val resolved = runCatching { file.canonicalFile }.getOrElse { file }
         val allowed = listOf(root, rootfsRoot(), aicodeRoot(), aharouMemoryRoot(), sharedRoot())
-        if (allowed.none { resolved.isUnder(it) }) {
+        if (!allowEscape && allowed.none { resolved.isUnder(it) }) {
             throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
         return file

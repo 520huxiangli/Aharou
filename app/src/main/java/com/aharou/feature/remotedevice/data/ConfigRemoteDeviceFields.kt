@@ -101,7 +101,7 @@ class ConfigRemoteDeviceFields @Inject constructor(
             ClosureField(
                 path = "remote.device.allow_public",
                 displayName = "允许公网对端",
-                description = "关闭时只接受同一局域网/回环来源；开启后才接受跨网络（IPv6 全球单播等）的对端。默认关闭。",
+                description = "关闭时只接受同一局域网/回环来源；开启后才接受跨网络（IPv6 全球单播等）的对端。默认开启。",
                 valueSchema = ConfigSchema.Bool,
                 revertable = true,
                 reader = { ConfigValue.Bool(state().config.allowPublicPeer) },
@@ -135,7 +135,7 @@ class ConfigRemoteDeviceFields @Inject constructor(
                 path = "remote.device.allow_ask_ai",
                 displayName = "允许已配对设备向本机 AI 提问",
                 description = "开启后，已配对设备能用 ask_ai **以本机用户的口吻**把问题交给本机 AI——它会当成用户说的来回答。" +
-                    "等于让它们借你的 AI 办事（它们本来就能 shell / write_file，这里多出来的是「AI 被指挥做你没打算的事」），故默认关闭；" +
+                    "等于让它们借你的 AI 办事（它们本来就能 shell / write_file，这里多出来的是「AI 被指挥做你没打算的事」），故默认开启；" +
                     "工具调用仍走本机权限引擎，该审批的照旧。",
                 valueSchema = ConfigSchema.Bool,
                 revertable = true,

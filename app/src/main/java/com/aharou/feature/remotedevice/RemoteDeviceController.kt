@@ -11,9 +11,8 @@ import com.aharou.feature.remotedevice.domain.RemotePairedDevice
 import com.aharou.feature.remotedevice.domain.RemotePairingStore
 import com.aharou.feature.remotedevice.server.RemoteMcpServer
 import com.aharou.feature.remotedevice.server.RemoteServerState
-import com.aharou.feature.remotedevice.server.localIpv4Addresses
-import com.aharou.feature.remotedevice.server.localIpv6Addresses
 import com.aharou.feature.remotedevice.service.RemoteDeviceService
+import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.net.HttpURLConnection
 import java.net.URL
@@ -37,7 +36,9 @@ data class RemoteDeviceUiState(
     /** 本机可被局域网访问的 MCP 端点（多网卡时多条）。 */
     val endpoints: List<String>,
     /** 本机能力清单（info 会回给对端）。 */
-    val capabilities: List<String>
+    val capabilities: List<String>,
+    /** 上一次反向配对失败的原因；null 表示没出问题。 */
+    val pairBackIssue: String? = null
 )
 
 /**
@@ -59,7 +60,8 @@ class RemoteDeviceController @Inject constructor(
     private val pairing: RemotePairingStore,
     private val server: RemoteMcpServer,
     private val catalog: RemoteActionCatalog,
-    private val mcpConfigRepository: McpConfigRepository
+    private val mcpConfigRepository: McpConfigRepository,
+    private val pathMapper: WorkspacePathMapper
 ) {
     private companion object {
         const val TAG = "RemoteDeviceController"
@@ -69,18 +71,24 @@ class RemoteDeviceController @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    val state: Flow<RemoteDeviceUiState> = combine(settings.config, server.state) { config, serverState ->
+    val state: Flow<RemoteDeviceUiState> = combine(
+        settings.config, server.state, server.pairBackIssue
+    ) { config, serverState, pairBackIssue ->
         RemoteDeviceUiState(
             config = config,
             server = serverState,
-            endpoints = endpointsFor(config.port, serverState),
-            capabilities = catalog.capabilityList()
+            endpoints = endpointsFor(serverState),
+            capabilities = catalog.capabilityList(),
+            pairBackIssue = pairBackIssue
         )
     }
 
     /** 应用启动时调用：配置里开着就把服务拉起来（接线点见报告，本次不改 AIEditorApp）。 */
     suspend fun startIfEnabled() {
-        if (settings.current().enabled) {
+        val enabled = settings.current().enabled
+        // 协作开即放开远端路径越界校验；关则恢复成只允许工作区/容器/配置/记忆/共享区。
+        pathMapper.allowEscape = enabled
+        if (enabled) {
             FileLogger.i(TAG, "配置已开启，启动远端协作服务")
             RemoteDeviceService.start(context)
         }
@@ -88,6 +96,7 @@ class RemoteDeviceController @Inject constructor(
 
     suspend fun setEnabled(enabled: Boolean) {
         settings.setEnabled(enabled)
+        pathMapper.allowEscape = enabled
         if (enabled) {
             RemoteDeviceService.start(context)
         } else {
@@ -126,11 +135,10 @@ class RemoteDeviceController @Inject constructor(
 
     suspend fun revokeAll() = pairing.revokeAll()
 
-    private fun endpointsFor(port: Int, serverState: RemoteServerState): List<String> {
-        if (serverState is RemoteServerState.Running && serverState.urls.isNotEmpty()) return serverState.urls
-        // 服务没跑时的兵底：只列本机地址，供界面先把地址展示出来。
-        return localIpv6Addresses().map { "http://[$it]:$port${RemoteMcpServer.MCP_PATH}" } +
-            localIpv4Addresses().map { "http://$it:$port${RemoteMcpServer.MCP_PATH}" }
+    private fun endpointsFor(serverState: RemoteServerState): List<String> = when (serverState) {
+        is RemoteServerState.Running -> serverState.urls
+        // 服务没起来时不能兜底编地址：没人在监听，用户却会把它念给对端去连。
+        else -> emptyList()
     }
 
     /** 接受协助的结果。 */
@@ -138,11 +146,19 @@ class RemoteDeviceController @Inject constructor(
         /** 配对成功且已登记为 MCP 服务器。 */
         data class Ok(val serverName: String) : AssistOutcome
 
-        /** 连上了但被拒（码不对、太频繁等）。 */
-        data class Rejected(val reason: String) : AssistOutcome
+        /** 失败；[code] 决定界面文案，[detail] 是文案里要填的变量（地址、状态码等）。 */
+        data class Failed(val code: AssistError, val detail: String = "") : AssistOutcome
+    }
 
-        /** 根本没连上（地址/端口不对，或对方没开服务）。 */
-        data class Unreachable(val reason: String) : AssistOutcome
+    /** 配对失败原因。文案在 UI 层用资源渲染，控制器不持有用户可见文字。 */
+    enum class AssistError {
+        EMPTY_INPUT,
+        UNREACHABLE,
+        INVALID_CODE,
+        PEER_NOT_ALLOWED,
+        TOO_MANY_ATTEMPTS,
+        HTTP_ERROR,
+        NO_TOKEN
     }
 
     /**
@@ -154,7 +170,7 @@ class RemoteDeviceController @Inject constructor(
         val target = host.trim()
             .removePrefix("https://").removePrefix("http://")
             .substringBefore('/')
-        if (target.isBlank() || code.isBlank()) return AssistOutcome.Unreachable("地址或配对码为空")
+        if (target.isBlank() || code.isBlank()) return AssistOutcome.Failed(AssistError.EMPTY_INPUT)
 
         val endpoint = "http://${hostLiteral(target)}:$port${RemoteMcpServer.PAIR_PATH}"
         val payload = buildJsonObject {
@@ -163,7 +179,7 @@ class RemoteDeviceController @Inject constructor(
             put("device_id", settings.installId())
             // 一次配对即互通：顺带把自己的协作端点与一枚码发过去，对端配对成功后会回连登记，
             // 省掉「反向再配一次」。老版本对端会忽略这两个字段，行为不变。
-            put("peer_endpoint", endpointsFor(settings.current().port, server.state.value).firstOrNull().orEmpty())
+            put("peer_endpoint", endpointsFor(server.state.value).firstOrNull().orEmpty())
             put("peer_code", pairing.issueCode())
         }.toString()
 
@@ -185,24 +201,33 @@ class RemoteDeviceController @Inject constructor(
             }.getOrNull()
         }
         if (http == null) {
-            return AssistOutcome.Unreachable("连不上 $endpoint：检查地址与端口，或确认对方已开启协作")
+            return AssistOutcome.Failed(AssistError.UNREACHABLE, endpoint)
         }
 
         val (status, body) = http
         if (status !in 200..299) {
-            return AssistOutcome.Rejected(
+            // 对端的拒绝一律回 403，只看状态码会把「公网对端被拒」误报成「配对码不对」，
+            // 于是用户一直去查码。协议里的 error 字段是唯一能把两者分开的信息。
+            val errorCode = runCatching {
+                json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+            return AssistOutcome.Failed(
                 when (status) {
-                    403 -> "配对码不对，或已被用过（一枚码只能配一台设备）"
-                    429 -> "尝试次数过多，稍后再试"
-                    else -> "对端返回 HTTP $status"
-                }
+                    403 -> when (errorCode) {
+                        "peer_not_allowed" -> AssistError.PEER_NOT_ALLOWED
+                        else -> AssistError.INVALID_CODE
+                    }
+                    429 -> AssistError.TOO_MANY_ATTEMPTS
+                    else -> AssistError.HTTP_ERROR
+                },
+                if (status in setOf(403, 429)) "" else status.toString()
             )
         }
 
         val token = runCatching {
             json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.contentOrNull
         }.getOrNull().orEmpty()
-        if (token.isBlank()) return AssistOutcome.Rejected("对端没有返回 token")
+        if (token.isBlank()) return AssistOutcome.Failed(AssistError.NO_TOKEN)
 
         val serverName = "远端设备 ${if (target.length > 24) target.take(24) + "…" else target}"
         val config = mcpConfigFor(serverName, target, port, token)
