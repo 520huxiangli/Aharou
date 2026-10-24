@@ -101,10 +101,23 @@ jobs:
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关（flavor 仅影响 abiFilters/assets），
       # 跑全 flavor 6 变体是重复编译，无额外覆盖。
       - name: Run unit tests
-        run: ./gradlew :app:testUniversalDebugUnitTest
+        run: ./gradlew :app:testUniversalDebugUnitTest || touch /tmp/unit-tests-failed
 
-      # 失败时也要把测试报告带出来：GitHub 的日志接口会把长日志截断，单测挂在哪一条
-      # 从日志里根本看不到（2026-10-25 连续两次因此只能看到「exit code 1」）。
+      # 失败原因写进步骤摘要：GitHub 的日志接口会截断长日志，单测挂在哪一条
+      # 从日志里看不到（之前只能拿到 exit code 1）；摘要会在 run 页面顶部直接显示。
+      - name: Summarize unit test failures
+        if: always()
+        run: |
+          {
+            echo '### 单测结果'
+            if compgen -G "app/build/test-results/testUniversalDebugUnitTest/*.xml" > /dev/null; then
+              grep -l '<failure' app/build/test-results/testUniversalDebugUnitTest/*.xml | sed 's#.*/##' || echo '没有失败用例文件'
+              grep -h -o 'testcase name="[^"]*"[^>]*>' app/build/test-results/testUniversalDebugUnitTest/*.xml > /dev/null 2>&1 || true
+            else
+              echo '没有生成测试报告：测试进程可能在写出报告前就崩了（OOM / 超时）'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -112,3 +125,8 @@ jobs:
           name: unit-test-results
           path: app/build/test-results/testUniversalDebugUnitTest/**
           retention-days: 7
+          if-no-files-found: warn
+
+      - name: Fail when unit tests failed
+        if: always()
+        run: test ! -f /tmp/unit-tests-failed
