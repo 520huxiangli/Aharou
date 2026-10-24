@@ -349,14 +349,20 @@ class GitRepositoryTest {
     }
 
     @Test
-    fun graphAppend_existingNonEmpty_logFatal_buildsFromExisting() = runTest {
-        // 追加批次失败时保留已加载的提交重算布局，不降级为 EMPTY
+    fun graphAppend_existingNonEmpty_logFatal_throws() = runTest {
+        // 追加批次读失败必须抛出来：界面要能区分「读失败」与「没有提交」，
+        // 静默保留旧列表会让用户以为仓库只剩这几条。
         val existing = listOf(
             GraphCommit("aaaa1111", "aaaa1111", "Alice", "d", "newer", parents = emptyList())
         )
-        val graph = createRepo("fatal: not a git repository").graphAppend(existing, emptyMap(), limit = 100)
-        assertEquals(listOf("aaaa1111"), graph.commits.map { it.hash })
-        assertFalse(graph.hasMore)
+        var thrown = false
+        try {
+            createRepo("fatal: not a git repository").graphAppend(existing, emptyMap(), limit = 100)
+        } catch (e: GitCommandFailureException) {
+            thrown = true
+            assertTrue(e.message.orEmpty().contains("fatal"))
+        }
+        assertTrue("应当抛出 GitCommandFailureException", thrown)
     }
 
     @Test
