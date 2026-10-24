@@ -103,9 +103,19 @@ jobs:
       - name: Run unit tests
         # runner 只有 7GB 内存，项目 gradle.properties 写的 6GB 堆把 daemon + test worker 一起推过了头，
         # 表现为测试进程还没跑出任何报告就崩（日志里只有任务开始那一行）。
+        # 输出同时落盘：GitHub 的日志接口只给前 91KB，崩溃原因往往在末尾。
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m"
-        run: ./gradlew :app:testUniversalDebugUnitTest || touch /tmp/unit-tests-failed
+        run: ./gradlew :app:testUniversalDebugUnitTest --console=plain > /tmp/unit.log 2>&1 || touch /tmp/unit-tests-failed
+
+      - name: Upload unit test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-log
+          path: /tmp/unit.log
+          retention-days: 7
+          if-no-files-found: warn
 
       # 失败原因写进步骤摘要 + 错误注解：GitHub 的日志接口会截断长日志，单测挂在哪一条
       # 从日志里看不到（之前只能拿到 exit code 1），而注解能通过 API 直接读到。
@@ -122,6 +132,9 @@ jobs:
             else
               echo '::error title=单测无报告::测试进程在写出报告前就崩了（OOM / 超时）'
               echo '没有生成测试报告：测试进程可能在写出报告前就崩了（OOM / 超时）'
+              echo '```'
+              tail -30 /tmp/unit.log 2>/dev/null || echo '（没有 /tmp/unit.log）'
+              echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
