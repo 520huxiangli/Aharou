@@ -7,9 +7,6 @@ import com.aharou.feature.im.data.repository.WeixinConfig
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
 import com.aharou.feature.im.domain.ImBotBridge
 import com.aharou.feature.im.domain.ImChannelState
-import com.aharou.feature.im.domain.model.PairedChat
-import com.aharou.feature.im.domain.model.PendingPairing
-import com.aharou.feature.im.domain.pairing.ImPairingStore
 import com.aharou.feature.im.domain.WeixinIlinkClient
 import com.aharou.feature.im.service.WeixinBotService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,9 +26,7 @@ import kotlinx.coroutines.launch
 /** 微信机器人设置页的一次性快照。 */
 data class WeixinBotUiState(
     val config: WeixinConfig = WeixinConfig(),
-    val connection: ImChannelState = ImChannelState.Stopped,
-    val pending: List<PendingPairing> = emptyList(),
-    val paired: List<PairedChat> = emptyList()
+    val connection: ImChannelState = ImChannelState.Stopped
 )
 
 /** 扫码绑定的界面状态。 */
@@ -51,14 +46,12 @@ sealed interface QrScanState {
  * 「设置 → 微信机器人」页的状态。
  *
  * 与 [TelegramBotViewModel] 同构：配置读写走 [WeixinSettingsRepository]，
- * 连接状态来自共享的 [ImBotBridge]（`@Named("weixin")` 那个实例），
- * 配对沿用同一份 [ImPairingStore]，但按 `weixin` 隔离：四个渠道各看各的名单。
+ * 连接状态来自共享的 [ImBotBridge]（`@Named("weixin")` 那个实例）。
  */
 @HiltViewModel
 class WeixinBotViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val settings: WeixinSettingsRepository,
-    private val pairing: ImPairingStore,
     private val client: WeixinIlinkClient,
     @param:Named("weixin") private val bridge: ImBotBridge
 ) : ViewModel() {
@@ -67,24 +60,16 @@ class WeixinBotViewModel @Inject constructor(
     val qr: StateFlow<QrScanState> = _qr.asStateFlow()
     private var qrJob: Job? = null
 
-    private val pending = MutableStateFlow<List<PendingPairing>>(emptyList())
-
     val uiState: StateFlow<WeixinBotUiState> = combine(
         settings.configFlow,
-        bridge.state,
-        bridge.pairedChats,
-        pending
-    ) { cfg, state, paired, pendingList ->
-        WeixinBotUiState(config = cfg, connection = state, pending = pendingList, paired = paired)
+        bridge.state
+    ) { cfg, state ->
+        WeixinBotUiState(config = cfg, connection = state)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = WeixinBotUiState()
     )
-
-    init {
-        viewModelScope.launch { refreshPaired() }
-    }
 
     fun setBotToken(token: String) {
         viewModelScope.launch { settings.setBotToken(token) }
@@ -107,34 +92,6 @@ class WeixinBotViewModel @Inject constructor(
         viewModelScope.launch {
             settings.setEnabled(enabled)
             if (enabled) WeixinBotService.start(context) else WeixinBotService.stop(context)
-        }
-    }
-
-    fun approve(code: String) {
-        viewModelScope.launch {
-            pairing.approve(bridge.id, code)
-            refreshPaired()
-        }
-    }
-
-    fun deny(code: String) {
-        viewModelScope.launch {
-            pairing.deny(bridge.id, code)
-            refreshPaired()
-        }
-    }
-
-    fun removePaired(senderId: String) {
-        viewModelScope.launch {
-            pairing.remove(bridge.id, senderId)
-            refreshPaired()
-        }
-    }
-
-    fun refreshPaired() {
-        viewModelScope.launch {
-            pending.value = runCatching { pairing.pending(bridge.id) }.getOrDefault(emptyList())
-            bridge.refreshPaired()
         }
     }
 

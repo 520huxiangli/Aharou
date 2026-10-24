@@ -69,9 +69,6 @@ internal fun TelegramBotSection(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val config = state.config
 
-    // 待配对列表不会被 bridge 自动推送，每次进入本页重拉一次（VM 为 Activity 级，init 只跑一次）。
-    LaunchedEffect(Unit) { viewModel.refresh() }
-
     // 通知权限申请只影响通知是否可见，不阻塞服务启停，回调里不做事。
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -171,68 +168,6 @@ internal fun TelegramBotSection(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-            }
-        }
-
-        // ── 待配对 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_telegram_bot_pending_header))
-        SettingsGroup {
-            if (state.pending.isEmpty()) {
-                InGroupHint(text = stringResource(R.string.settings_telegram_bot_pending_empty))
-            } else {
-                state.pending.forEachIndexed { index, item ->
-                    if (index > 0) SettingsDivider()
-                    SettingsRow(
-                        icon = null,
-                        title = item.senderName.ifBlank { item.chatId },
-                        subtitle = stringResource(R.string.settings_telegram_bot_pairing_code, item.code),
-                        trailing = {
-                            IconButton(onClick = { viewModel.approve(item.code) }) {
-                                Icon(
-                                    imageVector = FeatherIcons.Check,
-                                    contentDescription = stringResource(R.string.settings_telegram_bot_approve),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            IconButton(onClick = { viewModel.deny(item.code) }) {
-                                Icon(
-                                    imageVector = FeatherIcons.X,
-                                    contentDescription = stringResource(R.string.settings_telegram_bot_deny),
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    )
-                }
-            }
-        }
-
-        // ── 已配对 ──
-        SettingsGroupHeader(text = stringResource(R.string.settings_telegram_bot_paired_header))
-        SettingsGroup {
-            if (state.paired.isEmpty()) {
-                InGroupHint(text = stringResource(R.string.settings_telegram_bot_paired_empty))
-            } else {
-                state.paired.forEachIndexed { index, item ->
-                    if (index > 0) SettingsDivider()
-                    SettingsRow(
-                        icon = null,
-                        title = item.senderName.ifBlank { item.chatId },
-                        subtitle = item.chatId,
-                        trailing = {
-                            IconButton(onClick = { viewModel.removePaired(item.senderId) }) {
-                                Icon(
-                                    imageVector = FeatherIcons.Trash2,
-                                    contentDescription = stringResource(R.string.settings_telegram_bot_remove),
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    )
-                }
             }
         }
     }

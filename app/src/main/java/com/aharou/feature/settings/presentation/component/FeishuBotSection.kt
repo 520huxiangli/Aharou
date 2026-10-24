@@ -91,69 +91,6 @@ internal fun FeishuBotSection(
             )
         }
 
-        SettingsGroupHeader(text = stringResource(R.string.settings_feishu_bot_pairing))
-        SettingsGroup {
-            if (ui.pending.isEmpty()) {
-                FeishuHint(stringResource(R.string.settings_feishu_bot_no_pending))
-            } else {
-                ui.pending.forEachIndexed { index, item ->
-                    if (index > 0) SettingsDivider()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = Spacing.lg, vertical = Spacing.sm),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(item.senderName, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                item.code,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(onClick = { viewModel.approve(item.code) }) {
-                            Text(stringResource(R.string.settings_feishu_bot_approve))
-                        }
-                        TextButton(onClick = { viewModel.deny(item.code) }) {
-                            Text(stringResource(R.string.settings_feishu_bot_deny))
-                        }
-                    }
-                }
-            }
-        }
-
-        SettingsGroupHeader(text = stringResource(R.string.settings_feishu_bot_paired))
-        SettingsGroup {
-            if (ui.paired.isEmpty()) {
-                FeishuHint(stringResource(R.string.settings_feishu_bot_no_paired))
-            } else {
-                ui.paired.forEachIndexed { index, item ->
-                    if (index > 0) SettingsDivider()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = Spacing.lg, vertical = Spacing.sm),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(item.senderName, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                item.chatId,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(onClick = { viewModel.removePaired(item.senderId) }) {
-                            Text(stringResource(R.string.settings_feishu_bot_remove))
-                        }
-                    }
-                }
-            }
-        }
-
         Text(
             text = stringResource(R.string.settings_feishu_bot_note),
             style = MaterialTheme.typography.bodySmall,

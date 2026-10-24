@@ -13,8 +13,6 @@ import com.aharou.feature.im.domain.model.ImAttachment
 import com.aharou.feature.im.domain.model.ImCallbackQuery
 import com.aharou.feature.im.domain.model.ImInboundMessage
 import com.aharou.feature.im.domain.model.ImUpdate
-import com.aharou.feature.im.domain.model.PairedChat
-import com.aharou.feature.im.domain.pairing.ImPairingStore
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -47,7 +45,6 @@ class ImBotBridge (
     private val channelId: String,
     private val channel: ImChannel,
     private val settings: ImSettingsSource,
-    private val pairing: ImPairingStore,
     private val agentTurnRunner: AgentTurnRunner,
     private val sessionUseCase: SessionUseCase,
     private val toolPermissionManager: ToolPermissionManager,
@@ -58,10 +55,6 @@ class ImBotBridge (
 
     private val _state = MutableStateFlow<ImChannelState>(ImChannelState.Stopped)
     val state: StateFlow<ImChannelState> = _state.asStateFlow()
-
-    /** 已配对名单，设置界面据此展示与移除。审批动作在 ImPairingStore 上，这里只做快照。 */
-    private val _pairedChats = MutableStateFlow<List<PairedChat>>(emptyList())
-    val pairedChats: StateFlow<List<PairedChat>> = _pairedChats.asStateFlow()
 
     @Volatile private var bridgeScope: CoroutineScope? = null
     @Volatile private var bridgeJob: Job? = null
@@ -149,11 +142,6 @@ class ImBotBridge (
         return runCatching { channel.sendMedia(cfg, chatId, file, kind, caption) }.getOrNull()?.isNotBlank() == true
     }
 
-    /** 重新拉一次本渠道的已配对名单（approve/deny/remove 后调）。 */
-    suspend fun refreshPaired() {
-        _pairedChats.value = runCatching { pairing.approved(channelId) }.getOrDefault(emptyList())
-    }
-
     private suspend fun pollLoop() {
         cursor = settings.lastCursor().toLongOrNull() ?: 0L
         primed = cursor > 0L
@@ -207,15 +195,6 @@ class ImBotBridge (
 
     private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage) {
         runCatching {
-            val approved = pairing.isApproved(channelId, msg.senderId)
-            if (!approved) {
-                // 未配对：回一个配对码。已经在等审批的不重复发，避免刷屏。
-                FileLogger.i(TAG, "[$channelId] 未配对用户 ${msg.senderId} 发来消息，回复配对码")
-                val code = pairing.pending(channelId).firstOrNull { it.senderId == msg.senderId }?.code
-                    ?: pairing.request(channelId, msg.senderId, msg.senderName, msg.chatId)
-                channel.send(cfg, msg.chatId, pairingPrompt(code))
-                return
-            }
             if (msg.isGroup && !mentioned(msg)) {
                 FileLogger.d(TAG, "[$channelId] 群里没有 @机器人，忽略 chat=${msg.chatId}")
                 return
@@ -307,7 +286,6 @@ class ImBotBridge (
     private suspend fun handleCallback(cfg: ImChannelConfig, cb: ImCallbackQuery) {
         channel.acknowledgeCallback(cfg, cb.id)
         if (cb.messageId.isNotBlank()) channel.clearMarkup(cfg, cb.chatId, cb.messageId)
-        if (!pairing.isApproved(channelId, cb.senderId)) return
         val parts = cb.data.split(":", limit = 3)
         if (parts.size < 3 || parts[2].isBlank()) return
         val choice = if (parts[1] == "y") PermissionChoice.ONCE else PermissionChoice.REJECT
@@ -428,8 +406,6 @@ class ImBotBridge (
     private fun stripMention(text: String): String = text.trim()
 
     // 文案走 Context：编排层在多平台复用，语言跟随 App 当前设置
-    private fun pairingPrompt(code: String): String =
-        imText("im_pairing_prompt", code, channelLabel)
     private fun approvalAllowed(): String = imText("im_telegram_approval_allowed")
     private fun approvalDenied(): String = imText("im_telegram_approval_denied")
     private fun errorText(detail: String): String = imText("im_telegram_error", detail)

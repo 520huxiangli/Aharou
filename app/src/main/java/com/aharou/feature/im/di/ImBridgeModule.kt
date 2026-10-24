@@ -13,7 +13,6 @@ import com.aharou.feature.im.domain.ImBotBridge
 import com.aharou.feature.im.domain.QqChannelClient
 import com.aharou.feature.im.domain.TelegramBotClient
 import com.aharou.feature.im.domain.WeixinIlinkClient
-import com.aharou.feature.im.domain.pairing.ImPairingStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -38,13 +37,12 @@ object ImBridgeModule {
     fun provideTelegramBridge(
         channel: TelegramBotClient,
         settings: TelegramSettingsRepository,
-        pairing: ImPairingStore,
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("telegram", channel, settings, pairing, runner, sessionUseCase, permissions, context)
+        ImBotBridge("telegram", channel, settings, runner, sessionUseCase, permissions, context)
 
     @Provides
     @Singleton
@@ -52,13 +50,12 @@ object ImBridgeModule {
     fun provideWeixinBridge(
         channel: WeixinIlinkClient,
         settings: WeixinSettingsRepository,
-        pairing: ImPairingStore,
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("weixin", channel, settings, pairing, runner, sessionUseCase, permissions, context)
+        ImBotBridge("weixin", channel, settings, runner, sessionUseCase, permissions, context)
 
     @Provides
     @Singleton
@@ -66,13 +63,12 @@ object ImBridgeModule {
     fun provideFeishuBridge(
         channel: FeishuChannelClient,
         settings: FeishuSettingsRepository,
-        pairing: ImPairingStore,
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("feishu", channel, settings, pairing, runner, sessionUseCase, permissions, context)
+        ImBotBridge("feishu", channel, settings, runner, sessionUseCase, permissions, context)
 
     @Provides
     @Singleton
@@ -80,11 +76,10 @@ object ImBridgeModule {
     fun provideQqBridge(
         channel: QqChannelClient,
         settings: QqSettingsRepository,
-        pairing: ImPairingStore,
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("qq", channel, settings, pairing, runner, sessionUseCase, permissions, context)
+        ImBotBridge("qq", channel, settings, runner, sessionUseCase, permissions, context)
 }

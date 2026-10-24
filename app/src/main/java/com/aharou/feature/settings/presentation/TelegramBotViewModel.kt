@@ -7,15 +7,11 @@ import com.aharou.feature.im.data.repository.TelegramConfig
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
 import com.aharou.feature.im.domain.ImBotBridge
 import com.aharou.feature.im.domain.ImChannelState
-import com.aharou.feature.im.domain.model.PairedChat
-import com.aharou.feature.im.domain.model.PendingPairing
-import com.aharou.feature.im.domain.pairing.ImPairingStore
 import com.aharou.feature.im.service.TelegramBotService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Named
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -25,17 +21,13 @@ import kotlinx.coroutines.launch
 /** Telegram 机器人设置页的一次性快照。 */
 data class TelegramBotUiState(
     val config: TelegramConfig = TelegramConfig(),
-    val connection: ImChannelState = ImChannelState.Stopped,
-    val pending: List<PendingPairing> = emptyList(),
-    val paired: List<PairedChat> = emptyList()
+    val connection: ImChannelState = ImChannelState.Stopped
 )
 
 /**
  * 「设置 → Telegram 机器人」页的状态。
  *
- * 配置读写走 [TelegramSettingsRepository]（DataStore），连接状态与已配对名单来自共享单例
- * [ImBotBridge]，待配对列表按需从 [ImPairingStore] 拉取——配对码有 10 分钟过期语义，
- * 不做定时刷新，页面内 approve/deny/remove 后各刷新一次即可。
+ * 配置读写走 [TelegramSettingsRepository]（DataStore），连接状态来自共享单例 [ImBotBridge]。
  *
  * 开关即启停：由本页负责拉起/停掉 [TelegramBotService] 前台服务，注意 Android 8.0+ 需走
  * startForegroundService，服务内部已处理；通知权限（13+）由界面侧申请。
@@ -44,24 +36,17 @@ data class TelegramBotUiState(
 class TelegramBotViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val settings: TelegramSettingsRepository,
-    private val pairing: ImPairingStore,
     @param:Named("telegram") private val bridge: ImBotBridge
 ) : ViewModel() {
 
-    /** 待配对列表由本页主动拉取（DataStore 与 bridge 都不持有它）。 */
-    private val pending = MutableStateFlow<List<PendingPairing>>(emptyList())
-
     val state: StateFlow<TelegramBotUiState> = combine(
         settings.configFlow,
-        bridge.state,
-        pending,
-        bridge.pairedChats
-    ) { config, connection, pendingList, pairedList ->
-        TelegramBotUiState(config, connection, pendingList, pairedList)
+        bridge.state
+    ) { config, connection ->
+        TelegramBotUiState(config, connection)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TelegramBotUiState())
 
     init {
-        refresh()
         // 配置里已启用、但进程重启后服务未起时补一次启动：否则开关显示「开」而实际没人轮询。
         viewModelScope.launch {
             if (settings.current().enabled && !TelegramBotService.isRunning(context)) {
@@ -87,35 +72,6 @@ class TelegramBotViewModel @Inject constructor(
         viewModelScope.launch {
             settings.setEnabled(enabled)
             if (enabled) TelegramBotService.start(context) else TelegramBotService.stop(context)
-        }
-    }
-
-    fun approve(code: String) {
-        viewModelScope.launch {
-            pairing.approve(bridge.id, code)
-            refresh()
-        }
-    }
-
-    fun deny(code: String) {
-        viewModelScope.launch {
-            pairing.deny(bridge.id, code)
-            refresh()
-        }
-    }
-
-    fun removePaired(senderId: String) {
-        viewModelScope.launch {
-            pairing.remove(bridge.id, senderId)
-            refresh()
-        }
-    }
-
-    /** 待配对与已配对一起刷新：bridge 的已配对名单不会自己变，approve/deny/remove 后都要推一次。 */
-    fun refresh() {
-        viewModelScope.launch {
-            pending.value = runCatching { pairing.pending(bridge.id) }.getOrDefault(emptyList())
-            bridge.refreshPaired()
         }
     }
 }

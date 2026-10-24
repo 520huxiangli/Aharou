@@ -81,21 +81,3 @@ data class ImAttachment(
 /** 机器人的自身身份（getMe 结果）。 */
 data class ImBotIdentity(val id: Long, val username: String)
 
-/** 已配对的聊天/人，供设置界面展示与移除。 */
-data class PairedChat(
-    val senderId: String,
-    val senderName: String,
-    val chatId: String,
-    val approvedAt: Long
-)
-
-/** 一条待审批的配对请求（6 位码）。 */
-data class PendingPairing(
-    val code: String,
-    val senderId: String,
-    val senderName: String,
-    val chatId: String,
-    val createdAt: Long,
-    val expiresAt: Long
-)
-

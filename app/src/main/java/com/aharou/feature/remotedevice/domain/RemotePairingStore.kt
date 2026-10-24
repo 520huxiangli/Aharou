@@ -62,7 +62,7 @@ sealed interface PairOutcome {
 }
 
 /**
- * 配对码与长期 token 的存储（思路对齐 `feature/im/domain/ImPairingStore.kt`）。
+ * 配对码与长期 token 的存储。
  *
  * 落点 `filesDir/remotedevice/pairing.json`（App 私有目录），**绝不放工作区**：agent 的文件工具能写工作区，
  * 而「谁能在本机执行动作」不该由 agent 决定。
