@@ -676,120 +676,22 @@ fun ProviderEditorScreen(
                     }
 
                     // ── 自定义面板 (DIY) ──
-                    SettingsGroupHeader(text = stringResource(R.string.provider_section_dashboard))
-                    SettingsGroup {
-                        ProviderTextFieldRow(
-                            label = stringResource(R.string.provider_dashboard_script),
-                            value = dashboardScriptPath,
-                            onValueChange = { dashboardScriptPath = it },
-                            placeholder = stringResource(R.string.provider_dashboard_script_placeholder),
-                            trailing = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (dashboardScriptPath.isNotBlank()) {
-                                        IconButton(
-                                            onClick = { dashboardScriptPath = "" },
-                                            modifier = Modifier.size(32.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = FeatherIcons.X,
-                                                contentDescription = stringResource(R.string.provider_dashboard_clear_script),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            showScriptPickerSheet = true
-                                            viewModel.loadDashboardScripts()
-                                        },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = FeatherIcons.Folder,
-                                            contentDescription = stringResource(R.string.provider_dashboard_select_script),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        )
-                        SettingsDivider()
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = Spacing.lg, vertical = 11.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(R.string.provider_dashboard_test_btn),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = stringResource(R.string.provider_dashboard_script_desc),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(Modifier.width(Spacing.sm))
-                            IconButton(
-                                onClick = {
-                                    focusManager.clearFocus()
-                                    viewModel.testDashboardScript(currentConfig(), dashboardScriptPath)
-                                },
-                                enabled = dashboardScriptPath.isNotBlank() && dashboardTestState !is ProviderDashboardState.Loading,
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                if (dashboardTestState is ProviderDashboardState.Loading) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = FeatherIcons.Play,
-                                        contentDescription = stringResource(R.string.provider_dashboard_run_test),
-                                        tint = if (dashboardScriptPath.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                        SettingsDivider()
-                        SettingsRow(
-                            icon = null,
-                            title = stringResource(R.string.provider_script_params_title),
-                            subtitle = if (scriptParams.isEmpty()) {
-                                stringResource(R.string.provider_script_params_desc)
-                            } else {
-                                stringResource(R.string.provider_script_params_count, scriptParams.count { it.first.isNotBlank() })
-                            },
-                            onClick = { showScriptParamsSheet = true },
-                            trailing = {
-                                Text(
-                                    text = if (scriptParams.isEmpty()) {
-                                        stringResource(R.string.provider_script_param_add)
-                                    } else {
-                                        stringResource(R.string.provider_script_param_manage)
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                        if (dashboardTestState !is ProviderDashboardState.Idle) {
-                            SettingsDivider()
-                            DashboardTestResultBox(
-                                state = dashboardTestState,
-                                providerName = name.ifBlank { stringResource(R.string.provider_dashboard_preview_title) }
-                            )
-                        }
-                    }
+                    ProviderDashboardGroup(
+                        scriptPath = dashboardScriptPath,
+                        onScriptPathChange = { dashboardScriptPath = it },
+                        scriptParams = scriptParams,
+                        testState = dashboardTestState,
+                        providerName = name.ifBlank { stringResource(R.string.provider_dashboard_preview_title) },
+                        onPickScript = {
+                            showScriptPickerSheet = true
+                            viewModel.loadDashboardScripts()
+                        },
+                        onRunTest = {
+                            focusManager.clearFocus()
+                            viewModel.testDashboardScript(currentConfig(), dashboardScriptPath)
+                        },
+                        onOpenParams = { showScriptParamsSheet = true },
+                    )
                 }
             } else {
                 Column(
