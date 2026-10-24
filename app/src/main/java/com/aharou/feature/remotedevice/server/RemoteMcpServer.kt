@@ -155,23 +155,37 @@ class RemoteMcpServer @Inject constructor(
         start()
     }
 
-    private suspend fun runServer() {
-        val config = settings.current()
-        val port = config.port
-        // 绑 IPv6 通配符（Linux 默认双栈，同一个 socket 同时收 IPv4 与 IPv6）——这是跨网络直连的前提：
-        // 运营商给手机的 IPv6 通常是全球单播，不经 NAT，对端拿到地址就能直连。
-        val socket = try {
-            ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName("::"))
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "IPv6 绑定失败，回退 IPv4 通配: ${e.message}")
-            try {
-                ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName("0.0.0.0"))
-            } catch (e2: Exception) {
-                FileLogger.e(TAG, "无法绑定端口 $port", e2)
-                _state.value = RemoteServerState.Failed(e2.message ?: e2.javaClass.simpleName)
-                return
-            }
+    /**
+     * 绑定监听端口：首选配置端口；被占就交给系统分配一个空闲端口（`ServerSocket(0)`），永不再因为端口冲突起不来。
+     *
+     * 优先用固定端口是因为它重启后不变，已配对的对端还能继续连；
+     * 一旦换到系统分配的端口，配对信息必须重新给对端。
+     */
+    private suspend fun bindFallback(preferred: Int): Pair<ServerSocket, Int> {
+        bindAt(preferred)?.let { return it to it.localPort }
+        val fallback = bindAt(0)
+            ?: error("无法创建监听端口（连系统分配的空闲端口都绑不上）")
+        FileLogger.w(TAG, "端口 $preferred 被占用，改用系统分配的 ${fallback.localPort}")
+        settings.setPort(fallback.localPort)
+        return fallback to fallback.localPort
+    }
+
+    /** 在 [port] 上建监听 socket（0 = 系统分配）：先 IPv6 通配（双栈，跨网络直连靠它），再回退 IPv4 通配。 */
+    private fun bindAt(port: Int): ServerSocket? {
+        for (address in listOf("::", "0.0.0.0")) {
+            runCatching {
+                ServerSocket(port, SERVER_BACKLOG, InetAddress.getByName(address))
+            }.getOrNull()?.let { return it }
         }
+        return null
+    }
+
+    private suspend fun runServer() {
+        val preferred = settings.current().port
+        // 端口被占（同机正式包与 debug 包都开着协作、旧进程没退）时不能直接失败：端口设置项已不对外暴露，
+        // 用户只会拿到一句 EADDRINUSE。往后试十个，成功就改用新端口并写回配置，界面自己跟上。
+        val bound = bindFallback(preferred)
+        val (socket, port) = bound
         serverSocket = socket
         // 全球 IPv6 排在前面：跨网络协助优先用它，局域网地址作兼底。
         val urls = localIpv6Addresses().map { "http://[$it]:$port$MCP_PATH" } +

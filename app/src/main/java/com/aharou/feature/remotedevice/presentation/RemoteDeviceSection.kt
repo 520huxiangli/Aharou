@@ -235,16 +235,20 @@ private fun PairingCodeSheet(
                     )
                 }
                 TextButton(onClick = {
-                    // 一段带走三样：对端把它粘进「协助地址」即自动拆填，省掉手抄地址与端口。
-                    val uri = endpoints.firstOrNull()?.let { runCatching { java.net.URI(it) }.getOrNull() }
-                    val shortHost = uri?.host?.removeSurrounding("[", "]")
-                    val parsedPort = uri?.port?.takeIf { it in RemoteDeviceConfig.MIN_PORT..RemoteDeviceConfig.MAX_PORT }
+                    // 每个可用地址各生成一条链接（IPv6 在前、IPv4 在后）：对端网络不一定两者都通，
+                    // 只给一条会把「码对了却连不上」变成常态。粘进对方输入框会自动用第一条能解析的。
                     val codeText = pairing?.code.orEmpty()
-                    val payload = if (!shortHost.isNullOrBlank() && parsedPort != null && codeText.isNotBlank()) {
-                        "aharou://pair?host=$shortHost&port=$parsedPort&code=$codeText"
-                    } else {
-                        endpoints.joinToString("\n")
+                    val links = endpoints.mapNotNull { url ->
+                        val uri = runCatching { java.net.URI(url) }.getOrNull()
+                        val shortHost = uri?.host?.removeSurrounding("[", "]")
+                        val parsedPort = uri?.port
+                        if (!shortHost.isNullOrBlank() && parsedPort != null && codeText.isNotBlank()) {
+                            "aharou://pair?host=$shortHost&port=$parsedPort&code=$codeText"
+                        } else {
+                            null
+                        }
                     }
+                    val payload = links.ifEmpty { endpoints }.joinToString("\n")
                     clipboard.setText(AnnotatedString(payload))
                 }) { Text(stringResource(R.string.settings_remote_device_copy_pairing)) }
             }
@@ -377,6 +381,16 @@ private fun assistMessage(state: AssistUiState.Done): String = if (state.ok) {
  * 不是配对信息时返回 null，调用方按普通输入处理。
  */
 private fun parsePairingInput(raw: String): Triple<String, Int?, String>? {
+    // 复制出来的配对信息是多行（IPv6 一行、IPv4 一行）：逐行尝试，用第一条能解析的。
+    for (line in raw.lineSequence()) {
+        val text = line.trim()
+        if (text.isEmpty()) continue
+        parseSinglePairing(text)?.let { return it }
+    }
+    return null
+}
+
+private fun parseSinglePairing(raw: String): Triple<String, Int?, String>? {
     val text = raw.trim()
     if (text.isEmpty()) return null
     if (text.startsWith("aharou://", ignoreCase = true) || text.contains("host=")) {

@@ -67,8 +67,12 @@ data class RemoteDeviceConfig(
     val allowRemoteAskAi: Boolean = true
 ) {
     companion object {
-        /** 默认端口：避开 debug 变体内置 MCP server 的 47821，两者可同机共存。 */
+        /** 正式包的默认端口：避开 debug 变体内置 MCP server 的 47821。 */
         const val DEFAULT_PORT = 47822
+
+        /** debug / beta 变体的默认端口：同机与正式包共存时不该抢同一个口。 */
+        const val DEBUG_DEFAULT_PORT = 47823
+
         const val MIN_PORT = 1024
         const val MAX_PORT = 65535
     }
@@ -92,10 +96,21 @@ class RemoteDeviceSettings @Inject constructor(
         val ALLOW_REMOTE_ASK_AI = booleanPreferencesKey("remote_device_allow_ask_ai")
     }
 
+    /**
+     * 本变体的默认端口：debug / beta 包的包名带后缀，顺延到 47823。
+     * 同机与正式包共存时不该抢同一个口（抢了会 EADDRINUSE，服务起不来）。
+     */
+    private fun defaultPortForVariant(): Int =
+        if (context.packageName.endsWith(".debug") || context.packageName.endsWith(".beta")) {
+            RemoteDeviceConfig.DEBUG_DEFAULT_PORT
+        } else {
+            RemoteDeviceConfig.DEFAULT_PORT
+        }
+
     val config: Flow<RemoteDeviceConfig> = context.remoteDeviceDataStore.data.map { prefs ->
         RemoteDeviceConfig(
             enabled = prefs[ENABLED] ?: true,
-            port = prefs[PORT] ?: RemoteDeviceConfig.DEFAULT_PORT,
+            port = prefs[PORT] ?: defaultPortForVariant(),
             deviceName = prefs[NAME].orEmpty(),
             alwaysAskRemote = prefs[ALWAYS_ASK] ?: false,
             allowPublicPeer = prefs[ALLOW_PUBLIC] ?: true,
