@@ -48,7 +48,7 @@ class GitRepositoryRepoDiscoveryTest {
     private fun createRepo(engine: CommandEngine, workspacePath: String = root): GitRepository {
         val workspace = mockk<WorkspaceRepository>()
         every { workspace.currentPath() } returns workspacePath
-        return GitRepository(engine, workspace)
+        return GitRepository(engine, workspace, mockk<PreCommitChecker>(relaxed = true))
     }
 
     // ── discoverRepos：根 + 一层子目录 ────────────────────────────
