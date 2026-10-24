@@ -101,8 +101,11 @@ jobs:
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关（flavor 仅影响 abiFilters/assets），
       # 跑全 flavor 6 变体是重复编译，无额外覆盖。
       - name: Run unit tests
-        # 输出落盘：GitHub 的日志接口只给前 91KB，崩溃原因往往在末尾。
-        run: ./gradlew :app:testUniversalDebugUnitTest --console=plain > /tmp/unit.log 2>&1 || touch /tmp/unit-tests-failed
+        # 用 tee 而不是重定向：重定向会把 Gradle 输出全写进文件，job 日志里就只剩一行命令，
+        # 失败时完全看不到原因（2026-10-25 为此绕了一大圈）。pipefail 保证 gradle 的退出码不被 tee 吃掉。
+        run: |
+          set -o pipefail
+          ./gradlew :app:testUniversalDebugUnitTest --console=plain 2>&1 | tee /tmp/unit.log || touch /tmp/unit-tests-failed
 
       - name: Upload unit test log
         if: always()
