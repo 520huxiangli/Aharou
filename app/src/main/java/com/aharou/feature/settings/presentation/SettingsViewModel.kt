@@ -16,10 +16,8 @@ import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LogLevel
-import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.RecentCallRecord
 import com.aharou.feature.agent.domain.container.ConnectionState
-import com.aharou.feature.agent.domain.container.ContainerImageCatalog
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.ContainerOsDetector
@@ -61,7 +59,6 @@ import com.aharou.feature.agent.domain.subagent.AgentSaveError
 import com.aharou.feature.agent.domain.subagent.InjectPart
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.settings.data.remote.ModelApiService
-import com.aharou.feature.settings.data.remote.ContainerImageDownloader
 import com.aharou.feature.settings.data.remote.ModelMetadataService
 import com.aharou.feature.settings.data.remote.ModelTestResult
 import com.aharou.feature.agent.domain.shell.HostShellManager
@@ -112,7 +109,6 @@ import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
-import com.aharou.feature.settings.domain.service.ModelCostCalculator
 import com.aharou.feature.settings.domain.service.ProviderDashboardRunner
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.ProxyType
@@ -145,26 +141,6 @@ sealed class FetchState {
     object Loading : FetchState()
     data class Success(val models: List<String>, val debugInfo: ModelTestResult? = null) : FetchState()
     data class Error(val message: String, val debugInfo: ModelTestResult? = null) : FetchState()
-}
-
-/** 镜像下载页的完整 UI 状态：空闲 / 下载中（进度）/ 下载完成（可安装）/ 失败。 */
-sealed interface ContainerImageDownloadUiState {
-    data object Idle : ContainerImageDownloadUiState
-    data class Downloading(
-        val entryId: String,
-        val name: String,
-        val version: String,
-        val sourceId: String,
-        val bytesRead: Long,
-        val totalBytes: Long
-    ) : ContainerImageDownloadUiState
-    data class Done(
-        val entryId: String,
-        val name: String,
-        val version: String,
-        val fileUri: String
-    ) : ContainerImageDownloadUiState
-    data class Error(val entryId: String, val message: String) : ContainerImageDownloadUiState
 }
 
 /** 重置容器的进行状态：重置中才有值，[deleted] 为已删除的文件与目录数。 */
@@ -217,63 +193,6 @@ sealed interface UpdateDownloadUiState {
     data class Failed(val message: String? = null) : UpdateDownloadUiState
 }
 
-/** Token 统计周期：决定统计起始时间与趋势粒度（今天=小时粒度，其余=天粒度）。 */
-enum class TokenStatsPeriod(val labelRes: Int, val startMillis: (Long) -> Long) {
-    TODAY(R.string.settings_token_stats_period_today, { now ->
-        java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    }),
-    LAST_7_DAYS(R.string.settings_token_stats_period_7d, { now -> now - 7 * 86_400_000L }),
-    LAST_30_DAYS(R.string.settings_token_stats_period_30d, { now -> now - 30 * 86_400_000L }),
-    ALL(R.string.settings_token_stats_period_all, { 0L })
-}
-
-/** Token 统计页的完整 UI 状态，由周期 + 5 个聚合 Flow 组合而成。 */
-data class TokenStatsUiState(
-    val period: TokenStatsPeriod = TokenStatsPeriod.LAST_7_DAYS,
-    val summary: com.aharou.feature.agent.data.local.dao.CallSummary? = null,
-    val trend: List<com.aharou.feature.agent.data.local.dao.DayCallStats> = emptyList(),
-    val providers: List<com.aharou.feature.agent.data.local.dao.ProviderCallStats> = emptyList(),
-    val models: List<com.aharou.feature.agent.data.local.dao.ModelCallStats> = emptyList(),
-    val recentCalls: List<RecentCallRecord> = emptyList(),
-    /** 调用明细当前页（0 起）。 */
-    val callsPage: Int = 0,
-    /** 当前周期调用总数，供分页显示总页数。 */
-    val callsTotal: Int = 0,
-    /** 渠道当前页（0 起）。 */
-    val providersPage: Int = 0,
-    /** 渠道总数。 */
-    val providersTotal: Int = 0,
-    /** 模型当前页（0 起）。 */
-    val modelsPage: Int = 0,
-    /** 模型总数。 */
-    val modelsTotal: Int = 0,
-    /** 当前周期总费用（USD，渠道自定义单价优先，否则回退 models.dev 单价估算）。 */
-    val totalCostUsd: Double = 0.0,
-    /** 调用明细分页内每条记录的费用（key=记录 id，null=模型无单价）。 */
-    val recentCallCosts: Map<Long, Double?> = emptyMap(),
-    /** 筛选：指定供应商 ID（null 为不限）。 */
-    val filterProviderId: String? = null,
-    /** 筛选：指定模型名（null 为不限）。 */
-    val filterModel: String? = null,
-    /** 可供筛选的供应商列表（id to 名称）。 */
-    val availableProviders: List<Pair<String, String>> = emptyList(),
-    /** 可供筛选的模型列表。 */
-    val availableModels: List<String> = emptyList(),
-    /** 各供应商 ID 对应的密钥/凭据数量。 */
-    val providerKeyCounts: Map<String, Int> = emptyMap()
-)
-
-private data class ModelStatsPaging(
-    val paged: List<com.aharou.feature.agent.data.local.dao.ModelCallStats>,
-    val page: Int,
-    val total: Int
-)
 
 /** 技能列表页的 UI 状态：技能 + 来源作用域 + 启停状态。 */
 data class SkillUiEntry(
@@ -359,32 +278,6 @@ sealed interface SubAgentSaveState {
     data class Failed(val error: AgentSaveError) : SubAgentSaveState
 }
 
-/**
- * 把趋势聚合补全为周期内的完整时间轴：无记录的天/小时补 0，避免周期内调用集中在同一天时
- * 趋势只有单个点而无法绘制折线图。「全部」周期从最早有记录的那天起补到当天。
- */
-private fun padTrend(
-    period: TokenStatsPeriod,
-    trend: List<com.aharou.feature.agent.data.local.dao.DayCallStats>,
-    tzOffsetMillis: Long
-): List<com.aharou.feature.agent.data.local.dao.DayCallStats> {
-    if (trend.isEmpty()) return emptyList()
-    val now = System.currentTimeMillis()
-    val byDay = trend.associateBy { it.day }
-    val isHourly = period == TokenStatsPeriod.TODAY
-    val bucketMillis = if (isHourly) 3_600_000L else 86_400_000L
-    val endIndex = (now + tzOffsetMillis) / bucketMillis
-    val startIndex = when (period) {
-        TokenStatsPeriod.TODAY -> (period.startMillis(now) + tzOffsetMillis) / bucketMillis
-        TokenStatsPeriod.ALL -> trend.first().day
-        else -> (period.startMillis(now) + tzOffsetMillis) / bucketMillis
-    }
-    if (startIndex > endIndex) return trend
-    return (startIndex..endIndex).map { index ->
-        byDay[index] ?: com.aharou.feature.agent.data.local.dao.DayCallStats(index, 0, 0, 0, 0, 0, null, null)
-    }
-}
-
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -423,16 +316,12 @@ class SettingsViewModel @Inject constructor(
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
     private val containerSettingsRepository: ContainerSettingsRepository,
-    private val containerImageCatalog: ContainerImageCatalog,
-    private val containerImageDownloader: ContainerImageDownloader,
     private val containerInstaller: ContainerInstaller,
     private val containerOsDetector: ContainerOsDetector,
     private val executionModeRepository: ExecutionModeRepository,
     private val executionModeHolder: ExecutionModeHolder,
     private val remoteSshConnection: RemoteSshConnection,
     private val remoteRepository: RemoteRepository,
-    private val llmCallRecordDao: LlmCallRecordDao,
-    private val modelCostCalculator: ModelCostCalculator,
     private val updateCheckSettingsRepository: UpdateCheckSettingsRepository,
     private val updateCheckService: UpdateCheckService,
     private val updateApkDownloader: UpdateApkDownloader,
@@ -441,6 +330,8 @@ class SettingsViewModel @Inject constructor(
     private val terminalSettingsRepository: TerminalSettingsRepository,
     private val proxySettingsRepository: ProxySettingsRepository,
     private val memorySettings: MemorySettingsController,
+    private val tokenStatsController: TokenStatsController,
+    private val containerImageController: ContainerImageController,
 ) : ViewModel() {
 
     // ── 记忆浏览与编辑（设置页「记忆」分区） ──
@@ -502,8 +393,6 @@ class SettingsViewModel @Inject constructor(
         /** Shizuku 静默安装的超时（大包 pm install 要几十秒）。 */
         const val SHIZUKU_INSTALL_TIMEOUT_MS = 120_000L
         const val MAX_LOG_LINES = 1200
-        const val CALLS_PAGE_SIZE = 10
-        const val STATS_PAGE_SIZE = 5
         /** 背景透明度停止拖动后的落盘延迟。 */
         const val BACKGROUND_ALPHA_WRITE_DEBOUNCE_MS = 80L
 
@@ -513,8 +402,6 @@ class SettingsViewModel @Inject constructor(
         /** 技能压缩包导入接受的扩展名（小写，不含点）。 */
         val ZIP_EXTENSIONS = setOf("zip")
 
-        /** 只有官方源与自建源才做 SHA-256 校验：第三方镜像有没有重打包未实测，字节未必与官方一致。 */
-        val CHECKSUM_SOURCE_IDS = setOf("official", "aharou")
     }
 
     /** 终端个性化配置。 */
@@ -987,34 +874,18 @@ class SettingsViewModel @Inject constructor(
     private val _containerAnnouncementOutdated = MutableStateFlow(false)
     val containerAnnouncementOutdated: StateFlow<Boolean> = _containerAnnouncementOutdated.asStateFlow()
 
-    private val _imageCatalog = MutableStateFlow<List<ContainerImageEntry>>(emptyList())
-    val imageCatalog: StateFlow<List<ContainerImageEntry>> = _imageCatalog.asStateFlow()
-
-    /** 全局下载源 id 列表（来自目录 JSON 的 sources 键，保持顺序），供右上角切换。 */
-    private val _imageSourceOptions = MutableStateFlow<List<String>>(emptyList())
-    val imageSourceOptions: StateFlow<List<String>> = _imageSourceOptions.asStateFlow()
-
-    /** 当前选中的下载源（默认 Aharou 自建源；清单里没有该源时自动兜底到其他可用源）。 */
-    private val _selectedImageSource = MutableStateFlow("aharou")
-    val selectedImageSource: StateFlow<String> = _selectedImageSource.asStateFlow()
-
-    /** 已下载/已安装的镜像记录（entryId → 记录），跨重启保留。 */
-    private val _downloadedImages = MutableStateFlow<Map<String, DownloadedImageRecord>>(emptyMap())
-    val downloadedImages: StateFlow<Map<String, DownloadedImageRecord>> = _downloadedImages.asStateFlow()
-
-    /** 当前选中源下无下载 URL 的镜像 id（如腾讯云不提供 Ubuntu），UI 据此禁用下载按钮。 */
-    private val _sourceUnavailableIds = MutableStateFlow<Set<String>>(emptySet())
-    val sourceUnavailableIds: StateFlow<Set<String>> = _sourceUnavailableIds.asStateFlow()
-
-    private val _containerImageDownload = MutableStateFlow<ContainerImageDownloadUiState>(ContainerImageDownloadUiState.Idle)
-    val containerImageDownload: StateFlow<ContainerImageDownloadUiState> = _containerImageDownload.asStateFlow()
-
     /** 正在重置的容器（含已删条目数），为 null 说明不在重置。UI 据此弹进度框。 */
     private val _containerReset = MutableStateFlow<ContainerResetUiState?>(null)
     val containerReset: StateFlow<ContainerResetUiState?> = _containerReset.asStateFlow()
 
-    /** 当前下载任务句柄，取消下载时 cancel 它（底层 OkHttp call 同步中断）。 */
-    private var downloadJob: kotlinx.coroutines.Job? = null
+    // ── 容器镜像：目录 / 下载源 / 已下载记录整块在 [ContainerImageController] ──
+    val imageCatalog: StateFlow<List<ContainerImageEntry>> get() = containerImageController.imageCatalog
+    val imageSourceOptions: StateFlow<List<String>> get() = containerImageController.sourceOptions
+    val selectedImageSource: StateFlow<String> get() = containerImageController.selectedSource
+    val downloadedImages: StateFlow<Map<String, DownloadedImageRecord>> get() = containerImageController.downloaded
+    val sourceUnavailableIds: StateFlow<Set<String>> get() = containerImageController.unavailableIds
+    val containerImageDownload: StateFlow<ContainerImageDownloadUiState> get() = containerImageController.download
+
 
     /** 当前执行模式（本地 PRoot / 远程 SSH），供 UI 判断是否显示远程连接指示器。 */
     val executionMode: StateFlow<ExecutionMode> = executionModeHolder.mode
@@ -1022,60 +893,19 @@ class SettingsViewModel @Inject constructor(
     /** 远程 SSH 连接状态，供 UI 显示指示器。 */
     val connectionState: StateFlow<ConnectionState> = remoteSshConnection.connectionState
 
-    /** Token 统计：当前选中的统计周期。 */
-    private val _tokenStatsPeriod = MutableStateFlow(TokenStatsPeriod.LAST_7_DAYS)
-
-    /** Token 统计：周期内汇总、趋势、渠道、模型、明细的组合状态。 */
-    private val _tokenStats = MutableStateFlow(TokenStatsUiState())
-    val tokenStats: StateFlow<TokenStatsUiState> = _tokenStats.asStateFlow()
-
-    /** Token 统计：调用明细分页页码（0 起）。 */
-    private val _tokenStatsPage = MutableStateFlow(0)
-
-    /** Token 统计：渠道分页页码（0 起）。 */
-    private val _providerStatsPage = MutableStateFlow(0)
-
-    /** Token 统计：模型分页页码（0 起）。 */
-    private val _modelStatsPage = MutableStateFlow(0)
-
-    /** Token 统计：供应商筛选（null 为全部）。 */
-    private val _filterProviderId = MutableStateFlow<String?>(null)
-    val filterProviderId: StateFlow<String?> = _filterProviderId.asStateFlow()
-
-    /** Token 统计：模型筛选（null 为全部）。 */
-    private val _filterModel = MutableStateFlow<String?>(null)
-    val filterModel: StateFlow<String?> = _filterModel.asStateFlow()
+    /** Token 统计：整块状态与操作已搬到 [TokenStatsController]，这里只做转发。 */
+    val tokenStats: StateFlow<TokenStatsUiState> = tokenStatsController.state
+    val filterProviderId: StateFlow<String?> = tokenStatsController.filterProviderId
+    val filterModel: StateFlow<String?> = tokenStatsController.filterModel
 
     /** 工作区已配置的远程连接通道，供容器镜像 SSH 模式下拉复用。 */
     val remoteConnections: StateFlow<List<RemoteConnection>> = remoteRepository.getConnections()
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
 
     init {
-        _imageCatalog.value = containerImageCatalog.load()
-        // 启动时的远端刷新是异步的：上面的 load() 可能先读到旧缓存并定格，
-        // 刷新成功后需要跟随更新，否则列表一直显示旧内容（含空初值，故忽略空表）。
-        viewModelScope.launch {
-            containerImageCatalog.images.collect { list ->
-                if (list.isNotEmpty()) _imageCatalog.value = list
-            }
-        }
-        _imageSourceOptions.value = containerImageCatalog.sourceIds
-        _selectedImageSource.value = containerImageCatalog.sourceIds.firstOrNull { it == "aharou" }
-            ?: containerImageCatalog.sourceIds.firstOrNull { it == "official" }
-            ?: containerImageCatalog.sourceIds.firstOrNull() ?: "aharou"
-        // 已下载/已安装记录跨重启保留
-        viewModelScope.launch {
-            containerSettingsRepository.downloadedImagesFlow.collect { records ->
-                _downloadedImages.value = records.associateBy { it.entryId }
-            }
-        }
-        // 当前源下不可用的镜像集合（源切换后自动更新）
-        viewModelScope.launch {
-            combine(_imageCatalog, _selectedImageSource) { entries, sourceId ->
-                entries.filter { containerImageCatalog.urlFor(it, sourceId, ContainerImageCatalog.CURRENT_ABI) == null }
-                    .map { it.id }.toSet()
-            }.collect { _sourceUnavailableIds.value = it }
-        }
+        // Token 统计自己订阅 Room 的调用记录：首次建 ViewModel 才启动，避免开机就挂一串 Flow。
+        tokenStatsController.ensureStarted()
+        containerImageController.ensureStarted()
         // 公告按「内容哈希比对」判断是否弹出：首次（无哈希）或内容更新（哈希不一致）即弹。
         viewModelScope.launch {
             combine(_languageTag, containerSettingsRepository.announcementShownHashFlow) { tag, storedHash ->
@@ -1389,104 +1219,6 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
-            launch {
-                combine(
-                    _tokenStatsPeriod,
-                    _filterProviderId,
-                    _filterModel
-                ) { period, filterProviderId, filterModel ->
-                    Triple(period, filterProviderId, filterModel)
-                }.flatMapLatest { (period, filterProviderId, filterModel) ->
-                    val start = period.startMillis(System.currentTimeMillis())
-                    val tz = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()).toLong()
-                    combine(
-                        combine(
-                            if (period == TokenStatsPeriod.TODAY) {
-                                llmCallRecordDao.getHourStats(start, tz, filterProviderId, filterModel)
-                            } else {
-                                llmCallRecordDao.getDayStats(start, tz, filterProviderId, filterModel)
-                            },
-                            llmCallRecordDao.getSummary(start, filterProviderId, filterModel)
-                        ) { rawTrend, summary -> rawTrend to summary },
-                        combine(
-                            llmCallRecordDao.getProviderStats(start, filterProviderId, filterModel),
-                            _providerStatsPage
-                        ) { list, page ->
-                            val total = list.size
-                            val lastPage = if (total == 0) 0 else (total - 1) / STATS_PAGE_SIZE
-                            val safePage = page.coerceIn(0, lastPage)
-                            val paged = list.drop(safePage * STATS_PAGE_SIZE).take(STATS_PAGE_SIZE)
-                            Triple(paged, safePage, total)
-                        },
-                        combine(
-                            combine(
-                                llmCallRecordDao.getModelStats(start, filterProviderId, filterModel),
-                                _modelStatsPage
-                            ) { list, page ->
-                                val total = list.size
-                                val lastPage = if (total == 0) 0 else (total - 1) / STATS_PAGE_SIZE
-                                val safePage = page.coerceIn(0, lastPage)
-                                val paged = list.drop(safePage * STATS_PAGE_SIZE).take(STATS_PAGE_SIZE)
-                                ModelStatsPaging(paged, safePage, total)
-                            },
-                            // 总费用必须带渠道聚合：自定义单价按渠道存储，丢渠道就会取错价。
-                            llmCallRecordDao.getModelProviderCostStats(start, filterProviderId, filterModel)
-                        ) { modelPaging, costStats -> modelPaging to costStats },
-                        // 明细分页：页号或总数变化时重查当前页，其余聚合不重复计算
-                        combine(_tokenStatsPage, llmCallRecordDao.getCallsCount(start, filterProviderId, filterModel)) { page, total -> page to total }
-                            .flatMapLatest { (page, total) ->
-                                llmCallRecordDao.getRecentCalls(start, CALLS_PAGE_SIZE, page * CALLS_PAGE_SIZE, filterProviderId, filterModel)
-                                    .map { calls -> Triple(calls, total, page) }
-                            },
-                        // 可选筛选选项列表（全局不限过滤条件时的渠道与模型列表）
-                        combine(
-                            llmCallRecordDao.getProviderStats(start),
-                            llmCallRecordDao.getModelStats(start),
-                            _providers
-                        ) { allProviders, allModels, configuredProviders ->
-                            val providerList = (allProviders.mapNotNull { p ->
-                                val id = p.providerId ?: return@mapNotNull null
-                                id to (p.providerName ?: id)
-                            } + configuredProviders.map { it.id to it.name }).distinctBy { it.first }
-                            val modelList = allModels.mapNotNull { it.model }.distinct()
-                            val keyCounts = configuredProviders.associate { it.id to it.apiKeys.size }
-                            Triple(providerList, modelList, keyCounts)
-                        }
-                    ) { (rawTrend, summary), (pProviders, pPage, pTotal), (modelPaging, costStats), (calls, total, page), (availableProviders, availableModels, keyCounts) ->
-                        val trend = padTrend(period, rawTrend, tz)
-                        val costs = withContext(Dispatchers.Default) {
-                            val perCall = calls.associate {
-                                it.record.id to callCostUsd(it.record.providerId, it.record.model, it.record.inputTokens.toLong(), it.record.cachedInputTokens.toLong(), it.record.outputTokens.toLong(), it.record.cacheCreationTokens.toLong())
-                            }
-                            val periodTotal = costStats.sumOf { s ->
-                                callCostUsd(s.providerId, s.model, s.inputTokens, s.cachedInputTokens, s.outputTokens, s.cacheCreationTokens) ?: 0.0
-                            }
-                            perCall to periodTotal
-                        }
-                        TokenStatsUiState(
-                            period = period,
-                            summary = summary,
-                            trend = trend,
-                            providers = pProviders,
-                            models = modelPaging.paged,
-                            recentCalls = calls,
-                            callsPage = page,
-                            callsTotal = total,
-                            providersPage = pPage,
-                            providersTotal = pTotal,
-                            modelsPage = modelPaging.page,
-                            modelsTotal = modelPaging.total,
-                            totalCostUsd = costs.second,
-                            recentCallCosts = costs.first,
-                            filterProviderId = filterProviderId,
-                            filterModel = filterModel,
-                            availableProviders = availableProviders,
-                            availableModels = availableModels,
-                            providerKeyCounts = keyCounts
-                        )
-                    }
-                }.collectLatest { _tokenStats.value = it }
-            }
         }
     }
 
@@ -2695,6 +2427,25 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // ── 容器镜像：操作一律转到 [ContainerImageController] ──
+
+    /** 切换全局下载源（官方/华为云/阿里云/腾讯云等）。 */
+    fun setImageSource(sourceId: String) = containerImageController.setSource(sourceId)
+
+    /** 源显示名：按界面语言取目录 JSON 里定义的 name，跟随系统语言时按系统语言。 */
+    fun sourceDisplayName(sourceId: String, languageTag: String?): String =
+        containerImageController.sourceDisplayName(sourceId, languageTag)
+
+    fun startContainerImageDownload(entry: ContainerImageEntry, sourceId: String) =
+        containerImageController.startDownload(entry, sourceId)
+
+    fun cancelContainerImageDownload() = containerImageController.cancelDownload()
+
+    fun importDownloadedImage(entryId: String, fileUri: String) =
+        containerImageController.importDownloaded(entryId, fileUri)
+
+    fun deleteDownloadedImage(entryId: String) = containerImageController.deleteDownloaded(entryId)
+
     /** 重置容器：内置恢复出厂（清覆盖配置 + 删 rootfs），自定义本地镜像删 rootfs 下次重新解压。远程 SSH 无本地数据，UI 不提供入口。 */
     fun resetContainer(profile: ContainerProfile) {
         if (_containerReset.value != null) return
@@ -2788,104 +2539,6 @@ class SettingsViewModel @Inject constructor(
     fun markContainerAnnouncementShown() {
         viewModelScope.launch {
             containerSettingsRepository.markAnnouncementShown(sha256(_containerAnnouncementText.value))
-        }
-    }
-
-    /** 切换全局下载源（官方/华为云/阿里云/腾讯云等）。 */
-    fun setImageSource(sourceId: String) {
-        _selectedImageSource.value = sourceId
-    }
-
-    /** 源显示名：按界面语言取目录 JSON 里定义的 name，跟随系统语言时按系统语言。 */
-    fun sourceDisplayName(sourceId: String, languageTag: String?): String {
-        val lang = languageTag?.takeIf { it.isNotBlank() } ?: java.util.Locale.getDefault().language
-        val key = if (lang.startsWith("zh", ignoreCase = true)) "zh" else "en"
-        return containerImageCatalog.sourceName(sourceId, key) ?: sourceId
-    }
-
-    /** 开始下载镜像：按当前架构与全局源拼 URL，进度实时写入 [_containerImageDownload]。 */
-    fun startContainerImageDownload(entry: ContainerImageEntry, sourceId: String) {
-        if (_containerImageDownload.value is ContainerImageDownloadUiState.Downloading) return
-        val url = containerImageCatalog.urlFor(entry, sourceId, ContainerImageCatalog.CURRENT_ABI) ?: return
-        val suffix = when {
-            url.endsWith(".tar.gz") -> "tar.gz"
-            url.endsWith(".tar.xz") || url.endsWith(".txz") -> "tar.xz"
-            url.endsWith(".tgz") -> "tgz"
-            else -> "tar.gz"
-        }
-        val fileName = "download_${entry.id}_${entry.version}_${System.currentTimeMillis()}.$suffix"
-        // 官方/自建源拿清单里的哈希强制校验；第三方源与无哈希的条目（Debian）传 null 跳过
-        val expectedSha256 = entry.sha256For(ContainerImageCatalog.CURRENT_ABI)
-            .takeIf { sourceId in CHECKSUM_SOURCE_IDS }
-        downloadJob = viewModelScope.launch {
-            _containerImageDownload.value =
-                ContainerImageDownloadUiState.Downloading(entry.id, entry.name, entry.version, sourceId, 0, 0)
-            try {
-                val uri = containerImageDownloader.download(url, fileName, expectedSha256) { read, total ->
-                    _containerImageDownload.value = ContainerImageDownloadUiState.Downloading(
-                        entry.id, entry.name, entry.version, sourceId, read, total
-                    )
-                }
-                // 下载完成即持久化记录，安装与否都保留，跨重启可见。版本一并记下：目录版本会随上游刷新，
-                // 磁盘上的文件不会跟着变，靠它才能提示「有新版」而不是一直显示「已下载」。
-                containerSettingsRepository.upsertDownloadedImage(
-                    DownloadedImageRecord(entry.id, uri, version = entry.version)
-                )
-                _containerImageDownload.value =
-                    ContainerImageDownloadUiState.Done(entry.id, entry.name, entry.version, uri)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                _containerImageDownload.value = ContainerImageDownloadUiState.Idle
-                throw e
-            } catch (e: Exception) {
-                _containerImageDownload.value =
-                    ContainerImageDownloadUiState.Error(entry.id, e.message ?: context.getString(R.string.container_download_failed, ""))
-            }
-        }
-    }
-
-    /** 取消正在进行的下载（半成品文件由下载器清理）。 */
-    fun cancelContainerImageDownload() {
-        downloadJob?.cancel()
-        downloadJob = null
-    }
-
-    /**
-     * 把已下载的镜像作为自定义 profile 导入容器列表（可重复导入，每次新建 profile），后续流程与手动导入一致。
-     */
-    fun importDownloadedImage(entryId: String, fileUri: String) {
-        val entry = _imageCatalog.value.firstOrNull { it.id == entryId } ?: return
-        val record = _downloadedImages.value[entryId]
-        viewModelScope.launch {
-            val profile = ContainerProfile(
-                id = "custom-${System.currentTimeMillis()}",
-                // 用**下载时**记录的版本命名：目录版本可能已被上游刷新，而磁盘上的文件不会跟着变
-                name = entry.displayLabel(record?.version?.takeIf { it.isNotBlank() }),
-                rootfsSource = RootfsSource.LocalFile(fileUri),
-                shellPath = null,
-                extraArgs = ContainerProfile.DEFAULT_PROOT_ARGS,
-                isBuiltin = false
-            )
-            containerSettingsRepository.upsertCustomProfile(profile)
-            // 保留已下载记录（含下载时的版本号，供「有新版」判定），仅标记已导入；UI 状态不消失。
-            containerSettingsRepository.upsertDownloadedImage(
-                DownloadedImageRecord(entryId, fileUri, version = record?.version.orEmpty(), installed = true)
-            )
-            _containerImageDownload.value = ContainerImageDownloadUiState.Idle
-        }
-    }
-
-    /** 删除已下载的镜像：清记录 + 删下载文件（仅限 rootfs_images 目录，防误删）；若正在下载该条目先取消。 */
-    fun deleteDownloadedImage(entryId: String) {
-        val record = _downloadedImages.value[entryId] ?: return
-        if ((_containerImageDownload.value as? ContainerImageDownloadUiState.Downloading)?.entryId == entryId) {
-            cancelContainerImageDownload()
-        }
-        viewModelScope.launch {
-            runCatching {
-                val file = java.io.File(Uri.parse(record.fileUri).path ?: return@runCatching)
-                if (file.parentFile?.name == "rootfs_images") file.delete()
-            }
-            containerSettingsRepository.removeDownloadedImage(entryId)
         }
     }
 
@@ -3013,99 +2666,30 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setTokenStatsPeriod(period: TokenStatsPeriod) {
-        _tokenStatsPeriod.value = period
-        // 切周期后明细与统计切片回到第一页
-        _tokenStatsPage.value = 0
-        _providerStatsPage.value = 0
-        _modelStatsPage.value = 0
-    }
+    // ── Token 统计：状态与聚合都在 [TokenStatsController]，这里只转发操作 ──
+
+    fun setTokenStatsPeriod(period: TokenStatsPeriod) = tokenStatsController.setPeriod(period)
 
     /** 设置供应商筛选（null 为全部）。 */
-    fun setFilterProviderId(providerId: String?) {
-        if (_filterProviderId.value == providerId) return
-        _filterProviderId.value = providerId
-        _tokenStatsPage.value = 0
-        _providerStatsPage.value = 0
-        _modelStatsPage.value = 0
-    }
+    fun setFilterProviderId(providerId: String?) = tokenStatsController.setFilterProviderId(providerId)
 
     /** 设置模型筛选（null 为全部）。 */
-    fun setFilterModel(model: String?) {
-        if (_filterModel.value == model) return
-        _filterModel.value = model
-        _tokenStatsPage.value = 0
-        _providerStatsPage.value = 0
-        _modelStatsPage.value = 0
-    }
+    fun setFilterModel(model: String?) = tokenStatsController.setFilterModel(model)
 
     /** 清除所有筛选条件。 */
-    fun clearTokenStatsFilters() {
-        if (_filterProviderId.value == null && _filterModel.value == null) return
-        _filterProviderId.value = null
-        _filterModel.value = null
-        _tokenStatsPage.value = 0
-        _providerStatsPage.value = 0
-        _modelStatsPage.value = 0
-    }
-
-    /**
-     * 单次调用的预估费用（USD）；模型无单价返回 null。
-     * 单价解析与缓存价回退统一在 [ModelCostCalculator]。
-     */
-    private suspend fun callCostUsd(
-        providerId: String?,
-        model: String?,
-        inputTokens: Long,
-        cachedInputTokens: Long,
-        outputTokens: Long,
-        cacheCreationTokens: Long = 0
-    ): Double? {
-        val modelId = model ?: return null
-        val provider = _providers.value.firstOrNull { it.id == providerId }
-        return modelCostCalculator.costUsd(
-            providerId = providerId.orEmpty(),
-            providerType = provider?.type ?: ProviderType.OPENAI,
-            model = modelId,
-            inputTokens = inputTokens,
-            cachedInputTokens = cachedInputTokens,
-            outputTokens = outputTokens,
-            cacheCreationTokens = cacheCreationTokens
-        )
-    }
+    fun clearTokenStatsFilters() = tokenStatsController.clearFilters()
 
     /** 调用明细翻页；越界时钳制到合法范围。 */
-    fun setTokenStatsPage(page: Int) {
-        val total = _tokenStats.value.callsTotal
-        val lastPage = if (total == 0) 0 else (total - 1) / CALLS_PAGE_SIZE
-        _tokenStatsPage.value = page.coerceIn(0, lastPage)
-    }
+    fun setTokenStatsPage(page: Int) = tokenStatsController.setCallPage(page)
 
     /** 渠道统计翻页；越界时钳制到合法范围。 */
-    fun setProviderStatsPage(page: Int) {
-        val total = _tokenStats.value.providersTotal
-        val lastPage = if (total == 0) 0 else (total - 1) / STATS_PAGE_SIZE
-        _providerStatsPage.value = page.coerceIn(0, lastPage)
-    }
+    fun setProviderStatsPage(page: Int) = tokenStatsController.setProviderPage(page)
 
     /** 模型统计翻页；越界时钳制到合法范围。 */
-    fun setModelStatsPage(page: Int) {
-        val total = _tokenStats.value.modelsTotal
-        val lastPage = if (total == 0) 0 else (total - 1) / STATS_PAGE_SIZE
-        _modelStatsPage.value = page.coerceIn(0, lastPage)
-    }
+    fun setModelStatsPage(page: Int) = tokenStatsController.setModelPage(page)
 
     /** 清空全部调用记录（Token 统计页右上角重置）；Room Flow 自动把各聚合刷新为空。 */
-    fun resetTokenStats() {
-        viewModelScope.launch {
-            llmCallRecordDao.deleteAll()
-            _filterProviderId.value = null
-            _filterModel.value = null
-            _tokenStatsPage.value = 0
-            _providerStatsPage.value = 0
-            _modelStatsPage.value = 0
-        }
-    }
+    fun resetTokenStats() = tokenStatsController.reset()
 
     fun setProviderEnabled(id: String, isEnabled: Boolean) {
         viewModelScope.launch {
