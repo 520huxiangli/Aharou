@@ -503,82 +503,21 @@ fun ProviderEditorScreen(
                         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
                     // ── 基本信息 ──
-                    SettingsGroupHeader(text = stringResource(R.string.provider_section_basic))
-                    SettingsGroup(
-                        modifier = Modifier.onboardingTarget(OnboardingStep.PROVIDER_CONFIG_INFO)
-                    ) {
-                        ProviderTextFieldRow(
-                            label = stringResource(R.string.common_name),
-                            value = name,
-                            onValueChange = { name = it }
-                        )
-                        if (!multiKeyEnabled) {
-                            ProviderTextFieldRow(
-                                label = stringResource(R.string.provider_api_key),
-                                value = apiKey,
-                                onValueChange = { apiKey = it },
-                                placeholder = stringResource(R.string.provider_api_key_placeholder),
-                                visualTransformation = if (apiKeyVisible) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                                trailing = {
-                                    Icon(
-                                        imageVector = if (apiKeyVisible) FeatherIcons.EyeOff else FeatherIcons.Eye,
-                                        contentDescription = stringResource(
-                                            if (apiKeyVisible) R.string.provider_hide_api_key else R.string.provider_show_api_key
-                                        ),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clickable { apiKeyVisible = !apiKeyVisible }
-                                            .padding(2.dp)
-                                    )
-                                }
-                            )
-                        }
-                        ProviderTextFieldRow(
-                            label = stringResource(R.string.provider_base_url),
-                            value = baseUrl,
-                            onValueChange = { baseUrl = it }
-                        )
-                        SettingsDivider()
-                        SettingsRow(
-                            icon = null,
-                            title = stringResource(R.string.provider_headers_title),
-                            subtitle = if (customHeaders.isEmpty()) {
-                                stringResource(R.string.provider_headers_desc)
-                            } else {
-                                stringResource(R.string.provider_headers_count, customHeaders.count { it.first.isNotBlank() })
-                            },
-                            onClick = { showHeadersSheet = true },
-                            trailing = {
-                                Text(
-                                    text = if (customHeaders.isEmpty()) {
-                                        stringResource(R.string.provider_headers_add)
-                                    } else {
-                                        stringResource(R.string.provider_headers_manage)
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                        SettingsDivider()
-                        SettingsRow(
-                            icon = null,
-                            title = stringResource(R.string.provider_section_type),
-                            onClick = { showTypeSheet = true },
-                            trailing = {
-                                Text(
-                                    text = providerTypeLabel(type),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                    }
+                    ProviderBasicGroup(
+                        name = name,
+                        onNameChange = { name = it },
+                        apiKey = apiKey,
+                        onApiKeyChange = { apiKey = it },
+                        apiKeyVisible = apiKeyVisible,
+                        onToggleApiKeyVisible = { apiKeyVisible = !apiKeyVisible },
+                        multiKeyEnabled = multiKeyEnabled,
+                        baseUrl = baseUrl,
+                        onBaseUrlChange = { baseUrl = it },
+                        headers = customHeaders,
+                        onOpenHeaders = { showHeadersSheet = true },
+                        typeLabel = providerTypeLabel(type),
+                        onOpenType = { showTypeSheet = true },
+                    )
 
                     // ── 选项 ──
                     SettingsGroupHeader(text = stringResource(R.string.provider_section_options))
