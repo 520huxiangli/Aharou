@@ -47,6 +47,7 @@ import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.SwipeToDeleteRow
+import com.aharou.feature.remotedevice.RemoteDeviceController
 import com.aharou.feature.remotedevice.RemoteDeviceUiState
 import com.aharou.feature.remotedevice.domain.RemoteDeviceConfig
 import com.aharou.feature.remotedevice.domain.RemotePairedDevice
@@ -77,23 +78,12 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val devices by viewModel.devices.collectAsStateWithLifecycle()
     val pairing by viewModel.pairing.collectAsStateWithLifecycle()
     val assist by viewModel.assist.collectAsStateWithLifecycle()
     val config = state.config
 
-    var showNameSheet by remember { mutableStateOf(false) }
-    var showPortSheet by remember { mutableStateOf(false) }
     var showPairSheet by remember { mutableStateOf(false) }
     var showAssistDialog by remember { mutableStateOf(false) }
-    var revokeTarget by remember { mutableStateOf<RemotePairedDevice?>(null) }
-    // ifBlank 的 lambda 不是 composable 上下文，默认名必须先在这一层取好。
-    val defaultDeviceName = stringResource(R.string.settings_remote_device_name_default)
-
-    // 每次开启都拉一次授权列表：对端可能在开关保持开启时刚完成配对。
-    LaunchedEffect(config.enabled) {
-        if (config.enabled) viewModel.refreshDevices()
-    }
 
     Column(
         modifier = Modifier
@@ -116,71 +106,19 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                     )
                 }
             )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Smartphone,
-                title = stringResource(R.string.settings_remote_device_name),
-                onClick = { showNameSheet = true },
-                trailing = {
-                    ValueText(
-                        config.deviceName.ifBlank { defaultDeviceName }
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Server,
-                title = stringResource(R.string.settings_remote_device_port),
-                onClick = { showPortSheet = true },
-                trailing = { ValueText(config.port.toString()) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Shield,
-                title = stringResource(R.string.settings_remote_device_always_ask),
-                trailing = {
-                    AppSwitch(
-                        checked = config.alwaysAskRemote,
-                        onCheckedChange = { viewModel.setAlwaysAskRemote(it) }
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Share2,
-                title = stringResource(R.string.settings_remote_device_allow_public),
-                subtitle = stringResource(R.string.settings_remote_device_allow_public_hint),
-                trailing = {
-                    AppSwitch(
-                        checked = config.allowPublicPeer,
-                        onCheckedChange = { viewModel.setAllowPublicPeer(it) }
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Share2,
-                title = stringResource(R.string.settings_remote_device_auto_pair_back),
-                subtitle = stringResource(R.string.settings_remote_device_auto_pair_back_hint),
-                trailing = {
-                    AppSwitch(
-                        checked = config.autoPairBack,
-                        onCheckedChange = { viewModel.setAutoPairBack(it) }
-                    )
-                }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Share2,
-                title = stringResource(R.string.settings_remote_device_allow_ask_ai),
-                subtitle = stringResource(R.string.settings_remote_device_allow_ask_ai_hint),
-                trailing = {
-                    AppSwitch(
-                        checked = config.allowRemoteAskAi,
-                        onCheckedChange = { viewModel.setAllowRemoteAskAi(it) }
-                    )
-                }
-            )
+        }
+
+        // 配对与授权只在本机服务开启时有意义，关着就把这组藏起来。
+        if (config.enabled) {
+            SettingsGroupHeader(text = stringResource(R.string.settings_remote_device_pair_code))
+            SettingsGroup {
+                SettingsRow(
+                    icon = FeatherIcons.Key,
+                    title = stringResource(R.string.settings_remote_device_pair_code),
+                    subtitle = stringResource(R.string.settings_remote_device_pair_hint),
+                    onClick = { showPairSheet = true }
+                )
+            }
         }
 
         // 接受协助：作为协助方连到别人的 Aharou——与本机开服务是两件事，所以不放在 enabled 分支里。
@@ -193,67 +131,6 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                 onClick = { showAssistDialog = true }
             )
         }
-
-        // 配对与授权只在本机服务开启时有意义，关着就把这几组藏起来，避免空列表占屏。
-        if (config.enabled) {
-            SettingsGroupHeader(text = stringResource(R.string.settings_remote_device_pair_code))
-            SettingsGroup {
-                SettingsRow(
-                    icon = FeatherIcons.Key,
-                    title = stringResource(R.string.settings_remote_device_pair_code),
-                    subtitle = stringResource(R.string.settings_remote_device_pair_hint),
-                    onClick = { showPairSheet = true }
-                )
-                SettingsDivider()
-                SettingsRow(
-                    icon = FeatherIcons.Globe,
-                    title = stringResource(R.string.settings_remote_device_endpoint),
-                    subtitle = state.endpoints.firstOrNull()
-                        ?: stringResource(R.string.settings_remote_device_service_stopped)
-                )
-            }
-
-            SettingsGroupHeader(text = stringResource(R.string.settings_remote_device_paired))
-            SettingsGroup {
-                if (devices.isEmpty()) {
-                    SettingsRow(title = stringResource(R.string.settings_remote_device_no_devices))
-                } else {
-                    devices.forEachIndexed { index, device ->
-                        if (index > 0) SettingsDivider()
-                        PairedDeviceRow(device = device, onRevoke = { revokeTarget = device })
-                    }
-                }
-            }
-        }
-    }
-
-    if (showNameSheet) {
-        ValueEditSheet(
-            title = stringResource(R.string.settings_remote_device_name),
-            initial = config.deviceName,
-            hint = stringResource(R.string.settings_remote_device_name_hint),
-            keyboardType = KeyboardType.Text,
-            onConfirm = { viewModel.setDeviceName(it) },
-            onDismiss = { showNameSheet = false }
-        )
-    }
-
-    if (showPortSheet) {
-        val invalidMessage = stringResource(R.string.settings_remote_device_port_invalid)
-        ValueEditSheet(
-            title = stringResource(R.string.settings_remote_device_port),
-            initial = config.port.toString(),
-            hint = null,
-            keyboardType = KeyboardType.Number,
-            validate = { text ->
-                val value = text.toIntOrNull()
-                value != null &&
-                    value in RemoteDeviceConfig.MIN_PORT..RemoteDeviceConfig.MAX_PORT
-            },
-            invalidMessage = invalidMessage,
-            onConfirm = { text -> text.toIntOrNull()?.let { viewModel.setPort(it) } },
-            onDismiss = { showPortSheet = false }
-        )
     }
 
     if (showAssistDialog) {
@@ -279,26 +156,6 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
         )
     }
 
-    revokeTarget?.let { device ->
-        AlertDialog(
-            onDismissRequest = { revokeTarget = null },
-            title = { Text(stringResource(R.string.settings_remote_device_revoke)) },
-            text = { Text(stringResource(R.string.settings_remote_device_revoke_confirm)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.revoke(device.deviceId)
-                    revokeTarget = null
-                }) {
-                    Text(stringResource(R.string.settings_remote_device_revoke))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { revokeTarget = null }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
-        )
-    }
 }
 
 /** 行尾灰字（端口号、设备名等只读值）。 */
@@ -313,114 +170,16 @@ private fun ValueText(text: String) {
     )
 }
 
-/** 服务运行状态的一句话，作开关行的副标题。 */
+/** 服务运行状态的一句话，作开关行的副标题；反向互通失败时在后面补一句。 */
 @Composable
-private fun serviceStatusText(state: RemoteDeviceUiState): String = when (val server = state.server) {
-    is RemoteServerState.Running -> stringResource(R.string.settings_remote_device_service_running)
-    is RemoteServerState.Failed -> stringResource(R.string.settings_remote_device_service_failed, server.message)
-    RemoteServerState.Stopped -> stringResource(R.string.settings_remote_device_service_stopped)
-}
-
-/** 单台已授权设备行：设备名 + 授权时间 + 最近活跃，左滑露出撤销（点击再确认一次）。 */
-@Composable
-private fun PairedDeviceRow(device: RemotePairedDevice, onRevoke: () -> Unit) {
-    SwipeToDeleteRow(onDelete = onRevoke) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.lg, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = FeatherIcons.Smartphone,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(Modifier.width(Spacing.md))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = device.deviceName.ifBlank { device.deviceId },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = stringResource(
-                        R.string.settings_remote_device_approved_at,
-                        formatTimestamp(device.approvedAt)
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = stringResource(
-                        R.string.settings_remote_device_last_seen,
-                        formatTimestamp(device.lastSeenAt)
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
+private fun serviceStatusText(state: RemoteDeviceUiState): String {
+    val base = when (val server = state.server) {
+        is RemoteServerState.Running -> stringResource(R.string.settings_remote_device_service_running)
+        is RemoteServerState.Failed -> stringResource(R.string.settings_remote_device_service_failed, server.message)
+        RemoteServerState.Stopped -> stringResource(R.string.settings_remote_device_service_stopped)
     }
-}
-
-/** 单字段编辑弹层（设备名 / 端口复用）：校验不通过时禁用确定并显示错误。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ValueEditSheet(
-    title: String,
-    initial: String,
-    hint: String?,
-    keyboardType: KeyboardType,
-    validate: (String) -> Boolean = { true },
-    invalidMessage: String = "",
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var text by remember { mutableStateOf(initial) }
-    val isError = !validate(text)
-    val supporting: (@Composable () -> Unit)? = if (isError) {
-        { Text(invalidMessage) }
-    } else {
-        null
-    }
-
-    AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.lg)
-                .padding(bottom = Spacing.xl)
-                .imePadding(),
-            verticalArrangement = Arrangement.spacedBy(Spacing.md)
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            AppTextField(
-                value = text,
-                onValueChange = { text = it },
-                placeholder = hint,
-                isError = isError,
-                supportingText = supporting,
-                keyboardOptions = KeyboardOptions(keyboardType = keyboardType)
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
-                TextButton(onClick = { onConfirm(text) }, enabled = !isError) {
-                    Text(stringResource(R.string.common_ok))
-                }
-            }
-        }
-    }
+    val issue = state.pairBackIssue ?: return base
+    return base + " · " + stringResource(R.string.settings_remote_device_pair_back_failed, issue)
 }
 
 /** 配对码弹层：大号展示 6 位码与协助地址。码不过期，配对成功后自动换新。 */
@@ -506,6 +265,7 @@ private fun PairingCodeSheet(
 }
 
 /** 接受协助：输入对方给的地址与 6 位码，配对成功后自动登记为本机的一个 MCP 服务器。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AcceptAssistDialog(
     state: AssistUiState,
@@ -517,11 +277,20 @@ private fun AcceptAssistDialog(
     var code by remember { mutableStateOf("") }
     val working = state is AssistUiState.Working
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_remote_device_accept_assist)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+    AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl)
+                .imePadding(),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            Text(
+                text = stringResource(R.string.settings_remote_device_accept_assist),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
                 AppTextField(
                     value = host,
                     onValueChange = { raw ->
@@ -556,24 +325,48 @@ private fun AcceptAssistDialog(
                 )
                 if (state is AssistUiState.Done) {
                     Text(
-                        text = state.message,
+                        text = assistMessage(state),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (state.ok) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.error
                     )
                 }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+                TextButton(
+                    enabled = !working && host.isNotBlank() && code.length == 6,
+                    onClick = { onConfirm(host, port.toIntOrNull() ?: RemoteDeviceConfig.DEFAULT_PORT, code) }
+                ) { Text(stringResource(R.string.common_ok)) }
             }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !working && host.isNotBlank() && code.length == 6,
-                onClick = { onConfirm(host, port.toIntOrNull() ?: RemoteDeviceConfig.DEFAULT_PORT, code) }
-            ) { Text(stringResource(R.string.common_ok)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
-    )
+    }
+}
+
+/** 配对结果文案：文案在 strings 里，控制器只返回原因码。 */
+@Composable
+private fun assistMessage(state: AssistUiState.Done): String = if (state.ok) {
+    stringResource(R.string.settings_remote_device_assist_ok, state.detail)
+} else {
+    when (state.error) {
+        RemoteDeviceController.AssistError.EMPTY_INPUT ->
+            stringResource(R.string.settings_remote_device_assist_err_empty)
+        RemoteDeviceController.AssistError.UNREACHABLE ->
+            stringResource(R.string.settings_remote_device_assist_err_unreachable, state.detail)
+        RemoteDeviceController.AssistError.INVALID_CODE ->
+            stringResource(R.string.settings_remote_device_assist_err_invalid_code)
+        RemoteDeviceController.AssistError.PEER_NOT_ALLOWED ->
+            stringResource(R.string.settings_remote_device_assist_err_peer_not_allowed)
+        RemoteDeviceController.AssistError.TOO_MANY_ATTEMPTS ->
+            stringResource(R.string.settings_remote_device_assist_err_too_many)
+        RemoteDeviceController.AssistError.HTTP_ERROR ->
+            stringResource(R.string.settings_remote_device_assist_err_http, state.detail)
+        RemoteDeviceController.AssistError.NO_TOKEN ->
+            stringResource(R.string.settings_remote_device_assist_err_no_token)
+        null -> ""
+    }
 }
 
 /**
@@ -609,6 +402,4 @@ private fun parsePairingInput(raw: String): Triple<String, Int?, String>? {
     return null
 }
 
-/** 时间戳转 yyyy-MM-dd HH:mm。 */
-private fun formatTimestamp(epochMs: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(epochMs))
+

@@ -77,7 +77,7 @@ enum class RemoteActionKind(val capability: String) {
  *
  * 参数 schema 直接从本机工具的 `parameters` 过滤而来（而不是自己另写一份），
  * 保证「对端看到的参数」与「真正执行的参数」永远一致。
- * Bash 的 `timeout` 参数被钳到 [RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS]：
+ * 远端 shell 的单次时长参考值是 [RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS]，
  * 调用方 Aharou 的 MCP client 有 120 秒 callTimeout（见 di/AgentModule.kt 的 Named("Mcp")），
  * 单次远端调用必须留出审批时间且不能超过它。
  */
@@ -98,8 +98,8 @@ class RemoteActionCatalog @Inject constructor(
         const val ACTION_READ_LOGS = "read_logs"
         const val ACTION_ASK_AI = "ask_ai"
 
-        /** 远端 shell 单次执行上限（秒）：留出审批时间，避免超过调用方 120 秒的 callTimeout。 */
-        const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 60L
+        /** 远端 shell 单次执行上限（秒）：给长任务留足时间，只防卡死不断正常操作。 */
+        const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 600L
 
         /** 本机工具的挂载名（与 di/AgentModule.kt 的注册名一致）。 */
         const val TOOL_READ_FILE = "readFile"
@@ -108,8 +108,9 @@ class RemoteActionCatalog @Inject constructor(
         const val TOOL_A11Y = "a11y"
         const val TOOL_VSCREEN = "vscreen"
 
-        /** `ui` 动作允许的操作：start 是驱动的前提必须放（不放则 launch/shot 都跑不起来）；stop 与 task 不开放给远端。 */
-        val UI_ALLOWED_ACTIONS = setOf("start", "launch", "shot", "tap", "swipe", "key", "type")
+        /** `ui` 动作允许的操作：全放开，远端可以启动、停止、自己跑多步任务。 */
+        val UI_ALLOWED_ACTIONS =
+            setOf("start", "stop", "launch", "shot", "tap", "swipe", "key", "type", "task", "trace")
     }
 
     val actions: List<RemoteAction> = listOf(
@@ -143,10 +144,10 @@ class RemoteActionCatalog @Inject constructor(
             name = ACTION_SHELL,
             kind = RemoteActionKind.EXECUTE_COMMAND,
             description = "在本机容器/终端执行一条 shell 命令并返回输出。" +
-                "单次最长 $REMOTE_SHELL_MAX_TIMEOUT_SECONDS 秒（超时会被钳到该值）；" +
+                "单次建议不超过 $REMOTE_SHELL_MAX_TIMEOUT_SECONDS 秒；" +
                 "不支持后台任务与提权参数——远端调用不提供这两条路径。",
             toolName = TOOL_BASH,
-            allowedArgs = setOf("command", "timeout")
+            allowedArgs = setOf("command", "timeout", "elevate", "reason", "background")
         ),
         RemoteAction(
             name = ACTION_SCREENSHOT,

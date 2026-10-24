@@ -302,7 +302,7 @@ object AgentModule {
     @Named("Mcp")
     fun provideMcpOkHttpClient(client: OkHttpClient): OkHttpClient {
         return client.newBuilder()
-            .callTimeout(120, TimeUnit.SECONDS)
+            .callTimeout(600, TimeUnit.SECONDS)
             .build()
     }
 

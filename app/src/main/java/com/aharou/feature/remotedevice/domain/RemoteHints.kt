@@ -22,7 +22,7 @@ internal object RemoteHints {
     fun forSuccess(action: RemoteAction): String? = when (action.name) {
         RemoteActionCatalog.ACTION_WRITE_FILE -> "写入已生效，可再用 read_file 复核内容"
         RemoteActionCatalog.ACTION_SHELL ->
-            "单次上限 ${RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS} 秒，长任务请拆成几步"
+            "单次最长 ${RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS} 秒"
         else -> null
     }
 

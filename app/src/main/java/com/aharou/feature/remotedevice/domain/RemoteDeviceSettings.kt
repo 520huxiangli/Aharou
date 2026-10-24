@@ -28,12 +28,12 @@ private val Context.remoteDeviceDataStore by preferencesDataStore(
 /**
  * 「跨设备协作」的本机配置。
  *
- * 默认不开服务。服务一旦开启，界面上的配对码就是唯一准入门槛（可选用 [allowPublicPeer] 决定
- * 是否接受公网对端），所以其余几项都取保守值：远端动作默认不再逐次审批（[alwaysAskRemote]），
+ * 默认开启服务。服务一旦开启，界面上的配对码就是唯一准入门槛（可选用 [allowPublicPeer] 决定
+ * 是否接受公网对端），所以其余几项都取放开值：远端动作默认不再逐次审批（[alwaysAskRemote]），
  * 因为协助场景下弹窗没人点——真要不被打断就得连本机工具一起去审批，那是 [enabled] 的职责。
  */
 data class RemoteDeviceConfig(
-    val enabled: Boolean = false,
+    val enabled: Boolean = true,
     val port: Int = DEFAULT_PORT,
     /** 展示给对端看的设备名；空表示用机型。 */
     val deviceName: String = "",
@@ -48,9 +48,10 @@ data class RemoteDeviceConfig(
      * 是否接受来自公网的对端。
      *
      * 关闭时只放行私网/回环/链路本地地址（即同一局域网）；开启后才能接受跨网络对端
-     * （IPv6 全球单播或经组网工具的地址）。开启后准入只剩配对码，默认关。
+     * （IPv6 全球单播或经组网工具的地址）。默认开启：跨网络协助是这项功能的主场景，
+     * 默认关会让「配好码却连不上」成为常态；准入只剩配对码，介意可关。
      */
-    val allowPublicPeer: Boolean = false,
+    val allowPublicPeer: Boolean = true,
     /**
      * 一次配对即互通：对端用配对码连上本机时，本机顺带回连一次、把对端也登记成本机的 MCP 服务器，
      * 省掉「反向再配一次」。关闭后每次配对只开通一个方向。默认开。
@@ -63,7 +64,7 @@ data class RemoteDeviceConfig(
      * 打开等于本机用户明确表态「这些设备可以问」，本机 AI 才有依据回答；否则一律按不可信输入挡回。
      * 它放宽的只是「能不能问」，不是「能不能动手」——改文件、跑命令照样走原有审批。
      */
-    val allowRemoteAskAi: Boolean = false
+    val allowRemoteAskAi: Boolean = true
 ) {
     companion object {
         /** 默认端口：避开 debug 变体内置 MCP server 的 47821，两者可同机共存。 */
@@ -93,13 +94,13 @@ class RemoteDeviceSettings @Inject constructor(
 
     val config: Flow<RemoteDeviceConfig> = context.remoteDeviceDataStore.data.map { prefs ->
         RemoteDeviceConfig(
-            enabled = prefs[ENABLED] ?: false,
+            enabled = prefs[ENABLED] ?: true,
             port = prefs[PORT] ?: RemoteDeviceConfig.DEFAULT_PORT,
             deviceName = prefs[NAME].orEmpty(),
             alwaysAskRemote = prefs[ALWAYS_ASK] ?: false,
-            allowPublicPeer = prefs[ALLOW_PUBLIC] ?: false,
+            allowPublicPeer = prefs[ALLOW_PUBLIC] ?: true,
             autoPairBack = prefs[AUTO_PAIR_BACK] ?: true,
-            allowRemoteAskAi = prefs[ALLOW_REMOTE_ASK_AI] ?: false
+            allowRemoteAskAi = prefs[ALLOW_REMOTE_ASK_AI] ?: true
         )
     }
 

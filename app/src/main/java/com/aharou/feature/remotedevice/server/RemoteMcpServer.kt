@@ -128,6 +128,10 @@ class RemoteMcpServer @Inject constructor(
     private val _state = MutableStateFlow<RemoteServerState>(RemoteServerState.Stopped)
     val state: StateFlow<RemoteServerState> = _state.asStateFlow()
 
+    /** 上一次反向配对（一次配对即互通）失败的原因；null 表示上次成功或还没试过。 */
+    private val _pairBackIssue = MutableStateFlow<String?>(null)
+    val pairBackIssue: StateFlow<String?> = _pairBackIssue.asStateFlow()
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** 幂等启动：已在跑就直接返回。 */
@@ -206,7 +210,7 @@ class RemoteMcpServer @Inject constructor(
             val allowPublicPeer = settings.current().allowPublicPeer
             if (!isAllowedPeer(peer, allowPublicPeer)) {
                 FileLogger.w(TAG, "拒绝对端（allowPublic=$allowPublicPeer）: ${peer?.hostAddress}")
-                writeHttpResponse(socket.getOutputStream(), 403, """{"error":"forbidden"}""")
+                writeHttpResponse(socket.getOutputStream(), 403, """{"error":"peer_not_allowed"}""")
                 return
             }
             val input = BufferedInputStream(socket.getInputStream())
@@ -341,7 +345,11 @@ class RemoteMcpServer @Inject constructor(
                     settings.current().autoPairBack
                 ) {
                     runCatching { pairBack(peer, peerEndpoint, peerCode) }
-                        .onFailure { FileLogger.w(TAG, "反向配对失败: ${it.message}") }
+                        .onSuccess { issue -> _pairBackIssue.value = issue }
+                        .onFailure {
+                            _pairBackIssue.value = it.message ?: "反向配对异常"
+                            FileLogger.w(TAG, "反向配对失败: ${it.message}")
+                        }
                 }
             }
             PairOutcome.InvalidCode ->
@@ -367,12 +375,12 @@ class RemoteMcpServer @Inject constructor(
      * 地址只认**请求来源 IP**，对端在参数里写的地址不参——它最多能影响端口。这样「配对」就不会
      * 被当成打任意主机的跳板（否则一个掌上有码的人就能让本机去打内网其它机器）。
      */
-    private suspend fun pairBack(peer: InetAddress, peerEndpoint: String, peerCode: String) {
+    private suspend fun pairBack(peer: InetAddress, peerEndpoint: String, peerCode: String): String? {
         // 用 URI 解端口：对端给的端点大概率是 IPv6（http://[240e:...]:47822/mcp），拿「第一个 :数字」
         // 的正则会先撞上 IPv6 里的段（如 :2001），从而回连到完全无关的端口。
         val port = runCatching { URI(peerEndpoint).port }.getOrNull()
             ?.takeIf { it in 1..65535 } ?: settings.current().port
-        val host = peer.hostAddress ?: return
+        val host = peer.hostAddress ?: return "对端地址不可用"
         val literal = if (host.contains(':')) "[$host]" else host
         val endpoint = "http://$literal:$port$PAIR_PATH"
         val payload = buildJsonObject {
@@ -400,16 +408,16 @@ class RemoteMcpServer @Inject constructor(
                 FileLogger.w(TAG, "反向配对连不上 $endpoint：${it.javaClass.simpleName}: ${it.message}")
                 null
             }
-        } ?: return
+        } ?: return "连不上对端"
         val (status, body) = http
         if (status !in 200..299) {
             FileLogger.w(TAG, "反向配对被拒（HTTP $status）: $endpoint")
-            return
+            return "对端拒绝（HTTP $status）"
         }
         val token = runCatching {
             json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.contentOrNull
         }.getOrNull().orEmpty()
-        if (token.isBlank()) return
+        if (token.isBlank()) return "对端没有返回 token"
         val serverName = "远端设备 ${if (literal.length > 24) literal.take(24) + "…" else literal}"
         val config = McpServerConfig(
             name = serverName,
@@ -419,6 +427,7 @@ class RemoteMcpServer @Inject constructor(
         val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
         mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
         FileLogger.i(TAG, "已与对端互通，登记 MCP 服务器「$serverName」")
+        return null
     }
 
     // ── MCP（Streamable HTTP） ────────────────────────────────────

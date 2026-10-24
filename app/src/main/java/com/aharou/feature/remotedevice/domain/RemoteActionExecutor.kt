@@ -112,6 +112,22 @@ class RemoteActionExecutor @Inject constructor(
 
         const val PREVIEW_LIMIT = 500
         const val MAX_DEVICE_LOCKS = 64
+
+        /**
+         * 只读动作不进设备串行锁：一个卡住的长动作（如影子屏启动）不该让对端连日志都读不到。
+         * 它们不改本机状态，并发执行不会互相干扰。
+         */
+        val READ_ONLY_ACTIONS = setOf(
+            RemoteActionCatalog.ACTION_INFO,
+            RemoteActionCatalog.ACTION_READ_FILE,
+            RemoteActionCatalog.ACTION_READ_LOGS,
+            RemoteActionCatalog.ACTION_FETCH_FILE,
+            RemoteActionCatalog.ACTION_SCREENSHOT
+        )
+
+        /** 单次远端动作的执行上限，只用来防「永久卡死」，不构成正常操作的天花板。 */
+        const val ACTION_TIMEOUT_MS = 15_000L
+        const val LONG_ACTION_TIMEOUT_MS = 600_000L
     }
 
     /** 每台设备一把短动作锁：串行执行，避免多张审批同时挂起把用户淹没。 */
@@ -138,9 +154,22 @@ class RemoteActionExecutor @Inject constructor(
         caller: RemotePairedDevice
     ): RemoteActionResult {
         val isLongTask = action.name == RemoteActionCatalog.ACTION_ASK_AI
-        val lock = lockFor(if (isLongTask) deviceLongLocks else deviceLocks, caller)
+        val lock = when {
+            // 整轮问 AI 单独一把锁，免得把它后面的投递类动作堵到超时。
+            isLongTask -> lockFor(deviceLongLocks, caller)
+            // 只读动作不排队：对端查日志、看状态时不该等另一个长动作跑完。
+            action.name in READ_ONLY_ACTIONS -> null
+            else -> lockFor(deviceLocks, caller)
+        }
         val queuedAt = System.currentTimeMillis()
-        return lock.withLock {
+        val timeoutMs = if (isLongTask || action.name == RemoteActionCatalog.ACTION_SHELL ||
+            action.name == RemoteActionCatalog.ACTION_UI
+        ) {
+            LONG_ACTION_TIMEOUT_MS
+        } else {
+            ACTION_TIMEOUT_MS
+        }
+        val body: suspend () -> RemoteActionResult = {
             FileLogger.i(
                 TAG,
                 "远端动作开始: ${action.name}（${caller.deviceName}），等锁 ${System.currentTimeMillis() - queuedAt}ms"
@@ -153,6 +182,18 @@ class RemoteActionExecutor @Inject constructor(
                     "远端动作结束: ${action.name}（${caller.deviceName}），总耗时 ${System.currentTimeMillis() - queuedAt}ms"
                 )
             }
+        }
+        // 没有总超时的话，宿主命令或系统服务一旦挂住，这把设备的锁就再也放不出来，
+        // 对端后续所有调用都只能干等到调用方自己超时。
+        val result = withTimeoutOrNull(timeoutMs) {
+            if (lock == null) body() else lock.withLock { body() }
+        }
+        return result ?: run {
+            FileLogger.w(TAG, "远端动作超时放弃: ${action.name}（${caller.deviceName}），${timeoutMs}ms")
+            failure(
+                action,
+                "执行超时（${timeoutMs / 1000} 秒）：本机没有在时限内返回，已放弃等待——宿主命令或系统服务可能卡住了"
+            )
         }
     }
 
@@ -515,12 +556,6 @@ class RemoteActionExecutor @Inject constructor(
         val args = LinkedHashMap<String, JsonElement>()
         action.allowedArgs.forEach { key -> raw[key]?.let { args[key] = it } }
         action.forcedArgs.forEach { (key, value) -> args[key] = JsonPrimitive(value) }
-        if (action.name == RemoteActionCatalog.ACTION_SHELL) {
-            val requested = args["timeout"]?.jsonPrimitive?.longOrNull
-            if (requested != null && requested > RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS) {
-                args["timeout"] = JsonPrimitive(RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS)
-            }
-        }
         return args
     }
 
