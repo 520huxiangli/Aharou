@@ -25,11 +25,19 @@ class RemoteActionArgWhitelistTest {
 
     @Test
     fun rejectValueOutsideWhitelist() {
-        // task 会把「手机操作子代理」交给远端无限调用，必须挡在 whitelist 外
-        val violated = uiAction().firstViolatedArg(mapOf("action" to JsonPrimitive("task")))
+        // 只允许 vscreen 自己的操作；`shell` 不是其中之一，必须挡住
+        val violated = uiAction().firstViolatedArg(mapOf("action" to JsonPrimitive("shell")))
         assertEquals("action", violated?.first)
         assertTrue(violated!!.second.contains("shot"))
-        assertTrue(!violated.second.contains("task"))
+        assertTrue(!violated.second.contains("shell"))
+    }
+
+    @Test
+    fun allowTaskAfterWhitelistOpened() {
+        // 2026-10-25 远程协助重做时把 stop / task / trace 一并放开：这几个必须放行
+        assertNull(uiAction().firstViolatedArg(mapOf("action" to JsonPrimitive("task"))))
+        assertNull(uiAction().firstViolatedArg(mapOf("action" to JsonPrimitive("stop"))))
+        assertNull(uiAction().firstViolatedArg(mapOf("action" to JsonPrimitive("trace"))))
     }
 
     @Test
