@@ -135,6 +135,9 @@ jobs:
               echo '```'
               tail -30 /tmp/unit.log 2>/dev/null || echo '（没有 /tmp/unit.log）'
               echo '```'
+              # 日志尾部进注解：注解能通过 API 读到，不受日志截断与 artifact 下载权限影响
+              CRASH=$(tail -6 /tmp/unit.log 2>/dev/null | tr '\n' '~' | cut -c1-800)
+              echo "::error title=单测崩溃原因::${CRASH}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
