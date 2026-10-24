@@ -34,6 +34,10 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
+    env:
+      # 编译闸门的 CI 放行开关（gradlew 读它）：一个 job 里会多次调 gradlew，
+      # 而本地授权文件是一次性消费的，不显式放行的话第二次（单测）会被误拒。
+      AHAROU_CI_BUILD: "1"
 
     steps:
       - name: Checkout

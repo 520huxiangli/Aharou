@@ -16,6 +16,9 @@ jobs:
   build:
     name: Build & Release
     runs-on: ubuntu-latest
+    env:
+      # 编译闸门的 CI 放行开关：一个 job 里会多次调 gradlew（构建 + 单测 + 打包）。
+      AHAROU_CI_BUILD: "1"
     permissions:
       contents: write   # 创建 Release 与上传资产需要写权限
 

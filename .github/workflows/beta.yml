@@ -32,6 +32,9 @@ jobs:
   build:
     name: Build Beta APK
     runs-on: ubuntu-latest
+    env:
+      # 编译闸门的 CI 放行开关：一个 job 里会多次调 gradlew。
+      AHAROU_CI_BUILD: "1"
 
     steps:
       - name: Checkout
