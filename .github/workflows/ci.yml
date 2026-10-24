@@ -102,3 +102,13 @@ jobs:
       # 跑全 flavor 6 变体是重复编译，无额外覆盖。
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
+
+      # 失败时也要把测试报告带出来：GitHub 的日志接口会把长日志截断，单测挂在哪一条
+      # 从日志里根本看不到（2026-10-25 连续两次因此只能看到「exit code 1」）。
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: app/build/test-results/testUniversalDebugUnitTest/**
+          retention-days: 7
