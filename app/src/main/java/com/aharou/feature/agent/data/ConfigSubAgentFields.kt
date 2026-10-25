@@ -1,0 +1,42 @@
+package com.aharou.feature.agent.data
+
+import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigSchema
+import com.aharou.core.config.ConfigValue
+import com.aharou.core.config.fields.ClosureField
+import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
+import com.aharou.feature.agent.domain.subagent.SubAgentSettings
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/**
+ * 子代理并发上限 → 配置通道。
+ *
+ * 上限存在 SharedPreferences（`aharou_subagent_prefs`）而不是 DataStore，所以用 [ClosureField]
+ * 桥接；读写都同步，正好对得上。
+ */
+@Singleton
+class ConfigSubAgentFields @Inject constructor(
+    private val subAgentSettings: SubAgentSettings,
+) {
+
+    fun registerInto(registry: ConfigRegistry) = with(registry) {
+        register(
+            ClosureField(
+                path = "subagent.max_running",
+                displayName = "子代理并发上限",
+                description = "同时运行的子代理上限（整个应用共享，不按会话分组），范围 " +
+                    "${SubAgentSettings.MIN_RUNNING}..${SubAgentSettings.MAX_RUNNING}，默认 " +
+                    "${SubAgentEventBus.DEFAULT_MAX_RUNNING}。超过范围会被自动收敛。",
+                valueSchema = ConfigSchema.Int(SubAgentSettings.MIN_RUNNING, SubAgentSettings.MAX_RUNNING),
+                reader = { ConfigValue.Int(subAgentSettings.maxRunning()) },
+                writer = { v ->
+                    // 缺值/类型不对时回落到默认上限，而不是保留旧值：写入方拿到的应当是可预期的结果。
+                    subAgentSettings.setMaxRunning(
+                        (v as? ConfigValue.Int)?.value ?: SubAgentEventBus.DEFAULT_MAX_RUNNING,
+                    )
+                },
+            ),
+        )
+    }
+}

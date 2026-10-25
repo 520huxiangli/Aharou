@@ -11,13 +11,17 @@ import org.junit.Test
  */
 class SubAgentEventBusTest {
 
+    /** 事件总线只依赖 [MaxRunningSource]，测试直接给固定值；默认取 [SubAgentEventBus.DEFAULT_MAX_RUNNING]。 */
+    private fun busWith(limit: Int = SubAgentEventBus.DEFAULT_MAX_RUNNING) =
+        SubAgentEventBus(MaxRunningSource { limit })
+
     private fun spawn(bus: SubAgentEventBus, id: String) = bus.emit(
         SubAgentEvent(subSessionId = id, parentSessionId = "parent", type = SubAgentEventType.SPAWNED)
     )
 
     @Test
     fun spawn_marksActive() {
-        val bus = SubAgentEventBus()
+        val bus = busWith()
         spawn(bus, "sub-1")
 
         assertEquals(setOf("sub-1"), bus.activeSubSessionIds.value)
@@ -32,7 +36,7 @@ class SubAgentEventBusTest {
             SubAgentEventType.FAILED,
             SubAgentEventType.STOPPED
         ).forEach { type ->
-            val bus = SubAgentEventBus()
+            val bus = busWith()
             spawn(bus, "sub-1")
             bus.emit(SubAgentEvent(subSessionId = "sub-1", parentSessionId = "parent", type = type))
 
@@ -42,8 +46,8 @@ class SubAgentEventBusTest {
 
     @Test
     fun isFull_atMaxRunning() {
-        val bus = SubAgentEventBus()
-        repeat(SubAgentEventBus.MAX_RUNNING) { spawn(bus, "sub-$it") }
+        val bus = busWith()
+        repeat(SubAgentEventBus.DEFAULT_MAX_RUNNING) { spawn(bus, "sub-$it") }
 
         assertTrue(bus.isFull)
 
@@ -51,10 +55,22 @@ class SubAgentEventBusTest {
         assertFalse("腾出一个后应能再派发", bus.isFull)
     }
 
+    /** 上限读用户配置，不是写死的 5：配到 2 时第二个就不该再接受。 */
+    @Test
+    fun isFull_followsConfiguredLimit() {
+        val bus = busWith(limit = 2)
+        spawn(bus, "sub-1")
+        assertFalse(bus.isFull)
+
+        spawn(bus, "sub-2")
+        assertEquals(2, bus.maxRunning)
+        assertTrue("配到 2 个时就应判满", bus.isFull)
+    }
+
     /** 用户手动停止走 release：必须真的交回槽位，否则上限被永久占用。 */
     @Test
     fun release_freesSlotAndReportsWhetherItWasActive() {
-        val bus = SubAgentEventBus()
+        val bus = busWith()
         spawn(bus, "sub-1")
 
         assertTrue(bus.release("sub-1"))
@@ -67,7 +83,7 @@ class SubAgentEventBusTest {
      */
     @Test
     fun release_isIdempotentForUnknownId() {
-        val bus = SubAgentEventBus()
+        val bus = busWith()
         spawn(bus, "sub-1")
         bus.release("sub-1")
 
@@ -77,7 +93,7 @@ class SubAgentEventBusTest {
 
     @Test
     fun release_doesNotTouchOtherSubAgents() {
-        val bus = SubAgentEventBus()
+        val bus = busWith()
         spawn(bus, "sub-1")
         spawn(bus, "sub-2")
 

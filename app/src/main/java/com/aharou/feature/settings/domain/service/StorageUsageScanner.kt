@@ -187,7 +187,7 @@ class StorageUsageScanner @Inject constructor(
         return StorageEntry(StorageCategory.Workspaces, details.sumOf { it.bytes } + looseFiles, details)
     }
 
-    /** AI 配置与产物：`filesDir/aicode`，按子目录拆开（工具输出与识图会话可清理）。 */
+    /** AI 配置与产物：`filesDir/aharou`（[ContainerInstaller.aharouDir]），按子目录拆开（工具输出与识图会话可清理）。 */
     private fun aiConfigEntry(cancelled: () -> Boolean): StorageEntry {
         val root = containerInstaller.aharouDir
         val cleanableKeys = mapOf(
@@ -241,10 +241,17 @@ class StorageUsageScanner @Inject constructor(
             bytes = dirSize(context.cacheDir, cancelled) + dirSize(context.codeCacheDir, cancelled)
         )
 
-    /** 其他数据：filesDir 里未被上述分类覆盖的部分（DataStore、背景图、字体、SSH 私钥等）加 shared_prefs。 */
+    /**
+     * 其他数据：filesDir 里未被上述分类覆盖的部分（DataStore、背景图、字体、SSH 私钥等）加 shared_prefs。
+     *
+     * AI 配置目录名直接取自 [ContainerInstaller.aharouDir]，与 [aiConfigEntry] 同一来源；
+     * 不在这里另写一份目录名，否则目录改名后两处各说一套，该目录会被重复计入总占用。
+     */
     private fun otherDataEntry(cancelled: () -> Boolean): StorageEntry {
+        val aiConfigDirName = containerInstaller.aharouDir.name
         val rest = context.filesDir.listFiles()?.filterNot { file ->
-            file.name in CLASSIFIED_DIRS || file.name == ROOTFS_DIR || file.name.startsWith("${ROOTFS_DIR}_")
+            file.name in CLASSIFIED_DIRS || file.name == aiConfigDirName ||
+                file.name == ROOTFS_DIR || file.name.startsWith("${ROOTFS_DIR}_")
         }?.sumOf { dirSize(it, cancelled) } ?: 0L
         val prefs = context.filesDir.parentFile?.let { dirSize(File(it, PREFS_DIR), cancelled) } ?: 0L
         return StorageEntry(StorageCategory.OtherData, rest + prefs)
@@ -280,13 +287,16 @@ class StorageUsageScanner @Inject constructor(
         private const val PROJECTS_DIR = "projects"
         private const val CHECKPOINTS_DIR = "checkpoints"
         private const val VOICE_MODELS_DIR = VoiceModels.MODEL_ROOT_DIR
-        private const val AHAROU_DIR = "aicode"
         private const val PREFS_DIR = "shared_prefs"
         private const val ATTACHMENTS_RELATIVE = ".aharou/attachments"
 
-        /** 已被其它分类覆盖的 filesDir 子项，不再计入「其他数据」。 */
+        /**
+         * 已被其它分类覆盖的 filesDir 子项，不再计入「其他数据」。
+         *
+         * 不含 AI 配置目录：它已改名为 aharou，由 [ContainerInstaller.aharouDir] 提供，见 [otherDataEntry]。
+         */
         private val CLASSIFIED_DIRS = setOf(
-            PROJECTS_DIR, AHAROU_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, "logs", "ai-logs"
+            PROJECTS_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, "logs", "ai-logs"
         )
 
         private const val TOP_SESSIONS = 5

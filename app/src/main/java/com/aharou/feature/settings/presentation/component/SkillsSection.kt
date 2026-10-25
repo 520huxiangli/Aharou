@@ -76,9 +76,10 @@ internal fun SkillsSection(
     onExport: (SkillUiEntry) -> Unit,
     onOpenDetail: (SkillUiEntry) -> Unit
 ) {
-    val builtinSkills = entries.filter { it.builtin }
-    val projectSkills = entries.filter { it.scope == SkillScope.PROJECT }
-    val globalSkills = entries.filter { it.scope == SkillScope.GLOBAL }
+    // 已禁用的沉到组末尾：禁用项一多，混在中间会把启用的冲散。
+    val builtinSkills = entries.filter { it.builtin }.sortedBy { it.disabled }
+    val projectSkills = entries.filter { it.scope == SkillScope.PROJECT }.sortedBy { it.disabled }
+    val globalSkills = entries.filter { it.scope == SkillScope.GLOBAL }.sortedBy { it.disabled }
 
     if (entries.isEmpty()) {
         Box(

@@ -478,17 +478,83 @@ class ContextCompactorTest {
     }
 
     @Test
-    fun failedMaterialIsNotSummarizedAgainEvenWhenNewTailIsAppended() = runTest {
+    fun failedMaterialIsNotSummarizedAgainWhileTransientFailureIsFresh() = runTest {
         prepare()
         coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
         val original = history()
-        val first = compactor.compactIfNeeded(original, provider, force = true)
+        // 旧语义是「失败就拉黑 60 秒、连点重试也一直失败」；现在 API 类失败只拦 TRANSIENT_MATERIAL_TTL_MS（秒级），
+        // 且只拦自动路径（force 入口可绕过，见下个用例），所以这里用非 force 的自动路径验证「短窗口内不重复白跑摘要」。
+        val first = compactor.compactIfNeeded(original, provider, currentInputTokens = 99_999)
         val continued = original + AgentMessage.AssistantMessage(content = "continue")
-        val second = compactor.compactIfNeeded(continued, provider, force = true)
+        val second = compactor.compactIfNeeded(continued, provider, currentInputTokens = 99_999)
         assertFalse(first.compacted)
         assertFalse(second.compacted)
         assertSame(continued, second.messages)
         coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun forcedCompactionBypassesTransientFailureBlacklist() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
+        val original = history()
+        // 手动 /compress 与上下文溢出兜底都走 force：换供应商/换模型后同一份材料应当能再试（issue #23）
+        assertFalse(compactor.compactIfNeeded(original, provider, force = true).compacted)
+        assertFalse(compactor.compactIfNeeded(original, provider, force = true).compacted)
+        coVerify(exactly = 2) { provider.complete(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun fallsBackToChatModelWhenCompactionModelFails() = runTest {
+        prepare()
+        val chat = mockk<AIProvider>(relaxed = true)
+        every { chat.providerId } returns "chat-provider"
+        every { chat.model } returns "chat-model"
+        every { chat.maxOutputTokens } returns 8_000
+        coEvery { chat.complete(any(), any(), any(), any()) } returns AIResponse("Concise handoff", stopReason = "stop")
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
+        val result = compactor.compactIfNeeded(history(6_000), provider, force = true, windowProvider = chat)
+        // 压缩专用模型拒答后换聊天模型再试一次，成功就用第二级的结果
+        assertTrue(result.compacted)
+        coVerify(exactly = 1) { provider.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 1) { chat.complete(any(), any(), any(), any()) }
+        coVerify(exactly = 0) { dao.commitCompaction(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun noModelTrimRescuesTheTurnWhenSummaryKeepsFailing() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
+        val messages = listOf(
+            AgentMessage.UserMessage(id = "goal", content = "continue the task"),
+            AgentMessage.AssistantMessage(id = "a1", content = "", toolCalls = listOf(ToolCall("t1", "readFile", emptyMap()))),
+            AgentMessage.ToolResultMessage(id = "t1", toolName = "readFile", result = "y".repeat(60_000)),
+            AgentMessage.AssistantMessage(id = "a2", content = "", toolCalls = listOf(ToolCall("t2", "readFile", emptyMap()))),
+            AgentMessage.ToolResultMessage(id = "t2", toolName = "readFile", result = "ok")
+        )
+        val events = mutableListOf<AgentEvent>()
+        val result = compactor.compactIfNeeded(messages, provider, force = true, onEvent = { events.add(it) })
+        // 第三级不调模型：早轮次的超长工具输出折成引用，图片只留最新一张，装进预算就直接用
+        assertTrue(result.compacted)
+        val trimmed = result.messages[2] as AgentMessage.ToolResultMessage
+        assertTrue(trimmed.modelResult!!.contains("/root/.aharou/tool-output/soft-trim-"))
+        assertEquals(60_000, trimmed.result.length)
+        assertTrue(events.none { it is AgentEvent.CompactionFailed })
+        assertEquals(1, events.count { it is AgentEvent.CompactionStarted })
+    }
+
+    @Test
+    fun failureCardListsAttemptedFallbackLevels() = runTest {
+        prepare()
+        coEvery { provider.complete(any(), any(), any(), any()) } returns AIResponse("", stopReason = "refusal")
+        val events = mutableListOf<AgentEvent>()
+        compactor.compactIfNeeded(history(6_000), provider, force = true, currentInputTokens = 99_999,
+            onEvent = { events.add(it) })
+        val reason = events.filterIsInstance<AgentEvent.CompactionFailed>().single().reason
+        // 失败卡片要能看出「试过哪几级」以及可操作的原因（上游拒绝了摘要请求）
+        assertTrue(reason.contains("已尝试的降级级别"))
+        assertTrue(reason.contains(ContextCompactor.FORCED_TRIM_LABEL))
+        assertTrue(reason.contains(ContextCompactor.SUMMARY_REJECTED_REASON))
     }
 
     @Test

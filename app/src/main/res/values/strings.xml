@@ -1528,6 +1528,8 @@
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">子代理</string>
+    <string name="subagent_max_running">并发上限</string>
+    <string name="subagent_max_running_hint">同时运行的子代理数量上限，范围 %1$d~%2$d。名额整个应用共享，不按会话分组。</string>
     <string name="subagents_empty">还没有自定义子代理</string>
     <string name="subagents_empty_hint">点右上角「+」新建一个，或把 agent 的 .md 定义放进 ~/.aharou/agents/</string>
     <string name="subagents_no_project">当前项目暂无子代理</string>
@@ -1736,7 +1738,12 @@
     <!-- Provider Editor -->
     <string name="provider_section_basic">基本信息</string>
     <string name="provider_section_type">上游格式</string>
-    <string name="provider_section_options">选项</string>    <string name="provider_show_api_key">显示密钥</string>
+    <string name="provider_section_options">选项</string>
+    <string name="provider_custom_icon">供应商图标</string>
+    <string name="provider_custom_icon_hint">可以从相册选一张图，或填一个图片链接；不设置则按品牌名自动匹配内置图标。</string>
+    <string name="provider_custom_icon_pick">从相册选择</string>
+    <string name="provider_custom_icon_url">图片链接</string>
+    <string name="provider_custom_icon_reset">恢复默认图标</string>    <string name="provider_show_api_key">显示密钥</string>
     <string name="provider_hide_api_key">隐藏密钥</string>
     <string name="provider_api_key">API Key</string>
     <string name="provider_base_url">Base URL</string>

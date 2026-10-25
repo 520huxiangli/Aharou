@@ -1418,6 +1418,10 @@ class AIAgentViewModel @Inject constructor(
     private companion object {
         const val TAG = "AIAgentViewModel"
 
+        /** 续跑时发给模型的引导语：任务中途被中断后接着进度做，避免重做已完成部分。 */
+        const val RESUMED_TURN_PROMPT = "上一轮任务在中途被中断。请基于当前已有的对话与文件进度继续，" +
+            "不要重做已经完成的部分，也不要重新读取或重写已经正确的文件。"
+
         /** 通知正文里的回复摘要上限（字符）：横幅/胶囊都放不下整段回复。 */
         const val NOTIFICATION_BODY_MAX = 60
 
@@ -3013,8 +3017,9 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 错误横幅的一键重试：取当前会话最后一条用户输入，连同其后所有消息（半截回答、工具结果、
-     * 错误行）一并删掉，再用它原本的文本与附件重跑一轮——不回填输入框。
+     * 错误横幅的一键重试。失败那一轮已有进度（非空回答或工具结果）时接着进度续跑——
+     * 删掉重跑会让模型把已完成的部分当新任务重做，反而覆盖磁盘上已经改对的代码。
+     * 只有在首个回答产出之前就失败、没有任何进度时，才删除这一轮重新跑。
      *
      * 注意删除从用户消息自身开始：重跑时 runner 会重新落一条同样的用户消息，只删「其后」会多出气泡。
      */
@@ -3022,9 +3027,21 @@ class AIAgentViewModel @Inject constructor(
         val sessionId = _currentSessionId.value ?: return@launch
         val userMessage = lastUserInputMessage(sessionId) ?: return@launch
         cancelRunningTurn(sessionId)
+        setAgentState(sessionId, AgentUIState.Idle)
+        if (turnHasProgressAfter(sessionId, userMessage.timestamp)) {
+            executeAgentRequestStream(
+                request = RESUMED_TURN_PROMPT,
+                projectRoot = workspaceOf(sessionId),
+                targetSessionId = sessionId,
+                // 续跑轮不落用户消息、不建检查点、不改标题：引导语只是给模型的，不该变成聊天记录里的气泡。
+                isAutoTrigger = true,
+                persistUserMessage = false,
+                skipTitleUpdate = true
+            )
+            return@launch
+        }
         messagePersistenceUseCase.deleteMessagesFromTimestamp(sessionId, userMessage.timestamp)
         agentMessageDao.repairSingletonVariantGroups(sessionId)
-        setAgentState(sessionId, AgentUIState.Idle)
         executeAgentRequestStream(
             request = userMessage.content,
             projectRoot = workspaceOf(sessionId),
@@ -3032,6 +3049,14 @@ class AIAgentViewModel @Inject constructor(
             targetSessionId = sessionId
         )
     }
+
+    /** 该用户消息之后是否已有可续的进度：工具结果，或非空且非错误行的助手回答。 */
+    private suspend fun turnHasProgressAfter(sessionId: String, timestamp: Long): Boolean =
+        agentMessageDao.getMessagesBySessionOnce(sessionId).any {
+            it.timestamp > timestamp && !it.isError &&
+                (it.role == MessageRole.TOOL.name ||
+                    (it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank()))
+        }
 
     /**
      * 「重新生成」：旧回答不删，而是连同本轮的工具过程一起标记为变体组的一版（退出上下文回放），

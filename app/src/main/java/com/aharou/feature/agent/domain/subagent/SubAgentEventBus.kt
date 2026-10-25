@@ -57,10 +57,12 @@ data class SubAgentEvent(
  * 在子会话上启动 AI 工作流；子会话工作流结束时 ViewModel 再发 COMPLETED/FAILED，
  * 父会话据此注入后台通知（类比 terminal 的 notify=true 异步回调）。
  *
- * 同时维护活跃子代理会话 id 集合，供 TaskTool 查询并发上限（最多 5 个运行中）。
+ * 同时维护活跃子代理会话 id 集合，供 TaskTool 查询并发上限（默认最多 5 个运行中，可在设置里调整）。
  */
 @Singleton
-class SubAgentEventBus @Inject constructor() {
+class SubAgentEventBus @Inject constructor(
+    private val maxRunningSource: MaxRunningSource,
+) {
     private val _events = MutableSharedFlow<SubAgentEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SubAgentEvent> = _events.asSharedFlow()
 
@@ -84,8 +86,11 @@ class SubAgentEventBus @Inject constructor() {
     /** 运行中的子代理数量。 */
     val activeCount: Int get() = _activeSubSessionIds.value.size
 
+    /** 当前并发上限，读用户配置（默认 [DEFAULT_MAX_RUNNING]）。整个应用共享，不按父会话分组。 */
+    val maxRunning: Int get() = maxRunningSource.maxRunning()
+
     /** 是否已达并发上限。 */
-    val isFull: Boolean get() = activeCount >= MAX_RUNNING
+    val isFull: Boolean get() = activeCount >= maxRunning
 
     /**
      * 直接把某个子代理移出活跃集合，不广播事件；返回它此前是否处于活跃状态。
@@ -129,8 +134,8 @@ class SubAgentEventBus @Inject constructor() {
     }
 
     companion object {
-        /** 同时运行的子代理上限。判定以此为准，工具层只引用不自己再写一份。 */
-        const val MAX_RUNNING = 5
+        /** 同时运行的子代理上限的默认值。实际值由 [SubAgentSettings] 给，工具层只读实例值。 */
+        const val DEFAULT_MAX_RUNNING = 5
     }
 
     // ── 兄弟（同父）消息路由 ──────────────────────────────────

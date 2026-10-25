@@ -1529,6 +1529,8 @@
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
+    <string name="subagent_max_running">Concurrency limit</string>
+    <string name="subagent_max_running_hint">Max subagents running at the same time, %1$d to %2$d. The quota is shared by the whole app, not per session.</string>
     <string name="subagents_empty">No custom subagents yet</string>
     <string name="subagents_empty_hint">Tap + in the top bar to create one, or drop an agent\'s .md definition into ~/.aharou/agents/</string>
     <string name="subagents_no_project">No subagents in this project</string>
@@ -1737,7 +1739,12 @@
     <!-- Provider Editor -->
     <string name="provider_section_basic">General</string>
     <string name="provider_section_type">Upstream Format</string>
-    <string name="provider_section_options">Options</string>    <string name="provider_show_api_key">Show API Key</string>
+    <string name="provider_section_options">Options</string>
+    <string name="provider_custom_icon">Provider icon</string>
+    <string name="provider_custom_icon_hint">Pick an image from your gallery or paste an image link. Leave it empty to use the built-in icon matched by brand name.</string>
+    <string name="provider_custom_icon_pick">Choose from gallery</string>
+    <string name="provider_custom_icon_url">Image link</string>
+    <string name="provider_custom_icon_reset">Use default icon</string>    <string name="provider_show_api_key">Show API Key</string>
     <string name="provider_hide_api_key">Hide API Key</string>
     <string name="provider_api_key">API Key</string>
     <string name="provider_base_url">Base URL</string>

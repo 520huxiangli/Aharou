@@ -55,7 +55,7 @@ import javax.inject.Inject
  * - `team`：列出同批队友（同一父会话下的其它子代理）：谁在跑、各自负责任务与角色。
  * - `tell`：向同批队友发一条消息（id + message），供分支上的子代理互相交流。
  *
- * 最多同时允许 5 个运行中的子代理（create 时检查上限），嵌套派发同样计入该上限。
+ * 最多同时允许的数目由配置决定（默认 5 个，见 SubAgentSettings；create 时检查上限），嵌套派发同样计入该上限。
  * 子代理可再派子代理，但最多嵌套 2 层（主代理 → 子代理 → 孙代理，见 [AgentDefinition.MAX_SUBAGENT_DEPTH]），
  * 再深会被拒绝。
  *
@@ -116,7 +116,7 @@ class TaskTool @Inject constructor(
         }
     }
 
-    override val description = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 5 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。分支上的子代理可用 team 查队友、tell 互相发消息；子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。"
+    override val description: String get() = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 ${eventBus.maxRunning} 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。分支上的子代理可用 team 查队友、tell 互相发消息；子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
@@ -327,9 +327,9 @@ class TaskTool @Inject constructor(
                     "WRITE_CONFLICT"
                 )
             }
-            if (layer.size > SubAgentEventBus.MAX_RUNNING) {
+            if (layer.size > eventBus.maxRunning) {
                 return ToolResult.Error(
-                    "第 ${layerIndex + 1} 层有 ${layer.size} 个任务，超过并发上限 ${SubAgentEventBus.MAX_RUNNING}：" +
+                    "第 ${layerIndex + 1} 层有 ${layer.size} 个任务，超过并发上限 ${eventBus.maxRunning}：" +
                         "拆成多层（用 dependsOn 串起来）或减少同层任务数",
                     "TOO_MANY_IN_LAYER"
                 )
@@ -506,7 +506,7 @@ class TaskTool @Inject constructor(
         // 检查并发上限
         if (eventBus.isFull) {
             return ToolResult.Error(
-                "子代理已达上限（最多 ${SubAgentEventBus.MAX_RUNNING} 个同时运行），请先等待其中某个完成或用 stop 停止后再创建",
+                "子代理已达上限（最多 ${eventBus.maxRunning} 个同时运行），请先等待其中某个完成或用 stop 停止后再创建",
                 "MAX_SUBAGENTS_REACHED"
             )
         }
@@ -822,7 +822,7 @@ class TaskTool @Inject constructor(
                 put("subagents", jsonArray)
                 put("count", subs.size)
                 put("runningCount", activeIds.size)
-                put("maxRunning", SubAgentEventBus.MAX_RUNNING)
+                put("maxRunning", eventBus.maxRunning)
             }
         )
     }

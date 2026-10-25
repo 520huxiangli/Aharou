@@ -54,7 +54,12 @@ data class AIProviderConfig(
      * 执行面板脚本时注入为额外环境变量 `AICODE_KEY_<KEY>`，
      * 值支持引用提供商配置占位符，如 `{{PROVIDER_API_KEY}}`、`{{BASE_URL}}`。
      */
-    val scriptParams: Map<String, String> = emptyMap()
+    val scriptParams: Map<String, String> = emptyMap(),
+    /**
+     * 自定义图标：本地文件绝对路径（如 `filesDir/aharou/provider-icons/<id>.png`）或 http(s) 链接。
+     * 空表示按品牌名匹配内置图标。
+     */
+    val customIcon: String = ""
 ) {
     /** 实际生效的模型：优先 selectedModel，其次 defaultModel。 */
     val effectiveModel: String

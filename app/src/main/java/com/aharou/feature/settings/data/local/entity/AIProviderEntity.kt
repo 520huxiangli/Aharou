@@ -54,5 +54,10 @@ data class AIProviderEntity(
     val proxyUsername: String = "",
     val proxyPassword: String = "",
     /** 自定义面板 (DIY) 脚本参数（JSON 编码的 Map<String, String>，空为 ""）。 */
-    val scriptParams: String = ""
+    val scriptParams: String = "",
+    /**
+     * 自定义图标：本地文件绝对路径或 http(s) 链接，空表示按品牌名匹配内置图标。
+     * 表里的列名就是 customIcon（未改 @ColumnInfo）。
+     */
+    val customIcon: String = ""
 )

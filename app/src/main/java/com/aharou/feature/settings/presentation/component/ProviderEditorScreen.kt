@@ -5,6 +5,7 @@ import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +57,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.BatchDeleteConfirmDialog
 import com.aharou.core.ui.SelectionAction
@@ -107,6 +109,7 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppTextField
+import com.aharou.core.util.ProviderIconStore
 import com.aharou.core.ui.FloatingTabBar
 import com.aharou.core.ui.FloatingTabItem
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
@@ -218,6 +221,9 @@ fun ProviderEditorScreen(
     var isEnabled by remember { mutableStateOf(initialProvider?.isEnabled ?: true) }
     var type by remember { mutableStateOf(initialProvider?.type ?: presetType ?: ProviderType.OPENAI) }
     val providerId = remember { initialProvider?.id ?: System.currentTimeMillis().toString() }
+    // 自定义图标：相册导入后存本地绝对路径，也可以直接是图片链接。
+    var customIcon by remember { mutableStateOf(initialProvider?.customIcon ?: "") }
+    var showIconDialog by remember { mutableStateOf(false) }
     val models = remember {
         mutableStateListOf<String>().apply {
             addAll(initialProvider?.models ?: presetPrefill?.models ?: emptyList())
@@ -356,7 +362,8 @@ fun ProviderEditorScreen(
         proxyPort = proxyPort,
         proxyUsername = proxyUsername,
         proxyPassword = proxyPassword,
-        scriptParams = scriptParams.filter { it.first.isNotBlank() }.toMap()
+        scriptParams = scriptParams.filter { it.first.isNotBlank() }.toMap(),
+        customIcon = customIcon
     ).sanitized()
 
     // 新建场景下判断用户是否填写了实质内容：名称、API Key、Base URL 任一非空白，或已添加模型 / DIY 脚本参数。
@@ -383,6 +390,17 @@ fun ProviderEditorScreen(
         if (config == lastSubmittedConfig) return
         onSave(config)
         lastSubmittedConfig = config
+    }
+
+    fun applyIcon(newIcon: String) {
+        customIcon = newIcon
+        saveCurrent()
+    }
+
+    val iconPickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            ProviderIconStore.import(context, providerId, uri)?.let { applyIcon(it) }
+        }
     }
 
     // 拉取成功后自动对齐：远端已不存在的本地模型直接移除（可在「偏好设置」关掉）。拉取失败或返回空列表时不动列表。
@@ -513,6 +531,12 @@ fun ProviderEditorScreen(
                     // ── 选项 ──
                     SettingsGroupHeader(text = stringResource(R.string.provider_section_options))
                     SettingsGroup {
+                        SettingsRow(
+                            title = stringResource(R.string.provider_custom_icon),
+                            subtitle = stringResource(R.string.provider_custom_icon_hint),
+                            onClick = { showIconDialog = true }
+                        )
+                        SettingsDivider()
                         ProviderSwitchRow(
                             title = stringResource(R.string.common_enabled),
                             checked = isEnabled,
@@ -1023,7 +1047,77 @@ fun ProviderEditorScreen(
                 onOnboardingDismissFetchDialog = onOnboardingDismissFetchDialog
             )
         }
+
+        if (showIconDialog) {
+            ProviderIconDialog(
+                currentIcon = customIcon,
+                onPickGallery = {
+                    showIconDialog = false
+                    iconPickLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                onConfirmLink = { link ->
+                    applyIcon(link)
+                    showIconDialog = false
+                },
+                onReset = {
+                    ProviderIconStore.delete(context, providerId)
+                    applyIcon("")
+                    showIconDialog = false
+                },
+                onDismiss = { showIconDialog = false }
+            )
+        }
     }
+}
+
+/** 自定义供应商图标：相册选图 / 填图片链接 / 恢复默认。 */
+@Composable
+private fun ProviderIconDialog(
+    currentIcon: String,
+    onPickGallery: () -> Unit,
+    onConfirmLink: (String) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var link by remember(currentIcon) {
+        mutableStateOf(if (currentIcon.startsWith("http")) currentIcon else "")
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.provider_custom_icon)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text(
+                    text = stringResource(R.string.provider_custom_icon_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onPickGallery, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.provider_custom_icon_pick))
+                }
+                AppTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = stringResource(R.string.provider_custom_icon_url)
+                )
+                if (currentIcon.isNotBlank()) {
+                    TextButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.provider_custom_icon_reset))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirmLink(link.trim()) }, enabled = link.isNotBlank()) {
+                Text(stringResource(R.string.common_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        }
+    )
 }
 
 internal fun defaultProviderBaseUrl(type: ProviderType): String = when (type) {

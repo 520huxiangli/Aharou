@@ -226,6 +226,9 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var configStewardFields: com.aharou.feature.agent.data.ConfigStewardFields
 
+    @Inject
+    lateinit var configSubAgentFields: com.aharou.feature.agent.data.ConfigSubAgentFields
+
     /** 冷启动时按开关重新拉起 IM 前台服务（否则每次进 App 都要手动关再开）。 */
     @Inject
     lateinit var imServiceRestore: com.aharou.feature.im.ImServiceRestore
@@ -400,8 +403,7 @@ class AIEditorApp : Application(), Configuration.Provider {
             .onFailure { FileLogger.w(TAG, "恢复 IM 机器人服务失败", it) }
         // Aharou 配置通道 + 人格（SOUL.md）：初始化注册表/审计；首次运行释放默认模板文件（外置可改）
         com.aharou.core.config.ConfigRegistry.init(this)
-        // 应用设置字段（app.* / appearance.* / editor.* / terminal.* / sound.* / network.*）注册：
-        // Agent 经配置通道改自身设置（无系统权限依赖）
+        // 应用设置字段（app.* / appearance.* / editor.* / terminal.* / sound.* / network.*）注册：Agent 经配置通道改自身设置（无系统权限依赖）
         val configRegistry = com.aharou.core.config.ConfigRegistry.get()
         configAppFields.registerInto(configRegistry)
         configAppearanceFields.registerInto(configRegistry)
@@ -421,6 +423,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configBrowserFields.registerInto(configRegistry)
         configImFields.registerInto(configRegistry)
         configStewardFields.registerInto(configRegistry)
+        configSubAgentFields.registerInto(configRegistry)
         configPetFields.registerInto(configRegistry)
         configRemoteDeviceFields.registerInto(configRegistry)
         configCredentialFields.registerInto(configRegistry)
@@ -501,10 +504,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             logSettings.levelFlow.collectLatest { FileLogger.setMinLevel(it) }
         }
-        // 启动即同步从 DataStore 读首帧执行模式缓存到 ExecutionModeHolder，供 DI @Provides 同步读取。
-        // 异步读首帧模式写入 ExecutionModeHolder。委托层（DelegatingCommandEngine/DelegatingFileAccess）
-        // 每次方法调用时才按 holder.currentMode() 转发，不依赖注入时机，故 holder 晚几毫秒写入无妨——
-        // 首次命令/文件操作一定在 UI 启动之后，那时 holder 早已就绪。
+        // 启动即把首帧执行模式（从 DataStore 读）写入 ExecutionModeHolder，供 DI @Provides 同步读取；委托层每次调用才按 currentMode() 转发，不依赖注入时机。
         // SSH 连接放后台，失败不阻塞 UI（连接失败时首次命令会触发 ensureInstalled 重试）。
         appScope.launch {
             val mode = executionModeRepository.executionModeFlow.first()

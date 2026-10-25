@@ -13,6 +13,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import java.io.File
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -149,12 +152,32 @@ private fun modelLogoTint(): Color {
 /** 历史「内置AI」后端地址前缀：账号功能已下线，仅用于识别存量 provider 的图标。 */
 private const val LEGACY_BUILTIN_AI_BASE_URL = "http://1.117.60.254"
 
+/**
+ * 自定义图标的 Coil model：http(s) 与 data URI 直接交给 Coil，其余按本地文件路径读。
+ * Coil 把裸字符串当 URL 处理，本地路径不转成 File 会加载失败。
+ */
+private fun providerIconModel(icon: String): Any =
+    if (icon.startsWith("http://") || icon.startsWith("https://") || icon.startsWith("data:")) icon
+    else File(icon)
+
 @Composable
 fun ProviderLogoIcon(
     provider: AIProviderConfig?,
     modifier: Modifier = Modifier,
     size: Dp = 22.dp
 ) {
+    // 用户给这个供应商配了自己的图标就用它；加载失败（文件被删、链接失效）回落到品牌图标。
+    val customIcon = provider?.customIcon.orEmpty()
+    if (customIcon.isNotBlank()) {
+        AsyncImage(
+            model = providerIconModel(customIcon),
+            contentDescription = provider?.name ?: "AI Vendor",
+            contentScale = ContentScale.Crop,
+            error = providerLogoRes(provider)?.let { painterResource(it) },
+            modifier = modifier.size(size)
+        )
+        return
+    }
     // 曾由「内置AI」账号页自动配置的供应商（该功能已下线，但历史 provider 仍在），图标跟 SOUL.md 头像走。
     if (provider != null && provider.baseUrl.startsWith(LEGACY_BUILTIN_AI_BASE_URL)) {
         val soul by SoulStore.cachedMetadata.collectAsStateWithLifecycle()

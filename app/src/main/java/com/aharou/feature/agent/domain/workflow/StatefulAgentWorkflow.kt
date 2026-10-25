@@ -578,9 +578,13 @@ class StatefulAgentWorkflow @Inject constructor(
         // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
         var compactedMessages = state.messages
+        // 送模型前的图片投影只算这一次：压缩触发估算、超预算判定与实际发送共用同一份结果。
+        // 算两遍迟早因视觉能力解析或占位文案不同而漂移，那会反向低估、真撞窗口。
+        val supportsVision = activeModelSupportsVision(currentContext.sessionId)
+        var sendProjection = keepNewestImages(sanitizeImagesForModel(state.messages, supportsVision))
         if (!budget.compactionAttemptFailed) {
             telemetry.compactionStart()
-            val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, state.messages, promptTools) }
+            val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
                 windowProvider = aiProvider, systemPrompt = systemPrompt, tools = promptTools,
@@ -596,7 +600,9 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.baselineEstimate = 0
             }
         }
-        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, compactedMessages, promptTools) }
+        // 压缩真的改写过消息时内容变了，投影得按新的那份重算；源没变就沿用上面那份（同一个对象）。
+        if (compactedMessages !== initialState.messages) sendProjection = keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision))
+        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
         val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
         emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
         if (predictedInput >= inputBudget) {
@@ -660,12 +666,8 @@ class StatefulAgentWorkflow @Inject constructor(
         var callId = -1
 
         try {
-            // 发送前按实际模型的视觉能力处理图片（同 execute 路径）。
-            val supportsVision = activeModelSupportsVision(currentContext.sessionId)
-            // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。
-            val messagesToSend = foldStoredToolResults(
-                keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision))
-            )
+            // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。图片投影沿用上面那份：估算的就是发出去的。
+            val messagesToSend = foldStoredToolResults(sendProjection)
             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
             var samplingLoopCut = false
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。

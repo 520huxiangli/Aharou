@@ -60,8 +60,8 @@ class ContextCompactor @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val pathHomeResolver: PathHomeResolver
 ) {
-    // 失败材料拉黑表：key = 材料指纹，value = 最近一次失败时间。带有效期，过期后允许重试。
-    private val failedMaterials = LinkedHashMap<String, Long>()
+    // 失败材料拉黑表：key = 材料指纹，value = 最近一次失败（含是否属于「换模型也压不下」的确定性失败）。
+    private val failedMaterials = LinkedHashMap<String, FailedMaterial>()
 
     /**
      * 压缩主体（组装、token 估算、分块切分）跑的调度器。默认挑到后台，避免长历史在主线程上掉帧；
@@ -72,10 +72,23 @@ class ContextCompactor @Inject constructor(
         const val TAG = "ContextCompactor"
 
         /**
-         * 失败材料拉黑的有效期：过期后允许对同一段历史重试。失败多源于固定开销或某条超长输出，
-         * 拉黑只是免得每轮白跑一次摘要；窗口期太长会把恢复路径一起堵死（用户连点重试也始终失败）。
+         * 确定性失败（[RETAINED_REASON] / [OVER_BUDGET_REASON]：这段历史换模型也压不下）的拉黑有效期。
+         * 这类失败重试没有意义，拉黑只是免得每轮白跑一次摘要。
          */
         const val FAILED_MATERIAL_TTL_MS = 60_000L
+
+        /**
+         * API 类失败（超时、限流、密钥、上游拒绝）的拉黑窗口。它与这段历史本身无关：换供应商、换模型
+         * 或过几秒重试都可能直接成功，按 [FAILED_MATERIAL_TTL_MS] 拦 60 秒会把「明明还能继续用」
+         * 拖成整轮报错（issue #23）。
+         */
+        const val TRANSIENT_MATERIAL_TTL_MS = 5_000L
+
+        /** 第三级降级（不调模型）时保留的图片张数：只留最新的一张，更早的换成占位说明。 */
+        const val FORCED_TRIM_IMAGES = 1
+
+        /** 第三级降级的名字，落日志与失败卡片文案用。 */
+        const val FORCED_TRIM_LABEL = "强制精简"
         const val MAX_SUMMARY_BLOCKS = 32
 
         /**
@@ -124,7 +137,17 @@ class ContextCompactor @Inject constructor(
         const val OVER_BUDGET_REASON =
             "压缩后的摘要与保留内容仍装不进当前模型的输入预算。可以关掉不用的 MCP 连接器或技能，或换成上下文窗口更大的模型。"
         const val ALREADY_FAILED_REASON =
-            "这段历史刚压缩失败过，本轮不再重复尝试。"
+            "这段历史刚压缩失败过，暂不重复尝试。过几秒会自动放开，也可以手动压缩立即再试。"
+        const val TIMEOUT_REASON =
+            "压缩摘要请求超时（模型或上游长时间没有响应）。可以稍后重试，或换一个响应更快的压缩模型。"
+        const val KEY_REASON =
+            "压缩用的模型鉴权失败（API Key 无效或权限不足）。请到设置里检查该供应商的 Key，或换一个压缩模型。"
+        const val UPSTREAM_REASON =
+            "上游拒绝了压缩请求（多为限流、余额不足或该模型不支持这类请求）。稍后重试或更换压缩模型。"
+        const val SUMMARY_REJECTED_REASON =
+            "摘要模型返回了不可用的响应（空白、被拒答或只回工具调用）。换一个压缩模型多半能过。"
+        const val ALREADY_FAILED_MESSAGE =
+            "This historical material already failed compaction; retain it without summarizing again"
 
         internal fun softTrimToolOutputs(
             messages: List<AgentMessage>,
@@ -155,9 +178,38 @@ class ContextCompactor @Inject constructor(
         val anchorTs: Long?, val blockCount: Int, val tokens: Int
     )
 
-    private data class PreparationResult(
-        val prepared: PreparedCompaction?,
-        val compacted: CompactionResult? = null
+    /** 一条失败记录：确定性失败拉长拉黑窗口，API 类失败只短暂拦截。 */
+    private class FailedMaterial(val failedAt: Long, val deterministic: Boolean)
+
+    /** 一次压缩调用的可变进度：跨降级级别共享，外层 catch/finally 靠它记失败名单、收尾事件与文案。 */
+    private class CompactionProgress {
+        var summaryStarted = false
+        var materialKey: String? = null
+        var recorded = false
+        var lastError: Throwable? = null
+        val attempts = mutableListOf<String>()
+
+        fun attemptsText(): String = attempts.joinToString(" → ").ifEmpty { "无" }
+
+        /** 失败卡片上补一句「试过哪几级」，用户才能判断是模型问题还是这段历史真的压不下。 */
+        fun describeAttempts(): String = if (attempts.isEmpty()) "" else "\n已尝试的降级级别：${attemptsText()}"
+    }
+
+    /** 与摘要模型无关的压缩规划：预算、切分、保留段、落库锚点只算一次，三级降级共用同一份。 */
+    private data class CompactionPlan(
+        val messages: List<AgentMessage>,
+        val inputBudget: Int,
+        val estimatedTokens: Int,
+        val currentTokens: Int,
+        val head: List<AgentMessage>,
+        val material: List<AgentMessage>,
+        val tail: List<AgentMessage>,
+        val headIds: List<String>,
+        val anchorTs: Long?,
+        val sendsImages: Boolean,
+        val systemPrompt: String,
+        val tools: List<AgentTool>,
+        val materialKey: String
     )
 
     private fun storeOriginalToolOutput(message: AgentMessage.ToolResultMessage): String? {
@@ -180,16 +232,43 @@ class ContextCompactor @Inject constructor(
 
     /**
      * 校验失败抛的是英文原句，会直接落库渲染成卡片，这里换成用户能看懂并照做的说法。
-     * 未收录的（超时、摘要模型返回异常等）原样保留，日志里始终有完整堆栈。
+     * 未收录的原样保留，日志里始终有完整堆栈。
      */
     private fun friendlyReason(error: Throwable): String {
         val raw = error.message ?: return error.javaClass.simpleName
+        val text = raw.lowercase()
         return when {
             raw.contains("Recent task material") -> RETAINED_REASON
             raw.contains("Summary and retained history") -> OVER_BUDGET_REASON
             raw.contains("already failed compaction") -> ALREADY_FAILED_REASON
+            raw.contains("Incomplete summary response") -> SUMMARY_REJECTED_REASON
+            // 下面几类是上游/网络侧的原因：说清楚才能让用户判断该换模型、等一会儿还是改密钥。
+            text.contains("http 401") || text.contains("http 403") || text.contains("unauthorized") ||
+                text.contains("invalid api key") || text.contains("invalid_api_key") -> KEY_REASON
+            text.contains("timeout") || text.contains("timed out") -> TIMEOUT_REASON
+            text.contains("http 429") || text.contains("rate limit") || text.contains("quota") ||
+                text.contains("http 400") || text.contains("http 5") -> UPSTREAM_REASON
             else -> raw
         }
+    }
+
+    /**
+     * 记一条失败材料：只有「换模型也压不下」的确定性失败拉长窗口，API 类失败几秒后就放开，
+     * 否则换供应商后重试仍会被同一份材料拦住（issue #23 的现场）。
+     */
+    private fun recordFailure(key: String?, reason: String) {
+        if (key == null) return
+        val deterministic = reason == RETAINED_REASON || reason == OVER_BUDGET_REASON
+        synchronized(failedMaterials) {
+            failedMaterials[key] = FailedMaterial(System.currentTimeMillis(), deterministic)
+            if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.keys.first())
+        }
+    }
+
+    private fun isBlacklisted(key: String): Boolean {
+        val failed = synchronized(failedMaterials) { failedMaterials[key] } ?: return false
+        val ttl = if (failed.deterministic) FAILED_MATERIAL_TTL_MS else TRANSIENT_MATERIAL_TTL_MS
+        return System.currentTimeMillis() - failed.failedAt <= ttl
     }
 
     private fun materialFingerprint(sessionId: String?, provider: AIProvider, head: List<AgentMessage>): String {
@@ -247,15 +326,19 @@ class ContextCompactor @Inject constructor(
     ): CompactionResult {
         val unchanged = CompactionResult(messages, compacted = false)
         if (messages.isEmpty()) return unchanged
-        val originalOutputLimit = aiProvider.maxOutputTokens
-        var materialKey: String? = null
-        var summaryStarted = false
+        val progress = CompactionProgress()
         try {
-            val timedPreparation = withTimeoutOrNull(SUMMARY_DEADLINE_MS) {
+            // 规划与整条降级链共用这一个总时长上限：三级串起来也不会把一轮拖成几分钟。
+            val timed = withTimeoutOrNull(SUMMARY_DEADLINE_MS) {
                 val windowModel = windowProvider ?: aiProvider
                 val metadata = modelMetadataService.resolve(windowModel.providerId, inferProviderType(windowModel), windowModel.model)
                 val inputBudget = ModelContextPolicy.effectiveInputBudget(metadata)
-                val estimatedTokens = CompactionText.estimateRequest(systemPrompt, tools, messages)
+                // 估算必须按「实际发出去的投影」算：送模型前老的截图早被裁掉了，拿原始历史
+                // 里每张 4096 的图去估，会把压缩提前触发、把本来装得下的历史判成超预算。
+                // 视觉能力取 windowModel（消息真正发往的模型），不是压缩专用模型。
+                val sendsImages = metadata.supportsVision
+                val imageProjected = projectImagesForEstimate(messages, sendsImages)
+                val estimatedTokens = CompactionText.estimateRequest(systemPrompt, tools, imageProjected)
                 val currentTokens = currentInputTokens.takeIf { it > 0 } ?: estimatedTokens
                 val hardThresholdPercent = generalSettingsRepository.compactionThresholdPercent()
                 val threshold = (inputBudget * hardThresholdPercent / 100.0).toInt()
@@ -274,53 +357,49 @@ class ContextCompactor @Inject constructor(
                     }
                     if (trimmed !== messages) {
                         FileLogger.i(TAG, "上下文约 $currentTokens tokens 达软阈值 $softThreshold，已精简历史工具输出（未调用摘要模型）")
-                        return@withTimeoutOrNull PreparationResult(null, CompactionResult(trimmed, compacted = true))
+                        return@withTimeoutOrNull CompactionResult(trimmed, compacted = true)
                     }
-                    return@withTimeoutOrNull PreparationResult(null)
+                    return@withTimeoutOrNull unchanged
                 }
-                if (!force && !reachedHard) return@withTimeoutOrNull PreparationResult(null)
+                if (!force && !reachedHard) return@withTimeoutOrNull unchanged
                 yield()
                 // 固定开销把可压缩空间吃干净了就没什么可压的：直接给可操作原因，
                 // 不调摘要模型，也不把这份历史记进失败名单（关掉工具后还能重试）。
                 if (squeezableBudget <= 0) {
                     onEvent(AgentEvent.CompactionFailed(OVERHEAD_REASON))
-                    return@withTimeoutOrNull PreparationResult(null)
+                    return@withTimeoutOrNull unchanged
                 }
                 // 摘要正文也占目标，但预留只能是小份额：给多了会把 tail 挤到装不下「最近的大批次」，
                 // 反而让本来能成功的压缩判定失败（successfulSummaryFitsTargetAndKeepsLargeLatestBatch 盯的就是它）。
                 val summaryReserve = minOf(SUMMARY_OUTPUT_RESERVE_TOKENS, targetTokens / 10)
                 val tailBudget = (targetTokens - summaryReserve).coerceAtLeast(0)
-                var splitIndex = CompactionText.selectTailStartIndex(messages, inputBudget)
+                var splitIndex = CompactionText.selectTailStartIndex(imageProjected, inputBudget)
                 if (force && splitIndex <= 0) splitIndex = messages.lastIndex
                 splitIndex = CompactionText.adjustSplitIndex(messages, splitIndex)
-                if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
+                if (splitIndex <= 0) return@withTimeoutOrNull unchanged
                 // 保留段装不下时不要把整份历史判死：先把其中已落盘的超长工具输出折成引用
                 // （原件在盘上，模型能 readFile 取回），仍装不下再把切分点往后推、多交给摘要。
                 // 未配对的工具调用批次是硬边界，越过会让 tail 出现没有对应调用的工具结果。
                 var tail = messages.drop(splitIndex)
-                if (CompactionText.tokensOf(tail) >= tailBudget) {
-                    val fitted = CompactionText.fitSplitIndex(messages, splitIndex,
+                if (CompactionText.tokensOf(projectImagesForEstimate(tail, sendsImages)) >= tailBudget) {
+                    val fitted = CompactionText.fitSplitIndex(imageProjected, splitIndex,
                         CompactionText.unmatchedToolBatchStart(messages), tailBudget)
                     if (fitted > splitIndex) {
                         splitIndex = CompactionText.adjustSplitIndex(messages, fitted)
-                        if (splitIndex <= 0) return@withTimeoutOrNull PreparationResult(null)
+                        if (splitIndex <= 0) return@withTimeoutOrNull unchanged
                         tail = messages.drop(splitIndex)
                     }
                     tail = withContext(Dispatchers.IO) { foldStoredToolResults(tail, keepRecent = 0) }
                 }
                 val head = messages.take(splitIndex)
                 val material = removeCompactionPairs(head)
-                if (material.isEmpty()) return@withTimeoutOrNull PreparationResult(null)
-                summaryStarted = true
-                onEvent(AgentEvent.CompactionStarted(currentTokens))
-                materialKey = materialFingerprint(sessionId, aiProvider, head)
-                check(synchronized(failedMaterials) {
-                    val failedAt = failedMaterials[materialKey]
-                    failedAt == null || System.currentTimeMillis() - failedAt > FAILED_MATERIAL_TTL_MS
-                }) {
-                    "This historical material already failed compaction; retain it without summarizing again"
-                }
-                check(CompactionText.tokensOf(tail) < tailBudget) {
+                if (material.isEmpty()) return@withTimeoutOrNull unchanged
+                val materialKey = materialFingerprint(sessionId, aiProvider, head)
+                progress.materialKey = materialKey
+                // 手动 /compress 与溢出兜底都走 force：材料没变但供应商/模型可能刚换过（issue #23），
+                // 允许它们绕开失败名单直接再试一次，而不是一律「本轮不再尝试」。
+                check(force || !isBlacklisted(materialKey)) { ALREADY_FAILED_MESSAGE }
+                check(CompactionText.tokensOf(projectImagesForEstimate(tail, sendsImages)) < tailBudget) {
                     "Recent task material exceeds the retained budget"
                 }
                 val headIds = head.map { it.id }.filter { it.isNotBlank() }.distinct()
@@ -335,93 +414,178 @@ class ContextCompactor @Inject constructor(
                     timestamp
                 } else null
 
-                val summaryMetadata = modelMetadataService.resolve(aiProvider.providerId, inferProviderType(aiProvider), aiProvider.model)
-                val summaryContext = summaryMetadata.contextTokens.takeIf { it > 0 } ?: ModelContextPolicy.DEFAULT_CONTEXT_TOKENS
-                val outputLimit = minOf(
-                    4_096,
-                    originalOutputLimit?.takeIf { it > 0 } ?: 4_096,
-                    summaryMetadata.outputTokens?.takeIf { it > 0 } ?: 4_096,
-                    ModelContextPolicy.outputReserveTokens(summaryMetadata)
-                )
-                aiProvider.maxOutputTokens = outputLimit
-                // 分块只分配预算的一部分（见 SUMMARY_BUDGET_PERCENT）：本地估算对代码、JSON 这类
-                // 密集 ASCII 内容偏低，按全额切满一块会让摘要请求实际超出模型窗口被上游拒掉。
-                val summaryBudget = minOf(
-                    ModelContextPolicy.effectiveInputBudget(summaryMetadata),
-                    summaryContext - outputLimit
-                ) * SUMMARY_BUDGET_PERCENT / 100
-                val prompt = systemPromptProvider.resolvePrompt("agent/compact-summary.md").replace(LEADING_COMMENT, "")
-                var summary = extractPreviousSummary(head)
-                val cursor = CompactionText.Cursor(CompactionText.units(material))
-                var block = 0
-                while (!cursor.finished) {
-                    yield()
-                    check(block < MAX_SUMMARY_BLOCKS) { "History exceeds the $MAX_SUMMARY_BLOCKS summary block limit" }
-                    val instruction = prompt.replace("{{INSTRUCTION}}", buildSummaryInstruction(summary))
-                    val overhead = CompactionText.tokens(SUMMARY_SYSTEM) + CompactionText.tokens(instruction) + 64
-                    val available = summaryBudget - overhead
-                    check(available > 0) { "Summary instructions and previous summary exceed the input budget" }
-                    val chunk = cursor.next(available)
-                    val request = listOf(AgentMessage.UserMessage(content = instruction + "\n\n<history-material block=\"${++block}\">\n" + chunk + "\n</history-material>"))
-                    check(CompactionText.estimateRequest(SUMMARY_SYSTEM, emptyList(), request) <= summaryBudget) { "Summary block exceeds the input budget" }
-                    summary = summarize(aiProvider, sessionId, request, summaryContext, outputLimit)
-                }
-                yield()
-                check(!summary.isNullOrBlank()) { "Summary is empty" }
-                val markerId = UUID.randomUUID().toString()
-                val summaryId = UUID.randomUUID().toString()
-                val compacted = listOf(
-                    AgentMessage.UserMessage(id = markerId, content = CONTEXT_COMPACTION_MARKER),
-                    AgentMessage.AssistantMessage(id = summaryId, content = summary)
-                ) + tail
-                val compactedTokens = CompactionText.estimateRequest(systemPrompt, tools, compacted)
-                // 摘要由模型生成，长度不受控：短历史里摘要可能比被替换的原消息更长，压缩没有收益。
-                // 这不是失败，只是不该落库，静默保留原历史。
-                if (compactedTokens >= estimatedTokens) {
-                    FileLogger.i(TAG, "压缩未缩减 token（$estimatedTokens → $compactedTokens），保留原历史")
-                    return@withTimeoutOrNull PreparationResult(null, unchanged)
-                }
-                // 落库门槛只看「装不装得进输入预算」：targetTokens 是留给保留段用的额度，
-                // 拿来当门槛会让固定开销大的窗口恒不成立（128k 窗口 + 约 5 万固定开销就是那种情形）。
-                check(compactedTokens <= inputBudget) {
-                    "Summary and retained history do not fit the main model input budget"
-                }
-                PreparationResult(PreparedCompaction(compacted, headIds, markerId, summaryId, summary, anchorTs, block, compactedTokens))
+                val plan = CompactionPlan(messages, inputBudget, estimatedTokens, currentTokens, head, material, tail,
+                    headIds, anchorTs, sendsImages, systemPrompt, tools, materialKey)
+                compactWithFallbacks(plan, aiProvider, sessionId, force, windowProvider, progress, onEvent)
             }
-            val preparation = timedPreparation ?: throw IllegalStateException("Summary timed out after ${SUMMARY_DEADLINE_MS / 1000}s")
-            preparation.compacted?.let { return it }
-            val prepared = preparation.prepared ?: return unchanged
-            currentCoroutineContext().ensureActive()
-            if (sessionId != null) {
-                agentMessageDao.commitCompaction(
-                    sessionId = sessionId,
-                    headIds = prepared.headIds,
-                    messages = listOf(
-                        AgentMessageEntity(id = prepared.markerId, sessionId = sessionId, role = MessageRole.USER.name,
-                            content = CONTEXT_COMPACTION_MARKER, timestamp = requireNotNull(prepared.anchorTs) - 2, isCompactionMarker = true),
-                        AgentMessageEntity(id = prepared.summaryId, sessionId = sessionId, role = MessageRole.ASSISTANT.name,
-                            content = prepared.summary, timestamp = requireNotNull(prepared.anchorTs) - 1, isContextSummary = true)
-                    ),
-                    summaryId = prepared.summaryId
-                )
-                messagePersistenceUseCase.invalidateHistory(sessionId)
-            }
-            FileLogger.i(TAG, "上下文压缩完成：${prepared.blockCount} 块，压缩后 ${prepared.tokens} tokens")
-            return CompactionResult(prepared.messages, compacted = true)
+            return timed ?: throw IllegalStateException("Summary timed out after ${SUMMARY_DEADLINE_MS / 1000}s")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            materialKey?.let { key -> synchronized(failedMaterials) {
-                failedMaterials[key] = System.currentTimeMillis()
-                if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.keys.first())
-            } }
-            FileLogger.e(TAG, "压缩上下文失败，保留原历史", e)
-            onEvent(AgentEvent.CompactionFailed(friendlyReason(e)))
+            val reason = friendlyReason(e)
+            // 已在降级链里记过的、以及「刚失败过」的重复报告都不再覆写：后者会把确定性失败的
+            // 长窗口改写成短窗口，反而让这段历史被反复重试。
+            if (!progress.recorded && reason != ALREADY_FAILED_REASON) recordFailure(progress.materialKey, reason)
+            FileLogger.e(TAG, "压缩上下文失败（已尝试：${progress.attemptsText()}），保留原历史", e)
+            onEvent(AgentEvent.CompactionFailed(reason + progress.describeAttempts()))
             return unchanged
         } finally {
-            aiProvider.maxOutputTokens = originalOutputLimit
-            if (summaryStarted) onEvent(AgentEvent.CompactionFinished)
+            if (progress.summaryStarted) onEvent(AgentEvent.CompactionFinished)
         }
+    }
+
+    /**
+     * 降级链：配置的压缩模型 →（与前者不同时）当前聊天模型 → 不调模型的强制精简（issue #23）。
+     * 规划已由调用方算好，这里只反复换模型跑摘要；任一级成功就以它的结果为准，三级都失败才记失败名单并上报。
+     */
+    private suspend fun compactWithFallbacks(
+        plan: CompactionPlan,
+        aiProvider: AIProvider,
+        sessionId: String?,
+        force: Boolean,
+        windowProvider: AIProvider?,
+        progress: CompactionProgress,
+        onEvent: suspend (AgentEvent) -> Unit
+    ): CompactionResult {
+        val levels = mutableListOf(aiProvider)
+        val chat = windowProvider
+        // 两级是同一个实例时不必重复跑：同一份材料、同一模型，再试一次结果不变。
+        if (chat != null && (chat.providerId != aiProvider.providerId || chat.model != aiProvider.model)) levels += chat
+        levels.forEachIndexed { index, provider ->
+            val label = if (index == 0) "压缩模型" else "聊天模型"
+            val key = if (index == 0) plan.materialKey else materialFingerprint(sessionId, provider, plan.head)
+            // 第一级的失败名单在规划阶段已查过；后面几级各查自己那份指纹（指纹含模型，换模型就是另一份材料）。
+            if (index > 0 && !force && isBlacklisted(key)) {
+                FileLogger.i(TAG, "压缩降级：$label 在这份材料上刚失败过，跳过")
+                return@forEachIndexed
+            }
+            progress.summaryStarted = true
+            progress.attempts += label
+            onEvent(AgentEvent.CompactionStarted(plan.currentTokens))
+            try {
+                // 摘要压完不比原来小：不是失败，静默保留原历史，换模型重写一遍也没收益。
+                val prepared = summarizePlan(plan, provider, sessionId)
+                    ?: return CompactionResult(plan.messages, compacted = false)
+                return commitPreparation(prepared, sessionId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val reason = friendlyReason(e)
+                recordFailure(key, reason)
+                progress.materialKey = key
+                progress.recorded = true
+                progress.lastError = e
+                FileLogger.w(TAG, "压缩降级：$label 失败（$reason），继续下一级", e)
+            }
+        }
+        progress.attempts += FORCED_TRIM_LABEL
+        forceTrim(plan)?.let { return it }
+        // 每一级都轮不上（都在失败名单里）：沿用「本轮不再重复尝试」的说法。
+        throw progress.lastError ?: IllegalStateException(ALREADY_FAILED_MESSAGE)
+    }
+
+    /**
+     * 用 [provider] 生成摘要并校验，失败抛异常（由降级链决定换谁再试）；「没有收益」返回 null。
+     */
+    private suspend fun summarizePlan(
+        plan: CompactionPlan,
+        provider: AIProvider,
+        sessionId: String?
+    ): PreparedCompaction? {
+        val originalOutputLimit = provider.maxOutputTokens
+        try {
+            val summaryMetadata = modelMetadataService.resolve(provider.providerId, inferProviderType(provider), provider.model)
+            val summaryContext = summaryMetadata.contextTokens.takeIf { it > 0 } ?: ModelContextPolicy.DEFAULT_CONTEXT_TOKENS
+            val outputLimit = minOf(
+                4_096,
+                originalOutputLimit?.takeIf { it > 0 } ?: 4_096,
+                summaryMetadata.outputTokens?.takeIf { it > 0 } ?: 4_096,
+                ModelContextPolicy.outputReserveTokens(summaryMetadata)
+            )
+            provider.maxOutputTokens = outputLimit
+            // 分块只分配预算的一部分（见 SUMMARY_BUDGET_PERCENT）：本地估算对代码、JSON 这类
+            // 密集 ASCII 内容偏低，按全额切满一块会让摘要请求实际超出模型窗口被上游拒掉。
+            val summaryBudget = minOf(
+                ModelContextPolicy.effectiveInputBudget(summaryMetadata),
+                summaryContext - outputLimit
+            ) * SUMMARY_BUDGET_PERCENT / 100
+            val prompt = systemPromptProvider.resolvePrompt("agent/compact-summary.md").replace(LEADING_COMMENT, "")
+            var summary = extractPreviousSummary(plan.head)
+            val cursor = CompactionText.Cursor(CompactionText.units(plan.material))
+            var block = 0
+            while (!cursor.finished) {
+                yield()
+                check(block < MAX_SUMMARY_BLOCKS) { "History exceeds the $MAX_SUMMARY_BLOCKS summary block limit" }
+                val instruction = prompt.replace("{{INSTRUCTION}}", buildSummaryInstruction(summary))
+                val overhead = CompactionText.tokens(SUMMARY_SYSTEM) + CompactionText.tokens(instruction) + 64
+                val available = summaryBudget - overhead
+                check(available > 0) { "Summary instructions and previous summary exceed the input budget" }
+                val chunk = cursor.next(available)
+                val request = listOf(AgentMessage.UserMessage(content = instruction + "\n\n<history-material block=\"${++block}\">\n" + chunk + "\n</history-material>"))
+                check(CompactionText.estimateRequest(SUMMARY_SYSTEM, emptyList(), request) <= summaryBudget) { "Summary block exceeds the input budget" }
+                summary = summarize(provider, sessionId, request, summaryContext, outputLimit)
+            }
+            yield()
+            check(!summary.isNullOrBlank()) { "Summary is empty" }
+            val markerId = UUID.randomUUID().toString()
+            val summaryId = UUID.randomUUID().toString()
+            val compacted = listOf(
+                AgentMessage.UserMessage(id = markerId, content = CONTEXT_COMPACTION_MARKER),
+                AgentMessage.AssistantMessage(id = summaryId, content = summary)
+            ) + plan.tail
+            val compactedTokens = CompactionText.estimateRequest(plan.systemPrompt, plan.tools,
+                projectImagesForEstimate(compacted, plan.sendsImages))
+            // 摘要由模型生成，长度不受控：短历史里摘要可能比被替换的原消息更长，压缩没有收益。
+            if (compactedTokens >= plan.estimatedTokens) {
+                FileLogger.i(TAG, "压缩未缩减 token（${plan.estimatedTokens} → $compactedTokens），保留原历史")
+                return null
+            }
+            // 落库门槛只看「装不装得进输入预算」：targetTokens 是留给保留段用的额度，
+            // 拿来当门槛会让固定开销大的窗口恒不成立（128k 窗口 + 约 5 万固定开销就是那种情形）。
+            check(compactedTokens <= plan.inputBudget) {
+                "Summary and retained history do not fit the main model input budget"
+            }
+            return PreparedCompaction(compacted, plan.headIds, markerId, summaryId, summary, plan.anchorTs, block, compactedTokens)
+        } finally {
+            provider.maxOutputTokens = originalOutputLimit
+        }
+    }
+
+    /** 摘要通过校验后原子替换 head 并落库，返回压缩后的历史。 */
+    private suspend fun commitPreparation(prepared: PreparedCompaction, sessionId: String?): CompactionResult {
+        currentCoroutineContext().ensureActive()
+        if (sessionId != null) {
+            agentMessageDao.commitCompaction(
+                sessionId = sessionId,
+                headIds = prepared.headIds,
+                messages = listOf(
+                    AgentMessageEntity(id = prepared.markerId, sessionId = sessionId, role = MessageRole.USER.name,
+                        content = CONTEXT_COMPACTION_MARKER, timestamp = requireNotNull(prepared.anchorTs) - 2, isCompactionMarker = true),
+                    AgentMessageEntity(id = prepared.summaryId, sessionId = sessionId, role = MessageRole.ASSISTANT.name,
+                        content = prepared.summary, timestamp = requireNotNull(prepared.anchorTs) - 1, isContextSummary = true)
+                ),
+                summaryId = prepared.summaryId
+            )
+            messagePersistenceUseCase.invalidateHistory(sessionId)
+        }
+        FileLogger.i(TAG, "上下文压缩完成：${prepared.blockCount} 块，压缩后 ${prepared.tokens} tokens")
+        return CompactionResult(prepared.messages, compacted = true)
+    }
+
+    /**
+     * 第三级降级：不调模型。早轮次的长工具输出折成「原文在盘上，用 readFile 取回」的引用，图片只留最新一张，
+     * 压进输入预算就直接用——摘要模型挂了也不至于整轮跑不下去。压不下或没可精简内容返回 null（不拉黑）。
+     */
+    private suspend fun forceTrim(plan: CompactionPlan): CompactionResult? {
+        val trimmed = withContext(Dispatchers.IO) {
+            keepNewestImages(softTrimToolOutputs(plan.messages, ::storeOriginalToolOutput), FORCED_TRIM_IMAGES)
+        }
+        if (trimmed === plan.messages) return null
+        val tokens = CompactionText.estimateRequest(plan.systemPrompt, plan.tools,
+            projectImagesForEstimate(trimmed, plan.sendsImages))
+        if (tokens >= plan.estimatedTokens || tokens > plan.inputBudget) return null
+        FileLogger.i(TAG, "压缩降级：$FORCED_TRIM_LABEL 成功，${plan.estimatedTokens} → $tokens tokens")
+        return CompactionResult(trimmed, compacted = true)
     }
 
     /**
@@ -561,25 +725,43 @@ class ContextCompactor @Inject constructor(
     }
 }
 
-/** 默认保留的带图消息条数。 */
+/** 默认保留的图片张数。 */
 internal const val DEFAULT_CONTEXT_IMAGES = 4
 private const val IMAGE_OMITTED_NOTE = "\n(较早的截图已省略)"
 
 /**
- * 送模型前限制图片数量：只保留最新 [maxImages] 条带图消息参与本次请求，更早的图片换成一行占位说明，
+ * 送模型前限制图片数量：只保留最新 [maxImages] **张**图参与本次请求，更早的图片换成一行占位说明，
  * 消息里的文字仍保留。作用的是「送给模型的副本」，历史本体不动（[dropImages] 返回新对象）。
+ * 限额按累计张数而不是消息条数：单条消息可带多张图（见 ImageTools / McpTool），按条数会在
+ * 「一条带 8 张图」时把 8 张全发出去。取舍仍以整条消息为单位（不会只发半条消息里的图），
+ * 但停在哪一条由累计张数决定；最新的那条带图消息无条件保留，否则刚发的截图会被自己裁掉。
  * 参考 nanomuse vision.py 的 keep_newest_images()：带图消息多为影子屏/浏览器截图，
  * 每轮工具循环都会重发整段历史，不设预算会反复传输全部截图。
  */
 internal fun keepNewestImages(messages: List<AgentMessage>, maxImages: Int = DEFAULT_CONTEXT_IMAGES): List<AgentMessage> {
     if (maxImages <= 0) return messages
-    val imageIndices = messages.indices.filter { messages[it].imageCount() > 0 }
-    if (imageIndices.size <= maxImages) return messages
-    val keep = imageIndices.takeLast(maxImages).toSet()
+    var budget = maxImages
+    val keep = HashSet<Int>()
+    for (index in messages.indices.reversed()) {
+        val count = messages[index].imageCount()
+        if (count == 0) continue
+        if (keep.isNotEmpty() && count > budget) break
+        keep.add(index)
+        budget -= count
+    }
+    if (keep.isEmpty() || keep.size == messages.count { it.imageCount() > 0 }) return messages
     return messages.mapIndexed { index, message ->
         if (index in keep || message.imageCount() == 0) message else message.dropImages()
     }
 }
+
+/**
+ * 估算侧的图片投影：与发送侧共用 [keepNewestImages]（同一套裁剪逻辑，两边各写一份迟早漂移成
+ * 「估的比发的小」）。不支持图片的模型按「一张都不发」算，补的占位文案也顺带对上真实请求里的说明。
+ */
+internal fun projectImagesForEstimate(messages: List<AgentMessage>, sendsImages: Boolean): List<AgentMessage> =
+    if (sendsImages) keepNewestImages(messages)
+    else messages.map { message -> if (message.imageCount() > 0) message.dropImages() else message }
 
 private fun AgentMessage.imageCount(): Int = when (this) {
     is AgentMessage.UserMessage -> images.size

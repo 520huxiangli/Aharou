@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,19 +32,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.BatchDeleteConfirmDialog
 import com.aharou.core.ui.SelectionAction
 import com.aharou.core.ui.SelectionActionBar
 import com.aharou.core.ui.SwipeToDeleteRow
+import com.aharou.core.ui.dialogTextFieldColors
 import com.aharou.core.ui.rememberListSelectionState
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionScope
+import com.aharou.feature.agent.domain.subagent.SubAgentSettings
+import com.aharou.feature.settings.presentation.SubAgentSettingsViewModel
 import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.CheckSquare
@@ -60,10 +69,51 @@ internal fun SubAgentsSection(
     projectName: String?,
     entries: List<SubAgentUiEntry>,
     onDelete: (SubAgentUiEntry) -> Unit,
+    onOpenDetail: (SubAgentUiEntry) -> Unit,
+    limitViewModel: SubAgentSettingsViewModel = hiltViewModel()
+) {
+    val maxRunning by limitViewModel.maxRunning.collectAsStateWithLifecycle()
+    var editingLimit by remember { mutableStateOf(false) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 并发上限是整个应用共享的名额，与具体子代理无关；空列表时也要能改，所以放在列表判定之外
+        MaxRunningGroup(maxRunning = maxRunning, onClick = { editingLimit = true })
+        Box(modifier = Modifier.weight(1f)) {
+            SubAgentsList(
+                projectName = projectName,
+                entries = entries,
+                onDelete = onDelete,
+                onOpenDetail = onOpenDetail
+            )
+        }
+    }
+
+    if (editingLimit) {
+        MaxRunningDialog(
+            initialValue = maxRunning,
+            onConfirm = {
+                limitViewModel.setMaxRunning(it)
+                editingLimit = false
+            },
+            onDismiss = { editingLimit = false }
+        )
+    }
+}
+
+/**
+ * 列表本体：空态提示与「项目 / 全局」两组。抽成独立函数是为了让上方的并发上限行常驻，
+ * 又不改动列表自己的滚动、多选与批量删除逻辑。
+ */
+@Composable
+private fun SubAgentsList(
+    projectName: String?,
+    entries: List<SubAgentUiEntry>,
+    onDelete: (SubAgentUiEntry) -> Unit,
     onOpenDetail: (SubAgentUiEntry) -> Unit
 ) {
-    val projectAgents = entries.filter { it.scope == AgentDefinitionScope.PROJECT }
-    val globalAgents = entries.filter { it.scope == AgentDefinitionScope.GLOBAL }
+    // 已禁用的沉到组末尾：禁用项一多，混在中间会把启用的冲散。
+    val projectAgents = entries.filter { it.scope == AgentDefinitionScope.PROJECT }.sortedBy { it.disabled }
+    val globalAgents = entries.filter { it.scope == AgentDefinitionScope.GLOBAL }.sortedBy { it.disabled }
 
     if (entries.isEmpty()) {
         Box(
@@ -349,5 +399,74 @@ private fun SubAgentEmptyHint(text: String) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)
+    )
+}
+
+/** 并发上限行：左侧标题、右侧当前值，点开数值弹窗。 */
+@Composable
+private fun MaxRunningGroup(maxRunning: Int, onClick: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.Users,
+                title = stringResource(R.string.subagent_max_running),
+                onClick = onClick,
+                trailing = {
+                    Text(
+                        text = maxRunning.toString(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+        }
+    }
+}
+
+/**
+ * 数值输入弹窗：只接受数字，范围与 [SubAgentSettings] 的常量一致；越界时保存按钮不可点。
+ */
+@Composable
+private fun MaxRunningDialog(
+    initialValue: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember(initialValue) { mutableStateOf(initialValue.toString()) }
+    val parsed = text.trim().toIntOrNull()
+    val inRange = parsed != null && parsed in SubAgentSettings.MIN_RUNNING..SubAgentSettings.MAX_RUNNING
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text(stringResource(R.string.subagent_max_running)) },
+        text = {
+            AppTextField(
+                value = text,
+                onValueChange = { input -> text = input.filter { it.isDigit() } },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = !inRange,
+                supportingText = {
+                    Text(
+                        stringResource(
+                            R.string.subagent_max_running_hint,
+                            SubAgentSettings.MIN_RUNNING,
+                            SubAgentSettings.MAX_RUNNING
+                        )
+                    )
+                },
+                colors = dialogTextFieldColors()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { parsed?.let(onConfirm) }, enabled = inRange) {
+                Text(stringResource(R.string.common_save))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.common_cancel))
+            }
+        }
     )
 }
