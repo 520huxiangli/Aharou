@@ -1048,28 +1048,28 @@ fun ProviderEditorScreen(
                 onOnboardingDismissFetchDialog = onOnboardingDismissFetchDialog
             )
         }
+    }
 
-        if (showIconDialog) {
-            ProviderIconDialog(
-                currentIcon = customIcon,
-                onPickGallery = {
-                    showIconDialog = false
-                    iconPickLauncher.launch(
-                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    )
-                },
-                onConfirmLink = { link ->
-                    applyIcon(link)
-                    showIconDialog = false
-                },
-                onReset = {
-                    ProviderIconStore.delete(context, providerId)
-                    applyIcon("")
-                    showIconDialog = false
-                },
-                onDismiss = { showIconDialog = false }
-            )
-        }
+    if (showIconDialog) {
+        ProviderIconDialog(
+            currentIcon = customIcon,
+            onPickGallery = {
+                showIconDialog = false
+                iconPickLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            },
+            onConfirmLink = { link ->
+                applyIcon(link)
+                showIconDialog = false
+            },
+            onReset = {
+                ProviderIconStore.delete(context, providerId)
+                applyIcon("")
+                showIconDialog = false
+            },
+            onDismiss = { showIconDialog = false }
+        )
     }
 }
 
