@@ -7,6 +7,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.aharou.feature.agent.data.local.database.AgentDatabase
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.BeforeClass
 import org.junit.Rule
@@ -59,6 +61,44 @@ class MigrationTest {
             .build()
         // 打开即触发 Room 的 identity/schema 校验，entity 与迁移产物不符会抛异常
         db.openHelper.writableDatabase
+        db.close()
+    }
+
+    /**
+     * 回归：v2.39.0 的 74 号迁移用 `ADD COLUMN customIcon TEXT` 建了可空列，而 Entity 是非空 String，
+     * 老库升级上来一律在 Room 表校验处崩（IllegalStateException: Migration didn't properly handle: ai_providers）。
+     * 这条用例走 73 → 当前的完整升级路径，顺带验证旧行的 customIcon 被补成空串。
+     */
+    @Test
+    fun migrate_73_to_current_fills_provider_custom_icon() {
+        helper.createDatabase(dbName, 73).apply {
+            execSQL(
+                """
+                INSERT INTO `ai_providers` (
+                  `id`, `name`, `type`, `apiKey`, `multiKeyEnabled`, `apiKeys`, `keyRotationStrategy`,
+                  `keyFailoverThreshold`, `keyCooldownMinutes`, `keySwitchStatusCodes`, `baseUrl`,
+                  `defaultModel`, `models`, `selectedModel`, `isEnabled`, `useFullUrl`, `useResponseApi`,
+                  `anthropicCacheBreakpoints`, `openaiChatCacheKey`, `balanceScriptPath`,
+                  `balanceRefreshInterval`, `customHeaders`, `sortOrder`, `proxyEnabled`, `proxyType`,
+                  `proxyHost`, `proxyPort`, `proxyUsername`, `proxyPassword`, `scriptParams`
+                ) VALUES (
+                  'p1', 'old', 'OPENAI', 'k', 0, '', 'SEQUENTIAL', 2, 5, '', 'https://example.com',
+                  'm', 'm', 'm', 1, 0, 0, 1, 0, '', 5, '', 0, 0, 'HTTP', '', 0, '', '', ''
+                )
+                """.trimIndent()
+            )
+            close()
+        }
+
+        val db = Room.databaseBuilder(context, AgentDatabase::class.java, dbName)
+            .addMigrations(*MigrationLoader.loadMigrations(context))
+            .build()
+        // 打开即触发 Room 的表结构校验，customIcon 不是 NOT NULL 就在这一步抛异常
+        db.openHelper.writableDatabase
+        db.query("SELECT `customIcon` FROM `ai_providers` WHERE `id` = 'p1'", null).use { cursor ->
+            assertTrue("升级后旧供应商记录应保留", cursor.moveToFirst())
+            assertEquals("旧行的 customIcon 应补成空串", "", cursor.getString(0))
+        }
         db.close()
     }
 
