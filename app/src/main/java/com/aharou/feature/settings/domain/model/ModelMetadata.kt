@@ -7,6 +7,11 @@ data class ModelMetadata(
     val id: String,
     val providerId: String? = null,
     val displayName: String = id,
+    /**
+     * 自定义模型图标：本地文件绝对路径或 http(s) 链接，空表示按模型名匹配内置品牌图标。
+     * 存在 CustomModelMetadataStore 的 JSON 里，不走数据库，所以加这个字段不需要迁移。
+     */
+    val customIcon: String = "",
     val contextTokens: Int,
     val inputTokens: Int? = null,
     val outputTokens: Int? = null,

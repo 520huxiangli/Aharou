@@ -213,8 +213,21 @@ fun ProviderLogoIcon(
 fun ModelLogoIcon(
     modelName: String,
     modifier: Modifier = Modifier,
-    size: Dp = 22.dp
+    size: Dp = 22.dp,
+    /** 用户给这个模型配的图标（本地路径或链接）；空或加载失败时回落品牌图标。 */
+    customIcon: String? = null
 ) {
+    if (!customIcon.isNullOrBlank()) {
+        val fallbackRes = brandLogoRes(modelBrandKey(modelName))
+        AsyncImage(
+            model = providerIconModel(customIcon),
+            contentDescription = modelName,
+            contentScale = ContentScale.Crop,
+            error = fallbackRes?.let { painterResource(it) },
+            modifier = modifier.size(size)
+        )
+        return
+    }
     val key = modelBrandKey(modelName)
     val res = brandLogoRes(key)
     if (res != null) {

@@ -5,6 +5,8 @@ import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import com.aharou.core.util.ProviderIconStore
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -166,14 +168,21 @@ internal fun AddModelSheet(
     title: String,
     confirmLabel: String,
     initial: ModelMetadata?,
+    /** 所属供应商 id：模型自定义图标的文件名要带上它，否则两个供应商的同名模型会共用一个文件。 */
+    providerId: String,
     onSave: (String, ModelMetadata) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
     val flingFix = rememberSheetFlingFix(sheetState)
     var modelName by remember { mutableStateOf(initial?.id ?: "") }
+    // 显示名：列表里给模型起的别名，留空就显示原始模型名。
+    var displayName by remember { mutableStateOf(initial?.displayName?.takeIf { it != initial.id } ?: "") }
+    var customIcon by remember { mutableStateOf(initial?.customIcon ?: "") }
+    var showIconDialog by remember { mutableStateOf(false) }
     var supportsVision by remember { mutableStateOf(initial?.supportsVision ?: false) }
     var supportsImageOutput by remember { mutableStateOf(initial?.supportsImageOutput ?: false) }
     var supportsTools by remember { mutableStateOf(initial?.supportsTools ?: false) }
@@ -191,6 +200,12 @@ internal fun AddModelSheet(
     val inputError = inputTokens.isNotBlank() && (inputTokens.trim().toIntOrNull() ?: 0) <= 0
     val outputError = outputTokens.isNotBlank() && (outputTokens.trim().toIntOrNull() ?: 0) <= 0
     val canSave = trimmedModel.isNotEmpty() && !duplicate && !contextError && !inputError && !outputError
+
+    val iconPickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            ProviderIconStore.import(context, "model-$providerId-$trimmedModel", uri)?.let { customIcon = it }
+        }
+    }
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -241,6 +256,41 @@ internal fun AddModelSheet(
                     value = modelName,
                     onValueChange = { modelName = it }
                 )
+                ModelSheetTextField(
+                    label = stringResource(R.string.provider_model_display_name),
+                    value = displayName,
+                    onValueChange = { displayName = it }
+                )
+                SettingsRow(
+                    icon = null,
+                    title = stringResource(R.string.provider_model_icon),
+                    subtitle = if (customIcon.isBlank()) stringResource(R.string.provider_model_icon_hint) else null,
+                    onClick = { showIconDialog = true },
+                    trailing = {
+                        ModelLogoIcon(modelName = trimmedModel, customIcon = customIcon, size = 22.dp)
+                    }
+                )
+                if (showIconDialog) {
+                    ProviderIconDialog(
+                        currentIcon = customIcon,
+                        onPickGallery = {
+                            showIconDialog = false
+                            iconPickLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        onConfirmLink = { link ->
+                            customIcon = link
+                            showIconDialog = false
+                        },
+                        onReset = {
+                            ProviderIconStore.delete(context, "model-$providerId-$trimmedModel")
+                            customIcon = ""
+                            showIconDialog = false
+                        },
+                        onDismiss = { showIconDialog = false }
+                    )
+                }
                 if (duplicate) {
                     Text(
                         text = stringResource(R.string.provider_model_already_added),
@@ -351,7 +401,8 @@ internal fun AddModelSheet(
                         val output = outputTokens.trim().toIntOrNull()
                         val meta = ModelMetadata(
                             id = trimmedModel,
-                            displayName = trimmedModel,
+                            displayName = displayName.trim().ifBlank { trimmedModel },
+                            customIcon = customIcon,
                             contextTokens = contextTokens.trim().toIntOrNull() ?: 0,
                             inputTokens = input,
                             outputTokens = output,

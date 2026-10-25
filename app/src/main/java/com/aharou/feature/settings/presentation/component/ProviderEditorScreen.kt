@@ -970,6 +970,7 @@ fun ProviderEditorScreen(
                     stringResource(R.string.common_add)
                 },
                 initial = editingModel?.let { mergeModelMetadata(it, modelMetadata[modelMetadataKey(providerId, it)], customMetadata[modelMetadataKey(providerId, it)]) },
+                providerId = providerId,
                 onSave = { model, meta ->
                     val editing = editingModel
                     if (editing != null && model != editing) {
@@ -1074,7 +1075,7 @@ fun ProviderEditorScreen(
 
 /** 自定义供应商图标：相册选图 / 填图片链接 / 恢复默认。 */
 @Composable
-private fun ProviderIconDialog(
+internal fun ProviderIconDialog(
     currentIcon: String,
     onPickGallery: () -> Unit,
     onConfirmLink: (String) -> Unit,

@@ -256,7 +256,7 @@ internal fun ProviderModelRow(
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            model,
+                            metadata?.displayName?.takeIf { it.isNotBlank() } ?: model,
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -290,7 +290,7 @@ internal fun ProviderModelRow(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            ModelLogoIcon(modelName = model, size = 22.dp)
+                            ModelLogoIcon(modelName = model, customIcon = metadata?.customIcon, size = 22.dp)
                         }
                         Spacer(Modifier.width(Spacing.md))
                     }
