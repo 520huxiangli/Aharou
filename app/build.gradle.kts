@@ -276,6 +276,12 @@ android {
         unitTests.isReturnDefaultValues = true
         // Robolectric（迁移测试）需要真实 Android resources
         unitTests.isIncludeAndroidResources = true
+        // 失败用例打印完整堆栈：CI 日志默认只留首行，定位迁移校验差异时看不到 Room 的期望/实际结构
+        unitTests.all {
+            it.testLogging {
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
+        }
     }
 
     // 迁移测试（MigrationTestHelper）在 Robolectric 下从合并后的 assets 读 Room 导出的 schema，
