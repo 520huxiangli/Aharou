@@ -32,6 +32,7 @@ import com.aharou.feature.agent.presentation.hasVisibleContent
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Edit2
+import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Trash2
 
@@ -44,7 +45,9 @@ internal fun MessageActionsBottomSheet(
     onCopyClick: () -> Unit,
     onDeleteClick: () -> Unit,
     /** 重新生成：仅助手回答（有正文）提供，生成新版本而不覆盖当前回答。 */
-    onRegenerateClick: (() -> Unit)? = null
+    onRegenerateClick: (() -> Unit)? = null,
+    /** 从此处新建分支：以该消息（含）之前的历史另起会话。隐身会话不提供，传 null 即隐藏该项。 */
+    onForkClick: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -86,6 +89,18 @@ internal fun MessageActionsBottomSheet(
                     onClick = {
                         onDismiss()
                         onCopyClick()
+                    }
+                )
+            }
+
+            // 从此处新建分支：复制这条消息（含）之前的历史到新会话，原会话保持不变
+            if (onForkClick != null) {
+                MessageActionItem(
+                    icon = FeatherIcons.GitBranch,
+                    title = stringResource(R.string.chat_action_fork),
+                    onClick = {
+                        onDismiss()
+                        onForkClick()
                     }
                 )
             }

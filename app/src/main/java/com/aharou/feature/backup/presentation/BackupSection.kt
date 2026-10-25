@@ -53,6 +53,7 @@ import com.aharou.feature.backup.domain.WorkspaceBackupMeta
 import com.aharou.feature.backup.domain.remote.BackupTarget
 import com.aharou.feature.backup.domain.remote.BackupTargetType
 import com.aharou.feature.settings.presentation.component.SettingsDivider
+import com.aharou.feature.settings.presentation.component.SettingsEmptyState
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.SettingsGroupHeader
 import com.aharou.feature.settings.presentation.component.SettingsRow
@@ -288,10 +289,18 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     }
 
     if (networkAction != null) {
+        val pendingAction = networkAction
+        // 上传强制加密：快照里是解密后的 API Key 与 SSH 凭据，空口令等于把它们明文传到远端。
+        // 恢复侧仍允许留空——未加密的旧备份要靠它才能还原。
+        val requiresPassword = pendingAction is NetworkAction.Upload
         PasswordDialog(
             title = stringResource(R.string.backup_net_password_action),
-            subtitle = stringResource(R.string.backup_password_optional_hint),
+            subtitle = stringResource(
+                if (requiresPassword) R.string.backup_net_upload_password_hint
+                else R.string.backup_password_optional_hint
+            ),
             confirmText = stringResource(R.string.common_ok),
+            confirmEnabled = !requiresPassword || password.isNotEmpty(),
             password = password,
             onPasswordChange = { password = it },
             onConfirm = {
@@ -564,6 +573,7 @@ private fun PasswordDialog(
     title: String,
     subtitle: String,
     confirmText: String,
+    confirmEnabled: Boolean = true,
     password: String,
     onPasswordChange: (String) -> Unit,
     onConfirm: () -> Unit,
@@ -591,7 +601,7 @@ private fun PasswordDialog(
                 )
             }
         },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(confirmText) } },
+        confirmButton = { TextButton(onClick = onConfirm, enabled = confirmEnabled) { Text(confirmText) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } }
     )
 }
@@ -653,7 +663,11 @@ private fun NetworkBackupContent(
     SettingsGroupHeader(text = stringResource(R.string.backup_net_targets_header))
     SettingsGroup {
         if (targets.isEmpty()) {
-            SettingsRow(title = stringResource(R.string.backup_net_empty), enabled = false)
+            // 空态改用统一组件（图标底板 + 标题），与凭据页、技能页保持同一套样式。
+            SettingsEmptyState(
+                icon = FeatherIcons.Cloud,
+                title = stringResource(R.string.backup_net_empty)
+            )
             SettingsDivider()
         } else {
             targets.forEachIndexed { index, target ->

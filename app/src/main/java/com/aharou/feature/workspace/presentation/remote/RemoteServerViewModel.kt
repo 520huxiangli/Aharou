@@ -101,11 +101,16 @@ class RemoteServerViewModel @Inject constructor(
     fun connectMount(id: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            val result = repository.connectMount(id)
-            val updatedFailed = if (result.isFailure) _uiState.value.failedMountIds + id else _uiState.value.failedMountIds - id
-            _uiState.value = _uiState.value.copy(isLoading = false, failedMountIds = updatedFailed)
-            if (result.isFailure) {
-                _uiState.value = _uiState.value.copy(error = result.exceptionOrNull()?.message)
+            // 建连可能抛取消（切走工作区时），不走 try/finally 会让 isLoading 永远停在 true。
+            try {
+                val result = repository.connectMount(id)
+                val updatedFailed = if (result.isFailure) _uiState.value.failedMountIds + id else _uiState.value.failedMountIds - id
+                _uiState.value = _uiState.value.copy(failedMountIds = updatedFailed)
+                if (result.isFailure) {
+                    _uiState.value = _uiState.value.copy(error = result.exceptionOrNull()?.message)
+                }
+            } finally {
+                _uiState.value = _uiState.value.copy(isLoading = false)
             }
         }
     }

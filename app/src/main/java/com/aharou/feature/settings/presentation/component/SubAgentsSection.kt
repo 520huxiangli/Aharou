@@ -18,9 +18,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -34,11 +37,17 @@ import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.BatchDeleteConfirmDialog
+import com.aharou.core.ui.SelectionAction
+import com.aharou.core.ui.SelectionActionBar
 import com.aharou.core.ui.SwipeToDeleteRow
+import com.aharou.core.ui.rememberListSelectionState
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionScope
 import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Users
 
 /**
@@ -99,14 +108,58 @@ internal fun SubAgentsSection(
     var projectExpanded by rememberSaveable { mutableStateOf(true) }
     var globalExpanded by rememberSaveable { mutableStateOf(true) }
 
+    val settingsViewModel = rememberSettingsViewModel()
+    val selection = rememberListSelectionState()
+    // 选中 id 带作用域：同名子代理可能项目与全局各一份
+    val selectionIds = entries.map(::subAgentSelectionId)
+    LaunchedEffect(selectionIds) { selection.retain(selectionIds) }
+    var showBatchDelete by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    // 长按的可能是列表深处的行，进多选后滚回顶部，否则看不到操作栏
+    LaunchedEffect(selection.selectionMode) {
+        if (selection.selectionMode) scrollState.animateScrollTo(0)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = Spacing.lg)
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        if (selection.selectionMode) {
+            SelectionActionBar(
+                selectedCount = selection.selectedCount,
+                allSelected = selection.isAllSelected(selectionIds),
+                onToggleSelectAll = { selection.toggleSelectAll(selectionIds) },
+                onExit = { selection.exit() },
+                actions = listOf(
+                    SelectionAction(
+                        icon = FeatherIcons.Trash2,
+                        label = stringResource(R.string.common_delete),
+                        onClick = { showBatchDelete = true },
+                        destructive = true
+                    )
+                )
+            )
+        } else {
+            // 长按也能进多选，但不是可发现的入口；再给一个显式按钮，与其它列表一致
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { selection.enterSelectionMode() }) {
+                    Icon(
+                        imageVector = FeatherIcons.CheckSquare,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(Spacing.xs))
+                    Text(stringResource(R.string.provider_models_select))
+                }
+            }
+        }
         CollapsibleGroupHeader(
             text = if (projectName != null) {
                 stringResource(R.string.perm_current_project, projectName)
@@ -126,7 +179,14 @@ internal fun SubAgentsSection(
                         SubAgentRow(
                             entry = entry,
                             onDelete = { onDelete(entry) },
-                            onClick = { onOpenDetail(entry) }
+                            onClick = { onOpenDetail(entry) },
+                            selectionMode = selection.selectionMode,
+                            selected = selection.isSelected(subAgentSelectionId(entry)),
+                            onToggleSelect = { selection.toggle(subAgentSelectionId(entry)) },
+                            onLongClick = {
+                                selection.enterSelectionMode()
+                                selection.select(subAgentSelectionId(entry))
+                            }
                         )
                     }
                 }
@@ -148,25 +208,63 @@ internal fun SubAgentsSection(
                         SubAgentRow(
                             entry = entry,
                             onDelete = { onDelete(entry) },
-                            onClick = { onOpenDetail(entry) }
+                            onClick = { onOpenDetail(entry) },
+                            selectionMode = selection.selectionMode,
+                            selected = selection.isSelected(subAgentSelectionId(entry)),
+                            onToggleSelect = { selection.toggle(subAgentSelectionId(entry)) },
+                            onLongClick = {
+                                selection.enterSelectionMode()
+                                selection.select(subAgentSelectionId(entry))
+                            }
                         )
                     }
                 }
             }
         }
     }
+
+    if (showBatchDelete) {
+        val selectedEntries = entries.filter { subAgentSelectionId(it) in selection.selectedIds }
+        BatchDeleteConfirmDialog(
+            title = stringResource(R.string.common_delete),
+            message = stringResource(R.string.common_batch_delete_confirm, selectedEntries.size),
+            onConfirm = {
+                showBatchDelete = false
+                selection.exit()
+                // 删除接口按作用域定位目录，跨作用域的选中必须分组提交
+                selectedEntries.groupBy { it.scope }.forEach { (scope, group) ->
+                    settingsViewModel.deleteSubAgents(group.map { it.name }, scope)
+                }
+            },
+            onDismiss = { showBatchDelete = false }
+        )
+    }
 }
 
-/** 单个子代理行：图标 + 名称/描述 + 模型标签 + 右箭头；左滑删除，点击行进入详情。 */
+/** 选中 id：「作用域:名称」——同名子代理可能项目与全局各一份。 */
+private fun subAgentSelectionId(entry: SubAgentUiEntry): String = "${entry.scope.name}:${entry.name}"
+
+/** 单个子代理行：图标 + 名称/描述 + 模型标签 + 右箭头；左滑删除，点击行进入详情，长按进多选。 */
 @Composable
 private fun SubAgentRow(
     entry: SubAgentUiEntry,
     onDelete: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null
 ) {
     val rowBackground = MaterialTheme.semanticColors.cardSurface
 
-    SwipeToDeleteRow(onDelete = onDelete, onClick = onClick) {
+    SwipeToDeleteRow(
+        onDelete = onDelete,
+        onClick = onClick,
+        onLongClick = onLongClick,
+        selectionMode = selectionMode,
+        selected = selected,
+        onToggleSelect = onToggleSelect
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

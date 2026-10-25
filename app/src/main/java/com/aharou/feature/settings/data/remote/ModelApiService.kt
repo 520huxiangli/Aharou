@@ -5,7 +5,12 @@ import com.aharou.R
 import com.aharou.feature.agent.domain.provider.joinUrl
 import com.aharou.feature.settings.domain.model.ProviderType
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.InterruptedIOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -21,6 +26,12 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** 调试详情回显的请求体上限：够看清端点与参数形态，又不至于把整份上下文塞进界面。 */
+private const val MAX_REQUEST_BODY_CHARS = 800
+
+/** 网络错误重试前的退避时长（毫秒）。 */
+private const val NETWORK_RETRY_DELAY_MS = 3_000L
 
 /** 拉取模型列表的结果，包含解析出的模型列表及完整的调试信息。 */
 data class FetchModelsResult(
@@ -85,14 +96,7 @@ class ModelApiService @Inject constructor(
                 .get()
                 .build()
 
-            val reqHeadersMap = request.headers.names().associateWith { name ->
-                val raw = request.header(name).orEmpty()
-                if (name.equals("Authorization", ignoreCase = true) || name.equals("x-api-key", ignoreCase = true)) {
-                    if (raw.length > 12) raw.take(7) + "..." + raw.takeLast(4) else "***"
-                } else {
-                    raw
-                }
-            }
+            val reqHeadersMap = maskedHeaders(request)
             failedHeaders = reqHeadersMap
 
             client.newCall(request).execute().use { response ->
@@ -197,106 +201,163 @@ class ModelApiService @Inject constructor(
         customHeaders: Map<String, String> = emptyMap()
     ): ModelTestResult = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
-        try {
-            // 空 Key 也放行（免鉴权供应商）；真正需要 Key 的平台会由上游返回鉴权错误。
+        val first = testModelOnce(start, baseUrl, apiKey, type, useFullUrl, useResponseApi, model, customHeaders)
+        if (!first.retryable) return@withContext first.result
+        // DNS 解析失败会被 libcore 缓存，紧接着重试必然重复失败；退避 3 秒再试一次（delay 不占线程）。
+        delay(NETWORK_RETRY_DELAY_MS)
+        testModelOnce(start, baseUrl, apiKey, type, useFullUrl, useResponseApi, model, customHeaders).result
+    }
 
-            val (url, payload) = when (type) {
-                ProviderType.ANTHROPIC -> {
-                    val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1/messages")
-                    u to """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
-                }
-                ProviderType.GEMINI -> {
-                    // Interactions 的请求体是 `input`（step 序列或纯字符串），必须同时切到
-                    // v1beta/interactions 端点；仍打到 generateContent 会被以缺 `contents` 拒绝。
-                    // 图像模型（Nano Banana 系）只支持 Interactions，无论开关是否开启都强制切。
-                    if (useResponseApi || model.endsWith("-image", ignoreCase = true)) {
-                        val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1beta/interactions")
-                        u to """{"model":${model.jsonStr()},"input":"hi","store":false}"""
+    /** 一次尝试；「是否值得重试」随结果带出，因为网络异常类型只在 catch 里看得到。 */
+    private fun testModelOnce(
+        start: Long,
+        baseUrl: String,
+        apiKey: String,
+        type: ProviderType,
+        useFullUrl: Boolean,
+        useResponseApi: Boolean,
+        model: String,
+        customHeaders: Map<String, String>
+    ): TestAttempt {
+        // 空 Key 也放行（免鉴权供应商）；真正需要 Key 的平台会由上游返回鉴权错误。
+        val (url, payload) = when (type) {
+            ProviderType.ANTHROPIC -> {
+                val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1/messages")
+                u to """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+            }
+            ProviderType.GEMINI -> {
+                // Interactions 的请求体是 `input`（step 序列或纯字符串），必须同时切到
+                // v1beta/interactions 端点；仍打到 generateContent 会被以缺 `contents` 拒绝。
+                // 图像模型（Nano Banana 系）只支持 Interactions，无论开关是否开启都强制切。
+                if (useResponseApi || model.endsWith("-image", ignoreCase = true)) {
+                    val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1beta/interactions")
+                    u to """{"model":${model.jsonStr()},"input":"hi","store":false}"""
+                } else {
+                    val u = if (useFullUrl) {
+                        baseUrl
                     } else {
-                        val u = if (useFullUrl) {
-                            baseUrl
+                        val path = if (baseUrl.trimEnd('/').endsWith(model)) {
+                            baseUrl.trimEnd('/') + ":generateContent"
                         } else {
-                            val path = if (baseUrl.trimEnd('/').endsWith(model)) {
-                                baseUrl.trimEnd('/') + ":generateContent"
-                            } else {
-                                joinUrl(baseUrl, "v1beta/models/$model:generateContent")
-                            }
-                            path
+                            joinUrl(baseUrl, "v1beta/models/$model:generateContent")
                         }
-                        u to """{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"""
+                        path
                     }
-                }
-                else -> {
-                    // Responses API 的请求体是 `input` 格式，必须同时切到 v1/responses 端点；
-                    // 仍打到 chat/completions 会被服务端以「missing field `messages`」拒绝。
-                    val path = if (useResponseApi) "v1/responses" else "v1/chat/completions"
-                    val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, path)
-                    if (useResponseApi) {
-                        u to """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
-                    } else {
-                        u to """{"model":${model.jsonStr()},"max_completion_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
-                    }
+                    u to """{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"""
                 }
             }
+            else -> {
+                // Responses API 的请求体是 `input` 格式，必须同时切到 v1/responses 端点；
+                // 仍打到 chat/completions 会被服务端以「missing field `messages`」拒绝。
+                val path = if (useResponseApi) "v1/responses" else "v1/chat/completions"
+                val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, path)
+                if (useResponseApi) {
+                    u to """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
+                } else {
+                    u to """{"model":${model.jsonStr()},"max_completion_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                }
+            }
+        }
 
-            val request = Request.Builder()
+        val request = runCatching {
+            Request.Builder()
                 .url(url)
                 .applyAuth(apiKey, type)
                 .applyCustomHeaders(customHeaders)
                 .post(payload.toRequestBody("application/json".toMediaType()))
                 .build()
+        }.getOrElse { e ->
+            // 地址本身就非法（如少写协议头）：没有可发的请求，直接回失败结果。
+            return TestAttempt(failure(e, url, emptyMap(), payload.take(MAX_REQUEST_BODY_CHARS), start))
+        }
 
-            val reqHeadersMap = request.headers.names().associateWith { name ->
-                val raw = request.header(name).orEmpty()
-                if (name.equals("Authorization", ignoreCase = true) || name.equals("x-api-key", ignoreCase = true)) {
-                    if (raw.length > 12) raw.take(7) + "..." + raw.takeLast(4) else "***"
-                } else {
-                    raw
-                }
-            }
+        // 失败时用户要能看清「发到哪、带了什么头、发了什么体」：不回填这三项就分不清
+        // 是地址错、鉴权错还是网络错，故在请求构造完就固定下来。
+        val requestUrl = request.url.toString()
+        val requestHeaders = maskedHeaders(request)
+        val requestBody = payload.take(MAX_REQUEST_BODY_CHARS)
 
+        return try {
             client.newCall(request).execute().use { response ->
-                val latency = (System.nanoTime() - start) / 1_000_000
+                val latency = elapsedMs(start)
                 val body = response.body?.string().orEmpty()
                 val respHeadersMap = response.headers.names().associateWith { response.header(it).orEmpty() }
-
-                if (response.isSuccessful) {
+                TestAttempt(
                     ModelTestResult(
-                        success = true,
+                        success = response.isSuccessful,
                         latencyMs = latency,
-                        message = context.getString(R.string.provider_test_success, latency),
-                        requestUrl = url,
-                        requestHeaders = reqHeadersMap,
-                        requestBody = payload,
-                        responseCode = response.code,
-                        responseHeaders = respHeadersMap,
-                        responseBody = body
-                    )
-                } else {
-                    ModelTestResult(
-                        success = false,
-                        latencyMs = latency,
-                        message = "HTTP ${response.code}: ${body.take(160)}",
-                        requestUrl = url,
-                        requestHeaders = reqHeadersMap,
-                        requestBody = payload,
+                        message = if (response.isSuccessful) {
+                            context.getString(R.string.provider_test_success, latency)
+                        } else {
+                            "HTTP ${response.code}: ${body.take(160)}"
+                        },
+                        requestUrl = requestUrl,
+                        requestHeaders = requestHeaders,
+                        requestBody = requestBody,
                         responseCode = response.code,
                         responseHeaders = respHeadersMap,
                         responseBody = body,
-                        errorDetail = body
+                        errorDetail = if (response.isSuccessful) "" else body
                     )
-                }
+                )
             }
         } catch (e: Exception) {
-            val latency = (System.nanoTime() - start) / 1_000_000
-            ModelTestResult(
-                success = false,
-                latencyMs = latency,
-                message = e.message ?: context.getString(R.string.chat_error_title),
-                errorDetail = e.stackTraceToString()
+            TestAttempt(
+                failure(e, requestUrl, requestHeaders, requestBody, start),
+                retryable = e.isRetryableNetworkError()
             )
         }
     }
+
+    /** 失败结果：URL、打码后的请求头、截断的请求体必须带上，否则分不清错在哪一层。 */
+    private fun failure(
+        e: Throwable,
+        requestUrl: String,
+        requestHeaders: Map<String, String>,
+        requestBody: String,
+        start: Long
+    ): ModelTestResult = ModelTestResult(
+        success = false,
+        latencyMs = elapsedMs(start),
+        message = e.message ?: context.getString(R.string.chat_error_title),
+        requestUrl = requestUrl,
+        requestHeaders = requestHeaders,
+        requestBody = requestBody,
+        errorDetail = e.stackTraceToString()
+    )
+
+    /** 单次尝试的结果，附带是否值得退避重试。 */
+    private data class TestAttempt(val result: ModelTestResult, val retryable: Boolean = false)
+
+    private fun elapsedMs(start: Long): Long = (System.nanoTime() - start) / 1_000_000
+
+    /** DNS 解析失败 / 连接被拒 / 超时 才值得重试：换个解析结果或网络状态就可能成功。 */
+    private fun Throwable.isRetryableNetworkError(): Boolean {
+        var current: Throwable? = this
+        var depth = 0
+        while (current != null && depth < 4) {
+            when (current) {
+                is UnknownHostException, is ConnectException, is SocketTimeoutException,
+                is InterruptedIOException -> return true
+            }
+            current = current.cause
+            depth++
+        }
+        return false
+    }
+
+    /** 带凭据的请求头一律打码（保留前 7 位与后 4 位，便于核对是哪把 Key）：调试详情会展示给用户。 */
+    private fun maskedHeaders(request: Request): Map<String, String> =
+        request.headers.names().associateWith { name ->
+            val raw = request.header(name).orEmpty()
+            val header = name.lowercase()
+            val sensitive = header == "authorization" || header.contains("key") ||
+                header.contains("token") || header.contains("secret") || header.contains("cookie")
+            if (sensitive) maskSecret(raw) else raw
+        }
+
+    private fun maskSecret(raw: String): String =
+        if (raw.length > 12) raw.take(7) + "..." + raw.takeLast(4) else "***"
 
     /** 从错误响应里取出可读描述（如 `code` + `desc` / `message` / `error.message`）；取不到返回 null。 */
     private fun serverErrorMessage(obj: JsonObject): String? {

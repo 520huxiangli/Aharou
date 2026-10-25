@@ -53,7 +53,9 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.feature.settings.data.remote.ModelApiService
 import com.aharou.feature.settings.data.remote.ModelTestResult
+import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import compose.icons.FeatherIcons
 import android.widget.Toast
@@ -67,6 +69,10 @@ import compose.icons.feathericons.AlertCircle
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Plus
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.launch
 
 private val ModelLogoSize = 40.dp
@@ -127,6 +133,98 @@ private fun ModelTagPill(texts: List<String>) {
             )
         }
     }
+}
+
+/**
+ * 单次测试结果的摘要行：提供商编辑页（可点开详情）与模型选择弹层（只读）共用。
+ * [onClick] 为空即不可点，也不显示「查看详情」的箭头。
+ */
+@Composable
+internal fun ModelTestResultLine(
+    result: ModelTestResult,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    val tint = if (result.success) MaterialTheme.semanticColors.success else MaterialTheme.colorScheme.error
+    val clickModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .then(clickModifier)
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+    ) {
+        Icon(
+            imageVector = if (result.success) FeatherIcons.Check else FeatherIcons.AlertCircle,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(Spacing.xs))
+        Text(
+            text = modelTestSummary(result),
+            style = MaterialTheme.typography.bodySmall,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (onClick != null) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                imageVector = FeatherIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(12.dp)
+            )
+        }
+    }
+}
+
+/** 成功给「连接正常 · 820ms」，失败只留 HTTP 码或首行摘要——完整报文在详情弹窗里。 */
+private fun modelTestSummary(result: ModelTestResult): String {
+    if (result.success) return result.message
+    val codeMatch = Regex("""(?i)(HTTP\s*\d{3}|code[:\s]+[a-zA-Z0-9_]+)""").find(result.message)
+    if (codeMatch != null) return codeMatch.value
+    return result.message.lines().firstOrNull()?.let { if (it.length > 20) it.take(20) + "..." else it }
+        ?: "Error"
+}
+
+/**
+ * 模型选择弹层里的「测试」按钮用的执行器。
+ *
+ * 弹层拿不到 [com.aharou.feature.settings.presentation.SettingsViewModel]（调用方是设置页与聊天页两个
+ * 互不共享实例的子树），直接取单例 [ModelApiService] 测一次即可；结果由弹层自己按行持有，
+ * 不落任何 ViewModel 全局状态。
+ */
+@Composable
+internal fun rememberModelTester(): suspend (AIProviderConfig, String) -> ModelTestResult {
+    val context = LocalContext.current
+    val service = remember(context) {
+        EntryPointAccessors
+            .fromApplication(context.applicationContext, ModelTestEntryPoint::class.java)
+            .modelApiService()
+    }
+    return remember(service) {
+        val tester: suspend (AIProviderConfig, String) -> ModelTestResult = { provider, model ->
+            service.testModel(
+                provider.baseUrl,
+                provider.firstUsableApiKey,
+                provider.type,
+                provider.useFullUrl,
+                provider.useResponseApi,
+                model,
+                provider.customHeaders
+            )
+        }
+        tester
+    }
+}
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ModelTestEntryPoint {
+    fun modelApiService(): ModelApiService
 }
 
 /** 模型行。logo 与「测试」相对名称+标签整块垂直居中，对齐提供商列表。 */
@@ -235,43 +333,11 @@ internal fun ProviderModelRow(
                     }
                 }
                 result?.let { r ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .padding(top = Spacing.xs, start = ModelContentStart)
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { showDetail = true }
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (r.success) FeatherIcons.Check else FeatherIcons.AlertCircle,
-                            contentDescription = null,
-                            tint = if (r.success) MaterialTheme.semanticColors.success else MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(Spacing.xs))
-                        val displayMsg = if (r.success) {
-                            r.message
-                        } else {
-                            val codeMatch = Regex("""(?i)(HTTP\s*\d{3}|code[:\s]+[a-zA-Z0-9_]+)""").find(r.message)
-                            if (codeMatch != null) codeMatch.value
-                            else r.message.lines().firstOrNull()?.let { if (it.length > 20) it.take(20) + "..." else it } ?: "Error"
-                        }
-                        Text(
-                            text = displayMsg,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (r.success) MaterialTheme.semanticColors.success else MaterialTheme.colorScheme.error,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Icon(
-                            imageVector = FeatherIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(12.dp)
-                        )
-                    }
+                    ModelTestResultLine(
+                        result = r,
+                        modifier = Modifier.padding(top = Spacing.xs, start = ModelContentStart),
+                        onClick = { showDetail = true }
+                    )
                 }
             }
             if (showDivider) {

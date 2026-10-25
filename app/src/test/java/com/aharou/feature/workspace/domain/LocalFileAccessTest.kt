@@ -30,6 +30,7 @@ class LocalFileAccessTest {
     private fun newAccess(): LocalFileAccess {
         // 生产代码恒以两参形式调用（path, boundWorkspace），单参桩匹配不上，必须写全两个
         every { pathMapper.toHostFile(any(), any()) } answers { File(tmp.root, firstArg<String>()) }
+        every { pathMapper.resolveFile(any(), any(), any()) } answers { File(tmp.root, firstArg<String>()) }
         every { pathMapper.toContainerPath(any(), any()) } answers { firstArg<String>() }
         return LocalFileAccess(pathMapper)
     }
@@ -356,6 +357,10 @@ class LocalFileAccessTest {
     @Test
     fun forWorkspace_boundCopiesKeepTheirOwnWorkspace() {
         every { pathMapper.toHostFile(any(), any()) } answers {
+            File(File(tmp.root, secondArg<String?>() ?: "unbound"), firstArg<String>())
+        }
+        // 生产代码的路径解析走 resolveFile(path, boundWorkspace, followFinalLink)，只桩 toHostFile 命中不了
+        every { pathMapper.resolveFile(any(), any(), any()) } answers {
             File(File(tmp.root, secondArg<String?>() ?: "unbound"), firstArg<String>())
         }
         val base = LocalFileAccess(pathMapper)

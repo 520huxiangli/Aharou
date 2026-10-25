@@ -3,6 +3,8 @@ package com.aharou.feature.agent.domain.tool
 import com.aharou.feature.agent.domain.model.AgentMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -89,5 +91,82 @@ class ModelProjectionTest {
     fun fold_ignoresNonToolMessages() {
         val messages = listOf(userMessage(1), storedResult(2)) + (3..12).map { userMessage(it) }
         assertSame(messages, foldStoredToolResults(messages))
+    }
+
+    private val backgroundNotification =
+        """{"kind":"background_task","notice":"notice","task_id":"bg-1","title":"gradle build","exit_code":0}"""
+
+    private val subagentNotification =
+        """{"kind":"subagent","notice":"notice","subagent_id":"sub-7","subagent_title":"model research"}"""
+
+    private val expectedEditText =
+        "Edited file successfully: /root/x.kt\nReplacements: 2\nChanged lines: +3 -1"
+
+    private val expectedWriteText =
+        "Created file successfully: /root/y.kt (lines: 10, +10 -0)"
+
+    private fun editResult(notificationsJson: String? = null): String =
+        """{"status":"success","data":{"path":"/root/x.kt","replacements":2,"added_lines":3,"removed_lines":1}""" +
+            (notificationsJson?.let { ""","notifications":$it""" } ?: "") + "}"
+
+    private fun writeResult(notificationsJson: String? = null): String =
+        """{"status":"success","data":{"path":"/root/y.kt","created":true,"added_lines":10,""" +
+            """"removed_lines":0,"lines_written":10}""" +
+            (notificationsJson?.let { ""","notifications":$it""" } ?: "") + "}"
+
+    /** 搭车通知必须原样跟着 editFile 投影回到模型，否则结果落库后 ack 就永久丢了。 */
+    @Test
+    fun projection_editFileKeepsInjectedNotifications() {
+        val text = modelToolResultText("editFile", editResult("[$backgroundNotification,$subagentNotification]"))
+        assertNotNull(text)
+        assertTrue(text!!.startsWith(expectedEditText))
+        assertTrue("通知数组应整段补回", text.contains("\"kind\":\"background_task\""))
+        assertTrue(text.contains("\"task_id\":\"bg-1\""))
+        assertTrue(text.contains("\"subagent_id\":\"sub-7\""))
+    }
+
+    /** writeFile 投影同样要带回通知。 */
+    @Test
+    fun projection_writeFileKeepsInjectedNotifications() {
+        val text = modelToolResultText("writeFile", writeResult("[$subagentNotification]"))
+        assertNotNull(text)
+        assertTrue(text!!.startsWith(expectedWriteText))
+        assertTrue(text.contains("\"subagent_id\":\"sub-7\""))
+    }
+
+    /** 空通知数组：与没有通知完全等价，不多一行说明。 */
+    @Test
+    fun projection_ignoresEmptyNotifications() {
+        assertEquals(expectedEditText, modelToolResultText("editFile", editResult("[]")))
+    }
+
+    /** 没有 notifications 字段时投影保持原样。 */
+    @Test
+    fun projection_unchangedWithoutNotifications() {
+        assertEquals(expectedEditText, modelToolResultText("editFile", editResult()))
+        assertEquals(expectedWriteText, modelToolResultText("writeFile", writeResult()))
+    }
+
+    /** 失败结果不投影（即使带了通知），交给调用方回退完整 result，通知不会丢。 */
+    @Test
+    fun projection_returnsNullForFailedResultWithNotifications() {
+        val failed = """{"status":"error","code":"STALE_FILE","message":"conflict",""" +
+            """"data":{"path":"/root/x.kt"},"notifications":[$backgroundNotification]}"""
+        assertNull(modelToolResultText("editFile", failed))
+    }
+
+    /** 非文件工具返回 null，由调用方回退完整 result。 */
+    @Test
+    fun projection_returnsNullForNonFileTool() {
+        val bash = """{"status":"success","data":{"output":"ok"},""" +
+            """"notifications":[$backgroundNotification]}"""
+        assertNull(modelToolResultText("bash", bash))
+    }
+
+    /** 成功但 data 里取不到路径（投影无法生成）也返回 null，同样回退完整 result。 */
+    @Test
+    fun projection_returnsNullWhenProjectionCannotBeBuilt() {
+        val noPath = """{"status":"success","data":{},"notifications":[$backgroundNotification]}"""
+        assertNull(modelToolResultText("editFile", noPath))
     }
 }

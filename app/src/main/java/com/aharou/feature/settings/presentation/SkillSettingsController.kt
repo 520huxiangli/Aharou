@@ -168,6 +168,18 @@ class SkillSettingsController @Inject constructor(
         }
     }
 
+    /** 批量切换技能启用状态：逐条写回各自的 skills.json，全部写完只刷一次列表。 */
+    fun setSkillsEnabled(names: Collection<String>, enabled: Boolean, scope: SkillScope) {
+        val targets = names.filter { it.isNotBlank() }.distinct()
+        if (targets.isEmpty()) return
+        this.scope.launch {
+            withContext(Dispatchers.IO) {
+                targets.forEach { skillRepository.setSkillDisabled(it, !enabled, scope) }
+            }
+            refreshSkills()
+        }
+    }
+
     /**
      * 删除指定作用域的技能（删除其目录，不可恢复），完成后刷新列表。
      * 删除本体在 IO 线程跑（远程模式经 SFTP 递归删，不能在主线程）；期间 [deleting] 置名供 UI 转圈。
@@ -186,6 +198,42 @@ class SkillSettingsController @Inject constructor(
                     }
                     if (!stillPresent) {
                         withContext(Dispatchers.IO) { skillMarketRepository.forgetInstall(name) }
+                    }
+                }
+                refreshSkills()
+            } finally {
+                _deleting.value = null
+            }
+        }
+    }
+
+    /**
+     * 批量删除同一作用域下的技能：逐条删目录，全部删完只刷一次列表。
+     * 删除中途 [_deleting] 逐个置为当前处理的技能名，界面转圈与重复点击拦截沿用单条那套。
+     */
+    fun deleteSkills(names: Collection<String>, scope: SkillScope) {
+        val targets = names.filter { it.isNotBlank() }.distinct()
+        if (targets.isEmpty() || _deleting.value != null) return
+        this.scope.launch {
+            try {
+                val deleted = withContext(Dispatchers.IO) {
+                    val done = mutableListOf<String>()
+                    targets.forEach { name ->
+                        _deleting.value = name
+                        if (skillRepository.deleteSkill(name, scope)) done += name
+                    }
+                    done
+                }
+                // 市场装来的技能删掉后要一并清安装记录，否则市场一直显示「已安装」。
+                // 安装记录只按名字存、不分作用域，所以同名技能在别的地方还在时要留着；
+                // 批量场景只查一次磁盘（单条那条走的是「每个名字查一次」）。
+                if (deleted.isNotEmpty()) {
+                    val remaining = withContext(Dispatchers.IO) {
+                        skillRepository.listAllSkills().map { it.skill.name.lowercase() }.toSet()
+                    }
+                    withContext(Dispatchers.IO) {
+                        deleted.filterNot { it.lowercase() in remaining }
+                            .forEach { skillMarketRepository.forgetInstall(it) }
                     }
                 }
                 refreshSkills()

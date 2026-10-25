@@ -72,10 +72,11 @@ internal fun settingsLightMode(): Boolean =
 internal fun CollapsibleGroupHeader(
     text: String,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onToggle)
             .padding(start = Spacing.md, end = Spacing.sm, top = Spacing.sm, bottom = Spacing.xs),
@@ -137,6 +138,9 @@ internal fun SettingsGroupHeader(
     }
 }
 
+/** 分组卡片圆角：[SettingsGroup] 与 [LazyGroupItem] 共用，保证「整块卡片」与「逐条拼出」两种形态外观一致。 */
+private val GroupCardCorner = 14.dp
+
 /** 白色/深色分组圆角卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。[visible] 为 false 时整组不渲染（可折叠分组用）。 */
 @Composable
 internal fun SettingsGroup(
@@ -149,7 +153,39 @@ internal fun SettingsGroup(
     if (!visible) return
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(GroupCardCorner),
+        color = MaterialTheme.semanticColors.cardSurface,
+        shadowElevation = 0.dp
+    ) {
+        Column(content = content)
+    }
+}
+
+/**
+ * LazyColumn 版分组行：把 [SettingsGroup] 的整块卡片拆成一条一条，靠首条/末条各自的圆角拼出卡片外形。
+ *
+ * Lazy 列表里没有能包住整组的容器可裁剪（包了就不懒了），所以圆角与卡片底色必须落在每个条目自己身上。
+ *
+ * @param index 该行在所属分组内的序号（0 起）。
+ * @param count 所属分组的行数。
+ */
+@Composable
+internal fun LazyGroupItem(
+    index: Int,
+    count: Int,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val isFirst = index == 0
+    val isLast = index == count - 1
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(
+            topStart = if (isFirst) GroupCardCorner else 0.dp,
+            topEnd = if (isFirst) GroupCardCorner else 0.dp,
+            bottomStart = if (isLast) GroupCardCorner else 0.dp,
+            bottomEnd = if (isLast) GroupCardCorner else 0.dp
+        ),
         color = MaterialTheme.semanticColors.cardSurface,
         shadowElevation = 0.dp
     ) {

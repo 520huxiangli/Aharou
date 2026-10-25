@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
@@ -36,13 +37,17 @@ import com.aharou.core.theme.semanticColors
  *
  * 不用主题色填充，让它与下方的扫描式列表协调，只靠中性色与轻阴影表现层次。
  * 侧边栏顶部与 MCP 编辑弹窗共用同一份，切换手感保持一致。
+ *
+ * [enabled] == false 时锁定当前选中段：整体置灰且不可点击（用于创建后不可更改的选项，
+ * 如容器的本地/远程模式），滑块仍停留在选中位置以展示当前值。
  */
 @Composable
 fun SegmentedTabs(
     selected: Int,
     labels: List<String>,
     onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val trackColor = MaterialTheme.semanticColors.mutedSurface
@@ -55,6 +60,7 @@ fun SegmentedTabs(
             .clip(RoundedCornerShape(12.dp))
             .background(trackColor)
             .padding(3.dp)
+            .alpha(if (enabled) 1f else 0.55f)
     ) {
         val thumbWidth = maxWidth / labels.size
         // 选中滑块位移：临界阻尼弹簧（不过冲），切换时滑块顺滑到位，不是硬切。
@@ -82,10 +88,17 @@ fun SegmentedTabs(
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(9.dp))
                         // 禁用点击波纹：选中滑块位移已是反馈，ripple 残留的深色阴影反而扎眼。
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { onSelect(index) },
+                        // 锁定时完全去掉 clickable（含无障碍点击语义），再叠整体置灰。
+                        .then(
+                            if (enabled) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onSelect(index) }
+                            } else {
+                                Modifier
+                            }
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

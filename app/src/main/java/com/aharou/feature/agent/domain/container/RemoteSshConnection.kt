@@ -66,6 +66,12 @@ class RemoteSshConnection @Inject constructor(
     private val mutex = Mutex()
     private val sftpLock = Mutex()
 
+    /**
+     * 凭据同步互斥：切「自动注入」开关与增删凭据分别在独立协程里跑，注入与撤销并发时会一边写
+     * gitconfig/includeIf、一边 rm 掉同目录文件，留下半截配置（注入静默失效，或 git 读到坏段）。
+     */
+    private val credentialSyncMutex = Mutex()
+
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     /** 连接状态流，供 UI 显示指示器、工作区初始化等待连接就绪。 */
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -451,41 +457,45 @@ class RemoteSshConnection @Inject constructor(
         val wsRoot = config?.remoteWorkspacePath?.trimEnd('/')
             ?.takeIf { it.isNotBlank() }
             ?: workspaceRoot.trimEnd('/').ifEmpty { return }
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val mkdirSession = client.startSession()
-                mkdirSession.exec("mkdir -p ${shellQuote(aharouDir)}").join()
-                mkdirSession.close()
+        // 与 removeGitCredentialConfig 共用同一把锁：并发时一边写 includeIf 配置、一边删文件，
+        // 会留下半截配置。两个方法互不调用，锁内也不再取别的锁，不存在重入/交叉等待。
+        credentialSyncMutex.withLock {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val mkdirSession = client.startSession()
+                    mkdirSession.exec("mkdir -p ${shellQuote(aharouDir)}").join()
+                    mkdirSession.close()
 
-                val creds = credentials.joinToString("\n") { c ->
-                    "https://${enc(c.username)}:${enc(c.token)}@${c.host}"
-                }.let { if (it.isNotEmpty()) "$it\n" else "" }
-                writeRemoteFile(client, "$aharouDir/git-credentials", encodeCreds(creds))
+                    val creds = credentials.joinToString("\n") { c ->
+                        "https://${enc(c.username)}:${enc(c.token)}@${c.host}"
+                    }.let { if (it.isNotEmpty()) "$it\n" else "" }
+                    writeRemoteFile(client, "$aharouDir/git-credentials", encodeCreds(creds))
 
-                // 上传 credential helper 脚本（本地由 ContainerInstaller 提取），配置为唯一 helper；
-                // 服务器上没有 App，用 AICODE_CRED_NO_PROMPT 让未命中时直接空退出而非等待弹窗。
-                containerInstaller.extractCredentialHelper()
-                val helperScript = java.io.File(containerInstaller.aharouDir, "git-credential-aicode").readText()
-                writeRemoteFile(client, "$aharouDir/git-credential-aicode", helperScript)
-                val chmodSession = client.startSession()
-                chmodSession.exec("chmod +x ${shellQuote("$aharouDir/git-credential-aicode")}").join()
-                chmodSession.close()
+                    // 上传 credential helper 脚本（本地由 ContainerInstaller 提取），配置为唯一 helper；
+                    // 服务器上没有 App，用 AICODE_CRED_NO_PROMPT 让未命中时直接空退出而非等待弹窗。
+                    containerInstaller.extractCredentialHelper()
+                    val helperScript = java.io.File(containerInstaller.aharouDir, "git-credential-aicode").readText()
+                    writeRemoteFile(client, "$aharouDir/git-credential-aicode", helperScript)
+                    val chmodSession = client.startSession()
+                    chmodSession.exec("chmod +x ${shellQuote("$aharouDir/git-credential-aicode")}").join()
+                    chmodSession.close()
 
-                val gitconfig = buildString {
-                    append("[include]\n")
-                    append("    path = ~/.gitconfig\n")
-                    append("[includeIf \"gitdir:${gitConfigValue(wsRoot)}/\"]\n")
-                    append("    path = ~/.aharou/gitconfig.credential\n")
-                }
-                writeRemoteFile(client, "$aharouDir/gitconfig", gitconfig)
+                    val gitconfig = buildString {
+                        append("[include]\n")
+                        append("    path = ~/.gitconfig\n")
+                        append("[includeIf \"gitdir:${gitConfigValue(wsRoot)}/\"]\n")
+                        append("    path = ~/.aharou/gitconfig.credential\n")
+                    }
+                    writeRemoteFile(client, "$aharouDir/gitconfig", gitconfig)
 
-                val credentialConfig = buildString {
-                    append("[credential]\n")
-                    append("    helper = !AICODE_CRED_NO_PROMPT=1 $aharouDir/git-credential-aicode\n")
-                }
-                writeRemoteFile(client, "$aharouDir/gitconfig.credential", credentialConfig)
-                FileLogger.i(TAG, "已注入 git 凭据到远程 $aharouDir（限定 $wsRoot/）")
-            }.onFailure { FileLogger.w(TAG, "注入 git 凭据到远程失败", it) }
+                    val credentialConfig = buildString {
+                        append("[credential]\n")
+                        append("    helper = !AICODE_CRED_NO_PROMPT=1 $aharouDir/git-credential-aicode\n")
+                    }
+                    writeRemoteFile(client, "$aharouDir/gitconfig.credential", credentialConfig)
+                    FileLogger.i(TAG, "已注入 git 凭据到远程 $aharouDir（限定 $wsRoot/）")
+                }.onFailure { FileLogger.w(TAG, "注入 git 凭据到远程失败", it) }
+            }
         }
     }
 
@@ -497,19 +507,21 @@ class RemoteSshConnection @Inject constructor(
         val client = sshClient ?: return
         val home = remoteHome ?: return
         val aharouDir = home.trimEnd('/') + "/.aharou"
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val session = client.startSession()
-                val managedFiles = listOf(
-                    "$aharouDir/gitconfig",
-                    "$aharouDir/gitconfig.credential",
-                    "$aharouDir/git-credentials",
-                    "$aharouDir/git-credential-aicode"
-                )
-                session.exec("rm -f ${managedFiles.joinToString(" ") { shellQuote(it) }} 2>/dev/null; echo done").join()
-                session.close()
-                FileLogger.i(TAG, "已撤销远程 git 凭据注入")
-            }.onFailure { FileLogger.w(TAG, "撤销远程 git 凭据注入失败", it) }
+        credentialSyncMutex.withLock {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val session = client.startSession()
+                    val managedFiles = listOf(
+                        "$aharouDir/gitconfig",
+                        "$aharouDir/gitconfig.credential",
+                        "$aharouDir/git-credentials",
+                        "$aharouDir/git-credential-aicode"
+                    )
+                    session.exec("rm -f ${managedFiles.joinToString(" ") { shellQuote(it) }} 2>/dev/null; echo done").join()
+                    session.close()
+                    FileLogger.i(TAG, "已撤销远程 git 凭据注入")
+                }.onFailure { FileLogger.w(TAG, "撤销远程 git 凭据注入失败", it) }
+            }
         }
     }
 

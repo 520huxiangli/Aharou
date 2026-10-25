@@ -54,6 +54,7 @@ import com.aharou.feature.agent.domain.subagent.AgentDefinitionForm
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionScope
 import com.aharou.feature.agent.domain.subagent.AgentSaveError
 import com.aharou.feature.agent.domain.subagent.InjectPart
+import com.aharou.feature.agent.presentation.component.reasoningEffortLabel
 import com.aharou.feature.settings.presentation.SubAgentSaveState
 import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import com.aharou.feature.settings.domain.model.AIProviderConfig
@@ -252,7 +253,7 @@ internal fun SubAgentEditorScreen(
                             effort.takeIf { it.isNotBlank() }
                                 ?.let { value ->
                                     ReasoningEffort.entries.firstOrNull { it.apiValue == value }
-                                        ?.let { stringResource(it.labelRes()) }
+                                        ?.let { reasoningEffortLabel(it) }
                                 }
                                 ?: stringResource(R.string.subagent_inherit_parent)
                         )
@@ -402,7 +403,7 @@ internal fun SubAgentEditorScreen(
                     ReasoningEffort.entries.filter { it.apiValue != null }.forEach { item ->
                         SettingsDivider()
                         PickerRow(
-                            title = stringResource(item.labelRes()),
+                            title = reasoningEffortLabel(item),
                             selected = effort == item.apiValue,
                             onClick = {
                                 effort = item.apiValue.orEmpty()
@@ -623,16 +624,6 @@ private fun AgentSaveError.messageRes(): Int = when (this) {
     AgentSaveError.EMPTY_PROMPT -> R.string.subagent_editor_error_empty_prompt
     AgentSaveError.NAME_CONFLICT -> R.string.subagent_editor_error_name_conflict
     AgentSaveError.IO_FAILED -> R.string.subagent_editor_error_io
-}
-
-private fun ReasoningEffort.labelRes(): Int = when (this) {
-    ReasoningEffort.NONE -> R.string.chat_reasoning_effort_none
-    ReasoningEffort.DEFAULT -> R.string.chat_reasoning_effort_default
-    ReasoningEffort.LOW -> R.string.chat_reasoning_effort_low
-    ReasoningEffort.MEDIUM -> R.string.chat_reasoning_effort_medium
-    ReasoningEffort.HIGH -> R.string.chat_reasoning_effort_high
-    ReasoningEffort.XHIGH -> R.string.chat_reasoning_effort_xhigh
-    ReasoningEffort.MAX -> R.string.chat_reasoning_effort_max
 }
 
 private fun InjectPart.labelRes(): Int = when (this) {

@@ -237,6 +237,10 @@ internal fun AgentMessageItem(
     reasoningVisible: Boolean = true,
     /** 思考过程耗时（ms）：由上层记录的思考实际耗时。 */
     reasoningDurationMs: Long? = null,
+    /** 思考块展开态的外部覆盖（宿主持久化，见 [com.aharou.feature.agent.presentation.AIAgentViewModel.reasoningExpansionOverrides]）；null = 用内部状态。 */
+    reasoningExpandedOverride: Boolean? = null,
+    /** 手动展开/收起思考块时回传新状态，由上层持久化。 */
+    onReasoningExpandedChange: ((Boolean) -> Unit)? = null,
     /** 是否为分块的末块（渲染操作行、底部圆角、与下一条列表 item 的间距）；非分块消息恒为 true。 */
     isChunkFooter: Boolean = true,
     /** 是否在正文上方渲染「身份行」（Soul 图标 + 名字）：每轮助手回复的首条为 true。 */
@@ -343,7 +347,9 @@ internal fun AgentMessageItem(
             ReasoningBubble(
                 text = message.reasoning.orEmpty(),
                 cache = markdownCache,
-                durationMs = reasoningDurationMs
+                durationMs = reasoningDurationMs,
+                expandedOverride = reasoningExpandedOverride,
+                onExpandedChange = onReasoningExpandedChange
             )
         }
         if (hasContent || hasAttachments || message.role != MessageRole.ASSISTANT) {

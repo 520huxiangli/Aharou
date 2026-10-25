@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -383,8 +384,7 @@ fun SettingsScreen(
     val subAgentMarkdownCache = remember { MarkdownRenderCache() }
     // 技能正文 Markdown 解析缓存：详情页多次进入复用，避免重复解析卡顿
     val skillMarkdownCache = remember { MarkdownRenderCache() }
-    // 自定义提示词：右上角「+」弹层可见性 + 编辑目标（新建/编辑）
-    var showPromptsAddSheet by remember { mutableStateOf(false) }
+    // 自定义提示词：顶栏「+」直达新建，这里只记编辑目标（新建/编辑）
     var promptEditTarget by remember { mutableStateOf<PromptEditTarget?>(null) }
     var selectedPrompt by remember { mutableStateOf<PromptFragment?>(null) }
     // 编辑页返回目标：从详情进就回详情，从列表「+」进就回列表。
@@ -541,6 +541,11 @@ fun SettingsScreen(
     // 滚动位置必须提到 AnimatedContent 之外持有：菜单页作为分区分支被切走时会被 dispose，
     // 内部 rememberScrollState 一并丢弃，从二级页返回就跳回顶部。
     val menuScrollState = rememberScrollState()
+    // 一级 / 详情页整块内容被 AnimatedContent 切走后会被 dispose，内部的 rememberScrollState /
+    // rememberLazyListState 一并丢失，从下一级页面返回就跳回顶部（供应商、MCP、技能等列表全中招）。
+    // 用 SaveableStateHolder 按分区名接住这些 rememberSaveable 状态；编辑类页面在 AnimatedContent
+    // 里走独立分支、不进 Holder，保证每次进编辑器都是干净表单，不会恢复上次未提交的草稿。
+    val sectionStateHolder = rememberSaveableStateHolder()
     val menuBody: @Composable () -> Unit = {
         SettingsMenu(
             scrollState = menuScrollState,
@@ -679,6 +684,14 @@ fun SettingsScreen(
                 )
 
             else -> {
+            // 列表页用分区名；详情页带上条目身份，换成另一条技能 / 子代理 / 提示词进来不能继承上一条的滚动位置。
+            val stateKey: String = when (current) {
+                SettingsSection.SkillDetail -> "SkillDetail:${selectedSkill?.name.orEmpty()}"
+                SettingsSection.SubAgentDetail -> "SubAgentDetail:${selectedSubAgent?.name.orEmpty()}"
+                SettingsSection.PromptDetail -> "PromptDetail:${selectedPrompt?.number ?: 0}"
+                else -> current.name
+            }
+            sectionStateHolder.SaveableStateProvider(stateKey) {
             // 存储页的顶栏刷新按钮与页面内容要共用同一个 ViewModel，故在此分支创建；
             // 它的构造即触发一次全盘统计，不能提到 SettingsScreen 顶层（那样每次进设置页都会扫盘）。
             val storageViewModel: com.aharou.feature.settings.presentation.StorageViewModel? =
@@ -856,7 +869,9 @@ fun SettingsScreen(
                             }
                         }
                         SettingsSection.Prompts -> IconButton(onClick = {
-                            showPromptsAddSheet = true
+                            promptEditTarget = PromptEditTarget(null)
+                            promptEditorReturn = SettingsSection.Prompts
+                            section = SettingsSection.PromptEditor
                         }) {
                             Icon(
                                 FeatherIcons.Plus,
@@ -1150,17 +1165,6 @@ fun SettingsScreen(
                         onReorder = promptsViewModel::reorderFragments,
                         onToggleBuiltinDisabled = promptsViewModel::setBuiltinDisabled
                     )
-                    if (showPromptsAddSheet) {
-                        PromptsAddSheet(
-                            onDismiss = { showPromptsAddSheet = false },
-                            onAddFragment = {
-                                showPromptsAddSheet = false
-                                promptEditTarget = PromptEditTarget(null)
-                                promptEditorReturn = SettingsSection.Prompts
-                                section = SettingsSection.PromptEditor
-                            }
-                        )
-                    }
                 }
                 SettingsSection.PromptDetail -> {
                     val promptsViewModel: PromptsViewModel =
@@ -1310,6 +1314,7 @@ fun SettingsScreen(
             }
         }
     }
+        } // SaveableStateProvider 结束
         } // else 分支结束（storageViewModel 作用域）
         } // 详情区 when 结束
         } // AnimatedContent 结束

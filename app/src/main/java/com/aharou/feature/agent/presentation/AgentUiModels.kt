@@ -330,43 +330,48 @@ internal data class TurnHeaderState(
  */
 internal fun leadingHeadKey(lastMessage: AgentUIMessage): String = "turn:head:${lastMessage.id}"
 
-/** 过程项超过这个条数就改懒渲染（见 [flattenLongProcesses]）。 */
-private const val INLINE_PROCESS_ITEM_LIMIT = 8
+/**
+ * 窗口里一个轮首都找不到时的折叠 key：块尾会随工具输出移动，不能拿它当 key，只能退回会话 id。
+ */
+internal fun leadingHeadSessionKey(sessionId: String): String = "turn:head:session:$sessionId"
+
+/** 轮首用户消息 id → 整轮折叠的持久化 key（与 ViewModel.turnExpansionOverrides 同口径）。 */
+internal fun turnKeyOf(firstMessageId: String): String = "turn:$firstMessageId"
 
 /**
- * 长过程改懒渲染：轮头/工具分组的过程项超过 [INLINE_PROCESS_ITEM_LIMIT] 时不再内联展开，
- * 而是把它们平铺成主列表的独立 item，交给 LazyColumn 按可见范围组合（点开时不再一次性全量测量）。
+ * 过程项无条件平铺进主列表：折叠头只留一行，过程子项（思考 / 工具分组 / 中间正文）作为顶层 item
+ * 交给 LazyColumn 按可见范围组合。
+ *
+ * 从前按「过程项超过 8 个才平铺」在两种结构之间切换：追加工具调用跨过阈值那一刻，整轮从「内联展开」
+ * 变成「平铺」，item 结构与数量同时变化，LazyColumn 的锚点随之丢失——表现为点开长过程后继续执行工具时
+ * 列表自己跳走。改成无条件平铺后结构恒定，追加工具只会在末尾多出 item。
  *
  * 展开态、顺序与层级全部沿用原渲染：[ChatRenderItem.turnProcess] 清空只是拆掉内联那层容器，
  * 子项（含身份行标记、常显项位置）原样落到顶层；分组已展开时成员行也一并平铺，
  * 由 [ChatRenderItem.groupMember] 让 UI 补回缩进。折叠头收起时不产出任何子项。
  */
-internal fun flattenLongProcesses(items: List<ChatRenderItem>): List<ChatRenderItem> = buildList {
+internal fun flattenTurnProcesses(items: List<ChatRenderItem>): List<ChatRenderItem> = buildList {
     for (item in items) {
-        val processSize = item.turnProcess.sumOf { it.toolGroup?.size ?: 1 }
-        if (item.turnHeader == null || processSize <= INLINE_PROCESS_ITEM_LIMIT) {
+        val header = item.turnHeader
+        if (header == null) {
             add(item)
             continue
         }
-        add(item.copy(turnProcess = emptyList(), lazyProcess = true))
-        if (!item.turnHeader.expanded) continue
+        add(item.copy(turnProcess = emptyList()))
+        if (!header.expanded) continue
         for (child in item.turnProcess) {
-            val group = child.toolGroup
-            if (group == null) {
-                add(child)
-            } else {
-                add(child.copy(lazyProcess = true))
-                if (child.groupExpanded) {
-                    group.forEach { member ->
-                        add(
-                            ChatRenderItem(
-                                message = member,
-                                key = member.id,
-                                contentType = member.role.name,
-                                groupMember = true,
-                            )
+            add(child)
+            val group = child.toolGroup ?: continue
+            if (child.groupExpanded) {
+                group.forEach { member ->
+                    add(
+                        ChatRenderItem(
+                            message = member,
+                            key = member.id,
+                            contentType = member.role.name,
+                            groupMember = true,
                         )
-                    }
+                    )
                 }
             }
         }

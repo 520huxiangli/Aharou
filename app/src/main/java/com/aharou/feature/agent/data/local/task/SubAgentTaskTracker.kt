@@ -40,6 +40,9 @@ class SubAgentTaskTracker @Inject constructor(
         private const val INSTRUCTION_SNIPPET_MAX = 120
 
         private const val INTERRUPTED_RESULT = "应用进程被关闭，任务未完成"
+
+        /** 会话被删除时的结束原因（DELETED 事件详情为空，不写这条就看不出是怎么终止的）。 */
+        private const val DELETED_RESULT = "子代理会话已被删除"
     }
 
     /**
@@ -92,6 +95,8 @@ class SubAgentTaskTracker @Inject constructor(
             SubAgentEventType.COMPLETED -> onTerminal(event, AgentTaskStatus.COMPLETED, null)
             SubAgentEventType.FAILED -> onTerminal(event, AgentTaskStatus.FAILED, event.detail.ifBlank { null })
             SubAgentEventType.STOPPED -> onTerminal(event, AgentTaskStatus.CANCELLED, event.detail.ifBlank { null })
+            // 会话已被删除，与主动停止同归 CANCELLED；归到 COMPLETED 会让父代理以为拿到了交付物。
+            SubAgentEventType.DELETED -> onTerminal(event, AgentTaskStatus.CANCELLED, DELETED_RESULT)
             // 收发消息不改变任务状态。
             SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> Unit
         }

@@ -25,6 +25,15 @@ object SubAgentResultInspector {
     /** 复用同一份 Json 实例：每次新建都要重初始化格式配置，编译器也会提示。 */
     private val jsonCodec = Json { ignoreUnknownKeys = true }
 
+    /** 结论摘要上限：够父代理判断要不要深读，又不至于把整篇结论塞进通知。 */
+    private const val CONCLUSION_EXCERPT_MAX = 800
+
+    /** 改动文件最多逐个列出几条，超出只报总数——绝对路径很占上下文。 */
+    private const val CHANGED_FILES_LISTED_MAX = 8
+
+    private const val CONCLUSION_LABEL = "结论摘要："
+    private const val CHANGED_FILES_LABEL = "改动文件："
+
     /** 一次收尾检查的结果。 */
     data class Result(
         /** 结论文本，已剥离 claim 协议块——原始 JSON 不进父上下文。 */
@@ -37,17 +46,26 @@ object SubAgentResultInspector {
         val inputTokens: Int,
         /** 子会话累计输出 token（按 ASSISTANT 行汇总）。 */
         val outputTokens: Int,
+        /** 成功落盘的目标文件（去重、按调用顺序）：让父代理看通知就知道改了什么，不必再补一次 task(read)。 */
+        val changedFiles: List<String> = emptyList(),
     ) {
         /** 是否因 claim 验收项核验不上而降级。 */
         val downgraded: Boolean get() = report?.downgraded == true
 
-        /** 收尾事件 detail 用的概要：终态、原因、claim 裁定与 token 用量。 */
+        /** 收尾事件 detail 用的概要：终态、原因、claim 裁定、token 用量，外加结论摘要与改动文件。 */
         fun renderDetail(): String = buildString {
             append("终止状态：").append(verdict.termination.name)
             if (verdict.reason.isNotBlank()) append("（").append(verdict.reason).append("）")
             append("\n交付判定：").append(if (verdict.accepted) "已交付" else "未交付")
             report?.let { append("\n").append(SubAgentClaimVerifier.renderAdjudication(it)) }
             append("\ntoken 用量：输入 ").append(inputTokens).append(" / 输出 ").append(outputTokens)
+            // 父代理只看通知就要决定「还要不要再 task(read)」：结论与改动文件直接带上，省掉那一趟往返。
+            if (conclusion.isNotBlank()) {
+                append("\n").append(CONCLUSION_LABEL).append(excerpt(conclusion))
+            }
+            if (changedFiles.isNotEmpty()) {
+                append("\n").append(CHANGED_FILES_LABEL).append(renderFileList(changedFiles))
+            }
         }
     }
 
@@ -63,9 +81,11 @@ object SubAgentResultInspector {
             it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank()
         }
         val conclusion = lastAssistant?.let { SubAgentClaimVerifier.stripClaimBlock(it.content) }.orEmpty()
+        // 证据只扫一遍：claim 核验与通知里的「改动文件」共用同一份，避免两套口径。
+        val evidence = collectEvidence(messages)
         val report = lastAssistant?.let { msg ->
             SubAgentClaimVerifier.parse(msg.content)?.let { claim ->
-                SubAgentClaimVerifier.verify(claim, collectEvidence(messages))
+                SubAgentClaimVerifier.verify(claim, evidence)
             }
         }
         val verdict = SubAgentConclusionJudge.judge(
@@ -86,8 +106,19 @@ object SubAgentResultInspector {
             verdict = verdict,
             inputTokens = assistantRows.sumOf { it.inputTokens },
             outputTokens = assistantRows.sumOf { it.outputTokens },
+            changedFiles = evidence.writtenPaths.toList(),
         )
     }
+
+    private fun excerpt(text: String): String {
+        val trimmed = text.trim()
+        return if (trimmed.length <= CONCLUSION_EXCERPT_MAX) trimmed
+        else trimmed.take(CONCLUSION_EXCERPT_MAX) + "…（已截断）"
+    }
+
+    private fun renderFileList(files: List<String>): String =
+        if (files.size <= CHANGED_FILES_LISTED_MAX) files.joinToString("、")
+        else files.take(CHANGED_FILES_LISTED_MAX).joinToString("、") + " 等 ${files.size} 个文件"
 
     /**
      * 从子会话消息里收集核验证据：把 ASSISTANT 的 tool_calls 与对应 TOOL 行的成败配对，

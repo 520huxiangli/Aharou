@@ -1,5 +1,6 @@
 package com.aharou.feature.workspace.domain
 
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
@@ -9,6 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
+import java.nio.file.FileSystemLoopException
+import java.nio.file.Files
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,6 +58,9 @@ class WorkspacePathMapper @Inject constructor(
         const val AHAROU_MEMORY_ROOT = "/root/.aharou/memory"
         /** 跨工作区共享区在容器内的路径（宿主 filesDir/shared）：所有工作区共用同一份。 */
         const val SHARED_ROOT = "/root/shared"
+        /** 软链解析最大跳数。超过即视为环或病态链接，放弃解析（Linux 内核同量级上限，足够覆盖正常用法）。 */
+        private const val MAX_LINK_HOPS = 32
+        private const val TAG = "WorkspacePathMapper"
     }
 
     /**
@@ -140,6 +147,68 @@ class WorkspacePathMapper @Inject constructor(
             throw IllegalArgumentException("路径越界，拒绝访问：$path")
         }
         return file
+    }
+
+    /**
+     * 把容器路径解析为宿主文件，并逐段展开路径上的符号链接；[workspacePath] 语义同 [toHostFile]。
+     *
+     * 为什么需要逐段解析：容器里大量路径本身是软链（`~/workspace`、`/usr/lib/…`、用户自建的链接），
+     * `java.io.File` 只认字面路径，本地模式不解析就是「文件明明在，工具却读不到」。
+     * 为什么在容器路径空间里逐段走而不是在宿主路径上走：链接目标可能是容器绝对路径
+     * （`ln -s /usr/bin x`），必须按容器语义重新映射进 rootfs；当成宿主路径找会落到完全无关的位置。
+     *
+     * 解析有界：跳数超过 [MAX_LINK_HOPS] 即认定环或病态链接。
+     * **fail-closed**：解析阶段任何失败都退回 [toHostFile] 的原结果，不抛异常——一个坏链接不该
+     * 打断整次工具调用。越界校验仍在 [toHostFile] 内且先于解析执行，不会被这条兜底绕过。
+     *
+     * @param followFinalLink 末级是链接时是否跟随。删除 / 重命名必须传 false：要动的是链接本身。
+     */
+    fun resolveFile(path: String, workspacePath: String? = null, followFinalLink: Boolean = true): File {
+        // 先做常规映射：路径越界在这里就抛，不能进下面的兜底分支被吞掉。
+        val mapped = toHostFile(path, workspacePath)
+        return try {
+            walkLinks(path, workspacePath, followFinalLink)
+        } catch (e: Exception) {
+            FileLogger.w(TAG, "软链解析失败，按未解析路径处理: $path", e)
+            mapped
+        }
+    }
+
+    /**
+     * 在容器路径空间逐段前进：每段映射成宿主文件判断是否为软链，命中就把链接目标插到待处理队列头部
+     * （绝对目标回到容器根，相对目标相对链接所在目录）。`..` 在容器根之上饱和，走不出容器。
+     */
+    private fun walkLinks(path: String, workspacePath: String?, followFinalLink: Boolean): File {
+        val expanded = pathHomeResolver.expandHome(path.trim())
+        // 相对路径按 [toHostFile] 的语义挂到容器工作区根下，先补成容器绝对路径才能逐段判断。
+        val absolute = if (expanded.startsWith("/")) expanded else "${resolvedContainerRoot()}/$expanded"
+        val pending = ArrayDeque(absolute.split('/').filter { it.isNotEmpty() })
+        var current = ""
+        var hops = 0
+        while (pending.isNotEmpty()) {
+            val part = pending.removeFirst()
+            if (part == ".") continue
+            if (part == "..") {
+                current = current.substringBeforeLast('/', "")
+                continue
+            }
+            val candidate = "$current/$part"
+            val mapped = toHostFile(candidate, workspacePath)
+            // 额外挂载点（ContainerProfile.extraBindings）挂的是宿主路径，那里的绝对软链目标是宿主路径，
+            // 不能当容器路径重映射——整棵挂载子树放弃解析、退回原映射。
+            if (mountedHostFile(candidate) != null) return mapped
+            // 末级是否跟随由调用方决定：删除 / 重命名要动链接本身，只解析中间段。
+            if ((followFinalLink || pending.isNotEmpty()) && Files.isSymbolicLink(mapped.toPath())) {
+                if (++hops > MAX_LINK_HOPS) throw FileSystemLoopException(path)
+                val target = Files.readSymbolicLink(mapped.toPath()).toString()
+                if (target.startsWith("/")) current = ""
+                // 先展开链接目标再处理剩余路径，避免提前归一化 `..` 改变链接语义。
+                target.split('/').filter { it.isNotEmpty() }.asReversed().forEach { pending.addFirst(it) }
+            } else {
+                current = candidate
+            }
+        }
+        return toHostFile(current.ifEmpty { "/" }, workspacePath)
     }
 
     /**

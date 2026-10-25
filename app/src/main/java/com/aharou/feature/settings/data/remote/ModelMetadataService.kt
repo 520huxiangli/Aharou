@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
@@ -187,14 +188,43 @@ class ModelMetadataService @Inject constructor(
     )
 
     companion object {
+        /**
+         * models.dev `reasoning_options` 的完整解析结果。
+         * 一个模型可以同时声明多种形态（例如 toggle + effort、effort + budget_tokens），故逐项收集而非只取第一个命中项。
+         */
+        internal data class ReasoningOptions(
+            val effortValues: List<String> = emptyList(),
+            val supportsToggle: Boolean = false,
+            val hasBudgetTokens: Boolean = false,
+            val budgetMin: Int? = null,
+            val budgetMax: Int? = null
+        )
+
         /** 从 models.dev 的 reasoning_options 数组中提取 effort 类型的档位 values；无 effort 档位时返回空列表。 */
         fun parseReasoningOptions(reasoningOptions: JsonElement?): List<String> =
-            reasoningOptions?.takeIf { it !is JsonNull }?.jsonArray
-                ?.mapNotNull { it.jsonObject }
-                ?.firstOrNull { it["type"]?.jsonPrimitive?.content == "effort" }
-                ?.get("values")?.jsonArray
-                ?.mapNotNull { it.jsonPrimitive.content }
+            parseReasoningOptionsFull(reasoningOptions).effortValues
+
+        /**
+         * 同 [parseReasoningOptions]，但同时识别 toggle（只有思考开/关）与 budget_tokens（按 token 预算控制深度）两种形态。
+         * 两者目前只做展示用途，选择器仍全列档位——models.dev 的声明常缺档，按它过滤会让用户选不到中间档。
+         */
+        internal fun parseReasoningOptionsFull(reasoningOptions: JsonElement?): ReasoningOptions {
+            val options = reasoningOptions?.takeIf { it !is JsonNull }?.jsonArray
+                ?.mapNotNull { el -> el as? JsonObject }
                 .orEmpty()
+            val typeOf: (JsonObject) -> String? = { o -> o["type"]?.jsonPrimitive?.content }
+            val effort = options.firstOrNull { typeOf(it) == "effort" }
+            val budget = options.firstOrNull { typeOf(it) == "budget_tokens" }
+            return ReasoningOptions(
+                effortValues = effort?.get("values")?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.content }
+                    .orEmpty(),
+                supportsToggle = options.any { typeOf(it) == "toggle" },
+                hasBudgetTokens = budget != null,
+                budgetMin = budget?.get("min")?.jsonPrimitive?.intOrNull,
+                budgetMax = budget?.get("max")?.jsonPrimitive?.intOrNull
+            )
+        }
 
         /**
          * 解析后的模型目录：[byProvider] 保留目录里的原始 id 大小写；[lowerByProvider] 结构相同但键统一小写
@@ -219,7 +249,7 @@ class ModelMetadataService @Inject constructor(
                         ?.mapNotNull { it.jsonPrimitive.content }
                         .orEmpty()
                     val cost = model["cost"]?.jsonObject
-                    val reasoningOptions = parseReasoningOptions(model["reasoning_options"])
+                    val reasoningOptions = parseReasoningOptionsFull(model["reasoning_options"])
                     ModelMetadata(
                         id = model["id"]?.jsonPrimitive?.content ?: "",
                         providerId = providerId,
@@ -235,7 +265,11 @@ class ModelMetadataService @Inject constructor(
                             (model["id"]?.jsonPrimitive?.content.orEmpty().endsWith("-image")),
                         supportsReasoning = model["reasoning"]?.jsonPrimitive?.booleanOrNull == true,
                         supportsCustomTemperature = model["temperature"]?.jsonPrimitive?.booleanOrNull == true,
-                        reasoningEffortOptions = reasoningOptions.takeIf { it.isNotEmpty() },
+                        reasoningEffortOptions = reasoningOptions.effortValues.takeIf { it.isNotEmpty() },
+                        reasoningSupportsToggle = reasoningOptions.supportsToggle,
+                        reasoningBudgetTokens = reasoningOptions.hasBudgetTokens,
+                        reasoningBudgetTokensMin = reasoningOptions.budgetMin,
+                        reasoningBudgetTokensMax = reasoningOptions.budgetMax,
                         inputCostUsdPerM = cost?.get("input")?.jsonPrimitive?.doubleOrNull,
                         outputCostUsdPerM = cost?.get("output")?.jsonPrimitive?.doubleOrNull,
                         cacheReadCostUsdPerM = cost?.get("cache_read")?.jsonPrimitive?.doubleOrNull,

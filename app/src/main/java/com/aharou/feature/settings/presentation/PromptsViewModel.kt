@@ -91,6 +91,55 @@ class PromptsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 清空项目层与全局层里带编号的自定义片段，内置片段与本地副本不受影响。
+     *
+     * catalog 没有「全删」入口，这里按其既有 API 组合：同一编号可能两层各有一份，
+     * 而 [PromptFragmentCatalog.deleteOverride] 一次只删当前生效层，删完下一层才会暴露。
+     */
+    fun resetCustomFragments() {
+        viewModelScope.launch {
+            val projectRoot = workspaceRepository.currentPath()
+            withContext(Dispatchers.IO) {
+                catalog.list(projectRoot)
+                    .filter { it.editable }
+                    .map { it.number }
+                    .distinct()
+                    .forEach { number -> deleteEveryCustomLayer(number, projectRoot) }
+            }
+            refresh()
+        }
+    }
+
+    /**
+     * 逐层删同一个编号的自定义片段：项目层与全局层可能各有一份，同一层里还可能有多个同号文件
+     * （手工放进去的）。[PromptFragmentCatalog.deleteOverride] 一次只删当前生效的那个文件，
+     * 所以删到生效层不再是可写来源为止；轮数上限只用于防异常目录死循环。
+     */
+    private fun deleteEveryCustomLayer(number: Int, projectRoot: String) {
+        repeat(MAX_RESET_ROUNDS) {
+            val fragment = catalog.fragment(number, projectRoot) ?: return
+            if (!fragment.editable) return
+            if (!catalog.deleteOverride(number, projectRoot)) return
+        }
+    }
+
+    /**
+     * 批量删除自定义片段：逐编号删尽各层（同 [deleteEveryCustomLayer] 的层叠规则），
+     * 全部删完只重读一次列表。
+     */
+    fun deleteFragments(numbers: Collection<Int>) {
+        val targets = numbers.distinct()
+        if (targets.isEmpty()) return
+        viewModelScope.launch {
+            val projectRoot = workspaceRepository.currentPath()
+            withContext(Dispatchers.IO) {
+                targets.forEach { number -> deleteEveryCustomLayer(number, projectRoot) }
+            }
+            refresh()
+        }
+    }
+
     /** 拖拽重排：按新顺序重新编号并落盘，改变注入顺序。乐观更新本地状态，避免重读导致列表跳动。 */
     fun reorderFragments(reordered: List<PromptFragment>) {
         val numbers = reordered.map { it.number }.sorted()
@@ -114,5 +163,9 @@ class PromptsViewModel @Inject constructor(
             withContext(Dispatchers.IO) { catalog.setBuiltinDisabled(disabled) }
             refresh()
         }
+    }
+
+    private companion object {
+        const val MAX_RESET_ROUNDS = 8
     }
 }

@@ -6,7 +6,23 @@ package com.aharou.feature.agent.domain.model
 enum class AgentMode {
     BUILD, // 逐个确认模式：未授权操作弹窗确认
     PLAN,  // 计划模式，拦截修改类操作，只读/探索为主
-    AUTO   // 自动模式，放行所有权限（不弹窗），仅用户手动可切换；AI 无法通过 planMode 进入 —— Aharou 新会话默认
+    AUTO;  // 自动模式，放行所有权限（不弹窗），仅用户手动可切换；AI 无法通过 planMode 进入 —— Aharou 新会话默认
+
+    /** 宽松程度：数值越大越严。AUTO（放行）< BUILD（逐次确认）< PLAN（只读）。 */
+    private val strictness: Int
+        get() = when (this) {
+            AUTO -> 0
+            BUILD -> 1
+            PLAN -> 2
+        }
+
+    /**
+     * 子会话模式收敛：取两者中更严的一档。
+     * 子代理定义里的 mode 只能把权限收窄，不能放宽——否则父会话 PLAN 时派一个
+     * `mode: auto` 的子代理，它就能绕过只读拦截直接改文件。
+     */
+    fun limitedBy(parent: AgentMode): AgentMode =
+        if (strictness >= parent.strictness) this else parent
 }
 
 /**

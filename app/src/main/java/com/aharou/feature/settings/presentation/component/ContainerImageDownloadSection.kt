@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,15 +54,21 @@ import androidx.compose.ui.unit.sp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.BatchDeleteConfirmDialog
+import com.aharou.core.ui.SelectionAction
+import com.aharou.core.ui.SelectionActionBar
 import com.aharou.core.ui.SwipeToDeleteRow
+import com.aharou.core.ui.rememberListSelectionState
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerImageEolStatus
 import com.aharou.feature.agent.domain.container.hasNewerVersion
 import com.aharou.feature.settings.data.repository.DownloadedImageRecord
 import com.aharou.feature.settings.presentation.ContainerImageDownloadUiState
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.HardDrive
+import compose.icons.feathericons.Trash2
 import java.io.File
 import kotlinx.coroutines.launch
 
@@ -139,14 +147,61 @@ internal fun ContainerImageDownloadSection(
     var deleteEntry by remember { mutableStateOf<ContainerImageEntry?>(null) }
     // 只显示当前源下可用的镜像；切源后列表自动过滤
     val visibleCatalog = catalog.filter { it.id !in sourceUnavailableIds }
+    // 只有已下载且文件真在的行可删，也只有它们能参与多选；行内复用这份集合，免得每行重复 stat
+    val downloadedIdSet = visibleCatalog
+        .filter { entry -> downloadedImages[entry.id]?.let { File(Uri.parse(it.fileUri).path ?: "").exists() } == true }
+        .map { it.id }
+        .toSet()
+    val settingsViewModel = rememberSettingsViewModel()
+    val selection = rememberListSelectionState()
+    LaunchedEffect(downloadedIdSet) { selection.retain(downloadedIdSet) }
+    var showBatchDelete by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    // 长按的可能是列表深处的行，进多选后滚回顶部，否则看不到操作栏
+    LaunchedEffect(selection.selectionMode) {
+        if (selection.selectionMode) scrollState.animateScrollTo(0)
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = Spacing.lg)
             .padding(bottom = Spacing.xl)
     ) {
+        if (selection.selectionMode) {
+            SelectionActionBar(
+                selectedCount = selection.selectedCount,
+                allSelected = selection.isAllSelected(downloadedIdSet),
+                onToggleSelectAll = { selection.toggleSelectAll(downloadedIdSet) },
+                onExit = { selection.exit() },
+                modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs),
+                actions = listOf(
+                    SelectionAction(
+                        icon = FeatherIcons.Trash2,
+                        label = stringResource(R.string.common_delete),
+                        onClick = { showBatchDelete = true },
+                        destructive = true
+                    )
+                )
+            )
+        } else if (downloadedIdSet.isNotEmpty()) {
+            // 长按也能进多选，但不是可发现的入口；再给一个显式按钮，与其它列表一致
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                TextButton(onClick = { selection.enterSelectionMode() }) {
+                    Icon(
+                        imageVector = FeatherIcons.CheckSquare,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(Spacing.xs))
+                    Text(stringResource(R.string.provider_models_select))
+                }
+            }
+        }
         SettingsGroupHeader(text = stringResource(R.string.container_download_image))
         if (visibleCatalog.isEmpty()) {
             SettingsGroup {
@@ -164,14 +219,25 @@ internal fun ContainerImageDownloadSection(
                 visibleCatalog.forEachIndexed { index, entry ->
                     if (index > 0) SettingsDivider()
                     val record = downloadedImages[entry.id]
-                    val fileExists = record?.let { File(Uri.parse(it.fileUri).path ?: "").exists() } == true
                     DownloadImageRow(
                         entry = entry,
                         state = state,
-                        isDownloaded = record != null && fileExists,
+                        isDownloaded = entry.id in downloadedIdSet,
                         hasNewerVersion = hasNewerVersion(record?.version, entry.version),
                         onOpenDetail = { detailEntry = entry },
-                        onDelete = { deleteEntry = entry }
+                        onDelete = { deleteEntry = entry },
+                        selectionMode = selection.selectionMode,
+                        selected = selection.isSelected(entry.id),
+                        onToggleSelect = { selection.toggle(entry.id) },
+                        // 长按进多选并当场选中这一行；未下载的行不接，否则会选中一个删不掉、也不在候选里的 id
+                        onLongClick = if (entry.id in downloadedIdSet) {
+                            {
+                                selection.enterSelectionMode()
+                                selection.select(entry.id)
+                            }
+                        } else {
+                            null
+                        }
                     )
                 }
             }
@@ -197,6 +263,21 @@ internal fun ContainerImageDownloadSection(
                 ).show()
             },
             onDismiss = { detailEntry = null }
+        )
+    }
+
+    if (showBatchDelete) {
+        val targets = selection.selectedIds.toList()
+        BatchDeleteConfirmDialog(
+            title = stringResource(R.string.common_delete),
+            message = stringResource(R.string.common_batch_delete_confirm, targets.size),
+            onConfirm = {
+                showBatchDelete = false
+                selection.exit()
+                // 记录一次写回：逐条删会让 DataStore 每条发射一次、列表跟着刷 N 遍
+                settingsViewModel.deleteDownloadedImages(targets)
+            },
+            onDismiss = { showBatchDelete = false }
         )
     }
 
@@ -226,7 +307,11 @@ private fun DownloadImageRow(
     isDownloaded: Boolean,
     hasNewerVersion: Boolean,
     onOpenDetail: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null
 ) {
     val light = MaterialTheme.colorScheme.background.luminance() > 0.5f
 
@@ -235,7 +320,12 @@ private fun DownloadImageRow(
     SwipeToDeleteRow(
         onDelete = onDelete,
         onClick = onOpenDetail,
-        deleteEnabled = isDownloaded
+        onLongClick = onLongClick,
+        deleteEnabled = isDownloaded,
+        selectionMode = selectionMode,
+        selected = selected,
+        onToggleSelect = onToggleSelect,
+        selectable = isDownloaded
     ) {
         Row(
             modifier = Modifier

@@ -39,6 +39,7 @@ Aharou packs a full AI assistant and Linux environment into your phone: a built-
 - 🪟 **Shadow screen** — a headless virtual display: the agent runs and drives apps on an invisible screen without disturbing your phone
 - ⚙️ **Config channel** — the agent can change its own settings; every write needs your confirmation, fully audited and revertible
 - 🦊 **Personality (SOUL.md)** — name / icon / language / persona text, effective immediately in chat
+- 🔌 **Shizuku support** — the agent can run system-level commands and read other apps' private directories through Shizuku, no root needed
 - 🔑 **Environment variables** — encrypted at rest, injected into every command and terminal inside the container
 - 🗄️ **Storage management** — usage by category, one-tap cleanup
 - 🧩 **And more** — MCP, skills, sub-agents, themes & backgrounds…

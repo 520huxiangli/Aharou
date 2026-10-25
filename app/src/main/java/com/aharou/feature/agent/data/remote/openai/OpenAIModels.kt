@@ -6,6 +6,13 @@ data class ChatCompletionRequest(
     /** null 时 Gson 跳过该字段：服务端固定温度的模型（kimi-k3、gpt-5 系等）带上任何值都会 400。 */
     val temperature: Float? = null,
     val reasoning_effort: String? = null,
+    /**
+     * 「不思考」的厂商私有开关：DeepSeek / Kimi / 智谱 / MiniMax 的 OpenAI 兼容端点用
+     * `thinking: {"type": "disabled"}`。null 时 Gson 跳过（OpenAI 官方不认该字段）。
+     */
+    val thinking: ThinkingConfig? = null,
+    /** 阿里 Qwen / DashScope 兼容模式的布尔关闭开关；null 时不发。 */
+    val enable_thinking: Boolean? = null,
     val tools: List<OpenAIToolDefinition>? = null,
     val tool_choice: String? = null,
     val stream: Boolean = false,
@@ -62,6 +69,9 @@ data class OpenAIFunctionCall(
 data class StreamOptions(
     val include_usage: Boolean = true
 )
+
+/** `thinking` 开关体（`{"type":"enabled"|"disabled"}`）：部分兼容渠道的「关闭思考」表达。 */
+data class ThinkingConfig(val type: String)
 
 data class ChatCompletionResponse(
     val id: String,

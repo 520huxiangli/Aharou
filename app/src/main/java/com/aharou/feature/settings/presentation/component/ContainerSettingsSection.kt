@@ -592,15 +592,13 @@ private fun ProfileEditSheet(
                 }
             }
 
-            // 本地镜像 / 远程 SSH 切换：与侧边栏共用同一份滑块分段控件
+            // 本地镜像 / 远程 SSH 切换：与侧边栏共用同一份滑块分段控件；编辑时锁定——模式创建后不可改（本地切远程会丢 rootfs），换模式只能新建。
             val modes = listOf(ExecutionMode.LOCAL_PROOT, ExecutionMode.REMOTE_SSH)
             SegmentedTabs(
                 selected = modes.indexOf(mode).coerceAtLeast(0),
-                labels = listOf(
-                    stringResource(R.string.container_local_image),
-                    stringResource(R.string.container_remote_ssh)
-                ),
-                onSelect = { mode = modes[it] }
+                labels = listOf(stringResource(R.string.container_local_image), stringResource(R.string.container_remote_ssh)),
+                onSelect = { mode = modes[it] },
+                enabled = initial == null
             )
 
             // 中间可滚动表单区域：通过 weight(1f) 撑满剩余高度，杜绝左右 tab 切换时高度跳动

@@ -784,7 +784,7 @@ class TaskTool @Inject constructor(
                 SubAgentEvent(
                     subSessionId = subSessionId,
                     parentSessionId = context.sessionId!!,
-                    type = SubAgentEventType.STOPPED
+                    type = SubAgentEventType.DELETED
                 )
             )
         }

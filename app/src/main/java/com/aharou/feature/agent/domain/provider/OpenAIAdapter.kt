@@ -6,6 +6,7 @@ import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.defaultProviderApiPath
 import java.io.IOException
 import com.aharou.feature.agent.data.remote.openai.ChatCompletionRequest
+import com.aharou.feature.agent.data.remote.openai.ThinkingConfig
 import com.aharou.feature.agent.data.remote.openai.OpenAIChatMessage
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -131,7 +132,7 @@ class OpenAIAdapter @Inject constructor(
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = false,
             prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
-        )
+        ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
         val triedKeys = mutableSetOf(apiKey)
@@ -189,6 +190,42 @@ class OpenAIAdapter @Inject constructor(
         else -> effort
     }
 
+    /** 各兼容渠道表达「关闭思考」的字段形态。 */
+    private enum class ThinkingOffField { THINKING_DISABLED, ENABLE_THINKING_FALSE }
+
+    /**
+     * 「不思考」在 OpenAI 兼容渠道没有统一表达：[normalizeReasoningEffort] 对 none 只是「不发字段」，
+     * 服务端随即回退自家默认（多数兼容渠道默认开思考），等于关不掉。
+     *
+     * 判定只看 baseUrl 域名：providerId 是建提供商时生成的时间戳/UUID、name 用户可随意改，都识别不出厂商。
+     * 域名认不出（中转站、自建网关）一律不发——未知字段会被服务端 400，比关不掉更糟。
+     */
+    private fun thinkingOffField(): ThinkingOffField? {
+        val url = baseUrl.lowercase()
+        return when {
+            // DeepSeek / Kimi / 智谱 GLM / MiniMax 的 OpenAI 兼容端点接受 Anthropic 式 thinking 开关。
+            listOf(
+                "api.deepseek.com",
+                "api.moonshot.cn", "api.moonshot.ai",
+                "open.bigmodel.cn", "api.z.ai",
+                "api.minimax.io", "api.minimaxi.com", "api.minimax.chat"
+            ).any { host -> url.contains(host) } -> ThinkingOffField.THINKING_DISABLED
+            // 阿里 Qwen / DashScope 兼容模式用独立布尔开关。
+            url.contains("dashscope") -> ThinkingOffField.ENABLE_THINKING_FALSE
+            else -> null
+        }
+    }
+
+    /** 只在用户选「不思考」时补发厂商关闭字段；其余档位原样返回，请求体与之前完全一致。 */
+    private fun ChatCompletionRequest.withThinkingDisabled(effort: String?): ChatCompletionRequest {
+        if (effort != "none") return this
+        return when (thinkingOffField()) {
+            ThinkingOffField.THINKING_DISABLED -> copy(thinking = ThinkingConfig("disabled"))
+            ThinkingOffField.ENABLE_THINKING_FALSE -> copy(enable_thinking = false)
+            null -> this
+        }
+    }
+
     /**
      * Responses 请求体。system prompt 作为首个 message item 进 `input`（与顶层 `instructions` 等价，
      * 服务端同样按首条 system 消息处理），因此不再单独发 `instructions`。
@@ -230,6 +267,14 @@ class OpenAIAdapter @Inject constructor(
                 request["reasoning"] = mapOf("effort" to effort, "summary" to "auto")
                 request["include"] = listOf("reasoning.encrypted_content")
             }
+        }
+        // Responses 格式没有 thinking 开关：DeepSeek 在 Responses 端用 reasoning.effort="none" 关闭思考，
+        // 而 Chat 端必须发 thinking 开关（在那边只发 none 会被服务端映射成思考模式）。
+        // 仍然要求域名命中 DeepSeek：走到这里的中转站不一定接受该字段。
+        if (reasoningEffort == "none" && isDeepSeek &&
+            thinkingOffField() == ThinkingOffField.THINKING_DISABLED
+        ) {
+            request["reasoning"] = mapOf("effort" to "none")
         }
         // OpenAI 官方 Responses 原生支持 prompt_cache_key（同会话路由到同一缓存 shard）；
         // 自动管理缓存的服务（如 DeepSeek）会静默忽略该字段，不会报错。
@@ -374,7 +419,7 @@ class OpenAIAdapter @Inject constructor(
             stream = true,
             stream_options = StreamOptions(include_usage = true),
             prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
-        )
+        ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
         val sseLog = AILogger.beginRawSse(logSessionId, "OpenAI", seq)

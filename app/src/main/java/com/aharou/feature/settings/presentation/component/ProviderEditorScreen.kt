@@ -35,7 +35,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -58,6 +57,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import com.aharou.core.ui.AppSwitch
+import com.aharou.core.ui.BatchDeleteConfirmDialog
+import com.aharou.core.ui.SelectionAction
+import com.aharou.core.ui.SelectionActionBar
+import com.aharou.core.ui.rememberListSelectionState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -72,7 +75,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import kotlinx.coroutines.delay
@@ -409,15 +411,13 @@ fun ProviderEditorScreen(
     }
     val hapticFeedback = LocalHapticFeedback.current
 
-    var isSelectionMode by rememberSaveable { mutableStateOf(false) }
-    val selectedModels = remember { mutableStateListOf<String>() }
+    // 模型列表多选：与其余设置列表共用同一套选中状态（选中集合 + 多选开关）
+    val modelSelection = rememberListSelectionState()
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
-
+    // 拉取/自动对齐会整体换列表，丢掉已不存在的模型，否则「已选 N 项」与可见行数对不上
+    LaunchedEffect(models.toList()) { modelSelection.retain(models) }
     LaunchedEffect(pagerState.currentPage) {
-        if (pagerState.currentPage == 0 && isSelectionMode) {
-            isSelectionMode = false
-            selectedModels.clear()
-        }
+        if (pagerState.currentPage == 0 && modelSelection.selectionMode) modelSelection.exit()
     }
 
     fun saveAndNavigateBack() {
@@ -431,11 +431,8 @@ fun ProviderEditorScreen(
             showProxyPage = false
             showKeysPage = false
         }
-    } else if (isSelectionMode) {
-        BackHandler {
-            isSelectionMode = false
-            selectedModels.clear()
-        }
+    } else if (modelSelection.selectionMode) {
+        BackHandler { modelSelection.exit() }
     } else {
         BackHandler { saveAndNavigateBack() }
     }
@@ -451,12 +448,7 @@ fun ProviderEditorScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (isSelectionMode) {
-                            isSelectionMode = false
-                            selectedModels.clear()
-                        } else {
-                            saveAndNavigateBack()
-                        }
+                        if (modelSelection.selectionMode) modelSelection.exit() else saveAndNavigateBack()
                     }) {
                         Icon(FeatherIcons.ArrowLeft, contentDescription = stringResource(R.string.common_back))
                     }
@@ -464,13 +456,12 @@ fun ProviderEditorScreen(
                 actions = {
                     if (pagerState.currentPage == 1 && models.isNotEmpty()) {
                         IconButton(onClick = {
-                            isSelectionMode = !isSelectionMode
-                            if (!isSelectionMode) selectedModels.clear()
+                            if (modelSelection.selectionMode) modelSelection.exit() else modelSelection.enterSelectionMode()
                         }) {
                             Icon(
                                 FeatherIcons.CheckSquare,
                                 contentDescription = stringResource(R.string.provider_models_select),
-                                tint = if (isSelectionMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                tint = if (modelSelection.selectionMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -638,71 +629,38 @@ fun ProviderEditorScreen(
                         .fillMaxSize()
                         .padding(horizontal = Spacing.lg)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = Spacing.md, end = Spacing.xs, top = Spacing.sm, bottom = Spacing.sm),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (isSelectionMode) {
-                            Text(
-                                stringResource(R.string.provider_models_selected_count, selectedModels.size),
-                                style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.weight(1f)
-                            )
-                            val allSelected = models.isNotEmpty() && selectedModels.size == models.size
-                            TextButton(
-                                onClick = {
-                                    if (allSelected) {
-                                        selectedModels.clear()
-                                    } else {
-                                        selectedModels.clear()
-                                        selectedModels.addAll(models)
+                    if (modelSelection.selectionMode) {
+                        SelectionActionBar(
+                            selectedCount = modelSelection.selectedCount,
+                            allSelected = modelSelection.isAllSelected(models),
+                            onToggleSelectAll = { modelSelection.toggleSelectAll(models) },
+                            onExit = { modelSelection.exit() },
+                            modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs),
+                            actions = listOf(
+                                SelectionAction(
+                                    icon = FeatherIcons.Play,
+                                    label = stringResource(R.string.provider_models_batch_test),
+                                    onClick = {
+                                        modelSelection.selectedIds.forEach { m ->
+                                            viewModel.testModel(currentConfig(), m)
+                                        }
                                     }
-                                },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                SelectionAction(
+                                    icon = FeatherIcons.Trash2,
+                                    label = stringResource(R.string.provider_models_batch_delete),
+                                    onClick = { showBatchDeleteConfirm = true },
+                                    destructive = true
                                 )
-                            ) {
-                                Text(stringResource(if (allSelected) R.string.provider_models_deselect_all else R.string.provider_models_select_all))
-                            }
-                            TextButton(
-                                onClick = {
-                                    selectedModels.forEach { m -> viewModel.testModel(currentConfig(), m) }
-                                },
-                                enabled = selectedModels.isNotEmpty(),
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(FeatherIcons.Play, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(Spacing.xs))
-                                Text(stringResource(R.string.provider_models_batch_test))
-                            }
-                            TextButton(
-                                onClick = { showBatchDeleteConfirm = true },
-                                enabled = selectedModels.isNotEmpty(),
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.error
-                                )
-                            ) {
-                                Icon(FeatherIcons.Trash2, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(Spacing.xs))
-                                Text(stringResource(R.string.provider_models_batch_delete))
-                            }
-                            TextButton(
-                                onClick = {
-                                    isSelectionMode = false
-                                    selectedModels.clear()
-                                },
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            ) {
-                                Text(stringResource(R.string.common_cancel))
-                            }
-                        } else {
+                            )
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = Spacing.md, end = Spacing.xs, top = Spacing.sm, bottom = Spacing.sm),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 stringResource(R.string.provider_models_count, models.size),
                                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
@@ -711,7 +669,7 @@ fun ProviderEditorScreen(
                             )
                             if (models.isNotEmpty()) {
                                 TextButton(
-                                    onClick = { isSelectionMode = true },
+                                    onClick = { modelSelection.enterSelectionMode() },
                                     colors = ButtonDefaults.textButtonColors(
                                         contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -821,7 +779,6 @@ fun ProviderEditorScreen(
                                             },
                                             onRemove = {
                                                 models.remove(model)
-                                                selectedModels.remove(model)
                                                 scope.launch {
                                                     customMetadataStore.remove(providerId, model)
                                                     customMetadata = customMetadataStore.all()
@@ -829,16 +786,10 @@ fun ProviderEditorScreen(
                                                 saveCurrent()
                                             },
                                             showDivider = !isLast && !isDragging,
-                                            selectionMode = isSelectionMode,
-                                            selected = model in selectedModels,
-                                            onToggleSelect = {
-                                                if (model in selectedModels) {
-                                                    selectedModels.remove(model)
-                                                } else {
-                                                    selectedModels.add(model)
-                                                }
-                                            },
-                                            dragModifier = if (isSelectionMode) Modifier else Modifier.longPressDraggableHandle(
+                                            selectionMode = modelSelection.selectionMode,
+                                            selected = modelSelection.isSelected(model),
+                                            onToggleSelect = { modelSelection.toggle(model) },
+                                            dragModifier = if (modelSelection.selectionMode) Modifier else Modifier.longPressDraggableHandle(
                                                 onDragStarted = {
                                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
                                                 },
@@ -1023,35 +974,21 @@ fun ProviderEditorScreen(
     }
 
     if (showBatchDeleteConfirm) {
-        AlertDialog(
-            onDismissRequest = { showBatchDeleteConfirm = false },
-            title = { Text(stringResource(R.string.provider_models_batch_delete_title)) },
-            text = {
-                Text(stringResource(R.string.provider_models_batch_delete_confirm, selectedModels.size))
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showBatchDeleteConfirm = false
-                        val toDelete = selectedModels.toList()
-                        models.removeAll(toDelete.toSet())
-                        selectedModels.clear()
-                        isSelectionMode = false
-                        scope.launch {
-                            toDelete.forEach { m -> customMetadataStore.remove(providerId, m) }
-                            customMetadata = customMetadataStore.all()
-                        }
-                        saveCurrent()
-                    }
-                ) {
-                    Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
+        val toDelete = modelSelection.selectedIds.toList()
+        BatchDeleteConfirmDialog(
+            title = stringResource(R.string.provider_models_batch_delete_title),
+            message = stringResource(R.string.provider_models_batch_delete_confirm, toDelete.size),
+            onConfirm = {
+                showBatchDeleteConfirm = false
+                models.removeAll(toDelete.toSet())
+                modelSelection.exit()
+                scope.launch {
+                    toDelete.forEach { m -> customMetadataStore.remove(providerId, m) }
+                    customMetadata = customMetadataStore.all()
                 }
+                saveCurrent()
             },
-            dismissButton = {
-                TextButton(onClick = { showBatchDeleteConfirm = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
+            onDismiss = { showBatchDeleteConfirm = false }
         )
     }
 

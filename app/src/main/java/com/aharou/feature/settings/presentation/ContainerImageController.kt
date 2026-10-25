@@ -203,6 +203,28 @@ class ContainerImageController @Inject constructor(
         }
     }
 
+    /**
+     * 批量删除已下载的镜像：逐个删磁盘文件（同上仅限 rootfs_images 目录），
+     * 记录只写回一次——逐条删除会让 DataStore 每条发射一次，列表跟着刷新 N 遍。
+     * 正在下载的目标条目先取消。
+     */
+    fun deleteDownloaded(entryIds: Collection<String>) {
+        val targets = entryIds.filter { it.isNotBlank() }.distinct()
+            .mapNotNull { id -> _downloaded.value[id]?.let { id to it } }
+        if (targets.isEmpty()) return
+        val downloading = (_download.value as? ContainerImageDownloadUiState.Downloading)?.entryId
+        if (downloading != null && targets.any { it.first == downloading }) cancelDownload()
+        scope.launch {
+            targets.forEach { (_, record) ->
+                runCatching {
+                    val file = File(Uri.parse(record.fileUri).path ?: return@runCatching)
+                    if (file.parentFile?.name == "rootfs_images") file.delete()
+                }
+            }
+            containerSettings.removeDownloadedImages(targets.map { it.first })
+        }
+    }
+
     private companion object {
         /** 目录清单里带哈希的源：只有这两个源会强制校验下载文件。 */
         val CHECKSUM_SOURCES = setOf("official", "aharou")

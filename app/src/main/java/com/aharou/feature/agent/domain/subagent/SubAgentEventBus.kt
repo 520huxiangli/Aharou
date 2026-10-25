@@ -11,10 +11,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 子代理事件类型。前四种为生命周期事件；后两种为收发消息事件，只投递内容，不影响活跃集合。
+ * 子代理事件类型。前五种为生命周期事件；后两种为收发消息事件，只投递内容，不影响活跃集合。
  */
 enum class SubAgentEventType {
     SPAWNED, COMPLETED, FAILED, STOPPED,
+
+    /**
+     * 子代理会话已被 task(action="del") 删除（含全部消息）。与 STOPPED 的区别：
+     * 收集方不得再给该会话补送通知、起后续轮次（会话已不存在，只会白烧一轮 LLM 并落孤儿消息），
+     * 而应清掉它的运行时状态。
+     */
+    DELETED,
 
     /** 主会话向子代理发来一条消息（发送方是父会话）。 */
     MESSAGE_FROM_PARENT,
@@ -68,6 +75,12 @@ class SubAgentEventBus @Inject constructor() {
      */
     private val parentOfSub = ConcurrentHashMap<String, String>()
 
+    /**
+     * 活跃集合的读-改-写锁：[emit] 与 [release] 都可能被不同协程同时调用，
+     * 各自直接改 `_activeSubSessionIds.value` 会互相覆盖（丢一次移除 → 名额永久泄漏）。
+     */
+    private val activeLock = Any()
+
     /** 运行中的子代理数量。 */
     val activeCount: Int get() = _activeSubSessionIds.value.size
 
@@ -82,23 +95,32 @@ class SubAgentEventBus @Inject constructor() {
      * 返回值同时用于区分「用户手动终止」与「TaskTool 已处理过」（后者返回 false），
      * 避免向父代理重复投递通知。
      */
-    fun release(subSessionId: String): Boolean {
+    fun release(subSessionId: String): Boolean = unmarkActive(subSessionId)
+
+    /** 把 [subSessionId] 加入活跃集合；与 [unmarkActive] 共用 [activeLock]。 */
+    private fun markActive(subSessionId: String) {
+        synchronized(activeLock) {
+            _activeSubSessionIds.value = _activeSubSessionIds.value + subSessionId
+        }
+    }
+
+    /** 把 [subSessionId] 移出活跃集合，返回它此前是否在集合里。 */
+    private fun unmarkActive(subSessionId: String): Boolean = synchronized(activeLock) {
         val current = _activeSubSessionIds.value
-        if (subSessionId !in current) return false
+        if (subSessionId !in current) return@synchronized false
         _activeSubSessionIds.value = current - subSessionId
-        return true
+        true
     }
 
     fun emit(event: SubAgentEvent) {
         // 同步维护活跃集合
         when (event.type) {
             SubAgentEventType.SPAWNED -> {
-                _activeSubSessionIds.value = _activeSubSessionIds.value + event.subSessionId
+                markActive(event.subSessionId)
                 parentOfSub[event.subSessionId] = event.parentSessionId
             }
-            SubAgentEventType.COMPLETED, SubAgentEventType.FAILED, SubAgentEventType.STOPPED -> {
-                _activeSubSessionIds.value = _activeSubSessionIds.value - event.subSessionId
-            }
+            SubAgentEventType.COMPLETED, SubAgentEventType.FAILED,
+            SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> unmarkActive(event.subSessionId)
             SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> {
                 // 收发消息不改变运行状态，活跃集合保持不变。
             }

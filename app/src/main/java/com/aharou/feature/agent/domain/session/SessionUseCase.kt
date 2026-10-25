@@ -166,8 +166,11 @@ class SessionUseCase @Inject constructor(
             updatedAt = now,
             // 默认继承父会话 mode：权限引擎按会话 mode 判定写拦截，默认 BUILD 会让 PLAN
             // 模式下派出的子代理绕过只读限制，反过来 AUTO 模式的子代理又会弹授权窗打扰用户。
-            // 自定义子代理可用定义的 mode 覆盖该默认值。
-            mode = mode?.name ?: parent.mode,
+            // 自定义子代理的 mode 只能更严（limitedBy），不能把父会话的权限放宽。
+            mode = mode?.let { definitionMode ->
+                val parentMode = runCatching { AgentMode.valueOf(parent.mode) }.getOrDefault(AgentMode.BUILD)
+                definitionMode.limitedBy(parentMode).name
+            } ?: parent.mode,
             providerId = providerId ?: parent.providerId,
             model = model ?: parent.model,
             reasoningEffort = reasoningEffort ?: parent.reasoningEffort,

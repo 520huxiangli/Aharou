@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -84,7 +83,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -127,6 +125,8 @@ private val ToolSectionFadeHeight = 24.dp
  * 状态不再只用颜色表达：运行中图标脉冲、失败额外挂一个警示图标，读屏另有状态语义。
  * [liveOutput] 非空时进入「实时输出」模式：显示逐行累积输出。
  *
+ * `task` 的 create 派发整行换成 [SubAgentDispatchCard]（子代理派发卡片），其余工具仍是扁平行。
+ *
  * 展开态由 [expandedOverride] + [onExpandedChange] 受控（宿主持久化，见
  * [com.aharou.feature.agent.presentation.AIAgentViewModel.toolExpansionOverrides]）：
  * 从前用 `remember(message.id)` 存在这里，item 滚出视口被 LazyColumn 回收、或全屏路由
@@ -147,6 +147,15 @@ internal fun ToolMessageBody(
     // 逐次重组都拿整串做一次 O(n) 相等比较，本身就是可观的浪费。
     // 工具结果只会追加增长，长度相同即视为同一份内容。
     val contentKey = message.content.length
+    // task 派发卡片：命中就整行换成子代理卡（派发中 → 结束后同一张卡换成摘要与改动文件）。
+    // 解析记住在 (id, 内容长度, 参数) 上，流式输出逐字追加时不会重解析一遍。
+    val subAgentDispatch = remember(message.id, contentKey, message.toolArgs) {
+        if (message.toolName == "task") parseSubAgentDispatch(message.toolArgs, message.content) else null
+    }
+    if (subAgentDispatch != null) {
+        SubAgentDispatchCard(dispatch = subAgentDispatch, running = running)
+        return
+    }
     // 解析（diff/todo/搜索/通知/路径等）从组合期移到 Default：工具结果可达数十万字符，主线程解析会掉帧。
     // 外层 key(...) 让 key 变化时整体重建（重新解析、丢弃旧输入的结果）；初值 null 表示尚未解析完成，
     // 各处按空值渲染，避免先画出空卡片或错内容。
@@ -469,70 +478,8 @@ private data class ToolMessageDerived(
     val shellCommand: String?
 )
 
-internal data class ToolNotificationInfo(val summary: String, val succeeded: Boolean, val isMessage: Boolean = false)
-
-/**
- * 从工具结果 transport JSON 顶层的 `notifications` 字段提取搭车通知（后台任务/子代理完成）。
- * 该字段由 [com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow] 在 AI 忙碌时注入。
- */
-internal fun parseToolNotifications(raw: String): List<ToolNotificationInfo> {
-    val array = parseToolTransport(raw.withoutToolStatusPrefix())?.get("notifications") as? JsonArray
-        ?: return emptyList()
-    return array.mapNotNull { element ->
-        val obj = element as? JsonObject ?: return@mapNotNull null
-        val summary = (obj["summary"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
-            ?: return@mapNotNull null
-        val status = (obj["status"] as? JsonPrimitive)?.contentOrNull
-        ToolNotificationInfo(
-            summary = summary,
-            succeeded = status == "completed",
-            isMessage = status == "message"
-        )
-    }
-}
-
-/** 工具卡片底部的搭车通知提示条：状态点 + 摘要。 */
-@Composable
-private fun ToolNotificationRow(info: ToolNotificationInfo) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = Spacing.xs),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(
-                    when {
-                        info.isMessage -> MaterialTheme.colorScheme.primary
-                        info.succeeded -> MaterialTheme.semanticColors.success
-                        else -> MaterialTheme.colorScheme.error
-                    }
-                )
-        )
-        Text(
-            text = info.summary,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-private fun String.takeLastLines(maxLines: Int): String {
-    if (maxLines <= 0 || isEmpty()) return ""
-    var seen = 0
-    for (i in lastIndex downTo 0) {
-        if (this[i] == '\n' && ++seen == maxLines) {
-            return substring(i + 1)
-        }
-    }
-    return this
-}
+// 搭车通知（ToolNotificationInfo / parseToolNotifications / ToolNotificationRow）、takeLastLines 与
+// DiffStat 已迁至 SubAgentCardComponents.kt：本文件受单文件行数棘轮约束，加 task 卡片分支前先腾行。
 
 /**
  * 双击折叠检测：detectTapGestures 的 awaitFirstDown 默认 requireUnconsumed=true，
@@ -743,30 +690,6 @@ internal fun ToolSection(label: String, content: String, live: Boolean = false) 
     }
 }
 
-/** 增删统计胶囊：绿色「+N」与红色「−M」。 */
-@Composable
-internal fun DiffStat(added: Int, removed: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (added > 0) {
-            Text(
-                text = "+$added",
-                color = DiffAddText,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (added > 0 && removed > 0) Spacer(Modifier.width(Spacing.xs))
-        if (removed > 0) {
-            Text(
-                text = "−$removed",
-                color = DiffRemoveText,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
 /**
  * 彩色行级差异视图
  */
@@ -954,7 +877,7 @@ internal fun formatToolResult(raw: String): String {
     return s
 }
 
-private fun parseToolTransport(raw: String): JsonObject? {
+internal fun parseToolTransport(raw: String): JsonObject? {
     return runCatching {
         val obj = Json.parseToJsonElement(raw.trim()).jsonObject
         if (obj["status"] != null) obj else null

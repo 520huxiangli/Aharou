@@ -235,6 +235,8 @@
 
     <!-- SettingsScreen common -->
     <string name="common_back">Back</string>
+    <string name="common_label_with_api">%1$s (%2$s)</string>
+    <string name="common_batch_delete_confirm">Delete the %1$d selected items? This cannot be undone.</string>
     <string name="tool_action_open_preview">View details</string>
     <string name="common_scroll_to_bottom">Back to bottom</string>
     <string name="common_scroll_to_prev_user">Previous message</string>
@@ -498,6 +500,10 @@
     <string name="chat_reasoning_effort_high">High</string>
     <string name="chat_reasoning_effort_xhigh">Extra high</string>
     <string name="chat_reasoning_effort_max">Max</string>
+    <string name="model_reasoning_effort_unverified">This model may not support this level; the server may downgrade or ignore it.</string>
+    <string name="model_reasoning_toggle_only">This model only supports thinking on/off, with no intermediate levels.</string>
+    <string name="model_reasoning_budget_tokens">This model controls thinking depth by a token budget; the selected level is converted to a budget.</string>
+
     <string name="chat_open_file_missing">File not found or has been moved</string>
     <string name="chat_open_file_unshareable">This file\'s location cannot be shared with other apps</string>
     <string name="chat_open_file_no_app">No app available to open this file</string>
@@ -592,6 +598,8 @@
     <string name="backup_export_btn">Export</string>
     <string name="backup_password_input">Enter backup password</string>
     <string name="backup_password_optional_hint">Leave empty if backup is unencrypted</string>
+    <string name="backup_net_upload_password_hint">Uploads are always encrypted: the backup contains decrypted API keys and SSH credentials, so a password is required</string>
+    <string name="backup_net_upload_password_required">A password is required for network backups (the file contains decrypted credentials)</string>
     <string name="backup_import_btn">Import</string>
     <string name="backup_operation_failed">Operation failed</string>
     <string name="backup_import_done">Import complete</string>    <string name="backup_actions">Actions</string>
@@ -673,6 +681,15 @@
 
     <!-- Subagent -->
     <string name="subagent_tab_sessions">Chats</string>
+    <string name="subagent_card_title">Subagent task</string>
+    <string name="subagent_card_status_running">Running</string>
+    <string name="subagent_card_status_completed">Completed</string>
+    <string name="subagent_card_status_failed">Failed</string>
+    <string name="subagent_card_status_cancelled">Stopped</string>
+    <string name="subagent_card_status_interrupted">Interrupted</string>
+    <string name="subagent_card_changed_files">%1$d files changed</string>
+    <string name="subagent_card_more_files">%1$d more files</string>
+    <string name="subagent_card_open_session">Open subagent session</string>
     <string name="drawer_tab_files">Files</string>
     <string name="drawer_tab_workflow">Workflow</string>
     <string name="workflow_empty">No workflow to show yet</string>
@@ -2009,8 +2026,8 @@
 
     <!-- Workspace Picker -->
     <string name="workspace_open">Open Workspace</string>
-    <string name="workspace_new">New</string>
-    <string name="workspace_empty_hint">No workspaces, tap "New" to create one</string>
+    <string name="workspace_new_internal">New Internal Workspace</string>
+    <string name="workspace_empty_hint">No workspaces, tap "%1$s" to create one</string>
     <string name="workspace_delete">Delete Workspace</string>
     <string name="workspace_delete_confirm">Delete "%1$s"? All files in this directory and this workspace\'s chats will be deleted and cannot be undone.</string>
     <string name="workspace_delete_failed">Failed to delete workspace "%1$s": the directory could not be removed (it may contain read-only files). Please delete it manually in a file manager.</string>
@@ -2027,9 +2044,9 @@
     <string name="workspace_rename_external_hint">Only the name shown in the list changes; the directory on your device is not renamed.</string>
     <string name="workspace_remote_root_create_failed">Failed to create the remote workspace directory. Check the path and server permissions.</string>
     <string name="workspace_remote_default_create_failed">Failed to create the default remote workspace. Check server permissions and disk space.</string>
-    <string name="workspace_add_local_dir">Add Local Directory</string>
-    <string name="workspace_external_added">Local directory workspace "%1$s" added</string>
-    <string name="workspace_external_warning_title">Add local directory workspace</string>
+    <string name="workspace_add_external">Add External Workspace</string>
+    <string name="workspace_external_added">External workspace "%1$s" added</string>
+    <string name="workspace_external_warning_title">Add External Workspace</string>
     <string name="workspace_external_warning_message">AI directly reads and writes the real files in the selected directory. Public storage does not support symlinks, so npm, yarn, pnpm, and git operations involving symlinks may fail. Removing the workspace only removes the association and does not delete directory contents.</string>
     <string name="workspace_external_warning_dont_show_again">Don’t show again</string>
     <string name="workspace_external_warning_continue">Continue</string>
@@ -2050,6 +2067,8 @@
     <string name="chat_more_options">More Options</string>
     <string name="chat_action_edit">Edit Message</string>
     <string name="chat_action_copy">Copy Text</string>
+    <string name="chat_action_fork">Fork from Here</string>
+    <string name="chat_fork_title">Branch of %1$s</string>
     <string name="chat_action_delete">Delete Message</string>
     <string name="chat_action_regenerate">Regenerate</string>
     <string name="chat_retry_action">Retry</string>
@@ -2824,6 +2843,9 @@
     <string name="memory_recall_no_hit">Nothing matched this input. Check whether the related memories mention the key entities from your input (domain, module name, proper noun) in their summary or keywords; without them the entry cannot rank high when injecting.</string>
     <string name="memory_recall_no_memory">No memory entries would be injected right now. Create one in the memory list and test again.</string>
     <string name="prompts_title">Prompts</string>
+    <string name="prompts_reset_custom">Reset custom prompts</string>
+    <string name="prompts_reset_custom_hint">Delete all custom prompt fragments; built-in prompts are not affected</string>
+    <string name="prompts_reset_custom_confirm">This deletes every custom prompt fragment from both project and global scopes. Built-in prompts are not affected. This cannot be undone.</string>
     <string name="prompts_sort_long_press">Long-press to reorder</string>
     <string name="prompts_empty">No fragments available</string>
     <string name="prompts_source_project">Project</string>

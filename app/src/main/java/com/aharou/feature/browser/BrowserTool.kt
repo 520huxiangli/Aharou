@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -100,6 +101,9 @@ class BrowserTool @Inject constructor(
             } else {
                 ToolResult.Error(result.text, "BROWSER_ACTION_FAILED")
             }
+        } catch (e: CancellationException) {
+            // 用户停止时不能当成「浏览器操作失败」：取消要原样透传，否则上层会把它当普通失败结果回给模型。
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "browser action failed: ${e.message}", e)
             ToolResult.Error("浏览器操作失败: ${e.message}")

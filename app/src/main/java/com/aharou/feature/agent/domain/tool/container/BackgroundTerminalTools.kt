@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -36,6 +37,28 @@ private fun JsonElement.asPlainString(): String? =
     (this as? JsonPrimitive)?.contentOrNull
 
 /**
+ * 解析标签 id 列表。
+ *
+ * 正规形态是 JSON 数组（`["term-1","term-2"]`），但模型经常把数组写成 `"term-1, term-2"`
+ * 这种字符串，故字符串形态再按逗号/分号/空白切开，避免一次调用整批失败。
+ */
+private fun parseTabIds(element: JsonElement?): List<String> {
+    val raw = when (element) {
+        is JsonArray -> element.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        is JsonPrimitive -> element.contentOrNull?.split(',', ';', ' ', '\n', '\t').orEmpty()
+        else -> emptyList()
+    }
+    return raw.map { it.trim() }.filter { it.isNotEmpty() }
+}
+
+/**
+ * 按行保留匹配给定正则的行（行内任意位置命中即可），用于从大段日志里挑关键行。
+ * 用 `lineSequence()` 切行，`\n` / `\r\n` / `\r` 都算换行。
+ */
+private fun filterOutputLines(output: String, regex: Regex): List<String> =
+    output.lineSequence().filter { regex.containsMatchIn(it) }.toList()
+
+/**
  * 统一的后台终端会话工具：用一个 `action` 参数区分三种操作，把原先的
  * `run_background_command` / `send_terminal_input` / `read_terminal_output` 三个工具合一。
  *
@@ -43,8 +66,9 @@ private fun JsonElement.asPlainString(): String? =
  *   不阻塞等待。命令进程持续运行，AI 之后凭返回的 id 用 send/read 继续。
  * - `send`：按 tab_id 向某个后台或交互终端发送一行命令/输入（默认自动回车执行），随后短暂捕获输出。
  * - `key`：按 tab_id 发送常见快捷键/控制字符（如 Ctrl-C、Ctrl-D、方向键）。
- * - `read`：按 tab_id 读取该终端当前的全部输出（含后台命令实时日志）；省略 tab_id 则列出所有标签。
- * - `close`：按 tab_id 主动关闭并销毁某个终端标签。
+ * - `read`：按 tab_id 读取该终端当前的全部输出（含后台命令实时日志）；省略 tab_id 则列出所有标签；
+ *   可用 `filter` 传正则，只返回匹配的行（从大段日志里挑关键信息）。
+ * - `close`：按 tab_id 关闭并销毁某个终端标签；也可用 `tab_ids` 一次关闭多个。
  *
  * 授权：start 动作按 shell 命令前缀匹配（见 [com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine]），
  * send 动作按输入内容匹配，key/read/close 按整工具匹配。
@@ -80,7 +104,7 @@ class TerminalSessionTool @Inject constructor(
 
     override val name = "terminal"
     override val description =
-        "管理常驻后台终端会话（启动命令、发输入/快捷键、读输出、关闭标签）。会自行结束且需等结果的任务用 start + notify=true（结束后系统主动通知，勿轮询）；常驻服务用 notify=false，需要时再 read。中断前台进程用 key=ctrl+c。任务完成后可关闭自己创建的临时标签（close），常驻服务与用户手动开的标签不要关；一次性任务（notify=true）的标签在回合结束、进程已退出后也会被自动关闭。"
+        "管理常驻后台终端会话（启动命令、发输入/快捷键、读输出、关闭标签）。会自行结束且需等结果的任务用 start + notify=true（结束后系统主动通知，勿轮询）；常驻服务用 notify=false，需要时再 read。中断前台进程用 key=ctrl+c。任务完成后可关闭自己创建的临时标签（close），常驻服务与用户手动开的标签不要关；一次性任务（notify=true）的标签在回合结束、进程已退出后也会被自动关闭。输出很长时 read 传 filter 正则只回匹配的行；要一次关多个临时标签用 close 的 tab_ids（与 tab_id 合并去重）。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val capabilities = setOf(ToolCapability.EXECUTE_COMMANDS)
 
@@ -95,7 +119,7 @@ class TerminalSessionTool @Inject constructor(
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：start=启动后台命令；send=向终端发输入；key=发送快捷键；read=读终端输出；close=关闭终端标签",
+            description = "操作类型：start=启动后台命令；send=向终端发输入；key=发送快捷键；read=读终端输出（可用 filter 正则按行筛选）；close=关闭终端标签（可用 tab_ids 批量关闭）",
             required = true,
             enum = listOf("start", "send", "key", "read", "close")
         ),
@@ -120,7 +144,20 @@ class TerminalSessionTool @Inject constructor(
         "tab_id" to ToolParameter(
             name = "tab_id",
             type = ParameterType.STRING,
-            description = "send/key/read/close 用：目标终端标签 id，如 'term-2'；read 省略则列出所有标签",
+            description = "send/key/read/close 用：目标终端标签 id，如 'term-2'；read 省略则列出所有标签；close 可改用 tab_ids 批量关闭",
+            required = false
+        ),
+        "tab_ids" to ToolParameter(
+            name = "tab_ids",
+            type = ParameterType.ARRAY,
+            description = "close 可选：要关闭的终端标签 id 数组，如 [\"term-1\",\"term-2\"]；与 tab_id 同时给时合并去重，不存在的 id 在结果里单独汇报",
+            required = false,
+            itemsSchema = mapOf("type" to "string")
+        ),
+        "filter" to ToolParameter(
+            name = "filter",
+            type = ParameterType.STRING,
+            description = "read 可选：按行筛选输出的正则表达式（Java 语法，区分大小写，可加 (?i) 忽略大小写），只返回匹配的行；无匹配时返回提示与原输出行数；非法正则返回 INVALID_REGEX",
             required = false
         ),
         "input" to ToolParameter(
@@ -202,13 +239,18 @@ class TerminalSessionTool @Inject constructor(
             )
         }
         "close" -> {
-            val tabId = args["tab_id"]?.asPlainString() ?: "未知标签"
+            val ids = (parseTabIds(args["tab_ids"]) + parseTabIds(args["tab_id"])).distinct()
+            val label = ids.joinToString("、").ifBlank { "未知标签" }
             PendingToolPermission(
                 id = callId,
                 toolName = name,
-                title = "确认关闭终端标签",
-                summary = tabId,
-                details = "将关闭终端 $tabId，并终止其中仍在运行的进程。",
+                title = if (ids.size > 1) "确认关闭 ${ids.size} 个终端标签" else "确认关闭终端标签",
+                summary = label,
+                details = if (ids.size > 1) {
+                    "将关闭终端 $label 共 ${ids.size} 个标签，并终止其中仍在运行的进程。"
+                } else {
+                    "将关闭终端 $label，并终止其中仍在运行的进程。"
+                },
                 argsPreview = argsPreview
             )
         }
@@ -501,7 +543,7 @@ class TerminalSessionTool @Inject constructor(
             "该标签里的命令仍落在它自己那个工作区，需要在本会话工作区操作请用 start 新建标签。"
     }
 
-    /** 读取终端输出；省略 tab_id 则列出所有标签。TerminalSessionManager 需主线程。 */
+    /** 读取终端输出；省略 tab_id 则列出所有标签；filter 为正则时只返回匹配的行。TerminalSessionManager 需主线程。 */
     private suspend fun read(
         args: Map<String, JsonElement>,
         context: com.aharou.feature.agent.domain.model.AgentContext?
@@ -518,24 +560,80 @@ class TerminalSessionTool @Inject constructor(
             }
             return@withContext ToolResult.Success(JsonPrimitive(text))
         }
+        // 先编译正则：非法时直接回错，不必先把输出取出来。
+        val filter = args["filter"]?.asPlainString()?.trim()?.takeIf { it.isNotEmpty() }
+        val regex = if (filter == null) {
+            null
+        } else {
+            try {
+                Regex(filter)
+            } catch (e: Exception) {
+                return@withContext ToolResult.Error(
+                    "filter 不是合法的正则表达式：${e.message ?: filter}（Java 语法，区分大小写，可加 (?i) 忽略大小写）",
+                    "INVALID_REGEX"
+                )
+            }
+        }
         val output = sessionManager.getTabOutput(tabId)
             ?: return@withContext ToolResult.Error("未找到终端标签: $tabId")
-        FileLogger.v(TAG, "读取 $tabId 输出 ${output.length} 字符")
+        // 顺序要紧：先筛原始输出、再拼 mismatchNote。note 里带工作区路径，先进正文的话
+        // filter 会命中那些路径行（甚至为它们凭空造出“匹配”），也会让“原输出共 N 行”失真。
+        val body = if (regex == null) {
+            FileLogger.v(TAG, "读取 $tabId 输出 ${output.length} 字符")
+            output
+        } else {
+            val matched = filterOutputLines(output, regex)
+            FileLogger.v(TAG, "读取 $tabId 输出 ${output.length} 字符，filter=$filter 命中 ${matched.size} 行")
+            if (matched.isEmpty()) {
+                "没有匹配 $filter 的行（原输出共 ${output.lineSequence().count()} 行）。"
+            } else {
+                matched.joinToString("\n")
+            }
+        }
         val note = mismatchNote(tabId, context)
-        if (note == null) ToolResult.Success(JsonPrimitive(output))
-        else ToolResult.Success(JsonPrimitive("$note\n\n$output"))
+        if (note == null) ToolResult.Success(JsonPrimitive(body))
+        else ToolResult.Success(JsonPrimitive("$note\n\n$body"))
     }
 
-    /** 关闭指定终端标签。TerminalSessionManager 需主线程。 */
+    /**
+     * 关闭终端标签：tab_ids 与 tab_id 合并去重后逐个关闭。
+     *
+     * 批量时逐个汇报：关掉的列在「已关闭」、不存在的列在「未找到」，调用方据此看出哪个 id 写错了。
+     * TerminalSessionManager 需主线程。
+     */
     private suspend fun close(args: Map<String, JsonElement>): ToolResult = withContext(Dispatchers.Main) {
-        val tabId = args["tab_id"]?.asPlainString()
-            ?: return@withContext ToolResult.Error("close 操作缺少必需参数: tab_id")
-        val ok = sessionManager.closeTab(tabId)
-        if (ok) {
-            FileLogger.i(TAG, "关闭终端标签: $tabId")
-            ToolResult.Success(JsonPrimitive("已关闭终端标签 $tabId。"))
-        } else {
-            ToolResult.Error("未找到终端标签: $tabId")
+        val ids = (parseTabIds(args["tab_ids"]) + parseTabIds(args["tab_id"])).distinct()
+        if (ids.isEmpty()) {
+            return@withContext ToolResult.Error(
+                "close 操作缺少必需参数: tab_id 或 tab_ids",
+                "MISSING_TAB_ID"
+            )
+        }
+        val closed = mutableListOf<String>()
+        val missing = mutableListOf<String>()
+        ids.forEach { id ->
+            if (sessionManager.closeTab(id)) {
+                closed += id
+                FileLogger.i(TAG, "关闭终端标签: $id")
+            } else {
+                missing += id
+            }
+        }
+        when {
+            closed.isEmpty() -> ToolResult.Error(
+                "未找到终端标签: ${missing.joinToString("、")}",
+                "TERMINAL_NOT_FOUND"
+            )
+            closed.size == 1 && missing.isEmpty() ->
+                ToolResult.Success(JsonPrimitive("已关闭终端标签 ${closed.first()}。"))
+            else -> ToolResult.Success(
+                JsonPrimitive(
+                    buildString {
+                        append("已关闭终端标签：${closed.joinToString("、")}。")
+                        if (missing.isNotEmpty()) append("未找到：${missing.joinToString("、")}。")
+                    }
+                )
+            )
         }
     }
 

@@ -6,12 +6,16 @@ import com.aharou.feature.workspace.domain.model.SyncConnectionState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -191,6 +195,7 @@ class SyncEngine(
                             _connectionState.value = SyncConnectionState.CONNECTED
                             FileLogger.i(TAG, "Sync: 自动重连成功（${connection.name}）")
                         } catch (e: Exception) {
+                            if (e is CancellationException) throw e
                             FileLogger.e(TAG, "Sync: 自动重连失败（${connection.name}），${backoffMs / 1000}s 后重试: ${e.message}")
                             backoffMs = (backoffMs * 2).coerceAtMost(RECONNECT_MAX_MS)
                         }
@@ -203,7 +208,7 @@ class SyncEngine(
     /**
      * 全量拉取远程工作区到本地
      */
-    suspend fun downloadWorkspace() = withContext(Dispatchers.IO) {
+    suspend fun downloadWorkspace() = runFullSync {
         if (!syncClient.isConnected()) {
             throw IllegalStateException("Client not connected")
         }
@@ -216,6 +221,7 @@ class SyncEngine(
         suspend fun pull(remoteDir: String, localDir: File) {
             val files = syncClient.listFiles(remoteDir)
             for (file in files) {
+                currentCoroutineContext().ensureActive()
                 if (isIgnored("$remoteDir/${file.name}")) continue
                 val rPath = "$remoteDir/${file.name}"
                 val lFile = File(localDir, file.name)
@@ -244,21 +250,24 @@ class SyncEngine(
     /**
      * 推送本地工作区到远程。[force] 为 true 时忽略索引、全部重传；默认走增量、跳过未变文件。
      */
-    suspend fun uploadWorkspace(force: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun uploadWorkspace(force: Boolean = false) = runFullSync {
         if (!syncClient.isConnected()) {
             throw IllegalStateException("Client not connected")
         }
         val localRoot = File(mount.localMountPath)
-        if (!localRoot.exists()) return@withContext
+        if (!localRoot.exists()) return@runFullSync
 
         suspend fun push(localDir: File, remoteDir: String) {
             val files = localDir.listFiles() ?: return
             for (file in files) {
+                currentCoroutineContext().ensureActive()
                 if (isIgnored(file.absolutePath)) continue
                 val rPath = "$remoteDir/${file.name}"
                 if (file.isDirectory) {
                     // 远程目录可能已由先前同步创建，已存在时报错可忽略。
-                    try { syncClient.createDirectory(rPath) } catch (e: Exception) {
+                    try { syncClient.createDirectory(rPath) } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
                         FileLogger.w(TAG, "Sync: 远程目录创建失败 $rPath: ${e.message}")
                     }
                     push(file, rPath)
@@ -334,6 +343,7 @@ class SyncEngine(
             }
             retryCounts.remove(localPath) // 成功后清除重试计数
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             FileLogger.e(TAG, "Sync Error for $localPath: ${e.message}", e)
             if (e is RemoteFileRejectedException) {
                 retryCounts.remove(localPath)
@@ -357,21 +367,42 @@ class SyncEngine(
         }
     }
 
+    /**
+     * 全量同步（下载/上传）统一跑在本 engine 的 [scope] 上——它是 [shutdown] 唯一取消的目标，
+     * 断开挂载或切换工作区后同步必定随之停止，不会在已断开的 client 上继续刷错误、留半截文件。
+     * 调用方自身先被取消时，finally 里也会把这次同步取消掉，不留下脱离调用方的孤儿同步。
+     */
+    private suspend fun runFullSync(block: suspend () -> Unit) {
+        val operation = scope.async { block() }
+        try {
+            operation.await()
+        } finally {
+            operation.cancel()
+        }
+    }
+
     suspend fun shutdown() {
         _connectionState.value = SyncConnectionState.DISCONNECTED
         scope.cancel()
         // 只 cancel scope 不会断开底层 SSH/FTP 连接：syncClient 持有独立 client，
         // 断开挂载后它就是一条无人回收的服务端会话。取消后的清理必须不可取消。
         withContext(NonCancellable) {
+            // 取消是协作式的：不等子任务退出就断 client，正在跑的全量同步会拿已断开的连接继续跑，
+            // 刷错误日志、留半截文件。等它们退出（阻塞调用有 15/30s client 超时兜底）再断。
+            scope.coroutineContext[Job]?.join()
             runCatching { syncClient.disconnect() }
                 .onFailure { FileLogger.w(TAG, "Sync: 关闭同步连接失败: ${it.message}") }
         }
     }
 
     private suspend fun forceReconnect() {
+        // 已取消时不要再动连接：shutdown 已经断开它，这里重连会留下无人回收的会话。
+        currentCoroutineContext().ensureActive()
         try {
             // 断开旧连接可能因网络中断本身失败，忽略后继续尝试重连。
             syncClient.disconnect()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.w(TAG, "Sync: 断开旧连接失败: ${e.message}")
         }
@@ -383,6 +414,8 @@ class SyncEngine(
                 auth
             )
             FileLogger.i(TAG, "Sync: Force reconnected to server successfully.")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "Sync: Failed to force reconnect: ${e.message}")
         }

@@ -24,6 +24,14 @@ data class ModelMetadata(
     val source: Source = Source.INFERRED,
     /** models.dev 思考强度档位（reasoning_options 中 effort 类型的 values，如 ["low","medium","high"]）；null/空 = 无档位（不显示思考强度选择）。 */
     val reasoningEffortOptions: List<String>? = null,
+    /** models.dev 声明了 toggle 型（只有思考开/关，没有中间档位）。 */
+    val reasoningSupportsToggle: Boolean = false,
+    /** models.dev 声明了 budget_tokens 型（按思考 token 预算控制深度）。 */
+    val reasoningBudgetTokens: Boolean = false,
+    /** budget_tokens 的最小预算；models.dev 仅在部分模型上给出，缺失为 null。 */
+    val reasoningBudgetTokensMin: Int? = null,
+    /** budget_tokens 的最大预算；models.dev 仅在部分模型上给出，缺失为 null。 */
+    val reasoningBudgetTokensMax: Int? = null,
     /** models.dev cost：输入单价（USD/1M tokens）。 */
     val inputCostUsdPerM: Double? = null,
     /** models.dev cost：输出单价（USD/1M tokens）。 */

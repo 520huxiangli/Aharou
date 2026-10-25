@@ -9,17 +9,23 @@ import java.io.InputStream
 import java.nio.charset.Charset
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileVisitOption
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * [FileAccessProvider] 的本地实现：包一层 [WorkspacePathMapper]，走 java.io.File 直读。
  *
- * 本地模式下文件工具的原行为零变化——仅把原先散落在各工具里的 pathMapper.toHostFile + File 操作
- * 集中到此处，统一经由接口调用。
+ * 路径解析会逐段展开容器软链（[WorkspacePathMapper.resolveFile]）；但删除 / 重命名动的是链接本身，
+ * 递归遍历与递归删除也一律不跟随链接——否则一个自指或指错的链接就能把操作扩散到链接目标上去。
  */
 @Singleton
 class LocalFileAccess @Inject constructor(
@@ -29,7 +35,37 @@ class LocalFileAccess @Inject constructor(
     /** 会话绑定的工作区路径；null = 跟随全局当前工作区。 */
     private var boundWorkspace: String? = null
 
-    private fun resolve(path: String): File = pathMapper.toHostFile(path, boundWorkspace)
+    /**
+     * @param followFinalLink 末级是软链时是否解析到目标。默认跟随（读写内容）；
+     * 删除 / 重命名传 false，动链接本身而不是它指向的文件。
+     */
+    private fun resolve(path: String, followFinalLink: Boolean = true): File =
+        pathMapper.resolveFile(path, boundWorkspace, followFinalLink)
+
+    /** 条目是否存在——用 NOFOLLOW 判存在，指向已删目标的断链也算存在（要能删掉它）。 */
+    private fun entryExists(file: File): Boolean = Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)
+
+    /**
+     * 递归删除 [file]，不跟随链接：链接只删链接本身，不进入它指向的目录。
+     *
+     * 为什么不用 Kotlin 的 `File.deleteRecursively()`：它走 walkBottomUp，对目录链接同样会 listFiles
+     * 下钻，遇到指向上级目录或 `/` 的链接就会把删除扩散到链接目标（工作区、rootfs）。
+     */
+    private fun deleteTree(file: File) {
+        if (!entryExists(file)) return
+        Files.walkFileTree(file.toPath(), object : SimpleFileVisitor<Path>() {
+            override fun visitFile(entry: Path, attrs: BasicFileAttributes): FileVisitResult {
+                Files.delete(entry)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                if (exc != null) throw exc
+                Files.delete(dir)
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
 
     override fun forWorkspace(workspacePath: String): FileAccessProvider {
         if (workspacePath.isBlank()) return this
@@ -109,10 +145,36 @@ class LocalFileAccess @Inject constructor(
     override fun listFilesRecursive(path: String, maxDepth: Int): List<String> {
         val dir = resolve(path)
         if (!dir.isDirectory) return emptyList()
-        return dir.walkTopDown().maxDepth(maxDepth)
-            .filter { it.isFile }
-            .map { it.relativeTo(dir).invariantSeparatorsPath }
-            .toList()
+        val root = dir.toPath()
+        val paths = mutableListOf<String>()
+        // 为什么不用 walkTopDown：它跟 JDK/Kotlin 的目录遍历一样会进入软链目录，容器里指向上级
+        // 或自身的链接会变成无限递归（卡死工具调用、甚至栈溢出）。walkFileTree 默认不跟随链接，
+        // 链接条目只按「是否指向普通文件」计入，保持调用方看到的文件集合不变。
+        try {
+            Files.walkFileTree(
+                root,
+                emptySet<FileVisitOption>(),
+                maxDepth.coerceAtLeast(0),
+                object : SimpleFileVisitor<Path>() {
+                    override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        if (attrs.isRegularFile || (attrs.isSymbolicLink && file.toFile().isFile)) {
+                            paths += root.relativize(file).joinToString("/")
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    // 无权限/已消失的子目录跳过（与原先 listFiles 返回 null 就跳过的行为一致）。
+                    override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+                        FileVisitResult.CONTINUE
+
+                    override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult =
+                        FileVisitResult.CONTINUE
+                }
+            )
+        } catch (e: IOException) {
+            FileLogger.w(TAG, "递归列目录中断: ${dir.absolutePath}", e)
+        }
+        return paths
     }
 
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
@@ -199,18 +261,16 @@ class LocalFileAccess @Inject constructor(
     override fun copyToLocal(path: String): File = resolve(path)
 
     override fun delete(path: String) {
-        resolve(path).delete()
+        resolve(path, followFinalLink = false).delete()
     }
 
     override fun deleteRecursively(path: String) {
-        val file = resolve(path)
-        if (!file.exists()) return
-        if (!file.deleteRecursively()) throw IOException("delete failed: ${file.absolutePath}")
+        deleteTree(resolve(path, followFinalLink = false))
     }
 
     override fun rename(path: String, newPath: String) {
-        val source = resolve(path)
-        val target = resolve(newPath)
+        val source = resolve(path, followFinalLink = false)
+        val target = resolve(newPath, followFinalLink = false)
         if (!source.exists()) throw NoSuchFileException(source)
         if (target.exists()) throw FileAlreadyExistsException(target)
         target.parentFile?.mkdirs()
@@ -221,16 +281,16 @@ class LocalFileAccess @Inject constructor(
 
     override fun copy(path: String, newPath: String, overwrite: Boolean) {
         val source = resolve(path)
-        val target = resolve(newPath)
+        val target = resolve(newPath, followFinalLink = false)
         if (!source.exists()) throw NoSuchFileException(source)
         val sourcePath = source.canonicalFile.toPath()
         val targetPath = target.canonicalFile.toPath()
         if (targetPath == sourcePath || (source.isDirectory && targetPath.startsWith(sourcePath))) {
             throw IOException("destination is the source or its descendant: $newPath")
         }
-        if (target.exists()) {
+        if (entryExists(target)) {
             if (!overwrite) throw FileAlreadyExistsException(target)
-            target.deleteRecursively()
+            deleteTree(target)
         }
         target.parentFile?.mkdirs()
         if (source.isDirectory) {
@@ -241,17 +301,17 @@ class LocalFileAccess @Inject constructor(
     }
 
     override fun move(path: String, newPath: String, overwrite: Boolean) {
-        val source = resolve(path)
-        val target = resolve(newPath)
-        if (!source.exists()) throw NoSuchFileException(source)
+        val source = resolve(path, followFinalLink = false)
+        val target = resolve(newPath, followFinalLink = false)
+        if (!entryExists(source)) throw NoSuchFileException(source)
         val sourcePath = source.canonicalFile.toPath()
         val targetPath = target.canonicalFile.toPath()
         if (targetPath == sourcePath || (source.isDirectory && targetPath.startsWith(sourcePath))) {
             throw IOException("destination is the source or its descendant: $newPath")
         }
-        if (target.exists()) {
+        if (entryExists(target)) {
             if (!overwrite) throw FileAlreadyExistsException(target)
-            target.deleteRecursively()
+            deleteTree(target)
         }
         target.parentFile?.mkdirs()
         val moved = try {
@@ -266,7 +326,7 @@ class LocalFileAccess @Inject constructor(
         } else {
             source.copyTo(target, overwrite = false)
         }
-        if (!source.deleteRecursively()) throw IOException("delete-after-copy failed: ${source.absolutePath}")
+        deleteTree(source)
     }
 
     override fun mkdirs(path: String) {
@@ -274,12 +334,13 @@ class LocalFileAccess @Inject constructor(
     }
 
     override fun parentPath(path: String): String? {
-        val parent = resolve(path).parentFile ?: return null
+        // 回显统一走未解析路径：用户传的是链接路径，返回的目标路径会让他下次找不到入口。
+        val parent = pathMapper.toHostFile(path, boundWorkspace).parentFile ?: return null
         return pathMapper.toContainerPath(parent.absolutePath, boundWorkspace)
     }
 
     override fun toDisplayPath(path: String): String {
-        return pathMapper.toContainerPath(resolve(path).absolutePath, boundWorkspace)
+        return pathMapper.toContainerPath(pathMapper.toHostFile(path, boundWorkspace).absolutePath, boundWorkspace)
     }
 
     private companion object {

@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,7 +93,8 @@ internal fun ReasoningEffortSelector(
     effort: ReasoningEffort,
     availableEfforts: List<ReasoningEffort>,
     onChange: (ReasoningEffort) -> Unit,
-    enabled: Boolean
+    enabled: Boolean,
+    modelMetadata: ModelMetadata? = null
 ) {
     var showSheet by remember { mutableStateOf(false) }
     Box {
@@ -113,7 +115,7 @@ internal fun ReasoningEffortSelector(
             )
             Spacer(Modifier.width(Spacing.xs))
             Text(
-                text = stringResource(effort.labelRes()),
+                text = reasoningEffortLabel(effort),
                 style = MaterialTheme.typography.labelMedium,
                 color = tint,
                 maxLines = 1
@@ -141,6 +143,36 @@ internal fun ReasoningEffortSelector(
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(bottom = Spacing.sm)
                 )
+                val declaredEfforts = modelMetadata?.reasoningEffortOptions
+                // 声明了档位的模型，档位表本身就是说明；纯开关型/预算型才需一句话点明区别。
+                if (declaredEfforts.isNullOrEmpty()) {
+                    when {
+                        modelMetadata?.reasoningBudgetTokens == true -> EffortHint(
+                            stringResource(R.string.model_reasoning_budget_tokens),
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        modelMetadata?.reasoningSupportsToggle == true -> EffortHint(
+                            stringResource(R.string.model_reasoning_toggle_only),
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                // 只看元数据声明，不在这里复刻适配器的降级规则（xhigh/max 归一 high、老代际换算预算），
+                // UI 再算一遍必然与实现漂移。DEFAULT 是不指定档位，服务端默认总是成立，不提醒；
+                // 元数据没命中（INFERRED 兜底）时对模型一无所知，也不吓人。
+                // 纯开关型模型选「不思考」正是它声明的关态，不算未声明档位。
+                val toggleExpressesNone = modelMetadata?.reasoningSupportsToggle == true && effort == ReasoningEffort.NONE
+                val reasoningCapable = modelMetadata?.supportsReasoning == true || !declaredEfforts.isNullOrEmpty()
+                // apiValue 是 String?（DEFAULT 为 null），先取局部变量再比对，否则 contains 的类型对不上。
+                val effortValue = effort.apiValue
+                if (reasoningCapable && effortValue != null && !toggleExpressesNone &&
+                    declaredEfforts?.contains(effortValue) != true
+                ) {
+                    EffortHint(
+                        stringResource(R.string.model_reasoning_effort_unverified),
+                        MaterialTheme.colorScheme.tertiary
+                    )
+                }
                 availableEfforts.forEach { e ->
                     val selected = e == effort
                     Row(
@@ -162,7 +194,7 @@ internal fun ReasoningEffortSelector(
                         )
                         Spacer(Modifier.width(Spacing.md))
                         Text(
-                            text = stringResource(e.labelRes()),
+                            text = reasoningEffortLabel(e),
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f),
@@ -184,7 +216,30 @@ internal fun ReasoningEffortSelector(
     }
 }
 
-private fun ReasoningEffort.labelRes(): Int = when (this) {
+/** 档位弹层里的一行说明小字（能力形态 / 档位未在元数据里声明）。 */
+@Composable
+private fun EffortHint(text: String, color: Color) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = color,
+        modifier = Modifier.padding(bottom = Spacing.sm)
+    )
+}
+
+/**
+ * 档位显示文案：中文名后面跟上接口真实取值（如「最高（max）」）。
+ * 用户对照模型文档或看 400 报错时看到的是 none / low / medium / max 这些值，只给中文名对不上。
+ */
+@Composable
+internal fun reasoningEffortLabel(effort: ReasoningEffort): String {
+    val name = stringResource(effort.labelRes())
+    // DEFAULT 表示请求里不带该字段，没有取值为空串可显示，「默认（）」只会让人以为漏了参数。
+    val apiValue = effort.apiValue ?: return name
+    return stringResource(R.string.common_label_with_api, name, apiValue)
+}
+
+internal fun ReasoningEffort.labelRes(): Int = when (this) {
     ReasoningEffort.DEFAULT -> com.aharou.R.string.chat_reasoning_effort_default
     ReasoningEffort.NONE -> com.aharou.R.string.chat_reasoning_effort_none
     ReasoningEffort.LOW -> com.aharou.R.string.chat_reasoning_effort_low
@@ -196,6 +251,7 @@ private fun ReasoningEffort.labelRes(): Int = when (this) {
 
 /**
  * 模型选择弹窗：复用设置页默认模型的 [ModelSelectionSheet]（iOS 胶囊搜索框、提供商分组卡片、能力 Tag）。
+ * 行内「测试」入口也随 [ModelSelectionSheet] 一起来——弹层自己持测试状态，聊天页无需额外参数或接线。
  */
 @Composable
 internal fun ModelSheet(

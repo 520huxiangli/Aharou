@@ -86,12 +86,6 @@ class PlanApprovalManager @Inject constructor(
         entry.decision.complete(choice)
     }
 
-    /** 解析当前展示的那条（面板只有「批准/拒绝」两个按钮，不携带 id）。 */
-    fun resolvePending(choice: PlanApprovalChoice) {
-        val id = _pendingApproval.value?.id ?: return
-        resolve(id, choice)
-    }
-
     /** 回滚会话模式到 PLAN（SwitchModeTool 已提前写入目标模式，未获批准时还原）。 */
     private fun rollbackModeToPlan(sessionId: String?) {
         val sid = sessionId ?: return

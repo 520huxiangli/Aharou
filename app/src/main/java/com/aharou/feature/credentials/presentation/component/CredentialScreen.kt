@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,7 +62,7 @@ import com.aharou.feature.credentials.domain.model.GitCredential
 import com.aharou.feature.credentials.presentation.CredentialViewModel
 import com.aharou.feature.git.presentation.component.SectionHeader
 import com.aharou.feature.settings.presentation.component.SettingsDivider
-import com.aharou.feature.settings.presentation.component.SettingsGroup
+import com.aharou.feature.settings.presentation.component.SettingsEmptyState
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.SettingsRow
 import com.aharou.feature.settings.presentation.component.settingsLightMode
@@ -179,26 +178,12 @@ fun CredentialScreen(
                         }
                     }
                     1 -> if (state.credentials.isEmpty()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(Spacing.lg),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                        SettingsEmptyState(
+                            icon = FeatherIcons.Key,
+                            title = stringResource(R.string.credential_empty_title),
+                            description = stringResource(R.string.credential_empty_hint),
+                            modifier = Modifier.fillMaxSize()
                         ) {
-                            Text(
-                                text = stringResource(R.string.credential_empty_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Spacer(Modifier.height(Spacing.sm))
-                            Text(
-                                text = stringResource(R.string.credential_empty_hint),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(Modifier.height(Spacing.lg))
                             Button(
                                 onClick = { viewModel.startGitHubLogin() },
                                 modifier = Modifier

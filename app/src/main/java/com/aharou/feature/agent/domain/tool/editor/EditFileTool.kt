@@ -82,7 +82,7 @@ class EditFileTool @Inject constructor(
         "properties" to mapOf(
             "old_string" to mapOf(
                 "type" to "string",
-                "description" to "要被替换的原文，需与文件当前内容精确匹配（含缩进和换行）。带足够上下文以保证唯一。"
+                "description" to "要被替换的原文，需与文件当前内容逐字匹配（含缩进）。换行差异不影响匹配：文件是 CRLF 时也可以按 LF 书写。带足够上下文以保证唯一。"
             ),
             "new_string" to mapOf(
                 "type" to "string",
@@ -129,11 +129,13 @@ class EditFileTool @Inject constructor(
         val hunks = ArrayList<Hunk>(edits.size)
         var totalReplacements = 0
         edits.forEachIndexed { i, e ->
-            val occurrences = current.split(e.oldString).size - 1
+            // readFile 输出的换行已归一为 LF，而磁盘原文可能是 CRLF：匹配只兼容换行差异，其余逐字相等。
+            val matches = findLineEndingTolerant(current, e.oldString.replace("\r\n", "\n"))
+            val occurrences = matches.size
             if (occurrences == 0) {
                 return EditApplication.Failure(
                     "NO_MATCH",
-                    "第 ${i + 1} 个编辑未在文件中找到 old_string，请确认内容（含缩进/换行）与当前文件完全一致"
+                    "第 ${i + 1} 个编辑未在文件中找到 old_string，请确认内容（含缩进）与当前文件完全一致；换行差异（LF/CRLF）已自动兼容"
                 )
             }
             if (occurrences > 1 && !e.replaceAll) {
@@ -145,16 +147,28 @@ class EditFileTool @Inject constructor(
 
             // 变更在「应用本编辑前」内容中的起始行号（1 基）。内容已包含此前所有编辑的结果，
             // 这个行号已经反映了前序编辑造成的行漂移，对自上而下的常规编辑顺序是准确的。
-            val matchIndex = current.indexOf(e.oldString)
-            val startLine = if (matchIndex >= 0) current.substring(0, matchIndex).count { it == '\n' } + 1 else 1
+            val startLine = current.substring(0, matches.first().first).count { it == '\n' } + 1
 
             val diff = LineDiff.toUnified(e.oldString, e.newString)
             val added = diff.lines().count { it.startsWith("+") }
             val removed = diff.lines().count { it.startsWith("-") }
             hunks.add(Hunk(startLine = startLine, added = added, removed = removed, diff = diff))
 
-            current = if (e.replaceAll) current.replace(e.oldString, e.newString)
-            else current.replaceFirst(e.oldString, e.newString)
+            val fileLineEnding = firstLineEnding(current) ?: "\n"
+            val normalizedNew = e.newString.replace("\r\n", "\n")
+            val targets = if (e.replaceAll) matches else listOf(matches.first())
+            val sb = StringBuilder(current.length)
+            var cursor = 0
+            for ((start, endExclusive) in targets) {
+                sb.append(current, cursor, start)
+                // 替换文本沿用匹配区域首个换行的格式，匹配区域无换行时沿用文件格式；
+                // 匹配之外的区域按原样拼接，绝不被整体改写换行。
+                val lineEnding = firstLineEnding(current, start, endExclusive) ?: fileLineEnding
+                sb.append(normalizedNew.replace("\n", lineEnding))
+                cursor = endExclusive
+            }
+            sb.append(current, cursor, current.length)
+            current = sb.toString()
             totalReplacements += if (e.replaceAll) occurrences else 1
         }
         return EditApplication.Success(current, hunks, totalReplacements)
@@ -395,6 +409,61 @@ class EditFileTool @Inject constructor(
             FileLogger.e(TAG, "edit_file 异常", e)
             ToolResult.Error(e.message ?: "编辑文件失败", "EDIT_ERROR")
         }
+    }
+
+    /**
+     * 在 [content] 中查找 [pattern]（字面文本，换行需先归一为 LF）的全部出现位置，容忍换行差异：
+     * pattern 里的 \n 可匹配 content 的 \r\n 或单个 \n，其余字符逐字相等。返回非重叠的
+     * [start, endExclusive) 区间，按出现顺序排列。
+     *
+     * 特意不用正则实现：把多行 old_string 拼成单条正则时，正则引擎的匹配递归深度随行数增长，
+     * 模型整段替换上千行会抛 StackOverflowError——它是 Error，catch(Exception) 拦不住，
+     * 会穿透协程作用域直接崩进程。逐字符迭代扫描没有栈深问题。
+     */
+    private fun findLineEndingTolerant(content: String, pattern: String): List<Pair<Int, Int>> {
+        val matches = ArrayList<Pair<Int, Int>>()
+        val n = content.length
+        val m = pattern.length
+        // 每个模式字符至少消耗一个内容字符，起点超过 n-m 不可能完整匹配。
+        if (m == 0 || m > n) return matches
+        var i = 0
+        outer@ while (i <= n - m) {
+            var ci = i
+            var pj = 0
+            while (pj < m) {
+                val pc = pattern[pj]
+                if (pc == '\n') {
+                    if (ci + 1 < n && content[ci] == '\r' && content[ci + 1] == '\n') {
+                        ci += 2
+                    } else if (ci < n && content[ci] == '\n') {
+                        ci += 1
+                    } else {
+                        i++
+                        continue@outer
+                    }
+                } else if (ci < n && content[ci] == pc) {
+                    ci += 1
+                } else {
+                    i++
+                    continue@outer
+                }
+                pj++
+            }
+            matches.add(i to ci)
+            i = ci
+        }
+        return matches
+    }
+
+    /**
+     * [text] 的 [fromIndex, toIndex) 区间内首个换行的形态（"\r\n" 或 "\n"），无换行返回 null。
+     * 判断 \r 是否成对只在区间内进行：能进入匹配区间的 \n，其配对 \r（若有）必在区间内。
+     */
+    private fun firstLineEnding(text: String, fromIndex: Int = 0, toIndex: Int = text.length): String? {
+        for (k in fromIndex until toIndex) {
+            if (text[k] == '\n') return if (k > fromIndex && text[k - 1] == '\r') "\r\n" else "\n"
+        }
+        return null
     }
 
     /**

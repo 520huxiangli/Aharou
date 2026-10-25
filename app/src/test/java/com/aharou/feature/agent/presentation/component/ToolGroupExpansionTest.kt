@@ -3,7 +3,7 @@ package com.aharou.feature.agent.presentation.component
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.agent.presentation.MessageRole
-import com.aharou.feature.agent.presentation.flattenLongProcesses
+import com.aharou.feature.agent.presentation.flattenTurnProcesses
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -20,7 +20,7 @@ import org.junit.Test
  *
  * 结构：工具分组与过程项都挂在轮头 item 的 [ChatRenderItem.turnProcess] 里（与折叠头同一 Composable，
  * 展开时整体动画）；顶层 items 只有「用户消息 / 轮头 / 常显项与结果」。过程项超过阈值的轮由
- * [flattenLongProcesses] 平铺成顶层 item（懒渲染），断言走它的用例会显式调用。
+ * [flattenTurnProcesses] 平铺成顶层 item（无条件平铺），断言走它的用例会显式调用。
  */
 class ToolGroupExpansionTest {
 
@@ -48,6 +48,41 @@ class ToolGroupExpansionTest {
     /** 所有轮头携带的工具分组项（按轮头顺序展开）。 */
     private fun List<ChatRenderItem>.groupItems(): List<ChatRenderItem> =
         flatMap { it.turnProcess }.filter { it.toolGroup != null }
+
+    @Test
+    fun backgroundNotification_foldsIntoTurnProcess() {
+        // 后台完成通知是过程性提示：随整轮折叠收起，不再常驻
+        val notice = AgentUIMessage(id = "n1", role = MessageRole.USER, content = "done")
+            .copy(isBackgroundNotification = true)
+        val messages = listOf(user("u0"), tool("t1"), notice, assistant("answer"))
+        val rendered = items(messages, turnOverrides = mapOf("turn:u0" to true))
+        assertFalse("后台通知折进过程", rendered.any { it.key == "n1" })
+        assertTrue(rendered.header().turnProcess.any { it.key == "n1" })
+        assertTrue("结果正文仍常显", rendered.any { it.key == "answer" })
+    }
+
+    @Test
+    fun trailingCompactionSummary_isNotPickedAsResult() {
+        // 压缩摘要是 ASSISTANT 角色：不得被选为轮「结果」，否则真正的回复正文会被折进过程
+        val summary = assistant("summary").copy(isContextSummary = true)
+        val messages = listOf(user("u0"), tool("t1"), assistant("answer"), summary)
+        val rendered = items(messages)
+        assertTrue("回复正文仍是结果", rendered.any { it.key == "answer" })
+        assertFalse("摘要折进过程", rendered.any { it.key == "summary" })
+        assertTrue(rendered.header().turnProcess.any { it.key == "summary" })
+    }
+
+    @Test
+    fun samplingLoopStop_foldsIntoTurnProcess() {
+        // 采样熔断提示（Aharou 特有）是系统卡片：同样随过程折叠，不当成普通工具行也不当结果
+        val halted = AgentUIMessage(id = "halt", role = MessageRole.TOOL, content = "重复输出已中止")
+            .copy(isSamplingLoopStop = true)
+        val messages = listOf(user("u0"), tool("t1"), halted, assistant("answer"))
+        val rendered = items(messages, turnOverrides = mapOf("turn:u0" to true))
+        assertFalse("熔断提示折进过程", rendered.any { it.key == "halt" })
+        assertTrue(rendered.header().turnProcess.any { it.key == "halt" })
+        assertTrue("结果正文仍常显", rendered.any { it.key == "answer" })
+    }
 
     // ---- 连续工具调用分组 ----
 
@@ -254,8 +289,8 @@ class ToolGroupExpansionTest {
     }
 
     @Test
-    fun truncatedWindow_persistentLeadingStaysTopLevel() {
-        // 压缩卡片 / 后台通知 / 带附件工具在这一截里同样不参与折叠
+    fun truncatedWindow_notificationFoldsIntoLeadingProcess() {
+        // 后台通知随过程折叠：折进这一截的折叠头里，不占顶层 item
         val notice = AgentUIMessage(id = "n1", role = MessageRole.USER, content = "done")
             .copy(isBackgroundNotification = true)
         val messages = listOf(
@@ -265,8 +300,10 @@ class ToolGroupExpansionTest {
             user("u0"),
         )
         val rendered = items(messages)
-        assertTrue("后台通知常显", rendered.any { it.key == "n1" })
-        assertEquals("turn:head:n1", rendered.first { it.turnHeader != null }.turnHeader!!.key)
+        assertFalse("后台通知折进过程", rendered.any { it.key == "n1" })
+        val head = rendered.first { it.turnHeader != null }
+        assertEquals("turn:head:n1", head.turnHeader!!.key)
+        assertTrue(head.turnProcess.any { it.key == "n1" })
     }
 
     @Test
@@ -297,14 +334,13 @@ class ToolGroupExpansionTest {
     fun longProcess_flattensProcessIntoMainList() {
         // 过程项（含分组成员）超过 8 项：不再内联展开，改平铺成主列表 item，由 LazyColumn 按需组合
         val messages = listOf(user("u0"), assistant("a1")) + (1..12).map { tool("t$it") }
-        val expanded = flattenLongProcesses(
+        val expanded = flattenTurnProcesses(
             items(
                 messages,
                 overrides = mapOf(groupKey to true),
                 turnOverrides = mapOf("turn:u0" to true),
             )
         )
-        assertTrue(expanded.header().lazyProcess)
         assertTrue("过程项不再挂在折叠头里", expanded.header().turnProcess.isEmpty())
         assertEquals("顺序：用户消息 → 折叠头 → 过程子项（分组头、成员依次）→ 结果",
             listOf("u0", "turn:u0#header", "toolgroup:t1", "t1", "t2"),
@@ -322,7 +358,7 @@ class ToolGroupExpansionTest {
     fun longProcess_keepsSoulHeaderOncePerTurn() {
         // 平铺不能把身份行（用户那条 + 本轮首条助手回复）弄成零次或重复
         val messages = listOf(user("u0"), assistant("a1")) + (1..12).map { tool("t$it") }
-        val flat = flattenLongProcesses(
+        val flat = flattenTurnProcesses(
             items(messages, turnOverrides = mapOf("turn:u0" to true))
         )
         assertEquals(listOf("u0", "a1"), flat.filter { it.showSoulHeader }.map { it.message.id })
@@ -347,9 +383,7 @@ class ToolGroupExpansionTest {
             tool("t6"), tool("t7"), tool("t8"), tool("t9"),
             AgentUIMessage(id = "a2", role = MessageRole.ASSISTANT, content = "最终答案"),
         )
-        val flat = flattenLongProcesses(items(messages, turnOverrides = mapOf("turn:u0" to true)))
-        // 过程项计的是成员数：a1 + 5 + 4 = 10 > 8，虽然顶层过程项只有 3 个
-        assertTrue(flat.header().lazyProcess)
+        val flat = flattenTurnProcesses(items(messages, turnOverrides = mapOf("turn:u0" to true)))
         assertEquals(
             listOf("u0", "turn:u0#header", "a1", "toolgroup:t1", "toolgroup:t6", "send", "a2"),
             flat.map { it.key },
@@ -363,12 +397,11 @@ class ToolGroupExpansionTest {
     fun longProcess_collapsedStaysFolded() {
         // 收起时不产出任何子项；展开但分组仍收起时也不产出成员行
         val messages = listOf(user("u0")) + (1..12).map { tool("t$it") }
-        val collapsed = flattenLongProcesses(items(messages))
+        val collapsed = flattenTurnProcesses(items(messages))
         assertEquals(listOf("u0", "turn:u0#header"), collapsed.map { it.key })
-        assertTrue(collapsed.header().lazyProcess)
         assertFalse(collapsed.any { it.groupMember })
 
-        val groupCollapsed = flattenLongProcesses(
+        val groupCollapsed = flattenTurnProcesses(
             items(messages, turnOverrides = mapOf("turn:u0" to true))
         )
         assertEquals(
@@ -379,13 +412,16 @@ class ToolGroupExpansionTest {
     }
 
     @Test
-    fun shortProcess_keepsInlineProcess() {
-        // 未超阈值：照旧整块内联展开（保持展开动画是一个整体）
-        val rendered = flattenLongProcesses(
+    fun shortProcess_alsoFlattens() {
+        // 无条件平铺：短过程不再内联在折叠头里，同样落到顶层
+        val rendered = flattenTurnProcesses(
             items(listOf(user("u0"), tool("t1")), activeTurnKey = "turn:u0")
         )
-        assertFalse(rendered.header().lazyProcess)
-        assertEquals(1, rendered.header().turnProcess.size)
+        assertTrue(rendered.header().turnProcess.isEmpty())
+        assertEquals(
+            listOf("u0", "turn:u0#header", "t1"),
+            rendered.map { it.key },
+        )
     }
 
     @Test

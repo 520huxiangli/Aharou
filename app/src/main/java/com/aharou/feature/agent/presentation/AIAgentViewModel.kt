@@ -18,6 +18,8 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.toUserMessage
 import com.aharou.core.util.formatCostUsd
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
+import com.aharou.feature.agent.data.local.dao.AgentTaskDao
+import com.aharou.feature.agent.data.local.entity.AgentTaskStatus
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
@@ -67,6 +69,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.asDirtySignal
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.schedule.ScheduledRunBus
 import com.aharou.feature.agent.domain.schedule.ScheduledRunRequest
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
@@ -81,6 +84,7 @@ import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
+import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
@@ -104,9 +108,14 @@ import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.component.PendingUploadAttachment
 import com.aharou.feature.agent.presentation.component.PastedText
 import com.aharou.feature.agent.presentation.component.RewindOption
+import com.aharou.feature.agent.presentation.component.SubAgentCardState
+import com.aharou.feature.agent.presentation.component.SubAgentCardBridge
+import com.aharou.feature.agent.presentation.component.SubAgentCardStatus
 import com.aharou.feature.agent.presentation.component.expandPastePlaceholders
 import com.aharou.feature.agent.presentation.component.formatTokenCount
+import com.aharou.feature.agent.presentation.component.isTurnHead
 import com.aharou.feature.agent.presentation.component.shouldPasteAsFile
+import com.aharou.feature.agent.presentation.turnKeyOf
 import com.aharou.feature.agent.presentation.notification.AgentCompletedNotifier
 import com.aharou.feature.agent.presentation.notification.AgentPermissionNotifier
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -135,6 +144,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
@@ -163,6 +173,7 @@ class AIAgentViewModel @Inject constructor(
     private val agentWorkflow: AgentWorkflow,
     private val toolRegistry: ToolRegistry,
     private val agentMessageDao: AgentMessageDao,
+    private val agentTaskDao: AgentTaskDao,
     private val chatSessionDao: ChatSessionDao,
     private val llmCallRecordDao: LlmCallRecordDao,
     private val modelCostCalculator: ModelCostCalculator,
@@ -679,7 +690,7 @@ class AIAgentViewModel @Inject constructor(
      * 整轮任务折叠（外层「执行中 / 已完成」头）的手动展开态：key = `turn:<轮首消息 id>`。
      *
      * 与 [toolExpansionOverrides] 同款：按 App 进程内存保留、不落盘。没记录时按「末轮运行中默认展开、
-     * 其余默认收起」推默认值（见 AIChatPanel.buildChatItems 的 activeTurnKey）；一旦用户手动点过，
+     * 其余默认收起」推默认值（见 ChatItemBuilders.buildChatItems 的 activeTurnKey）；一旦用户手动点过，
      * 就以其选择为准，任务完成自动收起也不会覆盖它。
      */
     val turnExpansionOverrides = mutableStateMapOf<String, Boolean>()
@@ -698,6 +709,147 @@ class AIAgentViewModel @Inject constructor(
     /** 记录一次思考卡片的展开/收起。 */
     fun setReasoningExpanded(messageId: String, expanded: Boolean) {
         reasoningExpansionOverrides[messageId] = expanded
+    }
+
+    /**
+     * 子代理派发卡片的状态，key = 子会话 id（即 `agent_tasks` 主键，与 task 结果里的 id 一致）。
+     *
+     * 事实源是持久化的任务行：进程重启后内存里什么也不剩，卡片照样能从库里读到真实终态。
+     * 事件总线只负责「比落库快一步」地把状态翻过去，详见 [noteSubAgentCardEvent]。
+     */
+    private val _subAgentCards = MutableStateFlow<Map<String, SubAgentCardState>>(emptyMap())
+    internal val subAgentCards: StateFlow<Map<String, SubAgentCardState>> = _subAgentCards.asStateFlow()
+
+    /** 卡片向宿主拿状态 / 触发读库 / 进子会话的窄接口，聊天页只把它下发到 CompositionLocal。 */
+    internal val subAgentCardBridge = SubAgentCardBridge(
+        cards = subAgentCards,
+        refresh = ::refreshSubAgentCard,
+        openSession = ::selectSession,
+    )
+
+    /** 按持久化任务行刷新一张卡片（卡片出现在屏上时、以及子代理结束时调）。 */
+    fun refreshSubAgentCard(subSessionId: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { loadSubAgentCard(subSessionId) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "刷新子代理卡片失败: $subSessionId", e)
+            }
+        }
+    }
+
+    private suspend fun loadSubAgentCard(subSessionId: String) {
+        val task = agentTaskDao.getById(subSessionId) ?: return
+        // 结论摘要与改动文件不另造一套：走与收尾通知、task(read) 同一个检查器。
+        val inspection = runCatching {
+            SubAgentResultInspector.inspect(subSessionId, messagePersistenceUseCase.getMessagesOnce(subSessionId))
+        }.getOrNull()
+        val persisted = SubAgentCardState(
+            status = subAgentCardStatusOf(task.status),
+            summary = inspection?.conclusion?.takeIf { it.isNotBlank() } ?: task.result,
+            changedFiles = inspection?.changedFiles.orEmpty(),
+        )
+        _subAgentCards.update { cards ->
+            val prev = cards[subSessionId]
+            // 事件比落库快：终态事件已经先到、任务行还写着 RUNNING 时，别把卡片退回「运行中」。
+            val status = if (prev != null && prev.status != SubAgentCardStatus.RUNNING &&
+                persisted.status == SubAgentCardStatus.RUNNING
+            ) {
+                prev.status
+            } else {
+                persisted.status
+            }
+            cards + (subSessionId to persisted.copy(status = status))
+        }
+    }
+
+    /** 子代理事件即时翻卡片状态：落库慢一步，但「跑完了」要让卡片当场变。 */
+    private fun noteSubAgentCardEvent(event: SubAgentEvent) {
+        val status = when (event.type) {
+            SubAgentEventType.SPAWNED -> SubAgentCardStatus.RUNNING
+            SubAgentEventType.COMPLETED -> SubAgentCardStatus.COMPLETED
+            SubAgentEventType.FAILED -> SubAgentCardStatus.FAILED
+            SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> SubAgentCardStatus.CANCELLED
+            else -> return
+        }
+        _subAgentCards.update { cards ->
+            val prev = cards[event.subSessionId]
+            cards + (event.subSessionId to (prev ?: SubAgentCardState()).copy(status = status))
+        }
+        // 终态还要一次读库：结果摘要与改动文件只有子会话消息里有。
+        if (status != SubAgentCardStatus.RUNNING) refreshSubAgentCard(event.subSessionId)
+    }
+
+    /** `agent_tasks.status` → 卡片状态；未知取值按仍在跑来兜（宁可多显示一次运行中，也别谎报已完成）。 */
+    private fun subAgentCardStatusOf(raw: String): SubAgentCardStatus = when (raw) {
+        AgentTaskStatus.COMPLETED.name -> SubAgentCardStatus.COMPLETED
+        AgentTaskStatus.FAILED.name -> SubAgentCardStatus.FAILED
+        AgentTaskStatus.CANCELLED.name -> SubAgentCardStatus.CANCELLED
+        AgentTaskStatus.INTERRUPTED.name -> SubAgentCardStatus.INTERRUPTED
+        else -> SubAgentCardStatus.RUNNING
+    }
+
+    /**
+     * 流式思考（还没落库）的展开态 key。思考一落库就换成了新的消息 id，[reasoningExpansionOverrides]
+     * 上挂的临时态必须在那一刻迁过去（见 [migrateStreamingReasoningExpansion]），否则用户在思考过程中
+     * 点开的全文会在回复落地那一瞬间又缩回去。
+     */
+    fun streamingReasoningKey(sessionId: String?): String = "reasoning:streaming:${sessionId.orEmpty()}"
+
+    /** 流式思考落库：把展开态从会话级临时 key 迁到真实消息 id。 */
+    private fun migrateStreamingReasoningExpansion(sessionId: String, messageId: String) {
+        if (messageId.isBlank()) return
+        val expanded = reasoningExpansionOverrides.remove(streamingReasoningKey(sessionId)) ?: return
+        reasoningExpansionOverrides[messageId] = expanded
+    }
+
+    /**
+     * 每会话「消息 id → 轮 key」，与 [turnKeyOf] 同口径，供聊天页按轮折叠/列表锚点使用。
+     *
+     * 只由 [reconcileTurnKeys] 维护；会话切走就整张表丢掉（见 init），否则会话越切越多。
+     */
+    private val _turnMessageKeys = mutableStateMapOf<String, Map<String, String>>()
+
+    /** 当前会话的「消息 id → 轮 key」（没有记录时为空表）。 */
+    fun turnKeysOf(sessionId: String?): Map<String, String> = sessionId?.let { _turnMessageKeys[it] }.orEmpty()
+
+    /**
+     * 把「消息 id → 轮 key」与当前消息窗口对齐。
+     *
+     * 消息是按条数截断加载的，窗口边界常切在某一轮中间：那一截过程先挂在块尾生成的
+     * `turn:head:<块尾 id>` 折叠头下。分页把轮首用户消息补进来后，同一批消息改归到一个正式轮里，
+     * 若按轮首重新生成 `turn:<轮首 id>`，用户之前点开的整轮折叠（[turnExpansionOverrides]）与
+     * LazyColumn 的 item key 一起失效——展开态缩回去、列表锚点跳一下。所以给每个会话留一份
+     * 消息到轮 key 的映射：轮里已有旧 key 就沿用，没记录才用轮首 id 生成。
+     */
+    fun reconcileTurnKeys(sessionId: String, messages: List<AgentUIMessage>) {
+        if (messages.isEmpty()) return
+        val existing = _turnMessageKeys[sessionId].orEmpty()
+        val next = LinkedHashMap<String, String>(messages.size)
+        val firstTurn = messages.indexOfFirst { it.isTurnHead() }
+        if (firstTurn != 0) {
+            val end = if (firstTurn < 0) messages.lastIndex else firstTurn - 1
+            val tail = messages[end]
+            val key = existing[tail.id] ?: if (firstTurn < 0) {
+                leadingHeadSessionKey(sessionId)
+            } else {
+                leadingHeadKey(tail)
+            }
+            for (i in 0..end) next[messages[i].id] = key
+        }
+        var i = if (firstTurn < 0) messages.size else firstTurn
+        while (i < messages.size) {
+            var j = i + 1
+            while (j < messages.size && !messages[j].isTurnHead()) j++
+            val key = existing[messages[i].id]
+                ?: (i + 1 until j).firstNotNullOfOrNull { existing[messages[it].id] }
+                ?: turnKeyOf(messages[i].id)
+            for (k in i until j) next[messages[k].id] = key
+            i = j
+        }
+        if (next != existing) _turnMessageKeys[sessionId] = next
     }
 
     /** 思考过程耗时（毫秒）：key = 助手消息 id。记录流式思考的实际耗时，供落库后的卡片展示一位小数秒数。 */
@@ -906,6 +1058,13 @@ class AIAgentViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     init {
+        // 轮 key 表只服务当前会话：切走就丢，否则长会话切来切去会一直往上积（每条消息一条）。
+        viewModelScope.launch {
+            _currentSessionId.collect { id ->
+                val stale = _turnMessageKeys.keys.filter { it != id }
+                stale.forEach { _turnMessageKeys.remove(it) }
+            }
+        }
         // MCP 工具表跟着「当前会话所属工作区」走：跟着全局活动工作区时，在 Aharou 工作区开着的时候，
         // 小染工作区的会话就拿不到它自己的项目级 server（桥接 bot 典型）。
         viewModelScope.launch {
@@ -1118,7 +1277,12 @@ class AIAgentViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private fun setStreamingReasoning(sessionId: String, text: String?) {
-        if (text == null) _reasoningTimings.value = _reasoningTimings.value - sessionId
+        if (text == null) {
+            _reasoningTimings.value = _reasoningTimings.value - sessionId
+            // 这一轮的流式思考结束了（落库/重试/中止）：临时展开态没有意义，别留给下一轮。
+            // 落库那条路径先调 migrateStreamingReasoningExpansion 再调这里，迁移不会被提前抹掉。
+            reasoningExpansionOverrides.remove(streamingReasoningKey(sessionId))
+        }
         _streamingReasonings.value = if (text == null) _streamingReasonings.value - sessionId else _streamingReasonings.value + (sessionId to text)
     }
 
@@ -1185,6 +1349,19 @@ class AIAgentViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val pendingPlanApproval: StateFlow<PlanApprovalRequest?> = planApprovalManager.pendingApproval
+
+    /** 计划审批面板所属会话标题（多会话并行时供面板标注归属）。会话不存在时回退空串。 */
+    val pendingPlanApprovalSessionTitle: StateFlow<String> = combine(
+        planApprovalManager.pendingApproval,
+        sessions,
+        subSessionsByParent
+    ) { req, roots, subs ->
+        val sid = req?.sessionId.orEmpty()
+        if (sid.isBlank()) return@combine ""
+        val title = roots.firstOrNull { it.id == sid }?.title
+            ?: subs.values.asSequence().flatten().firstOrNull { it.id == sid }?.title
+        title.orEmpty()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     // 工具调用传入参数（argsPreview）按落库消息 id 暂存：ToolCallStarted 落库后，
     // ToolCallFinished / 用户停止会用同 id REPLACE 整行，需在此把参数带到后续落库。
@@ -1391,12 +1568,16 @@ class AIAgentViewModel @Inject constructor(
         // 订阅子代理生命周期事件（类比 terminal 的 notify=true 异步回调）：
         // - SPAWNED：task 工具已创建子会话并替用户发消息，这里在子会话上自动启动 AI 工作流；
         // - STOPPED：task(action="stop") 请求停止子代理，取消对应会话的 AI 任务；
-        // - COMPLETED/FAILED：由子会话工作流结束时发出（见 handleSubAgentFinished），注入父会话通知。
+        // - COMPLETED/FAILED：由子会话工作流结束时发出（见 handleSubAgentFinished），注入父会话通知；
+        // - DELETED：task(action="del") 已删库，只清运行时状态，不做任何停止收尾。
         viewModelScope.launch {
             subAgentEventBus.events.collect { event ->
+                // 卡片状态先按事件即时翻过去（落库慢一步），终态再补一次读库拿摘要与改动文件。
+                noteSubAgentCardEvent(event)
                 when (event.type) {
                     SubAgentEventType.SPAWNED -> spawnSubAgentWorkflow(event)
                     SubAgentEventType.STOPPED -> stopAgentSession(event.subSessionId)
+                    SubAgentEventType.DELETED -> clearDeletedSessionState(event.subSessionId)
                     SubAgentEventType.COMPLETED, SubAgentEventType.FAILED -> {
                         enqueueSubAgentNotification(event)
                     }
@@ -1455,14 +1636,18 @@ class AIAgentViewModel @Inject constructor(
         val parentSession = sessionUseCase.getSessionById(event.parentSessionId)
         if (parentSession == null) {
             FileLogger.w(TAG, "子代理父会话不存在: ${event.parentSessionId}")
+            // SPAWNED 已在总线里占了名额，早退不归还就永远占着（task 之后一直报「已达上限」）。
+            subAgentEventBus.release(event.subSessionId)
             return
         }
         // 子会话可能已被用户删除，跳过
         if (sessionUseCase.getSessionById(event.subSessionId) == null) {
             FileLogger.w(TAG, "子代理会话已被删除，跳过启动: ${event.subSessionId}")
+            subAgentEventBus.release(event.subSessionId)
             return
         }
-        // 子代理运行中不允许重复启动（同一会话已有活跃 job）
+        // 子代理运行中不允许重复启动（同一会话已有活跃 job）。这里不能 release：
+        // 活跃名额属于正在跑的那一轮，释放会让它在完成后少计一个，并发上限就被绕过了。
         if (sessionJobs[event.subSessionId]?.isActive == true) return
 
         executeAgentRequestStream(
@@ -1988,6 +2173,8 @@ class AIAgentViewModel @Inject constructor(
 
                         // 流式收尾：落库在 runner 里做，但它先把事件转给我们，
                         // 所以这里能先清空流式状态，避免「落库消息与流式气泡同屏并存」的时差。
+                        // 落库消息换了 id：先把思考卡的手动展开态迁到 event.messageId，再清流式态。
+                        migrateStreamingReasoningExpansion(sessionId, event.messageId)
                         setStreamingReasoning(sessionId, null)
                         setStreamingText(sessionId, null)
                         if (reasoningDuration != null && reasoningDuration > 0 && event.messageId.isNotBlank()) {
@@ -2100,7 +2287,7 @@ class AIAgentViewModel @Inject constructor(
         } catch (e: Exception) {
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
              if (sessionJobs[sessionId] === currentJob) {
-                 val failureMessage = e.toUserMessage()
+                 val failureMessage = e.toUserMessage(context)
                  setAgentState(sessionId, AgentUIState.Error(failureMessage))
                  persistFailureMessage(sessionId, failureMessage)
                  _completedSessions.value = _completedSessions.value - sessionId
@@ -2109,6 +2296,9 @@ class AIAgentViewModel @Inject constructor(
             val isOwnJob = sessionJobs[sessionId] == coroutineContext[Job]
             FileLogger.d(TAG, "stream finally: sid=$sessionId isOwnJob=$isOwnJob state=${_agentStates.value[sessionId]}")
             if (isOwnJob) {
+                // 本轮结束即不再占用子代理名额：正常收尾时 AgentTurnRunner 已发 COMPLETED/FAILED 释放过（这里返回 false），
+                // 只有被取消/抛异常而没走到发终态事件那一步才靠这里兜底。父会话不在集合里，release 直接返回 false。
+                subAgentEventBus.release(sessionId)
                 _runningTools.value = _runningTools.value - sessionId
                 setStreamingText(sessionId, null)
                 setStreamingReasoning(sessionId, null)
@@ -2149,6 +2339,10 @@ class AIAgentViewModel @Inject constructor(
         // 后清就会在「已停止」之后再冒出一轮 AI。
         agentNotificationCenter.clearAll()
         _queuedRequests.value = emptyMap()
+        // cancel 只抛 CancellationException，不会发 COMPLETED/FAILED/STOPPED，活跃集合里的子代理名额
+        // 就再也回不来了（之后 task(create) 永久报「已达上限」），故取消前逐个归还。
+        subAgentEventBus.activeSubSessionIds.value.toList()
+            .forEach { subAgentEventBus.release(it) }
         jobs.forEach { it.cancel() }
         sessionJobs.clear()
         _activeAgentSessions.value = emptySet()
@@ -2325,9 +2519,36 @@ class AIAgentViewModel @Inject constructor(
         SessionGrantStore.clearSession(sessionId)
     }
 
+    /**
+     * 会话已被删除（task del 删库 / 界面上删会话）时清掉它的全部运行时状态。
+     *
+     * 不能走 [stopAgentSession]：那是软打断，会把 USER_INTERRUPT 投进一个即将消失的会话，
+     * 收尾时 job 的 finally 又对着已删会话补送通知、再起一轮（幽灵会话，白烧一轮 LLM）。
+     */
+    private fun clearDeletedSessionState(sessionId: String) {
+        clearSessionRuntimeState(sessionId)
+        subAgentEventBus.release(sessionId)
+        // 先清队列再 cancel：cancel 可能在调用栈内同步跑 finally → flushPendingNotifications，
+        // 队列已空才会直接返回，不为已删会话再起一轮。
+        agentNotificationCenter.clear(sessionId)
+        _queuedRequests.value = _queuedRequests.value - sessionId
+        sessionJobs[sessionId]?.cancel()
+        sessionJobs.remove(sessionId)
+        _activeAgentSessions.value = _activeAgentSessions.value - sessionId
+        _agentStates.value = _agentStates.value - sessionId
+        _streamingTexts.value = _streamingTexts.value - sessionId
+        _streamingReasonings.value = _streamingReasonings.value - sessionId
+        _runningTools.value = _runningTools.value - sessionId
+        _turnMessageKeys.remove(sessionId)
+        _retryStates.value = _retryStates.value - sessionId
+        _inputDrafts.value = _inputDrafts.value - sessionId
+        draftPrefs.edit().remove(sessionId).apply()
+    }
+
     /** 停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启。 */
     private fun releaseStoppedSubAgent(sessionId: String) {
-        // TaskTool 的 stop/del 已在 emit(STOPPED) 时释放过，那条路径下 release 返回 false，不会重复通知。
+        // TaskTool 的 stop 已在 emit(STOPPED) 时释放过、del 走 DELETED 分支（不经过这里），
+        // 那些路径下 release 返回 false，不会重复通知。
         if (!subAgentEventBus.release(sessionId)) return
         viewModelScope.launch {
             val sub = sessionUseCase.getSessionById(sessionId)
@@ -2585,14 +2806,16 @@ class AIAgentViewModel @Inject constructor(
         sessionJobs[sid] = job
     }
 
+    // 按请求 id 解析，而非隐式取队头：多会话并行时队头可能已换成别的会话的请求，
+    // 界面上残留（退场动画）的那张卡片点下去就会批错对象。陈旧 id 解析不到即静默忽略。
     /** 用户批准计划，唤醒 workflow 继续在 BUILD 模式执行。 */
-    fun approvePlanAndBuild() {
-        planApprovalManager.resolvePending(PlanApprovalChoice.APPROVE)
+    fun approvePlanAndBuild(id: String) {
+        planApprovalManager.resolve(id, PlanApprovalChoice.APPROVE)
     }
 
     /** 用户选择继续反馈，唤醒 workflow 回滚到 PLAN 模式。 */
-    fun refinePlan() {
-        planApprovalManager.resolvePending(PlanApprovalChoice.REFINE)
+    fun refinePlan(id: String) {
+        planApprovalManager.resolve(id, PlanApprovalChoice.REFINE)
     }
 
     fun selectSession(id: String) {
@@ -2623,20 +2846,7 @@ class AIAgentViewModel @Inject constructor(
         }
 
         allDeletedIds.forEach { sid ->
-            clearSessionRuntimeState(sid)
-            subAgentEventBus.release(sid)
-            sessionJobs[sid]?.cancel()
-            sessionJobs.remove(sid)
-            _activeAgentSessions.value = _activeAgentSessions.value - sid
-            _agentStates.value = _agentStates.value - sid
-            _streamingTexts.value = _streamingTexts.value - sid
-            _streamingReasonings.value = _streamingReasonings.value - sid
-            _runningTools.value = _runningTools.value - sid
-            _retryStates.value = _retryStates.value - sid
-            _queuedRequests.value = _queuedRequests.value - sid
-            _inputDrafts.value = _inputDrafts.value - sid
-            draftPrefs.edit().remove(sid).apply()
-            agentNotificationCenter.clear(sid)
+            clearDeletedSessionState(sid)
         }
 
         if (_currentSessionId.value in allDeletedIds) {
@@ -2664,20 +2874,7 @@ class AIAgentViewModel @Inject constructor(
         val deletedIds = sessionUseCase.deleteSession(id)
 
         deletedIds.forEach { sid ->
-            clearSessionRuntimeState(sid)
-            subAgentEventBus.release(sid)
-            sessionJobs[sid]?.cancel()
-            sessionJobs.remove(sid)
-            _activeAgentSessions.value = _activeAgentSessions.value - sid
-            _agentStates.value = _agentStates.value - sid
-            _streamingTexts.value = _streamingTexts.value - sid
-            _streamingReasonings.value = _streamingReasonings.value - sid
-            _runningTools.value = _runningTools.value - sid
-            _retryStates.value = _retryStates.value - sid
-            _queuedRequests.value = _queuedRequests.value - sid
-            _inputDrafts.value = _inputDrafts.value - sid
-            draftPrefs.edit().remove(sid).apply()
-            agentNotificationCenter.clear(sid)
+            clearDeletedSessionState(sid)
         }
 
         if (_currentSessionId.value in deletedIds) {
@@ -3059,5 +3256,99 @@ class AIAgentViewModel @Inject constructor(
             FileLogger.e(TAG, "删除消息失败", e)
         }
     }
+
+    /**
+     * 「从此处新建分支」：以消息 [messageId]（含）之前的历史另起一个会话，并自动切过去。
+     *
+     * 尾部不完整轮次必须先截齐（见 [trimIncompleteTail]），否则回放会把悬挂的 tool_use 发给 Anthropic，
+     * 请求直接 400。checkpoint / todo / LLM 调用记录属于原会话的执行痕迹，不跟着复制。
+     */
+    fun forkSessionFromMessage(messageId: String) = viewModelScope.launch {
+        try {
+            val sourceId = _currentSessionId.value ?: return@launch
+            val source = sessionUseCase.getSessionById(sourceId) ?: return@launch
+            // 隐身会话的消息只在内存、不落库；分叉必然把内容写进磁盘，等于给隐身内容留痕。
+            // 界面已隐藏该入口，这里再兜一层，防切换会话期间的竞态。
+            if (source.ghostMode) return@launch
+            val all = agentMessageDao.getMessagesBySessionOnce(sourceId)
+            val cut = all.indexOfFirst { it.id == messageId }
+            if (cut < 0) return@launch
+            val head = trimIncompleteTail(all.subList(0, cut + 1))
+            if (head.isEmpty()) return@launch
+
+            val fork = sessionUseCase.newSessionEntity(
+                workspacePath = source.workspacePath.ifBlank { _currentWorkspace.value },
+                providerId = source.providerId,
+                model = source.model,
+                reasoningEffort = source.reasoningEffort,
+                mode = source.mode
+            )
+            // 超长正文已归档到磁盘（路径按 sessionId + messageId 算），换 id 前必须先整体读回，
+            // 否则副本里只剩一段 archive 标记，展示与回放都是空的。
+            val copied = messagePersistenceUseCase.restoreAll(head)
+            val idMap = copied.associate { it.id to UUID.randomUUID().toString() }
+            val entities = copied.map { entity ->
+                entity.copy(
+                    id = idMap.getValue(entity.id),
+                    sessionId = fork.id,
+                    // 这两个字段存的是别的消息 id，跟着重映射，否则副本里的压缩归属与变体分组全断。
+                    compactedBySummaryId = entity.compactedBySummaryId?.let { idMap[it] },
+                    variantGroupId = entity.variantGroupId?.let { idMap[it] ?: it }
+                )
+            }
+            // token 统计按复制后的消息重算：累计值取各条之和，上下文大小沿用最后一条回答的输入量。
+            sessionUseCase.upsertSession(
+                fork.copy(
+                    title = context.getString(R.string.chat_fork_title, source.title),
+                    modeBeforePlan = source.modeBeforePlan,
+                    totalInputTokens = entities.sumOf { it.inputTokens },
+                    totalOutputTokens = entities.sumOf { it.outputTokens },
+                    lastInputTokens = entities.lastOrNull { it.role == MessageRole.ASSISTANT.name }
+                        ?.inputTokens ?: 0
+                )
+            )
+            agentMessageDao.insertAll(entities.map { messagePersistenceUseCase.prepareForStorage(it) })
+            messagePersistenceUseCase.invalidateHistory(fork.id)
+            selectSession(fork.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "分叉会话失败", e)
+        }
+    }
+
+    /**
+     * 截掉历史尾部的不完整轮次：结果未回的 TOOL 行、tool_use 没拿到全部结果的 ASSISTANT 行。
+     *
+     * 只要有一条 tool_use 缺配对结果，Anthropic 回放就会 400，OpenAI 兼容侧则静默错配。
+     * 从尾往前退，退到一条普通回答、或一轮已全部配对完的工具轮为止。
+     */
+    private fun trimIncompleteTail(messages: List<AgentMessageEntity>): List<AgentMessageEntity> {
+        var end = messages.size
+        while (end > 0) {
+            val last = messages[end - 1]
+            val answered = messages.subList(0, end).mapNotNullTo(HashSet<String>()) { it.toolCallId }
+            if (last.role == MessageRole.TOOL.name) {
+                // 结果的发起行必须还在 head 内，且它这一轮的所有 tool_use 都要有结果，才算配对完整。
+                val resultId = last.toolCallId
+                val owner = resultId?.let { rid -> (end - 2 downTo 0).firstOrNull { rid in messages[it].toolCallIds() } }
+                if (owner != null && messages[owner].toolCallIds().all { it in answered }) break
+                // 悬挂结果（或同轮仍有 tool_use 没结果）：连同发起行一起回退；发起行不在 head 内就只退这一行。
+                end = owner ?: (end - 1)
+                continue
+            }
+            val issued = last.toolCallIds()
+            if (issued.isEmpty() || issued.all { it in answered }) break
+            end--
+        }
+        return if (end <= 0) emptyList() else messages.take(end)
+    }
+
+    /** ASSISTANT 行上的 tool_calls id；非工具行、或快照被截断解析不了时返回空表。 */
+    private fun AgentMessageEntity.toolCallIds(): Set<String> =
+        toolCallsJson?.takeIf { it.isNotBlank() }
+            ?.let { raw -> runCatching { json.decodeFromString<List<ToolCall>>(raw) }.getOrNull() }
+            ?.mapTo(HashSet<String>()) { it.id }
+            .orEmpty()
 
 }

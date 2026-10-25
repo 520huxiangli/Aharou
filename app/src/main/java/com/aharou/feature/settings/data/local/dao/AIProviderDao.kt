@@ -42,4 +42,11 @@ interface AIProviderDao {
 
     @Query("UPDATE ai_providers SET isEnabled = :isEnabled WHERE id = :id")
     suspend fun setProviderEnabled(id: String, isEnabled: Boolean)
+
+    /** 批量删除：单条 SQL 完成，避免逐条删除触发多次表变更通知。 */
+    @Query("DELETE FROM ai_providers WHERE id IN (:ids)")
+    suspend fun deleteProviders(ids: List<String>)
+
+    @Query("UPDATE ai_providers SET isEnabled = :isEnabled WHERE id IN (:ids)")
+    suspend fun setProvidersEnabled(ids: List<String>, isEnabled: Boolean)
 }

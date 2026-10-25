@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,18 +32,22 @@ import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,13 +59,13 @@ import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.feature.settings.data.local.ModelSheetCollapseStore
+import com.aharou.feature.settings.data.remote.ModelTestResult
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
 import compose.icons.feathericons.ArrowUp
-import compose.icons.feathericons.Check
 import compose.icons.feathericons.Camera
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.Image
@@ -67,6 +73,8 @@ import compose.icons.feathericons.Minimize2
 import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Type
 import compose.icons.feathericons.Volume2
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /**
  * 默认模型二级页：集中管理应用中的默认/特定用途模型设置（如识图模型、压缩模型）。
@@ -492,6 +500,14 @@ internal data class VoiceFieldState(
 )
 
 /**
+ * 模型选择弹层里单行的测试进度：跑着转圈，完成后就地显示结果摘要。
+ */
+private sealed interface ModelTestRowState {
+    data object Testing : ModelTestRowState
+    data class Done(val result: ModelTestResult) : ModelTestRowState
+}
+
+/**
  * 模型选择弹窗：风格与拉取模型弹窗保持一致（iOS 胶囊搜索框、提供商分组卡片、能力 Tag）。
  * 识图模型、压缩模型与主页聊天模型共用此组件，仅文案不同；右上角「重置」清除专用模型配置（回退跟随聊天模型），主页场景传 null 不显示。
  */
@@ -517,6 +533,29 @@ internal fun ModelSelectionSheet(
     val collapseStore = remember { ModelSheetCollapseStore(context.applicationContext) }
     var searchQuery by remember { mutableStateOf("") }
     var collapsedProviderIds by remember { mutableStateOf(collapseStore.collapsedProviderIds()) }
+
+    val modelTester = rememberModelTester()
+    // 行内测试状态只活在弹层里（按 providerId + 模型名）；弹层离场时 rememberCoroutineScope 一并取消在途请求。
+    val testStates = remember { mutableStateMapOf<Pair<String, String>, ModelTestRowState>() }
+    val testScope = rememberCoroutineScope()
+
+    fun startTest(provider: AIProviderConfig, model: String) {
+        val key = provider.id to model
+        // 同一行连点不重复发请求，不然两个请求回来会把结果互相覆盖。
+        if (testStates[key] is ModelTestRowState.Testing) return
+        testStates[key] = ModelTestRowState.Testing
+        testScope.launch {
+            val result = try {
+                modelTester(provider, model)
+            } catch (cancelled: CancellationException) {
+                // 弹层关闭就是在途请求的取消信号，别当成测试失败写回行内状态。
+                throw cancelled
+            } catch (error: Exception) {
+                ModelTestResult(success = false, latencyMs = 0, message = error.message.orEmpty())
+            }
+            testStates[key] = ModelTestRowState.Done(result)
+        }
+    }
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -645,6 +684,8 @@ internal fun ModelSelectionSheet(
                                                 model = model,
                                                 selected = provider.id == currentProviderId && model == currentModel,
                                                 metadata = modelMetadata[modelMetadataKey(provider.id, model)],
+                                                testState = testStates[provider.id to model],
+                                                onTest = { startTest(provider, model) },
                                                 onClick = { onSelect(provider.id, model) }
                                             )
                                         }
@@ -664,9 +705,12 @@ private fun ModelSelectionRow(
     model: String,
     selected: Boolean,
     metadata: ModelMetadata?,
+    testState: ModelTestRowState?,
+    onTest: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val testing = testState is ModelTestRowState.Testing
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -677,24 +721,39 @@ private fun ModelSelectionRow(
         ModelLogoIcon(modelName = model, size = 20.dp)
         Spacer(Modifier.width(Spacing.md))
         Column(modifier = Modifier.weight(1f)) {
+            // 行尾让给了「测试」，没有位置再放小勾：选中态改成主色 + 加粗，仍能一眼认出当前选的是哪个。
             Text(
                 text = model,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                ),
                 color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(Modifier.height(4.dp))
             ModelMetadataTags(metadata)
+            (testState as? ModelTestRowState.Done)?.let { done ->
+                Spacer(Modifier.height(2.dp))
+                ModelTestResultLine(result = done.result)
+            }
         }
-        if (selected) {
-            Spacer(Modifier.width(Spacing.sm))
-            Icon(
-                imageVector = FeatherIcons.Check,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
+        Spacer(Modifier.width(Spacing.sm))
+        TextButton(
+            onClick = onTest,
+            enabled = !testing,
+            contentPadding = PaddingValues(horizontal = Spacing.xs, vertical = 0.dp),
+            modifier = Modifier.height(32.dp)
+        ) {
+            if (testing) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            } else {
+                Text(
+                    text = stringResource(R.string.provider_test),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+            }
         }
     }
 }

@@ -74,11 +74,15 @@
         <!-- configChanges 自行接管旋转与窗口尺寸变化：Compose 会跟着新 Configuration 重组，
              不重建 Activity 才能保住终端 TerminalView、编辑器未保存内容与聊天列表位置。
              故意不含 locale —— 语言切换仍走 MainActivity 里的 recreate 路径。 -->
+        <!-- launchMode 必须 singleTask：singleTop 只在「实例正处栈顶」时复用，分享 / 划词 /
+             快捷方式从别的任务拉起时系统会新建第二个实例，多任务里就出现两张同名卡片，
+             分享内容进到新实例、用户在原界面看不到（表现为「分享没反应，退出重点一下才行」）。
+             singleTask 保证全局单一实例与单一任务，外部 intent 统一走 onNewIntent。 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.AICode.Splash"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

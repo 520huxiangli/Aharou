@@ -19,11 +19,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,19 +43,27 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
-import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
+import com.aharou.core.ui.BatchDeleteConfirmDialog
+import com.aharou.core.ui.ListSelectionState
+import com.aharou.core.ui.SelectionAction
+import com.aharou.core.ui.SelectionActionBar
 import com.aharou.core.ui.SwipeToDeleteRow
+import com.aharou.core.ui.rememberListSelectionState
 import com.aharou.feature.agent.domain.prompt.PromptFragment
 import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
 import com.aharou.feature.settings.presentation.PromptsUiState
+import com.aharou.feature.settings.presentation.PromptsViewModel
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.FileText
-import compose.icons.feathericons.Plus
+import compose.icons.feathericons.RotateCcw
+import compose.icons.feathericons.Trash2
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -67,7 +76,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 internal data class PromptEditTarget(val number: Int? = null)
 
 /**
- * 提示词页：顶部是「完全禁用内置提示词」开关，下面是按编号列出的生效片段。
+ * 提示词页：顶部是「完全禁用内置提示词」开关与「重置自定义提示词」，下面是按编号列出的生效片段。
  *
  * 每行一张卡片（图标 + 编号·名称 + 摘要 + 来源徽章），长按行内容可拖拽调整顺序，
  * 点击进入详情预览（右上角再进编辑），来源可写时左滑删除。
@@ -78,22 +87,81 @@ internal fun PromptsSection(
     onOpenFragment: (PromptFragment) -> Unit,
     onDeleteFragment: (Int) -> Unit,
     onReorder: (List<PromptFragment>) -> Unit,
-    onToggleBuiltinDisabled: (Boolean) -> Unit
+    onToggleBuiltinDisabled: (Boolean) -> Unit,
+    // 重置是落盘操作，调用方只传 state 与单个片段的回调；按本目录其它分区的做法自持 ViewModel
+    // （hiltViewModel 取同一 owner，与调用方拿到的实例相同，不会多一份磁盘读取）。
+    promptsViewModel: PromptsViewModel = hiltViewModel()
 ) {
+    // 只有项目层与全局层可删；没有自定义片段时重置入口置灰。
+    val customCount = state.fragments.count { it.editable }
+    var showResetConfirm by remember { mutableStateOf(false) }
+    val selection = rememberListSelectionState()
+    // 内置片段不可删，不在多选候选里：全选也只选可删的那些
+    val selectionIds = state.fragments.filter { it.editable }.map { it.number.toString() }
+    LaunchedEffect(selectionIds) { selection.retain(selectionIds) }
+    var showBatchDelete by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        SettingsGroup(
-            modifier = Modifier
-                .padding(horizontal = Spacing.lg)
-                .padding(top = Spacing.sm)
-        ) {
-            SettingsRow(
-                icon = null,
-                title = stringResource(R.string.prompts_disable_builtin),
-                subtitle = stringResource(R.string.prompts_disable_builtin_hint),
-                trailing = {
-                    AppSwitch(checked = state.builtinDisabled, onCheckedChange = onToggleBuiltinDisabled)
-                }
+        if (selection.selectionMode) {
+            SelectionActionBar(
+                selectedCount = selection.selectedCount,
+                allSelected = selection.isAllSelected(selectionIds),
+                onToggleSelectAll = { selection.toggleSelectAll(selectionIds) },
+                onExit = { selection.exit() },
+                modifier = Modifier
+                    .padding(horizontal = Spacing.lg)
+                    .padding(top = Spacing.sm),
+                actions = listOf(
+                    SelectionAction(
+                        icon = FeatherIcons.Trash2,
+                        label = stringResource(R.string.common_delete),
+                        onClick = { showBatchDelete = true },
+                        destructive = true
+                    )
+                )
             )
+        } else {
+            SettingsGroup(
+                modifier = Modifier
+                    .padding(horizontal = Spacing.lg)
+                    .padding(top = Spacing.sm)
+            ) {
+                SettingsRow(
+                    icon = null,
+                    title = stringResource(R.string.prompts_disable_builtin),
+                    subtitle = stringResource(R.string.prompts_disable_builtin_hint),
+                    trailing = {
+                        AppSwitch(checked = state.builtinDisabled, onCheckedChange = onToggleBuiltinDisabled)
+                    }
+                )
+                SettingsDivider()
+                SettingsRow(
+                    icon = FeatherIcons.RotateCcw,
+                    title = stringResource(R.string.prompts_reset_custom),
+                    subtitle = stringResource(R.string.prompts_reset_custom_hint),
+                    enabled = customCount > 0,
+                    onClick = { showResetConfirm = true }
+                )
+            }
+            // 长按已被拖拽排序占用，多选入口只能放在列表上方
+            if (customCount > 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.lg),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { selection.enterSelectionMode() }) {
+                        Icon(
+                            imageVector = FeatherIcons.CheckSquare,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(Spacing.xs))
+                        Text(stringResource(R.string.provider_models_select))
+                    }
+                }
+            }
         }
 
         if (state.fragments.isEmpty()) {
@@ -106,11 +174,45 @@ internal fun PromptsSection(
         } else {
             PromptList(
                 fragments = state.fragments,
+                selection = selection,
                 onOpenFragment = onOpenFragment,
                 onDeleteFragment = onDeleteFragment,
                 onReorder = onReorder
             )
         }
+    }
+
+    if (showBatchDelete) {
+        val numbers = selection.selectedIds.mapNotNull { it.toIntOrNull() }
+        BatchDeleteConfirmDialog(
+            title = stringResource(R.string.common_delete),
+            message = stringResource(R.string.common_batch_delete_confirm, numbers.size),
+            onConfirm = {
+                showBatchDelete = false
+                selection.exit()
+                promptsViewModel.deleteFragments(numbers)
+            },
+            onDismiss = { showBatchDelete = false }
+        )
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text(stringResource(R.string.prompts_reset_custom)) },
+            text = { Text(stringResource(R.string.prompts_reset_custom_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showResetConfirm = false
+                    promptsViewModel.resetCustomFragments()
+                }) { Text(stringResource(R.string.common_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -121,6 +223,7 @@ internal fun PromptsSection(
 @Composable
 private fun PromptList(
     fragments: List<PromptFragment>,
+    selection: ListSelectionState,
     onOpenFragment: (PromptFragment) -> Unit,
     onDeleteFragment: (Int) -> Unit,
     onReorder: (List<PromptFragment>) -> Unit
@@ -178,7 +281,11 @@ private fun PromptList(
                         onClick = { onOpenFragment(fragment) },
                         onDelete = { onDeleteFragment(fragment.number) },
                         deleteEnabled = fragment.editable,
-                        dragModifier = Modifier.longPressDraggableHandle(
+                        selectionMode = selection.selectionMode,
+                        selected = selection.isSelected(fragment.number.toString()),
+                        onToggleSelect = { selection.toggle(fragment.number.toString()) },
+                        // 多选态下拖拽排序停用：长按已经变成选中，再抢手势会两边都不灵
+                        dragModifier = if (selection.selectionMode) Modifier else Modifier.longPressDraggableHandle(
                             onDragStarted = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
                             },
@@ -200,35 +307,6 @@ private fun PromptList(
     }
 }
 
-/**
- * 右上角「+」弹层：添加片段入口。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun PromptsAddSheet(
-    onDismiss: () -> Unit,
-    onAddFragment: () -> Unit
-) {
-    AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = Spacing.xl),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            SettingsGroupHeader(text = stringResource(R.string.prompts_add_sheet_title))
-            SettingsGroup {
-                SettingsRow(
-                    icon = FeatherIcons.Plus,
-                    title = stringResource(R.string.prompts_add_prompt),
-                    subtitle = stringResource(R.string.prompts_add_prompt_hint),
-                    onClick = onAddFragment
-                )
-            }
-        }
-    }
-}
-
 /** 单条片段行：图标 + 编号·名称 + 摘要 + 来源徽章 + 箭头；长按内容区拖拽排序，左滑删除。 */
 @Composable
 private fun PromptRow(
@@ -236,7 +314,10 @@ private fun PromptRow(
     onClick: () -> Unit,
     onDelete: () -> Unit,
     deleteEnabled: Boolean,
-    dragModifier: Modifier
+    dragModifier: Modifier,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {}
 ) {
     val sortDescription = stringResource(R.string.prompts_sort_long_press)
     val row: @Composable () -> Unit = {
@@ -250,7 +331,8 @@ private fun PromptRow(
                 modifier = Modifier
                     .weight(1f)
                     .then(dragModifier)
-                    .semantics { contentDescription = sortDescription },
+                    // 拖拽仅在非多选态可用，选中时不再保留「长按拖动排序」的无障碍描述
+                    .then(if (selectionMode) Modifier else Modifier.semantics { contentDescription = sortDescription }),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
@@ -299,7 +381,15 @@ private fun PromptRow(
         }
     }
 
-    SwipeToDeleteRow(onDelete = onDelete, onClick = onClick, deleteEnabled = deleteEnabled) { row() }
+    SwipeToDeleteRow(
+        onDelete = onDelete,
+        onClick = onClick,
+        deleteEnabled = deleteEnabled,
+        selectionMode = selectionMode,
+        selected = selected,
+        onToggleSelect = onToggleSelect,
+        selectable = deleteEnabled
+    ) { row() }
 }
 
 /** 来源徽章：一眼看出该编号的内容来自哪一层。 */

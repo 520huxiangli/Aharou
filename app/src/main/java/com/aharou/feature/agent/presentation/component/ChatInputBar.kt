@@ -116,6 +116,7 @@ import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
+import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import com.aharou.feature.workspace.presentation.component.WorkspaceIconButton
 import compose.icons.FeatherIcons
@@ -597,12 +598,13 @@ internal fun ChatInputBar(
                         }
 
                         // 档位一律全列：models.dev 的声明常缺档（例如只给 low/high/max），
-                        // 按声明过滤会让用户选不到「中」这类档位。
+                        // 按声明过滤会让用户选不到「中」这类档位；声明只用来在弹层里提示「未必支持」。
                         ReasoningEffortSelector(
                             effort = reasoningEffort,
                             availableEfforts = ReasoningEffort.entries,
                             onChange = onReasoningEffortChange,
-                            enabled = !isBusy
+                            enabled = !isBusy,
+                            modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] }
                         )
                     }
                     val callContext = LocalContext.current
@@ -1191,9 +1193,10 @@ private fun ErrorBubble(message: String, onRetry: () -> Unit) {
 @Composable
 internal fun PlanApprovalPanel(
     state: PlanApprovalRequest,
-    onApprove: () -> Unit,
-    onRefine: () -> Unit,
-    forceCollapse: Boolean = false
+    onApprove: (String) -> Unit,
+    onRefine: (String) -> Unit,
+    forceCollapse: Boolean = false,
+    sessionTitle: String = ""
 ) {
     var expanded by remember { mutableStateOf(true) }
     // 余额面板展开时同帧收起本面板，避免叠加顶开输入框
@@ -1243,6 +1246,17 @@ internal fun PlanApprovalPanel(
                 exit = fadeOut(tween(140)) + shrinkVertically(tween(180))
             ) {
                 Column {
+                    // 审批按 id 解析，但界面文案来自这张卡片：多会话并行时告诉用户批的是哪一个，
+                    // 否则通知栏批了 A、面板上留着 B 的残影，用户无从分辨。
+                    if (sessionTitle.isNotBlank()) {
+                        Text(
+                            text = stringResource(R.string.chat_perm_session_label, sessionTitle),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     if (state.reason.isNotBlank()) {
                         Spacer(Modifier.height(Spacing.xs))
                         SelectionContainer {
@@ -1262,13 +1276,13 @@ internal fun PlanApprovalPanel(
                     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                         AgentActionButton(
                             text = stringResource(R.string.chat_continue_feedback),
-                            onClick = onRefine,
+                            onClick = { onRefine(state.id) },
                             modifier = Modifier.weight(1f),
                             tone = AgentActionTone.Neutral
                         )
                         AgentActionButton(
                             text = stringResource(R.string.chat_approve_and_implement),
-                            onClick = onApprove,
+                            onClick = { onApprove(state.id) },
                             modifier = Modifier.weight(1f),
                             tone = AgentActionTone.Success
                         )

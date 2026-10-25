@@ -78,12 +78,19 @@ fun modelToolResultText(toolName: String, transportJson: String): String? {
     val obj = runCatching { projectionJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return null
     if (obj["status"]?.jsonPrimitive?.contentOrNull != "success") return null
     val data = obj["data"] as? JsonObject ?: return null
-    return when (toolName) {
+    val written = (when (toolName) {
         "editFile" -> editProjection(data)
         "writeFile" -> writeProjection(data)
         else -> null
-    }
+    }) ?: return null
+    // 搭车通知（后台任务/子代理完成等）只存在于工具结果顶层，且结果落库后立刻 ack，
+    // 投影把它丢掉就等于永久丢失，所以这里必须把整段 notifications 原样补回。
+    val notifications = (obj["notifications"] as? JsonArray)?.takeIf { it.isNotEmpty() } ?: return written
+    return written + "\n\n" + NOTIFICATION_HINT + "\n" + notifications.toString()
 }
+
+private const val NOTIFICATION_HINT =
+    "以下是随本次工具结果搭车送达的系统通知（后台任务完成、子代理完成等，原样 JSON）："
 
 private fun editProjection(data: JsonObject): String? {
     val path = data["path"]?.jsonPrimitive?.contentOrNull ?: return null

@@ -227,6 +227,19 @@ class ContainerSettingsRepository @Inject constructor(
         }
     }
 
+    /** 批量移除已下载镜像记录：只做一次读改写，避免逐条写触发多次 DataStore 发射。 */
+    suspend fun removeDownloadedImages(entryIds: Collection<String>) {
+        if (entryIds.isEmpty()) return
+        val targets = entryIds.toSet()
+        context.containerDataStore.edit { prefs ->
+            val current = prefs[DOWNLOADED_IMAGES_KEY]?.let { raw ->
+                runCatching { json.decodeFromString(downloadedImageSerializer, raw) }.getOrNull()
+            } ?: emptyList()
+            prefs[DOWNLOADED_IMAGES_KEY] =
+                json.encodeToString(downloadedImageSerializer, current.filterNot { it.entryId in targets })
+        }
+    }
+
     /**
      * 新增或覆盖同名 id 的自定义 profile。
      * createdAt 规则：传入非 0 则用传入值；为 0 时若原记录存在（编辑场景，表单重建丢了时间）保留原时间。

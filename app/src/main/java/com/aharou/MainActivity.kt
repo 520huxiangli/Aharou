@@ -77,6 +77,7 @@ import com.aharou.core.ui.ImageViewerHost
 import com.aharou.core.ui.ImageViewerRequest
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.PAGE_MOTION_MS
+import com.aharou.core.ui.RootBackHandler
 import com.aharou.core.ui.SplitPaneLayout
 import com.aharou.core.ui.drawerWidth
 import com.aharou.core.ui.isExpandedWidth
@@ -532,10 +533,8 @@ fun AppNavigation(
         settingsViewModel.checkUpdate(manual = false)
     }
 
-    // 侧边栏打开时，系统返回键先收起侧边栏。
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
-    }
+    // 返回键：抽屉开着先收起；否则退到后台而不是结束任务（理由见 RootBackHandler）。
+    RootBackHandler(drawerOpen = drawerState.isOpen) { scope.launch { drawerState.close() } }
 
     // 侧边栏需要的数据。
     val currentWorkspace by workspaceViewModel.current.collectAsStateWithLifecycle()

@@ -110,6 +110,18 @@ class AIProviderRepositoryImpl @Inject constructor(
         aiProviderDao.setProviderEnabled(id, isEnabled)
     }
 
+    override suspend fun deleteProviders(ids: List<String>) {
+        if (ids.isEmpty()) return
+        FileLogger.i(TAG, "批量删除提供商 共 ${ids.size} 个")
+        aiProviderDao.deleteProviders(ids)
+    }
+
+    override suspend fun setProvidersEnabled(ids: List<String>, isEnabled: Boolean) {
+        if (ids.isEmpty()) return
+        FileLogger.i(TAG, "批量设置提供商状态 共 ${ids.size} 个 isEnabled=$isEnabled")
+        aiProviderDao.setProvidersEnabled(ids, isEnabled)
+    }
+
     private fun AIProviderEntity.toDomainModel(): AIProviderConfig {
         val modelList = models.split("\n").map { it.substringBefore('|').trim() }.filter { it.isNotEmpty() }
         return AIProviderConfig(

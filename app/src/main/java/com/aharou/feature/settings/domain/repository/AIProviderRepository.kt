@@ -12,6 +12,12 @@ interface AIProviderRepository {
     suspend fun updateModels(id: String, models: List<String>)
     suspend fun setProviderEnabled(id: String, isEnabled: Boolean)
 
+    /** 批量删除提供商，单次写入。 */
+    suspend fun deleteProviders(ids: List<String>)
+
+    /** 批量启停提供商，单次写入。 */
+    suspend fun setProvidersEnabled(ids: List<String>, isEnabled: Boolean)
+
     /** 按传入顺序重排提供商（重分配 sortOrder 并整体保存）。 */
     suspend fun reorderProviders(providers: List<AIProviderConfig>)
 }

@@ -370,8 +370,12 @@ class BackupViewModel @Inject constructor(
         }
     }
 
-    /** 先导出到本地临时文件再上传到目标；口令仅用于加密导出，可留空（明文）。 */
+    /** 先导出到本地临时文件再上传到目标；上传一律加密，口令为空直接拒绝（快照里是解密后的凭据）。 */
     fun uploadToTarget(id: String, password: String) {
+        if (password.isEmpty()) {
+            _networkState.value = NetworkBackupState.Notice(R.string.backup_net_upload_password_required, true)
+            return
+        }
         _networkState.value = NetworkBackupState.Working
         viewModelScope.launch {
             val target = targetRepository.getTarget(id)
