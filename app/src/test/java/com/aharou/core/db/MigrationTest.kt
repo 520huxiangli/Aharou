@@ -95,10 +95,10 @@ class MigrationTest {
             .build()
         // 打开即触发 Room 的表结构校验，customIcon 不是 NOT NULL 就在这一步抛异常
         db.openHelper.writableDatabase
-        // 走底层 rawQuery：Room 的 query() 在主线程调用会抛 IllegalStateException（测试跑在主线程）
-        db.openHelper.readableDatabase.rawQuery(
-            "SELECT `customIcon` FROM `ai_providers` WHERE `id` = 'p1'",
-            null
+        // 走 openHelper 的 SupportSQLiteDatabase.query：Room 的 query() 在主线程调用会抛
+        // IllegalStateException（Robolectric 用例就跑在主线程）
+        db.openHelper.readableDatabase.query(
+            "SELECT `customIcon` FROM `ai_providers` WHERE `id` = 'p1'"
         ).use { cursor ->
             assertTrue("升级后旧供应商记录应保留", cursor.moveToFirst())
             assertEquals("旧行的 customIcon 应补成空串", "", cursor.getString(0))
