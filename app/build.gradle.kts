@@ -342,7 +342,8 @@ dependencies {
 
     // 本地 OCR（Tesseract4Android，JitPack）。给不支持视觉的模型补上「读图」能力：
     // 影子屏截图与图片附件会先在本机转成文字再进上下文。
-    implementation("com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.9.0")
+    // JitPack 上 4.9.0 / 4.7.0 的构建产物缺失（其 CI 在 armeabi-v7a 的 CMake configure 阶段失败，POM/AAR 均 404），故锁在 4.8.0。
+    implementation("com.github.adaptech-cz.Tesseract4Android:tesseract4android:4.8.0")
 
     // 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
