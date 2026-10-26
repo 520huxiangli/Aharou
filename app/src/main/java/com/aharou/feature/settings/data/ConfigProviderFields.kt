@@ -2,6 +2,11 @@ package com.aharou.feature.settings.data
 
 import android.content.Context
 import com.aharou.core.config.ConfigCollection
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigField
 import com.aharou.core.config.ConfigRegistry
@@ -10,7 +15,9 @@ import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
 import com.aharou.core.config.fields.ReadOnlyField
+import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.DEFAULT_KEY_WEIGHT
 import com.aharou.feature.settings.domain.model.KeyRotationStrategy
 import com.aharou.feature.settings.domain.model.MAX_KEY_WEIGHT
@@ -38,6 +45,7 @@ import javax.inject.Singleton
 @Singleton
 class ConfigProviderFields @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val modelMetadataStore: CustomModelMetadataStore,
     private val providers: AIProviderRepository,
 ) {
 
@@ -235,6 +243,39 @@ class ConfigProviderFields @Inject constructor(
                     read = { it.fallbackModel },
                     write = { p, s -> p.copy(fallbackModel = s.trim()) },
                 ),
+                ClosureField(
+                    path = "$basePath.$forId.model_metadata",
+                    displayName = "模型显示名与图标（$forId）",
+                    description = "JSON：{\"模型名\":{\"displayName\":\"别名\",\"customIcon\":\"/路径或链接\"}}。" +
+                        "只覆盖显示名与图标两项，合并写入、其它元数据（价格/窗口/能力）不受影响；非法 JSON 直接报错不落盘。",
+                    valueSchema = ConfigSchema.Json,
+                    risk = ConfigRisk.NORMAL,
+                    revertable = false,
+                    reader = {
+                        val map = runBlocking { modelMetadataStore.all() }
+                        val own = map.entries
+                            .filter { it.key.startsWith("$forId:") }
+                            .associate { it.key.substringAfter(':') to it.value }
+                        ConfigValue.Str(buildMetadataJson(own))
+                    },
+                    writer = { v ->
+                        val raw = (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+                        val parsed = parseMetadataPatch(raw)
+                            ?: throw ConfigError.InvalidValue("model_metadata 需要 JSON 对象：{\"模型名\":{\"displayName\":\"...\"}}")
+                        runBlocking {
+                            val current = modelMetadataStore.all()
+                            parsed.forEach { (model, patch) ->
+                                val key = "$forId:$model"
+                                val base = current[key] ?: ModelMetadata(id = model, contextTokens = 0)
+                                modelMetadataStore.put(forId, model, base.copy(
+                                    displayName = patch.first ?: base.displayName,
+                                    customIcon = patch.second ?: base.customIcon
+                                ))
+                            }
+                        }
+                        null
+                    },
+                ),
                 str(
                     field = "request_middleware",
                     name = "请求中间件",
@@ -430,5 +471,36 @@ class ConfigProviderFields @Inject constructor(
             if (snapshot(id) == null) throw ConfigError.InvalidValue("供应商不存在：$id")
             runBlocking { providers.deleteProvider(id) }
         }
+    }
+
+    /** 把某供应商的模型显示名/图标序列化成 `{"模型名":{"displayName":..,"customIcon":..}}`。 */
+    private fun buildMetadataJson(entries: Map<String, ModelMetadata>): String {
+        val obj = JsonObject(entries.mapValues { (_, meta) ->
+            JsonObject(
+                buildMap {
+                    if (meta.displayName.isNotBlank() && meta.displayName != meta.id) {
+                        put("displayName", JsonPrimitive(meta.displayName))
+                    }
+                    if (meta.customIcon.isNotBlank()) put("customIcon", JsonPrimitive(meta.customIcon))
+                }
+            )
+        })
+        return obj.toString()
+    }
+
+    /**
+     * 解析写入请求。只接受「模型名 → 对象」的形态，对象里只认 displayName / customIcon；
+     * 其它键忽略（价格、窗口、能力不从这里改）。整体非法就返回 null，由调用方报错，不落盘。
+     */
+    private fun parseMetadataPatch(raw: String): Map<String, Pair<String?, String?>>? {
+        val root = runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
+        val out = mutableMapOf<String, Pair<String?, String?>>()
+        for ((model, value) in root) {
+            val obj = runCatching { value.jsonObject }.getOrNull() ?: return null
+            val displayName = runCatching { obj["displayName"]?.jsonPrimitive?.content }.getOrNull()
+            val customIcon = runCatching { obj["customIcon"]?.jsonPrimitive?.content }.getOrNull()
+            out[model] = displayName to customIcon
+        }
+        return out
     }
 }

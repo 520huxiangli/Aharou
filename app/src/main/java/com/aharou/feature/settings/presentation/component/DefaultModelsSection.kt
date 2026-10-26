@@ -62,6 +62,8 @@ import com.aharou.feature.settings.data.local.ModelSheetCollapseStore
 import com.aharou.feature.settings.data.remote.ModelTestResult
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
+import com.aharou.feature.settings.data.local.CustomModelMetadataStore
+import com.aharou.feature.settings.domain.model.mergeModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
@@ -531,6 +533,11 @@ internal fun ModelSelectionSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val collapseStore = remember { ModelSheetCollapseStore(context.applicationContext) }
+    // 别名与自定义图标存在自定义元数据里，是「用户改过的显示值」，必须与自动解析的元数据合并后
+    // 才能显示，否则这里只会露出原始模型名（2026-10-26 issue #33）。
+    val customMetadataStore = remember { CustomModelMetadataStore(context.applicationContext) }
+    var customMetadata by remember { mutableStateOf<Map<String, ModelMetadata>>(emptyMap()) }
+    LaunchedEffect(Unit) { customMetadata = customMetadataStore.all() }
     var searchQuery by remember { mutableStateOf("") }
     var collapsedProviderIds by remember { mutableStateOf(collapseStore.collapsedProviderIds()) }
 
@@ -683,7 +690,11 @@ internal fun ModelSelectionSheet(
                                             ModelSelectionRow(
                                                 model = model,
                                                 selected = provider.id == currentProviderId && model == currentModel,
-                                                metadata = modelMetadata[modelMetadataKey(provider.id, model)],
+                                                metadata = mergeModelMetadata(
+                                                    model,
+                                                    modelMetadata[modelMetadataKey(provider.id, model)],
+                                                    customMetadata[modelMetadataKey(provider.id, model)]
+                                                ),
                                                 testState = testStates[provider.id to model],
                                                 onTest = { startTest(provider, model) },
                                                 onClick = { onSelect(provider.id, model) }
@@ -718,12 +729,12 @@ private fun ModelSelectionRow(
             .padding(vertical = Spacing.sm, horizontal = Spacing.lg),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ModelLogoIcon(modelName = model, size = 20.dp)
+        ModelLogoIcon(modelName = model, customIcon = metadata?.customIcon, size = 20.dp)
         Spacer(Modifier.width(Spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             // 行尾让给了「测试」，没有位置再放小勾：选中态改成主色 + 加粗，仍能一眼认出当前选的是哪个。
             Text(
-                text = model,
+                text = metadata?.displayName?.takeIf { it.isNotBlank() } ?: model,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                 ),

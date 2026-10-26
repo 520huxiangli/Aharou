@@ -88,6 +88,16 @@ class ConfigAppFields @Inject constructor(
         )
 
         registry.register(
+            DataStoreIntField(
+                path = "app.context_trim_rounds",
+                displayName = "上下文保留轮数",
+                description = "只把最近 N 轮对话（一问一答算一轮）发给模型，更早的消息不再参与请求，但历史仍完整保存在本地。0 表示不裁剪（默认）。适合「一个项目一个会话」又想省 token 的场景；工具调用与结果不会被拆开。",
+                flow = generalSettings.contextTrimRoundsFlow,
+                setter = { generalSettings.setContextTrimRounds(it) },
+            ),
+        )
+
+        registry.register(
             DataStoreBoolField(
                 path = "app.privacy_masking_enabled",
                 displayName = "出站脱敏",

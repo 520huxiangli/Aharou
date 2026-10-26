@@ -18,12 +18,14 @@ import com.aharou.core.ui.AdaptiveModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -36,7 +38,9 @@ import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.domain.model.ModelMetadata
+import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.settings.presentation.component.ModelLogoIcon
 import com.aharou.feature.settings.presentation.component.ModelSelectionSheet
 import compose.icons.FeatherIcons
@@ -60,8 +64,19 @@ internal fun ModelIconButton(
     var showSheet by remember { mutableStateOf(false) }
     val effectiveShowSheet = showSheet || forceOpenSheet
 
+    // 自定义图标存在本地元数据里，自动解析的 modelMetadata 里没有它；这里单独取一次，
+    // 让输入区的小图标跟模型列表保持一致（2026-10-26 issue #33 追加反馈）。
+    val context = LocalContext.current
+    val customIconStore = remember { CustomModelMetadataStore(context.applicationContext) }
+    var customIcon by remember { mutableStateOf("") }
+    val effectiveModel = provider?.effectiveModel.orEmpty()
+    LaunchedEffect(provider?.id, effectiveModel) {
+        customIcon = customIconStore.all()[modelMetadataKey(provider?.id.orEmpty(), effectiveModel)]
+            ?.customIcon?.takeIf { it.isNotBlank() }
+            ?: modelMetadata[modelMetadataKey(provider?.id.orEmpty(), effectiveModel)]?.customIcon.orEmpty()
+    }
     IconButton(onClick = { showSheet = true }, modifier = modifier.size(36.dp)) {
-        ModelLogoIcon(modelName = provider?.effectiveModel.orEmpty(), size = 20.dp)
+        ModelLogoIcon(modelName = effectiveModel, customIcon = customIcon, size = 20.dp)
     }
 
     if (effectiveShowSheet) {

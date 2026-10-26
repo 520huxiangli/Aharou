@@ -57,6 +57,9 @@ class GeneralSettingsRepository @Inject constructor(
         val DELETE_EXTERNAL_WORKSPACE_SESSIONS_KEY = booleanPreferencesKey("delete_external_workspace_sessions")
         val OCR_FOR_TEXT_ONLY_MODELS_KEY = booleanPreferencesKey("ocr_for_text_only_models")
 
+        /** 上下文保留轮数：0（默认）= 不裁剪，只走原有的压缩逻辑。 */
+        val CONTEXT_TRIM_ROUNDS_KEY = intPreferencesKey("context_trim_rounds")
+
         /** 首字超时默认 120 秒：要拦住「服务端一直不回」，也不能误杀慢启动的渠道。 */
         const val DEFAULT_FIRST_BYTE_TIMEOUT_SEC = 120
 
@@ -75,6 +78,20 @@ class GeneralSettingsRepository @Inject constructor(
         /** sendFile 单个文件大小上限默认 100MB，与原硬编码值一致。 */
         const val DEFAULT_SENDFILE_MAX_SIZE_MB = 100
     }
+
+    /**
+     * 上下文只保留最近 N 轮（一问一答算一轮）；0 表示不裁剪。
+     * 裁剪只作用于「发给模型的投影」，历史消息仍完整保存在数据库里。
+     */
+    val contextTrimRoundsFlow: Flow<Int> =
+        context.generalDataStore.data.map { it[CONTEXT_TRIM_ROUNDS_KEY] ?: 0 }
+
+    suspend fun setContextTrimRounds(rounds: Int) {
+        context.generalDataStore.edit { it[CONTEXT_TRIM_ROUNDS_KEY] = rounds.coerceIn(0, 100) }
+    }
+
+    /** 请求路径上只读一次，避免额外收集流。 */
+    suspend fun contextTrimRounds(): Int = contextTrimRoundsFlow.first()
 
     /** 拉取模型后自动对齐本地列表的开关流；未设置时回退到 true（默认开启）。 */
     val autoRemoveStaleModelsFlow: Flow<Boolean> =

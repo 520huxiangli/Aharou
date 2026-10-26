@@ -604,7 +604,8 @@ class StatefulAgentWorkflow @Inject constructor(
         // 送模型前的图片投影只算这一次：压缩触发估算、超预算判定与实际发送共用同一份结果。
         // 算两遍迟早因视觉能力解析或占位文案不同而漂移，那会反向低估、真撞窗口。
         val supportsVision = activeModelSupportsVision(currentContext.sessionId)
-        var sendProjection = keepNewestImages(sanitizeImagesForModel(state.messages, supportsVision))
+        val trimRounds = generalSettingsRepository.contextTrimRounds()
+        var sendProjection = keepNewestImages(sanitizeImagesForModel(state.messages, supportsVision)).trimToRecentRounds(trimRounds)
         if (!budget.compactionAttemptFailed) {
             telemetry.compactionStart()
             val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
@@ -624,7 +625,7 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
         // 压缩真的改写过消息时内容变了，投影得按新的那份重算；源没变就沿用上面那份（同一个对象）。
-        if (compactedMessages !== initialState.messages) sendProjection = keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision))
+        if (compactedMessages !== initialState.messages) sendProjection = keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision)).trimToRecentRounds(trimRounds)
         val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
         val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
         emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
