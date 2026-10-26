@@ -5,6 +5,9 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.prompt.PromptFileResolver
+import com.aharou.core.privacy.OutboundMasker
+import com.aharou.feature.agent.domain.privacy.maskIfNeeded
+import com.aharou.feature.agent.domain.privacy.restoreIfNeeded
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.session.GhostModeStore
 import kotlinx.serialization.json.Json
@@ -53,6 +56,7 @@ class MemoryCurator @Inject constructor(
         sessionId: String,
         projectRoot: String?,
         transcript: String,
+        masker: OutboundMasker? = null,
     ): Int = runCatching {
         // 隐身会话不自动沉淀记忆（主模型经 memory 工具写入的路径已在 MemoryTool 拦截）。
         if (GhostModeStore.isGhost(chatSessionDao, sessionId)) return@runCatching 0
@@ -62,10 +66,10 @@ class MemoryCurator @Inject constructor(
 
         val response = provider.complete(
             systemPrompt = systemPrompt,
-            messages = listOf(AgentMessage.UserMessage(content = transcript.takeLast(MAX_TRANSCRIPT_CHARS))),
+            messages = listOf(AgentMessage.UserMessage(content = transcript.takeLast(MAX_TRANSCRIPT_CHARS).maskIfNeeded(masker))),
             tools = emptyList()
         )
-        val candidates = parseCandidates(response.content)
+        val candidates = parseCandidates(response.content.restoreIfNeeded(masker))
         var saved = 0
         for (c in candidates) {
             if (c.scope == MemoryScope.PROJECT && projectRoot.isNullOrBlank()) continue
@@ -96,7 +100,7 @@ class MemoryCurator @Inject constructor(
                 if (preserveConflict(c, similar, projectRoot, sessionId)) saved++
                 continue
             }
-            val decision = judge(provider, c, similar)
+            val decision = judge(provider, c, similar, masker)
             if (decision == null) {
                 memoryTrace.record(
                     source = MemoryTraceLog.SOURCE_CURATOR,
@@ -245,7 +249,8 @@ class MemoryCurator @Inject constructor(
     private suspend fun judge(
         provider: AIProvider,
         candidate: Candidate,
-        existing: Memory?
+        existing: Memory?,
+        masker: OutboundMasker? = null
     ): ArbiterDecision? = runCatching {
         val systemPrompt = promptFileResolver.resolve(ARBITER_PROMPT_FILE)
             .replace(LEADING_COMMENT, "").trim()
@@ -269,9 +274,9 @@ class MemoryCurator @Inject constructor(
 
         val raw = provider.complete(
             systemPrompt = systemPrompt,
-            messages = listOf(AgentMessage.UserMessage(content = userText)),
+            messages = listOf(AgentMessage.UserMessage(content = userText.maskIfNeeded(masker))),
             tools = emptyList()
-        ).content
+        ).content.restoreIfNeeded(masker)
         parseDecision(raw)?.takeIf {
             existing != null || it.action == ArbiterAction.NEW || it.action == ArbiterAction.REJECT
         }

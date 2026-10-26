@@ -1742,6 +1742,9 @@
     <string name="provider_custom_icon">供应商图标</string>
     <string name="provider_custom_icon_hint">可以从相册选一张图，或填一个图片链接；不设置则按品牌名自动匹配内置图标。</string>
     <string name="provider_custom_icon_pick">从相册选择</string>
+    <string name="provider_fallback_title">回退供应商</string>
+    <string name="provider_fallback_hint">本供应商请求失败（额度耗尽 / 鉴权 / 限流）时，自动切到备用供应商继续本轮请求。</string>
+    <string name="provider_fallback_off">不启用回退</string>
     <string name="provider_custom_icon_url">图片链接</string>
     <string name="provider_custom_icon_reset">恢复默认图标</string>    <string name="provider_show_api_key">显示密钥</string>
     <string name="provider_hide_api_key">隐藏密钥</string>

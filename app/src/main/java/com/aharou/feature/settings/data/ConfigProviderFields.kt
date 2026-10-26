@@ -221,6 +221,27 @@ class ConfigProviderFields @Inject constructor(
                     read = { it.dashboardScriptPath },
                     write = { p, s -> p.copy(dashboardScriptPath = s) },
                 ),
+                str(
+                    field = "fallback_provider_id",
+                    name = "回退供应商 id",
+                    desc = "本供应商请求失败（额度耗尽 / 鉴权 / 限流）时自动切到它继续本轮；留空不回退。填的是供应商 id（可用 config list 查）。",
+                    read = { it.fallbackProviderId },
+                    write = { p, s -> p.copy(fallbackProviderId = s.trim()) },
+                ),
+                str(
+                    field = "fallback_model",
+                    name = "回退模型",
+                    desc = "回退时使用的模型名；留空则用回退供应商自己的有效模型。",
+                    read = { it.fallbackModel },
+                    write = { p, s -> p.copy(fallbackModel = s.trim()) },
+                ),
+                str(
+                    field = "request_middleware",
+                    name = "请求中间件",
+                    desc = "JSON 配置：{\"modelMap\":{\"别名\":\"真实模型\"},\"systemPrompt\":\"追加的系统提示\",\"systemPromptTargets\":[\"openai\"]}。留空不启用；参数覆盖（paramOverrides）暂未接入请求体。",
+                    read = { it.requestMiddleware },
+                    write = { p, s -> p.copy(requestMiddleware = s.trim()) },
+                ),
                 ClosureField(
                     path = "$basePath.$forId.enabled",
                     displayName = "启用（$forId）",

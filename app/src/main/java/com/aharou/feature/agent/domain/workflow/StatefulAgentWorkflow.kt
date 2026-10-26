@@ -3,6 +3,11 @@ package com.aharou.feature.agent.domain.workflow
 import android.os.SystemClock
 import android.util.Base64
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.privacy.maskIfNeeded
+import com.aharou.feature.agent.domain.privacy.maskedForOutbound
+import com.aharou.feature.agent.domain.privacy.outboundMaskerOrNull
+import com.aharou.feature.agent.domain.privacy.restoreIfNeeded
+import com.aharou.feature.agent.domain.privacy.restoredFromOutbound
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
@@ -31,6 +36,7 @@ import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.provider.AIStreamChunk
+import com.aharou.feature.agent.domain.provider.ProviderFailoverCoordinator
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.StreamingAgentTool
@@ -63,6 +69,8 @@ import com.aharou.feature.agent.domain.provider.GeminiAdapter
 import com.aharou.feature.agent.domain.provider.AllKeysFailedException
 import com.aharou.feature.agent.domain.provider.enrichWithHttpErrorBody
 import com.aharou.feature.agent.domain.provider.KeySwitchOutcome
+import com.aharou.feature.agent.domain.middleware.applyProviderMiddleware
+import com.aharou.feature.agent.domain.middleware.applyProviderParamOverrides
 import com.aharou.feature.agent.domain.provider.isKeySwitchFailure
 import com.aharou.feature.agent.domain.provider.isQuotaExhausted
 import com.aharou.feature.agent.domain.provider.OpenAIAdapter
@@ -123,6 +131,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val checkpointManager: CheckpointManager,
     private val llmCallRecordDao: LlmCallRecordDao,
     private val keyRotator: ProviderKeyRotator,
+    private val generatedImagePersister: GeneratedImagePersister,
+    private val failoverCoordinator: ProviderFailoverCoordinator,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val eventInjector: AgentEventInjector,
     private val memoryCurator: MemoryCurator,
@@ -165,8 +175,6 @@ class StatefulAgentWorkflow @Inject constructor(
         const val STUCK_NUDGE_FILE = "agent/stuck-nudge.md"
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
         /** 模型直出图片落盘目录（与 GenerateImageTool 保持一致）。 */
-        const val GENERATED_IMAGE_DIR = "~/.aharou/generated-images"
-        const val MAX_GENERATED_IMAGE_BYTES = 20L * 1024 * 1024
     }
 
     /**
@@ -260,6 +268,8 @@ class StatefulAgentWorkflow @Inject constructor(
      * session 绑定的 provider 不存在或已禁用时回退全局，保证老会话与异常数据不中断。
      */
     private suspend fun resolveProviderConfig(sessionId: String?): AIProviderConfig? {
+        // 回退覆盖优先：主供应商已因额度/鉴权/限流失败过，不要每轮再撞一次
+        failoverCoordinator.overrideConfig(sessionId)?.let { return it }
         if (sessionId != null) {
             val session = sessionUseCase.getSessionById(sessionId)
             val boundProviderId = session?.providerId
@@ -358,7 +368,10 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         provider.keySwitcher = keySwitcher
         provider.baseUrl = config.baseUrl
-        provider.model = config.effectiveModel
+        // 声明式中间件：模型映射只改真正发出去的模型名，UI/会话仍显示用户选的原名
+        provider.model = applyProviderMiddleware(
+            config.requestMiddleware, config.id, config.type.name, config.effectiveModel, ""
+        ).actualModel
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
@@ -369,10 +382,19 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.maxOutputTokens = metadata.outputTokens
         // 元数据说不接受自定义温度就不发该字段（kimi-k3、gpt-5 系带了直接 400）；允许的只发官方固定值。
         provider.temperature = if (metadata.supportsCustomTemperature) fixedTemperature(config.effectiveModel) else null
+        applyProviderParamOverrides(config.requestMiddleware, config.id, config.type.name, provider.model, provider)
         provider.firstByteTimeoutMs = generalSettingsRepository.firstByteTimeoutMs()
         provider.streamIdleTimeoutMs = generalSettingsRepository.streamIdleTimeoutMs()
         provider.maxNetworkRetries = generalSettingsRepository.maxNetworkRetries()
         return provider
+    }
+
+    /** 中间件注入的系统提示：按供应商配置追加，取不到配置就原样返回。 */
+    private suspend fun appendMiddlewarePrompt(providerId: String, systemPrompt: String): String {
+        val config = aiProviderRepository.getProviderById(providerId) ?: return systemPrompt
+        return applyProviderMiddleware(
+            config.requestMiddleware, config.id, config.type.name, config.effectiveModel, systemPrompt
+        ).systemPrompt
     }
 
     override fun executeEvents(
@@ -574,6 +596,7 @@ class StatefulAgentWorkflow @Inject constructor(
     ): AgentSessionState {
         var state = initialState
         val providerInUse = aiProvider
+        val requestSystemPrompt = appendMiddlewarePrompt(providerInUse.providerId, systemPrompt)
         val promptTools = requestTools(currentTools)
         // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
@@ -620,7 +643,7 @@ class StatefulAgentWorkflow @Inject constructor(
         suspend fun captureSnapshot(): AgentEvent.AssistantText {
             assistantSnapshot?.let { return it }
             val response = finalResponse ?: AIResponse(acc.toString(), reasoning = reasoningAcc.toString())
-            val (images, attachments) = if (response.images.isNotEmpty()) persistModelImages(response.images)
+            val (images, attachments) = if (response.images.isNotEmpty()) generatedImagePersister.persist(response.images)
                 else emptyList<AgentImage>() to emptyList<AgentAttachment>()
             persistedImages = images
             return AgentEvent.AssistantText(response.content, response.toolCalls,
@@ -667,13 +690,15 @@ class StatefulAgentWorkflow @Inject constructor(
 
         try {
             // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。图片投影沿用上面那份：估算的就是发出去的。
+            val outboundMasker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
             val messagesToSend = foldStoredToolResults(sendProjection)
+                .let { list -> if (outboundMasker == null) list else list.maskedForOutbound(outboundMasker) }
             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
             var samplingLoopCut = false
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。
             var userInterruptCut = false
             callId = telemetry.llmRequest(providerInUse.providerId, providerInUse.model, messagesToSend.size, promptTools.size, predictedInput)
-            providerInUse.completeStream(systemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
+            providerInUse.completeStream(requestSystemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
                 .takeWhile { !samplingLoopCut && !userInterruptCut }
                 .collect { chunk ->
                     if (!userInterruptCut && consumeUserInterrupt(currentContext.sessionId)) {
@@ -733,7 +758,9 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AIStreamChunk.Final -> {
                         // 纯工具调用轮没有文本/思考增量，Final 是首个内容事件，兜底记为 TTFB
                         if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
+                        // 回填必须在完整文本上做：占位符可能被切在两个 chunk 之间
                         finalResponse = chunk.response
+                            .let { resp -> if (outboundMasker == null) resp else resp.restoredFromOutbound(outboundMasker) }
                     }
                     is AIStreamChunk.ToolCallDeclared -> {
                         // 工具名先于参数到达：立刻告诉 UI「模型准备调什么」，
@@ -782,6 +809,20 @@ class StatefulAgentWorkflow @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // provider 级失败且本轮未吐出内容：切回退供应商重发（放在溢出恢复之前，压缩救不回来这类错）
+            if (finalResponse == null && acc.isEmpty() && reasoningAcc.isEmpty() && (e.isKeySwitchFailure() || e.isQuotaExhausted())) {
+                if (failoverCoordinator.isActive(currentContext.sessionId)) {
+                    failoverCoordinator.deactivate(currentContext.sessionId)
+                } else {
+                    val origin = aiProviderRepository.getProviderById(providerInUse.providerId)
+                    val target = origin?.let { failoverCoordinator.activate(currentContext.sessionId, it) }
+                    if (target != null) {
+                        val fb = createStandaloneProvider(target, currentContext.sessionId)
+                        return executeLlmEffect(state, currentContext, currentTools, systemPrompt, fb,
+                            inputBudget, budget, actionQueue, emit, telemetry)
+                    }
+                }
+            }
             if (finalResponse == null && !budget.overflowRecoveryAttempted && acc.isEmpty() && reasoningAcc.isEmpty() && isContextOverflow(e)) {
                 budget.overflowRecoveryAttempted = true
                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
@@ -1230,11 +1271,12 @@ class StatefulAgentWorkflow @Inject constructor(
         var callError: String? = null
         var usage: AIResponse? = null
         val response = try {
+            val masker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
             val resp = provider.complete(
                 systemPrompt = prompt,
-                messages = listOf(AgentMessage.UserMessage(content = request)),
+                messages = listOf(AgentMessage.UserMessage(content = request.maskIfNeeded(masker))),
                 tools = emptyList()
-            )
+            ).let { if (masker == null) it else it.restoredFromOutbound(masker) }
             usage = resp
             callCompleted = true
             resp
@@ -1282,11 +1324,12 @@ class StatefulAgentWorkflow @Inject constructor(
         sessionId: String?
     ): String? = runCatching {
         val provider = getEffectiveProvider(sessionId)
+        val masker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
         provider.complete(
             systemPrompt = systemPrompt,
-            messages = listOf(AgentMessage.UserMessage(content = userText)),
+            messages = listOf(AgentMessage.UserMessage(content = userText.maskIfNeeded(masker))),
             tools = emptyList()
-        ).content.trim().ifBlank { null }
+        ).content.restoreIfNeeded(masker).trim().ifBlank { null }
     }.onFailure { e ->
         FileLogger.w(TAG, "一次性调用失败", e)
     }.getOrNull()
@@ -1297,12 +1340,13 @@ class StatefulAgentWorkflow @Inject constructor(
         val prompt = promptProvider.resolvePrompt(COMMIT_GENERATOR_FILE)
             .replace(LEADING_COMMENT, "")
         val truncatedDiff = diff.take(12000)
+        val masker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
         val resp = provider.complete(
             systemPrompt = prompt,
-            messages = listOf(AgentMessage.UserMessage(content = "git diff:\n```diff\n$truncatedDiff\n```")),
+            messages = listOf(AgentMessage.UserMessage(content = "git diff:\n```diff\n${truncatedDiff.maskIfNeeded(masker)}\n```")),
             tools = emptyList()
         )
-        val line = resp.content.lines().firstOrNull { it.isNotBlank() }?.trim()
+        val line = resp.content.restoreIfNeeded(masker).lines().firstOrNull { it.isNotBlank() }?.trim()
             ?.removeSurrounding("`")
             ?.removePrefix("\"")
             ?.removeSuffix("\"")
@@ -1320,7 +1364,7 @@ class StatefulAgentWorkflow @Inject constructor(
         if (transcript.isBlank()) return 0
         return try {
             val provider = resolveCompactionFallbackProvider(sessionId) ?: getEffectiveProvider(sessionId)
-            val saved = memoryCurator.curate(provider, sessionId, projectRoot, transcript)
+            val saved = memoryCurator.curate(provider, sessionId, projectRoot, transcript, outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled()))
             if (saved > 0) promptProvider.invalidateMemoryCache(sessionId, projectRoot)
             // 会话收尾顺带看一眼记忆是否需要整理（阈值与冷却在内部判定，静默失败）。
             memoryCompactor.get().compactIfDue(projectRoot, MemoryScope.PROJECT)
@@ -1369,47 +1413,6 @@ class StatefulAgentWorkflow @Inject constructor(
         } catch (e: Exception) {
             ToolRunResult(toolError(toolCall, "工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED"), true)
         }
-    }
-
-    /**
-     * 把模型直出的图片（base64）落盘到 `~/.aharou/generated-images/`，返回带容器路径的 images
-     * 与一一对应的 UI 附件（附件只带路径不含 base64，落库不撑爆数据库行）。
-     */
-    private suspend fun persistModelImages(images: List<AgentImage>): Pair<List<AgentImage>, List<AgentAttachment>> =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val persisted = mutableListOf<AgentImage>()
-            val attachments = mutableListOf<AgentAttachment>()
-            images.forEach { image ->
-                runCatching {
-                    val estimatedBytes = image.base64Data.length.toLong() * 3 / 4
-                    if (estimatedBytes > MAX_GENERATED_IMAGE_BYTES) return@runCatching
-                    val bytes = Base64.decode(image.base64Data, Base64.DEFAULT)
-                    if (bytes.isEmpty() || bytes.size > MAX_GENERATED_IMAGE_BYTES) return@runCatching
-                    val unique = "${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
-                    val targetPath = "$GENERATED_IMAGE_DIR/gen_$unique.${extForMime(image.mimeType)}"
-                    fileAccess.writeBytes(targetPath, bytes, overwrite = false)
-                    val displayPath = fileAccess.toDisplayPath(targetPath)
-                    val localFile = fileAccess.copyToLocal(targetPath)
-                    persisted.add(image.copy(path = displayPath))
-                    attachments.add(
-                        AgentAttachment(
-                            fileName = targetPath.substringAfterLast('/'),
-                            containerPath = displayPath,
-                            localPath = localFile.absolutePath,
-                            mimeType = image.mimeType,
-                            sizeBytes = bytes.size.toLong(),
-                            isImage = true
-                        )
-                    )
-                }
-            }
-            persisted to attachments
-        }
-
-    private fun extForMime(mime: String): String = when (mime.lowercase()) {
-        "image/jpeg" -> "jpg"
-        "image/webp" -> "webp"
-        else -> "png"
     }
 
     private fun checkAndUpdateMode(toolCall: ToolCall, isError: Boolean, currentContext: AgentContext): Pair<AgentContext, Boolean> {

@@ -1743,6 +1743,9 @@
     <string name="provider_custom_icon">Provider icon</string>
     <string name="provider_custom_icon_hint">Pick an image from your gallery or paste an image link. Leave it empty to use the built-in icon matched by brand name.</string>
     <string name="provider_custom_icon_pick">Choose from gallery</string>
+    <string name="provider_fallback_title">Fallback provider</string>
+    <string name="provider_fallback_hint">When this provider fails (out of quota, auth or rate limit), switch to the fallback one and continue this turn.</string>
+    <string name="provider_fallback_off">No fallback</string>
     <string name="provider_custom_icon_url">Image link</string>
     <string name="provider_custom_icon_reset">Use default icon</string>    <string name="provider_show_api_key">Show API Key</string>
     <string name="provider_hide_api_key">Hide API Key</string>

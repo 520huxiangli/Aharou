@@ -70,6 +70,8 @@ App 重启后会回到第一个 Key，冷却记录清空。
 - **自定义请求头**：给这个供应商的所有请求追加自定义 Header，完全覆盖同名默认头（比如填 `User-Agent` 就替换掉默认 UA）。值里可以写 <code v-pre>{{SESSION_ID}}</code>（当前会话 id）和 <code v-pre>{{API_KEY}}</code>（本次实际取用的 Key）占位符，发送前自动替换。少数中转网关会校验特定 Header，需要时才填。
 - **自定义面板脚本**：让供应商在输入框上方显示一个余额或用量卡片。脚本放在 `~/.aharou/scripts/` 下，支持 Python、Bash、Node，配好后可以在编辑页点「运行测试」看输出。脚本路径本身也可以通过**配置通道**读写（`providers.<id>.panel_script`），所以「换个面板脚本」可以让 AI 直接代改。卡片里的链接按钮（如「管理控制台」）点开后在**内置浏览器**里打开并自动弹出浏览器面板；写脚本时链接要指向人看的网页，不要填 API 地址。
 - **脚本参数**：给面板脚本额外注入环境变量 `AICODE_KEY_<KEY>`。参数值里可以写 <code v-pre>{{PROVIDER_API_KEY}}</code>（当前 Key）、<code v-pre>{{BASE_URL}}</code>、<code v-pre>{{MODEL}}</code> 等占位符，运行脚本前自动替换。
+- **回退供应商**：选一个备用供应商，当本供应商因为额度耗尽、鉴权失效或限流而失败时，自动切到备用供应商把本轮请求重发一次，不用你手动换。备用供应商也可以单独指定用哪个模型；留空就用它自己的当前模型。切换只在「这一轮还没吐任何内容」时发生，不会把半截回复拼到另一个模型上。它也能通过**配置通道**读写（`providers.<id>.fallback_provider_id`、`providers.<id>.fallback_model`）。
+- **请求中间件**：用一段 JSON 给这个供应商改请求，目前支持两项：把某个模型名映射成真实模型（`modelMap`，界面上仍显示原名）、统一追加一段系统提示（`systemPrompt`，可用 `systemPromptTargets` 限定只对某些供应商类型/模型生效）。配置通道字段 `providers.<id>.request_middleware`。注意：参数覆盖（改 temperature 等）目前还没接入请求体，写了也不会生效。
 :::
 
 ## 模型管理

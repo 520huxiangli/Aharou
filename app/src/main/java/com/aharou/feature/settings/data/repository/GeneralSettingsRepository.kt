@@ -45,6 +45,7 @@ class GeneralSettingsRepository @Inject constructor(
 ) {
     private companion object {
         val AUTO_REMOVE_STALE_MODELS_KEY = booleanPreferencesKey("auto_remove_stale_models")
+        val PRIVACY_MASKING_ENABLED_KEY = booleanPreferencesKey("privacy_masking_enabled")
         val STARTUP_SESSION_MODE_KEY = stringPreferencesKey("startup_session_mode")
         val FIRST_BYTE_TIMEOUT_SEC_KEY = intPreferencesKey("first_byte_timeout_sec")
         val STREAM_IDLE_TIMEOUT_SEC_KEY = intPreferencesKey("stream_idle_timeout_sec")
@@ -78,6 +79,20 @@ class GeneralSettingsRepository @Inject constructor(
     /** 拉取模型后自动对齐本地列表的开关流；未设置时回退到 true（默认开启）。 */
     val autoRemoveStaleModelsFlow: Flow<Boolean> =
         context.generalDataStore.data.map { it[AUTO_REMOVE_STALE_MODELS_KEY] ?: true }
+
+    /**
+     * 出站脱敏开关：请求发往供应商前把凭据/个人信息换成占位符，回复里再回填。
+     * 默认关闭——它会让模型看不到真值（比如让你分析一个被脱敏的 token 就做不到），由用户主动开启。
+     */
+    val privacyMaskingEnabledFlow: Flow<Boolean> =
+        context.generalDataStore.data.map { it[PRIVACY_MASKING_ENABLED_KEY] ?: false }
+
+    suspend fun setPrivacyMaskingEnabled(enabled: Boolean) {
+        context.generalDataStore.edit { it[PRIVACY_MASKING_ENABLED_KEY] = enabled }
+    }
+
+    /** 请求路径上只读一次开关，不额外收集流。 */
+    suspend fun privacyMaskingEnabled(): Boolean = privacyMaskingEnabledFlow.first()
 
     suspend fun setAutoRemoveStaleModels(enabled: Boolean) {
         context.generalDataStore.edit { it[AUTO_REMOVE_STALE_MODELS_KEY] = enabled }

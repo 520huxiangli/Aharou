@@ -18,6 +18,9 @@ import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.foldStoredToolResults
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.settings.data.remote.ModelMetadataService
+import com.aharou.feature.agent.domain.privacy.maskIfNeeded
+import com.aharou.feature.agent.domain.privacy.outboundMaskerOrNull
+import com.aharou.feature.agent.domain.privacy.restoredFromOutbound
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.domain.model.ModelContextPolicy
 import com.aharou.feature.settings.domain.model.ProviderType
@@ -648,7 +651,13 @@ class ContextCompactor @Inject constructor(
         var response: AIResponse? = null
         var error: String? = null
         try {
-            val result = provider.complete(systemPrompt = SUMMARY_SYSTEM, messages = messages, tools = emptyList())
+            // 摘要请求同样会把对话正文发给供应商，脱敏开着就走一遍掩码与回填
+            val masker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
+            val result = provider.complete(
+                systemPrompt = SUMMARY_SYSTEM,
+                messages = messages.maskIfNeeded(masker),
+                tools = emptyList()
+            ).let { if (masker == null) it else it.restoredFromOutbound(masker) }
             response = result
             error = summarizeFailure(result)
             return result

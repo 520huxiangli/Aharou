@@ -50,6 +50,8 @@ class ContextCompactorTest {
         every { paths.aharouRoot() } returns "/root/.aharou"
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata(id = "summary", contextTokens = context)
         coEvery { settings.compactionThresholdPercent() } returns 90
+        // 摘要请求现在会读脱敏开关；这些用例不验脱敏，统一按关闭处理
+        coEvery { settings.privacyMaskingEnabled() } returns false
         // 设成 100%：这些用例只验证硬摘要路径，软分支不该被意外触发
         coEvery { settings.softCompactionThresholdPercent() } returns 100
         every { prompts.resolvePrompt(any()) } returns "{{INSTRUCTION}}"

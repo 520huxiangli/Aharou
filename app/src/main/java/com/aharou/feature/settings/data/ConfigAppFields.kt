@@ -89,6 +89,16 @@ class ConfigAppFields @Inject constructor(
 
         registry.register(
             DataStoreBoolField(
+                path = "app.privacy_masking_enabled",
+                displayName = "出站脱敏",
+                description = "请求发往供应商前，把 API Key、私钥、令牌、邮箱、身份证/银行卡号换成占位符，回复里再换回真值。占位符只存内存、不落盘。默认关闭（开启后模型看不到这些真值）。",
+                flow = generalSettings.privacyMaskingEnabledFlow,
+                setter = { generalSettings.setPrivacyMaskingEnabled(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
                 path = "app.ocr_for_text_only_models",
                 displayName = "为无视觉模型识别图片",
                 description = "当前模型不支持图片输入时，用本机 OCR 把图片与影子屏截图转成文字再发给模型。全在本机识别、不上传。默认开启。",

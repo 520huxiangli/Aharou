@@ -157,7 +157,10 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyPassword = KeystoreCipher.decryptString(proxyPassword),
             customHeaders = decodeMap(KeystoreCipher.decryptString(customHeaders)),
             scriptParams = decodeMap(KeystoreCipher.decryptString(scriptParams)),
-            customIcon = customIcon
+            customIcon = customIcon,
+            fallbackProviderId = fallbackProviderId,
+            fallbackModel = fallbackModel,
+            requestMiddleware = requestMiddleware
         ).sanitized()
     }
 
@@ -193,7 +196,10 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyPassword = KeystoreCipher.encryptString(proxyPassword),
             customHeaders = KeystoreCipher.encryptString(encodeMap(customHeaders)),
             scriptParams = KeystoreCipher.encryptString(encodeMap(scriptParams)),
-            customIcon = customIcon
+            customIcon = customIcon,
+            fallbackProviderId = fallbackProviderId,
+            fallbackModel = fallbackModel,
+            requestMiddleware = requestMiddleware
         )
     }
 }

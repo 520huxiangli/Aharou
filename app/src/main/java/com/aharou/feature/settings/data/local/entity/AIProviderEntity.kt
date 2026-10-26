@@ -59,5 +59,14 @@ data class AIProviderEntity(
      * 自定义图标：本地文件绝对路径或 http(s) 链接，空表示按品牌名匹配内置图标。
      * 表里的列名就是 customIcon（未改 @ColumnInfo）。
      */
-    val customIcon: String = ""
+    val customIcon: String = "",
+    /**
+     * 回退供应商 id：本供应商请求失败（额度耗尽/鉴权/限流）时自动切到它继续本轮请求；
+     * 空串表示不回退。存 id 而非对象，避免循环引用与删除时的一致性麻烦。
+     */
+    val fallbackProviderId: String = "",
+    /** 回退时使用的模型；空串表示用回退供应商自己的有效模型。 */
+    val fallbackModel: String = "",
+    /** 声明式请求中间件配置（JSON）；空串表示不启用。schema 见 domain/middleware/MiddlewareConfig。 */
+    val requestMiddleware: String = ""
 )

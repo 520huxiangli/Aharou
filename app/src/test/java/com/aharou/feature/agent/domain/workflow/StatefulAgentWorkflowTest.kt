@@ -14,6 +14,7 @@ import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.provider.AIStreamChunk
+import com.aharou.feature.agent.domain.provider.ProviderFailoverCoordinator
 import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
@@ -22,6 +23,7 @@ import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.toTransportString
+import com.aharou.feature.agent.domain.workflow.GeneratedImagePersister
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.Companion.hasSnapshotData
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.Companion.persistenceConfirmed
 import com.aharou.feature.agent.presentation.AgentAttachment
@@ -66,6 +68,10 @@ class StatefulAgentWorkflowTest {
     private val compactionSettings = mockk<CompactionModelSettingsRepository>()
     private val outputStore = mockk<ToolOutputStore>()
     private val provider = mockk<AIProvider>(relaxed = true)
+    // 直出图片落盘已抽成独立类；这些用例只关心「图片被换成路径」，行为用 stub 保留
+    private val imagePersister = mockk<GeneratedImagePersister>(relaxed = true)
+    // 回退协调器：用例不覆盖跨供应商回退，relaxed 下 isActive=false、activate 返回 null
+    private val failoverCoordinator = mockk<ProviderFailoverCoordinator>(relaxed = true)
     private val notifications = mockk<AgentNotificationCenter>()
     private val config = AIProviderConfig("provider", "Provider", ProviderType.OPENAI, "test-key",
         baseUrl = "https://example.invalid", defaultModel = "model", models = listOf("model"))
@@ -92,12 +98,14 @@ class StatefulAgentWorkflowTest {
         compactionModelSettingsRepository = compactionSettings,
         titleModelSettingsRepository = mockk(),
         defaultModelSettingsRepository = mockk(),
-        generalSettingsRepository = mockk(),
+        generalSettingsRepository = mockk(relaxed = true),
         sessionUseCase = sessions,
         messagePersistenceUseCase = persistence,
         checkpointManager = mockk(),
         llmCallRecordDao = mockk<LlmCallRecordDao>(relaxed = true),
         keyRotator = mockk(),
+        generatedImagePersister = imagePersister,
+        failoverCoordinator = failoverCoordinator,
         agentNotificationCenter = notifications,
         eventInjector = mockk(),
         memoryCurator = mockk(),
@@ -113,6 +121,14 @@ class StatefulAgentWorkflowTest {
         // 记忆整理入口：这些用例不会走到自动整理，Lazy 里放个 relaxed mock 即可（注入形式是 dagger.Lazy 为了断环）。
         memoryCompactor = Lazy { mockk<MemoryCompactor>(relaxed = true) }
     ), recordPrivateCalls = true)
+
+    init {
+        // relaxed mock 对「返回对象」的可空方法会给个空壳配置，导致 getEffectiveProvider 认为没填 Key；
+        // 这些用例不覆盖跨供应商回退，显式打成未激活。
+        coEvery { failoverCoordinator.overrideConfig(any()) } returns null
+        coEvery { failoverCoordinator.activate(any(), any()) } returns null
+        every { failoverCoordinator.isActive(any()) } returns false
+    }
 
     private fun prepare(chunks: Flow<AIStreamChunk>) {
         coEvery { sessions.getSessionById("session") } returns ChatSessionEntity("session", "Session", 0, 0,
@@ -130,7 +146,7 @@ class StatefulAgentWorkflowTest {
         coEvery { compactor.compactIfNeeded(any(), any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             CompactionResult(firstArg(), false)
         }
-        coEvery { workflow["persistModelImages"](listOf(image)) } returns (listOf(image.copy(path = "/image.png")) to listOf(attachment))
+        coEvery { imagePersister.persist(listOf(image)) } returns (listOf(image.copy(path = "/image.png")) to listOf(attachment))
         // 软打断每收一个流块都会查一次通知中心；严格 mock 不给 stub 会直接抛 MockKException。
         every { notifications.peek(any()) } returns emptyList()
     }

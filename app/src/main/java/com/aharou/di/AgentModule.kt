@@ -110,7 +110,9 @@ import com.aharou.feature.agent.domain.tool.search.WebSearchTool
 import com.aharou.feature.agent.domain.tool.session.SessionTool
 import com.aharou.feature.browser.BrowserTool
 import com.aharou.feature.agent.domain.workflow.ContextCompactor
+import com.aharou.feature.agent.domain.workflow.GeneratedImagePersister
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
+import com.aharou.feature.agent.domain.provider.ProviderFailoverCoordinator
 import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow
 import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
@@ -495,6 +497,8 @@ object AgentModule {
         checkpointManager: CheckpointManager,
         llmCallRecordDao: LlmCallRecordDao,
         keyRotator: ProviderKeyRotator,
+        generatedImagePersister: GeneratedImagePersister,
+        failoverCoordinator: ProviderFailoverCoordinator,
         agentNotificationCenter: AgentNotificationCenter,
         eventInjector: AgentEventInjector,
         memoryCurator: MemoryCurator,
@@ -526,6 +530,8 @@ object AgentModule {
             checkpointManager,
             llmCallRecordDao,
             keyRotator,
+            generatedImagePersister,
+            failoverCoordinator,
             agentNotificationCenter,
             eventInjector,
             memoryCurator,

@@ -59,7 +59,13 @@ data class AIProviderConfig(
      * 自定义图标：本地文件绝对路径（如 `filesDir/aharou/provider-icons/<id>.png`）或 http(s) 链接。
      * 空表示按品牌名匹配内置图标。
      */
-    val customIcon: String = ""
+    val customIcon: String = "",
+    /** 回退供应商 id：本供应商失败（额度/鉴权/限流）时自动切到它继续本轮请求；空=不回退。 */
+    val fallbackProviderId: String = "",
+    /** 回退时使用的模型；空=用回退供应商自己的有效模型。 */
+    val fallbackModel: String = "",
+    /** 声明式请求中间件配置（JSON）：模型映射、参数覆盖、系统提示注入。空串=不启用。 */
+    val requestMiddleware: String = ""
 ) {
     /** 实际生效的模型：优先 selectedModel，其次 defaultModel。 */
     val effectiveModel: String
