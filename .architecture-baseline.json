@@ -17,7 +17,9 @@
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ContainerSettingsSection.kt": 1258,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1403,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AdaptiveCardRenderer.kt": 1194,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 983
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 983,
+    "app/src/main/java/com/aharou/AIEditorApp.kt": 1002,
+    "app/src/main/java/com/aharou/feature/agent/domain/tool/subagent/TaskTool.kt": 1024
   },
   "bannedImports": {
     "androidx.compose.material3.ModalBottomSheet": [

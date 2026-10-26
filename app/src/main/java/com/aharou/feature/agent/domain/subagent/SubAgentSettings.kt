@@ -56,7 +56,7 @@ class SubAgentSettings @Inject constructor(
 
     companion object {
         const val MIN_RUNNING = 1
-        const val MAX_RUNNING = 10
+        const val MAX_RUNNING = 15
 
         private const val PREFS = "aharou_subagent_prefs"
         private const val KEY_MAX_RUNNING = "subagent_max_running"

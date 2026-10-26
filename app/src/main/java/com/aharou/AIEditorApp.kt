@@ -461,9 +461,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             ContainerInstaller.extractPrompts(this@AIEditorApp)
         }
-        // 启动即释放内置子代理定义（Explore）到 ~/.aharou/agents/；已存在不覆盖，用户改过或删掉都不会被升级拉回。
+        // 启动即释放内置子代理定义（Explore）与团队预设；已存在不覆盖，用户改过或删掉都不会被升级拉回。
         appScope.launch {
             ContainerInstaller.extractAgents(this@AIEditorApp)
+            ContainerInstaller.extractTeams(this@AIEditorApp)
         }
         // 备份导入的解密暂存落在 cacheDir，进程在勾选弹窗期间被杀会留下明文（含凭据与聊天全文），启动即清。
         appScope.launch {
@@ -663,6 +664,7 @@ class AIEditorApp : Application(), Configuration.Provider {
      */
     private suspend fun releaseBuiltinAssetsToRemote() {
         remoteSshConnection.uploadBuiltinFiles("agents", collectAssetBytes("agents"))
+        remoteSshConnection.uploadBuiltinFiles("teams", collectAssetBytes("teams"))
     }
 
     /** 收集 assets 目录下的扁平文件（name → 字节）。目录项会被跳过。 */

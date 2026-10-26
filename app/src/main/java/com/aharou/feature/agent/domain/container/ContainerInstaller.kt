@@ -146,6 +146,28 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
+         * 从 assets 提取内置团队预设到 ~/.aharou/teams/。
+         * 若文件已存在则不覆盖，保留用户对预设的修改。
+         */
+        fun extractTeams(context: Context) {
+            val destDir = File(ContainerInstaller.migrateLegacyDir(context), "teams")
+            destDir.mkdirs()
+            runCatching {
+                val entries = context.assets.list("teams") ?: return@runCatching
+                for (entry in entries) {
+                    val destFile = File(destDir, entry)
+                    if (!destFile.exists()) {
+                        context.assets.open("teams/$entry").use { input ->
+                            destFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                }
+            }.onFailure {
+                FileLogger.w(TAG, "提取内置团队预设失败: ${it.message}", it)
+            }
+        }
+
+        /**
          * 从 assets 提取自定义 git credential helper 到 ~/.aharou/git-credential-aicode 并赋可执行位。
          *
          * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/git-credential-aicode，

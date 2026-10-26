@@ -16,6 +16,7 @@ import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
+import com.aharou.feature.agent.domain.subagent.AgentTeamRepository
 import com.aharou.feature.agent.domain.subagent.InjectPart
 import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -47,6 +48,7 @@ class SystemPromptProvider @Inject constructor(
     private val promptFileResolver: PromptFileResolver,
     private val containerInstaller: ContainerInstaller,
     private val agentDefinitionRepository: AgentDefinitionRepository,
+    private val agentTeamRepository: AgentTeamRepository,
     private val promptFragmentCatalog: PromptFragmentCatalog,
     private val ruleRepository: RuleRepository,
     private val chatSessionDao: ChatSessionDao,
@@ -128,6 +130,45 @@ class SystemPromptProvider @Inject constructor(
                 cachedByKey[key] = ""
                 return null
             }
+            cachedByKey[key] = content
+            trimIfNeeded()
+            return content
+        }
+
+        private fun trimIfNeeded() {
+            if (cachedByKey.size > SOURCE_CACHE_LIMIT) cachedByKey.clear()
+        }
+    }
+
+    /**
+     * 可用团队预设索引（仅注入主代理）：只列「团队 / 阶段数 / 流程」，不展开成员与文件路径，
+     * 完整编排用 `task(action="teams", team=…)` 按需拉。会话级缓存，避免每轮扫盘。
+     */
+    private inner class TeamListSource : PromptSource {
+        private val cachedByKey = ConcurrentHashMap<SourceCacheKey, String>()
+
+        override fun build(ctx: AgentContext): String? {
+            val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
+            val cached = cachedByKey[key]
+            if (cached != null) return cached.ifEmpty { null }
+            val teams = try {
+                agentTeamRepository.listAll().map { it.team }
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "扫描团队预设失败: ${e.message}", e)
+                return null
+            }
+            if (teams.isEmpty()) {
+                cachedByKey[key] = ""
+                return null
+            }
+            val lines = teams.joinToString("\n") { team ->
+                "- ${team.name} / ${team.stages.size} 阶段 / ${team.stages.joinToString(" → ") { it.title }}"
+            }
+            val content = "可用团队预设 (teams)：每行「团队 / 阶段数 / 流程」。用 " +
+                "`task(action=\"team_run\", team=\"<名>\", goal=\"<本次目标>\")` 一次跑完" +
+                "（阶段内并行、阶段间串行，上游产出自动传给下游）；看单个预设的阶段与成员用 " +
+                "`task(action=\"teams\", team=\"<名>\")`。团队会连派多个子代理，token 消耗明显高于单线程，琐事别用。\n" +
+                lines
             cachedByKey[key] = content
             trimIfNeeded()
             return content
@@ -456,6 +497,7 @@ class SystemPromptProvider @Inject constructor(
     private val staticRuleSource = StaticRuleSource()
     private val subAgentBaseSource = SubAgentBaseSource()
     private val subAgentListSource = SubAgentListSource()
+    private val teamListSource = TeamListSource()
     private val availableRulesSource = AvailableRulesSource()
     private val memoryListSource = MemoryListSource()
     private val activeSkillsSource = ActiveSkillsSource()
@@ -561,6 +603,7 @@ class SystemPromptProvider @Inject constructor(
             if (ghost) coreArchiveSource.build(agentContext) else aharouMemorySource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val subAgentsContent = subAgentListSource.build(agentContext)
+        val teamsContent = teamListSource.build(agentContext)
         val memoriesContent = if (ghost) null else memoryListSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
         val rulesContent = availableRulesSource.build(agentContext)
@@ -596,6 +639,7 @@ class SystemPromptProvider @Inject constructor(
 
             if (SKILLS_VAR !in rawStatic) skillsContent?.let { append("\n\n"); append(it) }
             if (SUBAGENTS_VAR !in rawStatic) subAgentsContent?.let { append("\n\n"); append(it) }
+            teamsContent?.let { append("\n\n"); append(it) }
             if (MEMORY_VAR !in rawStatic) memoriesContent?.let { append("\n\n"); append(it) }
             if (PROJECT_RULES_VAR !in rawStatic) projectRules?.let { append("\n\n"); append(it) }
 

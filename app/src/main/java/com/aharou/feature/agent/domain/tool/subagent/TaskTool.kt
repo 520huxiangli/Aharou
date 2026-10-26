@@ -68,6 +68,7 @@ class TaskTool @Inject constructor(
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
     private val eventBus: SubAgentEventBus,
     private val agentDefinitionRepository: AgentDefinitionRepository,
+    private val teamTasks: TeamTasks,
     private val aiProviderRepository: AIProviderRepository,
     private val subAgentWriteLease: SubAgentWriteLease
 ) : AbstractContextualTool() {
@@ -111,18 +112,18 @@ class TaskTool @Inject constructor(
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
         val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase() ?: "create"
         return when (action) {
-            "read", "list", "send", "roles", "team", "tell" -> emptySet()
+            "read", "list", "send", "roles", "team", "tell", "teams" -> emptySet()
             else -> setOf(ToolCapability.MODIFY_SESSION_STATE)
         }
     }
 
-    override val description: String get() = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 ${eventBus.maxRunning} 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。分支上的子代理可用 team 查队友、tell 互相发消息；子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。"
+    override val description: String get() = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 ${eventBus.maxRunning} 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。分支上的子代理可用 team 查队友、tell 互相发消息；子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。团队预设（teams/*.md）可一键跑完整流程：task(action=\"team_run\", team=\"<名>\", goal=\"<本次目标>\")，阶段内并行、阶段间串行；先用 action=\"teams\" 看有哪些团队。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）",
+            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）/ teams（列出团队预设 teams/*.md；给 team 参数看单个预设的阶段与成员）/ team_run（按团队预设跑完整流程：team + goal，阶段内并行、阶段间串行）",
             required = false
         ),
         "id" to ToolParameter(
@@ -211,6 +212,18 @@ class TaskTool @Inject constructor(
                 )
             )
         ),
+        "team" to ToolParameter(
+            name = "team",
+            type = ParameterType.STRING,
+            description = "团队预设名（teams / team_run 用）：取自 task(action=\"teams\") 列出的名字；teams 给了就展开该预设的阶段与成员，team_run 必须给",
+            required = false
+        ),
+        "goal" to ToolParameter(
+            name = "goal",
+            type = ParameterType.STRING,
+            description = "本次团队要达成的目标（team_run 必填）：会写进每个成员的任务指令，成员按阶段分工把它做完",
+            required = false
+        ),
         "message" to ToolParameter(
             name = "message",
             type = ParameterType.STRING,
@@ -233,7 +246,9 @@ class TaskTool @Inject constructor(
             "team" -> listTeam(context)
             "tell" -> tellSibling(args, context)
             "grant" -> grantWrite(args, context.projectRoot)
-            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant", "INVALID_ARGS")
+            "teams" -> teamTasks.list(args)
+            "team_run" -> runTeam(args, context)
+            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant / teams / team_run", "INVALID_ARGS")
         }
     }
 
@@ -997,4 +1012,13 @@ class TaskTool @Inject constructor(
             }
         )
     }
+
+    /**
+     * 按团队预设执行：编排的校验与 pipeline 展开在 [TeamTasks] / [TeamRunner] 里，
+     * 这里只把展开结果交给 [runPipeline]，复用它现成的分层调度、上游产出接力与写冲突拦截。
+     */
+    private suspend fun runTeam(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
+        teamTasks.run(args) { pipeline ->
+            runPipeline(buildJsonObject { put("pipeline", pipeline) }, context)
+        }
 }
