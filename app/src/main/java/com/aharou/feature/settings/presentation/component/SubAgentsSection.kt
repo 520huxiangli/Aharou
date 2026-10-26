@@ -70,6 +70,7 @@ internal fun SubAgentsSection(
     entries: List<SubAgentUiEntry>,
     onDelete: (SubAgentUiEntry) -> Unit,
     onOpenDetail: (SubAgentUiEntry) -> Unit,
+    onOpenTeams: () -> Unit,
     limitViewModel: SubAgentSettingsViewModel = hiltViewModel()
 ) {
     val maxRunning by limitViewModel.maxRunning.collectAsStateWithLifecycle()
@@ -78,6 +79,7 @@ internal fun SubAgentsSection(
     Column(modifier = Modifier.fillMaxSize()) {
         // 并发上限是整个应用共享的名额，与具体子代理无关；空列表时也要能改，所以放在列表判定之外
         MaxRunningGroup(maxRunning = maxRunning, onClick = { editingLimit = true })
+        TeamsEntryGroup(onClick = onOpenTeams)
         Box(modifier = Modifier.weight(1f)) {
             SubAgentsList(
                 projectName = projectName,
@@ -402,7 +404,10 @@ private fun SubAgentEmptyHint(text: String) {
     )
 }
 
-/** 并发上限行：左侧标题、右侧当前值，点开数值弹窗。 */
+/**
+ * 并发上限行：左侧标题、右侧当前值，点开数值弹窗；
+ * 下面紧跟团队预设入口——团队本质上也是子代理，只是编排被写进了一份可复用的预设。
+ */
 @Composable
 private fun MaxRunningGroup(maxRunning: Int, onClick: () -> Unit) {
     Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
@@ -418,6 +423,21 @@ private fun MaxRunningGroup(maxRunning: Int, onClick: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            )
+        }
+    }
+}
+
+/** 团队预设入口：点进去看 teams 目录下的预设；编排写在预设里，对话里一条 team_run 就能跑完整流程。 */
+@Composable
+private fun TeamsEntryGroup(onClick: () -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.Users,
+                title = stringResource(R.string.settings_teams),
+                subtitle = stringResource(R.string.subagent_teams_entry_desc),
+                onClick = onClick
             )
         }
     }

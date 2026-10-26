@@ -150,6 +150,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SubAgents(R.string.settings_subagents), ScheduledTasks(R.string.settings_scheduled_tasks),
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
+    Teams(R.string.settings_teams),
     Prompts(R.string.prompts_title),
     PromptDetail(R.string.prompts_title),
     PromptEditor(R.string.prompts_title),
@@ -192,6 +193,7 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SkillDetail,
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
+    SettingsSection.Teams,
     SettingsSection.PromptDetail,
     SettingsSection.ContainerDownloads, SettingsSection.ContainerSources,
     SettingsSection.Log -> 2
@@ -442,6 +444,7 @@ fun SettingsScreen(
         SettingsSection.SkillMarketDetail -> SettingsSection.SkillMarket
         SettingsSection.SkillEditor -> skillEditorReturn
         SettingsSection.SubAgentDetail -> SettingsSection.SubAgents
+        SettingsSection.Teams -> SettingsSection.SubAgents
         SettingsSection.SubAgentEditor -> subAgentEditorReturn
         SettingsSection.PromptDetail -> SettingsSection.Prompts
         SettingsSection.PromptEditor -> promptEditorReturn
@@ -1151,8 +1154,10 @@ fun SettingsScreen(
                     onOpenDetail = {
                         selectedSubAgent = it
                         section = SettingsSection.SubAgentDetail
-                    }
+                    },
+                    onOpenTeams = { section = SettingsSection.Teams }
                 )
+                SettingsSection.Teams -> SubAgentTeamsSection()
                 SettingsSection.Prompts -> {
                     val promptsViewModel: PromptsViewModel =
                         androidx.hilt.navigation.compose.hiltViewModel()
