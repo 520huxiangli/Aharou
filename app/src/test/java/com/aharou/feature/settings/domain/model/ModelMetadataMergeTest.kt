@@ -166,4 +166,22 @@ class ModelMetadataMergeTest {
         // 能力/窗口合并不受影响
         assertEquals(128_000, merged.contextTokens)
     }
+
+    @Test
+    fun customDisplayNameAndIcon_overrideAuto() {
+        // 回归：合并时漏了 displayName / customIcon，导致编辑模型别名、换图标后
+        // 看着像「保存了但没生效」（值已存进 CustomModelMetadataStore，只是没被合并出来）。
+        val auto = meta()
+        val custom = ModelMetadata(
+            id = "gpt-test",
+            displayName = "我的别名",
+            customIcon = "/data/user/0/com.aharou.agent/cache/provider-icons/gpt-test.png",
+            contextTokens = 128_000
+        )
+
+        val merged = mergeModelMetadata("gpt-test", auto, custom)
+
+        assertEquals("我的别名", merged.displayName)
+        assertEquals(custom.customIcon, merged.customIcon)
+    }
 }

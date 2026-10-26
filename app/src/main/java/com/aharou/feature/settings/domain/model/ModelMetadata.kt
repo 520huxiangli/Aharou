@@ -79,6 +79,8 @@ fun mergeModelMetadata(
     )
     val c = custom ?: return a
     return a.copy(
+        displayName = c.displayName,
+        customIcon = c.customIcon,
         modelType = c.modelType,
         supportsVision = c.supportsVision,
         supportsImageOutput = c.supportsImageOutput,
