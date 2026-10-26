@@ -1840,6 +1840,7 @@
     <string name="provider_models_batch_delete_confirm">Are you sure you want to delete the selected %1$d models?</string>
     <string name="provider_model_name">Model Name</string>
     <string name="provider_model_display_name">Display name (alias, optional)</string>
+    <string name="provider_model_display_name_reset">Reset</string>
     <string name="provider_model_icon_hint">Leave it empty to use the built-in icon matched by model name</string>    <string name="provider_model_already_added">This model has already been added</string>
     <string name="provider_edit_model">Edit Model</string>
     <string name="provider_model_section_price">Pricing</string>

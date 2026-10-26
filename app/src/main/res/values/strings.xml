@@ -1839,6 +1839,7 @@
     <string name="provider_models_batch_delete_confirm">确定删除选中的 %1$d 个模型吗？</string>
     <string name="provider_model_name">模型名称</string>
     <string name="provider_model_display_name">显示名（别名，可留空）</string>
+    <string name="provider_model_display_name_reset">重置</string>
     <string name="provider_model_icon_hint">不设置则按模型名自动匹配内置图标</string>    <string name="provider_model_already_added">该模型已添加</string>
     <string name="provider_edit_model">编辑模型</string>
     <string name="provider_model_section_price">价格</string>

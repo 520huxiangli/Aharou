@@ -813,6 +813,12 @@ fun ProviderEditorScreen(
                                         ProviderModelRow(
                                             model = model,
                                             metadata = mergeModelMetadata(model, modelMetadata[modelMetadataKey(providerId, model)], customMetadata[modelMetadataKey(providerId, model)]),
+                                            // 别名没动过（等于系统原名或未设置）就显示模型名称；改过才显示别名。
+                                            alias = customMetadata[modelMetadataKey(providerId, model)]?.let { meta ->
+                                                val isCustom = meta.customName
+                                                    ?: (meta.displayName.isNotBlank() && meta.displayName != model)
+                                                meta.displayName.takeIf { isCustom && it.isNotBlank() }
+                                            },
                                             testing = model in testing,
                                             result = testResults[model],
                                             onTest = { viewModel.testModel(currentConfig(), model) },
@@ -989,6 +995,10 @@ fun ProviderEditorScreen(
                     stringResource(R.string.common_add)
                 },
                 initial = editingModel?.let { mergeModelMetadata(it, modelMetadata[modelMetadataKey(providerId, it)], customMetadata[modelMetadataKey(providerId, it)]) },
+                defaultAlias = editingModel?.let { model ->
+                    modelMetadata[modelMetadataKey(providerId, model)]?.displayName
+                        ?.takeIf { it.isNotBlank() && it != model }
+                },
                 providerId = providerId,
                 onSave = { model, meta ->
                     val editing = editingModel

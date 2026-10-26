@@ -8,6 +8,12 @@ data class ModelMetadata(
     val providerId: String? = null,
     val displayName: String = id,
     /**
+     * 显示名是否被用户真正改过。true 才在模型列表里显示别名；
+     * false 表示当前显示名只是系统原名（或未设置），列表显示模型名。
+     * null 表示旧数据没有标记，按「显示名不等于模型名」推断。
+     */
+    val customName: Boolean? = null,
+    /**
      * 自定义模型图标：本地文件绝对路径或 http(s) 链接，空表示按模型名匹配内置品牌图标。
      * 存在 CustomModelMetadataStore 的 JSON 里，不走数据库，所以加这个字段不需要迁移。
      */
@@ -80,6 +86,7 @@ fun mergeModelMetadata(
     val c = custom ?: return a
     return a.copy(
         displayName = c.displayName,
+        customName = c.customName,
         customIcon = c.customIcon,
         modelType = c.modelType,
         supportsVision = c.supportsVision,

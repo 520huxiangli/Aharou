@@ -232,6 +232,8 @@ interface ModelTestEntryPoint {
 internal fun ProviderModelRow(
     model: String,
     metadata: ModelMetadata?,
+    /** 自定义显示名；null 表示没设过，列表回退到原始模型名。 */
+    alias: String? = null,
     testing: Boolean,
     result: ModelTestResult?,
     onTest: () -> Unit,
@@ -255,8 +257,9 @@ internal fun ProviderModelRow(
             ) {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth()) {
+                        // 设了自定义名就显示它；没设就用原始模型名。
                         Text(
-                            metadata?.displayName?.takeIf { it.isNotBlank() } ?: model,
+                            alias ?: model,
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,

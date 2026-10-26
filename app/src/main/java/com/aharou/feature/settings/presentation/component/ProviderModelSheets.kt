@@ -168,6 +168,8 @@ internal fun AddModelSheet(
     title: String,
     confirmLabel: String,
     initial: ModelMetadata?,
+    /** 系统给的默认显示名（官方名）；重置时回到它，为空则回到模型名。 */
+    defaultAlias: String? = null,
     /** 所属供应商 id：模型自定义图标的文件名要带上它，否则两个供应商的同名模型会共用一个文件。 */
     providerId: String,
     onSave: (String, ModelMetadata) -> Unit,
@@ -200,6 +202,30 @@ internal fun AddModelSheet(
     val inputError = inputTokens.isNotBlank() && (inputTokens.trim().toIntOrNull() ?: 0) <= 0
     val outputError = outputTokens.isNotBlank() && (outputTokens.trim().toIntOrNull() ?: 0) <= 0
     val canSave = trimmedModel.isNotEmpty() && !duplicate && !contextError && !inputError && !outputError
+
+    // 保存逻辑抽出来，保存按钮和「重置」共用：重置得立刻落盘才算真的重置，只改输入框等于没生效。
+    val saveWithName: (String) -> Unit = { rawName ->
+        val resolvedName = rawName.trim().ifBlank { trimmedModel }
+        val meta = ModelMetadata(
+            id = trimmedModel,
+            displayName = resolvedName,
+            // 只有真的改过名字才在列表里当别名显示；改回原名/重置 = 未改动。
+            customName = resolvedName != (defaultAlias?.takeIf { it.isNotBlank() } ?: trimmedModel),
+            customIcon = customIcon,
+            contextTokens = contextTokens.trim().toIntOrNull() ?: 0,
+            inputTokens = inputTokens.trim().toIntOrNull(),
+            outputTokens = outputTokens.trim().toIntOrNull(),
+            inputCostUsdPerM = inputPrice.trim().toDoubleOrNull(),
+            outputCostUsdPerM = outputPrice.trim().toDoubleOrNull(),
+            cacheReadCostUsdPerM = cacheReadPrice.trim().toDoubleOrNull(),
+            cacheWriteCostUsdPerM = cacheWritePrice.trim().toDoubleOrNull(),
+            supportsVision = supportsVision,
+            supportsImageOutput = supportsImageOutput,
+            supportsTools = supportsTools,
+            supportsReasoning = supportsReasoning
+        )
+        onSave(trimmedModel, meta)
+    }
 
     val iconPickLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
@@ -261,6 +287,23 @@ internal fun AddModelSheet(
                     value = displayName,
                     onValueChange = { displayName = it }
                 )
+                if (initial != null) {
+                    // 重置 = 恢复成没改过的状态：显示名回系统原名并立即保存，列表回到模型名。
+                    TextButton(
+                        onClick = {
+                            val restored = defaultAlias?.takeIf { it.isNotBlank() } ?: trimmedModel
+                            displayName = restored
+                            saveWithName(restored)
+                        },
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.provider_model_display_name_reset),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
                 SettingsRow(
                     icon = null,
                     title = stringResource(R.string.provider_model_icon),
@@ -396,27 +439,7 @@ internal fun AddModelSheet(
             ) {
                 Button(
                     enabled = canSave,
-                    onClick = {
-                        val input = inputTokens.trim().toIntOrNull()
-                        val output = outputTokens.trim().toIntOrNull()
-                        val meta = ModelMetadata(
-                            id = trimmedModel,
-                            displayName = displayName.trim().ifBlank { trimmedModel },
-                            customIcon = customIcon,
-                            contextTokens = contextTokens.trim().toIntOrNull() ?: 0,
-                            inputTokens = input,
-                            outputTokens = output,
-                            inputCostUsdPerM = inputPrice.trim().toDoubleOrNull(),
-                            outputCostUsdPerM = outputPrice.trim().toDoubleOrNull(),
-                            cacheReadCostUsdPerM = cacheReadPrice.trim().toDoubleOrNull(),
-                            cacheWriteCostUsdPerM = cacheWritePrice.trim().toDoubleOrNull(),
-                            supportsVision = supportsVision,
-                            supportsImageOutput = supportsImageOutput,
-                            supportsTools = supportsTools,
-                            supportsReasoning = supportsReasoning
-                        )
-                        onSave(trimmedModel, meta)
-                    },
+                    onClick = { saveWithName(displayName) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(44.dp),

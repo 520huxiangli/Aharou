@@ -533,8 +533,8 @@ internal fun ModelSelectionSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     val collapseStore = remember { ModelSheetCollapseStore(context.applicationContext) }
-    // 别名与自定义图标存在自定义元数据里，是「用户改过的显示值」，必须与自动解析的元数据合并后
-    // 才能显示，否则这里只会露出原始模型名（2026-10-26 issue #33）。
+    // 自定义图标存在自定义元数据里，与自动解析的元数据合并后才能显示；
+    // 名称固定用原始模型名：别名会把不同模型显示成同一个名字，也盖住模型名里的计费/用途标注。
     val customMetadataStore = remember { CustomModelMetadataStore(context.applicationContext) }
     var customMetadata by remember { mutableStateOf<Map<String, ModelMetadata>>(emptyMap()) }
     LaunchedEffect(Unit) { customMetadata = customMetadataStore.all() }
@@ -689,6 +689,12 @@ internal fun ModelSelectionSheet(
                                             }
                                             ModelSelectionRow(
                                                 model = model,
+                                                // 别名没动过（等于系统原名或未设置）就显示模型名称；改过才显示别名。
+                                                alias = customMetadata[modelMetadataKey(provider.id, model)]?.let { meta ->
+                                                    val isCustom = meta.customName
+                                                        ?: (meta.displayName.isNotBlank() && meta.displayName != model)
+                                                    meta.displayName.takeIf { isCustom && it.isNotBlank() }
+                                                },
                                                 selected = provider.id == currentProviderId && model == currentModel,
                                                 metadata = mergeModelMetadata(
                                                     model,
@@ -714,6 +720,7 @@ internal fun ModelSelectionSheet(
 @Composable
 private fun ModelSelectionRow(
     model: String,
+    alias: String?,
     selected: Boolean,
     metadata: ModelMetadata?,
     testState: ModelTestRowState?,
@@ -733,8 +740,9 @@ private fun ModelSelectionRow(
         Spacer(Modifier.width(Spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             // 行尾让给了「测试」，没有位置再放小勾：选中态改成主色 + 加粗，仍能一眼认出当前选的是哪个。
+            // 设了自定义名（别名）就显示它；没设就显示原始模型名。
             Text(
-                text = metadata?.displayName?.takeIf { it.isNotBlank() } ?: model,
+                text = alias ?: model,
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                 ),
