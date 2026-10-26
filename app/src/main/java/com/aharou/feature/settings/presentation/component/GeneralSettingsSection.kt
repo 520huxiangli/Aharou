@@ -63,13 +63,16 @@ internal fun GeneralSettingsSection(
     sendFileMaxSizeMb: Int,
     onSetSendFileMaxSizeMb: (Int) -> Unit,
     deleteExternalWorkspaceSessions: Boolean,
-    onToggleDeleteExternalWorkspaceSessions: (Boolean) -> Unit
+    onToggleDeleteExternalWorkspaceSessions: (Boolean) -> Unit,
+    contextTrimRounds: Int,
+    onSetContextTrimRounds: (Int) -> Unit
 ) {
     var showStartupSessionSheet by remember { mutableStateOf(false) }
     var editingFirstByteTimeout by remember { mutableStateOf(false) }
     var editingStreamIdleTimeout by remember { mutableStateOf(false) }
     var editingMaxNetworkRetries by remember { mutableStateOf(false) }
     var editingCompactionThreshold by remember { mutableStateOf(false) }
+    var editingContextTrim by remember { mutableStateOf(false) }
     var editingSoftCompactionThreshold by remember { mutableStateOf(false) }
     var editingSendFileMaxSize by remember { mutableStateOf(false) }
 
@@ -91,6 +94,24 @@ internal fun GeneralSettingsSection(
                     AppSwitch(
                         checked = autoRemoveStaleModels,
                         onCheckedChange = onToggleAutoRemoveStaleModels
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = null,
+                title = stringResource(R.string.settings_context_trim_title),
+                subtitle = stringResource(R.string.settings_context_trim_desc),
+                onClick = { editingContextTrim = true },
+                trailing = {
+                    Text(
+                        text = if (contextTrimRounds <= 0) {
+                            stringResource(R.string.settings_context_trim_off)
+                        } else {
+                            stringResource(R.string.settings_context_trim_value, contextTrimRounds)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.semanticColors.subtleText
                     )
                 }
             )
@@ -292,6 +313,21 @@ internal fun GeneralSettingsSection(
                 editingCompactionThreshold = false
             },
             onDismiss = { editingCompactionThreshold = false }
+        )
+    }
+
+    if (editingContextTrim) {
+        NumberInputDialog(
+            title = stringResource(R.string.settings_context_trim_title),
+            initialValue = contextTrimRounds,
+            hint = stringResource(R.string.settings_context_trim_input_hint),
+            minValue = 0,
+            maxValue = 100,
+            onConfirm = {
+                onSetContextTrimRounds(it)
+                editingContextTrim = false
+            },
+            onDismiss = { editingContextTrim = false }
         )
     }
 

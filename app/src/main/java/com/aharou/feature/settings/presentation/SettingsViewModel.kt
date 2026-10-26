@@ -593,6 +593,9 @@ class SettingsViewModel @Inject constructor(
     private val _agentSoundEnabled = MutableStateFlow(false)
     val agentSoundEnabled: StateFlow<Boolean> = _agentSoundEnabled.asStateFlow()
 
+    private val _contextTrimRounds = MutableStateFlow(0)
+    val contextTrimRounds: StateFlow<Int> = _contextTrimRounds.asStateFlow()
+
     private val _autoRemoveStaleModels = MutableStateFlow(true)
     val autoRemoveStaleModels: StateFlow<Boolean> = _autoRemoveStaleModels.asStateFlow()
 
@@ -915,6 +918,9 @@ class SettingsViewModel @Inject constructor(
             }
 
             launch {
+                generalSettingsRepository.contextTrimRoundsFlow.collectLatest {
+                    _contextTrimRounds.value = it
+                }
                 generalSettingsRepository.autoRemoveStaleModelsFlow.collectLatest {
                     _autoRemoveStaleModels.value = it
                 }
@@ -1769,6 +1775,13 @@ class SettingsViewModel @Inject constructor(
     fun setCompactionThresholdPercent(percent: Int) {
         viewModelScope.launch {
             generalSettingsRepository.setCompactionThresholdPercent(percent)
+        }
+    }
+
+    /** 上下文保留轮数：只把最近 N 轮发给模型，0 表示不裁剪。 */
+    fun setContextTrimRounds(rounds: Int) {
+        viewModelScope.launch {
+            generalSettingsRepository.setContextTrimRounds(rounds)
         }
     }
 

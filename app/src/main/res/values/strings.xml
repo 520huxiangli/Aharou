@@ -36,6 +36,11 @@
     <string name="settings_enter_to_send">回车键发送消息</string>
     <string name="settings_enter_to_send_desc">关闭后回车换行，需点发送按钮发送</string>
     <string name="settings_compaction_threshold">自动压缩阈值</string>
+    <string name="settings_context_trim_title">上下文保留轮数</string>
+    <string name="settings_context_trim_desc">只把最近 N 轮对话（一问一答算一轮）发给模型，更早的消息不再参与请求，但历史仍完整保存在本地；0 表示不裁剪。</string>
+    <string name="settings_context_trim_off">不裁剪</string>
+    <string name="settings_context_trim_value">%1$d 轮</string>
+    <string name="settings_context_trim_input_hint">输入轮数（0~100）</string>
     <string name="settings_compaction_threshold_desc">上下文占用达到窗口的该比例时自动压缩</string>
     <string name="settings_soft_compaction_threshold">软精简阈值</string>
     <string name="settings_soft_compaction_threshold_desc">上下文占用达到该比例时，先精简历史里的超长工具输出，暂不调用摘要模型</string>
