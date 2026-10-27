@@ -141,12 +141,11 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 
-      # 构建全部 flavor 再挑要发的两个：AGP 的变体 task 名是「flavor 首字母大写」拼出来的
-      # （x86solo 究竟叫 X86solo 还是 X86Solo 在本地无法验证，构建闸门挡着），
-      # 写错会让整个发版直接失败；assembleRelease 一定存在，多构建一个 universal 换零风险。
+      # 只构建两个单架构包（已用 `:app:tasks --all` 核实过任务名）：
+      # universal 把两套镜像都塞进去，体积翻倍且不再发布，不构建它。
       # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。
-      - name: Build Release APKs
-        run: ./gradlew assembleRelease --stacktrace
+      - name: Build single-arch Release APKs
+        run: ./gradlew :app:assembleArmsoloRelease :app:assembleX86soloRelease --stacktrace
 
       # 只把两个单架构包拷进 dist（universal 把两套镜像都塞进去，体积翻倍，不再发布）：
       #   Aharou-arm64-v1.0.0-rc1.apk      (armsolo)
