@@ -58,10 +58,15 @@ import com.aharou.core.ui.AppTextField
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.aharou.feature.settings.data.local.ModelSheetCollapseStore
 import com.aharou.feature.settings.data.remote.ModelTestResult
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
+import com.aharou.feature.settings.domain.model.ModelScene
+import com.aharou.feature.settings.domain.model.SceneBindingIssue
+import com.aharou.feature.settings.domain.model.SceneResolution
+import com.aharou.feature.settings.presentation.ModelSceneViewModel
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.domain.model.mergeModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
@@ -121,8 +126,11 @@ internal fun DefaultModelsSection(
     onClearVoiceModel: () -> Unit,
     onSelectVoiceTtsModel: (providerId: String, model: String) -> Unit,
     onChangeVoiceTtsVoice: (String) -> Unit,
-    onClearVoiceTtsModel: () -> Unit
+    onClearVoiceTtsModel: () -> Unit,
+    /** 各场景「实际生效的模型」只读视图；默认自取，调用方无需传。 */
+    sceneViewModel: ModelSceneViewModel = hiltViewModel(),
 ) {
+    val sceneResolutions by sceneViewModel.resolutions.collectAsStateWithLifecycle()
     var showVisionSheet by remember { mutableStateOf(false) }
     var showCompactionSheet by remember { mutableStateOf(false) }
     var showTitleSheet by remember { mutableStateOf(false) }
@@ -181,6 +189,7 @@ internal fun DefaultModelsSection(
             SettingsRow(
                 icon = FeatherIcons.Image,
                 title = stringResource(R.string.settings_vision_model),
+                subtitle = sceneBindingHint(sceneResolutions[ModelScene.VISION]),
                 onClick = { showVisionSheet = true },
                 trailing = {
                     Text(
@@ -198,6 +207,7 @@ internal fun DefaultModelsSection(
             SettingsRow(
                 icon = FeatherIcons.Minimize2,
                 title = stringResource(R.string.settings_compaction_model),
+                subtitle = sceneBindingHint(sceneResolutions[ModelScene.COMPACTION]),
                 onClick = { showCompactionSheet = true },
                 trailing = {
                     Text(
@@ -215,6 +225,7 @@ internal fun DefaultModelsSection(
             SettingsRow(
                 icon = FeatherIcons.Type,
                 title = stringResource(R.string.settings_title_model),
+                subtitle = sceneBindingHint(sceneResolutions[ModelScene.TITLE]),
                 onClick = { showTitleSheet = true },
                 trailing = {
                     Text(
@@ -232,6 +243,7 @@ internal fun DefaultModelsSection(
             SettingsRow(
                 icon = FeatherIcons.Camera,
                 title = stringResource(R.string.settings_image_gen_model),
+                subtitle = sceneBindingHint(sceneResolutions[ModelScene.IMAGE_GEN]),
                 onClick = { showImageGenSheet = true },
                 trailing = {
                     Text(
@@ -501,6 +513,21 @@ internal data class VoiceFieldState(
     val onValueChange: (String) -> Unit,
     val placeholder: String
 )
+
+/**
+ * 场景绑定失效时的行内提示：让用户看到「已绑定但实际会回退」，而不是被行尾的
+ * 「跟随聊天模型」误导。未绑定（NOT_CONFIGURED）不提示——行尾文案已经说清了。
+ */
+@Composable
+private fun sceneBindingHint(resolution: SceneResolution?): String? = when {
+    resolution is SceneResolution.Inherited &&
+        resolution.issue != null && resolution.issue != SceneBindingIssue.NOT_CONFIGURED ->
+        stringResource(R.string.settings_scene_binding_fallback)
+    resolution is SceneResolution.Unavailable &&
+        resolution.issue != SceneBindingIssue.NOT_CONFIGURED ->
+        stringResource(R.string.settings_scene_binding_no_fallback)
+    else -> null
+}
 
 /**
  * 模型选择弹层里单行的测试进度：跑着转圈，完成后就地显示结果摘要。

@@ -135,7 +135,7 @@ class ContainerSourcesRepository @Inject constructor(
 sealed interface ApplyResult {
     /** [detail] 对换源是实际选中的镜像站；[warning] 表示改动已落盘但校验没通过。 */
     data class Ok(val detail: String = "", val warning: String? = null) : ApplyResult
-    data class Failure(val message: String) : ApplyResult
+    data class Failure(val message: String, val notReady: Boolean = false) : ApplyResult
 }
 
 /** 重放结局。[None] 表示容器内已经一致，不需要动。 */
@@ -356,7 +356,8 @@ class ContainerSourcesApplier @Inject constructor(
             .onFailure { FileLogger.e(TAG, "容器命令执行异常", it) }
             .getOrNull()
 
-    private fun notReady() = ApplyResult.Failure(context.getString(R.string.container_not_ready_hint))
+    private fun notReady() =
+        ApplyResult.Failure(context.getString(R.string.container_not_ready_hint), notReady = true)
 
     private fun markers(output: String): Map<String, String> =
         output.lineSequence()
@@ -581,8 +582,14 @@ class ContainerSourcesViewModel @Inject constructor(
         }
         viewModelScope.launch {
             mutex.withLock {
+                // 先落盘再应用：容器还没初始化时写不进去，但选择必须记住——首次解压 rootfs 时
+                // ContainerInstaller 会读它直接写源，否则「先选源再初始化」永远是个死循环。
+                val saved = ContainerSourcesSettings(mode, _state.value.mirrorHost, _state.value.dns)
+                runCatching { repository.save(saved) }
+                    .onFailure { FileLogger.w(TAG, "保存镜像源选择失败", it) }
                 when (val applied = applier.applyMirror(mode)) {
-                    is ApplyResult.Failure -> finishError(applied.message)
+                    is ApplyResult.Failure ->
+                        if (applied.notReady) finishSavedPending(saved) else finishError(applied.message)
                     is ApplyResult.Ok -> {
                         val updated = ContainerSourcesSettings(mode, applied.detail, _state.value.dns)
                         runCatching { repository.save(updated) }
@@ -609,8 +616,16 @@ class ContainerSourcesViewModel @Inject constructor(
         }
         viewModelScope.launch {
             mutex.withLock {
+                val saved = ContainerSourcesSettings(
+                    mirror = _state.value.mirror,
+                    mirrorHost = _state.value.mirrorHost,
+                    dns = mode
+                )
+                runCatching { repository.save(saved) }
+                    .onFailure { FileLogger.w(TAG, "保存 DNS 选择失败", it) }
                 when (val applied = applier.applyDns(mode)) {
-                    is ApplyResult.Failure -> finishError(applied.message)
+                    is ApplyResult.Failure ->
+                        if (applied.notReady) finishSavedPending(saved) else finishError(applied.message)
                     is ApplyResult.Ok -> {
                         val updated = ContainerSourcesSettings(
                             mirror = _state.value.mirror,
@@ -677,6 +692,25 @@ class ContainerSourcesViewModel @Inject constructor(
 
     private fun finishError(message: String) {
         _state.update { it.copy(busy = null, message = message, messageIsError = true) }
+    }
+
+    /**
+     * 容器还没初始化：选择已经保存，只是暂时没地方应用。
+     *
+     * 不当错误处理——首次装包时本来就不存在可写的容器，这里报红只会让用户以为设置没生效，
+     * 而他其实已经可以进终端了（安装时会按这份选择写源）。
+     */
+    private fun finishSavedPending(settings: ContainerSourcesSettings) {
+        _state.update {
+            it.copy(
+                mirror = settings.mirror,
+                mirrorHost = settings.mirrorHost,
+                dns = settings.dns,
+                busy = null,
+                message = context.getString(R.string.container_sources_saved_pending_init),
+                messageIsError = false,
+            )
+        }
     }
 }
 
