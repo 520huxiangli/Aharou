@@ -51,7 +51,8 @@ private const val TAG = "RemoteSshEngine"
 class RemoteSshEngine @Inject constructor(
     private val connection: RemoteSshConnection,
     private val profileResolver: ContainerProfileResolver,
-    private val connectionResolver: ActiveRemoteConnectionResolver
+    private val connectionResolver: ActiveRemoteConnectionResolver,
+    private val bootstrapSync: RemoteBootstrapSync
 ) : CommandEngine {
 
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -77,6 +78,9 @@ class RemoteSshEngine @Inject constructor(
             if (connection.isConnected() && connection.config == cfg) return@withLock
             connection.connect(cfg)
         }
+        // 连上后把内置文档/子代理/团队铺到远端（同一目标只铺一次）：不铺的话远端 ~/.aharou 下
+        // 只有 workspaces，AI 读不到文档、内置 Explore 子代理也不存在。
+        bootstrapSync.syncIfNeeded()
     }
 
     override fun runCommandStream(

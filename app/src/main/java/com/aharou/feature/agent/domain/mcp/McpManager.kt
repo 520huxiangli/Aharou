@@ -4,6 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.tool.ToolRegistry
+import com.aharou.feature.agent.domain.container.ContainerProfileResolver
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.vault.VaultRepository
@@ -62,6 +63,7 @@ class McpManager @Inject constructor(
     private val containerEngine: LinuxContainerEngine,
     private val workspaceRepository: WorkspaceRepository,
     private val containerSettingsRepository: ContainerSettingsRepository,
+    private val profileResolver: ContainerProfileResolver,
     private val vault: VaultRepository
 ) {
     private companion object {
@@ -279,9 +281,16 @@ class McpManager @Inject constructor(
         return try {
             FileLogger.i(TAG, "[${cfg.name}] 开始连接（${if (cfg.isStdio) "stdio" else "HTTP"}，工作区 $workspacePath）")
             val t = if (cfg.isStdio) {
-                // stdio server 跑在「运行时容器」上：本地模式用当前容器，远程 SSH 模式用默认容器。
-                // 容器未就绪不自动初始化，直接失败并引导去终端页完成初始化。
-                val runtimeProfile = resolveMcpRuntimeProfile()
+                // stdio server 跑在「运行时容器」上：按**本工作区**解析容器，不再只认全局设置。
+                // 远程 SSH 容器里跑 stdio 需要走 SSH 起进程 + 管道，目前不支持；
+                // 静默落到本地会让远端工作区意外在手机上起一个子进程，所以直接拒绝并说明。
+                val runtimeProfile = profileResolver.forWorkspace(workspacePath)
+                if (runtimeProfile.mode == ExecutionMode.REMOTE_SSH) {
+                    throw IllegalStateException(
+                        "stdio 类型的 MCP server「${cfg.name}」暂不支持远程 SSH 容器（${runtimeProfile.name}），" +
+                            "请改用 HTTP 类型的 server"
+                    )
+                }
                 containerEngine.notReadyHintFor(runtimeProfile)?.let {
                     throw IllegalStateException(it)
                 }
@@ -400,12 +409,6 @@ class McpManager @Inject constructor(
             runtime.statuses + status
         }
         if (path == activeWorkspace) _statuses.value = runtime.statuses
-    }
-
-    /** 解析 stdio server 的运行时容器：本地模式用当前 profile，远程 SSH 模式用默认容器。 */
-    private suspend fun resolveMcpRuntimeProfile(): ContainerProfile {
-        val active = currentActiveProfile()
-        return if (active.mode == ExecutionMode.REMOTE_SSH) resolveDefaultContainerProfile() else active
     }
 
     /** 当前激活 profile：按 id 从配置列表解析，找不到回退内置 Alpine。 */
