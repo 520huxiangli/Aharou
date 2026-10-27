@@ -52,7 +52,8 @@ class SystemPromptProvider @Inject constructor(
     private val promptFragmentCatalog: PromptFragmentCatalog,
     private val ruleRepository: RuleRepository,
     private val chatSessionDao: ChatSessionDao,
-    private val sharedInbox: SharedInbox
+    private val sharedInbox: SharedInbox,
+    private val containerProfileResolver: com.aharou.feature.agent.domain.container.ContainerProfileResolver
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -508,6 +509,29 @@ class SystemPromptProvider @Inject constructor(
     private val workspaceChangeSource = WorkspaceChangeSource()
     private val currentTimeSource = CurrentTimeSource()
     private val modelIdentitySource = ModelIdentitySource()
+    private val remoteModeSource = RemoteModeSource()
+
+    /**
+     * 当前执行环境是远程 SSH 时，明确告知资源边界。
+     *
+     * 不写这段的话，远程模式最坑的是「半通」：命令与文件都跑到服务器上、`~/shared` 与本地记忆文件
+     * 不可读，但 `memory` 工具（走 App 通道）照常可用——AI 很容易以为自己在本地，
+     * 拿 `/root/.aharou/memory`、`~/shared/inbox` 这类本地路径去撞，白跑好几轮。
+     */
+    private inner class RemoteModeSource : PromptSource {
+        override fun build(ctx: AgentContext): String? {
+            val profile = runCatching { containerProfileResolver.forWorkspace(ctx.projectRoot) }.getOrNull()
+                ?: return null
+            if (profile.mode != com.aharou.feature.settings.data.repository.ExecutionMode.REMOTE_SSH) return null
+            return """
+                [System] 当前执行环境：**远程 SSH 容器**（${profile.name}）。
+                命令、文件读写、git 都落在服务器上，`~/workspace` 是服务器上的工作区目录。
+                - 共享区 `~/shared` 与本地记忆文件 `~/.aharou/memory/` 在手机上，**服务器上不可达**；
+                  需要取记忆或写记忆时用 `memory` 工具（走 App 通道，可用），不要拿 shell 去读那些路径。
+                - 项目级技能/子代理读的是服务器上 `<工作区>/.aharou/`，新建工作区里是空的，没有就说没有。
+            """.trimIndent()
+        }
+    }
 
     private val soulSource = SoulSource()
 
@@ -753,6 +777,10 @@ class SystemPromptProvider @Inject constructor(
             if (DATE_VAR !in raw) {
                 append("\n\n")
                 append(currentTimeSource.build(agentContext))
+            }
+            remoteModeSource.build(agentContext)?.let {
+                append("\n\n")
+                append(it)
             }
         }
     }
