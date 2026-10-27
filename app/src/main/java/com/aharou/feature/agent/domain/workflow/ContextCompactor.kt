@@ -71,6 +71,9 @@ class ContextCompactor @Inject constructor(
      * 测试替换成虚拟时间调度器，否则 runTest 推不动真实线程池上的超时等待。
      */
     internal var backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default
+
+    /** 分级裁剪的规划与执行（级别定义、最小够用前缀、落盘/骨架化都在 [ContextTrimPlanner]）。 */
+    private val trimPlanner = ContextTrimPlanner(fileAccess, pathHomeResolver)
     internal companion object {
         const val TAG = "ContextCompactor"
 
@@ -128,6 +131,9 @@ class ContextCompactor @Inject constructor(
 
         /** 软精简后追加在尾部的标记，用于幂等判断。 */
         const val SOFT_TRIM_MARKER = "\n[Tool output trimmed to save context]"
+
+        /** 压缩/裁剪释放不到请求总量的这个百分比就算收益不足：不值得为它作废旧前缀缓存。 */
+        const val MIN_GAIN_PERCENT = 5
 
         /**
          * 校验失败的原因会落库并渲染成失败卡片直接给用户看，所以换成能照做的说法；
@@ -214,24 +220,6 @@ class ContextCompactor @Inject constructor(
         val tools: List<AgentTool>,
         val materialKey: String
     )
-
-    private fun storeOriginalToolOutput(message: AgentMessage.ToolResultMessage): String? {
-        return try {
-            val path = CompactionText.outputPath(message.result)
-            if (path != null) path.takeIf { fileAccess.exists(it) && fileAccess.isFile(it) } else {
-                val hash = MessageDigest.getInstance("SHA-256").digest(message.result.toByteArray(Charsets.UTF_8))
-                    .joinToString("") { "%02x".format(it) }
-                val stored = pathHomeResolver.aharouRoot() + "/tool-output/soft-trim-$hash.txt"
-                if (!fileAccess.exists(stored)) fileAccess.writeFile(stored, message.result, overwrite = false)
-                stored
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "Cannot archive tool output for soft trim: ${e.message}")
-            null
-        }
-    }
 
     /**
      * 校验失败抛的是英文原句，会直接落库渲染成卡片，这里换成用户能看懂并照做的说法。
@@ -354,9 +342,22 @@ class ContextCompactor @Inject constructor(
                 val targetTokens = (squeezableBudget * COMPACTION_TARGET_PERCENT / 100.0).toInt()
                 val softThreshold = (inputBudget * generalSettingsRepository.softCompactionThresholdPercent() / 100.0).toInt()
                 val reachedHard = currentTokens >= threshold || currentTokens >= inputBudget
+                // 分级裁剪先试一遍：按成本从低到高逐级裁（清 reasoning → 落盘换引用 → 骨架化），够用就直接返回，
+                // 既不调模型、也不改写历史正文——旧消息的字节与上一轮一致，供应商的前缀缓存仍能命中。
+                if (!force && squeezableBudget > 0 && (reachedHard || currentTokens >= softThreshold)) {
+                    val ladderTarget = if (reachedHard) targetTokens else softThreshold
+                    val ladder = withContext(Dispatchers.IO) {
+                        trimPlanner.planTrim(messages, ladderTarget, sendsImages, systemPrompt, tools, ContextTrimPlanner.TRIM_KEEP_RECENT_ITERATIONS)
+                    }
+                    if (ladder.changed && ladder.after <= ladderTarget) {
+                        FileLogger.i(TAG, "分级裁剪顶替压缩：${ladder.before} → ${ladder.after} tokens（目标 $ladderTarget），${ladder.steps.joinToString(" ")}")
+                        return@withTimeoutOrNull CompactionResult(ladder.messages, compacted = true)
+                    }
+                    FileLogger.i(TAG, "分级裁剪收益不足：${ladder.before} → ${ladder.after} tokens（目标 $ladderTarget，${ladder.steps.joinToString(" ")}），继续摘要压缩")
+                }
                 if (!force && !reachedHard && currentTokens >= softThreshold) {
                     val trimmed = withContext(Dispatchers.IO) {
-                        softTrimToolOutputs(messages, ::storeOriginalToolOutput)
+                        softTrimToolOutputs(messages, trimPlanner::storeOriginalToolOutput)
                     }
                     if (trimmed !== messages) {
                         FileLogger.i(TAG, "上下文约 $currentTokens tokens 达软阈值 $softThreshold，已精简历史工具输出（未调用摘要模型）")
@@ -384,7 +385,18 @@ class ContextCompactor @Inject constructor(
                 // （原件在盘上，模型能 readFile 取回），仍装不下再把切分点往后推、多交给摘要。
                 // 未配对的工具调用批次是硬边界，越过会让 tail 出现没有对应调用的工具结果。
                 var tail = messages.drop(splitIndex)
-                if (CompactionText.tokensOf(projectImagesForEstimate(tail, sendsImages)) >= tailBudget) {
+                fun tailOverBudget() = CompactionText.tokensOf(projectImagesForEstimate(tail, sendsImages)) >= tailBudget
+                if (tailOverBudget()) {
+                    // 保留段内部也要裁：长任务里保留段本身就是整个任务，只往外推切分点永远压不到预算内。
+                    val trimmedTail = withContext(Dispatchers.IO) {
+                        trimPlanner.planTrim(tail, tailBudget, sendsImages, "", emptyList(), ContextTrimPlanner.TRIM_KEEP_RECENT_IN_TAIL)
+                    }
+                    if (trimmedTail.changed && trimmedTail.after < trimmedTail.before) {
+                        FileLogger.i(TAG, "保留段内部分级裁剪：${trimmedTail.before} → ${trimmedTail.after} tokens（预算 $tailBudget），${trimmedTail.steps.joinToString(" ")}")
+                        tail = trimmedTail.messages
+                    }
+                }
+                if (tailOverBudget()) {
                     val fitted = CompactionText.fitSplitIndex(imageProjected, splitIndex,
                         CompactionText.unmatchedToolBatchStart(messages), tailBudget)
                     if (fitted > splitIndex) {
@@ -543,6 +555,12 @@ class ContextCompactor @Inject constructor(
                 FileLogger.i(TAG, "压缩未缩减 token（${plan.estimatedTokens} → $compactedTokens），保留原历史")
                 return null
             }
+            // 收益判断：装得进预算但只释放几个百分点时，改写历史换来的只是模型调用与一次前缀缓存作废。
+            val gain = plan.estimatedTokens - compactedTokens
+            if (compactedTokens <= plan.inputBudget && gain * 100 < plan.estimatedTokens * MIN_GAIN_PERCENT) {
+                FileLogger.i(TAG, "压缩收益不足，跳过压缩：${plan.estimatedTokens} → $compactedTokens tokens（只释放 $gain，低于 $MIN_GAIN_PERCENT%），保留原历史")
+                return null
+            }
             // 落库门槛只看「装不装得进输入预算」：targetTokens 是留给保留段用的额度，
             // 拿来当门槛会让固定开销大的窗口恒不成立（128k 窗口 + 约 5 万固定开销就是那种情形）。
             check(compactedTokens <= plan.inputBudget) {
@@ -581,7 +599,7 @@ class ContextCompactor @Inject constructor(
      */
     private suspend fun forceTrim(plan: CompactionPlan): CompactionResult? {
         val trimmed = withContext(Dispatchers.IO) {
-            keepNewestImages(softTrimToolOutputs(plan.messages, ::storeOriginalToolOutput), FORCED_TRIM_IMAGES)
+            keepNewestImages(softTrimToolOutputs(plan.messages, trimPlanner::storeOriginalToolOutput), FORCED_TRIM_IMAGES)
         }
         if (trimmed === plan.messages) return null
         val tokens = CompactionText.estimateRequest(plan.systemPrompt, plan.tools,
@@ -732,62 +750,6 @@ class ContextCompactor @Inject constructor(
         }
         return result
     }
-}
-
-/** 默认保留的图片张数。 */
-internal const val DEFAULT_CONTEXT_IMAGES = 4
-private const val IMAGE_OMITTED_NOTE = "\n(较早的截图已省略)"
-
-/**
- * 送模型前限制图片数量：只保留最新 [maxImages] **张**图参与本次请求，更早的图片换成一行占位说明，
- * 消息里的文字仍保留。作用的是「送给模型的副本」，历史本体不动（[dropImages] 返回新对象）。
- * 限额按累计张数而不是消息条数：单条消息可带多张图（见 ImageTools / McpTool），按条数会在
- * 「一条带 8 张图」时把 8 张全发出去。取舍仍以整条消息为单位（不会只发半条消息里的图），
- * 但停在哪一条由累计张数决定；最新的那条带图消息无条件保留，否则刚发的截图会被自己裁掉。
- * 参考 nanomuse vision.py 的 keep_newest_images()：带图消息多为影子屏/浏览器截图，
- * 每轮工具循环都会重发整段历史，不设预算会反复传输全部截图。
- */
-internal fun keepNewestImages(messages: List<AgentMessage>, maxImages: Int = DEFAULT_CONTEXT_IMAGES): List<AgentMessage> {
-    if (maxImages <= 0) return messages
-    var budget = maxImages
-    val keep = HashSet<Int>()
-    for (index in messages.indices.reversed()) {
-        val count = messages[index].imageCount()
-        if (count == 0) continue
-        if (keep.isNotEmpty() && count > budget) break
-        keep.add(index)
-        budget -= count
-    }
-    if (keep.isEmpty() || keep.size == messages.count { it.imageCount() > 0 }) return messages
-    return messages.mapIndexed { index, message ->
-        if (index in keep || message.imageCount() == 0) message else message.dropImages()
-    }
-}
-
-/**
- * 估算侧的图片投影：与发送侧共用 [keepNewestImages]（同一套裁剪逻辑，两边各写一份迟早漂移成
- * 「估的比发的小」）。不支持图片的模型按「一张都不发」算，补的占位文案也顺带对上真实请求里的说明。
- */
-internal fun projectImagesForEstimate(messages: List<AgentMessage>, sendsImages: Boolean): List<AgentMessage> =
-    if (sendsImages) keepNewestImages(messages)
-    else messages.map { message -> if (message.imageCount() > 0) message.dropImages() else message }
-
-private fun AgentMessage.imageCount(): Int = when (this) {
-    is AgentMessage.UserMessage -> images.size
-    is AgentMessage.AssistantMessage -> images.size
-    is AgentMessage.ToolResultMessage -> images.size
-}
-
-/** 剥掉图片并补一行占位说明。工具结果的占位接在喂模型的 [AgentMessage.ToolResultMessage.modelResult] 上，不动 result。 */
-private fun AgentMessage.dropImages(): AgentMessage = when (this) {
-    is AgentMessage.UserMessage -> copy(images = emptyList(), content = content + IMAGE_OMITTED_NOTE)
-    is AgentMessage.AssistantMessage -> copy(images = emptyList(), content = content + IMAGE_OMITTED_NOTE)
-    is AgentMessage.ToolResultMessage -> copy(
-        images = emptyList(),
-        modelResult = (modelResult
-            ?: com.aharou.feature.agent.domain.tool.modelToolResultText(toolName, result)
-            ?: result) + IMAGE_OMITTED_NOTE
-    )
 }
 
 internal object CompactionText {
