@@ -257,8 +257,8 @@ android {
 
     // mp4 必须保持不压缩：PetVideoView 用 `assets.openFd()` 取文件描述符交给 MediaPlayer，
     // 压缩过的 asset 拿不到 fd（会直接抛 FileNotFoundException）。
-    // 语言包（traineddata）不在此列：TesseractOcrEngine 用 `assets.open()` 流式读、首次使用解压到
-    // 私有目录，不依赖 fd；实测 deflate 还能压掉四成多（6.3 MB → 3.5 MB），故不再排除。
+    // 语言包（traineddata）也不再内置：语言包已改为首次用 OCR 时运行时下载到私有目录
+    // （见 TessdataManager），assets 里不再有这类文件，与 noCompress 无关了。
     androidResources {
         noCompress += listOf("mvn", "mp4")
     }

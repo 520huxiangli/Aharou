@@ -267,6 +267,8 @@ fun SettingsScreen(
     val ocrForTextOnlyModels by viewModel.ocrForTextOnlyModels.collectAsStateWithLifecycle()
     val voiceModelStatus by viewModel.voiceModelStatus.collectAsStateWithLifecycle()
     val voiceModelState by viewModel.voiceModelState.collectAsStateWithLifecycle()
+    val tessdataStatus by viewModel.tessdataStatus.collectAsStateWithLifecycle()
+    val tessdataState by viewModel.tessdataState.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
     val containerProfiles by viewModel.profiles.collectAsStateWithLifecycle()
     val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
@@ -1042,6 +1044,9 @@ fun SettingsScreen(
                     voiceModelStatus = voiceModelStatus,
                     voiceModelState = voiceModelState,
                     onDownloadVoiceModel = { viewModel.downloadVoiceModel() },
+                    tessdataStatus = tessdataStatus,
+                    tessdataState = tessdataState,
+                    onDownloadTessdata = { viewModel.downloadTessdata() },
                     modelMetadata = modelMetadata,
                     onLoadMetadata = { viewModel.loadAllModelMetadata() },
                     onSelectVisionModel = { pid, m -> viewModel.setVisionModel(pid, m) },

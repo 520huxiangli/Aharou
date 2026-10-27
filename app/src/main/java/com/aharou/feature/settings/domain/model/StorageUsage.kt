@@ -16,6 +16,8 @@ enum class StorageCategory(@param:StringRes val labelRes: Int) {
     Workspaces(R.string.storage_category_workspaces),
     AiConfig(R.string.storage_category_ai_config),
     VoiceModels(R.string.storage_category_voice_models),
+    /** 本机 OCR 语言包（首次用 OCR 时按需下载）。 */
+    OcrTessdata(R.string.storage_category_ocr_tessdata),
     /** 用户自己导入的桌宠形象（内置角色在 assets 里，不计入）。 */
     PetAssets(R.string.storage_category_pet_assets),
     Checkpoints(R.string.storage_category_checkpoints),
@@ -61,6 +63,7 @@ enum class CleanupKind(
     ToolOutput(R.string.storage_clean_tool_output, R.string.storage_clean_tool_output_desc),
     VisionSessions(R.string.storage_clean_vision, R.string.storage_clean_vision_desc),
     VoiceModels(R.string.storage_clean_voice_models, R.string.storage_clean_voice_models_desc),
+    OcrTessdata(R.string.storage_clean_ocr_tessdata, R.string.storage_clean_ocr_tessdata_desc),
     PetAssets(R.string.storage_clean_pet_assets, R.string.storage_clean_pet_assets_desc)
 }
 

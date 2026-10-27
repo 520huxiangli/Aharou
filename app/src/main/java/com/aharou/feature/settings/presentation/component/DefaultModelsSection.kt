@@ -28,6 +28,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
+import com.aharou.feature.agent.domain.ocr.TessdataState
+import com.aharou.feature.agent.domain.ocr.TessdataStatus
 import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
 import androidx.compose.material3.Surface
@@ -74,6 +76,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
 import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Camera
+import compose.icons.feathericons.Download
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
@@ -112,6 +115,9 @@ internal fun DefaultModelsSection(
     voiceModelStatus: VoiceModelStatus,
     voiceModelState: VoiceModelState = VoiceModelState.Idle,
     onDownloadVoiceModel: () -> Unit = {},
+    tessdataStatus: TessdataStatus,
+    tessdataState: TessdataState = TessdataState.Idle,
+    onDownloadTessdata: () -> Unit = {},
     modelMetadata: Map<String, ModelMetadata>,
     onLoadMetadata: () -> Unit,
     onSelectVisionModel: (providerId: String, model: String) -> Unit,
@@ -301,6 +307,42 @@ internal fun DefaultModelsSection(
                     AppSwitch(
                         checked = ocrForTextOnlyModels,
                         onCheckedChange = { onToggleOcrForTextOnlyModels() }
+                    )
+                }
+            )
+            SettingsDivider()
+            val tessdataDownloading = tessdataState as? TessdataState.Downloading
+            val tessdataProblem = when {
+                tessdataStatus.ready -> null
+                // 从未下载过（而不是下载残了）：用不上 OCR 的人本来就不该有这份包
+                tessdataStatus.neverDownloaded -> stringResource(R.string.settings_ocr_pack_not_downloaded)
+                else -> {
+                    val missing = stringResource(R.string.settings_ocr_pack_missing)
+                    val mismatch = stringResource(R.string.settings_ocr_pack_size_mismatch)
+                    tessdataStatus.files.filter { !it.ok }
+                        .joinToString("、") { f -> "${f.name}：" + if (f.actual == null) missing else mismatch }
+                }
+            }
+            SettingsRow(
+                icon = FeatherIcons.Download,
+                title = stringResource(R.string.settings_ocr_pack_title),
+                subtitle = when {
+                    tessdataDownloading != null -> stringResource(
+                        R.string.settings_ocr_pack_downloading,
+                        (tessdataDownloading.progress * 100).toInt()
+                    )
+                    tessdataState is TessdataState.Failed -> stringResource(R.string.settings_ocr_pack_failed)
+                    tessdataProblem != null -> tessdataProblem
+                    else -> stringResource(R.string.settings_ocr_pack_ready)
+                },
+                onClick = onDownloadTessdata,
+                trailing = {
+                    Text(
+                        text = if (tessdataDownloading != null) stringResource(R.string.settings_ocr_pack_downloading_short)
+                        else stringResource(R.string.settings_ocr_pack_download),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
                     )
                 }
             )

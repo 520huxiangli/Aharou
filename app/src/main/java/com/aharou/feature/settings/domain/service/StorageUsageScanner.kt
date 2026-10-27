@@ -8,6 +8,7 @@ import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.ContainerProfile
+import com.aharou.feature.agent.domain.ocr.TessdataPack
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
 import com.aharou.feature.agent.domain.tool.file.VisionSessionStore
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
@@ -72,6 +73,7 @@ class StorageUsageScanner @Inject constructor(
         emit(otherDataEntry(cancelled))
         emit(aiConfigEntry(cancelled))
         emit(voiceModelsEntry(cancelled))
+        emit(tessdataEntry())
         emit(petAssetsEntry(cancelled))
         emit(workspacesEntry(cancelled))
         emit(containerEntry(cancelled))
@@ -94,6 +96,8 @@ class StorageUsageScanner @Inject constructor(
             CleanupKind.VisionSessions -> clearDirContents(visionSessionStore.sessionDir)
             // 整个 voice_models 一起清：里面的 .staging 与没删干净的 tar.bz2 都是同一批下载的残留
             CleanupKind.VoiceModels -> clearDirContents(File(context.filesDir, VOICE_MODELS_DIR))
+            // 整个 tessdata-parent 一起清：里面的 .part 与 tessdata/ 都是同一批下载的残留
+            CleanupKind.OcrTessdata -> clearDirContents(File(context.filesDir, TESSDATA_PARENT_DIR))
             CleanupKind.PetAssets -> clearDirContents(File(context.filesDir, PET_ASSETS_DIR))
         }
     }
@@ -224,6 +228,19 @@ class StorageUsageScanner @Inject constructor(
     }
 
     /**
+     * 本机 OCR 语言包：`filesDir/tessdata-parent/tessdata`，按语言包文件逐个列出。
+     * 下载中断留下的 `.part` 也算在内——清掉后才和下载器看到的状态一致。
+     */
+    private fun tessdataEntry(): StorageEntry {
+        val dir = File(File(context.filesDir, TESSDATA_PARENT_DIR), TessdataPack.DIR)
+        val files = dir.listFiles { f: File -> f.isFile }?.sortedBy { it.name } ?: emptyList()
+        val details = files
+            .map { StorageDetail(label = it.name, bytes = it.length()) }
+            .filter { it.bytes > 0 }
+        return StorageEntry(StorageCategory.OcrTessdata, details.sumOf { it.bytes }, details)
+    }
+
+    /**
      * 日志：直接问两个 logger 要文件清单，而不是猜目录——它们优先写外部私有目录，
      * 外部不可用时回退到内部，路径由 logger 自己决定。
      */
@@ -305,6 +322,8 @@ class StorageUsageScanner @Inject constructor(
         private const val PROJECTS_DIR = "projects"
         private const val CHECKPOINTS_DIR = "checkpoints"
         private const val VOICE_MODELS_DIR = VoiceModels.MODEL_ROOT_DIR
+        /** OCR 语言包根目录（内含 tessdata/），与 [TessdataPack] 同一来源。 */
+        private const val TESSDATA_PARENT_DIR = TessdataPack.PARENT_DIR
         /** 用户导入的桌宠形象根目录（内置角色在 assets，不在这）。 */
         private const val PET_ASSETS_DIR = "pet"
         private const val PREFS_DIR = "shared_prefs"
@@ -316,7 +335,8 @@ class StorageUsageScanner @Inject constructor(
          * 不含 AI 配置目录：它已改名为 aharou，由 [ContainerInstaller.aharouDir] 提供，见 [otherDataEntry]。
          */
         private val CLASSIFIED_DIRS = setOf(
-            PROJECTS_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, PET_ASSETS_DIR, "logs", "ai-logs"
+            PROJECTS_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, TESSDATA_PARENT_DIR,
+            PET_ASSETS_DIR, "logs", "ai-logs"
         )
 
         private const val TOP_SESSIONS = 5

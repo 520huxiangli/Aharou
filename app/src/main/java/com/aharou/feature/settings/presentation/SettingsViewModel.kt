@@ -32,6 +32,9 @@ import com.aharou.feature.agent.domain.mcp.McpServerEntry
 import com.aharou.feature.agent.domain.mcp.McpServerStatus
 import com.aharou.feature.agent.domain.mcp.McpToolDescriptor
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.ocr.TessdataManager
+import com.aharou.feature.agent.domain.ocr.TessdataState
+import com.aharou.feature.agent.domain.ocr.TessdataStatus
 import com.aharou.feature.agent.domain.permission.PermissionRule
 import com.aharou.feature.agent.domain.permission.PermissionRulesRepository
 import com.aharou.feature.agent.domain.skill.SkillForm
@@ -238,6 +241,7 @@ class SettingsViewModel @Inject constructor(
     private val voiceTtsSettingsRepository: VoiceTtsSettingsRepository,
     private val voiceWakeSettingsRepository: VoiceWakeSettingsRepository,
     private val voiceModelManager: VoiceModelManager,
+    private val tessdataManager: TessdataManager,
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
@@ -542,6 +546,33 @@ class SettingsViewModel @Inject constructor(
 
     fun refreshVoiceModelStatus() {
         _voiceModelStatus.value = voiceModelManager.statusAll()
+    }
+
+    /** OCR 语言包的当前状态（打开设置页时构造 VM 即算好）。 */
+    private val _tessdataStatus = MutableStateFlow(tessdataManager.status())
+    val tessdataStatus: StateFlow<TessdataStatus> = _tessdataStatus.asStateFlow()
+
+    /** OCR 语言包下载状态；[TessdataState.Idle] 表示没在跑。 */
+    private val _tessdataState = MutableStateFlow<TessdataState>(TessdataState.Idle)
+    val tessdataState: StateFlow<TessdataState> = _tessdataState.asStateFlow()
+
+    fun refreshTessdataStatus() {
+        _tessdataStatus.value = tessdataManager.status()
+    }
+
+    /** 下载（已下载则重新下载）OCR 语言包；进度与结果都走 [tessdataState]。 */
+    fun downloadTessdata() {
+        if (_tessdataState.value is TessdataState.Downloading) return
+        viewModelScope.launch {
+            _tessdataState.value = TessdataState.Downloading(0f)
+            runCatching { tessdataManager.redownload { _tessdataState.value = it } }
+                .onFailure { e ->
+                    if (e !is CancellationException) {
+                        _tessdataState.value = TessdataState.Failed(e.message ?: "")
+                    }
+                }
+            refreshTessdataStatus()
+        }
     }
 
     /** 下载（已下载则重新下载）全部离线语音模型；进度与结果都走 [voiceModelState]。 */
