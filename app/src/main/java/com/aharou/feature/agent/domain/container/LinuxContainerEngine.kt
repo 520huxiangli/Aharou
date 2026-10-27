@@ -905,11 +905,10 @@ class LinuxContainerEngine @Inject constructor(
         // 每个容器用自己 rootfs 下的 /tmp：镜像自带该目录，但重置/删除别的容器不该影响本容器，
         // 且 proot 要求 PROOT_TMP_DIR 已存在，故启动前确保建好（同 -b 源路径的处理）。
         val tmpDir = containerInstaller.prootTmpDirFor(profile).apply { mkdirs() }
-        // github.com 被 DNS 污染时（其他域名正常、唯它解析失败）注入 /etc/hosts 兑底，
-        // 否则容器内 git clone/pull/push 一律报「Could not resolve host」。解析正常时空转。
-        com.aharou.core.net.GitHubDnsFallback.ensureResolvable(
-            containerInstaller.rootfsDirFor(profile)
-        )
+        // github.com 被 DNS 污染时（其他域名正常、唯它解析失败）注入 /etc/hosts 兜底，否则容器内
+        // git clone/pull/push 一律报「Could not resolve host」。
+        // resolv.conf 不在这里写：容器 DNS 归「设置 → 镜像与 DNS」管，这里覆盖会冲掉用户的选择。
+        com.aharou.core.net.GitHubDnsFallback.ensureResolvable(containerInstaller.rootfsDirFor(profile))
         return mapOf(
             // Android proot 必需的环境变量
             "PROOT_TMP_DIR" to tmpDir.absolutePath, // Android 没有 /tmp

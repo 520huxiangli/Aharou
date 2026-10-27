@@ -76,7 +76,7 @@ pkg_add() {
     case "$PMGR" in
         apk)
             apk_update
-            apk add --no-cache "$@"
+            timeout "$APK_TIMEOUT" apk add --no-cache "$@"
             ;;
         apt)
             export DEBIAN_FRONTEND=noninteractive
@@ -208,9 +208,20 @@ runtime_ver() {
 # "Unable to lock database: temporary error (try again later)"。以前这会误报成网络问题。
 # 清锁前必须确认没有 apk 在跑（否则会拆掉真正在用的锁，把数据库搞坏）。
 apk_process_running() {
+    _self_root=$(readlink /proc/$$/root 2>/dev/null)
     for p in /proc/[0-9]*; do
         [ -r "$p/comm" ] || continue
-        [ "$(cat "$p/comm" 2>/dev/null)" = "apk" ] && return 0
+        [ "$(cat "$p/comm" 2>/dev/null)" = "apk" ] && {
+            # PRoot 把宿主的 /proc 绑进了容器，宿主上其它 Aharou 实例（另一个包、另一个 rootfs）
+            # 里的 apk 也会出现在这里。把它们当成「自己正在装」会导致永远不敢清锁、
+            # 每次重试都报 Unable to lock database。只认和自己同一个 rootfs 的 apk；
+            # 读不到 root 链接时退回旧行为（宁可不清锁，也不拆真在用的）。
+            if [ -n "$_self_root" ]; then
+                [ "$(readlink "$p/root" 2>/dev/null)" = "$_self_root" ] && return 0
+            else
+                return 0
+            fi
+        }
     done
     return 1
 }
@@ -223,14 +234,19 @@ apk_clear_stale_lock() {
     return 0
 }
 
+# apk 操作的超时：只防「PRoot 卡住永不返回」（无 socket、状态 S），不能当下载限时用——
+# 国内走官方源的包本来就慢，限得太紧会在下载到一半时把安装砍掉（表现为 Terminated +
+# 下次重装又从头来），反而永远装不完。
+APK_TIMEOUT="${APK_TIMEOUT:-900}"
+
 # apk update 的封装：先清陈旧锁（无锁或有活进程时不动），失败后再试一次清锁重试。
 apk_update() {
     apk_clear_stale_lock
-    if apk update; then
+    if timeout "$APK_TIMEOUT" apk update; then
         return 0
     fi
     if apk_clear_stale_lock; then
-        apk update
+        timeout "$APK_TIMEOUT" apk update
         return $?
     fi
     return 1

@@ -1,12 +1,20 @@
 package com.aharou.feature.agent.domain.container
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.system.Os
+import com.aharou.R
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.settings.presentation.ContainerDnsMode
+import com.aharou.feature.settings.presentation.ContainerMirrorMode
+import com.aharou.feature.settings.presentation.ContainerSourcesRepository
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -29,10 +37,31 @@ import javax.inject.Singleton
 @Singleton
 class ContainerInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val containerOsDetector: ContainerOsDetector
+    private val containerOsDetector: ContainerOsDetector,
+    /**
+     * 就绪探针。Lazy 破环：体检器要经引擎执行命令，而引擎又依赖本安装器；
+     * 默认 null 只为让单测能直接构造（生产路径由 Hilt 注入，必不为 null）。
+     */
+    private val containerDoctor: Lazy<ContainerDoctor>? = null,
+    /**
+     * 「设置 → 镜像与 DNS」的已保存选择，用于在容器还不能执行命令的首次解压阶段就把源与解析写好。
+     *
+     * 默认 null 只为让单测能直接构造（生产路径由 Hilt 注入）。
+     */
+    private val sourcesRepository: ContainerSourcesRepository? = null
 ) {
     companion object {
         private const val TAG = "ContainerInstaller"
+
+        /** 用户没手动指定镜像站时的默认值（与设置页候选列表第一个一致）。 */
+        private const val DEFAULT_CHINA_MIRROR = "mirrors.huaweicloud.com"
+
+        private val ALI_DNSPOD_DNS = listOf("223.5.5.5", "223.6.6.6", "119.29.29.29")
+        private val CLOUDFLARE_GOOGLE_DNS = listOf("1.1.1.1", "1.0.0.1", "8.8.8.8")
+        private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
+
+        /** resolv.conf 只认前 3 个 nameserver，多写的不会用。 */
+        private const val MAX_DNS_SERVERS = 3
 
         /**
          * 跨工作区共享区宿主目录（容器内 `/root/shared`）。静态入口给 Composable 等拿不到
@@ -389,6 +418,16 @@ class ContainerInstaller @Inject constructor(
     }
 
     /**
+     * 安装互斥。
+     *
+     * App 启动、进终端、每次执行命令前都可能调用安装；没有这把锁时，两个调用方会同时看到
+     * `isInstalled() == false`，然后各自 purge + 解压 + 起 proot 探针——两个进程在同一个 rootfs
+     * 上互相删文件、抢 apk 数据库锁（`Unable to lock database: Resource temporarily unavailable`），
+     * 典型现场就是装完一次直接用不了。
+     */
+    private val installMutex = Mutex()
+
+    /**
      * 若未安装（或版本不匹配）则从 assets 解压安装。幂等，可在每次执行命令前调用。
      *
      * [onProgress] 在真正解压的各阶段被回调以更新 [ContainerInitState]；已安装的快路径不会调用。
@@ -396,9 +435,18 @@ class ContainerInstaller @Inject constructor(
     suspend fun installRootfsIfNeed(
         onProgress: (ContainerInitState) -> Unit = {}
     ) = withContext(Dispatchers.IO) {
+        installMutex.withLock { installBuiltinRootfs(onProgress) }
+    }
+
+    /**
+     * 内置 rootfs 的实际安装。**不加锁**：调用方必须已持有 [installMutex]。
+     *
+     * Mutex 不可重入，所以锁只加在入口、主体走这里；profile 入口也复用这一段。
+     */
+    private suspend fun installBuiltinRootfs(onProgress: (ContainerInitState) -> Unit) {
         if (isInstalled()) {
             FileLogger.d(TAG, "rootfs 已是当前版本（$INSTALL_VERSION），跳过解压")
-            return@withContext
+            return
         }
 
         val startedAt = System.currentTimeMillis()
@@ -416,7 +464,9 @@ class ContainerInstaller @Inject constructor(
 
             val entries = extractRootfs(onProgress)
             configureResolvConf()
+            applySourcePreferences(rootfsDir)
             prootTmpDir.mkdirs()
+            verifyRootfsReady(rootfsDir)
             installedMarker.writeText(INSTALL_VERSION)
             FileLogger.i(
                 TAG,
@@ -474,14 +524,27 @@ class ContainerInstaller @Inject constructor(
         // rootfs 将被重新解压，容器系统可能变化，清掉旧的识别缓存让下次运行重新检测。
         containerOsDetector.clear(profile.id)
 
-        if (profile.isBuiltin) {
-            installRootfsIfNeed(onProgress)
-            return@withContext
+        installMutex.withLock {
+            // 等锁期间别的协程可能已经把同一个 rootfs 装好了，重新判一次，别重复解压。
+            if (isInstalledFor(profile)) return@withLock
+
+            if (profile.isBuiltin) {
+                installBuiltinRootfs(onProgress)
+                return@withLock
+            }
+
+            // 远程 SSH profile：无本地 rootfs 可解压，视为就绪。
+            if (profile.rootfsSource is RootfsSource.RemoteSsh) return@withLock
+
+            installCustomRootfs(profile, onProgress)
         }
+    }
 
-        // 远程 SSH profile：无本地 rootfs 可解压，视为就绪。
-        if (profile.rootfsSource is RootfsSource.RemoteSsh) return@withContext
-
+    /** 自定义（本地镜像）rootfs 的安装。**不加锁**：调用方必须已持有 [installMutex]。 */
+    private suspend fun installCustomRootfs(
+        profile: ContainerProfile,
+        onProgress: (ContainerInitState) -> Unit
+    ) {
         val dest = rootfsDirFor(profile)
         FileLogger.i(TAG, "安装自定义容器 rootfs：${profile.id} -> ${dest.absolutePath}")
         purgeRootfs(dest, customInstalledMarker(profile)) { onProgress(ContainerInitState.CleaningOldRootfs(it)) }
@@ -504,8 +567,101 @@ class ContainerInstaller @Inject constructor(
         configureResolvConf(dest)
         prootTmpDirFor(profile).mkdirs()
         repairRootfsCompatibility(dest)
+        verifyRootfsReady(dest)
         customInstalledMarker(profile).writeText("custom")
         FileLogger.i(TAG, "自定义容器 rootfs 安装完成：${profile.id}")
+    }
+
+    /**
+     * 按「设置 → 镜像与 DNS」把源与解析写进刚解压出来的 rootfs。
+     *
+     * 时机必须在这里：设置页的换源/改 DNS 靠容器执行命令（`isContainerReady()`），而首次初始化
+     * 恰恰是容器还不能用的时候。没有这一步，即使用户提前选了「国内镜像」，首次装包仍会走官方源，
+     * 想快只能等初始化完再回头改，绕一圈。
+     *
+     * 纯文件操作，不启动 PRoot；读不到设置就保持 rootfs 自带配置，不阻断安装。
+     */
+    private suspend fun applySourcePreferences(rootfs: File) {
+        val settings = runCatching { sourcesRepository?.read() }.getOrNull() ?: return
+        if (settings.mirror == ContainerMirrorMode.CHINA) {
+            writeChinaMirror(rootfs, settings.mirrorHost)
+        }
+        writeResolvConf(rootfs, dnsServersFor(settings.dns))
+    }
+
+    /** 把 apk 源改成国内镜像；分支沿用 rootfs 自带的（导入的其它 Alpine 版本也能对上）。 */
+    private fun writeChinaMirror(rootfs: File, preferredHost: String) {
+        val repositories = File(rootfs, "etc/apk/repositories")
+        val branch = runCatching {
+            if (repositories.isFile) {
+                Regex("alpine/([^/]+)/").find(repositories.readText())?.groupValues?.get(1)
+            } else null
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "v3.24"
+        val host = preferredHost.ifBlank { DEFAULT_CHINA_MIRROR }
+        runCatching {
+            repositories.writeText(
+                "http://$host/alpine/$branch/main\nhttp://$host/alpine/$branch/community\n"
+            )
+            FileLogger.i(TAG, "首次安装已按设置换成国内源：$host（$branch）")
+        }.onFailure { FileLogger.w(TAG, "写容器 apk 源失败：${it.message}") }
+    }
+
+    /** 按设置写 resolv.conf（覆盖 [configureResolvConf] 的公共 DNS 默认值）。 */
+    private fun writeResolvConf(rootfs: File, servers: List<String>) {
+        if (servers.isEmpty()) return
+        val conf = File(rootfs, "etc/resolv.conf")
+        runCatching {
+            conf.parentFile?.mkdirs()
+            // 容器里常见指向 systemd-resolved 的坏链，先删再写。
+            conf.delete()
+            conf.writeText(servers.joinToString("") { "nameserver $it\n" })
+            FileLogger.i(TAG, "首次安装已按设置写 DNS：${servers.joinToString()}")
+        }.onFailure { FileLogger.w(TAG, "写容器 DNS 失败：${it.message}") }
+    }
+
+    private fun dnsServersFor(mode: ContainerDnsMode): List<String> = when (mode) {
+        ContainerDnsMode.ALI_DNSPOD -> ALI_DNSPOD_DNS
+        ContainerDnsMode.CLOUDFLARE_GOOGLE -> CLOUDFLARE_GOOGLE_DNS
+        ContainerDnsMode.SYSTEM -> systemDnsServers().ifEmpty { ALI_DNSPOD_DNS }
+    }
+
+    /** 宿主当前网络的 IPv4 DNS。只取 IPv4：蜂窝/VPN 常「能配 v6 但出不去」，写进去会先等超时。 */
+    private fun systemDnsServers(): List<String> = runCatching {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        manager.getLinkProperties(manager.activeNetwork)?.dnsServers
+            ?.mapNotNull { it.hostAddress }
+            ?.filter { IPV4.matches(it) }
+            ?.distinct()
+            ?.take(MAX_DNS_SERVERS)
+            .orEmpty()
+    }.getOrElse { emptyList() }
+
+    /**
+     * 写就绪标记前的最后一道关：布局完整 + 真能起一条命令。
+     *
+     * 标记一旦落下，[isInstalled] 就会把这个 rootfs 当成装好的容器：后续每条命令都失败，而用户
+     * 拿不到任何「装坏了」的提示，只能靠用户报障。宁可安装当次报错（可重试、可重置），也不要留下
+     * 一个假就绪的容器。
+     *
+     * 失败时抛的文案走资源，由 UI 层展示。
+     */
+    private suspend fun verifyRootfsReady(rootfs: File) {
+        val doctor = containerDoctor?.get() ?: return
+        when (val verdict = doctor.verifyRootfs(rootfs)) {
+            RootfsVerdict.Ready -> return
+            is RootfsVerdict.LayoutMissing -> throw IllegalStateException(
+                context.getString(
+                    R.string.container_verify_layout_missing,
+                    verdict.entries.joinToString("、")
+                )
+            )
+            is RootfsVerdict.BootFailed -> throw IllegalStateException(
+                context.getString(R.string.container_verify_boot_failed, verdict.detail)
+            )
+            is RootfsVerdict.BootTimeout -> throw IllegalStateException(
+                context.getString(R.string.container_verify_boot_timeout, verdict.timeoutMs / 1000)
+            )
+        }
     }
 
     /**

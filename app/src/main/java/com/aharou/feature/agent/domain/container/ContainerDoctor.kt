@@ -9,10 +9,18 @@ import androidx.annotation.StringRes
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.BasicFileAttributes
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** 体检条目的状态。 */
 enum class HealthStatus {
@@ -63,6 +71,25 @@ sealed interface InstallOutcome {
 
     /** 装了但失败，[output] 是末尾输出，用来告诉用户到底卡在哪。 */
     data class Failed(val output: String) : InstallOutcome
+}
+
+/**
+ * rootfs 安装收尾校验的结论。
+ *
+ * 文案不在这里拼：[ContainerDoctor] 只给事实，由调用方（安装器）用资源文组装成用户可读的错误。
+ */
+sealed interface RootfsVerdict {
+    /** 布局完整且容器真能起条命令。 */
+    data object Ready : RootfsVerdict
+
+    /** 关键路径缺失（相对 rootfs 根的路径）。 */
+    data class LayoutMissing(val entries: List<String>) : RootfsVerdict
+
+    /** 容器起不来；[detail] 是末尾输出或启动异常，便于用户与日志定位。 */
+    data class BootFailed(val detail: String) : RootfsVerdict
+
+    /** 探针命令超时（rootfs 损坏、proot 卡在挂载上，或设备负载过高）；[timeoutMs] 供调用方组提示。 */
+    data class BootTimeout(val timeoutMs: Long) : RootfsVerdict
 }
 
 /** 一次体检的完整结果。 */
@@ -235,6 +262,76 @@ class ContainerDoctor @Inject constructor(
         }
     }
 
+    /**
+     * 安装完成、写就绪标记之前的就绪校验：先看关键布局，再真起一次容器跑最短的命令。
+     *
+     * 刻意不走 [check] 那套探测：那几条都经 [LinuxContainerEngine.runCommandSyncIfReady]，而此刻
+     * 就绪标记还没写，门禁必然判未就绪。这里直接起一次 PRoot（[LinuxContainerEngine.startProotProcess]），
+     * 把「装好了」的判定从「标记写了」改成「真能跑」——否则烂 rootfs 会被当成已装好，用户看到的是
+     * 之后每条命令都莫名其妙失败。
+     */
+    suspend fun verifyRootfs(rootfs: File, timeoutMs: Long = BOOT_PROBE_TIMEOUT_MS): RootfsVerdict =
+        withContext(Dispatchers.IO) {
+            val missing = REQUIRED_ROOTFS_ENTRIES.filterNot { hasEntry(rootfs, it) }
+            if (missing.isNotEmpty()) return@withContext RootfsVerdict.LayoutMissing(missing)
+
+            val process = runCatching { engine.startProotProcess(BOOT_PROBE_COMMAND, null) }
+                .getOrElse { error ->
+                    FileLogger.w(TAG, "启动容器探针失败：${rootfs.absolutePath}", error)
+                    return@withContext RootfsVerdict.BootFailed(
+                        error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
+                    )
+                }
+            // 输出不多（探针只跑 true），但仍然边跑边读：即便 proot 因绑定/rootfs 问题刷一堆告警，
+            // 也不会堵满管道把子进程卡死（那会被误判成超时）。
+            val output = BoundedOutput(2_000, 2_000)
+            val pump = CoroutineScope(Dispatchers.IO).launch {
+                runCatching {
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            output.append(line)
+                            output.append("\n")
+                        }
+                    }
+                }
+            }
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (process.isAlive && System.currentTimeMillis() < deadline) delay(100)
+            if (process.isAlive) {
+                process.destroyForcibly()
+                pump.cancel()
+                runCatching { process.inputStream.close() }
+                FileLogger.w(TAG, "容器启动探针超时（${timeoutMs}ms）：${rootfs.absolutePath}")
+                return@withContext RootfsVerdict.BootTimeout(timeoutMs)
+            }
+            val exitCode = runCatching { process.waitFor() }.getOrDefault(-1)
+            // 进程已退但管道里可能还剩最后几行没读完，给它一点时间再下结论。
+            withTimeoutOrNull(2_000) { pump.join() }
+            pump.cancel()
+            // 阻塞中的 readLine 不会被协程取消打断，关流才算真正放开这个子进程。
+            runCatching { process.inputStream.close() }
+            if (exitCode == 0) return@withContext RootfsVerdict.Ready
+            RootfsVerdict.BootFailed(
+                output.build().trim().takeLast(FAILURE_TAIL_CHARS).ifBlank { "exit=$exitCode" }
+            )
+        }
+
+    /**
+     * rootfs 里是否存在某个条目（符号链接算存在）。
+     *
+     * 不能用 [File.exists]：rootfs 里的 /bin/sh、/etc/os-release 很多是符号链接（Alpine 的 sh 指向
+     * busybox，Ubuntu 的 os-release 指向 /usr/lib），宿主侧会按**宿主自己的**根目录去解绝对目标，
+     * 结果把完好的容器判成缺文件。
+     */
+    private fun hasEntry(rootfs: File, relativePath: String): Boolean = runCatching {
+        val attrs = Files.readAttributes(
+            File(rootfs, relativePath).toPath(),
+            BasicFileAttributes::class.java,
+            LinkOption.NOFOLLOW_LINKS
+        )
+        !attrs.isDirectory
+    }.getOrDefault(false)
+
     private suspend fun detectPackageManager(): PackageManagerKind? {
         // 快路径：原生说某个包管理器在就直接采信（两个都判不出来才走容器探测复核）
         if (engine.probeContainerExecutable("apk") == true) return PackageManagerKind.APK
@@ -376,6 +473,15 @@ class ContainerDoctor @Inject constructor(
         /** 体检要确认存在的基础工具，与容器探测命令里的清单保持一致。 */
         val BASIC_TOOLS = listOf("sh", "git", "curl", "tar", "xz")
         const val PROBE_TIMEOUT_MS = 15_000L
+
+        /** 就绪校验必须存在的布局：起 shell 与识别发行版都靠这两个条目。 */
+        val REQUIRED_ROOTFS_ENTRIES = listOf("bin/sh", "etc/os-release")
+
+        /** 最短的探针命令：shell 内建，不依赖基础包是否装过。 */
+        const val BOOT_PROBE_COMMAND = "true"
+
+        /** 探针超时：冷启动 PRoot 正常几秒，给到 60s 是为了低端机/重负载下不误判。 */
+        const val BOOT_PROBE_TIMEOUT_MS = 60_000L
 
         /** 装包要刷新索引再下载，宽松些；再久就该让用户看见失败而不是干等。 */
         const val INSTALL_TIMEOUT_MS = 180_000L

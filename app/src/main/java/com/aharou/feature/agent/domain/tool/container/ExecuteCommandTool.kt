@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.container
 import com.aharou.feature.agent.domain.container.BoundedOutput
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.container.CommandEvent
+import com.aharou.feature.agent.domain.container.ContainerOutputSanitizer
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -188,7 +189,7 @@ class ExecuteCommandTool @Inject constructor(
             FileLogger.d(TAG, "execute_command (timeout=${timeoutMs}ms): $command")
             val result = commandEngine.runCommandSyncWithExit(command, workdir, timeoutMs)
             FileLogger.v(TAG, "execute_command 完成，输出 ${result.output.length} 字符，退出码 ${result.exitCode}")
-            ToolResult.Success(JsonPrimitive(withExitCode(result.output, result.exitCode)))
+            ToolResult.Success(JsonPrimitive(toModelOutput(result.output, result.exitCode)))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -199,8 +200,11 @@ class ExecuteCommandTool @Inject constructor(
 
     /**
      * 流式执行：逐行 emit [ToolStreamEvent.Progress]，命令结束 emit [ToolStreamEvent.Completed]，
-     * 其最终结果与 [execute] 等价（同样经 [BoundedOutput] 限幅：超大输出仅保留开头+结尾），
-     * 保证喂回模型的内容一致且不会撑爆上下文。
+     * 其最终结果与 [execute] 等价（同样经 [BoundedOutput] 限幅：超大输出仅保留开头+结尾，
+     * 再经 [toModelOutput] 清洗），保证喂回模型的内容一致且不会撑爆上下文。
+     *
+     * 注意 [ToolStreamEvent.Progress] 逐行发给的是原始行（未清洗），供聊天里实时看进度；
+     * 清洗只作用于最终回给模型的文本。
      */
     override fun executeStream(
         args: Map<String, JsonElement>,
@@ -235,7 +239,7 @@ class ExecuteCommandTool @Inject constructor(
                 }
             }
             FileLogger.v(TAG, "execute_command(流式) 完成，输出 ${accumulated.totalChars} 字符，退出码 $exitCode")
-            emit(ToolStreamEvent.Completed(ToolResult.Success(JsonPrimitive(withExitCode(accumulated.build(), exitCode)))))
+            emit(ToolStreamEvent.Completed(ToolResult.Success(JsonPrimitive(toModelOutput(accumulated.build(), exitCode)))))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -244,7 +248,7 @@ class ExecuteCommandTool @Inject constructor(
             FileLogger.e(TAG, "execute_command(流式) 异常(已保留此前输出 ${accumulated.totalChars} 字符): $command", e)
             val saved = accumulated.build()
             val result = if (saved.isNotEmpty()) {
-                ToolResult.Success(JsonPrimitive(withExitCode(saved, exitCode)))
+                ToolResult.Success(JsonPrimitive(toModelOutput(saved, exitCode)))
             } else {
                 ToolResult.Error("执行命令失败: ${e.message}")
             }
@@ -253,12 +257,24 @@ class ExecuteCommandTool @Inject constructor(
     }
 
     /**
-     * 退出码拼在结果末尾，让模型能分辨「跑完没输出」和「失败没输出」。
-     * 拿不到退出码（超时、引擎异常、远程通道断开）就不拼，别让模型把未知当成成功。
+     * 命令输出交给模型的**唯一出口**（[executeWithContext] 与 [executeStream] 共用）。
+     *
+     * 为什么清洗放在这里而不是引擎层：[LinuxContainerEngine] 的同一条输出通道还供 git diff 预览、
+     * 文件内容读取等**按行解析**的调用方使用，在那里吞行或压空行等于改动被解析的数据本身；
+     * 本出口只承担命令 stdout/stderr（stderr 已合并），不涉及 JSON、文件内容这类结构化结果。
+     *
+     * 顺序（截断 → 清洗）：长度截断已在引擎与流式累积器（[BoundedOutput]）内部完成，出口拿到的是
+     * 已限幅文本，清洗天然发生在截断之后。反过来的「先清洗再截断」只有流式路径做得到（非流式在引擎
+     * 内部就截断了），两条路径会对同一输出给出不同文本；而清洗只会让文本变短、不会把内容挤出长度
+     * 预算。代价是截断点可能落在转义序列中间，残留的 ESC 字节会被清洗器的控制字符规则剥掉，最多
+     * 留下少许参数碎片（如 `[38;5`），不影响可读性。
+     *
+     * 退出码拼在清洗之后的末尾，让模型能分辨「跑完没输出」和「失败没输出」；拿不到退出码（超时、
+     * 引擎异常、远程通道断开）就不拼，别让模型把未知当成成功。退出码行是本函数生成的，不参与清洗。
      */
-    private fun withExitCode(output: String, exitCode: Int?): String {
-        if (exitCode == null) return output
-        val line = "[退出码: $exitCode]"
-        return if (output.isBlank()) line else "$output\n$line"
+    private fun toModelOutput(output: String, exitCode: Int?): String {
+        val cleaned = ContainerOutputSanitizer.sanitize(output)
+        val line = exitCode?.let { "[退出码: $it]" } ?: return cleaned
+        return if (cleaned.isBlank()) line else "$cleaned\n$line"
     }
 }
