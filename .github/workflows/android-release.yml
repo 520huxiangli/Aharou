@@ -1,10 +1,10 @@
 name: Android Release
 
-# 打 Tag（如 v1.0.0）时触发：构建三个签名 Release APK
-#   - universal : arm64-v8a + x86_64，含 arm + x86 两套容器镜像（通用，体积最大）
-#   - armsolo    : 仅 arm64-v8a，仅含 arm 镜像（真机首选，体积约为 universal 的一半）
-#   - x86solo    : 仅 x86_64，仅含 x86 镜像（x86 模拟器/Chromebook，体积约为 universal 的一半）
-# 创建 GitHub Release 并把三个 APK 作为资产发布。
+# 打 Tag（如 v1.0.0）时触发：构建两个单架构签名 Release APK
+#   - armsolo : 仅 arm64-v8a，仅含 arm 镜像（真机全部是 arm64）
+#   - x86solo : 仅 x86_64，仅含 x86 镜像（模拟器 / Chromebook）
+# 不发 universal（双套镜像体积翻倍）：App 按设备架构挑对应的单架构包，用户只下自己那份。
+# 创建 GitHub Release 并把两个 APK 与 R8 mapping 作为资产发布。
 on:
   push:
     tags:
@@ -141,40 +141,43 @@ jobs:
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 
-      # 一次性构建全部 flavor 的 release APK（universal/armsolo/x86solo）
+      # 构建全部 flavor 再挑要发的两个：AGP 的变体 task 名是「flavor 首字母大写」拼出来的
+      # （x86solo 究竟叫 X86solo 还是 X86Solo 在本地无法验证，构建闸门挡着），
+      # 写错会让整个发版直接失败；assembleRelease 一定存在，多构建一个 universal 换零风险。
       # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。
-      - name: Build all flavor Release APKs
+      - name: Build Release APKs
         run: ./gradlew assembleRelease --stacktrace
 
-      # 给三个 APK 重命名为「包名-架构-版本」格式，架构用真实 ABI 名便于用户识别：
+      # 只把两个单架构包拷进 dist（universal 把两套镜像都塞进去，体积翻倍，不再发布）：
       #   Aharou-arm64-v1.0.0-rc1.apk      (armsolo)
       #   Aharou-x86_64-v1.0.0-rc1.apk     (x86solo)
-      #   Aharou-universal-v1.0.0-rc1.apk  (universal，含两套镜像)
       - name: Rename APKs by flavor
         run: |
           mkdir -p dist
           ver="${GITHUB_REF_NAME:-manual}"   # tag 如 v1.0.0-rc1；手动触发时为 manual-N
-          declare -A abi=( [armsolo]=arm64 [x86solo]=x86_64 [universal]=universal )
-          for f in universal armsolo x86solo; do
+          failed=0
+          for pair in "armsolo:arm64" "x86solo:x86_64"; do
+            f="${pair%%:*}"; abi="${pair##*:}"
             src="app/build/outputs/apk/$f/release/app-$f-release.apk"
             if [[ -f "$src" ]]; then
-              out="dist/Aharou-${abi[$f]}-${ver}.apk"
+              out="dist/Aharou-${abi}-${ver}.apk"
               cp "$src" "$out"
               echo "packaged $out"
             else
-              echo "::warning::missing $src"
+              echo "::error::missing $src"
+              failed=1
             fi
           done
+          [[ $failed -eq 0 ]] || exit 1
 
           # 保留 R8 混淆映射（mapping.txt）到 dist/，随 Release 一起发布，供崩溃堆栈反混淆。
-          # 三个 flavor 共享同一份字节码与混淆结果，取 universal 一份即可；
+          # 两个 flavor 共享同一份字节码与混淆结果，取 armsolo 一份即可；
           # gzip 压缩后只有几 MB（原始约 90MB），retrace/Android Studio 解析前 gunzip 一下。
-          # 命名沿用 Aharou-<abi>-<ver> 约定，看到崩溃报告里的版本号即可取对应 mapping。
           # AGP 8.x 的 mapping 输出目录是 variant 驼峰名（flavor + BuildType），
-          # 即 outputs/mapping/universalRelease/，不是 outputs/mapping/universal/release/。
-          if [[ -f "app/build/outputs/mapping/universalRelease/mapping.txt" ]]; then
-            gzip -c "app/build/outputs/mapping/universalRelease/mapping.txt" > "dist/Aharou-universal-${ver}-mapping.txt.gz"
-            echo "packaged Aharou-universal-${ver}-mapping.txt.gz"
+          # 即 outputs/mapping/armsoloRelease/，不是 outputs/mapping/armsolo/release/。
+          if [[ -f "app/build/outputs/mapping/armsoloRelease/mapping.txt" ]]; then
+            gzip -c "app/build/outputs/mapping/armsoloRelease/mapping.txt" > "dist/Aharou-arm64-${ver}-mapping.txt.gz"
+            echo "packaged Aharou-arm64-${ver}-mapping.txt.gz"
           else
             echo "::warning::missing mapping.txt（R8 混淆映射）"
           fi
@@ -255,16 +258,15 @@ jobs:
           # 不要写成 Aharou-*-<abi>.apk——那会把 abi 误放末段，与 Aharou-<abi>-<ver> 永远匹配不上（rc3 翻车原因）。
           # R8 映射与 APK 同版本发布，反混淆崩溃报告的凭据（gzip 压缩，体积小），一并上传。
           files: |
-            dist/Aharou-universal-*.apk
             dist/Aharou-arm64-*.apk
             dist/Aharou-x86_64-*.apk
-            dist/Aharou-universal-*mapping.txt.gz
+            dist/Aharou-arm64-*mapping.txt.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 发版后同步资产到 cnb 发布仓（国内下载源；GitCode 已于 2026-10-08 按主人要求停用）。
       # 发版即同步，失败不拦发版（GitHub 上资产还在，重跑脚本即可补齐）。
-      # 只传 universal：App 挑包优先 universal（含两套 ABI 镜像），三个 ABI 全传要 4GB+ 没必要。
+      # 两个单架构包都同步：App 按设备架构挑包，x86 用户也要能从 cnb 下。
       - name: Sync release assets to cnb
         continue-on-error: true
         timeout-minutes: 60
@@ -275,7 +277,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_MIRROR: https://gh-proxy.com/
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ASSET_FILTER: universal
+          ASSET_FILTER: Aharou-(arm64|x86_64)-
           # 只同步当次发版的 tag：脚本默认的「最新 3 个正式版」策略不适合发版流水线——
           # 已发布但用户不想放上 cnb 的版本（如待重发的），下次发版会被这个策略又搬过去。
           RELEASE_FILTER: ^${{ github.ref_name }}$

@@ -9,19 +9,37 @@ import org.junit.Test
 class UpdateDownloadSourceTest {
 
     @Test
-    fun pickApkAsset_prefersUniversalPackage() {
+    fun pickApkAsset_prefersArm64Package() {
         val names = listOf(
             "Aharou-arm64-v1.13.5.apk",
             "Aharou-universal-v1.13.5.apk",
             "Aharou-universal-v1.13.5-mapping.txt.gz",
         )
-        assertEquals("Aharou-universal-v1.13.5.apk", UpdateDownloadSource.pickApkAsset(names))
+        // 正式版发两个单架构包；arm64 设备拿 arm64 包，不拿体积翻倍的 universal
+        assertEquals("Aharou-arm64-v1.13.5.apk", UpdateDownloadSource.pickApkAsset(names))
     }
 
     @Test
-    fun pickApkAsset_fallsBackToArm64WhenNoUniversal() {
-        val names = listOf("Aharou-x86_64-v1.13.5.apk", "Aharou-arm64-v1.13.5.apk")
-        assertEquals("Aharou-arm64-v1.13.5.apk", UpdateDownloadSource.pickApkAsset(names))
+    fun pickApkAsset_x86DeviceTakesX86Package() {
+        val names = listOf("Aharou-arm64-v1.13.5.apk", "Aharou-x86_64-v1.13.5.apk")
+        assertEquals(
+            "Aharou-x86_64-v1.13.5.apk",
+            UpdateDownloadSource.pickApkAsset(names, supportsArm64 = false)
+        )
+    }
+
+    @Test
+    fun pickApkAsset_skipsOtherArchitectureOnly() {
+        // 只有其他架构的包：下下来也装不上，宁可返回 null 不上报更新
+        assertNull(UpdateDownloadSource.pickApkAsset(listOf("Aharou-arm64-v1.13.5.apk"), supportsArm64 = false))
+        assertNull(UpdateDownloadSource.pickApkAsset(listOf("Aharou-x86_64-v1.13.5.apk"), supportsArm64 = true))
+    }
+
+    @Test
+    fun pickApkAsset_fallsBackToUniversal() {
+        val names = listOf("Aharou-x86_64-v1.13.5.apk", "Aharou-universal-v1.13.5.apk")
+        // universal 兼容所有设备，作为旧版本的兜底
+        assertEquals("Aharou-universal-v1.13.5.apk", UpdateDownloadSource.pickApkAsset(names))
     }
 
     @Test
@@ -34,6 +52,12 @@ class UpdateDownloadSourceTest {
     fun pickApkAsset_ignoresNonApkAssets() {
         val names = listOf("Aharou-universal-v1.13.5-mapping.txt.gz", "README.md")
         assertNull(UpdateDownloadSource.pickApkAsset(names))
+    }
+
+    @Test
+    fun pickApkAsset_x86DeviceReturnsNullWhenNoUsablePackage() {
+        // 列表里根本没有可用的 apk
+        assertNull(UpdateDownloadSource.pickApkAsset(listOf("README.md"), supportsArm64 = false))
     }
 
     @Test

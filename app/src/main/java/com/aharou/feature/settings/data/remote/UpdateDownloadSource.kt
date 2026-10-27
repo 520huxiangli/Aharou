@@ -41,14 +41,21 @@ object UpdateDownloadSource {
     /**
      * 从 release 的资产名里挑要下载的 APK。
      *
-     * universal 包含 arm + x86 两套容器镜像、兼容所有设备，优先；只有单架构包时
-     * 选 arm64（真机主流）；再不行取第一个 APK，保证「有新版本就下得到东西」。
+     * 正式版发两个单架构包（`Aharou-arm64-*` / `Aharou-x86_64-*`），**按设备架构挑对应的那个**：
+     * 两个包各只含一套容器镜像，比 universal 的双套装小一半，用户只下自己那份。
+     *
+     * 其他架构的包不选——下下来也装不上；universal 兼容所有设备，仅作旧版本的兜底。
+     * 只有其它架构的包时返回 null，宁可不上报更新。
      */
-    fun pickApkAsset(names: List<String>): String? {
+    fun pickApkAsset(names: List<String>, supportsArm64: Boolean = true): String? {
         val apks = names.filter { it.endsWith(".apk", ignoreCase = true) }
-        return apks.firstOrNull { it.contains("universal", ignoreCase = true) }
-            ?: apks.firstOrNull { it.contains("arm64", ignoreCase = true) }
-            ?: apks.firstOrNull()
+        val preferred = if (supportsArm64) "arm64" else "x86_64"
+        val other = if (supportsArm64) "x86_64" else "arm64"
+        apks.firstOrNull { it.contains(preferred, ignoreCase = true) }?.let { return it }
+        apks.firstOrNull { it.contains("universal", ignoreCase = true) }?.let { return it }
+        if (apks.any { it.contains(other, ignoreCase = true) }) return null
+        // 没有架构标识的旧包名（如 Aharou-1.13.4.apk）：没有更可靠的判据，当作通用包
+        return apks.firstOrNull()
     }
 
     /** 供下载的候选地址，按优先级从高到低。 */

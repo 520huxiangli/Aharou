@@ -1,6 +1,7 @@
 package com.aharou.feature.settings.data.remote
 
 import android.content.Context
+import android.os.Build
 import com.aharou.R
 import com.aharou.feature.settings.data.repository.UpdateChannel
 import com.aharou.feature.settings.presentation.component.compareVersions
@@ -59,6 +60,8 @@ class UpdateCheckService @Inject constructor(
 ) {
     suspend fun checkForUpdate(currentVersion: String, channel: UpdateChannel): UpdateCheckResult =
         withContext(Dispatchers.IO) {
+            // 正式版发两个单架构包，按设备架构挑对应的那个（装错架构的包起不来）
+            val supportsArm64 = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
             runCatching {
                 // 源顺序：cnb（国内直连可用、含资产哈希）→ 反代转发 GitHub → GitHub 直连。
                 // 不拿 GitCode 当兜底：那个镜像早已停更，它「成功」返回一份旧列表会让本函数
@@ -88,7 +91,7 @@ class UpdateCheckService @Inject constructor(
                     val versionUpdates = updates.map { toVersionUpdate(it) }
                     val latest = updates.first()
                     var apkAsset = latest.assets.firstOrNull {
-                        it.name == UpdateDownloadSource.pickApkAsset(latest.assets.map { a -> a.name })
+                        it.name == UpdateDownloadSource.pickApkAsset(latest.assets.map { a -> a.name }, supportsArm64)
                     }
                     // 主源（cnb）的资产可能晚于 release 创建几秒到几分钟同步到位：那一刻列表里有更新
                     // 日志却没有包，直接弹「发现新版本」会让下载必然失败（报 no apk asset）。
@@ -98,7 +101,7 @@ class UpdateCheckService @Inject constructor(
                             ?.firstOrNull { it.rawTag == latest.rawTag }
                         val fallbackNames = fallback?.assets?.map { it.name }.orEmpty()
                         apkAsset = fallback?.assets?.firstOrNull {
-                            it.name == UpdateDownloadSource.pickApkAsset(fallbackNames)
+                            it.name == UpdateDownloadSource.pickApkAsset(fallbackNames, supportsArm64)
                         }
                     }
                     UpdateCheckResult.NewVersion(
