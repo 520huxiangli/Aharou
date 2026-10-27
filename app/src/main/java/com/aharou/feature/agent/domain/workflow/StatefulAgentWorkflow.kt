@@ -319,9 +319,9 @@ class StatefulAgentWorkflow @Inject constructor(
             else -> allTools.filterNot { it.name == AgentDefinition.PARENT_MESSAGE_TOOL }
         }
         val compactionProvider = resolveCompactionFallbackProvider(sessionId) ?: provider
-        val result = contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true,
-            windowProvider = provider, systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(context, consumeInbox = false) }, tools = requestTools(tools), onEvent = onEvent)
-        return result.compacted
+        val reuseMainPrefix = compactionProvider.providerId == provider.providerId && compactionProvider.model == provider.model  // 前缀缓存只同 provider 同 model 内生效，配了独立压缩模型就不复用主前缀
+        return contextCompactor.compactIfNeeded(history, compactionProvider, sessionId, force = true, windowProvider = provider,
+            systemPrompt = if (reuseMainPrefix) appendMiddlewarePrompt(provider.providerId, withContext(Dispatchers.IO) { promptProvider.build(context, consumeInbox = false) }) else "", tools = if (reuseMainPrefix) requestTools(tools) else emptyList(), onEvent = onEvent).compacted
     }
 
     /**
@@ -598,8 +598,8 @@ class StatefulAgentWorkflow @Inject constructor(
         val providerInUse = aiProvider
         val requestSystemPrompt = appendMiddlewarePrompt(providerInUse.providerId, systemPrompt)
         val promptTools = requestTools(currentTools)
-        // 压缩轮：若配置了压缩专用模型，使用独立压缩模型压缩
         val compactionProvider = resolveCompactionFallbackProvider(currentContext.sessionId) ?: providerInUse
+        val reuseMainPrefix = compactionProvider.providerId == providerInUse.providerId && compactionProvider.model == providerInUse.model  // 前缀缓存只同 provider 同 model 内生效，配了独立压缩模型就不复用主前缀
         var compactedMessages = state.messages
         // 送模型前的图片投影只算这一次：压缩触发估算、超预算判定与实际发送共用同一份结果。
         // 算两遍迟早因视觉能力解析或占位文案不同而漂移，那会反向低估、真撞窗口。
@@ -611,7 +611,7 @@ class StatefulAgentWorkflow @Inject constructor(
             val estimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
             val predictedInput = ContextTokenEstimator.calibrated(estimate, budget.baselineEstimate, budget.baselineUsage)
             val compaction = contextCompactor.compactIfNeeded(state.messages, compactionProvider, currentContext.sessionId,
-                windowProvider = aiProvider, systemPrompt = systemPrompt, tools = promptTools,
+                windowProvider = aiProvider, systemPrompt = if (reuseMainPrefix) requestSystemPrompt else "", tools = if (reuseMainPrefix) promptTools else emptyList(),
                 currentInputTokens = ContextTokenEstimator.forCompactionTrigger(estimate, budget.baselineEstimate, budget.baselineUsage)) { event ->
                 if (event is AgentEvent.CompactionFailed) budget.compactionAttemptFailed = true
                 emit(event)
@@ -782,7 +782,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.overflowRecoveryAttempted = true
                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
                     currentContext.sessionId, force = true, windowProvider = aiProvider,
-                    systemPrompt = systemPrompt, tools = promptTools, currentInputTokens = predictedInput) { emit(it) }
+                    systemPrompt = if (reuseMainPrefix) requestSystemPrompt else "", tools = if (reuseMainPrefix) promptTools else emptyList(), currentInputTokens = predictedInput) { emit(it) }
                 if (recovery.compacted) {
                     state = state.copy(messages = recovery.messages)
                     budget.baselineUsage = 0
@@ -828,7 +828,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 budget.overflowRecoveryAttempted = true
                 val recovery = contextCompactor.compactIfNeeded(state.messages, compactionProvider,
                     currentContext.sessionId, force = true, windowProvider = aiProvider,
-                    systemPrompt = systemPrompt, tools = promptTools, currentInputTokens = predictedInput) { emit(it) }
+                    systemPrompt = if (reuseMainPrefix) requestSystemPrompt else "", tools = if (reuseMainPrefix) promptTools else emptyList(), currentInputTokens = predictedInput) { emit(it) }
                 if (recovery.compacted) {
                     state = state.copy(messages = recovery.messages)
                     budget.baselineUsage = 0
