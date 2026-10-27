@@ -3,6 +3,9 @@ package com.aharou.feature.agent.domain.tool.device
 import android.content.Context
 import android.provider.MediaStore
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.personal.PersonalAccessText
+import com.aharou.feature.agent.domain.personal.PersonalCapability
+import com.aharou.feature.agent.domain.personal.PersonalContextAccess
 import com.aharou.feature.agent.domain.tool.ToolResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Date
@@ -18,12 +21,14 @@ import kotlinx.serialization.json.put
 /**
  * 相册查询：从 MediaStore 取最近的图片元数据（不返回图片本体，避免把大图塞进上下文）。
  *
- * 依赖「所有文件访问」或相册读权限；两者都没有时 MediaStore 会返回空集，这里会翻译成
- * 明确的权限指引而不是让模型以为是「相册是空的」。
+ * 依赖「所有文件访问」或相册读权限；两者都没有时 MediaStore 会返回空集，这里会直接返回
+ * 能力目录里的权限态与开启路径，而不是让模型以为是「相册是空的」。
  */
 @Singleton
 class PhotosHandler @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val personalAccess: PersonalContextAccess,
+    private val personalText: PersonalAccessText,
 ) {
 
     private companion object {
@@ -33,6 +38,11 @@ class PhotosHandler @Inject constructor(
     }
 
     suspend fun recent(limitRaw: Int?, newerThanMs: Long?): ToolResult = withContext(Dispatchers.IO) {
+        // MediaStore 没权限时不会报错，只会静默返回空集——所以先问能力目录，避免把「没权限」
+        // 说成「相册是空的」。
+        val accessState = personalAccess.snapshot(PersonalCapability.PHOTOS)
+        if (!accessState.usable) return@withContext personalText.error(accessState)
+
         val limit = (limitRaw ?: DEFAULT_LIMIT).coerceIn(1, MAX_LIMIT)
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
@@ -83,8 +93,7 @@ class PhotosHandler @Inject constructor(
                 if (items.isEmpty()) {
                     ToolResult.Success(buildJsonObject {
                         put("count", 0)
-                        put("note", "没有查到图片。若相册里确实有照片，多半是缺权限：" +
-                            "到系统设置给 Aharou 开「照片和视频」或「所有文件访问」。")
+                        put("note", "没有查到图片。权限是好的，所以相册里可能确实没有照片，或系统还没扫到。")
                     })
                 } else {
                     ToolResult.Success(buildJsonObject {

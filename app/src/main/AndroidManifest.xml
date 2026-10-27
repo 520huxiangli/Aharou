@@ -47,7 +47,14 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- 使用统计：PACKAGE_USAGE_STATS 是 AppOps 特殊权限，声明只表示「会请求」，
+         实际只能由用户在「设置 → 特殊应用权限 → 使用情况访问」手动开启，普通授权框对它无效。 -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
+    <!-- 个人上下文（personal_context）：短信与通话记录都是运行时权限，由「权限与后台 → 软件权限」申请；
+         Android 10+ 上它们还属受限权限，安装来源可能直接锁死（此时 capability 报 restricted）。
+         只读，Aharou 不发短信、不改已读、不拨号。 -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
 
     <!-- Android 11+ 的包可见性：Shizuku 不在默认可见范围内，声明后才能查它的安装状态与启动入口。
          另有 QUERY_ALL_PACKAGES 兜底，这里显式声明以缩小对全量包可见性的依赖。

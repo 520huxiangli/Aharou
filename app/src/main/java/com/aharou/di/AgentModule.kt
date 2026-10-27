@@ -52,6 +52,7 @@ import com.aharou.feature.agent.domain.tool.todo.TodoTool
 import com.aharou.feature.agent.domain.tool.subagent.TaskTool
 import com.aharou.feature.agent.domain.tool.subagent.MessageParentTool
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
+import com.aharou.feature.agent.domain.personal.PersonalContextTool
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
@@ -429,7 +430,8 @@ object AgentModule {
         openAppTool: OpenAppTool,
         dependencyCheckTool: DependencyCheckTool,
         sessionTool: SessionTool,
-        deviceTool: DeviceTool
+        deviceTool: DeviceTool,
+        personalContextTool: PersonalContextTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -465,6 +467,7 @@ object AgentModule {
             register("check_dependencies", dependencyCheckTool)
             register("sessions", sessionTool)
             register("device", deviceTool)
+            register("personal_context", personalContextTool)
         }
     }
 

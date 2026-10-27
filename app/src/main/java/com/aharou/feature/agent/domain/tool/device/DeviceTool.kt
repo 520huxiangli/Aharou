@@ -1,6 +1,9 @@
 package com.aharou.feature.agent.domain.tool.device
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.personal.PersonalAccessText
+import com.aharou.feature.agent.domain.personal.PersonalCapability
+import com.aharou.feature.agent.domain.personal.PersonalContextAccess
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -40,6 +43,8 @@ class DeviceTool @Inject constructor(
     private val weather: WeatherHandler,
     private val media: MediaHandler,
     private val notification: NotificationHandler,
+    private val personalAccess: PersonalContextAccess,
+    private val personalText: PersonalAccessText,
 ) : AgentTool() {
 
     private companion object {
@@ -80,7 +85,9 @@ class DeviceTool @Inject constructor(
             "notification_send=发一条通知提醒用户（title、text）；" +
             "device_info=机型/系统/电量/存储/内存/网络快照；" +
             "photos_recent=相册最近图片的元数据（limit 默认 20、最多 200，只给文件名与路径，不给图片本体）。" +
-            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体按写操作处理。"
+            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体按写操作处理。" +
+            "权限不足时错误里带 capabilityId 与「去系统设置哪里开」，不要自动重试；" +
+            "想知道各能力当前能不能用（含短信/通话记录/应用使用统计），先调 personal_context(action=capabilities)。"
 
     override val permissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
 
@@ -131,7 +138,7 @@ class DeviceTool @Inject constructor(
         val act = action(args)
             ?: return ToolResult.Error("缺少 action（${ACTIONS.joinToString(" / ")}）", "MISSING_ACTION")
 
-        return try {
+        val result: ToolResult = try {
             when (act) {
                 "alarm" -> {
                     val hour = args["hour"]?.jsonPrimitive?.intOrNull
@@ -237,6 +244,40 @@ class DeviceTool @Inject constructor(
             FileLogger.e(TAG, "device 执行失败：$act", e)
             ToolResult.Error("操作失败：${e.message}")
         }
+        return decorate(act, result)
+    }
+
+    /**
+     * 权限类失败统一补一句「capabilityId + 状态 + 去系统设置哪里开」：模型照原话转述，用户就能自己开。
+     * 只补权限/访问类错误——时间不合法、没有可写日历这类业务错误原样返回，别掺无关指引。
+     */
+    private fun decorate(action: String, result: ToolResult): ToolResult {
+        val error = result as? ToolResult.Error ?: return result
+        // 已经是能力目录自己拼好的错误（含 capabilityId 与指引），别再挂一遍。
+        if (error.code.startsWith("PERSONAL_ACCESS_")) return result
+        val permissionLike = error.code.contains("PERMISSION") ||
+            error.code.contains("ACCESS") ||
+            error.code == "NOTIFICATIONS_DISABLED"
+        if (!permissionLike) return result
+        val capability = capabilityFor(action) ?: return result
+        return error.copy(message = personalText.appendHint(error.message, personalAccess.snapshot(capability)))
+    }
+
+    /** action → 能力目录 id，保证工具错误与 personal_context 的权限总览说的是同一件事。 */
+    private fun capabilityFor(action: String): PersonalCapability? = when (action) {
+        "alarm", "timer" -> PersonalCapability.ALARMS
+        "calendar_list" -> PersonalCapability.CALENDAR_READ
+        "calendar_add" -> PersonalCapability.CALENDAR_WRITE
+        "contacts_search" -> PersonalCapability.CONTACTS_READ
+        "contacts_add" -> PersonalCapability.CONTACTS_WRITE
+        "clipboard_read", "clipboard_write" -> PersonalCapability.CLIPBOARD
+        "location", "weather" -> PersonalCapability.LOCATION
+        "media_control" -> PersonalCapability.MEDIA_CONTROL
+        "notification_read" -> PersonalCapability.NOTIFICATIONS_READ
+        "notification_send" -> PersonalCapability.NOTIFICATIONS_POST
+        "photos_recent" -> PersonalCapability.PHOTOS
+        "device_info" -> PersonalCapability.DEVICE_INFO
+        else -> null
     }
 
     private fun action(args: Map<String, JsonElement>): String? =
