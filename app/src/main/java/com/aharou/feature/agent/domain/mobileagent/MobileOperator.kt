@@ -28,6 +28,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -85,10 +86,14 @@ sealed interface OperatorOutcome {
  * 手机操作子代理：把「看屏 → 决策 → 动作 → 再看屏」的多步循环封在内部，
  * 主 agent 只看到「一次调用 + 一个结果」，不再逐步吃上下文。
  *
- * 观测是「截图 + 一行 caption」（VdTool 已带坐标网格，坐标直接沿用输入坐标），无障碍节点树为
- * 可选第二输入（由 [MobileHand.readsNodeTree] 决定）。决策让模型按固定形制输出，解析器容错。
- * 空转保护：[MAX_IDLE_STEPS] 步连续无效/重复同一动作即中止并返回失败。收尾用 [OperatorOutcome]
- * 表达（不抛异常）。
+ * 观测是「截图 + 一行 caption」（VdTool 已带坐标网格，网格数字是像素参考），无障碍节点树为
+ * 可选第二输入（由 [MobileHand.readsNodeTree] 决定）。模型交回的坐标一律是 0..1000 归一化值，
+ * 由 [MobileAction.toPlan] 在真正下发前换算成像素。决策让模型按固定形制输出，解析器容错。
+ *
+ * 动作之后先等「界面静默」再重新观测（[awaitSettled]）：动作前取一屏指纹，动作后轮询到「已经变了
+ * 且连续几次相同」才返回，超时就降级为返回当前观测，不算失败。每步的前后指纹写进 trace；
+ * 空转判定也因此从「同动作」升级为「同动作且同屏」。[MAX_IDLE_STEPS] 步无效即中止并返回失败。
+ * 收尾用 [OperatorOutcome] 表达（不抛异常）。
  */
 @Singleton
 class MobileOperator @Inject constructor(
@@ -133,8 +138,8 @@ class MobileOperator @Inject constructor(
         }
 
         val progress = mutableListOf<String>()
-        val recent = ArrayDeque<Map<String, JsonElement>>()
         var idle = 0
+        var lastAction: Attempt? = null
         val limit = if (maxSteps > 0) maxSteps else Int.MAX_VALUE
 
         var observation: HandObservation? = observe(hand)
@@ -157,11 +162,12 @@ class MobileOperator @Inject constructor(
                 return finish(trace, OperatorOutcome.Failed(stepNo, trace.id, "模型没有产出可用的动作，已中止"))
             }
 
-            val planned = MobileAction.toPlan(step)
+            val planned = MobileAction.toPlan(step, obs.width, obs.height)
             val entry = step.action.replace("\n", " ").replace("\"", "")
             when (planned) {
                 is PlannedAction.Finish -> {
-                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, null)
+                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, null,
+                        before = obs.fingerprint)
                     val outcome = when (planned.status) {
                         "done" -> OperatorOutcome.Done(stepNo, trace.id, planned.text)
                         "ask" -> OperatorOutcome.Ask(stepNo, trace.id, planned.text)
@@ -171,8 +177,11 @@ class MobileOperator @Inject constructor(
                 }
 
                 is PlannedAction.Wait -> {
+                    val before = obs.fingerprint
                     delay((planned.seconds * 1000).toLong())
-                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, null)
+                    val after = runCatching { hand.fingerprint() }.getOrNull()
+                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, null,
+                        before = before, after = after)
                     progress.add("$entry; Result: 等待 ${planned.seconds}s")
                     observation = null
                     continue
@@ -188,18 +197,23 @@ class MobileOperator @Inject constructor(
                         observation = null
                         continue
                     }
-                    val res = runCatching { hand.act(mapOf("action" to JsonPrimitive("launch"), "component" to JsonPrimitive(target))) }
+                    val launchArgs = mapOf("action" to JsonPrimitive("launch"), "component" to JsonPrimitive(target))
+                    val before = obs.fingerprint
+                    val res = runCatching { hand.act(launchArgs) }
                         .getOrElse { HandActResult(false, it.message ?: "启动失败") }
-                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, res.message.takeIf { !res.ok })
+                    val after = if (res.ok) awaitSettled(hand, before, SETTLE_TIMEOUT_LAUNCH_MS) else null
+                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, step.arguments, decision.raw, decision.latencyMs,
+                        res.message.takeIf { !res.ok }, dispatched = launchArgs, before = before, after = after)
                     progress.add(if (res.ok) entry else "$entry; Result: ${res.message}")
-                    recent.clear()
+                    lastAction = Attempt(launchArgs, before, after)
                     idle = 0
                     observation = null
                     continue
                 }
 
                 is PlannedAction.Invalid -> {
-                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, null, decision.raw, decision.latencyMs, planned.reason)
+                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, step.arguments, decision.raw, decision.latencyMs,
+                        planned.reason, before = obs.fingerprint)
                     progress.add("$entry; Result: ${planned.reason}")
                     idle++
                     if (idle >= MAX_IDLE_STEPS) return finish(trace, idle(trace, hand, stepNo))
@@ -208,24 +222,32 @@ class MobileOperator @Inject constructor(
                 }
 
                 is PlannedAction.Device -> {
-                    // 空转：同一动作连着来
-                    if (recent.size >= 2 && recent.all { MobileAction.sameAction(it, planned.args) }) {
+                    // 空转：上一次就是同一个动作，而且那次动作并没有改变画面——再重复一次也是白做。
+                    // 拿不到指纹时退化成旧行为：同一个动作连着做三次也算空转。
+                    val before = obs.fingerprint
+                    val last = lastAction
+                    val same = last != null && MobileAction.sameAction(last.args, planned.args)
+                    val lastHadNoEffect = last != null && last.before != null && last.after != null &&
+                        last.before.sameContent(last.after)
+                    val noFingerprint = last != null && (last.before == null || last.after == null)
+                    if (same && (lastHadNoEffect || (noFingerprint && last!!.repeats >= 2))) {
                         progress.add("$entry; Note: 同一个动作已经连续做了几次，屏幕没有变化——换一种做法，或用 terminate(status=\"failure\") 结束")
-                        recent.clear()
-                        trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, planned.args, decision.raw, decision.latencyMs, "空转")
+                        trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, step.arguments, decision.raw, decision.latencyMs,
+                            "空转（同动作且屏未变）", dispatched = planned.args, before = before, after = before)
                         idle++
                         if (idle >= MAX_IDLE_STEPS) return finish(trace, idle(trace, hand, stepNo))
                         observation = null
                         continue
                     }
 
-                    recent.addLast(planned.args)
-                    if (recent.size > 4) recent.removeFirst()
                     val res = runCatching { hand.act(planned.args) }
                         .getOrElse { HandActResult(false, it.message ?: "动作失败") }
-                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, planned.args, decision.raw, decision.latencyMs, res.message.takeIf { !res.ok })
+                    val after = if (res.ok) awaitSettled(hand, before, settleTimeoutMs(planned.args)) else null
+                    trace.step(stepNo, obs.caption, obs.image, step.thought, step.action, step.arguments, decision.raw, decision.latencyMs,
+                        res.message.takeIf { !res.ok }, dispatched = planned.args, before = before, after = after)
                     if (res.ok) {
                         idle = 0
+                        lastAction = Attempt(planned.args, before, after, if (same) last!!.repeats + 1 else 1)
                         progress.add(entry)
                     } else {
                         progress.add("$entry; Result: ${res.message}")
@@ -242,6 +264,14 @@ class MobileOperator @Inject constructor(
 
     private data class Decision(val step: MobileStep?, val raw: String, val latencyMs: Long)
 
+    /** 上一次设备动作、它前后的屏、以及同动作连续出现了几次：空转判定用「同动作 + 上次没改变画面」。 */
+    private data class Attempt(
+        val args: Map<String, JsonElement>,
+        val before: ScreenFingerprint?,
+        val after: ScreenFingerprint?,
+        val repeats: Int = 1,
+    )
+
     /** 让模型给出下一步；回复不成形时最多重问 [PARSE_RETRIES] 次。 */
     private suspend fun decide(
         provider: AIProvider,
@@ -251,7 +281,7 @@ class MobileOperator @Inject constructor(
         sessionId: String?,
     ): Decision {
         val progressText = progress.mapIndexed { i, s -> "Step ${i + 1}: $s; " }.joinToString("")
-        var content = MobilePrompt.userText(goal, progressText)
+        var content = MobilePrompt.userText(goal, progressText, screenSize(obs))
         obs.nodesText?.takeIf { it.isNotBlank() }?.let { content += "\n\n" + MobilePrompt.nodesText(it) }
         var messages: List<AgentMessage> = listOf(AgentMessage.UserMessage(content = content, images = listOfNotNull(obs.image)))
         val started = System.currentTimeMillis()
@@ -319,12 +349,56 @@ class MobileOperator @Inject constructor(
             .getOrElse { HandObservation(caption = "", image = null, error = it.message ?: it.javaClass.simpleName) }
     }
 
+    /** 给模型看的屏幕像素尺寸（归一化坐标换算用）；尺寸未知返回 null。 */
+    private fun screenSize(obs: HandObservation): String? =
+        if (obs.width > 0 && obs.height > 0) "${obs.width}×${obs.height}" else null
+
+    /** 动作后等静默的总超时：启动 App 落屏慢一些，其余统一 [SETTLE_TIMEOUT_MS]。 */
+    private fun settleTimeoutMs(args: Map<String, JsonElement>): Long {
+        val action = (args["action"] as? JsonPrimitive)?.contentOrNull?.trim()
+        return if (action == "launch") SETTLE_TIMEOUT_LAUNCH_MS else SETTLE_TIMEOUT_MS
+    }
+
+    /**
+     * 动作之后等界面静默：先等它「变了」（与 [before] 不同），再要求连续 [SETTLE_STABLE_POLLS] 次
+     * 采样一致才返回。总超时 [timeoutMs] 后返回最后一次采样——超时只说明没等到静下来，
+     * 不算动作失败。拿不到指纹（[before] 为空或这只手不支持）时返回 null，循环退化成直接重看。
+     */
+    private suspend fun awaitSettled(hand: MobileHand, before: ScreenFingerprint?, timeoutMs: Long): ScreenFingerprint? {
+        if (before == null) return null
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var previous = before
+        var changed = false
+        var stable = 0
+        while (SystemClock.elapsedRealtime() < deadline) {
+            delay(SETTLE_POLL_MS)
+            // 取不到这一帧就交回 null：宁可让循环当成「判不了」，也不要把动作误判成「没效果」。
+            val current = runCatching { hand.fingerprint() }.getOrNull() ?: return null
+            if (!changed) {
+                if (!current.sameContent(before)) {
+                    changed = true
+                    stable = 1
+                }
+            } else if (current.sameContent(previous)) {
+                stable++
+                if (stable >= SETTLE_STABLE_POLLS) return current
+            } else {
+                stable = 1
+            }
+            previous = current
+        }
+        return previous
+    }
+
     // ------------------------------------------------------------------ 收尾/工具
 
     private fun idle(trace: MobileTrace, hand: MobileHand, steps: Int): OperatorOutcome {
         // 影子屏不读节点树，用它区分「影子屏 / 无障碍」这只手。
         val noun = if (hand.readsNodeTree) "屏幕" else "影子屏"
-        return OperatorOutcome.Failed(steps, trace.id, "连续 $MAX_IDLE_STEPS 步在${noun}上都没有产生有效动作（动作不认识，或同一个动作反复做），已中止")
+        return OperatorOutcome.Failed(
+            steps, trace.id,
+            "连续 $MAX_IDLE_STEPS 步在${noun}上都没有产生有效动作（动作不认识，或同一个动作反复做而屏幕没有变化），已中止",
+        )
     }
 
     private fun finish(trace: MobileTrace, outcome: OperatorOutcome): OperatorOutcome {
@@ -421,5 +495,17 @@ class MobileOperator @Inject constructor(
 
         /** 回复不成形时最多重问几次。 */
         const val PARSE_RETRIES = 3
+
+        /** 动作后等界面静默的轮询间隔。 */
+        const val SETTLE_POLL_MS = 250L
+
+        /** 界面变化后要连续这么多次采样一致才算静下来。 */
+        const val SETTLE_STABLE_POLLS = 2
+
+        /** 普通动作后等静默的总超时。 */
+        const val SETTLE_TIMEOUT_MS = 3_000L
+
+        /** 启动 App 后等静默的总超时（冷启动 + 落屏更慢）。 */
+        const val SETTLE_TIMEOUT_LAUNCH_MS = 6_000L
     }
 }

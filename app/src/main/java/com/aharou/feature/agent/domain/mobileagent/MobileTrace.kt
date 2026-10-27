@@ -32,6 +32,9 @@ data class TraceSummary(
  * 手机操作 trace 的存取：每次循环落一份 JSONL（每步一行的「看到什么 / 想了什么 / 做了什么 /
  * 实际下发什么 / 耗时 / 错误」），外加每步的截图文件，供 [renderText] / [renderHtml] 回放。
  *
+ * 每步还记一屏指纹（动作前后各一个）：`screen.fp_before` / `screen.fp_after`，只存短哈希，
+ * 不存图；`params` 是模型侧原始参数（坐标已归一化 0..1000），`dispatched` 是真正下发的像素参数。
+ *
  * 存放位置为 App 私有目录 `filesDir/mobile-traces/`，不依赖容器是否就绪。保留最近
  * [KEEP_TRACES] 份（含各自的截图），更早的连同图片一起清掉。参考 nanoMuse 的 Trace。
  */
@@ -76,7 +79,21 @@ class MobileTraceStore @Inject constructor(
             sb.append("  ").append(str(step, "latency_ms")).append("ms\n")
             str(step, "thought").takeIf { it.isNotEmpty() }?.let { sb.append("  想一想：").append(it).append('\n') }
             str(step, "action").takeIf { it.isNotEmpty() }?.let { sb.append("  → ").append(it).append('\n') }
-            (step["params"] as? JsonObject)?.takeIf { it.isNotEmpty() }?.let { sb.append("  下发：").append(it).append('\n') }
+            (step["screen"] as? JsonObject)?.let { scr ->
+                val before = str(scr, "fp_before")
+                val after = str(scr, "fp_after")
+                if (before.isNotEmpty() || after.isNotEmpty()) {
+                    sb.append("  屏指纹：").append(before.ifEmpty { "?" }).append(" → ").append(after.ifEmpty { "?" }).append('\n')
+                }
+            }
+            val params = step["params"] as? JsonObject
+            val dispatched = step["dispatched"] as? JsonObject
+            // 旧 trace 只有 params（当时存的就是下发参数），新 trace 的 params 是归一化坐标。
+            params?.takeIf { it.isNotEmpty() }?.let {
+                sb.append(if (dispatched != null) "  参数（归一化坐标）：" else "  下发：").append(it).append('\n')
+            }
+            dispatched?.takeIf { it.isNotEmpty() && it != params }
+                ?.let { sb.append("  下发（像素）：").append(it).append('\n') }
             str(step, "raw").takeIf { it.isNotEmpty() }?.let { sb.append("  未解析的回复：").append(it).append('\n') }
             str(step, "error").takeIf { it.isNotEmpty() }?.let { sb.append("  错误：").append(it).append('\n') }
         }
@@ -111,9 +128,20 @@ class MobileTraceStore @Inject constructor(
             val screen = step["screen"] as? JsonObject
             parts.add("<div><span class='n'>Step " + str(step, "step") + "</span> <span class='t'>" +
                 escape(screen?.let { str(it, "caption") }.orEmpty()) + " · " + str(step, "latency_ms") + " ms</span></div>")
+            screen?.let { scr ->
+                val before = str(scr, "fp_before")
+                val after = str(scr, "fp_after")
+                if (before.isNotEmpty() || after.isNotEmpty()) {
+                    parts.add("<div class='t'>屏指纹：" + escape(before.ifEmpty { "?" }) + " → " + escape(after.ifEmpty { "?" }) + "</div>")
+                }
+            }
             str(step, "thought").takeIf { it.isNotEmpty() }?.let { parts.add("<div class='t'>" + escape(it) + "</div>") }
             str(step, "action").takeIf { it.isNotEmpty() }?.let { parts.add("<div class='a'><b>" + escape(it) + "</b></div>") }
-            (step["params"] as? JsonObject)?.takeIf { it.isNotEmpty() }?.let { parts.add("<div><code>" + escape(it.toString()) + "</code></div>") }
+            val params = step["params"] as? JsonObject
+            val dispatched = step["dispatched"] as? JsonObject
+            params?.takeIf { it.isNotEmpty() }?.let { parts.add("<div><code>" + escape(it.toString()) + "</code></div>") }
+            dispatched?.takeIf { it.isNotEmpty() && it != params }
+                ?.let { parts.add("<div><code>像素 " + escape(it.toString()) + "</code></div>") }
             str(step, "raw").takeIf { it.isNotEmpty() }?.let { parts.add("<div class='err'>未解析的回复：" + escape(it.take(600)) + "</div>") }
             str(step, "error").takeIf { it.isNotEmpty() }?.let { parts.add("<div class='err'>" + escape(it) + "</div>") }
             parts.add("</div></div>")
@@ -217,6 +245,9 @@ class MobileTrace internal constructor(
         raw: String?,
         latencyMs: Long,
         error: String?,
+        dispatched: Map<String, JsonElement>? = null,
+        before: ScreenFingerprint? = null,
+        after: ScreenFingerprint? = null,
     ) {
         val imageName = saveImage(stepNo, image)
         append(buildJsonObject {
@@ -226,10 +257,13 @@ class MobileTrace internal constructor(
             put("screen", buildJsonObject {
                 put("caption", caption)
                 if (imageName != null) put("image", imageName)
+                if (before != null) put("fp_before", before.render())
+                if (after != null) put("fp_after", after.render())
             })
             put("thought", thought ?: "")
             put("action", action ?: "")
             if (params != null) put("params", JsonObject(params))
+            if (dispatched != null) put("dispatched", JsonObject(dispatched))
             put("raw", raw?.take(2000) ?: "")
             put("latency_ms", latencyMs)
             put("error", error ?: "")

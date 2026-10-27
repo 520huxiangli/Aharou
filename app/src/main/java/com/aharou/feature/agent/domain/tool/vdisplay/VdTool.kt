@@ -13,6 +13,7 @@ import com.aharou.feature.agent.domain.mobileagent.HandObservation
 import com.aharou.feature.agent.domain.mobileagent.MobileHand
 import com.aharou.feature.agent.domain.mobileagent.MobileOperator
 import com.aharou.feature.agent.domain.mobileagent.MobileTraceStore
+import com.aharou.feature.agent.domain.mobileagent.ScreenFingerprint
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
@@ -37,7 +38,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
-import java.io.File
 import javax.inject.Inject
 
 /**
@@ -71,6 +71,7 @@ class VdTool @Inject constructor(
             "shot 截图（图片随结果返回，图上带坐标网格；传 ocr=true 则改回文字、传 grid=false 关闭网格）；" +
             "tap / swipe / key 触控；type 往焦点输入框输文字（text=内容，可选 submit=true 回车，支持中文）。" +
             "task 把「看屏→决策→动作→再看屏」的多步循环交给手机操作子代理：goal 是要完成的事，一次调用返回一个结果（不逐步吃上下文）；" +
+            "子代理内部的动作坐标是 0..1000 归一化值（换分辨率不失效），与本工具 tap/swipe 用的像素坐标不是一套，不要把两者混用；" +
             "trace 列出或回放手机操作记录（traceId 为空则列出）。需 root 或 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
 
     override val permissionPolicy = ToolPermissionPolicy.ASK
@@ -87,8 +88,8 @@ class VdTool @Inject constructor(
         "height" to ToolParameter("height", ParameterType.INTEGER, "start 专用：高（默认 1920）", false),
         "dpi" to ToolParameter("dpi", ParameterType.INTEGER, "start 专用：dpi（默认 440）", false),
         "component" to ToolParameter("component", ParameterType.STRING, "launch 专用：组件（\"pkg/act\" 或 \"pkg\"）", false),
-        "x" to ToolParameter("x", ParameterType.INTEGER, "tap/swipe 起点 X（像素）", false),
-        "y" to ToolParameter("y", ParameterType.INTEGER, "tap/swipe 起点 Y（像素）", false),
+        "x" to ToolParameter("x", ParameterType.INTEGER, "tap/swipe 起点 X（像素，直接读图上网格数字）", false),
+        "y" to ToolParameter("y", ParameterType.INTEGER, "tap/swipe 起点 Y（像素，直接读图上网格数字）", false),
         "x2" to ToolParameter("x2", ParameterType.INTEGER, "swipe 终点 X", false),
         "y2" to ToolParameter("y2", ParameterType.INTEGER, "swipe 终点 Y", false),
         "duration" to ToolParameter("duration", ParameterType.INTEGER, "swipe 持续时间（毫秒，默认 300）", false),
@@ -220,19 +221,43 @@ class VdTool @Inject constructor(
         }
     }
 
-    /** 看一次屏：复用 shot 分支（带坐标网格），取回 caption 与图片。 */
+    /** 看一次屏：复用 shot 分支（带坐标网格），取回 caption、图片与界面指纹。 */
     override suspend fun observe(): HandObservation {
-        return when (val result = execute(mapOf("action" to JsonPrimitive("shot")))) {
-            is ToolResult.Success -> {
-                val obj = result.data as? JsonObject
-                HandObservation(
-                    caption = obj?.get("caption")?.jsonPrimitive?.contentOrNull.orEmpty(),
-                    image = result.images.firstOrNull(),
-                )
-            }
+        return try {
+            val snap = capture(withGrid = true)
+            HandObservation(
+                caption = snap.caption,
+                image = snap.shot.base64.takeIf { it.isNotEmpty() }
+                    ?.let { AgentImage(mimeType = "image/jpeg", base64Data = it) },
+                width = snap.shot.inputWidth,
+                height = snap.shot.inputHeight,
+                fingerprint = snap.fingerprint,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            HandObservation(caption = "", image = null, error = e.message ?: e.javaClass.simpleName)
+        }
+    }
 
-            is ToolResult.Error -> HandObservation(caption = "", image = null, error = result.message)
-            is ToolResult.Partial -> HandObservation(caption = "", image = null, error = result.message)
+    /**
+     * 只取界面指纹：不叠网格、不编 base64、不查前台（轮询要便宜），只做接图 + 降采样哈希。
+     * 拿不到就返回 null，让循环降级为「动作后直接重看」，不把任务卡在截图失败上。
+     */
+    override suspend fun fingerprint(): ScreenFingerprint? {
+        return try {
+            val (_, file) = vdController.screenshot()
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            try {
+                ScreenFingerprint.fromBitmap(bitmap)
+            } finally {
+                bitmap?.recycle()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FileLogger.i(TAG, "取界面指纹失败：${e.message}")
+            null
         }
     }
 
@@ -294,28 +319,31 @@ class VdTool @Inject constructor(
                 }
 
                 "shot" -> {
-                    val (info, file) = vdController.screenshot()
                     val wantOcr = args["ocr"]?.jsonPrimitive?.booleanOrNull == true
                     val wantGrid = args["grid"]?.jsonPrimitive?.booleanOrNull ?: true
                     // OCR 直接吃画面，网格线会干扰识别，故 OCR 时不叠网格。
-                    val shot = encodeScreenshot(file, withGrid = wantGrid && !wantOcr)
-                    val caption = buildCaption(info, shot)
+                    val snap = capture(withGrid = wantGrid && !wantOcr)
                     if (wantOcr) {
-                        val image = AgentImage(mimeType = "image/jpeg", base64Data = shot.base64)
+                        val image = AgentImage(mimeType = "image/jpeg", base64Data = snap.shot.base64)
                         val text = ocrEngine.recognize(image)
                         ToolResult.Success(
                             infoJson(
-                                info,
+                                snap.info,
                                 if (text.isNullOrBlank()) "已截图，但未识别到文字" else "已截图并识别出屏幕文字",
                                 ocrText = text.orEmpty(),
-                                shot = shot,
-                                caption = caption,
+                                shot = snap.shot,
+                                caption = snap.caption,
                             )
                         )
                     } else {
                         ToolResult.Success(
-                            infoJson(info, "已截图（图片随结果返回，图中网格标注的数字即 input 坐标）", shot = shot, caption = caption),
-                            if (shot.base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = shot.base64)) else emptyList(),
+                            infoJson(
+                                snap.info,
+                                "已截图（图片随结果返回，图中网格标注的数字即 input 像素坐标）",
+                                shot = snap.shot,
+                                caption = snap.caption,
+                            ),
+                            if (snap.shot.base64.isNotEmpty()) listOf(AgentImage(mimeType = "image/jpeg", base64Data = snap.shot.base64)) else emptyList(),
                         )
                     }
                 }
@@ -436,16 +464,35 @@ class VdTool @Inject constructor(
         }
     }
 
-    /** 截图 caption：影子屏上的前台 App/Activity、画面像素尺寸、键盘是否在（拿不到的字段略去）。 */
-    private suspend fun buildCaption(info: VdInfo, shot: ShotImage): String {
-        val (pkg, activity) = shadowForeground(info.displayId)
-        return ScreenActionSemantics.caption(
-            packageName = pkg,
-            activity = activity,
-            width = shot.inputWidth.takeIf { it > 0 } ?: info.width,
-            height = shot.inputHeight.takeIf { it > 0 } ?: info.height,
-            keyboardShown = shadowKeyboardShown(),
-        )
+    /** 一次截图的完整产物：影子屏信息、给模型的图、caption、界面指纹。 */
+    private data class ScreenCapture(
+        val info: VdInfo,
+        val shot: ShotImage,
+        val caption: String,
+        val fingerprint: ScreenFingerprint?,
+    )
+
+    /**
+     * 截一屏并一并算出 caption 与界面指纹（只解一次图）。[withGrid] 为真时图上叠一层网格——
+     * 网格标的始终是**像素**（tap/swipe 用的那套），归一化只在手机操作子代理内部发生。
+     */
+    private suspend fun capture(withGrid: Boolean): ScreenCapture {
+        val (info, file) = vdController.screenshot()
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+        try {
+            val shot = encodeScreenshot(bitmap, withGrid)
+            val (pkg, activity) = shadowForeground(info.displayId)
+            val caption = ScreenActionSemantics.caption(
+                packageName = pkg,
+                activity = activity,
+                width = shot.inputWidth.takeIf { it > 0 } ?: info.width,
+                height = shot.inputHeight.takeIf { it > 0 } ?: info.height,
+                keyboardShown = shadowKeyboardShown(),
+            )
+            return ScreenCapture(info, shot, caption, ScreenFingerprint.fromBitmap(bitmap, pkg, activity))
+        } finally {
+            bitmap?.recycle()
+        }
     }
 
     /** 影子屏上的前台包名与 Activity（best-effort：拿不到返回 null，不让截图因此失败）。 */
@@ -481,10 +528,10 @@ class VdTool @Inject constructor(
 
     /**
      * 截图转 JPEG base64：长边压到 ≤1440 控制给模型的体积；[withGrid] 为真时在图上
-     * 叠加坐标网格，网格标注的是 **input（未缩放）坐标**，让模型照读即可点击。
+     * 叠加坐标网格，网格标注的是 **input（未缩放）像素坐标**，让模型照读即可点击。
      */
-    private fun encodeScreenshot(file: File, withGrid: Boolean): ShotImage {
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return ShotImage("", 0, 0, 0, 0, 1f)
+    private fun encodeScreenshot(bitmap: Bitmap?, withGrid: Boolean): ShotImage {
+        if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) return ShotImage("", 0, 0, 0, 0, 1f)
         // 原图就是设备真实像素，也是 tap 使用的坐标系（不依赖 dumpsys 报的尺寸）。
         val inputW = bitmap.width
         val inputH = bitmap.height
