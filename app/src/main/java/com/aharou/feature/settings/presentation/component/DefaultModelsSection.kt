@@ -176,6 +176,7 @@ internal fun DefaultModelsSection(
             .padding(bottom = Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
+        ModelCatalogRefreshRow()
         SettingsGroup {
             SettingsRow(
                 icon = FeatherIcons.Image,

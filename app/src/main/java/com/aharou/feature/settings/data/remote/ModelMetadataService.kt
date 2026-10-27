@@ -3,24 +3,30 @@ package com.aharou.feature.settings.data.remote
 import android.content.Context
 import com.aharou.core.net.RepoDataFetcher
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.settings.data.catalog.ModelCatalogCache
+import com.aharou.feature.settings.data.catalog.ModelCatalogClient
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.mergeModelMetadata
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -28,7 +34,9 @@ import javax.inject.Singleton
 @Singleton
 class ModelMetadataService @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val customModelMetadataStore: CustomModelMetadataStore
+    private val customModelMetadataStore: CustomModelMetadataStore,
+    private val modelCatalogCache: ModelCatalogCache,
+    private val modelCatalogClient: ModelCatalogClient
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val activeCatalogParses = java.util.concurrent.atomic.AtomicInteger(0)
@@ -45,6 +53,10 @@ class ModelMetadataService @Inject constructor(
     @Volatile
     private var refreshAttemptedThisProcess = false
 
+    /** 运行时目录的后台刷新协程：不能挂在调用方作用域上（首次 resolveAll 返回后仍要跑完）。 */
+    private val catalogRefreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val runtimeCatalogRefreshTriggered = java.util.concurrent.atomic.AtomicBoolean(false)
+
     suspend fun resolve(providerId: String, type: ProviderType, modelId: String): ModelMetadata =
         withContext(Dispatchers.IO) {
             val catalog = loadCatalog()
@@ -54,6 +66,8 @@ class ModelMetadataService @Inject constructor(
 
     suspend fun resolveAll(providerId: String, type: ProviderType, modelIds: List<String>): Map<String, ModelMetadata> =
         withContext(Dispatchers.IO) {
+            // 懒触发：首次进设置页照旧用现有数据，后台刷新运行时目录，下一次 resolveAll 生效。
+            triggerRuntimeCatalogRefresh()
             val catalog = loadCatalog()
             modelIds.associateWith { modelId ->
                 val auto = findMetadata(catalog, type, modelId) ?: default(type, modelId)
@@ -98,11 +112,19 @@ class ModelMetadataService @Inject constructor(
         }
     }
 
-    /** 纯只读链路：内存 → 本仓库磁盘缓存 → 内置 assets → 空目录（由调用方回退默认值），绝不发网络请求。 */
+    /**
+     * 纯只读链路：内存 → 运行时目录缓存（未过期）→ 本仓库磁盘缓存 → 内置 assets → 空目录
+     * （由调用方回退默认值），绝不发网络请求。
+     */
     private suspend fun loadCatalog(): Catalog {
         cached?.let { return it }
         return catalogLock.withLock {
             cached?.let { return it }
+
+            loadCatalogFromRuntimeCache()?.let {
+                cached = it
+                return it
+            }
 
             val readStartedNs = System.nanoTime()
             FileLogger.memoryCheckpoint(TAG, "catalog.disk.start", details = "operation=$readStartedNs")
@@ -126,6 +148,38 @@ class ModelMetadataService @Inject constructor(
             }
 
             Catalog(emptyMap(), emptyMap())
+        }
+    }
+
+    /** 运行时目录缓存（models.dev 直连，落盘见 [ModelCatalogCache]）：只在未过期时使用，过期即回退。 */
+    private fun loadCatalogFromRuntimeCache(): Catalog? {
+        val snapshot = modelCatalogCache.readFresh(CATALOG_CACHE_MAX_AGE_MS) ?: return null
+        return runCatching { parseCatalogWithDiagnostics(snapshot.body, "runtime") }
+            .onFailure { FileLogger.w(TAG, "解析运行时模型目录失败", it) }
+            .getOrNull()
+    }
+
+    /**
+     * 手动刷新运行时模型目录（供 UI 之后接）：成功时同时更新内存与磁盘缓存并返回 true，
+     * 失败返回 false，调用方继续用现有数据。
+     */
+    suspend fun refreshCatalog(): Boolean = withContext(Dispatchers.IO) {
+        val snapshot = modelCatalogClient.fetch() ?: return@withContext false
+        val parsed = runCatching { parseCatalogWithDiagnostics(snapshot.body, "runtime-refresh") }
+            .onFailure { FileLogger.w(TAG, "解析运行时模型目录失败", it) }
+            .getOrNull() ?: return@withContext false
+        // 空目录宁可继续用旧数据，也不要拿它覆盖内存快照（会让所有模型回退兜底值）。
+        if (parsed.byProvider.values.none { it.isNotEmpty() }) return@withContext false
+        catalogLock.withLock { cached = parsed }
+        true
+    }
+
+    /** 每个进程只懒触发一次运行时目录刷新；失败静默（下次 resolveAll 仍用现有数据）。 */
+    private fun triggerRuntimeCatalogRefresh() {
+        if (!runtimeCatalogRefreshTriggered.compareAndSet(false, true)) return
+        catalogRefreshScope.launch {
+            runCatching { refreshCatalog() }
+                .onFailure { FileLogger.w(TAG, "运行时模型目录后台刷新失败", it) }
         }
     }
 
@@ -235,55 +289,71 @@ class ModelMetadataService @Inject constructor(
             val lowerByProvider: Map<String, Map<String, ModelMetadata>>
         )
 
+        /**
+         * 宽松解析：provider 层结构非法直接跳过；单个模型条目解析失败只跳过该条，
+         * 不让运行时目录里的一条脏数据废掉整份目录。
+         */
         internal fun parseCatalog(root: JsonElement): Catalog {
-            val byProvider = root.jsonObject.mapValues { (providerId, providerEl) ->
-                val models = providerEl.jsonObject["models"]?.jsonObject.orEmpty()
-                models.mapValues { (_, modelEl) ->
-                    val model = modelEl.jsonObject
-                    val limit = model["limit"]?.jsonObject
-                    val modalities = model["modalities"]?.jsonObject
-                    val inputModalities = modalities?.get("input")?.jsonArray
-                        ?.mapNotNull { it.jsonPrimitive.content }
-                        .orEmpty()
-                    val outputModalities = modalities?.get("output")?.jsonArray
-                        ?.mapNotNull { it.jsonPrimitive.content }
-                        .orEmpty()
-                    val cost = model["cost"]?.jsonObject
-                    val reasoningOptions = parseReasoningOptionsFull(model["reasoning_options"])
-                    ModelMetadata(
-                        id = model["id"]?.jsonPrimitive?.content ?: "",
-                        providerId = providerId,
-                        displayName = model["name"]?.jsonPrimitive?.content ?: model["id"]?.jsonPrimitive?.content.orEmpty(),
-                        contextTokens = limit?.get("context")?.jsonPrimitive?.intOrNull ?: 0,
-                        inputTokens = limit?.get("input")?.jsonPrimitive?.intOrNull,
-                        outputTokens = limit?.get("output")?.jsonPrimitive?.intOrNull,
-                        supportsTools = model["tool_call"]?.jsonPrimitive?.booleanOrNull == true,
-                        supportsVision = "image" in inputModalities || "video" in inputModalities || "pdf" in inputModalities,
-                        // 图像输出能力：models.dev 的 modalities.output 标注，或 Nano Banana 系 id 后缀兜底
-                        // （内置快照缺 output 模态时也能识别 gemini-*-image 模型）。
-                        supportsImageOutput = "image" in outputModalities ||
-                            (model["id"]?.jsonPrimitive?.content.orEmpty().endsWith("-image")),
-                        supportsReasoning = model["reasoning"]?.jsonPrimitive?.booleanOrNull == true,
-                        supportsCustomTemperature = model["temperature"]?.jsonPrimitive?.booleanOrNull == true,
-                        reasoningEffortOptions = reasoningOptions.effortValues.takeIf { it.isNotEmpty() },
-                        reasoningSupportsToggle = reasoningOptions.supportsToggle,
-                        reasoningBudgetTokens = reasoningOptions.hasBudgetTokens,
-                        reasoningBudgetTokensMin = reasoningOptions.budgetMin,
-                        reasoningBudgetTokensMax = reasoningOptions.budgetMax,
-                        inputCostUsdPerM = cost?.get("input")?.jsonPrimitive?.doubleOrNull,
-                        outputCostUsdPerM = cost?.get("output")?.jsonPrimitive?.doubleOrNull,
-                        cacheReadCostUsdPerM = cost?.get("cache_read")?.jsonPrimitive?.doubleOrNull,
-                        cacheWriteCostUsdPerM = cost?.get("cache_write")?.jsonPrimitive?.doubleOrNull,
-                        source = ModelMetadata.Source.MODELS_DEV
-                    )
-                }
-            }
+            val rootObj = root as? JsonObject ?: return Catalog(emptyMap(), emptyMap())
+            val byProvider = rootObj.mapNotNull { (providerId, providerEl) ->
+                val providerObj = providerEl as? JsonObject ?: return@mapNotNull null
+                val models = providerObj["models"] as? JsonObject ?: JsonObject(emptyMap())
+                val parsedModels = models.mapNotNull { (modelKey, modelEl) ->
+                    parseModel(providerId, modelEl)?.let { modelKey to it }
+                }.toMap()
+                providerId to parsedModels
+            }.toMap()
             return Catalog(
                 byProvider = byProvider,
                 lowerByProvider = byProvider.mapValues { (_, models) ->
                     models.mapKeys { (id, _) -> id.lowercase() }
                 }
             )
+        }
+
+        /** 单条模型：字段缺失走默认 / null，字段类型不对则整条跳过（见 [parseCatalog]）。 */
+        private fun parseModel(providerId: String, modelEl: JsonElement): ModelMetadata? {
+            val model = modelEl as? JsonObject ?: return null
+            return runCatching {
+                val limit = model["limit"] as? JsonObject
+                val modalities = model["modalities"] as? JsonObject
+                val inputModalities = (modalities?.get("input") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                    .orEmpty()
+                val outputModalities = (modalities?.get("output") as? JsonArray)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.content }
+                    .orEmpty()
+                val cost = model["cost"] as? JsonObject
+                val reasoningOptions = parseReasoningOptionsFull(model["reasoning_options"])
+                val modelId = (model["id"] as? JsonPrimitive)?.content ?: ""
+                ModelMetadata(
+                    id = modelId,
+                    providerId = providerId,
+                    displayName = (model["name"] as? JsonPrimitive)?.content ?: modelId,
+                    contextTokens = (limit?.get("context") as? JsonPrimitive)?.intOrNull ?: 0,
+                    inputTokens = (limit?.get("input") as? JsonPrimitive)?.intOrNull,
+                    outputTokens = (limit?.get("output") as? JsonPrimitive)?.intOrNull,
+                    supportsTools = (model["tool_call"] as? JsonPrimitive)?.booleanOrNull == true,
+                    supportsVision = "image" in inputModalities || "video" in inputModalities || "pdf" in inputModalities,
+                    // 图像输出能力：models.dev 的 modalities.output 标注，或 Nano Banana 系 id 后缀兜底
+                    // （内置快照缺 output 模态时也能识别 gemini-*-image 模型）。
+                    supportsImageOutput = "image" in outputModalities || modelId.endsWith("-image"),
+                    supportsReasoning = (model["reasoning"] as? JsonPrimitive)?.booleanOrNull == true,
+                    supportsCustomTemperature = (model["temperature"] as? JsonPrimitive)?.booleanOrNull == true,
+                    reasoningEffortOptions = reasoningOptions.effortValues.takeIf { it.isNotEmpty() },
+                    reasoningSupportsToggle = reasoningOptions.supportsToggle,
+                    reasoningBudgetTokens = reasoningOptions.hasBudgetTokens,
+                    reasoningBudgetTokensMin = reasoningOptions.budgetMin,
+                    reasoningBudgetTokensMax = reasoningOptions.budgetMax,
+                    inputCostUsdPerM = (cost?.get("input") as? JsonPrimitive)?.doubleOrNull,
+                    outputCostUsdPerM = (cost?.get("output") as? JsonPrimitive)?.doubleOrNull,
+                    cacheReadCostUsdPerM = (cost?.get("cache_read") as? JsonPrimitive)?.doubleOrNull,
+                    cacheWriteCostUsdPerM = (cost?.get("cache_write") as? JsonPrimitive)?.doubleOrNull,
+                    source = ModelMetadata.Source.MODELS_DEV
+                )
+            }.onFailure {
+                FileLogger.d(TAG, "跳过无法解析的模型条目 provider=$providerId")
+            }.getOrNull()
         }
 
         /**
@@ -403,6 +473,9 @@ class ModelMetadataService @Inject constructor(
         const val MODELS_REPO_PATH = "data/models.json"
         const val DEFAULT_CONTEXT_TOKENS = 128_000
         const val DEFAULT_OUTPUT_TOKENS = 64_000
+
+        /** 运行时模型目录缓存的保鲜期：超过即回退内置快照，后台刷新成功后下次生效。 */
+        const val CATALOG_CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
 
         /** Gemini 风格的模型 id 前缀（`models/gemini-2.5-pro`），匹配前剥离，忽略大小写。 */
         private const val MODELS_PREFIX = "models/"

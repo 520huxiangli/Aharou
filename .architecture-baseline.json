@@ -4,7 +4,7 @@
     "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3384,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3254,
     "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3398,
-    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 1897,
+    "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 1901,
     "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1908,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1758,
     "app/src/main/java/com/aharou/feature/pet/PetOverlay.kt": 1712,
@@ -18,7 +18,7 @@
     "app/src/main/java/com/aharou/feature/agent/presentation/component/ChatInputBar.kt": 1403,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AdaptiveCardRenderer.kt": 1194,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/ToolMessageComponents.kt": 983,
-    "app/src/main/java/com/aharou/AIEditorApp.kt": 1002,
+    "app/src/main/java/com/aharou/AIEditorApp.kt": 1005,
     "app/src/main/java/com/aharou/feature/agent/domain/tool/subagent/TaskTool.kt": 1024
   },
   "bannedImports": {

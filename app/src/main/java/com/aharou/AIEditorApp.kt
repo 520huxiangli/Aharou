@@ -228,6 +228,8 @@ class AIEditorApp : Application(), Configuration.Provider {
 
     @Inject
     lateinit var configSubAgentFields: com.aharou.feature.agent.data.ConfigSubAgentFields
+    @Inject
+    lateinit var configExperimentFields: com.aharou.feature.settings.data.ConfigExperimentFields
 
     /** 冷启动时按开关重新拉起 IM 前台服务（否则每次进 App 都要手动关再开）。 */
     @Inject
@@ -424,6 +426,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configImFields.registerInto(configRegistry)
         configStewardFields.registerInto(configRegistry)
         configSubAgentFields.registerInto(configRegistry)
+        configExperimentFields.registerInto(configRegistry)
         configPetFields.registerInto(configRegistry)
         configRemoteDeviceFields.registerInto(configRegistry)
         configCredentialFields.registerInto(configRegistry)

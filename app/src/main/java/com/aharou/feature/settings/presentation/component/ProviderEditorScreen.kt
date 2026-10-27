@@ -736,6 +736,7 @@ fun ProviderEditorScreen(
                                 Spacer(Modifier.width(Spacing.xs))
                                 Text(stringResource(R.string.provider_fetch_models))
                             }
+                            LocalScanAction(onPick = { baseUrl = it })
                         }
                     }
                     if (models.isEmpty()) {

@@ -1531,12 +1531,21 @@
     <string name="scheduled_tasks_skipped_condition">Conditions not met</string>
     <string name="scheduled_tasks_skipped_debounce">In the debounce window</string>
     <string name="scheduled_tasks_skipped_running">Previous run still going</string>
+    <string name="scheduled_tasks_failed">Last run failed</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
     <string name="subagent_max_running">Concurrency limit</string>
     <string name="subagent_max_running_hint">Max subagents running at the same time, %1$d to %2$d. The quota is shared by the whole app, not per session.</string>
     <string name="settings_teams">Team presets</string>
+    <string name="settings_experiments">Experiments</string>
+    <string name="experiment_quote_reply">Long-press quote</string>
+    <string name="experiment_quote_reply_desc">Long-press a message bubble to copy it or quote it whole; quoting puts a short excerpt into the input box</string>
+    <string name="experiment_state_follow">Follow default</string>
+    <string name="experiment_state_on">On</string>
+    <string name="experiment_state_off">Off</string>
+    <string name="experiment_default_on">on</string>
+    <string name="experiment_default_off">off</string>
     <string name="subagent_teams_entry_desc">Chain triage, parallel implementation and review into one reusable flow</string>
     <string name="team_list_empty">No team presets yet. Create ~/.aharou/teams/&lt;name&gt;.md in the container: stages in the frontmatter, team charter in the body. The format is documented under Subagents → Team presets.</string>
     <string name="team_scope_global">Global</string>
@@ -2120,6 +2129,20 @@
     <string name="chat_more_options">More Options</string>
     <string name="chat_action_edit">Edit Message</string>
     <string name="chat_action_copy">Copy Text</string>
+    <string name="chat_action_quote">Quote</string>
+    <string name="chat_action_crosscheck">Cross-check with another model</string>
+    <string name="chat_crosscheck_failed">Cross-check failed: %1$s</string>
+    <string name="models_catalog_refresh">Refresh model catalog</string>
+    <string name="models_catalog_updated">Model catalog updated</string>
+    <string name="models_catalog_failed">Catalog refresh failed, still using the local snapshot</string>
+    <string name="local_models_discover">Scan for local model servers</string>
+    <string name="local_models_none">No local model servers found</string>
+    <string name="local_models_found">Found %1$d local servers</string>
+    <string name="memory_profile_pinned">Always included</string>
+    <string name="memory_profile_recall">Retrieved on demand</string>
+    <string name="memory_profile_add">Add a fact about me</string>
+    <string name="memory_profile_edit">Edit</string>
+    <string name="memory_profile_delete">Delete</string>
     <string name="chat_action_fork">Fork from Here</string>
     <string name="chat_fork_title">Branch of %1$s</string>
     <string name="chat_action_delete">Delete Message</string>
@@ -2717,6 +2740,13 @@
     </string-array>
 
     <string name="memory_settings_title">Memory</string>
+    <string name="memory_profile_title">About you</string>
+    <string name="memory_profile_subtitle">Long-term memories grouped by purpose, in one glance</string>
+    <string name="memory_profile_identity">Long-term agreements</string>
+    <string name="memory_profile_preference">Preferences</string>
+    <string name="memory_profile_workflow">Working habits</string>
+    <string name="memory_profile_recent">Recent days</string>
+    <string name="memory_profile_empty">Nothing to show yet</string>
     <string name="memory_toggle_title">Enable memory by default</string>
     <string name="memory_toggle_subtitle">When off, new sessions no longer load the core profile and daily logs (existing sessions unaffected)</string>
     <string name="memory_files_header">Files</string>

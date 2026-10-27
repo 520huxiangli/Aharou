@@ -1530,12 +1530,21 @@
     <string name="scheduled_tasks_skipped_condition">条件不满足</string>
     <string name="scheduled_tasks_skipped_debounce">防抖中</string>
     <string name="scheduled_tasks_skipped_running">上一次还在跑</string>
+    <string name="scheduled_tasks_failed">上次执行失败</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">子代理</string>
     <string name="subagent_max_running">并发上限</string>
     <string name="subagent_max_running_hint">同时运行的子代理数量上限，范围 %1$d~%2$d。名额整个应用共享，不按会话分组。</string>
     <string name="settings_teams">团队预设</string>
+    <string name="settings_experiments">实验开关</string>
+    <string name="experiment_quote_reply">长按引用回复</string>
+    <string name="experiment_quote_reply_desc">长按消息气泡弹出菜单，可复制或引用整条消息；引用会把该条摘要带进输入框</string>
+    <string name="experiment_state_follow">跟随默认</string>
+    <string name="experiment_state_on">已开启</string>
+    <string name="experiment_state_off">已关闭</string>
+    <string name="experiment_default_on">开</string>
+    <string name="experiment_default_off">关</string>
     <string name="subagent_teams_entry_desc">把拆解、并行实现与审查串成一条可复用的流程</string>
     <string name="team_list_empty">还没有团队预设。在容器里新建 ~/.aharou/teams/&lt;名&gt;.md：frontmatter 写 stages、正文写团队公约，格式见文档「子代理 → 团队预设」。</string>
     <string name="team_scope_global">全局</string>
@@ -2119,6 +2128,20 @@
     <string name="chat_more_options">更多选项</string>
     <string name="chat_action_edit">编辑消息</string>
     <string name="chat_action_copy">复制文本</string>
+    <string name="chat_action_quote">引用</string>
+    <string name="chat_action_crosscheck">让另一个模型复审</string>
+    <string name="chat_crosscheck_failed">复审失败：%1$s</string>
+    <string name="models_catalog_refresh">刷新模型目录</string>
+    <string name="models_catalog_updated">模型目录已更新</string>
+    <string name="models_catalog_failed">模型目录刷新失败，继续用本地快照</string>
+    <string name="local_models_discover">扫描本地模型服务</string>
+    <string name="local_models_none">没有发现本地模型服务</string>
+    <string name="local_models_found">发现 %1$d 个本地服务</string>
+    <string name="memory_profile_pinned">每次对话都会带上</string>
+    <string name="memory_profile_recall">按需检索</string>
+    <string name="memory_profile_add">添加一条关于我的事实</string>
+    <string name="memory_profile_edit">编辑</string>
+    <string name="memory_profile_delete">删除</string>
     <string name="chat_action_fork">从此处新建分支</string>
     <string name="chat_fork_title">%1$s 的分支</string>
     <string name="chat_action_delete">删除消息</string>
@@ -2716,6 +2739,13 @@
     </string-array>
 
     <string name="memory_settings_title">记忆</string>
+    <string name="memory_profile_title">关于你</string>
+    <string name="memory_profile_subtitle">把长期记住的内容按用途归类，一眼看完全貌</string>
+    <string name="memory_profile_identity">长期约定</string>
+    <string name="memory_profile_preference">偏好</string>
+    <string name="memory_profile_workflow">做事习惯</string>
+    <string name="memory_profile_recent">最近几天</string>
+    <string name="memory_profile_empty">还没有可以展示的内容</string>
     <string name="memory_toggle_title">默认启用记忆</string>
     <string name="memory_toggle_subtitle">关闭后，新会话不再注入核心档案与每日日志（已有会话不受影响）</string>
     <string name="memory_files_header">文件</string>

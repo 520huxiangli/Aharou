@@ -48,6 +48,7 @@ import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.settings.presentation.DistillOutcome
 import com.aharou.feature.settings.presentation.MemoryActionError
 import com.aharou.feature.settings.presentation.SettingsViewModel
@@ -56,6 +57,7 @@ import compose.icons.feathericons.ArrowLeft
 import compose.icons.feathericons.Search
 import compose.icons.feathericons.Star
 import compose.icons.feathericons.Trash2
+import compose.icons.feathericons.Users
 import compose.icons.feathericons.Zap
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -91,6 +93,7 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     var editing by remember { mutableStateOf<Memory?>(null) }
     var deleteTarget by remember { mutableStateOf<Memory?>(null) }
     var showRecallTest by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
     var writing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -179,6 +182,35 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             },
         )
     }
+    if (showProfile) {
+        MemoryProfileSheet(
+            memories = entries,
+            writing = writing,
+            onEdit = { memory ->
+                // 完整编辑器会接管整块分区，弹层要先收起，否则会盖在编辑器上面。
+                showProfile = false
+                editing = memory
+            },
+            onDelete = { memory -> deleteTarget = memory },
+            onAddFact = { text ->
+                writing = true
+                try {
+                    viewModel.saveMemoryEntry(
+                        name = "profile-${System.currentTimeMillis()}",
+                        description = text.lineSequence().firstOrNull().orEmpty()
+                            .trim()
+                            .take(PROFILE_FACT_DESC_CHARS),
+                        content = text,
+                        type = MemoryType.PREFERENCE,
+                        pending = false,
+                    )
+                } finally {
+                    writing = false
+                }
+            },
+            onDismiss = { showProfile = false },
+        )
+    }
     if (editingMemory != null) {
         MemoryEditorPane(
             memory = editingMemory,
@@ -208,6 +240,14 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
             .padding(bottom = Spacing.xl),
     ) {
         SettingsGroupHeader(text = stringResource(R.string.memory_settings_title))
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.Users,
+                title = stringResource(R.string.memory_profile_title),
+                subtitle = stringResource(R.string.memory_profile_subtitle),
+                onClick = { showProfile = true }
+            )
+        }
         SettingsGroup {
             SettingsRow(
                 icon = FeatherIcons.Star,
@@ -602,6 +642,9 @@ private const val TRACE_DISPLAY_LIMIT = 20
 
 /** 归档展示条数上限：归档会越积越多，界面只给最近的，再旧的靠文件管理器看。 */
 private const val ARCHIVE_DISPLAY_LIMIT = 20
+
+/** 画像弹层里「添加一条事实」自动生成的摘要长度：取输入首行的前这么多字。 */
+private const val PROFILE_FACT_DESC_CHARS = 60
 
 private fun formatBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
