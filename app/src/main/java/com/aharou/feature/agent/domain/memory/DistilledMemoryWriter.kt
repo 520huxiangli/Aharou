@@ -34,18 +34,18 @@ class DistilledMemoryWriter @Inject constructor(
     fun write(entries: List<DistilledEntry>, projectRoot: String? = null): Int {
         var written = 0
         for (entry in entries) {
-            val targetName = memoryRepository
-                .findSimilarMemories(
+            // 先找同名条目（重复蒸馏会命中），再退到相似条目：两者都是「要改的已有条目」，
+            // 带上它当前的版本号，才不至于把蒸馏期间被别处改过的正文盖掉。
+            val target = memoryRepository.findMemory(entry.name, projectRoot, MemoryScope.GLOBAL)
+                ?: memoryRepository.findSimilarMemories(
                     name = entry.name,
                     description = entry.description,
                     projectRoot = projectRoot,
                     limit = 1,
                     scope = MemoryScope.GLOBAL,
-                )
-                .firstOrNull()
-                ?.name
-                ?: entry.name
-            val ok = memoryRepository.saveMemory(
+                ).firstOrNull()
+            val targetName = target?.name ?: entry.name
+            val result = memoryRepository.writeMemory(
                 name = targetName,
                 description = entry.description,
                 content = entry.content,
@@ -54,8 +54,13 @@ class DistilledMemoryWriter @Inject constructor(
                 type = entry.type,
                 pending = entry.pending,
                 keywords = entry.keywords,
+                expectedVersion = target?.version ?: MemorySource.VERSION_NEW,
             )
-            if (ok) written++
+            if (result == MemoryWriteResult.Success) {
+                written++
+            } else {
+                FileLogger.w(TAG, "蒸馏条目「$targetName」未写入：${result.failureSummary()}")
+            }
         }
         trimOverflow()
         return written

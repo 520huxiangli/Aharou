@@ -9,10 +9,12 @@ import com.aharou.feature.agent.domain.memory.MemoryEdit
 import com.aharou.feature.agent.domain.memory.MemoryEditResult
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
+import com.aharou.feature.agent.domain.memory.MemorySource
 import com.aharou.feature.agent.domain.memory.MemorySyncManager
 import com.aharou.feature.agent.domain.memory.MemorySyncOutcome
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.agent.domain.memory.MemoryType
+import com.aharou.feature.agent.domain.memory.MemoryWriteResult
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.prompt.MemoryPromptRenderer
 import com.aharou.feature.agent.domain.session.GhostModeStore
@@ -65,6 +67,9 @@ class MemoryTool @Inject constructor(
 
         /** `stats` 里「被预算挤出」与「不走预算」的 identity 条目最多列多少条。 */
         private const val STATS_LIST_LIMIT = 30
+
+        /** 乐观锁冲突的错误码：模型据此判定「我该合并后重试」而不是「写入坏了」。 */
+        const val VERSION_CONFLICT_CODE = "MEMORY_VERSION_CONFLICT"
     }
 
     override val name = "memory"
@@ -81,7 +86,8 @@ class MemoryTool @Inject constructor(
     override val description =
         "管理 AI 的长期记忆（read/save/edit/delete/list；log=每日日志；fact=事实库；mindstream=心流；core=读/写核心档案；" +
             "sync=立刻把记忆同步到用户配置的仓库（返回收上的文件清单与跳过/失败分类）；" +
-            "stats=使用统计、冷记忆清单与常驻正文预算占用；undo=回滚到最近一次归档）。发现新的用户偏好、项目约定或架构决策时主动记录。"
+            "stats=使用统计、冷记忆清单与常驻正文预算占用；undo=回滚到最近一次归档）。发现新的用户偏好、项目约定或架构决策时主动记录。" +
+            "覆盖已有条目前必须带上 read 返回的 version（乐观锁）：版本不一致会拒绝写入并回你最新正文，合并后重试。"
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema，语义与 editFile 一致。 */
     private val editItemSchema: Map<String, Any> = mapOf(
@@ -127,6 +133,14 @@ class MemoryTool @Inject constructor(
             name = "content",
             type = ParameterType.STRING,
             description = "记忆的详细正文（Markdown 格式，save 必填）。",
+            required = false
+        ),
+        "version" to ToolParameter(
+            name = "version",
+            type = ParameterType.STRING,
+            description = "乐观锁版本（save / edit 可用）。覆盖已有条目时传 read 返回的 version；" +
+                "确认要新建一条不存在的记忆时传 \"new\"。不传而目标已存在会被拦下并回你最新正文，" +
+                "防止把你上下文里已过期的内容盖上去。",
             required = false
         ),
         "edits" to ToolParameter(
@@ -456,7 +470,40 @@ class MemoryTool @Inject constructor(
             ?: return ToolResult.Error("未找到记忆「$name」", "MEMORY_NOT_FOUND")
         memoryRepository.recordUsage(memory.name, memory.scope)
         val notice = if (memory.pending) "待确认：此条记忆存在冲突，未经用户确认不得作为已确认约定或自动裁决。\n\n" else ""
-        return ToolResult.Success(JsonPrimitive(notice + memory.content))
+        return ToolResult.Success(JsonPrimitive(notice + versionHeader(memory.version) + memory.content))
+    }
+
+    /**
+     * 正文前挂一行版本号。模型必须能从 read 的返回值里拿到乐观锁基准，
+     * 否则它只能盲写，版本校验就退化成「凡是覆盖一律拒绝」。
+     */
+    private fun versionHeader(version: String): String =
+        if (version.isBlank()) ""
+        else "version: $version（覆盖或编辑本条时把这个值作为 version 参数传回；不传而条目已存在会被拒绝）\n\n"
+
+    /**
+     * 版本冲突时回给模型的正文。
+     *
+     * 必须连最新版本与最新正文一起给：只说一句「冲突了」，模型只能再 read 一次，白白多一轮；
+     * 给了正文它就能在同一轮里把两边合并、带上 current_version 重试，这正是乐观锁要的效果。
+     */
+    private fun versionConflictMessage(
+        name: String,
+        currentVersion: String,
+        currentContent: String,
+        missing: Boolean = false
+    ): String = buildString {
+        append("记忆「$name」在你读取后被改动过，本次未写入——乐观锁拦下了这次覆盖，避免盖掉别人的更新。")
+        if (missing) {
+            append("\ncurrent_version: （文件已不存在，可能已被别处删除）")
+            append("\n下一步：如果仍要保留这条记忆，把 version 参数设成 \"${MemorySource.VERSION_NEW}\" 重新调用 save。")
+        } else {
+            append("\ncurrent_version: $currentVersion")
+            append("\ncurrent_content:\n<<<\n").append(currentContent).append("\n>>>")
+            append("\n下一步：把你要写的内容与上面的最新正文合并（务必保留其中别人新增的信息），")
+            append("然后用同一个 name 加上 version=\"$currentVersion\" 重新调用；")
+            append("若两边说法真正冲突、无法合并，先向用户说明再决定，不要二者选一直接覆盖。")
+        }
     }
 
     private fun handleSave(
@@ -487,9 +534,36 @@ class MemoryTool @Inject constructor(
         val ttlDays = args["ttl_days"]?.jsonPrimitive?.contentOrNull?.trim()?.toIntOrNull()
         val expiresAt = ttlDays?.takeIf { it > 0 }
             ?.let { System.currentTimeMillis() + it * 24L * 60L * 60L * 1_000L }
-        val existed = memoryRepository.loadContent(name, projectRoot, scope) != null
-        val success = memoryRepository.saveMemory(name, description, content, scope, projectRoot, type, expiresAt)
-        if (!success) return ToolResult.Error("保存记忆失败，请查看日志。", "SAVE_FAILED")
+        val existing = memoryRepository.findMemory(name, projectRoot, scope)
+        val version = args["version"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        // 没带版本却要覆盖已有条目：直接拒绝，并把最新正文回给模型让它合并后重试。
+        // 旧行为是盲写覆盖——模型上下文里的内容常常已经过期，一写就把后台整理/用户手改的更新抹掉了。
+        if (existing != null && version == null) {
+            return ToolResult.Error(
+                versionConflictMessage(existing.name, existing.version, existing.content),
+                VERSION_CONFLICT_CODE
+            )
+        }
+        val result = memoryRepository.writeMemory(
+            name = name,
+            description = description,
+            content = content,
+            scope = scope,
+            projectRoot = projectRoot,
+            type = type,
+            expiresAt = expiresAt,
+            // 新建按「要求文件不存在」写：查找与写盘之间被别人插了一条同名记忆时能被拦住。
+            expectedVersion = version ?: MemorySource.VERSION_NEW
+        )
+        when (result) {
+            is MemoryWriteResult.VersionConflict -> return ToolResult.Error(
+                versionConflictMessage(result.name, result.currentVersion, result.currentContent, result.missing),
+                VERSION_CONFLICT_CODE
+            )
+            is MemoryWriteResult.Failure -> return ToolResult.Error("保存记忆失败：${result.message}", result.code)
+            MemoryWriteResult.Success -> Unit
+        }
+        val existed = existing != null
 
         // 重名（意同）是记忆库最大的噪声来源：同一条事实被不同名字反复记下，检索时互相抢位。
         // 只提醒不阻断——写进去的内容本身没毛病，模型拿到提示后可以立刻用 edit 合并。
@@ -515,6 +589,10 @@ class MemoryTool @Inject constructor(
                 "。若这次写的是同一条事实，请改用 action=edit 就地修改，别再新建条目。"
         }
         val stored = memoryRepository.findMemory(name, projectRoot, scope)
+        // 把新版本一并给回：模型接下来往往还要改同一处，带上它就不用再 read 一次。
+        val versionLine = stored?.version?.takeIf { it.isNotBlank() }
+            ?.let { "当前 version: $it（再次修改请作为 version 参数传回）。" }
+            .orEmpty()
         val typeNote = if (stored?.pending == true) "它仍待确认，需保留冲突双方，不能作为已确认约定。" else when (stored?.type ?: type) {
             MemoryType.IDENTITY -> "它属于长期约定，正文会在下一次会话启动时直接进系统提示词常驻（无需再 read）。"
             MemoryType.EVENT -> "它被标为一次性事件：只留档，不进注入清单，需要时用 search / read 取回。"
@@ -523,7 +601,7 @@ class MemoryTool @Inject constructor(
         return ToolResult.Success(
             JsonPrimitive(
                 "已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。$typeNote" +
-                    "当前会话若需立即使用，请通过 read 操作读取。$hint"
+                    "$versionLine" + "当前会话若需立即使用，请通过 read 操作读取。$hint"
             )
         )
     }
@@ -544,7 +622,8 @@ class MemoryTool @Inject constructor(
             return ToolResult.Error("当前未选择工作区，无法编辑项目级记忆。请改用 scope=global", "NO_WORKSPACE")
         }
 
-        return when (val result = memoryRepository.editMemory(name, edits, scope, projectRoot)) {
+        val version = args["version"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+        return when (val result = memoryRepository.editMemory(name, edits, scope, projectRoot, version)) {
             is MemoryEditResult.Success -> {
                 memoryTrace.record(
                     source = MemoryTraceLog.SOURCE_TOOL,
@@ -558,6 +637,11 @@ class MemoryTool @Inject constructor(
             }
             is MemoryEditResult.NotFound ->
                 ToolResult.Error("未找到记忆「${result.name}」，请先通过 save 创建，或确认 name 与作用域是否正确。", "MEMORY_NOT_FOUND")
+            is MemoryEditResult.VersionConflict ->
+                ToolResult.Error(
+                    versionConflictMessage(result.name, result.currentVersion, result.currentContent),
+                    VERSION_CONFLICT_CODE
+                )
             is MemoryEditResult.Error ->
                 ToolResult.Error(result.message, result.code)
         }

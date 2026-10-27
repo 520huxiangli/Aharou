@@ -11,6 +11,7 @@
 
 - 先用 memory(action=list) 确认是否已有同名/同主题记忆，再决定 save 还是 edit；
 - 已有相关记忆 → 用 memory(action=edit) 局部更新正文，不要新建重复文件；
+- `read` 返回的正文第一行是 `version: <值>`。**覆盖或 edit 已有条目时必须把它当作 `version` 参数传回**：不传而目标已存在会被拒，工具会把最新正文连同 `current_version` 回给你；这时把两边合并（保留别人新增的内容）后带新版本重试，不要盲目覆盖掉别人的更新。确认要新建一条不存在的条目时传 `version="new"`。
 - 确属新主题 → memory(action=save)，description 写清「何时该读它」；
 - 同一事实已经记录过 → 不再重复记录；记忆内容过时 → 用 edit 修正或 delete 清理。
 - 名称相同不代表作用域相同：read / edit / delete 前先确认 scope，全局与项目各有一条同名记忆时按需指定，别默认动其中一条。

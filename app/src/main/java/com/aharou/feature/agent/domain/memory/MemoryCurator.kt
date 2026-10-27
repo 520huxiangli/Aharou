@@ -141,11 +141,21 @@ class MemoryCurator @Inject constructor(
                     ArbiterAction.MERGE -> {
                         // 只允许改同一作用域里的条目：项目记忆不该改写全局记忆。
                         val merged = decision.mergedContent
-                        if (similar.scope == effectiveScope &&
-                            memoryRepository.saveMemory(
-                                similar.name, similar.description, merged, similar.scope, projectRoot
+                        // 带上裁决时读到的版本：这期间用户手改或主模型改过它，就放弃本轮并入，
+                        // 否则后台整理会把刚写进去的新内容整体盖掉——这正是乐观锁要拦的盲写。
+                        val write = if (similar.scope == effectiveScope) {
+                            memoryRepository.writeMemory(
+                                name = similar.name,
+                                description = similar.description,
+                                content = merged,
+                                scope = similar.scope,
+                                projectRoot = projectRoot,
+                                expectedVersion = similar.version
                             )
-                        ) {
+                        } else {
+                            null
+                        }
+                        if (write == MemoryWriteResult.Success) {
                             FileLogger.i(TAG, "记忆「${c.name}」已并入「${similar.name}」")
                             memoryTrace.record(
                                 source = MemoryTraceLog.SOURCE_CURATOR,
@@ -156,6 +166,16 @@ class MemoryCurator @Inject constructor(
                                 sessionId = sessionId
                             )
                             saved++
+                        } else if (write != null) {
+                            FileLogger.w(TAG, "并入「${similar.name}」已放弃：${write.failureSummary()}")
+                            memoryTrace.record(
+                                source = MemoryTraceLog.SOURCE_CURATOR,
+                                action = MemoryTraceLog.ACTION_SKIP,
+                                name = similar.name,
+                                scope = similar.scope.name.lowercase(),
+                                detail = "并入前发现条目已被改动（${write.failureSummary()}），本轮放弃",
+                                sessionId = sessionId
+                            )
                         }
                         continue
                     }
@@ -167,14 +187,16 @@ class MemoryCurator @Inject constructor(
                 }
             }
 
-            val ok = memoryRepository.saveMemory(
+            val ok = memoryRepository.writeMemory(
                 name = c.name,
                 description = c.description,
                 content = c.content,
                 scope = effectiveScope,
                 projectRoot = projectRoot,
-                type = c.type
-            )
+                type = c.type,
+                // 走「文件必须不存在」：判定与写入之间若是被人抢先建了同名条目，本轮就让位。
+                expectedVersion = MemorySource.VERSION_NEW
+            ) == MemoryWriteResult.Success
             if (ok) {
                 saved++
                 memoryTrace.record(
@@ -207,25 +229,31 @@ class MemoryCurator @Inject constructor(
         val baseName = "${candidate.name}_pending_$hash"
         var name = if (candidate.name.equals(existing.name, ignoreCase = true)) baseName else candidate.name
         var suffix = 0
+        var sameContent: Memory? = null
         while (true) {
             val occupied = memoryRepository.findMemory(name, projectRoot, candidate.scope) ?: break
-            if (occupied.content.trim() == candidate.content.trim()) break
+            if (occupied.content.trim() == candidate.content.trim()) {
+                sameContent = occupied
+                break
+            }
             name = "${baseName}_${++suffix}"
         }
         // 旧条目**保持原样**：它正在生效，不该因为新来的候选而当场失效。
         // 旧实现把双方都标 pending，结果是两条都不进上下文——那次改动等于把知识丢了，
         // 比「暂时分不清哪条对」还糟。
         // 冲突关系放 keywords，不写进 description：描述会被永久污染，裁决完也洗不掉。
-        val ok = memoryRepository.saveMemory(
-            name,
-            candidate.description,
-            candidate.content,
-            candidate.scope,
-            projectRoot,
-            candidate.type,
+        val ok = memoryRepository.writeMemory(
+            name = name,
+            description = candidate.description,
+            content = candidate.content,
+            scope = candidate.scope,
+            projectRoot = projectRoot,
+            type = candidate.type,
             pending = true,
-            keywords = listOf("conflict:${existing.name}")
-        )
+            keywords = listOf("conflict:${existing.name}"),
+            // 同名同内容只是补标记（幂等改写）；否则是新建，按「文件必须不存在」写。
+            expectedVersion = sameContent?.version ?: MemorySource.VERSION_NEW
+        ) == MemoryWriteResult.Success
         if (ok) {
             memoryTrace.record(
                 source = MemoryTraceLog.SOURCE_CURATOR,

@@ -15,6 +15,8 @@ import java.io.File
  *   避免为了提升检索命中率反而把注入撑肥。
  * @param expiresAt 短期记忆的过期时刻（epoch millis）；null 表示不过期。
  *   过期后不再进注入清单（文件保留，仍可 read / edit），无需人工清理。
+ * @param version 内容版本（文件全文的 SHA-256 前 12 位）。写入时作为乐观锁的比对基准：
+ *   内容没变版本就不变；内容被别处改过版本就变。没有文件（内存构造）时为空串。
  */
 data class Memory(
     val name: String,
@@ -29,7 +31,8 @@ data class Memory(
      * 待确认：与另一条记忆的说法冲突、暂时两条并存，等使用者裁决。
      * 由整理器判为冲突时打上；在设置页保存这条记忆即视为已确认（标记清除）。
      */
-    val pending: Boolean = false
+    val pending: Boolean = false,
+    val version: String = ""
 )
 
 enum class MemoryScope {

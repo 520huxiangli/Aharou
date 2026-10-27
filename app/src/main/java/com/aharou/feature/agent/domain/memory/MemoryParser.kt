@@ -51,7 +51,9 @@ object MemoryParser {
             type = type,
             keywords = keywords,
             expiresAt = parseExpiresAt(frontmatter["expires_at"]),
-            pending = frontmatter["pending"]?.toString()?.equals("true", ignoreCase = true) == true
+            pending = frontmatter["pending"]?.toString()?.equals("true", ignoreCase = true) == true,
+            // 版本只跟内容走：同一份全文算出的版本恒定，与路径、mtime 无关。
+            version = MemoryFileStorage.versionOf(text)
         )
     }
 

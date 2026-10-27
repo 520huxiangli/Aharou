@@ -424,6 +424,47 @@ class MemoryRepository @Inject constructor(
         }
     }
 
+    /**
+     * 带乐观锁的保存（新建或覆盖）。与 [saveMemory] 的唯一区别是：把版本冲突与写盘失败分开回报。
+     *
+     * 沿用与 [saveMemory] 同一套字段继承规则（未显式指定的 type / expiresAt / pending / keywords
+     * 取原值），否则带版本校验的覆盖会抹掉 identity 分类或短期记忆的过期时间。
+     */
+    fun writeMemory(
+        name: String,
+        description: String,
+        content: String,
+        scope: MemoryScope,
+        projectRoot: String?,
+        type: MemoryType? = null,
+        expiresAt: Long? = null,
+        pending: Boolean? = null,
+        keywords: List<String>? = null,
+        expectedVersion: String? = null
+    ): MemoryWriteResult {
+        val existing = existingMemoryOf(name, scope, projectRoot)
+        val effectiveType = type ?: existing?.type
+        val effectiveExpiresAt = expiresAt ?: existing?.expiresAt
+        val effectivePending = pending ?: existing?.pending ?: false
+        val effectiveKeywords = keywords ?: existing?.keywords
+        return when (scope) {
+            MemoryScope.GLOBAL -> globalMemorySource.writeMemory(
+                name, description, content, effectiveType, effectiveExpiresAt, effectivePending,
+                effectiveKeywords, expectedVersion
+            )
+            MemoryScope.PROJECT -> {
+                if (projectRoot.isNullOrBlank()) {
+                    MemoryWriteResult.Failure("NO_WORKSPACE", "当前未选择工作区，无法保存项目级记忆")
+                } else {
+                    projectSource(projectRoot).writeMemory(
+                        name, description, content, effectiveType, effectiveExpiresAt, effectivePending,
+                        effectiveKeywords, expectedVersion
+                    )
+                }
+            }
+        }
+    }
+
     /** 记一次记忆取用（read 成功时调用）：遗忘判定与「这条到底用过没」的事实依据。 */
     fun recordUsage(name: String, scope: MemoryScope) {
         runCatching { memoryUsageStore.record(scope.name, name) }
@@ -433,12 +474,18 @@ class MemoryRepository @Inject constructor(
     private fun existingMemoryOf(name: String, scope: MemoryScope, projectRoot: String?): Memory? =
         findMemory(name, projectRoot, scope)
 
-    fun editMemory(name: String, edits: List<MemoryEdit>, scope: MemoryScope, projectRoot: String?): MemoryEditResult {
+    fun editMemory(
+        name: String,
+        edits: List<MemoryEdit>,
+        scope: MemoryScope,
+        projectRoot: String?,
+        expectedVersion: String? = null
+    ): MemoryEditResult {
         return when (scope) {
-            MemoryScope.GLOBAL -> globalMemorySource.editMemory(name, edits)
+            MemoryScope.GLOBAL -> globalMemorySource.editMemory(name, edits, expectedVersion)
             MemoryScope.PROJECT -> {
                 if (projectRoot.isNullOrBlank()) MemoryEditResult.Error("NO_WORKSPACE", "当前未选择工作区，无法编辑项目级记忆")
-                else projectSource(projectRoot).editMemory(name, edits)
+                else projectSource(projectRoot).editMemory(name, edits, expectedVersion)
             }
         }
     }

@@ -158,7 +158,9 @@ class MemoryCompactor @Inject constructor(
         val payload = MemoryParser.format(
             parsed.name, parsed.description, parsed.content, effective, parsed.keywords, parsed.expiresAt, parsed.pending
         )
-        return MemoryFileStorage.write(target, payload)
+        // 刚合并完又改分类：中间若是被人插了一笔（主对话刚好在写这条），
+        // 就用版本号拦下，不去把他刚写的内容盖回合并稿。
+        return MemoryFileStorage.write(target, payload, expectedVersion = parsed.version)
     }
 
     /**

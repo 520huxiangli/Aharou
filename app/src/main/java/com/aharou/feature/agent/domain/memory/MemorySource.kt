@@ -22,8 +22,49 @@ sealed interface MemoryEditResult {
     /** 指定名称的记忆不存在。 */
     data class NotFound(val name: String) : MemoryEditResult
 
+    /**
+     * 版本校验失败：这条记忆在调用方读取后被别处改过，本次未写盘。
+     *
+     * 带上最新的版本与正文，调用方才能在同一轮里改用最新正文重新构造编辑并重试，
+     * 而不是只得到一句「冲突了」再去 read 一次。
+     */
+    data class VersionConflict(
+        val name: String,
+        val currentVersion: String,
+        val currentContent: String
+    ) : MemoryEditResult
+
     /** 编辑校验或写盘失败。 */
     data class Error(val code: String, val message: String) : MemoryEditResult
+}
+
+/**
+ * 带乐观锁的写入结果。
+ *
+ * 把「版本冲突」从「写盘失败」里单独拎出来：前者是并发改动的正常后果，要带着最新正文
+ * 回到调用方（模型）让它合并后重试；后者是磁盘/权限问题，重试无用。
+ */
+sealed interface MemoryWriteResult {
+    data object Success : MemoryWriteResult
+
+    /** 版本校验失败（含「要求不存在却已存在」与「要求已存在却已消失」）。 */
+    data class VersionConflict(
+        val name: String,
+        val currentVersion: String,
+        val currentContent: String,
+        /** 校验时文件已不存在（被别处删掉）：调用方应改用新建语义重试。 */
+        val missing: Boolean = false
+    ) : MemoryWriteResult
+
+    data class Failure(val code: String, val message: String) : MemoryWriteResult
+}
+
+/** 一句话说明失败原因，供日志与流水用；刻意不带正文，避免把记忆内容拷进日志。 */
+internal fun MemoryWriteResult.failureSummary(): String = when (this) {
+    is MemoryWriteResult.Success -> "成功"
+    is MemoryWriteResult.VersionConflict ->
+        if (missing) "版本冲突：目标已被删除" else "版本冲突：当前版本 $currentVersion"
+    is MemoryWriteResult.Failure -> "$code：$message"
 }
 
 /** 归档目录里的一条旧版本（覆盖 / 合并前留的底）。 */
@@ -47,14 +88,47 @@ interface MemorySource {
     fun saveMemory(name: String, description: String, content: String, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null, keywords: List<String>? = null): Boolean
 
     /**
+     * 带乐观锁的保存：语义同 [saveMemory]，但把「版本冲突」与「写盘失败」分开回报。
+     *
+     * [expectedVersion] 三种语义：[MemorySource.VERSION_NEW] 要求文件不存在；具体版本号要求
+     * 与当前版本相等；null 不校验（人手工编辑、后台刚读完就写这两类调用方走这条）。
+     * 默认实现只转发 [saveMemory]，自定义数据源可以覆写成真正的版本校验。
+     */
+    fun writeMemory(
+        name: String,
+        description: String,
+        content: String,
+        type: MemoryType? = null,
+        expiresAt: Long? = null,
+        pending: Boolean? = null,
+        keywords: List<String>? = null,
+        expectedVersion: String? = null
+    ): MemoryWriteResult =
+        if (saveMemory(name, description, content, type, expiresAt, pending, keywords)) {
+            MemoryWriteResult.Success
+        } else {
+            MemoryWriteResult.Failure("SAVE_FAILED", "写入记忆文件失败，原文未修改")
+        }
+
+    /**
      * 对已有记忆的正文做局部编辑（old_string/new_string 精确匹配），语义与 editFile 一致。
      * 默认实现基于 [listMemories] 定位记忆文件，在内存中按序应用所有编辑；
      * 任一编辑校验失败则整批不写盘（原子），成功后用原 name/description 重新格式化写回。
+     *
+     * [expectedVersion] 非空时先校验版本：读取与校验同在 [MemoryFileStorage.lock] 内，
+     * 所以比对用的就是「这一刻」的版本。
      */
-    fun editMemory(name: String, edits: List<MemoryEdit>): MemoryEditResult = synchronized(MemoryFileStorage.lock) {
+    fun editMemory(
+        name: String,
+        edits: List<MemoryEdit>,
+        expectedVersion: String? = null
+    ): MemoryEditResult = synchronized(MemoryFileStorage.lock) {
         val memory = listMemories().firstOrNull { it.name.equals(name, ignoreCase = true) }
             ?: return MemoryEditResult.NotFound(name)
         val file = memory.file ?: return MemoryEditResult.NotFound(name)
+        if (expectedVersion != null && expectedVersion != memory.version) {
+            return MemoryEditResult.VersionConflict(memory.name, memory.version, memory.content)
+        }
         if (edits.isEmpty()) {
             return MemoryEditResult.Error("EMPTY_EDITS", "edits 不能为空，请至少提供一个 {old_string,new_string} 编辑")
         }
@@ -160,6 +234,9 @@ interface MemorySource {
     ): Boolean
 
     companion object {
+        /** 版本校验的「要求文件不存在」语义：新建一条记忆。 */
+        const val VERSION_NEW = "new"
+
         /**
          * 将模型传入的记忆名归一化为安全文件名片段。
          *

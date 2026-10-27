@@ -36,6 +36,14 @@ class GlobalMemorySource @Inject constructor(
         memoryRoot, MemoryScope.GLOBAL, name, description, content, type, expiresAt, pending, keywords
     )
 
+    override fun writeMemory(
+        name: String, description: String, content: String, type: MemoryType?,
+        expiresAt: Long?, pending: Boolean?, keywords: List<String>?, expectedVersion: String?
+    ): MemoryWriteResult = MemoryFileStorage.saveChecked(
+        memoryRoot, MemoryScope.GLOBAL, name, description, content, type, expiresAt, pending,
+        keywords, expectedVersion
+    )
+
     override fun archiveContent(
         name: String, description: String, content: String, type: MemoryType?,
         keywords: List<String>, expiresAt: Long?, pending: Boolean
