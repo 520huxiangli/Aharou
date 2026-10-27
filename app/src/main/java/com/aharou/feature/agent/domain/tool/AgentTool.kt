@@ -9,6 +9,9 @@ import kotlinx.serialization.Transient
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 
 @Serializable
 sealed class ToolResult {
@@ -43,6 +46,64 @@ private val ToolResultTransportJson = Json {
 
 fun ToolResult.toTransportString(): String {
     return ToolResultTransportJson.encodeToString(this)
+}
+
+/**
+ * 「人话标题」参数名。
+ *
+ * 由 [AgentTool.toJsonSchema] 统一注入到每个内置工具的 schema 里（排在第一位、且必填），
+ * 工具实现**不必**在 [AgentTool.parameters] 里声明它、也不必读它：模型填的是一句 5~10 个词的
+ * 人话描述（如「读取依赖配置」「跑一次冒烟编译」），工具卡标题行直接显示，用户就不用面对
+ * `Bash` / `readFile` 这类机器名加一坨参数 JSON 去猜这一步在干什么。
+ *
+ * 注入点选在 schema 而不是 `parameters` 表：`parameters` 还被远程设备动作（RemoteAction 按
+ * `allowedArgs` 白名单过滤）、工具说明等地方按「工具真正会用到的入参」消费，混进一个执行侧
+ * 不消费的字段会污染那些语义；对模型可见的 schema 才是唯一该加的地方。
+ */
+const val TOOL_TITLE_PARAM = "tool_title"
+
+/** 标题的字符上限：模型偶尔把整句解释塞进来，显示侧按此截断，避免撑爆标题行。 */
+private const val TOOL_TITLE_MAX_CHARS = 80
+
+/** [TOOL_TITLE_PARAM] 的 schema 描述（模型看的，与其它参数描述一样用中文）。 */
+private const val TOOL_TITLE_DESCRIPTION =
+    "一句话人话标题：用 5~10 个词、与用户同语言说明这一步在做什么，会直接显示在工具卡上" +
+        "（例：读取依赖配置、跑一次冒烟编译）。不要重复工具名，也不要粘参数原文。"
+
+/**
+ * 从工具调用参数里取模型给的人话标题；缺失、非字符串或全是空白时返回 null。
+ *
+ * 显示侧据此回退到工具名——老会话里已存的工具调用没有这个字段，必须能优雅退化。
+ * 主循环判断「这次是否漏填标题」也用它（`extractToolTitle(args) == null`）。
+ */
+fun extractToolTitle(args: Map<String, JsonElement>): String? =
+    (args[TOOL_TITLE_PARAM] as? JsonPrimitive)?.contentOrNull?.toToolTitleOrNull()
+
+/** 同 [extractToolTitle]，入参是持久化里的原始参数 JSON 串（工具卡从会话里读到的就是它）。 */
+fun extractToolTitle(argsJson: String?): String? {
+    if (argsJson.isNullOrBlank()) return null
+    runCatching { Json.parseToJsonElement(argsJson).jsonObject }.getOrNull()
+        ?.let { return extractToolTitle(it) }
+    // 会话里存的参数是「前 500 字符的预览」，带大内容的调用（writeFile 等）会被截成非法 JSON；
+    // 标题排在最前面，整串解不开时按字面量再捞一次，别让截断把标题弄丢。
+    return TOOL_TITLE_LITERAL_RE.find(argsJson)?.groupValues?.get(1)
+        ?.replace("\\n", " ")?.replace("\\t", " ")?.replace("\\\"", "\"")?.replace("\\\\", "\\")
+        ?.toToolTitleOrNull()
+}
+
+/** 从（可能被截断的）参数串里抓 `"tool_title": "..."` 的字面量。 */
+private val TOOL_TITLE_LITERAL_RE = Regex("\\\"tool_title\\\"\\s*:\\s*\\\"((?:[^\\\"\\\\]|\\\\.)*)\\\"")
+
+/** 去掉标题参数后的参数表：执行前若要展示/转发参数，用它避免把标题当业务入参。 */
+fun stripToolTitle(args: Map<String, JsonElement>): Map<String, JsonElement> =
+    if (TOOL_TITLE_PARAM in args) args - TOOL_TITLE_PARAM else args
+
+/** 压成单行、去空白，超长按 [TOOL_TITLE_MAX_CHARS] 截断；无有效内容返回 null。 */
+private fun String.toToolTitleOrNull(): String? {
+    val oneLine = replace(Regex("\\s+"), " ").trim()
+    if (oneLine.isEmpty()) return null
+    return if (oneLine.length <= TOOL_TITLE_MAX_CHARS) oneLine
+    else oneLine.take(TOOL_TITLE_MAX_CHARS).trimEnd() + "…"
 }
 
 data class ToolParameter(
@@ -201,6 +262,19 @@ abstract class AgentTool {
     ): PendingToolPermission? = null
 
     /**
+     * 该工具的 schema 是否要求人话标题：内置工具恒为 true（[toJsonSchema] 统一注入），
+     * 覆写了 [toJsonSchema] 的外部工具（MCP 透传服务端原始 schema）为 false。
+     *
+     * 供主循环的「漏填标题软提醒」判定用：只有要求标题的工具才谈得上「漏填」，MCP 工具不该被提醒。
+     * 首次计算后缓存——主循环每次工具调用都会问一次，反复拼 schema 纯属浪费。
+     */
+    fun declaresToolTitle(): Boolean = declaresToolTitleCache
+
+    private val declaresToolTitleCache: Boolean by lazy {
+        ((toJsonSchema()["properties"] as? Map<*, *>)?.containsKey(TOOL_TITLE_PARAM)) == true
+    }
+
+    /**
      * 生成符合 JSON Schema 的参数描述，用于真正传给大模型的 function-calling 接口
      * （OpenAI 的 function.parameters / Anthropic 的 input_schema）。
      *
@@ -210,6 +284,13 @@ abstract class AgentTool {
     open fun toJsonSchema(): Map<String, Any> {
         val properties = LinkedHashMap<String, Any>()
         val required = mutableListOf<String>()
+        // 人话标题作为第一个参数注入：模型先写「这一步在做什么」，再写业务参数，
+        // 参数顺序上也更贴近「先说人话」的期望。执行侧只读自己关心的键，多这一项不影响行为。
+        properties[TOOL_TITLE_PARAM] = linkedMapOf<String, Any>(
+            "type" to "string",
+            "description" to TOOL_TITLE_DESCRIPTION
+        )
+        required.add(TOOL_TITLE_PARAM)
         parameters.forEach { (key, param) ->
             val prop = LinkedHashMap<String, Any>()
             prop["type"] = param.type.name.lowercase()

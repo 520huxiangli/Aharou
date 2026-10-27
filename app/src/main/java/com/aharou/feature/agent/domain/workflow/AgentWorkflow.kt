@@ -1,11 +1,15 @@
 package com.aharou.feature.agent.domain.workflow
 
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.agent.domain.tool.AgentTool
+import com.aharou.feature.agent.domain.tool.TOOL_TITLE_PARAM
 import com.aharou.feature.agent.domain.tool.ToolCall
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.json.JsonObject
+import java.security.MessageDigest
 
 /**
  * Agent 执行过程中向 UI 推送的分步事件。
@@ -149,3 +153,154 @@ interface AgentWorkflow {
      */
     suspend fun curateMemory(sessionId: String, projectRoot: String?, transcript: String): Int
 }
+
+/**
+ * 工具循环检测的三级阈值。
+ *
+ * 为什么是 10 / 20 / 30：
+ * - 10（警告）：正常重试（网络抖动、参数写错重填）不会到 10 次；到 10 次且结果一模一样，说明这一步
+ *   没有再产生任何新信息。这一级只提醒不打断——有的模型需要一句提示才肯换招，硬断会把快到手的任务掐没；
+ * - 20（严重）：提醒过一轮还在重复，就需要更强的约束（下一步必须换策略或明确收尾）；
+ * - 30（熔断）：连续 30 次同参同结果已经可以认定本轮卡死，继续跑只是烧额度和时间，直接终止；
+ * - 历史窗口 32：必须装得下最高阈值（30），多留 2 条给「同批多调用」留余量，否则熔断级永远数不到 30。
+ */
+internal object ToolLoopThresholds {
+    const val WARNING = 10
+    const val CRITICAL = 20
+    const val CIRCUIT_BREAK = 30
+    const val WINDOW = 32
+}
+
+/**
+ * 循环提醒注入到上下文时的消息 id 前缀。
+ *
+ * 这些提醒也是 UserMessage，但它们不是「用户开了新一轮任务」，判定窗口不能因为它而清零，
+ * 所以给它们一个可识别的固定 id；其它用户消息一旦出现就说明任务换了一轮，窗口从那里重新开。
+ */
+internal const val TOOL_LOOP_NUDGE_ID = "tool-loop-nudge"
+
+/** 循环熔断的终止原因码（随 [AgentEvent.Failed.reasonCode] 上抛），UI 可据此换成本地化文案。 */
+internal const val TOOL_LOOP_CIRCUIT_BREAK_CODE = "TOOL_LOOP_CIRCUIT_BREAK"
+
+/**
+ * 「观察/等待」类工具：同一参数反复调用、结果暂时没变，本身是合法的等待方式
+ * （等子代理跑完、等长命令吐输出、等界面变化）。它们只吃提醒不吃熔断，
+ * 否则一个正常等十分钟的长任务会被当成死循环杀掉。
+ */
+private val WAIT_POLL_TOOLS = setOf("task", "terminal", "vscreen", "a11y", "browser")
+
+/** 循环检测的等级，枚举顺序即严重程度：reducer 用 ordinal 判断「这一批刚跨过哪一级」。 */
+internal enum class ToolLoopLevel { NONE, WARNING, CRITICAL, CIRCUIT_BREAK }
+
+/** 一次循环判定的结果：[toolName] 为最新一条工具调用，[repeatCount] 为它的连续重复次数。 */
+internal data class ToolLoopVerdict(
+    val level: ToolLoopLevel = ToolLoopLevel.NONE,
+    val toolName: String = "",
+    val repeatCount: Int = 0
+)
+
+/** 窗口里的一条记录：判定只要「调用键 + 结果哈希」，不保留结果正文。 */
+internal data class ToolLoopRecord(
+    val toolName: String,
+    val argsKey: String,
+    val resultHash: String
+)
+
+/**
+ * 对已回填工具结果的消息历史做一次循环判定（纯函数，不持有任何检测状态）。
+ *
+ * 判定键是「工具名 + 参数 + 结果哈希」：参数相同但结果变了说明有进展，绝不能算进循环，
+ * 这也是把结果纳入判定键的原因（只看调用本身会把「反复查同一个命令」误判成死循环）。
+ */
+internal fun toolLoopVerdict(
+    messages: List<AgentMessage>,
+    window: Int = ToolLoopThresholds.WINDOW
+): ToolLoopVerdict {
+    val records = toolCallRecords(messages, window)
+    val latest = records.lastOrNull() ?: return ToolLoopVerdict()
+    var pinnedResultHash: String? = null
+    var repeatCount = 0
+    for (index in records.indices.reversed()) {
+        val record = records[index]
+        // 别的调用既不计入也不打断：模型陷在循环里时常常夹着别的动作（查状态、写进度）。
+        if (record.argsKey != latest.argsKey) continue
+        if (pinnedResultHash == null) {
+            pinnedResultHash = record.resultHash
+            repeatCount = 1
+        } else if (record.resultHash == pinnedResultHash) {
+            repeatCount++
+        } else {
+            // 结果变了就是拿到了新信息，循环链在这里断开。
+            break
+        }
+    }
+    val level = when {
+        repeatCount >= ToolLoopThresholds.CIRCUIT_BREAK && latest.toolName !in WAIT_POLL_TOOLS ->
+            ToolLoopLevel.CIRCUIT_BREAK
+        repeatCount >= ToolLoopThresholds.CRITICAL -> ToolLoopLevel.CRITICAL
+        repeatCount >= ToolLoopThresholds.WARNING -> ToolLoopLevel.WARNING
+        else -> ToolLoopLevel.NONE
+    }
+    return ToolLoopVerdict(level, latest.toolName, repeatCount)
+}
+
+/**
+ * 从消息历史重建最近 [window] 条工具调用记录。
+ *
+ * 先数一遍工具结果总数、只哈希尾部窗口内的那几条：整段历史都哈希一遍在长会话里代价不小，
+ * 而判定只需要窗口内的记录。遇到真正的用户消息（不是循环提醒）时窗口清零，
+ * 判定范围永远是「本轮任务」，不会把上一轮的重复算到这一轮头上。
+ */
+private fun toolCallRecords(messages: List<AgentMessage>, window: Int): List<ToolLoopRecord> {
+    val total = messages.count { it is AgentMessage.ToolResultMessage }
+    if (total == 0 || window <= 0) return emptyList()
+    val skip = (total - window).coerceAtLeast(0)
+    val callsById = HashMap<String, ToolCall>()
+    val records = ArrayList<ToolLoopRecord>(minOf(total, window))
+    var seen = 0
+    messages.forEach { message ->
+        when (message) {
+            is AgentMessage.AssistantMessage -> message.toolCalls.forEach { callsById[it.id] = it }
+            is AgentMessage.UserMessage -> if (!message.id.startsWith(TOOL_LOOP_NUDGE_ID)) {
+                records.clear()
+                callsById.clear()
+            }
+            is AgentMessage.ToolResultMessage -> {
+                seen++
+                if (seen <= skip) return@forEach
+                // 参数取不到（历史被裁剪/压缩、原调用对不上）就丢掉这条：
+                // 只按工具名分组会把同一工具的不同调用归成一组，凭空造出循环。
+                val call = callsById[message.id] ?: return@forEach
+                records.add(
+                    ToolLoopRecord(
+                        toolName = message.toolName,
+                        argsKey = loopArgsKey(message.toolName, call),
+                        // 模型实际看到的是 modelResult（若有），判定也跟着它走，避免 UI 附注差异造成漏判。
+                        resultHash = sha256Hex(message.modelResult ?: message.result)
+                    )
+                )
+            }
+        }
+    }
+    return records
+}
+
+/** 调用键：工具名 + 参数（按键排序的稳定 JSON）。 */
+private fun loopArgsKey(toolName: String, call: ToolCall): String {
+    // tool_title 只是给工具卡看的标题，模型每次措辞都不同；算进调用键会让同一操作的每次重复
+    // 都变成「不同调用」，判重与熔断全部漏判。
+    val sorted = call.arguments.filterKeys { it != TOOL_TITLE_PARAM }.toSortedMap()
+    return toolName + "\u0000" + JsonObject(sorted).toString()
+}
+
+private fun sha256Hex(text: String): String {
+    val bytes = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+    val builder = StringBuilder(bytes.size * 2)
+    for (byte in bytes) {
+        val value = byte.toInt() and 0xFF
+        builder.append(HEX_DIGITS[value ushr 4]).append(HEX_DIGITS[value and 0x0F])
+    }
+    return builder.toString()
+}
+
+private const val HEX_DIGITS = "0123456789abcdef"

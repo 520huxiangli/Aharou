@@ -136,13 +136,48 @@ internal fun StatefulAgentWorkflow.reduce(
                 rejectedToolResults = emptyMap(),
                 totalToolCalls = state.totalToolCalls + newState.batchToolCalls.size
             )
+            // 工具循环检测：判定从已回填的消息重建滑动窗口（键 = 工具名 + 参数 + 结果哈希），
+            // 所以 reducer 仍是纯函数，不额外持有检测器实例；压缩/重启后窗口自然重建。
+            val verdict = toolLoopVerdict(newState.messages)
+            val crossed = verdict.level.ordinal > toolLoopVerdict(state.messages).level.ordinal
+            when {
+                // 熔断：工具结果已按序补完（不会留下孤儿 tool_call），直接走现有「带错误结束」通路终止本轮。
+                verdict.level == ToolLoopLevel.CIRCUIT_BREAK -> {
+                    FileLogger.w(StatefulAgentWorkflow.TAG,
+                        "工具循环熔断：${verdict.toolName} 连续 ${verdict.repeatCount} 次同参同结果，终止本轮")
+                    newState = newState.copy(
+                        isFinished = true,
+                        error = toolLoopCircuitBreakText(verdict.toolName, verdict.repeatCount),
+                        errorCode = TOOL_LOOP_CIRCUIT_BREAK_CODE
+                    )
+                }
+                // 警告/严重：只在刚跨过某一阈值的那一批注入一次，否则阈值之上每批都插一句会把上下文刷满。
+                crossed && verdict.level != ToolLoopLevel.NONE -> {
+                    val text = if (verdict.level == ToolLoopLevel.CRITICAL) {
+                        toolLoopCriticalText(verdict.toolName, verdict.repeatCount)
+                    } else {
+                        toolLoopWarningText(verdict.toolName, verdict.repeatCount)
+                    }
+                    FileLogger.i(StatefulAgentWorkflow.TAG,
+                        "工具循环${if (verdict.level == ToolLoopLevel.CRITICAL) "严重提醒" else "警告"}：" +
+                            "${verdict.toolName} 连续 ${verdict.repeatCount} 次同参同结果")
+                    // 用固定 id 前缀标记这是「循环提醒」而非用户新指令：判定窗口遇到真用户消息才清零。
+                    newState = newState.copy(
+                        messages = newState.messages + AgentMessage.UserMessage(
+                            id = "$TOOL_LOOP_NUDGE_ID-${verdict.repeatCount}",
+                            content = text
+                        )
+                    )
+                }
+            }
             // 卡死探测（零额外模型调用）：最近 3 条 assistant 整体重复时注入一次提示让模型换招。
             // 只在历史里还没有同一句提示时注入，避免每批都插、也避免重启后重复。
-            if (detectStuck(newState.messages) && !nudgedAlready(newState.messages, stuckNudgeText)) {
+            if (!newState.isFinished && detectStuck(newState.messages) && !nudgedAlready(newState.messages, stuckNudgeText)) {
                 newState = newState.copy(messages = newState.messages + AgentMessage.UserMessage(content = stuckNudgeText))
                 FileLogger.i(StatefulAgentWorkflow.TAG, "检测到连续重复动作，注入卡死提示")
             }
-            effects.add(AgentSideEffect.CallLlm)
+            // 熔断时不再请求下一轮，本轮就到此结束（终止原因已写进 state.error，由主循环统一上抛）。
+            if (!newState.isFinished) effects.add(AgentSideEffect.CallLlm)
         }
     }
 
@@ -161,6 +196,32 @@ private const val STUCK_WINDOW = 3
  */
 internal const val STUCK_NUDGE_TEXT =
     "你在重复同一个动作，停下来换个策略，或向用户提问。如果确实推进不下去，就直接向用户说明卡在哪里，不要继续重复。"
+
+/**
+ * 循环警告（重复达 [ToolLoopThresholds.WARNING] 级）：只提醒不打断，措辞里留一条「真在等外部任务」的出口，
+ * 免得模型把合法的等待当成错误而去写一些花活。与 [STUCK_NUDGE_TEXT] 一样是给模型看的，不进 UI 文案。
+ */
+internal fun toolLoopWarningText(toolName: String, repeatCount: Int): String =
+    "循环检测提醒：你已用完全相同的参数调用 $toolName $repeatCount 次，返回结果也一模一样，这一步没有产生任何新信息。" +
+        "换一种做法（改参数、换工具，或先根据已有结果往下走），或者在回复里说明为什么必须继续重复。" +
+        "如果你确实在等外部任务（子代理、长命令、界面变化）完成，请明确说明，并改用带超时的等待，而不是反复轮询。"
+
+/**
+ * 循环严重提醒（重复达 [ToolLoopThresholds.CRITICAL] 级）：上一级提醒没能让它换招，
+ * 这一级不再只是建议，而是要求下一步必须改变策略或明确结束。
+ */
+internal fun toolLoopCriticalText(toolName: String, repeatCount: Int): String =
+    "循环检测严重提醒：$toolName 已连续 $repeatCount 次返回完全相同的结果，再重复下去只会白白耗费时间和额度。" +
+        "下一步必须改变策略（换成不同参数/不同工具/重新观察当前状态），或者直接结束本轮并向用户说明卡在哪里；" +
+        "不允许再用同样的参数调用它。"
+
+/**
+ * 熔断终止原因（会作为 [AgentEvent.Failed.error] 展示给用户，因此是可读中文而不是错误码）。
+ * 本地化文案的字符串键 reserved：`agent_stop_tool_loop_circuit_break`，由展示层按
+ * [TOOL_LOOP_CIRCUIT_BREAK_CODE] 映射（领域层拿不到 Context，不能直接用 R.string）。
+ */
+internal fun toolLoopCircuitBreakText(toolName: String, repeatCount: Int): String =
+    "检测到工具循环：$toolName 连续 $repeatCount 次以相同参数调用并返回相同结果，已自动终止本轮，避免继续空转。"
 
 /** 孤儿工具调用的结果占位文案。 */
 internal const val ORPHAN_TOOL_RESULT_TEXT = "(无结果：App 在这条调用完成前重启了)"

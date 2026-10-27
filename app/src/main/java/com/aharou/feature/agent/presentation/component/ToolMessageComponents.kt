@@ -71,6 +71,8 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.feature.agent.domain.session.SessionUseCase
+import com.aharou.feature.agent.domain.tool.TOOL_TITLE_PARAM
+import com.aharou.feature.agent.domain.tool.extractToolTitle
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronDown
@@ -167,6 +169,7 @@ internal fun ToolMessageBody(
                         (message.toolName == "editFile" || message.toolName == "writeFile")
                     ) parseEditDiff(message.content) else null,
                     resultText = if (!running) formatToolResult(message.content) else null,
+                    title = extractToolTitle(message.toolArgs),
                     argHint = toolArgHint(message.toolArgs),
                     argsFull = formatToolArgs(message.toolArgs),
                     todo = if (message.toolName == "todo" && !running && !message.isError) {
@@ -192,7 +195,8 @@ internal fun ToolMessageBody(
     }
     val edit = derived?.edit
     val resultText = derived?.resultText
-    val argHint = derived?.argHint
+    // 有标题就用标题当主文本，不再另挂参数摘要（图标已能看出工具家族）；没有则退回原样。
+    val argHint = if (derived?.title != null) null else derived?.argHint
     val argsFull = derived?.argsFull
     val todoData = derived?.todo
     val webSearchData = derived?.webSearch
@@ -218,7 +222,8 @@ internal fun ToolMessageBody(
     // 因此滚出视口、切页返回都不会再丢。
     val effectiveExpanded = expandedOverride == true
 
-    val toolLabel = message.toolName ?: stringResource(R.string.common_tool)
+    // 标题行主文本：模型的人话标题优先（老会话或漏填时回退工具名）。
+    val toolLabel = derived?.title ?: message.toolName ?: stringResource(R.string.common_tool)
     // 文件相关工具：从结构化 diff 或工具参数里取路径，统一按「工具名 + 路径 + 文件名」展示
     val filePath = if (edit != null) edit.path else derived?.filePath
 
@@ -244,7 +249,8 @@ internal fun ToolMessageBody(
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(Modifier.width(Spacing.xs))
                     // 路径段（可省略）+ 文件名段（永远完整，优先级最高）：等宽字，与代码卡头部一致
@@ -275,7 +281,8 @@ internal fun ToolMessageBody(
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
                     if (!argHint.isNullOrBlank()) {
                         Spacer(Modifier.width(Spacing.sm))
@@ -468,6 +475,7 @@ private data class ToolMessageDerived(
     val edit: EditDiff?,
     val resultText: String?,
     val argHint: String?,
+    val title: String?,
     val argsFull: String?,
     val todo: ParsedTodoResult?,
     val webSearch: ParsedWebSearchResult?,
@@ -926,8 +934,10 @@ internal fun formatToolArgs(argsJson: String?): String? {
     if (argsJson.isNullOrBlank()) return null
     return runCatching {
         val obj = Json.parseToJsonElement(argsJson).jsonObject
-        if (obj.isEmpty()) return null
-        obj.entries.joinToString("\n") { (k, v) ->
+        // 标题已在标题行展示，参数列表里剔掉。
+        val entries = obj.entries.filterNot { it.key == TOOL_TITLE_PARAM }
+        if (entries.isEmpty()) return null
+        entries.joinToString("\n") { (k, v) ->
             val vv = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()
             "$k: $vv"
         }
@@ -940,7 +950,8 @@ internal fun toolArgHint(argsJson: String?): String? {
     return runCatching {
         val obj = Json.parseToJsonElement(argsJson).jsonObject
         val preferred = listOf("command", "cmd", "path", "file_path", "file", "query", "pattern", "url", "name")
-        val v = preferred.firstNotNullOfOrNull { obj[it] } ?: obj.values.firstOrNull()
+        val v = preferred.firstNotNullOfOrNull { obj[it] }
+            ?: obj.entries.firstOrNull { it.key != TOOL_TITLE_PARAM }?.value
         val str = (v as? JsonPrimitive)?.contentOrNull ?: v?.toString()
         str?.replace("\n", " ")?.trim()?.takeIf { it.isNotEmpty() }
     }.getOrNull()
