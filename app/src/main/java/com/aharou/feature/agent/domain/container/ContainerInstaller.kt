@@ -586,7 +586,7 @@ class ContainerInstaller @Inject constructor(
         if (settings.mirror == ContainerMirrorMode.CHINA) {
             writeChinaMirror(rootfs, settings.mirrorHost)
         }
-        writeResolvConf(rootfs, dnsServersFor(settings.dns))
+        writeResolvConf(rootfs, dnsServersFor(settings.dns), settings.dns)
     }
 
     /** 把 apk 源改成国内镜像；分支沿用 rootfs 自带的（导入的其它 Alpine 版本也能对上）。 */
@@ -607,15 +607,32 @@ class ContainerInstaller @Inject constructor(
     }
 
     /** 按设置写 resolv.conf（覆盖 [configureResolvConf] 的公共 DNS 默认值）。 */
-    private fun writeResolvConf(rootfs: File, servers: List<String>) {
+    private fun writeResolvConf(rootfs: File, servers: List<String>, mode: ContainerDnsMode) {
         if (servers.isEmpty()) return
+        writeResolvFile(File(rootfs, "etc/resolv.conf"), servers, mode)
+    }
+
+    /**
+     * 「跟随系统」模式下把容器 DNS 刷成当前网络的 DNS（换 WiFi / 挂代理后宿主 DNS 会变）。
+     * 只在文件里有 `aharou-dns-mode: SYSTEM` 标记时动，否则会冲掉用户选的固定 DNS。
+     */
+    fun refreshSystemDns(rootfs: File) {
         val conf = File(rootfs, "etc/resolv.conf")
+        val text = runCatching { if (conf.isFile) conf.readText() else null }.getOrNull() ?: return
+        if (!text.contains("aharou-dns-mode: ${ContainerDnsMode.SYSTEM.name}")) return
+        val servers = systemDnsServers().ifEmpty { return }
+        val current = text.lineSequence().map { it.trim() }.filter { it.startsWith("nameserver ") }.toList()
+        if (current == servers.map { "nameserver $it" }) return
+        writeResolvFile(conf, servers, ContainerDnsMode.SYSTEM)
+    }
+
+    private fun writeResolvFile(conf: File, servers: List<String>, mode: ContainerDnsMode) {
         runCatching {
             conf.parentFile?.mkdirs()
             // 容器里常见指向 systemd-resolved 的坏链，先删再写。
             conf.delete()
-            conf.writeText(servers.joinToString("") { "nameserver $it\n" })
-            FileLogger.i(TAG, "首次安装已按设置写 DNS：${servers.joinToString()}")
+            conf.writeText(servers.joinToString("") { "nameserver $it\n" } + "# aharou-dns-mode: ${mode.name}\n")
+            FileLogger.i(TAG, "容器 DNS 已写入：${servers.joinToString()}（$mode）")
         }.onFailure { FileLogger.w(TAG, "写容器 DNS 失败：${it.message}") }
     }
 

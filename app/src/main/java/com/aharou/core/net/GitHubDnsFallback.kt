@@ -31,8 +31,14 @@ object GitHubDnsFallback {
 
     private const val TAG = "GitHubDnsFallback"
 
-    /** 默认兜底域名。codeload 供 tarball 下载，api 供版本查询。 */
-    private val DEFAULT_HOSTS = listOf("github.com", "codeload.github.com", "api.github.com")
+    /** 默认兜底域名。codeload 供 tarball 下载，api 供版本查询，raw/objects 供单文件与 Release 资产。 */
+    private val DEFAULT_HOSTS = listOf(
+        "github.com",
+        "codeload.github.com",
+        "api.github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+    )
 
     /** 只处理形如 a.b 的域名，挡掉命令里扫到的文件路径、`origin` 之类的假阳性。 */
     private val HOST_RE = Regex("""^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$""")
@@ -57,13 +63,32 @@ object GitHubDnsFallback {
     private const val END_MARKER = "# <<< Aharou DNS 兜底"
     private const val STAMP_PREFIX = "# injected-at: "
 
-    /** 种子 IP 只对 GitHub 有意义：别的域名解析不出来就该老老实实失败，不能瞎填。 */
-    private val SEED_IPS = listOf(
-        "20.205.243.166",
-        "20.205.243.165",
-        "140.82.112.3",
-        "140.82.113.4",
+    /** 只对 GitHub 有意义：别的域名解析不出来就该老老实实失败，不能瞎填。 */
+    private val SEED_IPS = mapOf(
+        "github.com" to listOf("140.82.114.3", "20.205.243.166", "140.82.112.3", "140.82.113.4"),
+        "api.github.com" to listOf("20.205.243.168", "140.82.113.6", "140.82.114.6"),
+        "codeload.github.com" to listOf("20.205.243.165", "140.82.114.9"),
+        "raw.githubusercontent.com" to listOf("185.199.110.133", "185.199.108.133", "185.199.111.133"),
+        "objects.githubusercontent.com" to listOf("185.199.110.133", "185.199.108.133"),
     )
+
+    /**
+     * 在线 hosts 列表（GitHub520 社区维护，国内可直连）。
+     *
+     * 静态种子只能拦住「某个 IP 当下能用」，GitHub 轮换后就全失效；这份列表由社区定期更新，
+     * 能持续提供新地址。**但它只当候选**：实测同一份列表里 `140.82.113.4` 在本机超时、
+     * `140.82.114.3` 才通，不等于运营商之间都一致——所以拉回来也要逐个 443 探活。
+     */
+    private const val ONLINE_HOSTS_URL = "https://raw.hellogithub.com/hosts"
+
+    /** 在线列表的内存缓存时长：它一天才更新几次，没必要每次命令都拉。 */
+    private const val ONLINE_HOSTS_TTL_MS = 6 * 3600 * 1000L
+
+    @Volatile
+    private var onlineHosts: Map<String, List<String>> = emptyMap()
+
+    @Volatile
+    private var onlineHostsAt = 0L
 
     @Volatile
     private var lastCheckAt = 0L
@@ -218,8 +243,15 @@ object GitHubDnsFallback {
         if (System.currentTimeMillis() < deadline) {
             resolveViaDoh(host)?.let { if (isUsableIp(it) && isReachable(it)) return it }
         }
+        SEED_IPS[host]?.let { seeds ->
+            for (ip in seeds) {
+                if (System.currentTimeMillis() >= deadline) break
+                if (isUsableIp(ip) && isReachable(ip)) return ip
+            }
+        }
+        // 前面全落空才拉在线列表：它有网给开销，不能拖慢每一条命令
         if (host in DEFAULT_HOSTS) {
-            for (ip in SEED_IPS) {
+            for (ip in onlineSeedFor(host)) {
                 if (System.currentTimeMillis() >= deadline) break
                 if (isUsableIp(ip) && isReachable(ip)) return ip
             }
@@ -229,6 +261,42 @@ object GitHubDnsFallback {
 
     private fun resolveOnHost(host: String): String? =
         runCatching { InetAddress.getByName(host).hostAddress }.getOrNull()
+
+    /** IPV4 字面量（在线 hosts 只收 A 记录，IPv6 写进容器 hosts 对 git 没帮助）。 */
+    private val IPV4_RE = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
+
+    /**
+     * 在线 hosts 列表中的候选（带缓存）。拉取失败就返回空，不影响其他兜底。
+     */
+    private fun onlineSeedFor(host: String): List<String> {
+        val now = System.currentTimeMillis()
+        if (now - onlineHostsAt > ONLINE_HOSTS_TTL_MS) {
+            onlineHostsAt = now
+            val body = runCatching {
+                dohClient.newCall(Request.Builder().url(ONLINE_HOSTS_URL).build())
+                    .execute().use { if (it.isSuccessful) it.body?.string() else null }
+            }.onFailure { FileLogger.w(TAG, "拉取在线 hosts 失败", it) }.getOrNull()
+            onlineHosts = body?.let { runCatching { parseOnlineHosts(it) }.getOrDefault(emptyMap()) }
+                ?: emptyMap()
+        }
+        return onlineHosts[host].orEmpty()
+    }
+
+    /** 解析 hosts 格式：`IP 域名 [域名...]`，`#` 后面是注释。 */
+    private fun parseOnlineHosts(text: String): Map<String, List<String>> {
+        val out = mutableMapOf<String, MutableList<String>>()
+        text.lineSequence().forEach { raw ->
+            val line = raw.substringBefore('#').trim()
+            if (line.isEmpty()) return@forEach
+            val parts = line.split(Regex("\\s+"))
+            if (parts.size < 2 || !IPV4_RE.matches(parts[0])) return@forEach
+            parts.drop(1).forEach { name ->
+                val h = name.trim().lowercase()
+                if (HOST_RE.matches(h)) out.getOrPut(h) { mutableListOf() }.add(parts[0])
+            }
+        }
+        return out
+    }
 
     /**
      * 经阿里公共 DNS 的 HTTP 接口查 A 记录。
