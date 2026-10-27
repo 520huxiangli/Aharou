@@ -253,6 +253,8 @@
     <string name="settings_refresh_logs">Refresh logs</string>    <string name="settings_vision_follow_chat">Follow current chat model</string>
     <string name="settings_compaction_follow_chat">Follow current chat model</string>
     <string name="settings_title_follow_chat">Follow current chat model</string>
+    <string name="settings_scene_binding_fallback">Binding is unusable; the chat model will be used instead</string>
+    <string name="settings_scene_binding_no_fallback">Binding is unusable and there\'s no fallback model; pick one again</string>
     <string name="settings_image_gen_unconfigured">Not configured</string>    <string name="settings_theme_title">Appearance</string>    <string name="theme_auto">Auto</string>
     <string name="theme_dark">Dark</string>
     <string name="theme_light">Light</string>
@@ -828,6 +830,8 @@
     <string name="chat_turn_running">Running</string>
     <string name="chat_turn_completed">Completed in %1$s</string>
     <string name="chat_turn_completed_plain">Completed</string>
+    <string name="chat_turn_failed">Failed</string>
+    <string name="chat_turn_cancelled">Cancelled</string>
 
     <string name="chat_context_usage">Context %1$d%% used</string>
     <string name="chat_bg_command_done">Background command completed</string>
@@ -923,6 +927,9 @@
     <string name="container_health_busy_detail">The sandbox is handling another task. Run the check again in a moment</string>
     <string name="container_health_parse_fail">Could not parse the probe result</string>
     <string name="container_health_parse_fail_detail">The probe returned unrecognized output; see the logs for details</string>
+    <string name="container_verify_layout_missing">The image is missing required paths (%1$s), so it was not marked as installed. Retry or switch to another image</string>
+    <string name="container_verify_boot_failed">Container boot self-check failed: %1$s</string>
+    <string name="container_verify_boot_timeout">Container boot self-check timed out (%1$d s). The image may be incomplete, or the device is under heavy load</string>
     <string name="container_active">Currently in use</string>
     <string name="container_set_as_default">Set as default container</string>
     <string name="container_default_badge">Default</string>
@@ -978,6 +985,7 @@
     <string name="container_sources_applied_mirror">Switched to a China mirror: %1$s</string>
     <string name="container_sources_applied_mirror_official">Official mirrors restored</string>
     <string name="container_sources_applied_dns">Container DNS updated</string>
+    <string name="container_sources_saved_pending_init">Saved. Takes effect when the container initializes.</string>
     <string name="container_sources_error_no_env_lib">env-common.sh is missing in the container. Open the Terminal page once so the app can extract it again.</string>
     <string name="container_sources_error_no_pm">No package manager found. The container may be incomplete.</string>
     <string name="container_sources_error_unsupported_pm">Automatic mirror switching is not supported for this package manager.</string>
@@ -3358,4 +3366,22 @@
     <string name="steward_status_auto_sending">Sending next step</string>
     <string name="steward_status_completed">Completed</string>
     <string name="steward_status_stopped">Stopped</string>
+
+    <!-- Personal context capability and permission copy -->
+    <string name="personal_capability_sms">SMS</string>
+    <string name="personal_capability_call_log">Call log</string>
+    <string name="personal_capability_app_usage">App usage</string>
+    <string name="personal_capability_contacts">Contacts</string>
+    <string name="personal_capability_calendar">Calendar</string>
+    <string name="personal_capability_location">Location</string>
+    <string name="personal_capability_photos">Photos</string>
+    <string name="personal_capability_notifications_read">Reading notifications</string>
+    <string name="personal_capability_notifications_post">Sending notifications</string>
+    <string name="personal_access_state_note">%1$s status: %2$s</string>
+    <string name="personal_access_denied">%1$s is not allowed. Turn it on in Settings → Permissions &amp; Background → App Permissions. Repeated calls won\'t show the permission prompt again</string>
+    <string name="personal_access_partial">%1$s is only partially allowed: it works, but the data is incomplete. Grant the rest in Settings → Permissions &amp; Background → App Permissions</string>
+    <string name="personal_access_restricted">%1$s is blocked by the system or the installing source, so it can\'t be enabled even in permission settings. Use another way to get this data</string>
+    <string name="personal_access_unavailable">%1$s has no data service on this device, so granting permission won\'t help. Use another way</string>
+    <string name="personal_access_special_usage">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Usage access</string>
+    <string name="personal_access_special_notification">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Notification access</string>
 </resources>

@@ -253,6 +253,8 @@
     <string name="settings_refresh_logs">刷新日志</string>    <string name="settings_vision_follow_chat">跟随当前聊天模型</string>
     <string name="settings_compaction_follow_chat">跟随当前聊天模型</string>
     <string name="settings_title_follow_chat">跟随当前聊天模型</string>
+    <string name="settings_scene_binding_fallback">绑定已失效，实际会用聊天模型</string>
+    <string name="settings_scene_binding_no_fallback">绑定已失效且没有可回退的模型，需要重新选择</string>
     <string name="settings_image_gen_unconfigured">未配置</string>    <string name="settings_theme_title">外观主题</string>    <string name="theme_auto">自动</string>
     <string name="theme_dark">深色</string>
     <string name="theme_light">浅色</string>
@@ -827,6 +829,8 @@
     <string name="chat_turn_running">执行中</string>
     <string name="chat_turn_completed">已完成 %1$s</string>
     <string name="chat_turn_completed_plain">已完成</string>
+    <string name="chat_turn_failed">失败</string>
+    <string name="chat_turn_cancelled">已取消</string>
 
     <string name="chat_context_usage">上下文已用 %1$d%%</string>
     <string name="chat_bg_command_done">后台命令已完成</string>
@@ -922,6 +926,9 @@
     <string name="container_health_busy_detail">沙箱正在处理其他任务，稍后重新体检即可</string>
     <string name="container_health_parse_fail">探测结果无法解析</string>
     <string name="container_health_parse_fail_detail">探测返回了无法识别的输出，详情见日志</string>
+    <string name="container_verify_layout_missing">镜像缺少关键目录（%1$s），未标记为已安装；请重试或更换镜像</string>
+    <string name="container_verify_boot_failed">容器启动自检失败：%1$s</string>
+    <string name="container_verify_boot_timeout">容器启动自检超时（%1$d 秒），镜像可能不完整或设备负载过高</string>
     <string name="container_active">当前使用中</string>
     <string name="container_set_as_default">设为默认容器</string>
     <string name="container_default_badge">默认</string>
@@ -977,6 +984,7 @@
     <string name="container_sources_applied_mirror">已切换到国内镜像：%1$s</string>
     <string name="container_sources_applied_mirror_official">已恢复官方源</string>
     <string name="container_sources_applied_dns">容器 DNS 已更新</string>
+    <string name="container_sources_saved_pending_init">已保存，进终端初始化时自动生效</string>
     <string name="container_sources_error_no_env_lib">容器内缺少 env-common.sh，请重新进入终端页让 App 重新写入脚本</string>
     <string name="container_sources_error_no_pm">未识别到包管理器，容器可能不完整</string>
     <string name="container_sources_error_unsupported_pm">当前系统的包管理器暂不支持自动换源</string>
@@ -3356,4 +3364,22 @@
     <string name="steward_status_auto_sending">正在自动发送下一步</string>
     <string name="steward_status_completed">已完成</string>
     <string name="steward_status_stopped">已停止</string>
+
+    <!-- 个人上下文能力与权限文案 -->
+    <string name="personal_capability_sms">短信</string>
+    <string name="personal_capability_call_log">通话记录</string>
+    <string name="personal_capability_app_usage">应用使用统计</string>
+    <string name="personal_capability_contacts">联系人</string>
+    <string name="personal_capability_calendar">日历</string>
+    <string name="personal_capability_location">定位</string>
+    <string name="personal_capability_photos">相册</string>
+    <string name="personal_capability_notifications_read">读取通知</string>
+    <string name="personal_capability_notifications_post">发送通知</string>
+    <string name="personal_access_state_note">「%1$s」当前状态：%2$s</string>
+    <string name="personal_access_denied">「%1$s」未授权，可在「设置 → 权限与后台 → 软件权限」里开启；重复调用不会再弹授权框</string>
+    <string name="personal_access_partial">「%1$s」只授权了部分范围，可用但不完整；需要更多数据时请到「设置 → 权限与后台 → 软件权限」补全授权</string>
+    <string name="personal_access_restricted">「%1$s」被系统或安装来源限制，在权限页也开不了，请改用其他方式获取</string>
+    <string name="personal_access_unavailable">「%1$s」在本机没有可用的数据服务，授权也无法解决，请改用其他方式</string>
+    <string name="personal_access_special_usage">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 使用情况访问」手动开启</string>
+    <string name="personal_access_special_notification">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 通知使用权」手动开启</string>
 </resources>
