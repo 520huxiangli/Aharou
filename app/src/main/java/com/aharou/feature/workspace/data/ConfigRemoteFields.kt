@@ -140,7 +140,20 @@ class ConfigRemoteFields @Inject constructor(
             val host = (obj["host"] as? ConfigValue.Str)?.value?.takeIf { it.isNotBlank() }
                 ?: throw ConfigError.InvalidValue("缺少 host")
             val authType = (obj["authType"] as? ConfigValue.Str)?.value ?: "password"
-            val authData = (obj["authData"] as? ConfigValue.Str)?.value.orEmpty()
+            // 兼容直观字段名：模型与用户通常传 password / privateKey，而不是内部的 authData。
+            // 之前只认 authData，传 password 会被静默忽略成空串——get 显示掩码像存进去了、
+            // reveal 才是空，于是 App 拿空密码反复认证，既连不上还会触发服务器防爆破封禁。
+            val authData = (obj["authData"] as? ConfigValue.Str)?.value
+                ?: (obj["password"] as? ConfigValue.Str)?.value
+                ?: (obj["privateKey"] as? ConfigValue.Str)?.value
+                ?: (obj["private_key"] as? ConfigValue.Str)?.value
+                ?: ""
+            if (authData.isBlank()) {
+                throw ConfigError.InvalidValue(
+                    "缺少凭据：authType=$authType 需要密码或私钥内容（authData，也可直接传 password）。" +
+                        "空凭据建出来必然认证失败，还可能因反复重试触发服务器封禁，所以这里直接拒。"
+                )
+            }
             val conn = RemoteConnection(
                 id = UUID.randomUUID().toString(),
                 name = (obj["name"] as? ConfigValue.Str)?.value ?: host,
