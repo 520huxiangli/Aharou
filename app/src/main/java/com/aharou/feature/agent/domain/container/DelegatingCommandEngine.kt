@@ -1,70 +1,79 @@
 package com.aharou.feature.agent.domain.container
 
 import com.aharou.feature.settings.data.repository.ExecutionMode
-import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * [CommandEngine] 的委托层：同时持有本地与远程两套实现，每次方法调用时按
- * [ExecutionModeHolder.currentMode] 转发到对应实现。
+ * [CommandEngine] 的委托层：同时持有本地与远程两套实现，每次方法调用时选实现。
  *
- * 这样 Hilt 注入时机不再影响最终行为——无论 [CommandEngine] 在何时被首次注入，
- * 真正执行命令时才读取当前模式。
+ * 选择依据是**本次调用所属工作区解析出的容器**（[ContainerProfileResolver.forWorkspace]），
+ * 而不是全局 mode：配了「工作区 → SSH 容器」覆盖时，那个工作区的命令必须走 [RemoteSshEngine]，
+ * 其余工作区继续走 [LinuxContainerEngine]。只看全局 mode 会把 SSH profile 交给本地引擎，
+ * 它就去起一个不存在的 rootfs（`/bin/sh not found`）。
+ *
+ * 没有工作区参数的方法（isContainerInstalled / defaultShell / notReadyHint 等）仍看全局默认容器：
+ * 它们是界面初始化门禁，面向「当前选中的容器」。
  */
 @Singleton
 class DelegatingCommandEngine @Inject constructor(
-    private val modeHolder: ExecutionModeHolder,
+    private val profileResolver: ContainerProfileResolver,
     private val localEngine: LinuxContainerEngine,
     private val remoteEngine: RemoteSshEngine
 ) : CommandEngine {
 
-    private fun delegate(): CommandEngine =
-        if (modeHolder.currentMode() == ExecutionMode.REMOTE_SSH) remoteEngine
+    /** 按本次执行的工作区选引擎。 */
+    private fun delegate(projectPath: String?): CommandEngine =
+        if (profileResolver.forWorkspace(projectPath).mode == ExecutionMode.REMOTE_SSH) remoteEngine
+        else localEngine
+
+    /** 无工作区上下文时按全局默认容器选引擎。 */
+    private fun delegateByDefault(): CommandEngine =
+        if (profileResolver.defaultProfile().mode == ExecutionMode.REMOTE_SSH) remoteEngine
         else localEngine
 
     override val initProgress: StateFlow<ContainerInitState>
-        get() = delegate().initProgress
+        get() = delegateByDefault().initProgress
 
     override fun runCommandStream(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): Flow<CommandEvent> = delegate().runCommandStream(command, projectPath, timeoutMs)
+    ): Flow<CommandEvent> = delegate(projectPath).runCommandStream(command, projectPath, timeoutMs)
 
     override suspend fun runCommandSync(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): String = delegate().runCommandSync(command, projectPath, timeoutMs)
+    ): String = delegate(projectPath).runCommandSync(command, projectPath, timeoutMs)
 
     override suspend fun runCommandSyncWithExit(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): CommandResult = delegate().runCommandSyncWithExit(command, projectPath, timeoutMs)
+    ): CommandResult = delegate(projectPath).runCommandSyncWithExit(command, projectPath, timeoutMs)
 
     override suspend fun runCommandSyncUnbounded(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): CommandResult = delegate().runCommandSyncUnbounded(command, projectPath, timeoutMs)
+    ): CommandResult = delegate(projectPath).runCommandSyncUnbounded(command, projectPath, timeoutMs)
 
     override suspend fun runCommandSyncIfReady(
         command: String,
         projectPath: String?,
         timeoutMs: Long
-    ): CommandResult? = delegate().runCommandSyncIfReady(command, projectPath, timeoutMs)
+    ): CommandResult? = delegate(projectPath).runCommandSyncIfReady(command, projectPath, timeoutMs)
 
-    override fun isContainerInstalled(): Boolean = delegate().isContainerInstalled()
+    override fun isContainerInstalled(): Boolean = delegateByDefault().isContainerInstalled()
 
-    override fun isProvisioned(): Boolean = delegate().isProvisioned()
+    override fun isProvisioned(): Boolean = delegateByDefault().isProvisioned()
 
-    override fun defaultShell(): String = delegate().defaultShell()
+    override fun defaultShell(): String = delegateByDefault().defaultShell()
 
-    override fun notReadyHint(): String? = delegate().notReadyHint()
+    override fun notReadyHint(): String? = delegateByDefault().notReadyHint()
 
-    override suspend fun ensureInstalled() = delegate().ensureInstalled()
+    override suspend fun ensureInstalled() = delegateByDefault().ensureInstalled()
 }

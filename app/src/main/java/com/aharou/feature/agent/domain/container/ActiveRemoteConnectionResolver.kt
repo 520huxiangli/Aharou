@@ -9,6 +9,7 @@ import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,8 +25,7 @@ class ActiveRemoteConnectionResolver @Inject constructor(
     private val containerSettingsRepository: ContainerSettingsRepository,
     private val dao: RemoteConnectionDao
 ) {
-    /** 激活 profile 解析出的连接配置；本地 profile、通道缺失或连接被删时为 null。 */
-    val activeConfigFlow: Flow<RemoteConnectionConfig?> = combine(
+    /** 激活 profile 解析出的连接配置；本地 profile、通道缺失或连接被删时为 null。 */    val activeConfigFlow: Flow<RemoteConnectionConfig?> = combine(
         containerSettingsRepository.activeProfileIdFlow,
         containerSettingsRepository.customProfilesFlow,
         dao.getAllConnections()
@@ -33,12 +33,24 @@ class ActiveRemoteConnectionResolver @Inject constructor(
         resolve(activeId, profiles, connections)
     }.distinctUntilChanged()
 
+    /**
+     * 按 **profile id** 解析连接配置（不看全局 active_profile）。
+     *
+     * 容器可以按工作区指定后，执行时拿到的 profile 可能不是全局激活的那个；
+     * 只按 active_profile 解析会得到 null，表现为「SSH 连接失败: 未配置 SSH 连接」。
+     */
+    suspend fun configForProfile(profileId: String): RemoteConnectionConfig? {
+        val profile = containerSettingsRepository.customProfilesFlow.first()
+            .firstOrNull { it.id == profileId } ?: return null
+        val connections = dao.getAllConnections().first()
+        return resolve(profile.id, listOf(profile), connections)
+    }
+
     private fun resolve(
         activeId: String,
         profiles: List<ContainerProfile>,
         connections: List<RemoteConnectionEntity>
-    ): RemoteConnectionConfig? {
-        val profile = profiles.firstOrNull { it.id == activeId }
+    ): RemoteConnectionConfig? {        val profile = profiles.firstOrNull { it.id == activeId }
             ?: ContainerProfile.BUILTIN_ALPINE.takeIf { it.id == activeId }
             ?: return null
         val ssh = profile.rootfsSource as? RootfsSource.RemoteSsh ?: return null

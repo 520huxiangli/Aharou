@@ -77,6 +77,14 @@ class EditorLspManager @Inject constructor(
                 closeAll()
             }
         }
+        // 工作区→容器覆盖表变化：容器可以按工作区指定，改覆盖不会震动全局 activeProfileId，
+        // 不监听这条的话旧语言服务器会继续钉在旧容器的 rootfs 上。
+        scope.launch {
+            containerSettingsRepository.workspaceProfilesFlow.drop(1).collect {
+                FileLogger.i(TAG, "工作区容器覆盖变化，关闭语言服务器并清理残留")
+                closeAll()
+            }
+        }
         // 工作区切换：语言服务器挂在项目根上，项目一变就得重建。
         scope.launch {
             workspaceRepository.current.drop(1).collectLatest {

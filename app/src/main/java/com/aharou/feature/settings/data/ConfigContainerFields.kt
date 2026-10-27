@@ -14,6 +14,7 @@ import com.aharou.core.config.fields.DataStoreIntField
 import com.aharou.core.config.fields.DataStoreStrField
 import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.domain.container.ContainerProfile
+import com.aharou.feature.agent.domain.container.ContainerWorkspaceKeys
 import com.aharou.feature.agent.domain.container.RootfsSource
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.presentation.ContainerDnsMode
@@ -47,7 +48,9 @@ class ConfigContainerFields @Inject constructor(
             DataStoreStrField(
                 path = "container.active_profile",
                 displayName = "当前容器",
-                description = "终端 / 命令执行使用的容器 profile id。默认 ${ContainerProfile.BUILTIN_ID}（内置 Alpine）。" +
+                description = "终端 / 命令执行使用的容器 profile id，同时是「未单独指定的工作区」的默认值。" +
+                    "默认 ${ContainerProfile.BUILTIN_ID}（内置 Alpine）；某个工作区要用别的容器，" +
+                    "在 container.workspace_profiles 里加一条即可。" +
                     "可用 id 见 `config get container.profiles` 或设置页「容器与镜像」。",
                 flow = containerSettings.activeProfileIdFlow,
                 setter = { containerSettings.setActiveProfile(it) },
@@ -81,6 +84,7 @@ class ConfigContainerFields @Inject constructor(
         )
 
         registry.register(ProfileCollection())
+        registry.register(WorkspaceProfileCollection())
     }
 
     private fun profiles(): List<ContainerProfile> =
@@ -306,6 +310,72 @@ class ConfigContainerFields @Inject constructor(
             runBlocking { containerSettings.deleteCustomProfile(id) }
         }
     }
+
+    /**
+     * 工作区 → 容器 profile 覆盖表（`container.workspace_profiles.<归一化工作区路径>`）。
+     *
+     * 只对「表里有的工作区」生效；没配的工作区继续走 [ConfigContainerFields] 的 container.active_profile，
+     * 所以默认行为与加这个集合之前完全一致。执行引擎每跑一条命令按传入的 projectPath 现查一次。
+     */
+    private inner class WorkspaceProfileCollection : ConfigCollection {
+        override val basePath = "container.workspace_profiles"
+        override val displayName = "工作区容器覆盖"
+        override val description =
+            "按工作区指定容器。子字段：workspace（归一化后的绝对路径，即子项 id）/ profile（容器 profile id）；" +
+                "add 传 {\"workspace\":\"<工作区绝对路径>\",\"profile\":\"<profile id>\"}，remove 传该路径。" +
+                "表里没有的工作区仍用 container.active_profile（全局默认）。"
+
+        override fun childIds(): List<String> = overrides().keys.toList()
+
+        override fun fields(forId: String): List<ConfigField> = listOf(
+            ReadOnlyField(
+                path = "$basePath.$forId.workspace",
+                displayName = "工作区（$forId）",
+                description = "归一化后的工作区绝对路径（去尾斜杠、解掉符号链接）；即集合子项 id。",
+                valueSchema = ConfigSchema.Str(),
+            ) { ConfigValue.Str(forId) },
+
+            ClosureField(
+                path = "$basePath.$forId.profile",
+                displayName = "容器 profile（$forId）",
+                description = "该工作区执行命令 / 开终端时使用的容器；须为 container.profiles 里的 id。",
+                valueSchema = ConfigSchema.Str(maxLength = 200),
+                revertable = true,
+                reader = { ConfigValue.Str(overrides()[forId].orEmpty()) },
+                writer = { v ->
+                    val target = strOf(v).trim()
+                    require(target)
+                    runBlocking { containerSettings.putWorkspaceProfile(forId, target) }
+                },
+            ),
+        )
+
+        override fun add(payload: ConfigValue): String {
+            val obj = (payload as? ConfigValue.Obj)?.value
+                ?: throw ConfigError.InvalidValue("container.workspace_profiles 的新项需为 JSON 对象")
+            val workspace = (obj["workspace"] as? ConfigValue.Str)?.value?.trim().orEmpty()
+            if (workspace.isBlank()) throw ConfigError.InvalidValue("缺少 workspace（工作区绝对路径）")
+            if (!workspace.startsWith("/")) throw ConfigError.InvalidValue("workspace 须为绝对路径：$workspace")
+            val profileId = (obj["profile"] as? ConfigValue.Str)?.value?.trim().orEmpty()
+            if (profileId.isBlank()) throw ConfigError.InvalidValue("缺少 profile（容器 profile id）")
+            // 不存在的 id 先拦住：写进去只会让引擎回退到全局默认，用户却以为生效了。
+            require(profileId)
+            val key = ContainerWorkspaceKeys.normalize(workspace)
+                ?: throw ConfigError.InvalidValue("工作区路径不合法：$workspace")
+            runBlocking { containerSettings.putWorkspaceProfile(key, profileId) }
+            return key
+        }
+
+        override fun remove(id: String) {
+            val key = ContainerWorkspaceKeys.normalize(id)
+                ?: throw ConfigError.InvalidValue("工作区路径不合法：$id")
+            val removed = runBlocking { containerSettings.removeWorkspaceProfile(key) }
+            if (!removed) throw ConfigError.InvalidValue("该工作区没有容器覆盖：$id")
+        }
+    }
+
+    private fun overrides(): Map<String, String> =
+        runBlocking { containerSettings.workspaceProfilesFlow.first() }
 
     /**
      * 容器软件源与 DNS。

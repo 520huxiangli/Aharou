@@ -9,11 +9,14 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
 import com.aharou.feature.agent.domain.container.ContainerProfile
+import com.aharou.feature.agent.domain.container.ContainerWorkspaceKeys
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -91,14 +94,27 @@ class ContainerSettingsRepository @Inject constructor(
         val DOWNLOADED_IMAGES_KEY = stringPreferencesKey("downloaded_images_json")
         /** 容器内编译 Gradle 工程时的 JVM 堆上限（MB）；无值时按设备内存推荐。 */
         val GRADLE_HEAP_MB_KEY = intPreferencesKey("gradle_heap_mb")
+        /** 工作区路径 → profile id 的覆盖表（JSON 对象）；键已由 [ContainerWorkspaceKeys] 归一化。 */
+        val WORKSPACE_PROFILES_KEY = stringPreferencesKey("workspace_profiles_json")
         val downloadedImageSerializer = ListSerializer(DownloadedImageRecord.serializer())
         val profileSerializer = ListSerializer(ContainerProfile.serializer())
+        val workspaceProfilesSerializer = MapSerializer(String.serializer(), String.serializer())
         val json = Json { ignoreUnknownKeys = true }
     }
 
     /** 当前选中的 profile id；无值时默认内置 Alpine。 */
     val activeProfileIdFlow: Flow<String> = context.containerDataStore.data.map { prefs ->
         prefs[ACTIVE_PROFILE_ID_KEY]?.takeIf { it.isNotBlank() } ?: ContainerProfile.BUILTIN_ID
+    }
+
+    /**
+     * 工作区 → profile id 覆盖表（键为归一化后的工作区绝对路径）。
+     *
+     * 表里没有某个工作区时，该工作区的命令走 [activeProfileIdFlow] 的全局默认——与改动前完全一致；
+     * 只有用户显式 add 过的工作区才会用别的容器。
+     */
+    val workspaceProfilesFlow: Flow<Map<String, String>> = context.containerDataStore.data.map { prefs ->
+        decodeWorkspaceProfiles(prefs[WORKSPACE_PROFILES_KEY])
     }
 
     /** 远程模式下的默认容器 id；无值时默认内置 Alpine。 */
@@ -137,6 +153,40 @@ class ContainerSettingsRepository @Inject constructor(
     suspend fun setDefaultContainerId(id: String) {
         context.containerDataStore.edit { it[DEFAULT_CONTAINER_ID_KEY] = id }
     }
+
+    /**
+     * 为某个工作区指定容器 profile（键归一化后落盘）。已存在则覆盖。
+     * 传无意义的工作区路径时什么都不做，避免写入一条永远匹配不上的记录。
+     */
+    suspend fun putWorkspaceProfile(workspacePath: String, profileId: String) {
+        val key = ContainerWorkspaceKeys.normalize(workspacePath) ?: return
+        context.containerDataStore.edit { prefs ->
+            val current = decodeWorkspaceProfiles(prefs[WORKSPACE_PROFILES_KEY])
+            prefs[WORKSPACE_PROFILES_KEY] = json.encodeToString(
+                workspaceProfilesSerializer, current + (key to profileId)
+            )
+        }
+    }
+
+    /** 去掉某个工作区的容器覆盖（归一化后匹配）；返回是否真的删掉了一条。 */
+    suspend fun removeWorkspaceProfile(workspacePath: String): Boolean {
+        val key = ContainerWorkspaceKeys.normalize(workspacePath) ?: return false
+        var removed = false
+        context.containerDataStore.edit { prefs ->
+            val current = decodeWorkspaceProfiles(prefs[WORKSPACE_PROFILES_KEY])
+            if (key !in current) return@edit
+            removed = true
+            prefs[WORKSPACE_PROFILES_KEY] = json.encodeToString(
+                workspaceProfilesSerializer, current - key
+            )
+        }
+        return removed
+    }
+
+    /** 解析覆盖表 JSON；历史/损坏数据回退空表（等同于没配覆盖，走全局默认）。 */
+    private fun decodeWorkspaceProfiles(raw: String?): Map<String, String> =
+        raw?.let { runCatching { json.decodeFromString(workspaceProfilesSerializer, it) }.getOrNull() }
+            ?: emptyMap()
 
     /**
      * 首次启动（或旧版本升级）兜底：把内置 Alpine 补入列表（若缺），保证列表始终有内置项。

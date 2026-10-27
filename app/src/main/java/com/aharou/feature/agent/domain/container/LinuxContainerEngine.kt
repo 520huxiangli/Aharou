@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
@@ -79,7 +78,7 @@ class LinuxContainerEngine @Inject constructor(
     private val envVarRepository: com.aharou.feature.settings.data.repository.EnvVarRepository,
     private val containerInstaller: ContainerInstaller,
     private val containerOsDetector: ContainerOsDetector,
-    private val containerSettingsRepository: com.aharou.feature.settings.data.repository.ContainerSettingsRepository,
+    private val profileResolver: ContainerProfileResolver,
     private val pathHomeResolver: com.aharou.feature.workspace.domain.PathHomeResolver,
     private val runtimeProcessStore: RuntimeProcessStore,
     private val gradleHeapApplier: ContainerGradleHeapApplier
@@ -100,31 +99,8 @@ class LinuxContainerEngine @Inject constructor(
     /** 当前在途的初始化 job（受 [initMutex] 保护），完成后置 null。 */
     private var initJob: Job? = null
 
-    /**
-     * 当前选中的 profile（缓存自 [containerSettingsRepository.activeProfileIdFlow]，避免同步读 DataStore）。
-     * 启动首帧为内置 Alpine（等同改动前）；profile 切换后由 flow collector 更新。fallback 到内置保证安全。
-     */
-    @Volatile
-    private var currentProfile: ContainerProfile = ContainerProfile.BUILTIN_ALPINE
-
-    init {
-        CoroutineScope(Dispatchers.IO).launch {
-            containerSettingsRepository.activeProfileIdFlow.collect { id ->
-                currentProfile = resolveProfile(id)
-            }
-        }
-    }
-
-    /**
-     * 按 id 解析 profile：从持久化列表找，找不到回退列表第一个，再兜底内置 Alpine（保证引擎始终可用）。
-     * 列表里持久化的 Alpine 覆盖项优先于 [ContainerProfile.BUILTIN_ALPINE] 常量（用户编辑过的配置生效）。
-     */
-    private suspend fun resolveProfile(id: String): ContainerProfile {
-        val profiles = containerSettingsRepository.customProfilesFlow.first()
-        return profiles.firstOrNull { it.id == id }
-            ?: profiles.firstOrNull()
-            ?: ContainerProfile.BUILTIN_ALPINE
-    }
+    /** 本类不持有任何「当前 profile」可变状态；执行路径按自己的 projectPath 现场取局部 profile 往下传。 */
+    private val defaultProfile: ContainerProfile get() = profileResolver.defaultProfile()
 
     /**
      * 当前正在途的凭据请求计数（自定义 credential helper 阻塞等 app 弹窗回填的对数）。
@@ -150,7 +126,8 @@ class LinuxContainerEngine @Inject constructor(
      */
     fun probeContainerExecutable(name: String): Boolean? {
         if (name.isBlank()) return null
-        val profile = currentProfile
+        // 探针不针对具体工作区，用全局默认。
+        val profile = defaultProfile
         if (!containerInstaller.isInstalledFor(profile)) return null
         val rootfs = containerInstaller.rootfsDirFor(profile)
         val aharouBin = java.io.File(containerInstaller.aharouDir, "bin")
@@ -233,13 +210,15 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): Flow<CommandEvent> = flow {
+        // 本次执行用的容器：按工作区覆盖解析（没配覆盖即全局默认）。
+        val profile = profileResolver.forWorkspace(projectPath)
         // 未就绪（rootfs 未解压或基础包未配置）时不自动初始化，直接提示用户去终端页完成初始化。
-        notReadyHint()?.let {
+        notReadyHintFor(profile)?.let {
             emit(CommandEvent.Line(it))
             emit(CommandEvent.Exit(null))
             return@flow
         }
-        emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
+        emitAll(streamExecNoInstall(command, projectPath, timeoutMs, profile))
     }.flowOn(Dispatchers.IO)
     /**
      * 在容器内流式执行命令的「裸」实现：每读到一行就 emit [CommandEvent.Line]，命令结束 emit
@@ -256,13 +235,14 @@ class LinuxContainerEngine @Inject constructor(
     private fun streamExecNoInstall(
         command: String,
         projectPath: String?,
-        timeoutMs: Long
+        timeoutMs: Long,
+        profile: ContainerProfile
     ): Flow<CommandEvent> = flow {
         val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
-        FileLogger.d(TAG, "执行命令(流式) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
+        FileLogger.d(TAG, "执行命令(流式) cwd=$projectPath profile=${profile.id} timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
         // 先记下当前已有的子进程，启动后取差集：这是不依赖 Process.pid() 的兜底定位手段
         val childrenBefore = ProcessIdentity.childPids()
-        val process = startContainerProcess(command, projectPath)
+        val process = startContainerProcess(command, projectPath, profile)
         val identity = ProcessIdentity.capture(process)
             ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
         identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, command) }
@@ -341,9 +321,10 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): String = withContext(Dispatchers.IO) {
+        val profile = profileResolver.forWorkspace(projectPath)
         // 未就绪时不自动初始化，直接返回引导文案，由用户去终端页完成初始化。
-        notReadyHint()?.let { return@withContext it }
-        execCaptured(command, projectPath, timeoutMs).output
+        notReadyHintFor(profile)?.let { return@withContext it }
+        execCaptured(command, projectPath, timeoutMs, profile).output
     }
 
     /**
@@ -355,9 +336,10 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): CommandResult = withContext(Dispatchers.IO) {
+        val profile = profileResolver.forWorkspace(projectPath)
         // 未就绪时不自动初始化，直接返回引导文案，由用户去终端页完成初始化。
-        notReadyHint()?.let { return@withContext CommandResult(it, null) }
-        val r = execCaptured(command, projectPath, timeoutMs)
+        notReadyHintFor(profile)?.let { return@withContext CommandResult(it, null) }
+        val r = execCaptured(command, projectPath, timeoutMs, profile)
         CommandResult(r.output, r.exitCode, r.truncated)
     }
 
@@ -375,8 +357,9 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): CommandResult? {
-        if (!containerInstaller.isInstalledFor(currentProfile)) return null
-        val result = execCaptured(command, projectPath, timeoutMs)
+        val profile = profileResolver.forWorkspace(projectPath)
+        if (!containerInstaller.isInstalledFor(profile)) return null
+        val result = execCaptured(command, projectPath, timeoutMs, profile)
         return CommandResult(result.output, result.exitCode, result.truncated)
     }
 
@@ -385,8 +368,9 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): CommandResult = withContext(Dispatchers.IO) {
-        notReadyHint()?.let { return@withContext CommandResult(it, null) }
-        val r = execCaptured(command, projectPath, timeoutMs, unbounded = true)
+        val profile = profileResolver.forWorkspace(projectPath)
+        notReadyHintFor(profile)?.let { return@withContext CommandResult(it, null) }
+        val r = execCaptured(command, projectPath, timeoutMs, profile, unbounded = true)
         CommandResult(r.output, r.exitCode, r.truncated)
     }
 
@@ -402,13 +386,14 @@ class LinuxContainerEngine @Inject constructor(
         command: String,
         projectPath: String?,
         timeoutMs: Long,
+        profile: ContainerProfile,
         unbounded: Boolean = false
     ): ExecResult = withContext(Dispatchers.IO) {
         try {
             val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
-            FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
+            FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath profile=${profile.id} timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
             val childrenBefore = ProcessIdentity.childPids()
-            val process = startContainerProcess(command, projectPath)
+            val process = startContainerProcess(command, projectPath, profile)
             val identity = ProcessIdentity.capture(process)
                 ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
             identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, command) }
@@ -547,13 +532,12 @@ class LinuxContainerEngine @Inject constructor(
      * 启动进程。rootfs/proot 安装就绪则用 PRoot 进入容器；
      * 否则回退到 Android 原生 shell（rootfs 缺失时的兜底）。
      */
-    private fun startContainerProcess(command: String, projectPath: String?): Process {
-        val profile = currentProfile
+    private fun startContainerProcess(command: String, projectPath: String?, profile: ContainerProfile): Process {
         ensureHostsForCommand(command, profile)
         val useProot = containerInstaller.isInstalledFor(profile)
 
         val processBuilder = if (useProot) {
-            buildProcessBuilder(buildProotInvocation(command, projectPath))
+            buildProcessBuilder(buildProotInvocation(command, projectPath, profile))
         } else {
             FileLogger.w(TAG, "PRoot 未安装，回退到原生 shell")
             buildNativeProcess(command, projectPath)
@@ -565,14 +549,14 @@ class LinuxContainerEngine @Inject constructor(
         return processBuilder.start()
     }
 
-    /** 容器是否已安装就绪（按当前 profile）。 */
-    override fun isContainerInstalled(): Boolean = containerInstaller.isInstalledFor(currentProfile)
+    /** 容器是否已安装就绪（按全局默认 profile；带工作区的判断走 [ContainerProfileResolver.forWorkspace]）。 */
+    override fun isContainerInstalled(): Boolean = containerInstaller.isInstalledFor(defaultProfile)
 
     /**
-     * 基础包是否已配置完成（按当前 profile 的标记）。首次进入终端时由初始化菜单
+     * 基础包是否已配置完成（按全局默认 profile 的标记）。首次进入终端时由初始化菜单
      * （assets/aharou/provision.sh）引导安装，完成后脚本写标记；未完成时不影响进入 shell。
      */
-    override fun isProvisioned(): Boolean = isProvisionedFor(currentProfile)
+    override fun isProvisioned(): Boolean = isProvisionedFor(defaultProfile)
 
     /** 按指定 profile 判断基础包配置是否完成（[defaultShell] 据此选 bash/sh）。 */
     fun isProvisionedFor(profile: ContainerProfile): Boolean {
@@ -584,7 +568,7 @@ class LinuxContainerEngine @Inject constructor(
      * 容器未就绪（rootfs 未解压）时返回引导文案，就绪返回 null。
      * 命令执行入口据此不自动初始化、直接失败并引导用户去终端页完成初始化。
      */
-    override fun notReadyHint(): String? = notReadyHintFor(currentProfile)
+    override fun notReadyHint(): String? = notReadyHintFor(defaultProfile)
 
     /** 按指定 profile 判断容器是否就绪（MCP 按运行时容器启动前检查用）。 */
     fun notReadyHintFor(profile: ContainerProfile): String? {
@@ -596,10 +580,12 @@ class LinuxContainerEngine @Inject constructor(
      * 容器默认命令 shell：优先用 profile 指定的 [ContainerProfile.shellPath]；未指定时
      * 按 provision 状态选 `/bin/bash`（脚本已安装 bash）或 `/bin/sh`。
      */
-    override fun defaultShell(): String {
-        val profile = currentProfile
+    override fun defaultShell(): String = defaultShellFor(defaultProfile)
+
+    /** 按指定 profile 选 shell（规则同 [defaultShell]）；执行路径传自己的局部 profile 进来。 */
+    private fun defaultShellFor(profile: ContainerProfile): String {
         profile.shellPath?.takeIf { it.isNotBlank() }?.let { return it }
-        return if (isProvisioned()) "/bin/bash" else "/bin/sh"
+        return if (isProvisionedFor(profile)) "/bin/bash" else "/bin/sh"
     }
 
     /**
@@ -614,7 +600,8 @@ class LinuxContainerEngine @Inject constructor(
      * 并抛异常（不静默置 Ready），让终端页进入失败态、可重试。
      */
     override suspend fun ensureInstalled() {
-        val profile = currentProfile
+        // 无工作区参数：始终初始化全局默认容器，与终端页的 isContainerInstalled / defaultShell 门禁同口径。
+        val profile = defaultProfile
         val startedAt = System.currentTimeMillis()
         FileLogger.i(
             TAG,
@@ -627,7 +614,7 @@ class LinuxContainerEngine @Inject constructor(
             // 旧 rootfs（如已导入的 Ubuntu 26.04）不会重新解压，这里兜底巡检修复已知兼容性问题
             containerInstaller.repairRootfsCompatibility(containerInstaller.rootfsDirFor(profile))
             _initProgress.value = ContainerInitState.Ready
-            refreshContainerHome()
+            refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
             FileLogger.i(TAG, "ensureInstalled 完成（快路径，耗时 ${System.currentTimeMillis() - startedAt}ms）")
             logContainerDiagnostics("ensureInstalled 快路径")
@@ -653,7 +640,7 @@ class LinuxContainerEngine @Inject constructor(
         job.join()
         if (containerInstaller.isInstalledFor(profile)) {
             _initProgress.value = ContainerInitState.Ready
-            refreshContainerHome()
+            refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
             FileLogger.i(TAG, "ensureInstalled 完成（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             logContainerDiagnostics("ensureInstalled 完成后")
@@ -675,7 +662,7 @@ class LinuxContainerEngine @Inject constructor(
      */
     fun logContainerDiagnostics(reason: String) {
         runCatching {
-            val profile = currentProfile
+            val profile = defaultProfile
             val rootfs = containerInstaller.rootfsDirFor(profile)
             val marker = provisionMarker(profile)
             val provision = java.io.File(containerInstaller.aharouDir, "provision.sh")
@@ -713,9 +700,9 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /** 查容器内 $HOME 并缓存到 [com.aharou.feature.workspace.domain.PathHomeResolver]，供各工具展开 ~。 */
-    private suspend fun refreshContainerHome() {
+    private suspend fun refreshContainerHome(profile: ContainerProfile) {
         runCatching {
-            val result = execCaptured("echo \$HOME", projectPath = null, timeoutMs = 3000)
+            val result = execCaptured("echo \$HOME", projectPath = null, timeoutMs = 3000, profile = profile)
             val home = result.output.trim().ifEmpty { null }
             if (home != null) pathHomeResolver.containerHome = home
         }.onFailure { FileLogger.w(TAG, "查容器 \$HOME 失败", it) }
@@ -732,7 +719,8 @@ class LinuxContainerEngine @Inject constructor(
             val result = execCaptured(
                 "if [ -f /etc/os-release ]; then . /etc/os-release 2>/dev/null; echo \"\$ID\"; fi",
                 projectPath = null,
-                timeoutMs = 3000
+                timeoutMs = 3000,
+                profile = profile
             )
             val osId = result.output.trim().lowercase().ifBlank { null }
             if (osId != null && result.exitCode == 0) {
@@ -769,9 +757,9 @@ class LinuxContainerEngine @Inject constructor(
         programArgs: List<String>,
         projectPath: String?,
         extraEnv: Map<String, String> = emptyMap(),
-        profile: ContainerProfile = currentProfile
+        profile: ContainerProfile? = null
     ): Process {
-        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile)
+        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile ?: profileResolver.forWorkspace(projectPath))
         val pb = buildProcessBuilder(invocation)
         // 刻意不 redirectErrorStream：stdout 留给 JSON-RPC，stderr 由调用方单独消费。
         // 同样刻意不重定向 stdin：这里的 stdin 就是 JSON-RPC 的请求通道，接 /dev/null 会让 server 立刻收到 EOF 退出。
@@ -786,10 +774,11 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         tag: String,
         extraEnv: Map<String, String> = emptyMap(),
-        profile: ContainerProfile = currentProfile
+        profile: ContainerProfile? = null
     ): TrackedStdioProcess {
+        val effectiveProfile = profile ?: profileResolver.forWorkspace(projectPath)
         val childrenBefore = ProcessIdentity.childPids()
-        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, profile)
+        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, effectiveProfile)
         val identity = ProcessIdentity.capture(process)
             ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
         identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, tag) }
@@ -820,13 +809,20 @@ class LinuxContainerEngine @Inject constructor(
      * 构造进入容器执行 [command] 的完整 PRoot 调用（argv + env）。
      * 暴露给终端会话：Termux TerminalSession 需要把可执行文件与参数分开传入。
      */
-    fun buildProotInvocation(command: String, projectPath: String?): ProotInvocation {
-        val argv = buildBaseProotArgv(projectPath, currentProfile)
-        // 用 [defaultShell]：bash 装好后 AI 命令与终端会话都走 bash；装机期间/失败回退 /bin/sh。
-        argv.add(defaultShell())
+    fun buildProotInvocation(command: String, projectPath: String?): ProotInvocation =
+        buildProotInvocation(command, projectPath, profileResolver.forTerminal(projectPath))
+
+    private fun buildProotInvocation(
+        command: String,
+        projectPath: String?,
+        profile: ContainerProfile
+    ): ProotInvocation {
+        val argv = buildBaseProotArgv(projectPath, profile)
+        // 用同一 profile 的 shell：bash 装好后 AI 命令与终端会话都走 bash；装机期间/失败回退 /bin/sh。
+        argv.add(defaultShellFor(profile))
         argv.add("-c")
         argv.add(command)
-        return ProotInvocation(argv, buildContainerEnv(currentProfile) + currentProfile.env)
+        return ProotInvocation(argv, buildContainerEnv(profile) + profile.env)
     }
 
     /**

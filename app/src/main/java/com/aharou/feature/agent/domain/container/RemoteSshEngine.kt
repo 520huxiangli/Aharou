@@ -5,6 +5,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
 import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.settings.data.repository.ExecutionMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +49,9 @@ private const val TAG = "RemoteSshEngine"
  * - [defaultShell]：/bin/bash（远程服务器通常有 bash）。
  */
 class RemoteSshEngine @Inject constructor(
-    private val connection: RemoteSshConnection
+    private val connection: RemoteSshConnection,
+    private val profileResolver: ContainerProfileResolver,
+    private val connectionResolver: ActiveRemoteConnectionResolver
 ) : CommandEngine {
 
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -56,12 +59,32 @@ class RemoteSshEngine @Inject constructor(
 
     private val connectMutex = Mutex()
 
+    /**
+     * 按**本次执行所属工作区**解析容器与它的 SSH 连接，配置不一致就重连。
+     *
+     * 不能依赖全局 active_profile 那条：容器可以按工作区指定，全局仍是本地时那条收集器
+     * 根本不建立连接，执行会报「SSH 连接失败: 未配置 SSH 连接」。
+     */
+    private suspend fun ensureConnectedFor(projectPath: String?) {
+        val profile = profileResolver.forWorkspace(projectPath)
+        if (profile.mode != ExecutionMode.REMOTE_SSH) {
+            throw IllegalStateException("工作区 ${projectPath ?: "（未指定）"} 解析出的容器 ${profile.name} 不是远程 SSH 类型")
+        }
+        val cfg = connectionResolver.configForProfile(profile.id)
+            ?: throw IllegalStateException("容器 ${profile.name} 未配置可用的 SSH 连接")
+        if (connection.isConnected() && connection.config == cfg) return
+        connectMutex.withLock {
+            if (connection.isConnected() && connection.config == cfg) return@withLock
+            connection.connect(cfg)
+        }
+    }
+
     override fun runCommandStream(
         command: String,
         projectPath: String?,
         timeoutMs: Long
     ): Flow<CommandEvent> = flow {
-        ensureInstalled()
+        ensureConnectedFor(projectPath)
         emitAll(streamExec(command, projectPath, timeoutMs))
     }.flowOn(Dispatchers.IO)
 
@@ -140,7 +163,7 @@ class RemoteSshEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): String = withContext(Dispatchers.IO) {
-        ensureInstalled()
+        ensureConnectedFor(projectPath)
         execCaptured(command, projectPath, timeoutMs).output
     }
 
@@ -149,7 +172,7 @@ class RemoteSshEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): CommandResult = withContext(Dispatchers.IO) {
-        ensureInstalled()
+        ensureConnectedFor(projectPath)
         execCaptured(command, projectPath, timeoutMs)
     }
 
@@ -171,7 +194,7 @@ class RemoteSshEngine @Inject constructor(
         projectPath: String?,
         timeoutMs: Long
     ): CommandResult = withContext(Dispatchers.IO) {
-        ensureInstalled()
+        ensureConnectedFor(projectPath)
         execCaptured(command, projectPath, timeoutMs, unbounded = true)
     }
 
@@ -273,7 +296,22 @@ class RemoteSshEngine @Inject constructor(
         if (projectPath == null) return prefix + command
         // cd 失败就不要往下跑了：路径写错时在 $HOME 里执行命令，比直接报错危险得多。
         // 路径用单引号包并转义内部单引号，避免路径含特殊字符时被 shell 拆成别的参数。
-        return prefix + "cd ~/workspace 2>/dev/null || cd ${shellQuote(projectPath)} 2>/dev/null || exit 1; $command"
+        //
+        // 目标必须换算成**服务器上的路径**：projectPath 是本地工作区路径（/data/data/.../projects/x），
+        // 服务器上没有那个目录，照搬会让每条命令都 exit 1。规则：remoteWorkspacePath/<工作区目录名>，
+        // 不存在就建（首次连上去时远程还没这套目录）。
+        val target = remoteWorkspaceFor(projectPath)
+        val mk = if (target != null) "mkdir -p ${shellQuote(target)} 2>/dev/null; " else ""
+        val cdTarget = shellQuote(target ?: projectPath)
+        return prefix + mk + "cd ~/workspace 2>/dev/null || cd $cdTarget 2>/dev/null || exit 1; $command"
+    }
+
+    /** 本地工作区路径 → 服务器上的工作区目录（`<remoteWorkspacePath>/<目录名>`）；没有远程配置时为 null。 */
+    private fun remoteWorkspaceFor(projectPath: String): String? {
+        val base = connection.config?.remoteWorkspacePath?.trimEnd('/') ?: return null
+        val name = projectPath.trimEnd('/').substringAfterLast('/')
+        if (name.isBlank()) return base
+        return "$base/$name"
     }
 
 }

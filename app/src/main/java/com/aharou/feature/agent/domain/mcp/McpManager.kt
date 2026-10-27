@@ -171,6 +171,13 @@ class McpManager @Inject constructor(
                 reloadStdioServers()
             }
         }
+        // 工作区→容器覆盖表变化：容器按工作区指定后，某个工作区换了容器不会再震动全局 activeProfileId，
+        // 只监听上面那条会让那个工作区的 stdio server 还挂在旧容器的 rootfs 上。
+        scope.launch {
+            containerSettingsRepository.workspaceProfilesFlow.drop(1).collect {
+                reloadStdioServers()
+            }
+        }
         // 默认容器变化：远程模式下 stdio server 运行在默认容器上，同样需要重建。
         scope.launch {
             containerSettingsRepository.defaultContainerIdFlow.drop(1).collect {
@@ -442,13 +449,22 @@ class McpManager @Inject constructor(
         if (path == activeWorkspace) _statuses.value = runtime?.statuses.orEmpty()
     }
 
-    private fun teardownServerLocked(path: String, name: String) {
+    /**
+     * 拆掉一个 server：断连接，并按需注销它的工具。
+     *
+     * [keepTools] 为 true 时**只断开底层连接、保留工具注册**（空闲回收用）。工具自身有 onReconnect：
+     * 下次被调用时会重连并继续用。不保留就成死锁——工具被注销→不在会话工具清单→模型调不到→
+     * 永远触发不了重连，用户只能重启 App 才恢复（2026-10-28 实测踩到）。
+     */
+    private fun teardownServerLocked(path: String, name: String, keepTools: Boolean = false) {
         val client = synchronized(runtimes) { runtimes[path]?.clients?.remove(name) }
-        synchronized(registeredToolNames) {
-            // 同名 server 可能已被别的工作区接管（工具表只挂一套），不是自己挂的就不要摘。
-            if (registeredToolOwner[name] == path) {
-                registeredToolNames.remove(name)?.forEach { toolRegistry.unregister(it) }
-                registeredToolOwner.remove(name)
+        if (!keepTools) {
+            synchronized(registeredToolNames) {
+                // 同名 server 可能已被别的工作区接管（工具表只挂一套），不是自己挂的就不要摘。
+                if (registeredToolOwner[name] == path) {
+                    registeredToolNames.remove(name)?.forEach { toolRegistry.unregister(it) }
+                    registeredToolOwner.remove(name)
+                }
             }
         }
         runCatching { client?.close() }
@@ -496,8 +512,8 @@ class McpManager @Inject constructor(
                     }
                 }
                 victims.forEach { (path, name) ->
-                    FileLogger.i(TAG, "[$path] $name 空闲超过 15 分钟，回收连接（再次调用时自动重连）")
-                    teardownServerLocked(path, name)
+                    FileLogger.i(TAG, "[$path] $name 空闲超过 15 分钟，回收连接（工具保留，下次调用时自动重连）")
+                    teardownServerLocked(path, name, keepTools = true)
                 }
             }
         }
