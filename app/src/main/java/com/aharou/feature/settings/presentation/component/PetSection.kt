@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,25 +43,40 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppSwitch
+import com.aharou.feature.pet.PetAvatarImporter
+import com.aharou.feature.pet.PetConfirmDialog
+import com.aharou.feature.pet.PetCropDialog
 import com.aharou.feature.pet.PetDailyBrief
 import com.aharou.feature.pet.PetMood
 import com.aharou.feature.pet.PetMoodStore
+import com.aharou.feature.pet.PetNoticeDialog
 import com.aharou.feature.pet.PetOverlay
 import com.aharou.feature.pet.PetOverlayService
+import com.aharou.feature.pet.PetRenameDialog
+import com.aharou.feature.pet.PetRole
 import com.aharou.feature.pet.PetRoles
+import com.aharou.feature.pet.PetUserRoles
+import com.aharou.feature.pet.VideoImportResult
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Bell
 import compose.icons.feathericons.CloudRain
+import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.EyeOff
 import compose.icons.feathericons.Heart
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.MapPin
 import compose.icons.feathericons.Mic
+import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Smile
 import compose.icons.feathericons.Smartphone
 import compose.icons.feathericons.Calendar
 import compose.icons.feathericons.Check
+import compose.icons.feathericons.Trash2
+import compose.icons.feathericons.Upload
 import compose.icons.feathericons.User
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 设置页「小染」分区：屏幕上的悬浮伙伴。
@@ -80,8 +97,15 @@ internal fun PetSection() {
     var always by remember { mutableStateOf(petAlways(context)) }
     var size by remember { mutableStateOf(PetOverlay.readSize(context)) }
     var role by remember { mutableStateOf(PetOverlay.readRole(context)) }
-    val petRoles = remember { PetRoles.load(context) }
-    var showRoleSheet by remember { mutableStateOf(false) }
+    var petRoles by remember { mutableStateOf(PetRoles.load(context)) }
+    var sheet by remember { mutableStateOf<PetRoleSheet?>(null) }
+    var pendingImage by remember { mutableStateOf<Uri?>(null) }
+    var notice by remember { mutableStateOf<PetNotice?>(null) }
+    var renameTarget by remember { mutableStateOf<PetRole?>(null) }
+    var deleteTarget by remember { mutableStateOf<PetRole?>(null) }
+    val importer = remember { PetAvatarImporter(context) }
+    val scope = rememberCoroutineScope()
+    val defaultName = stringResource(R.string.pet_role_default_name)
     var locked by remember { mutableStateOf(PetOverlay.readLocked(context)) }
     var petMood by remember { mutableStateOf(PetMoodStore.read(context)) }
     var passThrough by remember { mutableStateOf(PetOverlay.readPassThrough(context)) }
@@ -100,6 +124,31 @@ internal fun PetSection() {
         calendarGranted = PetDailyBrief.hasCalendar(context)
     }
 
+    // 导入的是外部文件，选完先拿 URI，真正的解析/落盘在弹窗确认后才做
+    val pngPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) pendingImage = uri
+    }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val name = PetUserRoles.pickedName(context, uri) ?: defaultName
+                PetUserRoles.importVideo(context, uri, name)
+            }
+            when (result) {
+                is VideoImportResult.Ok -> {
+                    petRoles = PetRoles.load(context)
+                    PetOverlayService.applyRole(context, result.id)
+                    role = result.id
+                }
+                VideoImportResult.Unreadable -> notice = PetNotice(R.string.pet_video_unreadable)
+                VideoImportResult.SaveFailed -> notice = PetNotice(R.string.pet_role_import_failed)
+                is VideoImportResult.BadRatio ->
+                    notice = PetNotice(R.string.pet_video_bad_ratio, result.ratio)
+            }
+        }
+    }
+
     LifecycleResumeEffect(Unit) {
         permissionGranted = petOverlayPermission(context)
         enabled = PetOverlayService.isEnabled(context)
@@ -109,6 +158,7 @@ internal fun PetSection() {
         calendarGranted = PetDailyBrief.hasCalendar(context)
         micGranted = granted(context, Manifest.permission.RECORD_AUDIO)
         notifGranted = notificationsGranted(context)
+        petRoles = PetRoles.load(context)
         onPauseOrDispose { }
     }
 
@@ -269,7 +319,7 @@ internal fun PetSection() {
                 icon = FeatherIcons.User,
                 title = stringResource(R.string.pet_role_title),
                 subtitle = stringResource(R.string.pet_role_hint),
-                onClick = { showRoleSheet = true },
+                onClick = { sheet = PetRoleSheet.Roles },
                 trailing = {
                     Text(
                         text = petRoles.firstOrNull { it.id == role }?.name ?: role,
@@ -418,21 +468,26 @@ internal fun PetSection() {
         }
     }
 
-    if (showRoleSheet) {
+    val openSheet = sheet
+    if (openSheet != null) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         AdaptiveModalBottomSheet(
-            onDismissRequest = { showRoleSheet = false },
+            onDismissRequest = { sheet = null },
             sheetState = sheetState,
             containerColor = settingsPageBackground(),
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.lg),
             ) {
                 Text(
-                    text = stringResource(R.string.pet_role_title),
+                    text = stringResource(
+                        if (openSheet is PetRoleSheet.Manage) R.string.pet_role_manage
+                        else R.string.pet_role_title
+                    ),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(
@@ -441,26 +496,101 @@ internal fun PetSection() {
                         bottom = Spacing.sm,
                     ),
                 )
-                SettingsGroup {
-                    petRoles.forEachIndexed { index, item ->
-                        if (index > 0) SettingsDivider()
+                when (openSheet) {
+                    PetRoleSheet.Roles -> SettingsGroup {
+                        petRoles.forEachIndexed { index, item ->
+                            if (index > 0) SettingsDivider()
+                            SettingsRow(
+                                icon = FeatherIcons.Smile,
+                                title = item.name,
+                                onClick = {
+                                    PetOverlayService.applyRole(context, item.id)
+                                    role = item.id
+                                    sheet = null
+                                },
+                                trailing = {
+                                    if (item.id == role) {
+                                        Icon(
+                                            imageVector = FeatherIcons.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                    if (!PetUserRoles.isBuiltin(context, item.id)) {
+                                        Icon(
+                                            imageVector = FeatherIcons.Edit2,
+                                            contentDescription = stringResource(R.string.pet_role_manage),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier
+                                                .padding(start = Spacing.sm)
+                                                .size(18.dp)
+                                                .clickable { sheet = PetRoleSheet.Manage(item) },
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        SettingsDivider()
+                        SettingsRow(
+                            icon = FeatherIcons.Plus,
+                            title = stringResource(R.string.pet_role_add),
+                            onClick = { sheet = PetRoleSheet.New },
+                        )
+                    }
+
+                    PetRoleSheet.New -> {
+                        Text(
+                            text = stringResource(R.string.pet_role_add_hint),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm),
+                        )
+                        SettingsGroup {
+                            SettingsRow(
+                                icon = FeatherIcons.Upload,
+                                title = stringResource(R.string.pet_role_import_png),
+                                subtitle = stringResource(R.string.pet_role_import_png_hint),
+                                onClick = {
+                                    sheet = null
+                                    pngPicker.launch(arrayOf("image/*"))
+                                },
+                            )
+                            SettingsDivider()
+                            SettingsRow(
+                                icon = FeatherIcons.Upload,
+                                title = stringResource(R.string.pet_role_import_video),
+                                subtitle = stringResource(R.string.pet_role_import_video_hint),
+                                onClick = {
+                                    sheet = null
+                                    videoPicker.launch(arrayOf("video/mp4"))
+                                },
+                            )
+                        }
+                    }
+
+                    is PetRoleSheet.Manage -> SettingsGroup {
                         SettingsRow(
                             icon = FeatherIcons.Smile,
-                            title = item.name,
+                            title = openSheet.role.name,
+                            subtitle = stringResource(R.string.pet_role_hint),
+                        )
+                        SettingsDivider()
+                        SettingsRow(
+                            icon = FeatherIcons.Edit2,
+                            title = stringResource(R.string.common_rename),
                             onClick = {
-                                PetOverlayService.applyRole(context, item.id)
-                                role = item.id
-                                showRoleSheet = false
+                                sheet = null
+                                renameTarget = openSheet.role
                             },
-                            trailing = {
-                                if (item.id == role) {
-                                    Icon(
-                                        imageVector = FeatherIcons.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                }
+                        )
+                        SettingsDivider()
+                        SettingsRow(
+                            icon = FeatherIcons.Trash2,
+                            title = stringResource(R.string.common_delete),
+                            onClick = {
+                                sheet = null
+                                deleteTarget = openSheet.role
                             },
                         )
                     }
@@ -468,7 +598,83 @@ internal fun PetSection() {
             }
         }
     }
+
+    pendingImage?.let { uri ->
+        PetCropDialog(
+            uri = uri,
+            onDismiss = { pendingImage = null },
+            onConfirm = { bytes, crop ->
+                pendingImage = null
+                scope.launch {
+                    val imported = withContext(Dispatchers.IO) {
+                        val name = PetUserRoles.pickedName(context, uri) ?: defaultName
+                        importer.importImage(bytes, name, crop)
+                    }
+                    imported
+                        .onSuccess { id ->
+                            petRoles = PetRoles.load(context)
+                            PetOverlayService.applyRole(context, id)
+                            role = id
+                        }
+                        .onFailure { notice = PetNotice(R.string.pet_role_import_failed) }
+                }
+            },
+        )
+    }
+
+    renameTarget?.let { target ->
+        PetRenameDialog(
+            initial = target.name,
+            onDismiss = { renameTarget = null },
+            onConfirm = { newName ->
+                renameTarget = null
+                PetUserRoles.rename(context, target.id, newName)
+                petRoles = PetRoles.load(context)
+            },
+        )
+    }
+
+    deleteTarget?.let { target ->
+        PetConfirmDialog(
+            title = stringResource(R.string.pet_role_delete_title),
+            message = stringResource(R.string.pet_role_delete_message, target.name),
+            confirmText = stringResource(R.string.common_delete),
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                deleteTarget = null
+                scope.launch {
+                    val removed = withContext(Dispatchers.IO) { importer.remove(target.id) }
+                    if (!removed) return@launch
+                    petRoles = PetRoles.load(context)
+                    if (role == target.id) {
+                        PetOverlayService.applyRole(context, PetRoles.DEFAULT_ID)
+                        role = PetRoles.DEFAULT_ID
+                    }
+                }
+            },
+        )
+    }
+
+    notice?.let { item ->
+        PetNoticeDialog(
+            message = item.ratio?.let { stringResource(item.message, it) }
+                ?: stringResource(item.message),
+            onDismiss = { notice = null },
+        )
+    }
 }
+
+/** 设置页里桌宠相关弹层的三种内容。 */
+private sealed interface PetRoleSheet {
+    data object Roles : PetRoleSheet
+
+    data object New : PetRoleSheet
+
+    data class Manage(val role: PetRole) : PetRoleSheet
+}
+
+/** 一次性的提示文案；[ratio] 不为空时当格式化参数传给 [message]。 */
+private data class PetNotice(val message: Int, val ratio: Float? = null)
 
 private fun granted(context: Context, permission: String): Boolean =
     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED

@@ -37,7 +37,7 @@ class PetVideoView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : TextureView(context, attrs), TextureView.SurfaceTextureListener {
 
-    /** 该播的素材（assets 内路径）；同段重复调用只当继续播，换段才重开播放器。 */
+    /** 该播的素材（`pet/<role>/...`：内置的在 assets，用户自建的在 filesDir）；同段重复调用只当继续播，换段才重开播放器。 */
     private var requested: String? = null
     private var playingPath: String? = null
 
@@ -102,10 +102,12 @@ class PetVideoView @JvmOverloads constructor(
         if (playingPath == assetPath && player != null) return
         stopPlayer()
         val mp = MediaPlayer()
+        // 内置素材只能走 openFd，用户导入的是普通文件——两种都交给素材层处理
+        if (!PetAssetStore(context).attach(mp, assetPath)) {
+            runCatching { mp.release() }
+            return
+        }
         try {
-            context.assets.openFd(assetPath).use { afd ->
-                mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-            }
             mp.setSurface(Surface(input))
             mp.isLooping = true
             mp.setVolume(0f, 0f)

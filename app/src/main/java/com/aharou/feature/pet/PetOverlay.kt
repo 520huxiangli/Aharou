@@ -255,6 +255,9 @@ class PetOverlay(private val context: Context) {
     /** 当前角色（素材目录名 `assets/pet/<role>/`）。切换见 [setRole]。 */
     private var role: String = readRole(context)
 
+    /** 素材读取入口：内置素材在 assets 里，用户自建角色在 filesDir 里，由它统一按优先顺序取。 */
+    private val assetStore = PetAssetStore(context)
+
     /** 角色自带的图片气泡；空表示这个角色只用文字气泡。 */
     private var bubbleImages: List<Bitmap> = emptyList()
     private var bubbleImageIndex = -1
@@ -1301,7 +1304,7 @@ class PetOverlay(private val context: Context) {
         if (videoOverride != null && now >= videoOverrideUntil) videoOverride = null
         val key = poseKey()
         val path = videoOverride ?: when {
-            key.startsWith("sleep") -> pickVideo("random", prefer = VIDEO_SLEEP)
+            key.startsWith("sleep") -> pickVideo("random", prefer = VIDEO_SLEEP) ?: pickVideo("idle", prefer = VIDEO_IDLE)
             key.startsWith("drag") -> pickVideo("drag", prefer = VIDEO_DRAG)
             // 站着往旁边看用它自带的「东张西望」，别拿走路的片子顶
             idle == Idle.GLANCE -> pickVideo("turn", prefer = VIDEO_TURN)
@@ -1331,10 +1334,7 @@ class PetOverlay(private val context: Context) {
     /** 从某个类别目录里挑一段视频；[prefer] 优先，[exclude] 用来避开特定片段。 */
     private fun pickVideo(category: String, prefer: String? = null, exclude: String? = null): String? {
         val dir = "pet/$role/videos/$category"
-        val files = runCatching {
-            context.assets.list(dir).orEmpty().filter { it.endsWith(".mp4", ignoreCase = true) }
-        }.getOrDefault(emptyList())
-        if (files.isEmpty()) return null
+        val files = assetStore.list(dir).filter { it.endsWith(".mp4", ignoreCase = true) }
         val name = files.firstOrNull { prefer != null && it.equals(prefer, ignoreCase = true) }
             ?: files.filter { exclude == null || !it.contains(exclude) }.randomOrNull()
             ?: return null
@@ -1342,15 +1342,12 @@ class PetOverlay(private val context: Context) {
     }
 
     /** 角色素材里带 `videos/` 就是视频角色（dsh-pet 那套左右拼合 mp4）。 */
-    private fun hasVideos(): Boolean =
-        runCatching { context.assets.list("pet/$role/videos").orEmpty().isNotEmpty() }
-            .getOrDefault(false)
+    private fun hasVideos(): Boolean = assetStore.hasEntries("pet/$role/videos")
 
     /** 载入「含文字、不能镜像」的动作名单（素材自带的 `text_clips.json`）；没这个文件就是空。 */
     private fun loadNoMirrorNames() {
         noMirrorNames = runCatching {
-            val raw = context.assets.open("pet/$role/text_clips.json")
-                .use { it.readBytes().decodeToString() }
+            val raw = assetStore.open("pet/$role/text_clips.json").use { it.readBytes().decodeToString() }
             val arr = JSONObject(raw).optJSONArray("no_mirror")
             buildSet { if (arr != null) for (i in 0 until arr.length()) add(arr.optString(i)) }
         }.getOrDefault(emptySet())
@@ -1591,7 +1588,7 @@ class PetOverlay(private val context: Context) {
     /** 按固定比例缩放某个素材（用于不走「按身高归一」的图，如探头素材）。 */
     private fun scaleByRatio(name: String, ratio: Float): Bitmap? {
         return try {
-            val decoded = context.assets.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
+            val decoded = assetStore.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
                 ?: return null
             val w = (decoded.width * ratio).roundToInt().coerceAtLeast(1)
             val h = (decoded.height * ratio).roundToInt().coerceAtLeast(1)
@@ -1605,7 +1602,7 @@ class PetOverlay(private val context: Context) {
 
     private fun scaleAsset(name: String, targetHeight: Int): Bitmap? {
         return try {
-            val decoded = context.assets.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
+            val decoded = assetStore.open("pet/$role/$name.png").use { BitmapFactory.decodeStream(it) }
                 ?: return null
             val scale = targetHeight.toFloat() / decoded.height
             val w = (decoded.width * scale).roundToInt().coerceAtLeast(1)
@@ -1690,11 +1687,11 @@ class PetOverlay(private val context: Context) {
     /** 载入当前角色自带的图片气泡（`assets/pet/<role>/bubbles/` 里的 png）；没有就是空列表。 */
     private fun loadBubbleImages() {
         bubbleImages = runCatching {
-            context.assets.list("pet/$role/bubbles").orEmpty()
+            assetStore.list("pet/$role/bubbles")
                 .filter { it.endsWith(".png") }
                 .sorted()
                 .mapNotNull { name ->
-                    context.assets.open("pet/$role/bubbles/$name").use { BitmapFactory.decodeStream(it) }
+                    assetStore.open("pet/$role/bubbles/$name").use { BitmapFactory.decodeStream(it) }
                 }
         }.getOrDefault(emptyList())
         bubbleImageIndex = -1

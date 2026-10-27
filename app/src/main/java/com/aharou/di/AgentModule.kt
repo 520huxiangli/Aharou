@@ -31,6 +31,7 @@ import com.aharou.feature.agent.domain.container.SshLoginKeyStore
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.agent.domain.tool.file.ReadFileTool
+import com.aharou.feature.agent.domain.tool.pet.PetAvatarTool
 import com.aharou.feature.agent.domain.tool.SendImFileTool
 import com.aharou.feature.agent.domain.tool.file.SendFileTool
 import com.aharou.feature.agent.domain.tool.file.GenerateImageTool
@@ -431,7 +432,8 @@ object AgentModule {
         dependencyCheckTool: DependencyCheckTool,
         sessionTool: SessionTool,
         deviceTool: DeviceTool,
-        personalContextTool: PersonalContextTool
+        personalContextTool: PersonalContextTool,
+        petAvatarTool: PetAvatarTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -468,6 +470,7 @@ object AgentModule {
             register("sessions", sessionTool)
             register("device", deviceTool)
             register("personal_context", personalContextTool)
+            register("petAvatar", petAvatarTool)
         }
     }
 

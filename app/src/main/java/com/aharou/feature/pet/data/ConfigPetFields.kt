@@ -1,15 +1,20 @@
 package com.aharou.feature.pet.data
 
 import android.content.Context
+import com.aharou.core.config.ConfigCollection
 import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.feature.pet.PetAvatarImporter
 import com.aharou.feature.pet.PetDailyBrief
 import com.aharou.feature.pet.PetOverlay
 import com.aharou.feature.pet.PetOverlayService
 import com.aharou.feature.pet.PetRoles
+import com.aharou.feature.pet.PetUserRoles
+import com.aharou.core.config.ConfigField
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -89,7 +94,7 @@ class ConfigPetFields @Inject constructor(
             ClosureField(
                 path = "pet.role",
                 displayName = "小染角色",
-                description = "角色素材 id（对应 assets/pet/<id>/），可选值见 assets/pet/roles.json。默认 xiaoran。",
+                description = "角色素材 id：内置的在 assets/pet/<id>/（可选值见 assets/pet/roles.json），用户自建的在 files/pet/<id>/。默认 xiaoran。",
                 valueSchema = ConfigSchema.Str(maxLength = 64),
                 revertable = true,
                 reader = { ConfigValue.Str(PetOverlay.readRole(context)) },
@@ -150,5 +155,48 @@ class ConfigPetFields @Inject constructor(
                 },
             ),
         )
+
+        registry.register(AvatarCollection())
+    }
+
+    /**
+     * 用户自己导入的桌宠形象。只能列与删——新建必须给图片文件，走桌宠设置页或 `petAvatar` 工具。
+     */
+    private inner class AvatarCollection : ConfigCollection {
+        override val basePath = "pet.avatars"
+        override val displayName = "自建桌宠形象"
+        override val description =
+            "用户自己导入的桌宠角色（素材在 files/pet/<id>/）。新建请用 petAvatar 工具或桌宠设置页选图片；" +
+                "这里只能列出（子路径 <id>.name）与删除。内置角色不在此列。"
+        override val addable: Boolean get() = false
+        override val risk: ConfigRisk get() = ConfigRisk.NORMAL
+
+        override fun childIds(): List<String> = PetUserRoles.list(context).map { it.id }
+
+        override fun fields(forId: String): List<ConfigField> {
+            val role = PetUserRoles.list(context).firstOrNull { it.id == forId } ?: return emptyList()
+            return listOf(
+                ClosureField(
+                    path = "$forId.name",
+                    displayName = "名称（$forId）",
+                    description = "这个角色的显示名。改名请到桌宠设置页。",
+                    valueSchema = ConfigSchema.Str(maxLength = 64),
+                    reader = { ConfigValue.Str(role.name) },
+                    writer = { throw ConfigError.InvalidValue("改名请到桌宠设置页") },
+                ),
+            )
+        }
+
+        override fun add(payload: ConfigValue): String =
+            throw ConfigError.InvalidValue("形象必须由图片或视频导入，请用 petAvatar 工具或桌宠设置页")
+
+        override fun remove(id: String) {
+            if (PetUserRoles.isBuiltin(context, id)) {
+                throw ConfigError.InvalidValue("「$id」是内置角色，删不掉")
+            }
+            if (!PetAvatarImporter(context).remove(id)) {
+                throw ConfigError.InvalidValue("没找到角色：$id")
+            }
+        }
     }
 }

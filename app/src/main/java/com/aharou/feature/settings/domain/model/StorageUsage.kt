@@ -16,6 +16,8 @@ enum class StorageCategory(@param:StringRes val labelRes: Int) {
     Workspaces(R.string.storage_category_workspaces),
     AiConfig(R.string.storage_category_ai_config),
     VoiceModels(R.string.storage_category_voice_models),
+    /** 用户自己导入的桌宠形象（内置角色在 assets 里，不计入）。 */
+    PetAssets(R.string.storage_category_pet_assets),
     Checkpoints(R.string.storage_category_checkpoints),
     Logs(R.string.storage_category_logs),
     Caches(R.string.storage_category_caches),
@@ -58,7 +60,8 @@ enum class CleanupKind(
     Logs(R.string.storage_clean_logs, R.string.storage_clean_logs_desc),
     ToolOutput(R.string.storage_clean_tool_output, R.string.storage_clean_tool_output_desc),
     VisionSessions(R.string.storage_clean_vision, R.string.storage_clean_vision_desc),
-    VoiceModels(R.string.storage_clean_voice_models, R.string.storage_clean_voice_models_desc)
+    VoiceModels(R.string.storage_clean_voice_models, R.string.storage_clean_voice_models_desc),
+    PetAssets(R.string.storage_clean_pet_assets, R.string.storage_clean_pet_assets_desc)
 }
 
 /** 所在存储卷的容量信息（App 私有目录所在卷）。 */

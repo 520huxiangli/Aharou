@@ -21,12 +21,13 @@ class PetEasterEgg private constructor(
     private val assetPath: String,
 ) {
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val store = PetAssetStore(context)
     private val view: ImageView
     private val params: WindowManager.LayoutParams
 
     init {
         val bitmap = runCatching {
-            context.assets.open(assetPath).use { BitmapFactory.decodeStream(it) }
+            store.open(assetPath).use { BitmapFactory.decodeStream(it) }
         }.getOrNull()
 
         view = ImageView(context).apply {
@@ -84,7 +85,7 @@ class PetEasterEgg private constructor(
 
         /** 这个角色带了几张彩蛋图（0 表示没素材，菜单项该藏起来）。 */
         fun pool(context: Context, role: String): List<String> = runCatching {
-            context.assets.list(assetDir(role)).orEmpty()
+            PetAssetStore(context).list(assetDir(role))
                 .filter { it.endsWith(".jpg", true) || it.endsWith(".png", true) }
                 .sorted()
         }.getOrDefault(emptyList())

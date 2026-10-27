@@ -113,6 +113,7 @@ internal fun StorageSection(
                         StorageCategory.Logs -> CleanupKind.Logs
                         StorageCategory.Caches -> CleanupKind.Caches
                         StorageCategory.VoiceModels -> CleanupKind.VoiceModels
+                        StorageCategory.PetAssets -> CleanupKind.PetAssets
                         else -> null
                     }
                     CategoryRow(
@@ -423,6 +424,7 @@ private fun StorageCategory.color(): Color = when (this) {
     StorageCategory.Workspaces -> StorageUsagePalette.Workspaces
     StorageCategory.AiConfig -> StorageUsagePalette.AiConfig
     StorageCategory.VoiceModels -> StorageUsagePalette.VoiceModels
+    StorageCategory.PetAssets -> StorageUsagePalette.PetAssets
     StorageCategory.Checkpoints -> StorageUsagePalette.Checkpoints
     StorageCategory.Logs -> StorageUsagePalette.Logs
     StorageCategory.Caches -> StorageUsagePalette.Caches
