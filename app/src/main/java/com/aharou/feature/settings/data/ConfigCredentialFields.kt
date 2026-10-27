@@ -12,7 +12,10 @@ import com.aharou.core.config.fields.ClosureField
 import com.aharou.feature.agent.domain.container.SshLoginKey
 import com.aharou.feature.agent.domain.container.SshLoginKeyStore
 import com.aharou.feature.credentials.data.CredentialInjectSettingsRepository
+import com.aharou.feature.credentials.domain.model.GitCredential
+import com.aharou.feature.credentials.domain.repository.CredentialRepository
 import com.aharou.feature.git.data.GitHubTokenStore
+import com.aharou.feature.git.domain.GitRepository
 import com.aharou.feature.vault.VaultRepository
 import com.aharou.feature.workspace.domain.repository.RemoteRepository
 import kotlinx.coroutines.flow.first
@@ -40,10 +43,22 @@ class ConfigCredentialFields @Inject constructor(
     private val loginKeyStore: SshLoginKeyStore,
     private val remote: RemoteRepository,
     private val vault: VaultRepository,
+    private val credentialRepository: CredentialRepository,
+    private val gitRepository: GitRepository,
+    /**
+     * 工具授权规则。在这里顺带注册而不是单独挂到 AIEditorApp：那个文件卡着 1005 行的棘轮基线，
+     * 再加一个注入属性就会顶破门禁，而两类字段本来就同属「授权与凭据」。
+     */
+    private val permissionFields: ConfigPermissionFields,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
         registry.register(gitHubTokenField())
+        registry.register(gitUserNameField())
+        registry.register(gitUserEmailField())
+        registry.register(GitCredentialsCollection())
+        permissionFields.registerInto(registry)
+        registry.register(GitCredentialsCollection())
         registry.register(AutoInjectCollection())
         registry.register(LoginKeyCollection())
         registry.register(vaultNamesField())
@@ -62,6 +77,129 @@ class ConfigCredentialFields @Inject constructor(
             githubTokens.save(GITHUB_HOST, token)
         },
     )
+
+    /**
+     * 提交署名（`git config user.name`）。
+     *
+     * 与 [GitCredentialsCollection] 同属「凭据与署名」页，之前同样只能进页面手填：
+     * 写入走 [GitRepository.setUserIdentity]，与 UI 一样遵「有项目级配项目级、否则写全局」。
+     */
+    private fun gitUserNameField(): ConfigField = ClosureField(
+        path = "git.user_name",
+        displayName = "提交署名（用户名）",
+        description = "提交时写入的 user.name。当前仓库有项目级配置时写项目级，否则写全局。",
+        valueSchema = ConfigSchema.Str(),
+        revertable = true,
+        reader = { ConfigValue.Str(runBlocking { gitRepository.getUserName() }) },
+        writer = { v ->
+            val name = (v as? ConfigValue.Str)?.value
+                ?: throw ConfigError.TypeMismatch("string")
+            runBlocking { gitRepository.setUserIdentity(name, "") }
+        },
+    )
+
+    private fun gitUserEmailField(): ConfigField = ClosureField(
+        path = "git.user_email",
+        displayName = "提交署名（邮箱）",
+        description = "提交时写入的 user.email。当前仓库有项目级配置时写项目级，否则写全局。",
+        valueSchema = ConfigSchema.Str(),
+        revertable = true,
+        reader = { ConfigValue.Str(runBlocking { gitRepository.getUserEmail() }) },
+        writer = { v ->
+            val email = (v as? ConfigValue.Str)?.value
+                ?: throw ConfigError.TypeMismatch("string")
+            runBlocking { gitRepository.setUserIdentity("", email) }
+        },
+    )
+
+    /**
+     * 「凭据与署名」页里的 git 凭据，按主机一条。
+     *
+     * 之前只有 `memory.sync.token` 能写凭据，而它的主机由记忆仓库地址决定、用户名写死成 cnb，
+     * 其它主机（如 github.com）只能去 UI 手填——设置项一律要接 config 通道，这是漏的那一块。
+     */
+    private inner class GitCredentialsCollection : ConfigCollection {
+        override val basePath = "git.credentials"
+        override val displayName = "Git 凭据"
+        override val description =
+            "按主机（如 github.com）保存 git 推送/拉取用的账号。子字段：host / username / token。" +
+                "新增时传 {\"host\":\"github.com\",\"username\":\"...\",\"token\":\"...\"}。"
+
+        override val addable = true
+        override val removable = true
+
+        override fun childIds(): List<String> = allCredentials().map { it.id }
+
+        override fun fields(forId: String): List<ConfigField> {
+            val credential = allCredentials().firstOrNull { it.id == forId } ?: return emptyList()
+            return listOf(
+                ClosureField(
+                    path = "$basePath.$forId.host",
+                    displayName = "主机（$forId）",
+                    description = "凭据按主机匹配：push/pull 到哪个主机就用同名的那一条。",
+                    valueSchema = ConfigSchema.Str(),
+                    access = ConfigAccess.READONLY,
+                    revertable = false,
+                    reader = { ConfigValue.Str(credential.host) },
+                    writer = { throw ConfigError.PermissionDenied("主机为只读字段，换主机请新建一条") },
+                ),
+                ClosureField(
+                    path = "$basePath.$forId.username",
+                    displayName = "用户名（$forId）",
+                    description = "git 认证用户名。GitHub 用个人访问令牌时填账号名即可。",
+                    valueSchema = ConfigSchema.Str(),
+                    revertable = true,
+                    reader = { ConfigValue.Str(credential.username) },
+                    writer = { v ->
+                        val name = (v as? ConfigValue.Str)?.value
+                            ?: throw ConfigError.TypeMismatch("string")
+                        saveCredential(credential.copy(username = name))
+                    },
+                ),
+                ClosureField(
+                    path = "$basePath.$forId.token",
+                    displayName = "访问令牌（$forId）",
+                    description = "该主机的密码或个人访问令牌。写空字符串即删除这条凭据。",
+                    valueSchema = ConfigSchema.Str(maxLength = 512),
+                    risk = ConfigRisk.SENSITIVE,
+                    revertable = true,
+                    reader = { ConfigValue.Str(credential.token) },
+                    writer = { v ->
+                        val token = (v as? ConfigValue.Str)?.value
+                            ?: throw ConfigError.TypeMismatch("string")
+                        if (token.isBlank()) {
+                            runBlocking { credentialRepository.delete(credential.id) }
+                        } else {
+                            saveCredential(credential.copy(token = token))
+                        }
+                    },
+                ),
+            )
+        }
+
+        override fun add(payload: ConfigValue): String {
+            val obj = (payload as? ConfigValue.Obj)?.value
+                ?: throw ConfigError.InvalidValue("git.credentials 的新项需为 JSON 对象")
+            val host = (obj["host"] as? ConfigValue.Str)?.value?.trim()?.lowercase()
+                ?.takeIf { it.isNotBlank() }
+                ?: throw ConfigError.InvalidValue("缺少 host（如 github.com）")
+            val username = (obj["username"] as? ConfigValue.Str)?.value.orEmpty()
+            val token = (obj["token"] as? ConfigValue.Str)?.value.orEmpty()
+            saveCredential(GitCredential(id = host, host = host, username = username, token = token))
+            return host
+        }
+
+        override fun remove(id: String) {
+            runBlocking { credentialRepository.delete(id) }
+        }
+    }
+
+    private fun allCredentials(): List<GitCredential> =
+        runBlocking { credentialRepository.getAll().first() }
+
+    private fun saveCredential(credential: GitCredential) {
+        runBlocking { credentialRepository.save(credential) }
+    }
 
     /**
      * 凭据库条目名列表，只读。
