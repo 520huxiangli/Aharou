@@ -17,8 +17,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.DragInteraction
@@ -39,12 +39,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
+
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -101,6 +100,7 @@ import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.AIAgentViewModel
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.QueuedRequest
+import com.aharou.feature.agent.presentation.WorkflowStatus
 import com.aharou.feature.agent.presentation.REASONING_CONTENT_TYPE
 import com.aharou.feature.agent.presentation.flattenTurnProcesses
 import com.aharou.feature.agent.presentation.hasVisibleContent
@@ -114,9 +114,6 @@ import com.aharou.feature.settings.domain.model.ProviderDashboardState
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
-import compose.icons.FeatherIcons
-import compose.icons.feathericons.ArrowDown
-import compose.icons.feathericons.ArrowUp
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -138,14 +135,20 @@ private enum class TailKind { THINKING, STREAMING, COMPACTING, RETRYING, KEY_SWI
 /** 悬浮层（横幅/面板/输入框）与最后一条消息的间距。 */
 private val FLOATING_LAYER_GAP_DP = 8.dp
 
-/** 内容底部驱动校准的容差（px）：最后内容底部超出安全区超过该值才向下校准，避免亚像素抖动。 */
-private const val AUTO_SCROLL_TOLERANCE_PX = 2
+/**
+ * 贴底校准的死区（dp）：最后内容底部超出安全区不足这一档时不动视口。
+ *
+ * 流式追加与 Markdown 异步重排会让内容底部在亚像素~数像素量级来回动，此前按 2px 容差逐帧
+ * `scrollToItem(末尾)` 回锚点，实际表现是「刚补下去又被顶回来」的反向抖动；死区把它放宽到
+ * 一次追加自然盖过的量级，每次也只按超出量平移（见 `calibrateToAnchor`），不再跳回固定锚点。
+ */
+private val AUTO_SCROLL_DEADBAND_DP = 8.dp
 
 /** AI 收工后继续逐帧校准的时长（ms）：md 异步解析仍可能改高度，不能一停就收手。 */
 private const val CALIBRATE_TAIL_MS = 1_200L
 
-/** 滚动到底部按钮直径（dp）。 */
-private const val SCROLL_TO_BOTTOM_BTN_SIZE = 34
+/** 一次滚动手势的起点：外层视口锚点 + 手势前的贴底跟随态。 */
+private data class ScrollGestureStart(val index: Int, val offset: Int, val following: Boolean)
 
 /** 连续新消息的入场错开间隔（ms）与总上限：一次插入很多卡片时不能让最后一张等好几秒。 */
 private const val MESSAGE_ENTRY_STAGGER_MS = 90L
@@ -395,8 +398,15 @@ fun AIChatPanel(
                 ?.let { turnKeyOf(it.id) }
         }
     }
+    // 取消态没有落库记录（历史里查不到），只能由实时状态指认，而且只对刚收工的那一轮有意义。
+    val cancelledTurnKey = remember(messages, agentState, isBusy) {
+        val status = (agentState as? AgentUIState.Result)?.status
+        if (isBusy || status != WorkflowStatus.CANCELLED) null
+        else messages.lastOrNull { it.isTurnHead() }?.let { turnKeyOf(it.id) }
+    }
     val chatItems = remember(
-        messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, currentSessionId, turnKeys
+        messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, cancelledTurnKey,
+        currentSessionId, turnKeys
     ) {
         keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
             messages = messages,
@@ -405,6 +415,7 @@ fun AIChatPanel(
             activeTurnKey = activeTurnKey,
             sessionId = currentSessionId,
             turnKeys = turnKeys,
+            cancelledTurnKey = cancelledTurnKey,
         )), messages)
     }
     // 每轮任务的总耗时（用户发送 → 本轮 AI 收工）与 token 合计，都只挂在轮末助手气泡下方
@@ -762,10 +773,21 @@ fun AIChatPanel(
     var userScrollGesture by remember { mutableStateOf(false) }
     var pointerDown by remember { mutableStateOf(false) }
     var nestedFling by remember { mutableStateOf(false) }
+    // 手势起点快照（见 [ScrollGestureStart]）：嵌套列表（工具输出面板、长文内滚）里的拖动不会移动外层
+    // 视口，靠锚点没变就能认出来，据此不和「用户上滑看历史」混为一谈。
+    var scrollGestureStart by remember { mutableStateOf<ScrollGestureStart?>(null) }
+    val deadbandPx = with(LocalDensity.current) { AUTO_SCROLL_DEADBAND_DP.roundToPx() }
     val userScrollConnection = remember(listState) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    if (!userScrollGesture) {
+                        scrollGestureStart = ScrollGestureStart(
+                            index = listState.firstVisibleItemIndex,
+                            offset = listState.firstVisibleItemScrollOffset,
+                            following = followBottom,
+                        )
+                    }
                     userScrollGesture = true
                     followBottom = false
                 }
@@ -786,7 +808,7 @@ fun AIChatPanel(
 
     // key 必须带上 inputBarReservePx：闭包捕获的是创建时的值，用无 key 的 remember 会让
     // 判定永远停在首帧的兜底留白（156dp）上，面板展开把悬浮层顶高后仍按旧安全区算。
-    val isAtBottom by remember(inputBarReservePx) {
+    val isAtBottom by remember(inputBarReservePx, deadbandPx) {
         derivedStateOf {
             val layout = listState.layoutInfo
             // 列表还没测量（首帧、或消息未就绪期间 LazyColumn 未挂载）时 layoutInfo 为空、
@@ -800,15 +822,23 @@ fun AIChatPanel(
             // 判定更严格，避免用户拖走一小段后仍被判「在底部」而恢复跟随、立即被拉回。
             val safeBottom = layout.viewportEndOffset - inputBarReservePx
             lastVisible.index >= lastIndex &&
-                (lastVisible.offset + lastVisible.size) <= safeBottom + AUTO_SCROLL_TOLERANCE_PX
+                (lastVisible.offset + lastVisible.size) <= safeBottom + deadbandPx
         }
     }
 
+    // 手指抬起并停稳后才重新判定是否恢复跟随：拖动中 / 惯性未停时不动它（否则一次上滑会被
+    // 逐帧解重判、反复抢回底部）。
     LaunchedEffect(pointerDown, userScrollGesture, nestedFling, listState.isScrollInProgress) {
         if (!pointerDown && userScrollGesture && !nestedFling && !listState.isScrollInProgress) {
             delay(150)
+            val start = scrollGestureStart
+            scrollGestureStart = null
             userScrollGesture = false
-            followBottom = isAtBottom
+            // 外层视口根本没动 = 手指拖的是嵌套列表：恢复手势前的跟随态，不按「是否贴底」重算，
+            // 否则贴底那一下会把视口拽回底部（嵌套拖动后弹回）。
+            val movedOuter = start == null || start.index != listState.firstVisibleItemIndex ||
+                start.offset != listState.firstVisibleItemScrollOffset
+            followBottom = if (movedOuter) isAtBottom else start?.following == true
         }
     }
 
@@ -864,9 +894,13 @@ fun AIChatPanel(
             }
         }
     }
+    // 手指已抬起、惯性已停、且停在底部附近才重新开启跟随：拖动中途不动它，
+    // 否则每回合上百次 pin 会把正在上翻的视口来回抖。
     LaunchedEffect(listState) {
-        snapshotFlow { isAtBottom && !userScrollGesture }.collect { atBottom ->
-            if (atBottom) followBottom = true
+        snapshotFlow {
+            isAtBottom && !userScrollGesture && !pointerDown && !nestedFling && !listState.isScrollInProgress
+        }.collect { settledAtBottom ->
+            if (settledAtBottom) followBottom = true
         }
     }
 
@@ -887,28 +921,35 @@ fun AIChatPanel(
     // （contentPadding 底部预留 reserve 保证），即最后一项底部停在悬浮层上沿，
     // 数学上任何时刻都成立——消息足够时，最后一条消息永不落入输入框之下，
     // 且不依赖“最后可见项 == 最后一项”的高度假设（高度跳变时也不会算错目标）。
-    // 每帧检查最后可见项：最后内容被增长推下（底部超安全区）或有内容被推出视口下方
-    // （最后可见项不是最后一项，即跟丢）时，滚回锚点；md 异步解析的高度跳变也会在
-    // 下一帧被检测到，不存在信号与渲染错位。
+    // 每帧检查最后可见项：跟丢（最后一项被整条推出视口）才 scrollToItem 回锚点；
+    // 被增长推下则只按超出量平移，且超出不足一个死区就不动——死区挡掉 md 异步重排的
+    // 亚像素抖动，平移量与内容增量也对得上，不会「补一下又被顶回去」。
     // 只向下校准：内容变矮（流式结束、折叠）时保持当前位置，避免「往回滚」与拉锯。
     // reserve 经 State 传递：下面这个 lambda 只创建一次，直接捕获局部 Int 会一直用首帧的兜底值。
     val reservePxState = rememberUpdatedState(inputBarReservePx)
+    val deadbandPxState = rememberUpdatedState(deadbandPx)
     val busyState = rememberUpdatedState(isBusy)
     val calibrateToAnchor: suspend () -> Unit = remember(listState) {
         {
             // 无向下滚动空间（内容不满屏或已滚到锚点）：最后内容必然在安全区上方，无需校准。
-            if (followBottom && !userScrollGesture && listState.canScrollForward) {
+            // 用户正在拖动或惯性未停时不抢：此刻 pin 会与手势拉铲（手指只是按住不动不算，不影响贴底）。
+            if (followBottom && !userScrollGesture && !nestedFling && listState.canScrollForward) {
                 val layout = listState.layoutInfo
                 val lastIndex = layout.totalItemsCount - 1
                 if (lastIndex >= 0) {
                     val lastVisible = layout.visibleItemsInfo.lastOrNull()
                     val safeBottom = layout.viewportEndOffset - reservePxState.value
-                    // 最后一项被推出视口下方（跟丢）或最后内容底部越过安全区：滚回锚点。
-                    // 用户在别处浏览时 followBottom 已为 false，不会走到这里。
+                    // 最后一项被推出视口下方（跟丢）：只能回锚点。
                     val lost = lastVisible == null || lastVisible.index < lastIndex
-                    val pushedDown = lastVisible != null &&
-                        lastVisible.offset + lastVisible.size > safeBottom + AUTO_SCROLL_TOLERANCE_PX
-                    if (lost || pushedDown) listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                    // 死区内的超出不动：流式重排的亚像素抖动不该每帧都计数。
+                    val overshoot = if (lastVisible == null) 0f else
+                        (lastVisible.offset + lastVisible.size - safeBottom).toFloat()
+                    if (lost) {
+                        listState.scrollToItem(lastIndex, Int.MAX_VALUE)
+                    } else if (overshoot > deadbandPxState.value) {
+                        // 按超出量平移而不是跳回固定锚点：位移与内容增长一一对应，视口不会来回抖。
+                        listState.scrollBy(overshoot)
+                    }
                 }
             }
         }
@@ -1068,17 +1109,18 @@ fun AIChatPanel(
         val header = item.turnHeader
         val group = item.toolGroup
         when {
-            header != null -> {
-                TurnCollapseHeader(
-                    running = header.running,
-                    durationMs = header.endMessageId?.let { taskDurations[it] },
-                    expanded = header.expanded,
-                    onToggle = {
-                        viewModel.setTurnExpanded(header.key, !header.expanded)
-                        onToolItemToggled()
-                    }
-                )
-            }
+            header != null -> TurnHeaderRow(
+                running = header.running,
+                startMs = item.message.timestamp,
+                durationMs = header.endMessageId?.let { taskDurations[it] },
+                outcome = item.turnOutcome,
+                liveLabel = thinkingLabel.takeIf { header.running },
+                expanded = header.expanded,
+                onToggle = {
+                    viewModel.setTurnExpanded(header.key, !header.expanded)
+                    onToolItemToggled()
+                }
+            )
             item.contentType == REASONING_CONTENT_TYPE -> {
                 // 助手的思考抽为过程项：展开态交给宿主持久化，划出视口/切页返回仍保持。
                 ReasoningBubble(
@@ -1571,7 +1613,7 @@ fun AIChatPanel(
                     .padding(end = Spacing.lg)
                     .padding(bottom = with(LocalDensity.current) {
                         (floatingLayerHeightPx + permissionOffsetPx + FLOATING_LAYER_GAP_DP.toPx()).toDp() +
-                            SCROLL_TO_BOTTOM_BTN_SIZE.dp + Spacing.sm
+                            SCROLL_BUTTON_SIZE_DP.dp + Spacing.sm
                     })
                     .graphicsLayer { alpha = if (listState.isScrollInProgress) 0.4f else 1f },
                 enter = fadeIn() + scaleIn(),
@@ -1847,55 +1889,4 @@ private class MessageEntryScheduler {
     }
 }
 
-/** 滚动到底部按钮：圆形，悬浮在输入框右上角，不在底部时显示。 */
-@Composable
-private fun ScrollToBottomButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shadowElevation = 6.dp,
-        modifier = modifier
-            .size(SCROLL_TO_BOTTOM_BTN_SIZE.dp)
-            .clickable(onClick = onClick)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = FeatherIcons.ArrowDown,
-                contentDescription = stringResource(R.string.common_scroll_to_bottom),
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
-}
-
-/** 回上一条用户消息按钮：圆形，与 [ScrollToBottomButton] 同款，堆在它上方。 */
-@Composable
-private fun ScrollToPrevUserButton(
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shadowElevation = 6.dp,
-        modifier = modifier
-            .size(SCROLL_TO_BOTTOM_BTN_SIZE.dp)
-            .clickable(onClick = onClick)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = FeatherIcons.ArrowUp,
-                contentDescription = stringResource(R.string.common_scroll_to_prev_user),
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(20.dp)
-            )
-        }
-    }
-}
 

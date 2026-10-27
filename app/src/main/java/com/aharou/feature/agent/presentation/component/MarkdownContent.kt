@@ -1,8 +1,17 @@
 package com.aharou.feature.agent.presentation.component
 
+import android.content.ClipData
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,12 +27,19 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -35,6 +51,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
+import com.aharou.core.theme.Radius
+import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
@@ -64,6 +82,7 @@ import dev.snipme.highlights.model.ColorHighlight
 import dev.snipme.highlights.model.SyntaxLanguage
 import dev.snipme.highlights.model.SyntaxThemes
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // 代码块与行内代码共用字体。系统等宽（FontFamily.Monospace）缺下标字形且不回落，
@@ -106,6 +125,34 @@ internal class WeightedLruCache<K, V>(
 internal const val MARKDOWN_CACHE_MAX_ENTRIES = 80
 internal const val MARKDOWN_CACHE_MAX_WEIGHT = 1_000_000
 internal const val MARKDOWN_CACHE_MAX_ITEM_WEIGHT = 100_000
+
+/*
+ * markdown 正文的渲染护栏阈值（与上游 OpenMinis 的 LARGE_MESSAGE_THRESHOLD_CHARS 同数量级）。
+ *
+ * 为什么是 32k：chat 里的长正文早就在 splitLongContent 里按 2k 拆过了，真正能落到这里
+ * 的超长文本只有两类——文件预览的长 .md（几百 KB）和长任务把几十万字符的工具输出贴进正文。
+ * 这类文本一旦整段进 mikepenz 解析器，AST 节点数、AnnotatedString、测量与组合内存会一起
+ * 膨胀，结果就是主线程卡死或 OOM；而它的可读性本来也只能靠「展开后分段看」。32k 字符
+ * ≈ 十几屏正文，远超人工阅读量，取在这个量级可以保证正常消息完全走原路径。
+ */
+internal const val MARKDOWN_GUARD_THRESHOLD_CHARS = 32_000
+
+/** 占位里的纯文本预览长度：约两屏正文，足以认出这段是什么；不解析 markdown，成本恒定。 */
+private const val MARKDOWN_GUARD_PREVIEW_CHARS = 4_000
+
+/** 占位预览里单行的字符上限（同 ExpandableOutputText 的预览口径）。 */
+private const val MARKDOWN_GUARD_PREVIEW_LINE_MAX_CHARS = 400
+
+/** 展开态单段的上限与其行数上限：任一段交给 markdown 解析器都是有界的小块。 */
+private const val MARKDOWN_GUARD_CHUNK_MAX_CHARS = 4_000
+private const val MARKDOWN_GUARD_CHUNK_LINES = 40
+
+/** 展开后首批 / 每批揭示的段数（一段约 1.2k~4k 字符）。 */
+private const val MARKDOWN_GUARD_INITIAL_CHUNKS = 4
+private const val MARKDOWN_GUARD_BATCH_CHUNKS = 4
+
+/** 占位里「复制」的上限：再大就可能撑爆剪贴板的 Binder 事务（1MB 量级）。 */
+private const val MARKDOWN_GUARD_COPY_MAX_CHARS = 200_000
 
 internal class MarkdownRenderCache(
     maxEntries: Int = MARKDOWN_CACHE_MAX_ENTRIES
@@ -164,8 +211,38 @@ internal fun MarkdownContent(
      *  才能触发懒加载），避免超大 md 一次性全量组合/测量造成的卡顿。 */
     lazyScroll: Boolean = false,
     cacheEnabled: Boolean = true,
-    retainState: Boolean = true
+    retainState: Boolean = true,
+    /** 超长正文护栏：超过 [MARKDOWN_GUARD_THRESHOLD_CHARS] 时不解析 markdown，先给纯文本占位，
+     *  点开后才分段解析渲染。正常长度完全走原路径。 */
+    largeContentGuard: Boolean = true
 ) {
+    // 流式/回放渲染（cacheEnabled = false 的那几处：聊天流式气泡、思考块 live 态）不进护栏：
+    // 它们的文本每个 tick 都在变，护栏阈值一旦跨过就是「正文突然折叠成徽标」，
+    // 而且每涨几个字符就会把展开状态重置一次；这些调用方自己已有有界策略（思考块的
+    // lazyScroll + heightIn），保持它们原行为更安全。显式传 largeContentGuard = false 同样跳过。
+    if (largeContentGuard && cacheEnabled && text.length > MARKDOWN_GUARD_THRESHOLD_CHARS) {
+        var guardExpanded by rememberSaveable(text) { mutableStateOf(false) }
+        if (guardExpanded) {
+            RevealedMarkdownText(
+                text = text,
+                color = color,
+                modifier = modifier,
+                cache = cache,
+                compact = compact,
+                cacheEnabled = cacheEnabled,
+                lazyScroll = lazyScroll,
+            )
+        } else {
+            LargeMarkdownPlaceholder(
+                text = text,
+                color = color,
+                modifier = modifier,
+                onExpand = { guardExpanded = true },
+            )
+        }
+        return
+    }
+
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val semantic = MaterialTheme.semanticColors
 
@@ -489,4 +566,187 @@ private fun PlainMarkdownText(
         modifier = modifier,
         style = MaterialTheme.typography.bodyMedium.copy(color = color, lineHeight = 20.sp)
     )
+}
+
+/**
+ * 超长 markdown 的轻量占位：一段纯文本预览 + 大小提示 + 复制/展开入口。全程不解析 markdown，
+ * 所以不管正文多长，这里只有一次固定大小的 Text 测量。
+ */
+@Composable
+private fun LargeMarkdownPlaceholder(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onExpand: () -> Unit,
+) {
+    val semantic = MaterialTheme.semanticColors
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var copied by remember(text) { mutableStateOf(false) }
+    val preview = remember(text) { markdownGuardPreview(text) }
+    val shape = RoundedCornerShape(Radius.mdLarge)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(semantic.mutedSurface)
+            .border(0.5.dp, semantic.subtleBorder, shape)
+            .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+    ) {
+        Text(
+            text = breakableText(preview),
+            style = MaterialTheme.typography.bodySmall,
+            color = color.copy(alpha = 0.85f),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.computer_output_collapsed, formatOutputSize(text.length)),
+                style = MaterialTheme.typography.labelSmall,
+                color = semantic.subtleText,
+            )
+            Spacer(Modifier.weight(1f))
+            if (text.length <= MARKDOWN_GUARD_COPY_MAX_CHARS) {
+                Text(
+                    text = stringResource(
+                        if (copied) R.string.common_copy_success else R.string.common_copy
+                    ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clickable {
+                            scope.launch {
+                                copied = runCatching {
+                                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("markdown", text)))
+                                }.isSuccess
+                            }
+                        }
+                        .padding(horizontal = Spacing.sm, vertical = 4.dp),
+                )
+            }
+            Text(
+                text = stringResource(R.string.common_expand),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable { onExpand() }
+                    .padding(horizontal = Spacing.sm, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 展开态：分段解析渲染。每段都是独立、有界的短 markdown（先按 markdown 结构切，再给仍超长的
+ * 巨型代码块硬切），所以既不会出现「整段正文一次性进解析器」，也不会把全文拼回一个字符串。
+ *
+ * [lazyScroll] 为 true 时用 LazyColumn 逐段渲染（沿用调用方的有限高度约束，与正文主路径同一契约）：
+ * 文件预览这类「整屏只有这一篇 markdown」的场景不需要逐批按钮，视口内组合即天然有界，
+ * 而且保留原来「内容超屏可滚」的行为。反之用 Column + 「继续加载」，因为 chat 类调用方
+ * 在 LazyColumn item 里，自己没有滚动容器。
+ */
+@Composable
+private fun RevealedMarkdownText(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier,
+    cache: MarkdownRenderCache?,
+    compact: Boolean,
+    cacheEnabled: Boolean,
+    lazyScroll: Boolean,
+) {
+    val chunks = remember(text) { markdownGuardChunks(text) }
+    val total = chunks.size
+
+    if (lazyScroll) {
+        LazyColumn(modifier = modifier) {
+            items(count = total) { index ->
+                key(index) {
+                    MarkdownGuardChunk(
+                        chunk = chunks[index],
+                        color = color,
+                        cache = cache,
+                        compact = compact,
+                        cacheEnabled = cacheEnabled,
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    var revealed by remember(text) {
+        mutableStateOf(MARKDOWN_GUARD_INITIAL_CHUNKS.coerceAtMost(total))
+    }
+    Column(modifier = modifier.fillMaxWidth()) {
+        for (index in 0 until revealed) {
+            key(index) {
+                MarkdownGuardChunk(
+                    chunk = chunks[index],
+                    color = color,
+                    cache = cache,
+                    compact = compact,
+                    cacheEnabled = cacheEnabled,
+                )
+            }
+        }
+        if (revealed < total) {
+            Spacer(Modifier.height(Spacing.sm))
+            Text(
+                text = stringResource(R.string.computer_output_load_more, total - revealed),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable { revealed = (revealed + MARKDOWN_GUARD_BATCH_CHUNKS).coerceAtMost(total) }
+                    .padding(vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/** 展开态的一段：始终走无护栏的 MarkdownContent（段已是有界短文本，再拦就永远展不开）。 */
+@Composable
+private fun MarkdownGuardChunk(
+    chunk: String,
+    color: Color,
+    cache: MarkdownRenderCache?,
+    compact: Boolean,
+    cacheEnabled: Boolean,
+) {
+    MarkdownContent(
+        text = chunk,
+        color = color,
+        modifier = Modifier.fillMaxWidth(),
+        cache = cache,
+        compact = compact,
+        cacheEnabled = cacheEnabled,
+        // 分段已经是稳定短文本，不复用上一段解析结果，也避免每段各留一份状态。
+        retainState = false,
+        largeContentGuard = false,
+    )
+}
+
+/** 占位预览：截取头部若干字符并给其中超长行封顶，不解析 markdown。 */
+private fun markdownGuardPreview(text: String): String =
+    capLineLengths(text.take(MARKDOWN_GUARD_PREVIEW_CHARS), MARKDOWN_GUARD_PREVIEW_LINE_MAX_CHARS) + "…"
+
+/**
+ * 展开态分段：先用 [splitLongContent] 按 markdown 结构切（代码围栏、表格、段落不拆散），
+ * 再把仍超长的段（巨型代码块、无空行的超长单段）按字符/行数硬切，保证每段的解析与排版成本有界。
+ */
+private fun markdownGuardChunks(text: String): List<String> {
+    val out = ArrayList<String>()
+    for (chunk in splitLongContent(text)) {
+        if (chunk.length <= MARKDOWN_GUARD_CHUNK_MAX_CHARS) {
+            out.add(chunk)
+        } else {
+            for (range in boundedTextChunks(chunk, MARKDOWN_GUARD_CHUNK_MAX_CHARS, MARKDOWN_GUARD_CHUNK_LINES)) {
+                out.add(chunk.substring(range.first, range.last + 1))
+            }
+        }
+    }
+    return out
 }

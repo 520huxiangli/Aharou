@@ -1,7 +1,39 @@
 package com.aharou.feature.agent.presentation.component
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aharou.R
+import com.aharou.core.theme.Brand
+import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.ChevronRotationStyle
+import com.aharou.core.ui.ExpandableChevronIcon
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.REASONING_CONTENT_TYPE
@@ -12,12 +44,17 @@ import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.agent.presentation.leadingHeadKey
 import com.aharou.feature.agent.presentation.leadingHeadSessionKey
 import com.aharou.feature.agent.presentation.turnKeyOf
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.ArrowDown
+import compose.icons.feathericons.ArrowUp
+import kotlinx.coroutines.delay
 
 /**
  * 「消息 → 渲染项」的全部构造逻辑：分组判定、单条消息拆块（[messageRenderItems]）、整轮折叠与过程项
- * （[buildChatItems]）、以及待定位消息的查找（[findChatMessageIndex]）。
+ * （[buildChatItems]）、以及待定位消息的查找（[findChatMessageIndex]）；文件尾是轮折叠头与回底按钮
+ * 这类面板叶子组件。
  *
- * 单独成文件是因为 [AIChatPanel] 受单文件行数棘轮约束，只能缩不能涨。
+ * 单独成文件是因为 [AIChatPanel] 受单文件行数棘轮约束，只能缩不能涨：新增 UI 放这里、面板只留调用点。
  */
 
 /**
@@ -156,7 +193,27 @@ internal data class ChatRenderItem(
     val reasoningVisible: Boolean = true,
     /** 工具分组平铺后的成员行：作为主列表的独立 item 渲染，需缩进一级（[ToolGroupMemberPadding]）。 */
     val groupMember: Boolean = false,
+    /** 整轮收尾态（仅轮头 item 有意义）：决定折叠头显示「已完成 / 处理失败 / 已取消」。 */
+    val turnOutcome: TurnOutcome = TurnOutcome.DONE,
 )
+
+/**
+ * 一轮任务的收尾态。取消态没有落库记录（历史里查不到），只能由调用方用实时状态指认；
+ * 失败态从轮内消息上的错误标记还原。
+ */
+internal enum class TurnOutcome { DONE, FAILED, CANCELLED }
+
+/**
+ * 一轮的收尾态。
+ *
+ * 失败只认轮内**最后一条助手消息**的 `error`：中途某个工具失败常被模型自己重试修好，
+ * 按「轮内出现任何错误就算失败」判定会大面积误报，折叠头上挂个「处理失败」反而误导。
+ */
+internal fun turnOutcomeOf(messages: List<AgentUIMessage>, cancelled: Boolean = false): TurnOutcome = when {
+    cancelled -> TurnOutcome.CANCELLED
+    messages.lastOrNull { it.role == MessageRole.ASSISTANT }?.error != null -> TurnOutcome.FAILED
+    else -> TurnOutcome.DONE
+}
 
 /**
  * 消息列表 → LazyColumn item 列表。
@@ -193,6 +250,7 @@ internal fun buildChatItems(
     activeTurnKey: String? = null,
     sessionId: String? = null,
     turnKeys: Map<String, String> = emptyMap(),
+    cancelledTurnKey: String? = null,
 ): List<ChatRenderItem> {
     val items = ArrayList<ChatRenderItem>(messages.size)
     val (leading, turns) = splitChatTurns(messages)
@@ -254,6 +312,7 @@ internal fun buildChatItems(
                     expanded = expanded,
                 ),
                 turnProcess = process,
+                turnOutcome = turnOutcomeOf(turn.messages, cancelled = key == cancelledTurnKey),
             )
         }
         items += buildTurnPersistentItems(turn.messages, resultId, soulHeaderId)
@@ -378,3 +437,158 @@ private fun buildTurnPersistentItems(
  */
 internal fun findChatMessageIndex(items: List<ChatRenderItem>, messageId: String): Int =
     items.indexOfFirst { it.message.id == messageId || it.key.startsWith("$messageId#") }
+
+/** 运行中的耗时刷新间隔（ms）：折叠头上逐秒走表，半秒一更足够看不出跳动。 */
+private const val TURN_ELAPSED_TICK_MS = 500L
+
+/** 圆悬浮按钮直径（dp）：回底 / 回上一条用户消息两个按钮共用（面板堆叠偏移也读它）。 */
+internal const val SCROLL_BUTTON_SIZE_DP = 34
+
+/**
+ * 整轮任务折叠头：一行「状态 + 耗时 + 折叠箭头」，点一下展开/收起整轮过程（见 [flattenTurnProcesses]）。
+ *
+ * 运行中不可折叠（不显示箭头、点击无响应）：这一轮正在跑，过程项正是用户此刻该看的东西，
+ * 收起只会让人以为任务卡住。此时文案跟当前动作走（[liveLabel]，如「正在读取文件」），
+ * 右侧耗时由计时器逐秒累加，不必等收工。
+ * 收工后按 [outcome] 分三种收尾文案，右侧显示本轮总耗时（[durationMs]，与轮末气泡同一笔账）。
+ */
+@Composable
+internal fun TurnHeaderRow(
+    running: Boolean,
+    /** 轮首用户消息的时间戳：运行中据此逐秒计时，收工后不再读它。 */
+    startMs: Long,
+    durationMs: Long?,
+    outcome: TurnOutcome,
+    liveLabel: String?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 只有运行中那一条轮头挂计时器（每轮仅一条，且收工即取消），不构成常驻开销。
+    var nowMs by remember(startMs) { mutableStateOf(startMs) }
+    LaunchedEffect(running, startMs) {
+        if (!running) return@LaunchedEffect
+        nowMs = System.currentTimeMillis()
+        while (true) {
+            delay(TURN_ELAPSED_TICK_MS)
+            nowMs = System.currentTimeMillis()
+        }
+    }
+    // 拿不到耗时（窗口截断的半轮、消息缺时间戳）时干脆不占位，不编一个「1s」出来。
+    val elapsedText = when {
+        running -> formatTaskDuration((nowMs - startMs).coerceAtLeast(0))
+        durationMs != null -> formatTaskDuration(durationMs)
+        else -> null
+    }
+    val statusText = when {
+        running -> liveLabel ?: stringResource(R.string.chat_turn_running)
+        outcome == TurnOutcome.FAILED -> stringResource(R.string.chat_turn_failed)
+        outcome == TurnOutcome.CANCELLED -> stringResource(R.string.chat_turn_cancelled)
+        else -> stringResource(R.string.chat_turn_completed_plain)
+    }
+    val statusColor = when {
+        running -> MaterialTheme.colorScheme.onSurfaceVariant
+        outcome == TurnOutcome.FAILED -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = ChatStyle.toolRowMinHeight)
+            .clip(RoundedCornerShape(ChatStyle.panelCorner))
+            .clickable(
+                enabled = !running,
+                onClickLabel = stringResource(
+                    if (expanded) R.string.common_collapse_action else R.string.common_expand
+                ),
+                onClick = onToggle
+            ),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = statusText,
+            color = statusColor,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (elapsedText != null) {
+            Spacer(Modifier.width(Spacing.xs))
+            Text(
+                text = elapsedText,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1
+            )
+        }
+        if (!running) {
+            Spacer(Modifier.width(Spacing.xs))
+            ExpandableChevronIcon(
+                expanded = expanded,
+                style = ChevronRotationStyle.RIGHT_DOWN,
+                contentDescription = stringResource(
+                    if (expanded) R.string.common_collapse_action else R.string.common_expand
+                ),
+                tint = Brand.IconGray,
+                size = 18.dp
+            )
+        }
+    }
+}
+
+/** 滚动到底部按钮：圆形，悬浮在输入框右上角，不在底部时显示。 */
+@Composable
+internal fun ScrollToBottomButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    CircleScrollButton(
+        onClick = onClick,
+        icon = FeatherIcons.ArrowDown,
+        contentDescription = stringResource(R.string.common_scroll_to_bottom),
+        modifier = modifier
+    )
+}
+
+/** 回上一条用户消息按钮：圆形，与 [ScrollToBottomButton] 同款，堆在它上方。 */
+@Composable
+internal fun ScrollToPrevUserButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    CircleScrollButton(
+        onClick = onClick,
+        icon = FeatherIcons.ArrowUp,
+        contentDescription = stringResource(R.string.common_scroll_to_prev_user),
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun CircleScrollButton(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 6.dp,
+        modifier = modifier
+            .size(SCROLL_BUTTON_SIZE_DP.dp)
+            .clickable(onClick = onClick)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}

@@ -639,57 +639,6 @@ private fun MessageVariantSwitcher(
     }
 }
 
-/**
- * 整轮任务折叠头（最外层）：一行「执行中 / 已完成 Xs + 箭头」，点一下展开/收起整轮过程。
- *
- * 收起态用右箭头（ChevronRight），展开态用下箭头（ChevronDown）——与参考图一致；
- * 运行中（[running]）只显示「执行中」，完成后显示本轮耗时。风格对齐 [ToolCallGroupHeader]。
- */
-@Composable
-internal fun TurnCollapseHeader(
-    running: Boolean,
-    durationMs: Long?,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = ChatStyle.toolRowMinHeight)
-            .clip(RoundedCornerShape(ChatStyle.panelCorner))
-            .clickable(
-                onClickLabel = stringResource(
-                    if (expanded) R.string.common_collapse_action else R.string.common_expand
-                ),
-                onClick = onToggle
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = when {
-                running -> stringResource(R.string.chat_turn_running)
-                durationMs != null -> stringResource(R.string.chat_turn_completed, formatTaskDuration(durationMs))
-                // 拿不到耗时（被窗口截断的半轮、消息缺时间戳）时只说「已完成」，不留空档
-                else -> stringResource(R.string.chat_turn_completed_plain)
-            },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(Modifier.width(Spacing.xs))
-        ExpandableChevronIcon(
-            expanded = expanded,
-            style = ChevronRotationStyle.RIGHT_DOWN,
-            contentDescription = if (expanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
-            tint = Brand.IconGray,
-            size = 18.dp
-        )
-    }
-}
-
 @Composable
 private fun MessageActionIconButton(
     icon: ImageVector,
