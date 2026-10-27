@@ -304,18 +304,10 @@ class RemoteSshEngine @Inject constructor(
         // 目标必须换算成**服务器上的路径**：projectPath 是本地工作区路径（/data/data/.../projects/x），
         // 服务器上没有那个目录，照搬会让每条命令都 exit 1。规则：remoteWorkspacePath/<工作区目录名>，
         // 不存在就建（首次连上去时远程还没这套目录）。
-        val target = remoteWorkspaceFor(projectPath)
+        val target = connection.remoteWorkspaceFor(projectPath)
         val mk = if (target != null) "mkdir -p ${shellQuote(target)} 2>/dev/null; " else ""
         val cdTarget = shellQuote(target ?: projectPath)
         return prefix + mk + "cd ~/workspace 2>/dev/null || cd $cdTarget 2>/dev/null || exit 1; $command"
-    }
-
-    /** 本地工作区路径 → 服务器上的工作区目录（`<remoteWorkspacePath>/<目录名>`）；没有远程配置时为 null。 */
-    private fun remoteWorkspaceFor(projectPath: String): String? {
-        val base = connection.config?.remoteWorkspacePath?.trimEnd('/') ?: return null
-        val name = projectPath.trimEnd('/').substringAfterLast('/')
-        if (name.isBlank()) return base
-        return "$base/$name"
     }
 
 }

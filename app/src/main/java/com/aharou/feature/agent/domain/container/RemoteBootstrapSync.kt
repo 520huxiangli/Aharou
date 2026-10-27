@@ -22,6 +22,8 @@ class RemoteBootstrapSync @Inject constructor(
 ) {
     private companion object {
         const val TAG = "RemoteBootstrapSync"
+        /** 共享区推送到远程的单文件上限：超过的通常是构建产物（APK 几十 MB），推过去无意义。 */
+        const val SHARED_MAX_BYTES = 1L * 1024 * 1024
     }
 
     /** 已铺过的目标（host:port:user）；连接换了对端会重新铺。 */
@@ -46,7 +48,19 @@ class RemoteBootstrapSync @Inject constructor(
         runCatching {
             connection.uploadBuiltinFiles("agents", collectAssetBytes(assets, "agents"))
             connection.uploadBuiltinFiles("teams", collectAssetBytes(assets, "teams"))
-        }.onFailure { FileLogger.w(TAG, "释放内置子代理/团队到远程失败：$key", it) }
+            // 技能是目录结构（<name>/SKILL.md + 附属脚本），用带相对路径的名字传，
+            // 否则远端 ~/.aharou/skills 为空，`loadSkill` 在远程工作区一个都找不到。
+            connection.uploadBuiltinFiles("skills", collectAssetBytesRecursive(assets, "skills"))
+        }.onFailure { FileLogger.w(TAG, "释放内置子代理/团队/技能到远程失败：$key", it) }
+
+        // 共享区：远程模式下 shell 也访问不到 `~/shared`（它在手机上）。把**小文件**推过去
+        // （信箱、待办、交接文档这些真要跨区共享的），大文件如 APK 跳过——
+        // 共享区可能有几十 MB 构建产物，全量推既慢又会吃满服务器磁盘。
+        runCatching {
+            val sharedFiles = collectSharedFiles()
+            if (sharedFiles.isNotEmpty()) connection.uploadBuiltinFiles("shared", sharedFiles, rootDir = "")
+            FileLogger.i(TAG, "共享区小文件已同步 ${sharedFiles.size} 个（跳过 >1MB 的）")
+        }.onFailure { FileLogger.w(TAG, "同步共享区到远程失败：$key", it) }
 
         synchronized(lock) { syncedKey = key }
         FileLogger.i(TAG, "远程内置资源已同步：$key")
@@ -84,4 +98,50 @@ class RemoteBootstrapSync @Inject constructor(
         }
         return out
     }
+
+    /** 递归收集（相对路径 → 字节），用于技能这类带子目录的资源。 */
+    private fun collectAssetBytesRecursive(
+        assets: android.content.res.AssetManager,
+        assetDir: String,
+        prefix: String = "",
+        out: MutableMap<String, ByteArray> = linkedMapOf()
+    ): Map<String, ByteArray> {
+        val entries = runCatching { assets.list(assetDir).orEmpty() }.getOrDefault(emptyArray())
+        if (entries.isEmpty()) {
+            if (prefix.isNotEmpty()) {
+                runCatching { assets.open(assetDir).use { out[prefix] = it.readBytes() } }
+                    .onFailure { FileLogger.w(TAG, "读取内置资源失败: $assetDir", it) }
+            }
+            return out
+        }
+        entries.forEach { entry ->
+            collectAssetBytesRecursive(assets, "$assetDir/$entry", if (prefix.isEmpty()) entry else "$prefix/$entry", out)
+        }
+        return out
+    }
+
+    /**
+     * 收集共享区里值得推到远程的小文件（相对路径 → 字节）。
+     *
+     * 只收 <= [SHARED_MAX_BYTES] 的普通文件：信箱/待办/交接文档都是几 KB，而构建产物动辄几十 MB。
+     * 跳过大文件是刻意取舍——远程真正需要的是「能读到别人留的话」，不是把安装包搬过去。
+     */
+    private fun collectSharedFiles(): Map<String, ByteArray> {
+        val root = sharedDir() ?: return emptyMap()
+        val out = linkedMapOf<String, ByteArray>()
+        runCatching {
+            root.walkTopDown()
+                .onEnter { dir -> dir.name != ".git" }
+                .filter { it.isFile && it.length() in 1..SHARED_MAX_BYTES }
+                .forEach { file ->
+                    runCatching { out[file.relativeTo(root).path] = file.readBytes() }
+                        .onFailure { FileLogger.w(TAG, "读取共享区文件失败: ${file.name}", it) }
+                }
+        }.onFailure { FileLogger.w(TAG, "遍历共享区失败", it) }
+        return out
+    }
+
+    /** 共享区根目录：与容器内 `/root/shared` 指向同一个目录（见 LinuxContainerEngine 的绑定挂载）。 */
+    private fun sharedDir(): java.io.File? =
+        java.io.File(context.filesDir, "aharou-global/shared").takeIf { it.isDirectory }
 }

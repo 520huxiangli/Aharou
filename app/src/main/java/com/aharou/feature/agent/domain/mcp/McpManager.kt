@@ -4,6 +4,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.tool.ToolRegistry
+import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.ContainerProfileResolver
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
@@ -61,6 +62,7 @@ class McpManager @Inject constructor(
     private val toolRegistry: ToolRegistry,
     @Named("Mcp") private val okHttpClient: OkHttpClient,
     private val containerEngine: LinuxContainerEngine,
+    private val remoteConnection: com.aharou.feature.agent.domain.container.RemoteSshConnection,
     private val workspaceRepository: WorkspaceRepository,
     private val containerSettingsRepository: ContainerSettingsRepository,
     private val profileResolver: ContainerProfileResolver,
@@ -281,28 +283,41 @@ class McpManager @Inject constructor(
         return try {
             FileLogger.i(TAG, "[${cfg.name}] 开始连接（${if (cfg.isStdio) "stdio" else "HTTP"}，工作区 $workspacePath）")
             val t = if (cfg.isStdio) {
-                // stdio server 跑在「运行时容器」上：按**本工作区**解析容器，不再只认全局设置。
-                // 远程 SSH 容器里跑 stdio 需要走 SSH 起进程 + 管道，目前不支持；
-                // 静默落到本地会让远端工作区意外在手机上起一个子进程，所以直接拒绝并说明。
+                // stdio server 跑在「运行时容器」上：按**本工作区**解析容器。
+                // 本地 → proot 内起进程；远程 SSH → 同一条命令发到服务器上起进程，
+                // 两边都交给 StdioTransport 同一套 JSON-RPC 路由（差异只在 startProcess）。
                 val runtimeProfile = profileResolver.forWorkspace(workspacePath)
-                if (runtimeProfile.mode == ExecutionMode.REMOTE_SSH) {
-                    throw IllegalStateException(
-                        "stdio 类型的 MCP server「${cfg.name}」暂不支持远程 SSH 容器（${runtimeProfile.name}），" +
-                            "请改用 HTTP 类型的 server"
-                    )
+                val isRemote = runtimeProfile.mode == ExecutionMode.REMOTE_SSH
+                if (!isRemote) {
+                    containerEngine.notReadyHintFor(runtimeProfile)?.let {
+                        throw IllegalStateException(it)
+                    }
                 }
-                containerEngine.notReadyHintFor(runtimeProfile)?.let {
-                    throw IllegalStateException(it)
+                val serverCommand = buildString {
+                    append(cfg.command!!)
+                    if (cfg.args.isNotEmpty()) append(" ").append(cfg.args.joinToString(" ") { shellQuote(it) })
                 }
                 StdioTransport(
                     serverName = cfg.name,
-                    engine = containerEngine,
+                    startProcess = {
+                        if (isRemote) {
+                            // 远端起长驻进程：cd 到该工作区后设环境变量再 exec，stdin/stdout 就是 MCP 协议通道。
+                            val cd = remoteConnection.remoteWorkspaceFor(workspacePath)
+                                ?.let { "cd ${shellQuote(it)} && " } ?: ""
+                            val env = cfg.env.entries.joinToString("") { (k, v) -> "export $k=${shellQuote(v)}; " }
+                            remoteConnection.startProcess("$cd$env$serverCommand")
+                        } else {
+                            containerEngine.startStdioProcess(
+                                program = cfg.command!!,
+                                programArgs = cfg.args,
+                                projectPath = workspacePath,
+                                extraEnv = cfg.env,
+                                profile = runtimeProfile
+                            )
+                        }
+                    },
                     program = cfg.command!!,
                     programArgs = cfg.args,
-                    // 绑定**本工作区**：不同工作区的同名 server 各自跑在自己的项目目录里。
-                    projectPath = workspacePath,
-                    extraEnv = cfg.env,
-                    runtimeProfile = runtimeProfile,
                     // stdio 进程死亡 / 管道断开：自报死亡，由 onTransportClosed 摘除死连接并按退避重连。
                     onClosed = { onTransportClosed(workspacePath, cfg.name, created) }
                 )

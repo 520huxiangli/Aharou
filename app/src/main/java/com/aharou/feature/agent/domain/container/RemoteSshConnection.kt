@@ -99,6 +99,17 @@ class RemoteSshConnection @Inject constructor(
         private set
 
     suspend fun connect(config: RemoteConnectionConfig) = mutex.withLock {
+        // 凭据为空时直接报根因：否则 sshj 只会抛出
+        // 「Exhausted available authentication methods」，与「密码错」「服务器拒绝」分不开，
+        // 而且会白跑一轮认证（服务器侧可能计入防爆破失败次数）。
+        when (val auth = config.auth) {
+            is RemoteAuth.Password -> if (auth.password.isBlank()) {
+                throw IllegalStateException("SSH 连接失败：未填写密码（凭据为空，不是密码错）")
+            }
+            is RemoteAuth.PrivateKey -> if (auth.privateKeyPath.isBlank()) {
+                throw IllegalStateException("SSH 连接失败：未填写私钥路径（凭据为空）")
+            }
+        }
         if (isConnected() && this.config == config) return@withLock
         disconnectInternal()
         this.config = config
@@ -218,8 +229,30 @@ class RemoteSshConnection @Inject constructor(
         return client.startSession().exec(command)
     }
 
-    /** 开一个新的 Session，供调用方分配 PTY 并启动 shell。调用方负责关闭 Session。 */
-    fun startShellSession(): Session {
+    /**
+     * 在远端起一个长驻进程并保留 stdin，供 stdio 型 MCP server 双向通信。
+     *
+     * 与 [startExecSessionWithStdin] 的区别：那条要求调用方自己管 session 与引号，这里直接返回
+     * [Process]，让上层现成的 [StdioTransport] 不用为远程单写一套。
+     */
+    fun startProcess(commandLine: String): SshCommandProcess {
+        val client = sshClient ?: throw IllegalStateException("SSH 未连接")
+        val session = client.startSession()
+        val command = session.exec(commandLine)
+        return SshCommandProcess(session, command, commandLine.take(80))
+    }
+
+    /**
+     * 本地工作区路径 → 服务器上的工作区目录（`<remoteWorkspacePath>/<目录名>`）。
+     * 与 [RemoteSshEngine] 的命令 cd 目标同一口径，供 MCP stdio 远端起进程复用。
+     */
+    fun remoteWorkspaceFor(projectPath: String): String? {
+        val base = config?.remoteWorkspacePath?.trimEnd('/') ?: return null
+        val name = projectPath.trimEnd('/').substringAfterLast('/')
+        return if (name.isBlank()) base else "$base/$name"
+    }
+
+    /** 开一个新的 Session，供调用方分配 PTY 并启动 shell。调用方负责关闭 Session。 */    fun startShellSession(): Session {
         val client = sshClient ?: throw IllegalStateException("SSH 未连接")
         return client.startSession()
     }
@@ -410,12 +443,15 @@ class RemoteSshConnection @Inject constructor(
     suspend fun uploadBuiltinFiles(
         destSubdir: String,
         files: Map<String, ByteArray>,
-        executable: Boolean = false
+        executable: Boolean = false,
+        /** 相对 home 的容器目录，默认 `.aharou`；共享区传空串（落在 `~/shared`）。 */
+        rootDir: String = ".aharou"
     ) {
         if (files.isEmpty()) return
         val client = sshClient ?: return
         val home = remoteHome ?: return
-        val destDir = home.trimEnd('/') + "/.aharou/" + destSubdir.trim('/')
+        val root = rootDir.trim('/')
+        val destDir = home.trimEnd('/') + "/" + (if (root.isEmpty()) "" else "$root/") + destSubdir.trim('/')
         withContext(Dispatchers.IO) {
             runCatching {
                 val mk = client.startSession()
@@ -423,6 +459,14 @@ class RemoteSshConnection @Inject constructor(
                 mk.close()
                 for ((name, bytes) in files) {
                     val dest = "$destDir/$name"
+                    // name 可含子目录（如 skills/config-channel/SKILL.md）：先建父目录，
+                    // 否则重定向会因目录不存在而失败。
+                    val parent = dest.substringBeforeLast('/', "")
+                    if (parent.isNotEmpty() && parent != destDir) {
+                        val md = client.startSession()
+                        md.exec("mkdir -p ${shellQuote(parent)}").join()
+                        md.close()
+                    }
                     val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
                     val chmod = if (executable) " chmod +x ${shellQuote(dest)};" else ""
                     val session = client.startSession()

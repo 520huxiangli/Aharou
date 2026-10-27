@@ -2,7 +2,6 @@ package com.aharou.feature.agent.domain.mcp
 
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerProfile
-import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,8 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
  * 往其 **stdin** 写一行 JSON-RPC、从其 **stdout** 读一行 JSON-RPC（NDJSON），
  * **stderr** 仅作为 server 日志单独消费、不污染协议流。
  *
- * 进程由 [LinuxContainerEngine.startStdioProcess] 在 proot 容器内拉起（如 `npx -y some-server`），
- * 首次 [request]/[notify] 时惰性启动（[startMutex] 串行化）。stdout 读循环把每条带 id 的响应路由到
+ * 进程由调用方通过 [startProcess] 拉起：本地是 proot 容器内的 `npx -y some-server`，
+ * 远程是 SSH 通道上的同名命令。首次 [request]/[notify] 时惰性启动（[startMutex] 串行化）。stdout 读循环把每条带 id 的响应路由到
  * 对应的 pending [CompletableDeferred]；server 主动发来的请求/通知（带 method）当前不支持，记录后忽略。
  *
  * 与 [StreamableHttpTransport] 对等：协议错误以 [McpException] 抛出，由 [McpClient]/[McpManager]
@@ -35,12 +34,11 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class StdioTransport(
     private val serverName: String,
-    private val engine: LinuxContainerEngine,
-    private val program: String,
-    private val programArgs: List<String>,
-    private val projectPath: String?,
-    private val extraEnv: Map<String, String> = emptyMap(),
-    private val runtimeProfile: ContainerProfile = ContainerProfile.BUILTIN_ALPINE,
+    /** 启动 stdio 子进程的方式；本地传 proot 实现，远程传 SSH 实现。 */
+    private val startProcess: () -> Process,
+    /** 仅用于日志展示，不参与启动（实际启动在 [startProcess] 里）。 */
+    private val program: String = "",
+    private val programArgs: List<String> = emptyList(),
     /**
      * stdio 结束（子进程退出 / 管道断开）时回调一次。供管理层摘除死连接并重连——
      * 主动 [close] 不回调（那由调用方自己负责）。
@@ -160,7 +158,7 @@ class StdioTransport(
         acquireSlot()
         FileLogger.i(TAG, "[$serverName] 启动 stdio server: $program ${programArgs.joinToString(" ")}")
         val p = try {
-            engine.startStdioProcess(program, programArgs, projectPath, extraEnv, runtimeProfile)
+            startProcess()
         } catch (e: Exception) {
             releaseSlot()
             throw McpException(message = "[$serverName] 启动子进程失败: ${e.message}", cause = e)
