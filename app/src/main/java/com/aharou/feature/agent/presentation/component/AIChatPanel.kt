@@ -329,6 +329,8 @@ fun AIChatPanel(
     val attachmentUploadMutex = remember { Mutex() }
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
+    var crossCheckMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
+    val quoteReplyEnabled = rememberQuoteReplyEnabled()
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
     var queuedEditing by remember { mutableStateOf<QueuedRequest?>(null) }
     val listState = rememberLazyListState()
@@ -1746,14 +1748,16 @@ fun AIChatPanel(
                     onRegenerateClick = { viewModel.regenerateMessage(message.id) },
                     onForkClick = if (ghostMode) null else ({ viewModel.forkSessionFromMessage(message.id) }),
                     onCopyClick = {
-                        copyScope.launch {
-                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", message.content)))
-                        }
+                        copyScope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", message.content))) }
                     },
+                    onQuoteClick = if (quoteReplyEnabled)
+                        ({ viewModel.updateInputDraft(buildQuoteDraft(message.content, inputText)) }) else null,
+                    onCrossCheckClick = { crossCheckMessage = message },
                     onDeleteClick = { viewModel.deleteMessage(message.id) }
                 )
             }
 
+            crossCheckMessage?.let { message -> CrossCheckSheet(message, currentSessionId) { crossCheckMessage = null } }
             editingMessage?.let { message ->
                 EditMessageDialog(
                     initialText = message.content,

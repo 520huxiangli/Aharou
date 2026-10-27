@@ -24,7 +24,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aharou.R
-import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.presentation.AgentUIMessage
 import com.aharou.feature.agent.presentation.MessageRole
@@ -35,6 +34,7 @@ import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Trash2
+import compose.icons.feathericons.Eye
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,10 +44,14 @@ internal fun MessageActionsBottomSheet(
     onEditClick: () -> Unit,
     onCopyClick: () -> Unit,
     onDeleteClick: () -> Unit,
+    /** 引用本条：传 null 隐藏该项（实验开关关闭时）。 */
+    onQuoteClick: (() -> Unit)? = null,
     /** 重新生成：仅助手回答（有正文）提供，生成新版本而不覆盖当前回答。 */
     onRegenerateClick: (() -> Unit)? = null,
     /** 从此处新建分支：以该消息（含）之前的历史另起会话。隐身会话不提供，传 null 即隐藏该项。 */
-    onForkClick: (() -> Unit)? = null
+    onForkClick: (() -> Unit)? = null,
+    // 让另一个模型复审：有正文的消息才提供，传 null 即隐藏该项。
+    onCrossCheckClick: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -93,6 +97,18 @@ internal fun MessageActionsBottomSheet(
                 )
             }
 
+            // 引用本条：把摘要写进输入框，当成普通草稿继续编辑
+            if (onQuoteClick != null && message.content.hasVisibleContent()) {
+                MessageActionItem(
+                    icon = FeatherIcons.Copy,
+                    title = stringResource(R.string.chat_action_quote),
+                    onClick = {
+                        onDismiss()
+                        onQuoteClick()
+                    }
+                )
+            }
+
             // 从此处新建分支：复制这条消息（含）之前的历史到新会话，原会话保持不变
             if (onForkClick != null) {
                 MessageActionItem(
@@ -115,6 +131,18 @@ internal fun MessageActionsBottomSheet(
                     onClick = {
                         onDismiss()
                         onRegenerateClick()
+                    }
+                )
+            }
+
+            // 让另一个模型复审：结果只进弹层，不写回消息、不进会话历史
+            if (onCrossCheckClick != null && message.content.hasVisibleContent()) {
+                MessageActionItem(
+                    icon = FeatherIcons.Eye,
+                    title = stringResource(R.string.chat_action_crosscheck),
+                    onClick = {
+                        onDismiss()
+                        onCrossCheckClick()
                     }
                 )
             }

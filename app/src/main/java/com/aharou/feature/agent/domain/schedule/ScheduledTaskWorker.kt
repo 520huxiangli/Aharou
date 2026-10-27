@@ -216,6 +216,10 @@ class ScheduledTaskWorker(
         const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
         const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
 
+        /** 会话层跑完一轮后的真实结果，由 AIAgentViewModel 回写（取值定义见 [ScheduledTaskOutcome]）。 */
+        const val OUTCOME_COMPLETED = ScheduledTaskOutcome.COMPLETED
+        const val OUTCOME_FAILED = ScheduledTaskOutcome.FAILED
+
         /** runMode=single 的近似判据：见 [stillRunning]。 */
         const val RUNNING_GUARD_MINUTES = 5L
     }

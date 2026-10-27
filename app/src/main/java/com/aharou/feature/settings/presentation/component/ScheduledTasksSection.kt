@@ -67,6 +67,7 @@ private const val OUTCOME_SKIPPED_MISSED = "skipped_missed"
 private const val OUTCOME_SKIPPED_CONDITION = "skipped_condition"
 private const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
 private const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
+private const val OUTCOME_FAILED = "failed"
 
 private const val MAX_SESSION_CHOICES = 30
 
@@ -395,6 +396,7 @@ private fun outcomeLabel(outcome: String?): Int? = when (outcome) {
     OUTCOME_SKIPPED_CONDITION -> R.string.scheduled_tasks_skipped_condition
     OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
     OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
+    OUTCOME_FAILED -> R.string.scheduled_tasks_failed
     else -> null
 }
 

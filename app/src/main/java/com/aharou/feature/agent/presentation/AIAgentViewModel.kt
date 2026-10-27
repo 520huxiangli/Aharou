@@ -24,6 +24,7 @@ import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
+import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.dao.TodoItemDao
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
@@ -72,6 +73,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.schedule.ScheduledRunBus
 import com.aharou.feature.agent.domain.schedule.ScheduledRunRequest
+import com.aharou.feature.agent.domain.schedule.ScheduledTaskOutcome
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.terminal.domain.TabFinishedEvent
 import com.aharou.feature.terminal.domain.TerminalKeepaliveService
@@ -210,6 +212,7 @@ class AIAgentViewModel @Inject constructor(
     private val agentTurnRunner: AgentTurnRunner,
     private val turnEndBridge: AgentTurnEndBridge,
     private val todoItemDao: TodoItemDao,
+    private val scheduledTaskDao: ScheduledTaskDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
     private val fileTreeRoots: ContainerTreeRootProvider,
@@ -1622,13 +1625,29 @@ class AIAgentViewModel @Inject constructor(
         }
         val workspacePath = sessionUseCase.getSessionById(sessionId)?.workspacePath.orEmpty()
         FileLogger.i(TAG, "定时任务开始运行: ${request.taskName} -> session=$sessionId")
-        executeAgentRequestStream(
-            request = request.prompt,
-            projectRoot = workspacePath,
-            targetSessionId = sessionId,
-            isAutoTrigger = true,
-            skipTitleUpdate = true
-        )
+        val succeeded = try {
+            executeAgentRequestStream(
+                request = request.prompt,
+                projectRoot = workspacePath,
+                targetSessionId = sessionId,
+                isAutoTrigger = true,
+                skipTitleUpdate = true
+            )
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            FileLogger.w(TAG, "定时任务执行失败: ${request.taskName}", e)
+            false
+        }
+        // 把真实执行结果回写到任务行：Worker 只记「已投递」，跑没跑成只有这里知道。
+        runCatching {
+            scheduledTaskDao.recordOutcome(
+                request.taskId,
+                if (succeeded) ScheduledTaskOutcome.COMPLETED else ScheduledTaskOutcome.FAILED,
+                System.currentTimeMillis()
+            )
+        }.onFailure { FileLogger.w(TAG, "回写定时任务结果失败: ${request.taskName}", it) }
     }
 
     /**

@@ -19,6 +19,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,6 +63,14 @@ class ImBotBridge (
     @Volatile private var cursor = 0L
     @Volatile private var primed = false
 
+    /** 待处理队列：轮询只负责拉取，处理在独立协程里串行做，处理成功后才推进游标。 */
+    private var inbox = Channel<Pair<ImChannelConfig, ImUpdate>>(Channel.UNLIMITED)
+
+    /** 最近处理过的 updateId：防「处理成功但游标没写成」导致重拉后重复投递。 */
+    private val seenUpdateIds = ConcurrentHashMap.newKeySet<Long>()
+
+    private var consumerJob: Job? = null
+
     /** 同一聊天串行处理，避免两条消息并发跑 agent 把会话搅乱。 */
     private val chatLocks = ConcurrentHashMap<String, Mutex>()
 
@@ -99,6 +108,7 @@ class ImBotBridge (
                 }
             }
         }
+        consumerJob = parent.launch { consumeLoop() }
         bridgeJob = parent.launch {
             try {
                 pollLoop()
@@ -114,6 +124,11 @@ class ImBotBridge (
     }
 
     fun stop() {
+        consumerJob?.cancel()
+        consumerJob = null
+        // 队列通道只能用一次：停后重建，下次 start 才入得了队
+        inbox.close()
+        inbox = Channel(Channel.UNLIMITED)
         bridgeJob?.cancel()
         bridgeJob = null
         bridgeScope = null
@@ -168,11 +183,9 @@ class ImBotBridge (
                 delayMs = RETRY_MIN_MS
                 if (updates.isNotEmpty()) {
                     FileLogger.d(TAG, "[$channelId] 收到 ${updates.size} 条更新")
-                    updates.forEach { update ->
-                        cursor = maxOf(cursor, update.updateId + 1)
-                        bridgeScope?.launch { handleUpdate(cfg, update) }
-                    }
-                    settings.saveCursor(cursor.toString())
+                    // 只入队、不在这里推进游标：处理成功后才由消费协程确认。
+                    // 否则进程被杀或处理失败时，消息已经算「已读」，永久丢了。
+                    updates.forEach { inbox.send(cfg to it) }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -186,18 +199,60 @@ class ImBotBridge (
         }
     }
 
-    private suspend fun handleUpdate(cfg: ImChannelConfig, update: ImUpdate) {
+    private suspend fun handleUpdate(cfg: ImChannelConfig, update: ImUpdate): Boolean =
         when (update) {
             is ImUpdate.Message -> handleMessage(cfg, update.msg)
             is ImUpdate.Callback -> handleCallback(cfg, update.callback)
         }
+
+    /**
+     * 串行消费队列：一条处理成功才推进并落盘游标；失败按次数重试，重试耗尽才放行到下一条。
+     *
+     * 游标后推进是「不丢消息」的关键：进程被杀时游标还停在未处理那条之前，重启后会重新拉取。
+     */
+    private suspend fun consumeLoop() {
+        for ((cfg, update) in inbox) {
+            val updateId = update.updateId
+            // 处理成功但游标没写成时重拉会拿到同一条，靠这里去重。
+            if (!seenUpdateIds.add(updateId)) {
+                advanceCursor(updateId + 1)
+                continue
+            }
+            if (seenUpdateIds.size > SEEN_UPDATE_LIMIT) seenUpdateIds.clear()
+
+            var attempt = 0
+            var delivered = false
+            while (!delivered && attempt < MAX_DELIVERY_ATTEMPTS) {
+                delivered = runCatching { handleUpdate(cfg, update) }.getOrElse { e ->
+                    if (e is CancellationException) throw e
+                    FileLogger.w(
+                        TAG,
+                        "[$channelId] 处理消息 $updateId 失败（第 ${attempt + 1} 次）：${channel.redact(e.message.orEmpty(), cfg)}"
+                    )
+                    false
+                }
+                if (!delivered && ++attempt < MAX_DELIVERY_ATTEMPTS) delay(DELIVERY_RETRY_MS * attempt)
+            }
+            if (!delivered) {
+                FileLogger.e(TAG, "[$channelId] 消息 $updateId 重试 $MAX_DELIVERY_ATTEMPTS 次仍失败，跳过并推进游标")
+            }
+            advanceCursor(updateId + 1)
+        }
     }
 
-    private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage) {
-        runCatching {
+    /** 推进游标并落盘；乱序到达的旧 id 不会把游标往回调。 */
+    private suspend fun advanceCursor(target: Long) {
+        if (target <= cursor) return
+        cursor = target
+        runCatching { settings.saveCursor(cursor.toString()) }
+            .onFailure { FileLogger.w(TAG, "[$channelId] 保存游标失败", it) }
+    }
+
+    private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage): Boolean {
+        val result = runCatching {
             if (msg.isGroup && !mentioned(msg)) {
                 FileLogger.d(TAG, "[$channelId] 群里没有 @机器人，忽略 chat=${msg.chatId}")
-                return
+                return@runCatching
             }
             val text = stripMention(msg.text)
             // 只发图片/文件、不带文字也是有效消息：补一句占位提示再交给 agent，
@@ -205,7 +260,7 @@ class ImBotBridge (
             val attachmentOnly = text.isBlank() && msg.attachments.isNotEmpty()
             if (text.isBlank() && !attachmentOnly) {
                 FileLogger.d(TAG, "[$channelId] 消息正文为空且无附件，忽略")
-                return
+                return@runCatching
             }
             val prompt = if (attachmentOnly) imText("im_attachment_only_hint") else text
             FileLogger.d(
@@ -215,12 +270,13 @@ class ImBotBridge (
             // 记下最近活跃聊天，sendFile 这类无 chatId 的调用要靠它
             lastActiveChat = msg.chatId
             // 无按钮平台的审批回复：先当审批处理，不是审批词再走正常对话
-            if (!attachmentOnly && consumeApprovalReply(msg.chatId, text)) return
+            if (!attachmentOnly && consumeApprovalReply(msg.chatId, text)) return@runCatching
             runTurn(cfg, msg.chatId, prompt, msg.attachments)
-        }.onFailure { e ->
+        }
+        return result.onFailure { e ->
             if (e is CancellationException) throw e
             FileLogger.w(TAG, "[$channelId] 处理消息失败：${channel.redact(e.message.orEmpty(), cfg)}")
-        }
+        }.isSuccess
     }
 
     /**
@@ -283,19 +339,22 @@ class ImBotBridge (
         }
     }
 
-    private suspend fun handleCallback(cfg: ImChannelConfig, cb: ImCallbackQuery) {
+    private suspend fun handleCallback(cfg: ImChannelConfig, cb: ImCallbackQuery): Boolean = runCatching {
         channel.acknowledgeCallback(cfg, cb.id)
         if (cb.messageId.isNotBlank()) channel.clearMarkup(cfg, cb.chatId, cb.messageId)
         val parts = cb.data.split(":", limit = 3)
-        if (parts.size < 3 || parts[2].isBlank()) return
+        if (parts.size < 3 || parts[2].isBlank()) return@runCatching
         val choice = if (parts[1] == "y") PermissionChoice.ONCE else PermissionChoice.REJECT
         when (parts[0]) {
             "a" -> toolPermissionManager.resolve(parts[2], choice)
             "b" -> toolPermissionManager.resolveBatch(parts[2], choice)
-            else -> return
+            else -> return@runCatching
         }
         channel.send(cfg, cb.chatId, if (choice == PermissionChoice.ONCE) approvalAllowed() else approvalDenied())
-    }
+    }.onFailure { e ->
+        if (e is CancellationException) throw e
+        FileLogger.w(TAG, "[$channelId] 处理回调失败：${channel.redact(e.message.orEmpty(), cfg)}")
+    }.isSuccess
 
     private suspend fun runTurn(
         cfg: ImChannelConfig,
@@ -464,6 +523,13 @@ class ImBotBridge (
 
     companion object {
         private const val TAG = "ImBotBridge"
+
+        /** 单条消息的处理重试次数与退避基数；重试耗尽就推进游标，不让一条坏消息堵死队列。 */
+        private const val MAX_DELIVERY_ATTEMPTS = 3
+        private const val DELIVERY_RETRY_MS = 2_000L
+
+        /** 去重集合上限，超过就清空（只影响极端情况下重拉时的重复投递）。 */
+        private const val SEEN_UPDATE_LIMIT = 1_000
         private const val EDIT_INTERVAL_MS = 1000L
         private const val RETRY_MIN_MS = 2_000L
         private const val RETRY_MAX_MS = 60_000L
