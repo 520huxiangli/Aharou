@@ -37,9 +37,12 @@ class ProviderRecipeLoaderTest {
         }
     """.trimIndent()
 
+    /** parseRecipes 接受数组或带 recipes 的包装对象；测试数据是单条 recipe，包成数组再用。 */
+    private val fullRecipeList = "[$fullRecipe]"
+
     @Test
     fun fullJson_parsesAllFields() {
-        val recipes = ProviderRecipeLoader.parseRecipes(fullRecipe)
+        val recipes = ProviderRecipeLoader.parseRecipes(fullRecipeList)
         val recipe = recipes.getValue("anthropic")
         assertEquals(ProviderProtocol.ANTHROPIC_MESSAGES, recipe.protocol)
         assertEquals("https://api.anthropic.com/", recipe.defaultBaseUrl)
@@ -77,7 +80,7 @@ class ProviderRecipeLoaderTest {
 
     @Test
     fun unknownProvider_returnsNull() {
-        val recipes = ProviderRecipeLoader.parseRecipes(fullRecipe)
+        val recipes = ProviderRecipeLoader.parseRecipes(fullRecipeList)
         assertNull(ProviderRecipeLoader.lookup(recipes, "no-such-provider"))
         assertNull(ProviderRecipeLoader.lookup(recipes, ""))
         // 大小写不敏感
