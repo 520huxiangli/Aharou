@@ -253,7 +253,7 @@ class RemoteActionExecutor @Inject constructor(
             mode = AgentMode.BUILD,
             sessionId = approvalSessionId,
             workspacePath = workspacePath,
-            context = agentContext(workspacePath, approvalSessionId)
+            context = agentContext(workspacePath, approvalSessionId, collaborationActive)
         )
 
         val approved = when (verdict) {
@@ -297,7 +297,7 @@ class RemoteActionExecutor @Inject constructor(
 
         return try {
             val result = withContext(Dispatchers.IO) {
-                tool.executeWithContext(args, agentContext(workspacePath, approvalSessionId))
+                tool.executeWithContext(args, agentContext(workspacePath, approvalSessionId, collaborationActive))
             }
             FileLogger.i(TAG, "远端动作执行完成: ${action.name}（来自 ${caller.deviceName}）")
             toActionResult(result, action)
@@ -569,13 +569,17 @@ class RemoteActionExecutor @Inject constructor(
      * `WorkspacePathMapper.toHostFile` 落盘前会用真实路径校验是否落在「工作区 / rootfs / AI 配置 / 记忆 / 共享区」之内，
      * 越界直接抛「路径越界，拒绝访问」。再加上逐次审批，远端写入不比自己打电话让 AI 写文件更宽。
      */
-    private fun agentContext(workspacePath: String, approvalSessionId: String): AgentContext = AgentContext(
+    private fun agentContext(
+        workspacePath: String,
+        approvalSessionId: String,
+        autoMode: Boolean
+    ): AgentContext = AgentContext(
         currentFile = null,
         selectedCode = null,
         projectRoot = workspacePath,
         language = null,
         sessionId = approvalSessionId,
-        mode = AgentMode.BUILD,
+        mode = if (autoMode) AgentMode.AUTO else AgentMode.BUILD,
         writePaths = null
     )
 
