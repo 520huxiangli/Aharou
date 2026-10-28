@@ -56,6 +56,9 @@ object GitHubDnsFallback {
     /** 同一批域名的两次注入检查最小间隔：注入含解析与写文件，不该随每条容器命令跑。 */
     private const val CHECK_INTERVAL_MS = 5 * 60 * 1000L
 
+    /** 探活结果缓存有效期：与检查间隔一致，避免命令密集时反复做 TCP 探测。 */
+    private const val REACHABILITY_TTL_MS = 5 * 60 * 1000L
+
     /** 已注入内容的保留时长。过期重新解析，使站点换 IP 时能自愈。 */
     private const val REFRESH_AFTER_MS = 7 * 24 * 3600 * 1000L
 
@@ -95,6 +98,13 @@ object GitHubDnsFallback {
 
     @Volatile
     private var lastTargets: List<String> = emptyList()
+
+    /**
+     * 探活结果缓存。命令里扫出的域名每条都可能不同，而「目标集合变了就跳过节流」那条
+     * 会把探活放大成每秒一次 TCP 连接（线上实测一天 320 次重解析）。IP 可达性不会秒级变化，
+     * 给结果加 5 分钟缓存，让重复探活归零；真失效了最坏也就多等一个周期。
+     */
+    private val reachabilityCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Long>>()
 
     private val dohClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -137,7 +147,7 @@ object GitHubDnsFallback {
             // 但容器里的 git 会一直失败——不这样判，旧条目会一直续命。
             val alive = injected.entries
                 .filter { (_, host) -> host in targets }
-                .all { (ip, _) -> isUsableIp(ip) && isReachable(ip) }
+                .all { (ip, _) -> isUsableIp(ip) && isReachableCached(ip) }
             if (alive) return null
             FileLogger.i(
                 TAG,
@@ -206,6 +216,17 @@ object GitHubDnsFallback {
 
     private fun isStale(stamp: Long, now: Long): Boolean = now - stamp > REFRESH_AFTER_MS
 
+    /** 带缓存的探活：同一 IP 在 [REACHABILITY_TTL_MS] 内只真正连一次。 */
+    private fun isReachableCached(ip: String): Boolean {
+        val now = System.currentTimeMillis()
+        reachabilityCache[ip]?.let { (alive, at) ->
+            if (now - at < REACHABILITY_TTL_MS) return alive
+        }
+        val alive = isReachable(ip)
+        reachabilityCache[ip] = alive to now
+        return alive
+    }
+
     /**
      * 是不是能写进 hosts 的真实公网地址。
      *
@@ -238,10 +259,10 @@ object GitHubDnsFallback {
 
         // 宿主侧解析走 Android 系统 resolver，命中缓存时极快，拿到的 IP 也最贴近本机网络。
         // 宿主能解析不代表容器能解析，但 IP 只要真通就能用，所以这里只把它当候选。
-        resolveOnHost(host)?.let { if (isUsableIp(it) && isReachable(it)) return it }
+        resolveOnHost(host)?.let { if (isUsableIp(it) && isReachableCached(it)) return it }
 
         if (System.currentTimeMillis() < deadline) {
-            resolveViaDoh(host)?.let { if (isUsableIp(it) && isReachable(it)) return it }
+            resolveViaDoh(host)?.let { if (isUsableIp(it) && isReachableCached(it)) return it }
         }
         SEED_IPS[host]?.let { seeds ->
             for (ip in seeds) {
