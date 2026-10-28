@@ -60,10 +60,29 @@ class RemoteSshEngine @Inject constructor(
     private val injectSettings: CredentialInjectSettingsRepository
 ) : CommandEngine {
 
+    private companion object {
+        const val TAG = "RemoteSshEngine"
+        /** 共享区回拉间隔：0 表示每条远程命令都拉一次。
+         *
+         * 原本定 5 分钟，实测写完信立刻看手机是拿不到的（要等下一个窗口），
+         * 而共享区实际只有几十 KB（大文件不入镜像），每次拉一遍的开销可以忽略。 */
+        const val SHARED_PULL_INTERVAL_MS = 0L
+    }
+
+    init {
+        // 断开前把远端 ~/shared 的改动拉回手机：连上时只铺一次，期间 AI 在远端写的
+        // 信箱/待办靠这一步带回，否则只推不拉会让那些内容永远回不到手机。
+        connection.setOnBeforeDisconnect { bootstrapSync.pullShared() }
+    }
+
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
     override val initProgress: StateFlow<ContainerInitState> = _initProgress.asStateFlow()
 
     private val connectMutex = Mutex()
+
+    /** 上次回拉共享区的时刻（毫秒）。 */
+    @Volatile
+    private var lastSharedPullAt = 0L
 
     /**
      * 按**本次执行所属工作区**解析容器与它的 SSH 连接，配置不一致就重连。
@@ -74,11 +93,24 @@ class RemoteSshEngine @Inject constructor(
     private suspend fun ensureConnectedFor(projectPath: String?) {
         val profile = profileResolver.forWorkspace(projectPath)
         if (profile.mode != ExecutionMode.REMOTE_SSH) {
+            // 这个工作区已改成非远程（或覆盖被取消）：若还挂着旧 SSH 连接就断开，
+            // 断开会先回拉远端共享区（见 RemoteSshConnection.disconnect）。
+            // 不在这里收尾的话，覆盖改回本地后连接会一直挂着，远端写的文件也永不回来。
+            if (connection.isConnected()) {
+                FileLogger.i(TAG, "工作区已切回非远程环境，断开残留的 SSH 连接")
+                runCatching { connection.disconnect() }
+                    .onFailure { FileLogger.w(TAG, "断开残留连接失败", it) }
+            }
             throw IllegalStateException("工作区 ${projectPath ?: "（未指定）"} 解析出的容器 ${profile.name} 不是远程 SSH 类型")
         }
         val cfg = connectionResolver.configForProfile(profile.id)
             ?: throw IllegalStateException("容器 ${profile.name} 未配置可用的 SSH 连接")
-        if (connection.isConnected() && connection.config == cfg) return
+        if (connection.isConnected() && connection.config == cfg) {
+            // 连接已就绪：这里就必须回拉——下面的「建连」分支只在首次连接时跑，
+            // 挂在这里之后会导致首次之后再也不回拉（实测各条命令都只刷首次那一次）。
+            maybePullShared()
+            return
+        }
         connectMutex.withLock {
             if (connection.isConnected() && connection.config == cfg) return@withLock
             connection.connect(cfg)
@@ -86,6 +118,8 @@ class RemoteSshEngine @Inject constructor(
         // 连上后把内置文档/子代理/团队铺到远端（同一目标只铺一次）：不铺的话远端 ~/.aharou 下
         // 只有 workspaces，AI 读不到文档、内置 Explore 子代理也不存在。
         bootstrapSync.syncIfNeeded()
+        // 首连也回拉一次，把远端已改过的共享区文件带回来。
+        maybePullShared()
         // git 凭据：用户开了「自动注入」才铺，否则不动服务器上的任何 git 配置。
         // 之前这条只在凭据页手动切换开关时才触发，按工作区连上（全局仍是本地）时不会同步，
         // 远程里 `git push` 就会认证失败。
@@ -94,6 +128,14 @@ class RemoteSshEngine @Inject constructor(
         projectPath?.takeIf { it.isNotBlank() }
             ?.let { connection.remoteWorkspaceFor(it) }
             ?.let { connection.updateWorkspaceSymlink(it) }
+    }
+
+    /** 距上次回拉超过 [SHARED_PULL_INTERVAL_MS] 就拉一次；跟着命令走，不额外轮询。 */
+    private suspend fun maybePullShared() {
+        val now = System.currentTimeMillis()
+        if (SHARED_PULL_INTERVAL_MS > 0 && now - lastSharedPullAt < SHARED_PULL_INTERVAL_MS) return
+        lastSharedPullAt = now
+        bootstrapSync.pullShared()
     }
 
     /** 用户为该服务器开了「自动注入」时，把 App 的 git 凭据铺到远端；关闭时什么都不做。 */

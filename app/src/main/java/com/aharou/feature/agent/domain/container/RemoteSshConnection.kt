@@ -161,7 +161,22 @@ class RemoteSshConnection @Inject constructor(
     }
 
     suspend fun disconnect() = mutex.withLock {
+        // 回拉必须在断开**之前**：连接断了就没法读远端文件了。
+        // 远程模式下 AI 可能往 ~/shared 写过东西（信箱、待办），只在连上时拉一次不够——
+        // 连接不断就不会再拉，写完的信永远回不到手机。断开时正是切回本地、需要数据落地的时刻。
+        if (isConnected()) {
+            runCatching { onBeforeDisconnect?.invoke(this) }
+                .onFailure { FileLogger.w(TAG, "断开前回拉失败", it) }
+        }
         disconnectInternal()
+    }
+
+    /** 断开前的回调（由上层注册，用于回拉共享区等收尾动作）。 */
+    @Volatile
+    private var onBeforeDisconnect: (suspend (RemoteSshConnection) -> Unit)? = null
+
+    fun setOnBeforeDisconnect(block: suspend (RemoteSshConnection) -> Unit) {
+        onBeforeDisconnect = block
     }
 
     private fun disconnectInternal() {
@@ -287,9 +302,12 @@ class RemoteSshConnection @Inject constructor(
             runCatching {
                 val s = client.startSession()
                 // 只取 <=1MB 的普通文件，与推送上限一致；文件名与修改时间用 tab 分隔。
+                // 注意 `-size -1M` 不能用：GNU find 的 -size 按块数且小数向上取整，
+                // 非空文件也算 1 块，于是条件变成「小于 1 块」= 只匹配 0 字节文件，
+                // 结果一个都列不出来（2026-10-28 实测：回拉一直空转的根因）。
                 val cmd = s.exec(
                     "cd ${shellQuote(remoteRoot)} 2>/dev/null || exit 0; " +
-                        "find . -type f -size -1M -printf '%T@\\t%p\\n' 2>/dev/null"
+                        "find . -type f -size -1024k -printf '%T@\\t%p\\n' 2>/dev/null"
                 )
                 val listing = cmd.inputStream.bufferedReader().readText()
                 cmd.join(); s.close()

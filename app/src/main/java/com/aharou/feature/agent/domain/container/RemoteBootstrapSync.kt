@@ -37,7 +37,6 @@ class RemoteBootstrapSync @Inject constructor(
         val cfg = connection.config ?: return
         val key = "${cfg.host}:${cfg.port}:${cfg.username}"
         if (syncedKey == key) return
-
         val assets = context.assets
         runCatching {
             val docs = linkedMapOf<String, String>()
@@ -67,6 +66,15 @@ class RemoteBootstrapSync @Inject constructor(
 
         synchronized(lock) { syncedKey = key }
         FileLogger.i(TAG, "远程内置资源已同步：$key")
+    }
+
+    /**
+     * 只回拉共享区（不推送、不铺内置资源）。断开前调：连上时只铺一次，
+     * 期间 AI 在远端写的东西靠这里带回手机。
+     */
+    suspend fun pullShared() {
+        runCatching { sharedDir()?.let { connection.pullSharedFiles(it) } }
+            .onFailure { FileLogger.w(TAG, "回拉共享区失败", it) }
     }
 
     /** 递归收集 assets 下某目录的文本文件（相对路径 → 内容）。 */
