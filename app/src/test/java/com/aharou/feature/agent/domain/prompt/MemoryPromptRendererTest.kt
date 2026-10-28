@@ -164,10 +164,12 @@ class MemoryPromptRendererTest {
     }
 
     @Test
-    fun blankDescriptionKeepsExistingFallback() {
+    fun blankDescriptionFallsBackToFirstContentLine() {
         val output = MemoryPromptRenderer.render(listOf(memory("CORE", description = "")))
 
-        assertTrue(output.contains("- CORE: 无"))
+        // 摘要缺失时用正文首行兜底：漏写 description 不该让条目永久隐形（以前直接显示「无」）。
+        assertTrue(output.contains("- CORE: private body"))
+        assertFalse(output.contains("- CORE: 无"))
     }
 
     @Test
