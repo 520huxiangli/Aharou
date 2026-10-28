@@ -58,6 +58,7 @@ import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
+import com.aharou.feature.agent.domain.tool.ToolCallGuard
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.ToolSearchTool
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
@@ -433,9 +434,10 @@ object AgentModule {
         sessionTool: SessionTool,
         deviceTool: DeviceTool,
         personalContextTool: PersonalContextTool,
-        petAvatarTool: PetAvatarTool
+        petAvatarTool: PetAvatarTool,
+        guard: ToolCallGuard
     ): ToolRegistry {
-        return ToolRegistry().apply {
+        return ToolRegistry(guard).apply {
             register("readFile", readFileTool)
             register("sendFile", sendFileTool)
             register("sendToChat", sendImFileTool)
