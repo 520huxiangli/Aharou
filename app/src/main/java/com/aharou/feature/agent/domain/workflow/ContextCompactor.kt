@@ -66,6 +66,9 @@ class ContextCompactor @Inject constructor(
     // 失败材料拉黑表：key = 材料指纹，value = 最近一次失败（含是否属于「换模型也压不下」的确定性失败）。
     private val failedMaterials = LinkedHashMap<String, FailedMaterial>()
 
+    /** 确定性失败（这段历史压不下）额外按会话拉黑：材料指纹随切分点移动，只按材料记等于没记。 */
+    private val failedSessions = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /**
      * 压缩主体（组装、token 估算、分块切分）跑的调度器。默认挑到后台，避免长历史在主线程上掉帧；
      * 测试替换成虚拟时间调度器，否则 runTest 推不动真实线程池上的超时等待。
@@ -257,16 +260,23 @@ class ContextCompactor @Inject constructor(
      * 记一条失败材料：只有「换模型也压不下」的确定性失败拉长窗口，API 类失败几秒后就放开，
      * 否则换供应商后重试仍会被同一份材料拦住（issue #23 的现场）。
      */
-    private fun recordFailure(key: String?, reason: String) {
+    private fun recordFailure(key: String?, reason: String, sessionId: String?) {
         if (key == null) return
         val deterministic = reason == RETAINED_REASON || reason == OVER_BUDGET_REASON
         synchronized(failedMaterials) {
             failedMaterials[key] = FailedMaterial(System.currentTimeMillis(), deterministic)
             if (failedMaterials.size > 64) failedMaterials.remove(failedMaterials.keys.first())
         }
+        // 历史太长压不下与「哪一份材料」无关，按会话记才不会因切分点移动而失效（线上曾连续重做上百次）。
+        if (deterministic && !sessionId.isNullOrBlank()) {
+            failedSessions[sessionId] = System.currentTimeMillis()
+            if (failedSessions.size > 64) failedSessions.remove(failedSessions.keys.first())
+        }
     }
 
-    private fun isBlacklisted(key: String): Boolean {
+    private fun isBlacklisted(key: String, sessionId: String?): Boolean {
+        val failedAt = if (sessionId.isNullOrBlank()) 0L else failedSessions[sessionId] ?: 0L
+        if (failedAt > 0L && System.currentTimeMillis() - failedAt <= FAILED_MATERIAL_TTL_MS) return true
         val failed = synchronized(failedMaterials) { failedMaterials[key] } ?: return false
         val ttl = if (failed.deterministic) FAILED_MATERIAL_TTL_MS else TRANSIENT_MATERIAL_TTL_MS
         return System.currentTimeMillis() - failed.failedAt <= ttl
@@ -423,7 +433,7 @@ class ContextCompactor @Inject constructor(
                 progress.materialKey = materialKey
                 // 手动 /compress 与溢出兜底都走 force：材料没变但供应商/模型可能刚换过（issue #23），
                 // 允许它们绕开失败名单直接再试一次，而不是一律「本轮不再尝试」。
-                check(force || !isBlacklisted(materialKey)) { ALREADY_FAILED_MESSAGE }
+                check(force || !isBlacklisted(materialKey, sessionId)) { ALREADY_FAILED_MESSAGE }
                 check(CompactionText.tokensOf(projectImagesForEstimate(tail, sendsImages)) < tailBudget) {
                     "Recent task material exceeds the retained budget"
                 }
@@ -450,7 +460,7 @@ class ContextCompactor @Inject constructor(
             val reason = friendlyReason(e)
             // 已在降级链里记过的、以及「刚失败过」的重复报告都不再覆写：后者会把确定性失败的
             // 长窗口改写成短窗口，反而让这段历史被反复重试。
-            if (!progress.recorded && reason != ALREADY_FAILED_REASON) recordFailure(progress.materialKey, reason)
+            if (!progress.recorded && reason != ALREADY_FAILED_REASON) recordFailure(progress.materialKey, reason, sessionId)
             FileLogger.e(TAG, "压缩上下文失败（已尝试：${progress.attemptsText()}），保留原历史", e)
             onEvent(AgentEvent.CompactionFailed(reason + progress.describeAttempts()))
             return unchanged
@@ -480,7 +490,7 @@ class ContextCompactor @Inject constructor(
             val label = if (index == 0) "压缩模型" else "聊天模型"
             val key = if (index == 0) plan.materialKey else materialFingerprint(sessionId, provider, plan.head)
             // 第一级的失败名单在规划阶段已查过；后面几级各查自己那份指纹（指纹含模型，换模型就是另一份材料）。
-            if (index > 0 && !force && isBlacklisted(key)) {
+            if (index > 0 && !force && isBlacklisted(key, sessionId)) {
                 FileLogger.i(TAG, "压缩降级：$label 在这份材料上刚失败过，跳过")
                 return@forEachIndexed
             }
@@ -496,7 +506,7 @@ class ContextCompactor @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 val reason = friendlyReason(e)
-                recordFailure(key, reason)
+                recordFailure(key, reason, sessionId)
                 progress.materialKey = key
                 progress.recorded = true
                 progress.lastError = e
