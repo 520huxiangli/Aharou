@@ -177,7 +177,7 @@ class MemoryCompactor @Inject constructor(
             .filter { it.scope == scope && !it.pending }
             .filter { it.type != MemoryType.EVENT }
             .filterNot { isCoreArchiveName(it.name) }
-            .filter { it.content.length > MAX_ITEM_CHARS }
+            .filter { it.content.length > OVERSIZED_CHARS }
             .take(MAX_COMPRESS_PER_RUN)
         if (oversized.isEmpty()) return@runCatching 0
 
@@ -268,7 +268,7 @@ class MemoryCompactor @Inject constructor(
             .filter { it.scope == scope && !it.pending }
             .filter { it.type == MemoryType.IDENTITY }
             .filterNot { isCoreArchiveName(it.name) }
-            .filterNot { it.name.lowercase() in PROTECTED_IDENTITY_NAMES }
+            .filterNot { isProtectedIdentityName(it.name) }
         if (identity.isEmpty()) return@runCatching 0
 
         val squeezed = MemoryPromptRenderer.inlineBudgetReport(identity).squeezed.map { it.first }.toSet()
@@ -281,7 +281,7 @@ class MemoryCompactor @Inject constructor(
             val saved = runCatching {
                 memoryRepository.saveMemory(
                     name = memory.name,
-                    description = memory.description,
+                    description = describeAsDemoted(memory.description),
                     content = memory.content,
                     scope = scope,
                     projectRoot = projectRoot,
@@ -301,6 +301,10 @@ class MemoryCompactor @Inject constructor(
         downgraded
     }.onFailure { FileLogger.w(TAG, "自动降级失败（静默忽略）：${it.message}", it) }
         .getOrDefault(0)
+
+    /** 降级后的摘要：带上可见标记，让模型在清单里就能看出这是被系统降下来的。 */
+    private fun describeAsDemoted(description: String): String =
+        if (description.contains(DEMOTED_DESCRIPTION_LABEL)) description else description + DEMOTED_DESCRIPTION_LABEL
 
     private fun isCold(memory: Memory, scope: MemoryScope, now: Long): Boolean {
         val lastRead = runCatching { memoryUsageStore.lastUsedAt(scope.name, memory.name) }.getOrDefault(0L)
@@ -481,6 +485,14 @@ class MemoryCompactor @Inject constructor(
         /** 超出此长度的条目不参与自动合并，防止未看全文就删除原条目。 */
         const val MAX_ITEM_CHARS = 1_200
 
+        /**
+         * 超长压缩的触发线：与常驻单条上限（900）对齐。
+         *
+         * 原本只在超 1200 时才压，于是 900~1200 的条目两头不管：进不了常驻（超 900 整条跳过），
+         * 又不会被自动压缩，永远停在中间。
+         */
+        const val OVERSIZED_CHARS = 900
+
         /** 自动整理触发阈值：候选少于这么多就不跑（够多才值得花一次模型调用）。 */
         const val AUTO_COMPACT_THRESHOLD = 20
 
@@ -493,29 +505,8 @@ class MemoryCompactor @Inject constructor(
         const val COMPRESS_PROMPT_FILE = "agent/memory-compress.md"
         const val MAX_COMPRESS_PER_RUN = 3
 
-        /**
-         * 绝不自动降级的 identity：行为红线与关系锚点。它们一旦降级就从常驻里消失，
-         * 而红线不在上下文里等于没定。名单是「本案 12 条 + 小染回信的 11 条」的并集，宁可多锁。
-         */
-        private val PROTECTED_IDENTITY_NAMES = setOf(
-            "no_fabricated_credentials",
-            "zero_privacy_distribution",
-            "vault_secret_recovery_required",
-            "pairing_code_ask_peer_not_user",
-            "no_unsolicited_screen_control",
-            "dont_hijack_user_input",
-            "mcp_workspace_ownership_redlines",
-            "memory_write_threshold",
-            "master_bond_2026_10_20",
-            "self_check_full_list_before_done",
-            "tool_channel_escalation",
-            "aharou-master-profile",
-            "direct_fail_switch_to_api",
-            "follow_up_after_background_task",
-        )
-
-        /** 单次自动降级上限：降级可以慢慢来，一次降太多就没人来得及发现降错了。 */
-        const val MAX_DEMOTE_PER_RUN = 3
+        /** 单次自动降级上限：一批全挤出去时要能一次收拾完，逐条日志仍留痕。 */
+        const val MAX_DEMOTE_PER_RUN = 12
 
         /** 自动整理的冷却时间：距上次自动整理不足这么久就跳过，避免每次会话收尾都跑。 */
         const val AUTO_COMPACT_COOLDOWN_MILLIS = 24L * 60L * 60L * 1_000L

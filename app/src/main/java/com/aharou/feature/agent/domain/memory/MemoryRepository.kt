@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.memory
 import com.aharou.core.memory.MemoryUsageStore
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
 import javax.inject.Inject
@@ -88,7 +89,8 @@ class MemoryRepository @Inject constructor(
             // 使用者看到名字也无从判断要不要读。
             // 但核心档案（CORE / GLOBAL / SOUL / OPS 等）是按文件名直接读的，本来就没有
             // frontmatter，若一并滤掉等于把全局约定和身份直接从提示词里除名。
-            .filter { it.description.isNotBlank() || isCoreArchiveName(it.name) }
+            // 摘要为空但有正文的条目也放行：漏写 description 不该让一条记忆永久隐形（渲染时用首行兜底）。
+            .filter { it.description.isNotBlank() || isCoreArchiveName(it.name) || it.content.isNotBlank() }
             .filterNot { isStale(it) }
             // 先算一次分再排序：写在 comparator 里会随比较次数反复重算、反复切词。
             // 打分依赖全库的词频统计（IDF），所以先把候选集整好、算一次文档频数，再逐条打分。
@@ -125,7 +127,14 @@ class MemoryRepository @Inject constructor(
 
     /** 真正被取用过（≥2 次）的条目整体排在前面：一次可能是偶然，两次开始算「常用」。 */
     private fun compareByVerifiedUsage(): Comparator<PromptCandidate> =
-        compareByDescending { it.usageCount >= VERIFIED_USAGE_THRESHOLD }
+        compareByDescending {
+            // identity 靠常驻生效、天生不走 read，用「读了几次」排序等于系统性把红线排到后面
+            //（2026-10-28 加使用证据时漏了这层）。它们与「真被用过」的条目同级，层内再比。
+            it.memory.type == MemoryType.IDENTITY || it.usageCount >= VERIFIED_USAGE_THRESHOLD
+        }
+
+    /** 注入清单条数上限，供 stats 等只读展示引用，避免两处写死不一致。 */
+    fun injectedMemoryLimit(): Int = MAX_INJECTED_MEMORIES
 
     /**
      * 短期记忆是否已过期。取不到过期时间时视为永久——宁可多注入也不能把长期知识误判成过期。

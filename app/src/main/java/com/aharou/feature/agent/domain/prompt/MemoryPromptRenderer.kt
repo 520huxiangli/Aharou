@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.memory.isCoreArchiveName
+import com.aharou.feature.agent.domain.memory.isProtectedIdentityName
 
 internal object MemoryPromptRenderer {
     const val MAX_INDEX_CHARS = 8_000
@@ -70,9 +71,12 @@ internal object MemoryPromptRenderer {
         val blocks = mutableListOf<String>()
         val inlined = mutableListOf<Memory>()
         val squeezed = mutableListOf<SqueezedInline>()
+        // 保护名单（行为红线）先占位：它们是安全网，一旦被知识类条目挤出去就等于没定。
+        // 不改总量预算，只调整「谁先塞」的顺序。
+        val ordered = memories.sortedByDescending { isProtectedIdentityName(it.name) }
         // 累计长度按拼接后的实际字符数算（含块间空行），与原先 buildString 的 length 同一口径。
         var length = 0
-        for (memory in memories) {
+        for (memory in ordered) {
             if (!shouldInline(memory)) continue
             val body = inlineBody(memory)
             if (body.length > MAX_INLINE_ENTRY_CHARS) {
@@ -184,6 +188,17 @@ internal object MemoryPromptRenderer {
         if (body.isNotEmpty()) append('\n').append(body)
     }
 
+    /**
+     * 索引行显示的摘要：description 为空时用正文首行兜底。
+     *
+     * 写入时漏一个字段就让整条记忆永久隐形，代价太大；首行截断已经足够让人判断要不要 read。
+     */
+    private fun indexDescription(memory: Memory): String {
+        if (memory.description.isNotBlank()) return memory.description
+        val line = memory.content.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() } ?: return "无"
+        return if (line.length <= 60) line else line.take(60) + "…"
+    }
+
     private fun renderIndex(memories: List<Memory>, longBodies: Set<String>): String {
         if (memories.isEmpty()) return ""
         val full = renderSelected(memories, longBodies)
@@ -208,7 +223,7 @@ internal object MemoryPromptRenderer {
             if (isNotEmpty()) append("\n\n")
             append(if (scope == MemoryScope.GLOBAL) GLOBAL_HEADER else PROJECT_HEADER)
             scoped.forEach {
-                append("\n- ${SecretMasker.mask(TextSanitizer.sanitize(it.name))}: ${SecretMasker.mask(TextSanitizer.sanitize(it.description.ifBlank { "无" }))}${pendingLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
+                append("\n- ${SecretMasker.mask(TextSanitizer.sanitize(it.name))}: ${SecretMasker.mask(TextSanitizer.sanitize(indexDescription(it)))}${pendingLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
             }
         }
     }

@@ -404,6 +404,7 @@ class MemoryTool @Inject constructor(
                 if (neverUsed.size > 30) append("\n…其余 ${neverUsed.size - 30} 条未列出")
             }
             append(inlineBudgetSection(projectRoot))
+            append(injectListSection(projectRoot))
         }
         return ToolResult.Success(JsonPrimitive(text))
     }
@@ -415,6 +416,21 @@ class MemoryTool @Inject constructor(
      * 切分逻辑与两个上限常量全部复用 [MemoryPromptRenderer.inlineBudgetReport]，两边口径锁在一处。
      * 注入侧总是全局 + 项目一起排序、共用一份预算，所以这里不受 scope 参数影响。
      */
+    /**
+     * 本轮注入清单：全库几百条里只有前 N 条进了提示词，但以前只列「被挤出的」，看不到「入选的是谁」，
+     * 排查「某条为什么没生效」只能靠反推。
+     */
+    private fun injectListSection(projectRoot: String?): String {
+        val injected = memoryRepository.listMemoriesForPrompt(projectRoot)
+        if (injected.isEmpty()) return ""
+        val globalCount = injected.count { it.scope == MemoryScope.GLOBAL }
+        return buildString {
+            append("\n\n注入清单（上限 ${memoryRepository.injectedMemoryLimit()} 条）：实际 ${injected.size} 条")
+            append("（全局 $globalCount / 项目 ${injected.size - globalCount}）。")
+            append("\n入选：${injected.joinToString("、") { it.name }}")
+        }
+    }
+
     private fun inlineBudgetSection(projectRoot: String?): String {
         val report = MemoryPromptRenderer.inlineBudgetReport(
             // 统计要看全部候选，不能被注入上限截断：截断后口径会变成「前 60 条里有多少 identity」。
