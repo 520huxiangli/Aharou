@@ -184,6 +184,9 @@ private fun RecallRow(hit: MemoryRecallHit) {
             if (!hit.matched) {
                 RecallFieldLabel(stringResource(R.string.memory_recall_field_none), hit = false)
             }
+            if (hit.inlined) {
+                RecallFieldLabel(stringResource(R.string.memory_recall_field_inlined), hit = true)
+            }
         }
     }
 }

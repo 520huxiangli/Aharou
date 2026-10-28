@@ -5,6 +5,7 @@ import com.aharou.feature.agent.domain.memory.MemoryArchiveInfo
 import com.aharou.feature.agent.domain.memory.MemoryCompactReport
 import com.aharou.feature.agent.domain.memory.MemoryCompactor
 import com.aharou.feature.agent.domain.memory.MemoryDistiller
+import com.aharou.feature.agent.domain.prompt.MemoryPromptRenderer
 import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
@@ -38,6 +39,8 @@ data class MemoryRecallHit(
     val hitKeywords: Boolean,
     val hitName: Boolean,
     val hitDescription: Boolean,
+    /** 这条会不会连正文一起进常驻段（只有 identity 才会，且受 900/3000 预算约束）。 */
+    val inlined: Boolean = false,
 ) {
     val matched: Boolean get() = hitKeywords || hitName || hitDescription
 }
@@ -200,6 +203,9 @@ class MemorySettingsController @Inject constructor(
         }.getOrDefault(MemoryCompactReport())
         _compacting.value = false
         _compactResult.value = report
+        // 顺手清理归档：用户点「整理记忆」时也是想把堆积收一收（归档只写不删会一直涨）。
+        runCatching { memoryRepository.pruneArchive(MemoryScope.GLOBAL, null) }
+        projectRoot?.let { runCatching { memoryRepository.pruneArchive(MemoryScope.PROJECT, it) } }
         refresh()
     }
 
@@ -238,6 +244,10 @@ class MemorySettingsController @Inject constructor(
         val hits = withContext(Dispatchers.IO) {
             runCatching {
                 val normalized = trimmed.lowercase()
+                // 常驻判定用完整候选算（不能被清单上限截断），与注入侧同一套预算口径。
+                val inlinedNames = MemoryPromptRenderer.inlineBudgetReport(
+                    memoryRepository.listMemoriesForPrompt(projectRoot, trimmed, limit = Int.MAX_VALUE)
+                ).inlined.toSet()
                 memoryRepository.listMemoriesForPrompt(projectRoot, trimmed)
                     .take(RECALL_DISPLAY_LIMIT)
                     .map { memory ->
@@ -249,6 +259,7 @@ class MemorySettingsController @Inject constructor(
                             hitName = memoryRepository.termsOf(memory.name).any { it in normalized },
                             hitDescription = memoryRepository.termsOf(memory.description)
                                 .any { it in normalized },
+                            inlined = memory.name in inlinedNames,
                         )
                     }
             }.getOrDefault(emptyList())

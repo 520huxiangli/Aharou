@@ -62,7 +62,11 @@ class MemoryDistiller @Inject constructor(
         migrateLegacySection()
 
         val source = memoryStore.collectDistillSource(since = last, maxChars = MAX_SOURCE_CHARS)
-        if (source.isBlank()) return false
+        if (source.isBlank()) {
+            // 之前这里静默返回，导致「蒸馏从未产出」无法区分是没跑、还是没素材可蒸。
+            FileLogger.i(TAG, "蒸馏跳过：自上次以来没有新的可蒸馏素材（last=${'$'}{if (last > 0L) last else 0L}）")
+            return false
+        }
 
         val systemPrompt = runCatching { promptProvider.resolvePrompt(PROMPT_FILE) }.getOrNull()
         if (systemPrompt.isNullOrBlank()) {

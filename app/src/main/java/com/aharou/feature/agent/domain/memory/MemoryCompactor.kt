@@ -132,7 +132,10 @@ class MemoryCompactor @Inject constructor(
         val now = System.currentTimeMillis()
         val items = memoryRepository.listMemories(projectRoot)
             .filter { it.scope == scope && !it.pending }
-            .filter { it.type != MemoryType.IDENTITY }
+            // 只归档一次性事件。原先对所有非 identity 类型都按「90 天没被 read」归档，但清单上限只有
+            // 60 条、正文只有 identity 内联，绝大多数条目根本没机会被读——用「没被 read」当冷热判据
+            // 会系统性误删知识（小染实测全库 1373 条，96% 从未进过清单）。
+            .filter { it.type == MemoryType.EVENT }
             .filterNot { isCoreArchiveName(it.name) }
         val cold = items.filter { isCold(it, scope, now) }
         if (cold.isEmpty()) return@runCatching MemoryForgetReport(scanned = items.size)

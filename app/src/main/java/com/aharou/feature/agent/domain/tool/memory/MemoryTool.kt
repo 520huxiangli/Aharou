@@ -68,6 +68,9 @@ class MemoryTool @Inject constructor(
         /** `stats` 里「被预算挤出」与「不走预算」的 identity 条目最多列多少条。 */
         private const val STATS_LIST_LIMIT = 30
 
+        /** 记忆总量软阀值：超过就在 stats 里提醒——写再多清单也装不下。 */
+        private const val MEMORY_COUNT_SOFT_LIMIT = 800
+
         /** 乐观锁冲突的错误码：模型据此判定「我该合并后重试」而不是「写入坏了」。 */
         const val VERSION_CONFLICT_CODE = "MEMORY_VERSION_CONFLICT"
     }
@@ -398,6 +401,10 @@ class MemoryTool @Inject constructor(
         }
         val text = buildString {
             append("记忆使用统计：共 ${memories.size} 条，从未被 read 的 ${neverUsed.size} 条，$STALE_DAYS 天未读的 ${stale.size} 条。")
+            if (memories.size > MEMORY_COUNT_SOFT_LIMIT) {
+                append("\n提示：记忆已 ${memories.size} 条（软阀值 $MEMORY_COUNT_SOFT_LIMIT），而每轮清单上限只有 ${memoryRepository.injectedMemoryLimit()} 条")
+                append("——大部分条目只占存储、不进上下文。建议把一次性内容写成 event（完全不进提示词），定期清理过期条目。")
+            }
             if (neverUsed.isNotEmpty()) {
                 append("\n\n从未取用（归档候选，最多列 30 条）：")
                 neverUsed.take(30).forEach { append("\n- ${it.name}（${it.scope.name.lowercase()}/${it.type.key}）") }
@@ -423,11 +430,15 @@ class MemoryTool @Inject constructor(
     private fun injectListSection(projectRoot: String?): String {
         val injected = memoryRepository.listMemoriesForPrompt(projectRoot)
         if (injected.isEmpty()) return ""
+        val total = memoryRepository.listMemories(projectRoot).size
         val globalCount = injected.count { it.scope == MemoryScope.GLOBAL }
+        val byType = injected.groupingBy { it.type.key }.eachCount()
+            .entries.joinToString("、") { "${it.key} ${it.value}" }
         return buildString {
             append("\n\n注入清单（上限 ${memoryRepository.injectedMemoryLimit()} 条）：实际 ${injected.size} 条")
-            append("（全局 $globalCount / 项目 ${injected.size - globalCount}）。")
+            append("（全局 $globalCount / 项目 ${injected.size - globalCount}；$byType）。")
             append("\n入选：${injected.joinToString("、") { it.name }}")
+            append("\n未入选：${(total - injected.size).coerceAtLeast(0)} 条——这些连清单都进不去，只能靠 memory search 取回。")
         }
     }
 
@@ -477,7 +488,8 @@ class MemoryTool @Inject constructor(
         if (name.isNullOrEmpty()) return ToolResult.Error("undo 操作需要 name 参数", "MISSING_NAME")
         val restored = memoryRepository.restoreLatestArchive(name, scope, projectRoot)
             ?: return ToolResult.Error("「$name」没有可回滚的归档快照（或恢复失败）", "UNDO_UNAVAILABLE")
-        return ToolResult.Success(JsonPrimitive("已把「$name」回滚到最近一次归档（$restored）。"))
+        return ToolResult.Success(JsonPrimitive("已把「$name」回滚到最近一次归档（$restored）。" +
+            "本次只反滚这一个文件，同名条目的其它归档快照仍保留（要更早的版本就在归档列表里选）。"))
     }
 
     private fun handleRead(name: String?, scope: MemoryScope?, projectRoot: String?): ToolResult {

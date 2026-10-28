@@ -2975,6 +2975,7 @@
     <string name="memory_recall_field_name">name</string>
     <string name="memory_recall_field_description">summary</string>
     <string name="memory_recall_field_none">no field hit</string>
+    <string name="memory_recall_field_inlined">in prompt</string>
     <string name="memory_recall_no_hit">Nothing matched this input. Check whether the related memories mention the key entities from your input (domain, module name, proper noun) in their summary or keywords; without them the entry cannot rank high when injecting.</string>
     <string name="memory_recall_no_memory">No memory entries would be injected right now. Create one in the memory list and test again.</string>
     <string name="prompts_title">Prompts</string>

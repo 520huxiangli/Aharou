@@ -183,6 +183,9 @@ interface MemorySource {
      */
     val root: File? get() = null
 
+    /** 清理归档目录，返回删除的文件数。默认不处理，由具体数据源覆写。 */
+    fun pruneArchive(keepDays: Int = 30, keepFiles: Int = 300): Int = 0
+
     /** 归档目录下的旧版本，最新在前。 */
     fun listArchive(): List<MemoryArchiveInfo> {
         val dir = root?.let { File(it, ARCHIVE_DIR) } ?: return emptyList()
@@ -265,6 +268,25 @@ interface MemorySource {
 
         /** 归档子目录名。放在记忆根目录下，天然被 [listMemories] 的顶层扫描排除。 */
         const val ARCHIVE_DIR = "archive"
+
+        /**
+         * 归档清理：archive/ 以前只写不删，实测项目级已堆到 1250 个文件 / 8.4MB。
+         *
+         * 只删「既超过 [keepDays] 天、又超出最近 [keepFiles] 个」的文件：归档是后悔药，
+         * 把近期的删了等于没有后悔药；两个条件同时满足才动。
+         */
+        fun pruneArchive(root: File, keepDays: Int = 30, keepFiles: Int = 300): Int =
+            synchronized(MemoryFileStorage.lock) {
+                val dir = archiveDir(root, mkdirs = false) ?: return@synchronized 0
+                val files = dir.listFiles()?.filter { it.isFile }?.sortedByDescending { it.lastModified() }
+                    ?: return@synchronized 0
+                val cutoff = System.currentTimeMillis() - keepDays * 24L * 60L * 60L * 1_000L
+                var removed = 0
+                files.forEachIndexed { index, file ->
+                    if (index >= keepFiles && file.lastModified() < cutoff && file.delete()) removed++
+                }
+                removed
+            }
 
         /** 归档目录；[mkdirs] 为 true 时尝试创建，创建失败返回 null。 */
         private fun archiveDir(root: File, mkdirs: Boolean = false): File? {

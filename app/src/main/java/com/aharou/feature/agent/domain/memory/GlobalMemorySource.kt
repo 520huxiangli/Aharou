@@ -15,6 +15,9 @@ class GlobalMemorySource @Inject constructor(
     /** 这里不用 [memoryRoot]（它会 mkdirs）：UI 只是看看目录在不在，不该因为列一次归档就把目录建出来。 */
     override val root: File? get() = memoryStore.dir
 
+    override fun pruneArchive(keepDays: Int, keepFiles: Int): Int =
+        MemorySource.pruneArchive(memoryRoot, keepDays, keepFiles)
+
     override fun listMemories(): List<Memory> {
         if (!memoryRoot.exists()) return emptyList()
         val files = memoryRoot.listFiles { file -> file.isFile && file.extension == "md" } ?: return emptyList()

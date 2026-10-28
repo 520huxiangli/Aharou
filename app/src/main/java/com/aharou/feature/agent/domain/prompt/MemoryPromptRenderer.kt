@@ -74,6 +74,11 @@ internal object MemoryPromptRenderer {
         // 保护名单（行为红线）先占位：它们是安全网，一旦被知识类条目挤出去就等于没定。
         // 不改总量预算，只调整「谁先塞」的顺序。
         val ordered = memories.sortedByDescending { isProtectedIdentityName(it.name) }
+        // 作用域上限：全局与项目共用 3000，一方写太多会把另一方挤到一条不剩。
+        // 单个作用域最多占 2/3，保证另一方至少还有 1/3 可用（全占满也行，但不靠运气）。
+        val scopeCap = MAX_INLINE_CHARS * 2 / 3
+        var globalChars = 0
+        var projectChars = 0
         // 累计长度按拼接后的实际字符数算（含块间空行），与原先 buildString 的 length 同一口径。
         var length = 0
         for (memory in ordered) {
@@ -84,10 +89,13 @@ internal object MemoryPromptRenderer {
                 continue
             }
             val block = inlineBlock(memory, body)
-            if (length + block.length > MAX_INLINE_CHARS) {
+            if (length + block.length > MAX_INLINE_CHARS ||
+                (if (memory.scope == MemoryScope.GLOBAL) globalChars else projectChars) + block.length > scopeCap
+            ) {
                 squeezed += SqueezedInline(memory, InlineSkipReason.BUDGET_FULL, body.length)
                 continue
             }
+            if (memory.scope == MemoryScope.GLOBAL) globalChars += block.length else projectChars += block.length
             if (blocks.isNotEmpty()) length += 2
             length += block.length
             blocks += block

@@ -32,6 +32,9 @@ class ProjectMemorySource(
 
     override val root: File? get() = if (projectRoot.isBlank()) null else memoryRoot
 
+    override fun pruneArchive(keepDays: Int, keepFiles: Int): Int =
+        MemorySource.pruneArchive(memoryRoot, keepDays, keepFiles)
+
     override fun listMemories(): List<Memory> {
         if (projectRoot.isBlank() || !memoryRoot.exists()) return emptyList()
         val files = memoryRoot.listFiles { file -> file.isFile && file.extension == "md" } ?: return emptyList()

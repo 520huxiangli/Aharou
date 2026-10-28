@@ -113,7 +113,13 @@ class MemoryRepository @Inject constructor(
                     .thenByDescending { it.memory.file?.lastModified() ?: 0L }
                     .thenBy { it.memory.name.lowercase() }
             )
-            .take(limit)
+            // 清单按类型配额：identity 先占名额，剩下的给其他类型。
+            // 否则 60 条会被「用过的事实」占满，红线一条都进不来（全库上千条时这一步才真正生效）。
+            .let { ranked ->
+                val identities = ranked.filter { it.memory.type == MemoryType.IDENTITY }.take(limit)
+                val others = ranked.filterNot { it.memory.type == MemoryType.IDENTITY }
+                identities + others.take((limit - identities.size).coerceAtLeast(0))
+            }
             .map { it.memory }
     }
 
@@ -512,7 +518,8 @@ class MemoryRepository @Inject constructor(
             if (memory.type != MemoryType.WORKFLOW) return@runCatching
             writeMemory(
                 name = memory.name,
-                description = memory.description,
+                // 回升时把降级标记去掉：否则恢复成常驻后摘要里还挂着「已降级」。
+                description = memory.description.removeSuffix(DEMOTED_DESCRIPTION_LABEL).trim(),
                 content = memory.content,
                 scope = scope,
                 projectRoot = projectRoot,
@@ -588,6 +595,13 @@ class MemoryRepository @Inject constructor(
     }
 
     /** 列归档：设置页「归档」视图用。 */
+    /** 清理归档（archive/）：全局与项目各清各的，返回删除文件数。 */
+    fun pruneArchive(scope: MemoryScope, projectRoot: String?, keepDays: Int = 30, keepFiles: Int = 300): Int = when (scope) {
+        MemoryScope.GLOBAL -> globalMemorySource.pruneArchive(keepDays, keepFiles)
+        MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }
+            ?.let { projectSource(it).pruneArchive(keepDays, keepFiles) } ?: 0
+    }
+
     fun listArchive(scope: MemoryScope, projectRoot: String?): List<MemoryArchiveInfo> = when (scope) {
         MemoryScope.GLOBAL -> globalMemorySource.listArchive()
         MemoryScope.PROJECT -> projectRoot?.takeIf { it.isNotBlank() }

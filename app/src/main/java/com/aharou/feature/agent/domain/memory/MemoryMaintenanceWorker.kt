@@ -45,6 +45,9 @@ class MemoryMaintenanceWorker(
             .onFailure { FileLogger.w(TAG, "全局降级失败：${it.message}") }
         runCatching { compactor.compactIfDue(null, MemoryScope.GLOBAL) }
             .onFailure { FileLogger.w(TAG, "全局整理失败：${it.message}") }
+        // 归档只写不删会一直堆积（实测项目级已 1250 个文件），每日顺手清一次。
+        runCatching { entryPoint.memoryRepository().pruneArchive(MemoryScope.GLOBAL, null) }
+            .onFailure { FileLogger.w(TAG, "全局归档清理失败：${it.message}") }
 
         val roots = runCatching {
             entryPoint.workspaceRepository().workspaces.value.map { it.path }
@@ -58,6 +61,8 @@ class MemoryMaintenanceWorker(
                 .onFailure { FileLogger.w(TAG, "工作区降级失败（$root）：${it.message}") }
             runCatching { compactor.compactIfDue(root, MemoryScope.PROJECT) }
                 .onFailure { FileLogger.w(TAG, "工作区整理失败（$root）：${it.message}") }
+            runCatching { entryPoint.memoryRepository().pruneArchive(MemoryScope.PROJECT, root) }
+                .onFailure { FileLogger.w(TAG, "工作区归档清理失败（$root）：${it.message}") }
         }
         return Result.success()
     }
@@ -69,6 +74,7 @@ class MemoryMaintenanceWorker(
 interface MemoryMaintenanceEntryPoint {
     fun memoryCompactor(): MemoryCompactor
     fun workspaceRepository(): WorkspaceRepository
+    fun memoryRepository(): MemoryRepository
 }
 
 /** 按天排定记忆维护任务；重复调用不会重置周期（KEEP）。 */

@@ -2973,6 +2973,7 @@
     <string name="memory_recall_field_name">名称</string>
     <string name="memory_recall_field_description">摘要</string>
     <string name="memory_recall_field_none">未命中字段</string>
+    <string name="memory_recall_field_inlined">正文常驻</string>
     <string name="memory_recall_no_hit">这句话没有命中任何记忆。检查相关记忆的摘要或关键词里，是否写了这句输入中的关键实体（域名、模块名、专有名词）；这些字段没写，注入时就排不到前面。</string>
     <string name="memory_recall_no_memory">当前没有任何会注入的记忆条目，先在记忆列表里新建一条再测。</string>
     <string name="prompts_title">提示词</string>
