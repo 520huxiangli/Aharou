@@ -120,6 +120,9 @@ class StreamableHttpTransport(
         sessionId = null
     }
 
+    /** HTTP 是无状态的：close() 只是清 sessionId，下次请求会重新协商。 */
+    override val isOpen: Boolean get() = true
+
     /** 把 OkHttp 的异步回调桥接成可取消的挂起调用；调用方取消时 cancel 掉 call。 */
     private suspend fun awaitCall(call: Call): Response = suspendCancellableCoroutine { cont ->
         cont.invokeOnCancellation { call.cancel() }

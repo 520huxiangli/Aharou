@@ -29,7 +29,9 @@ class McpClient(
 
     @Volatile
     var tools: List<McpToolDescriptor> = emptyList()
-        private set
+
+    /** 底层传输是否还可用。工具重连时靠它判断「表里挂着但已死」的连接。 */
+    val isOpen: Boolean get() = transport.isOpen
 
     /** 完整握手：initialize → initialized 通知 → tools/list。返回拿到的工具数。 */
     suspend fun connect(): Int {

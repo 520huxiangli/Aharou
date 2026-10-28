@@ -136,6 +136,9 @@ class StdioTransport(
             .onFailure { FileLogger.w(TAG, "[$serverName] onClosed 回调异常: ${it.message}") }
     }
 
+    /** 传输是否可用：空闲回收 / 进程退出后为 false，管理层据此识别死连接。 */
+    override val isOpen: Boolean get() = !closed
+
     override fun close() {
         if (closed) return
         closed = true

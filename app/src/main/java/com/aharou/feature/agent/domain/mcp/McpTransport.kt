@@ -22,6 +22,14 @@ interface McpTransport {
     fun close()
 
     /**
+     * 传输当前是否可用。`close()` 之后为 false，stdio 进程退出 / 管道断开后也应为 false。
+     *
+     * 管理层靠它识别「还挂在表里但已死」的连接：只靠引用相等会把死连接当成活的重用，
+     * 表现就是工具调用一律报 transport 已关闭。
+     */
+    val isOpen: Boolean get() = true
+
+    /**
      * 这条传输是否仍然可用。默认 true（HTTP 传输不做廉价存活判定）；
      * stdio 实现按子进程存活返回 false，供管理层在进程死亡后摘除死连接。
      */

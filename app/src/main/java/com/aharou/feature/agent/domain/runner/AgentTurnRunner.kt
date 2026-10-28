@@ -224,8 +224,13 @@ class AgentTurnRunner @Inject constructor(
         val isSub = sessionEntity?.parentId != null
 
         // 工作区：名称 + 路径一起给模型——`~/workspace` 是每个工作区都有的别名，光看它认不出是哪个仓库。
-        // 上一轮与本轮不是同一个（本会话中途切了区）时把旧的那个带进上下文，由系统提示追加一段切换提醒。
-        val workspace = turn.projectRoot.takeIf { it.isNotBlank() }?.let(::workspaceRef)
+        // 调用方没给 projectRoot 时回退到会话绑定的工作区、再回退全局当前值：
+        // ask_ai 这类投递不带 projectRoot，而工具执行用的是全局当前工作区，两边不一致会让
+        // 系统提示说「未选择工作区」、命令却落在远程容器里。
+        val effectiveProjectRoot = turn.projectRoot.takeIf { it.isNotBlank() }
+            ?: sessionDomain?.workspacePath?.takeIf { it.isNotBlank() }
+            ?: workspaceRepository.current.value?.path.orEmpty()
+        val workspace = effectiveProjectRoot.takeIf { it.isNotBlank() }?.let(::workspaceRef)
         val previousWorkspace = workspace?.let { lastWorkspaceBySession.put(sessionId, it) }
         val switchedFrom =
             if (workspace != null && previousWorkspace != null && previousWorkspace.path != workspace.path) {
@@ -242,7 +247,7 @@ class AgentTurnRunner @Inject constructor(
         val agentContext = AgentContext(
             currentFile = turn.currentFile,
             selectedCode = turn.selectedCode,
-            projectRoot = turn.projectRoot,
+            projectRoot = effectiveProjectRoot,
             language = turn.currentFile?.let { detectLanguage(it) },
             history = history,
             currentUserText = turn.text,

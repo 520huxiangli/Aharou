@@ -547,8 +547,14 @@ class McpManager @Inject constructor(
     /** 连接被空闲回收后按需重连，供工具调用失败时重试。 */
     private suspend fun ensureClient(workspacePath: String, serverName: String): McpClient? =
         reloadMutex.withLock {
-            synchronized(runtimes) { runtimes[workspacePath]?.clients?.get(serverName) }
-                ?.let { return@withLock it }
+            // 表里挂着但传输已断的连接（进程退出 / 空闲回收）不能直接返回：
+            // 返回死连接会让工具重连变成空转，调用侧只能拿到「transport 已关闭」。
+            val existing = synchronized(runtimes) { runtimes[workspacePath]?.clients?.get(serverName) }
+            if (existing != null && existing.isOpen) return@withLock existing
+            if (existing != null) {
+                FileLogger.i(TAG, "[$serverName] 表中的连接已失效，丢弃后重连（工作区 $workspacePath）")
+                synchronized(runtimes) { runtimes[workspacePath]?.clients?.remove(serverName) }
+            }
             val cfg = runCatching { configRepository.getEffectiveServersFor(workspacePath) }
                 .getOrNull()?.firstOrNull { it.name == serverName && it.enabled }
                 ?: return@withLock null
