@@ -468,7 +468,7 @@ class MemoryTool @Inject constructor(
         if (name.isNullOrEmpty()) return ToolResult.Error("read 操作需要 name 参数", "MISSING_NAME")
         val memory = memoryRepository.findMemory(name, projectRoot, scope)
             ?: return ToolResult.Error("未找到记忆「$name」", "MEMORY_NOT_FOUND")
-        memoryRepository.recordUsage(memory.name, memory.scope)
+        memoryRepository.recordUsage(memory.name, memory.scope, projectRoot)
         val notice = if (memory.pending) "待确认：此条记忆存在冲突，未经用户确认不得作为已确认约定或自动裁决。\n\n" else ""
         return ToolResult.Success(JsonPrimitive(notice + versionHeader(memory.version) + memory.content))
     }

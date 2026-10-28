@@ -54,6 +54,12 @@ class MemoryUsageStore @Inject constructor(
         entries[key(scope, name)]?.count ?: 0
     }
 
+    /** 删除某条记录（自动降级标记在回升后要作废，否则会被重复当成待恢复）。 */
+    fun clear(scope: String, name: String) = synchronized(lock) {
+        ensureLoaded()
+        if (entries.remove(key(scope, name)) != null) persist()
+    }
+
     private fun key(scope: String, name: String) = "${scope.lowercase()}:${name.lowercase()}"
 
     private fun ensureLoaded() {

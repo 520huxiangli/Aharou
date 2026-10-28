@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
 import com.aharou.core.memory.MemoryUsageStore
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.workspace.domain.ProjectAharouRoot
@@ -94,17 +95,37 @@ class MemoryRepository @Inject constructor(
             .let { candidates ->
                 val frequencies = documentFrequencies(candidates)
                 candidates.map { memory ->
-                    memory to relevanceScore(memory, normalizedQuery, candidates.size, frequencies)
+                    val usageCount = memoryUsageStore.useCount(memory.scope.name, memory.name)
+                    val lastUsed = memoryUsageStore.lastUsedAt(memory.scope.name, memory.name)
+                    PromptCandidate(memory, relevanceScore(memory, normalizedQuery, candidates.size, frequencies), usageCount, lastUsed)
                 }
             }
+            // 排序目标不是「写得好看」而是「真用得上的先占位」：先看这条过去被取用过没有，
+            // 用过的（≥2 次）整体优先，再在层内按相关度、次数、最近使用与修改时间排。
+            // 否则常驻预算会被「写的时候觉得重要」但从未被读过的条目占满，真正常用的反而被挤回索引。
             .sortedWith(
-                compareByDescending<Pair<Memory, Double>> { it.second }
-                    .thenByDescending { it.first.file?.lastModified() ?: 0L }
-                    .thenBy { it.first.name.lowercase() }
+                compareByVerifiedUsage()
+                    .thenByDescending { it.relevance }
+                    .thenByDescending { it.usageCount }
+                    .thenByDescending { it.lastUsedAt }
+                    .thenByDescending { it.memory.file?.lastModified() ?: 0L }
+                    .thenBy { it.memory.name.lowercase() }
             )
             .take(limit)
-            .map { it.first }
+            .map { it.memory }
     }
+
+    /** 注入候选：一条记忆 + 它的相关度与使用证据（次数/最近一次）。 */
+    private class PromptCandidate(
+        val memory: Memory,
+        val relevance: Double,
+        val usageCount: Int,
+        val lastUsedAt: Long,
+    )
+
+    /** 真正被取用过（≥2 次）的条目整体排在前面：一次可能是偶然，两次开始算「常用」。 */
+    private fun compareByVerifiedUsage(): Comparator<PromptCandidate> =
+        compareByDescending { it.usageCount >= VERIFIED_USAGE_THRESHOLD }
 
     /**
      * 短期记忆是否已过期。取不到过期时间时视为永久——宁可多注入也不能把长期知识误判成过期。
@@ -334,6 +355,12 @@ class MemoryRepository @Inject constructor(
         /** 注入清单的条数上限。超出的条目只是不进提示词，文件仍在，模型仍可 read / edit / delete。 */
         const val MAX_INJECTED_MEMORIES = 60
 
+        /** 自动降级标记落在用量存储的这个作用域下，与真实使用记录分开。 */
+        private const val DEMOTED_SCOPE = "auto-demoted"
+
+        /** 视为「常用」的取用次数下限：一次可能是偶然，两次开始算真在用。 */
+        private const val VERIFIED_USAGE_THRESHOLD = 2
+
         /** 遗忘阈值（天）：超过这么久没改动的普通条目不再注入。 */
         const val STALE_MEMORY_DAYS = 180L
 
@@ -466,8 +493,33 @@ class MemoryRepository @Inject constructor(
     }
 
     /** 记一次记忆取用（read 成功时调用）：遗忘判定与「这条到底用过没」的事实依据。 */
-    fun recordUsage(name: String, scope: MemoryScope) {
+    fun recordUsage(name: String, scope: MemoryScope, projectRoot: String? = null) {
         runCatching { memoryUsageStore.record(scope.name, name) }
+        // 被自动降级过的条目一旦真被取用，就恢复常驻资格：
+        // 否则降级后越冷越没人读，永远回不来（小染指出的死亡螺旋）。
+        runCatching {
+            if (memoryUsageStore.useCount(DEMOTED_SCOPE, name) <= 0) return@runCatching
+            val memory = existingMemoryOf(name, scope, projectRoot) ?: return@runCatching
+            if (memory.type != MemoryType.WORKFLOW) return@runCatching
+            writeMemory(
+                name = memory.name,
+                description = memory.description,
+                content = memory.content,
+                scope = scope,
+                projectRoot = projectRoot,
+                type = MemoryType.IDENTITY,
+                expiresAt = memory.expiresAt,
+                pending = memory.pending,
+                keywords = memory.keywords,
+            )
+            memoryUsageStore.clear(DEMOTED_SCOPE, name)
+            FileLogger.i("MemoryRepository", "恢复常驻：$name（降级后被取用过）")
+        }
+    }
+
+    /** 标记「这条是被自动降级的」，供回升与留痕使用。 */
+    fun markAutoDemoted(name: String) {
+        runCatching { memoryUsageStore.record(DEMOTED_SCOPE, name) }
     }
 
     /** 已存在条目的分类；不存在时返回 null（新建交给 MemoryParser 的启发式推断）。 */

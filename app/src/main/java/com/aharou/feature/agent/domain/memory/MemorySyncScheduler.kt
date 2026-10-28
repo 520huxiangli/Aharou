@@ -25,6 +25,7 @@ import javax.inject.Singleton
 class MemorySyncScheduler @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val settings: MemorySyncSettings,
+    private val memoryMaintenanceScheduler: MemoryMaintenanceScheduler,
 ) {
 
     /**
@@ -38,6 +39,8 @@ class MemorySyncScheduler @Inject constructor(
      *   重启得勤的时候任务永远等不到下一次到期。
      */
     fun apply(force: Boolean = false) {
+        // 记忆维护（遗忘 + 整理）与同步开关无关：哪怕不开同步，也得按天整理一次。
+        memoryMaintenanceScheduler.ensureScheduled()
         if (!enabled()) {
             FileLogger.i(TAG, "调度：不满足入队条件（auto=${settings.autoSync} urlFilled=${settings.repoUrl.isNotBlank()}），撤销周期任务")
             WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
