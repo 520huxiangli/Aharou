@@ -34,6 +34,33 @@ if [ "${AHAROU_CI_BUILD:-0}" != "1" ]; then
     echo "[拒绝] 该授权已超过 30 分钟（at: $_at），请重新取得主人确认。" >&2
     exit 1
   fi
+  # 关键词门槛：quote 必须是明确指向编译的话术。挡的是「把主人对别的事说的『可以』当授权」
+  # （实际发生过：把「a，b，c」当成编译许可就起了构建）。
+  _quote=$(sed -n 's/^quote: *//p' "$_gate" | head -1)
+  case "$_quote" in
+    *编*|*build*|*BUILD*|*Build*|*打包*|*APK*|*apk*|*出包*) ;;
+    *)
+      echo "[拒绝] 授权话术里没有编译意图（quote: $_quote）。请让主人明说「编译 / 打包 / 出包」后再写令牌。" >&2
+      exit 1
+      ;;
+  esac
+  # commit 绑定：授权时记的 HEAD 与当前不一致就拒（批完又改了代码，旧授权自动失效）。
+  if grep -q '^commit:' "$_gate"; then
+    _want=$(sed -n 's/^commit: *//p' "$_gate" | head -1)
+    _head=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null || echo unknown)
+    if [ -n "$_want" ] && [ "$_want" != "$_head" ]; then
+      echo "[拒绝] 授权绑定 commit=$_want，当前 HEAD=$_head——代码已变，请重新确认。" >&2
+      exit 1
+    fi
+  fi
+  # 当天次数上限：频繁误批会在这里被拦住，也逼人去看审计日志。
+  _today=$(date '+%Y-%m-%d')
+  _count=$(grep -c "^\[$_today" "$_repo_dir/.aharou/build-audit.log" 2>/dev/null || true)
+  [ -n "$_count" ] || _count=0
+  if [ "$_count" -ge 20 ]; then
+    echo "[拒绝] 今日构建已达 20 次上限（见 .aharou/build-audit.log）。确认无异常后再手动豁免。" >&2
+    exit 1
+  fi
   # 审计留痕：谁批的、什么授权原话、跑了什么任务。伪造授权会在这里留下无出处的记录。
   { echo "[$(date '+%Y-%m-%d %H:%M:%S')] task=$* | $(tr '\n' ' ' < "$_gate")"; } >> "$_repo_dir/.aharou/build-audit.log" 2>/dev/null
   # 一次性令牌：消费后立即删除。旧授权留着不删，同一枚「可以」就会被之后几次构建反复借用，
