@@ -407,7 +407,14 @@ class ConfigTool @Inject constructor(
             oldDisplay = "—",
             newDisplay = preview(ConfigValue.Str(display)),
             verb = "新增",
-            risk = coll.risk,
+            // AUTO 模式下集合增删也要能自动批准：默认的 SENSITIVE 是为「改结构比改标量更敏感」
+            // 设的，但结果是一致的——用户开了 AUTO/协作，每建一条覆盖、每加一个 server 都弹窗，
+            // 远程协助时人不在手机旁就彻底卡死。仍保留敏感路径保护（api_key/token 这类照旧弹）。
+            risk = if (autoMode && !ConfigAutoApprovePolicy.isSensitivePath(basePath)) {
+                ConfigRisk.NORMAL
+            } else {
+                coll.risk
+            },
         )
         val change = PendingConfigChange(
             items = listOf(item),
@@ -447,7 +454,12 @@ class ConfigTool @Inject constructor(
             oldDisplay = preview(ConfigValue.Str(id)),
             newDisplay = "（已删除）",
             verb = "删除",
-            risk = coll.risk,
+            // 同 addChild：AUTO 模式下删集合项也不弹（否则远程协助彻底用不了）
+            risk = if (autoMode && !ConfigAutoApprovePolicy.isSensitivePath("$basePath.$id")) {
+                ConfigRisk.NORMAL
+            } else {
+                coll.risk
+            },
         )
         val change = PendingConfigChange(
             items = listOf(item),
