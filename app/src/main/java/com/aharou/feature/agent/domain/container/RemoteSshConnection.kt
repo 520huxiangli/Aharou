@@ -81,6 +81,15 @@ class RemoteSshConnection @Inject constructor(
     private var supervisorJob: Job? = null
     private var modeJob: Job? = null
 
+    /** 认证失败标记：看到它就不做快速重连，否则反复重试会触发服务器防爆破（实测被封 IP）。 */
+    @Volatile
+    private var isAuthFailure = false
+
+    private companion object {
+        /** 认证失败后的重试间隔：5 分钟，足够避开大多数 fail2ban 窗口。 */
+        const val AUTH_FAILURE_BACKOFF_MS = 5 * 60 * 1000L
+    }
+
     /**
      * 当前是否处于远程执行模式。切回本地后「断线即重连」的所有入口都要据它空转，
      * 否则 supervisor 被停掉了，网络恢复 / 回到前台仍会把 SSH 连接建回来。
@@ -261,6 +270,66 @@ class RemoteSshConnection @Inject constructor(
      * 获取独立的 SFTP client（惰性建立第二条 SSH 连接，与 exec 隔离）。调用方不应关闭它——
      * 由 [disconnect] 统一管理。连接失效（未连接/未认证）时丢弃重建，覆盖 SFTP 通道崩溃后的自愈。
      */
+    /**
+     * 回拉远端共享区的小文件到本地（远端 → 本地的增量合并）。
+     *
+     * 只推不拉会让远程模式写的信丢掉：AI 在远端改了 `~/shared/inbox/x.md`，不回拉就永远
+     * 到不了手机，App 也不会投递；而且下次连上还会被本地旧版本盖回去。
+     *
+     * 冲突取舍：本地文件较新（mtime 更新）时不覆盖，只回写远端更新或本地没有的——
+     * 没做三方合并，但不静默丢远端内容。
+     */
+    suspend fun pullSharedFiles(localRoot: java.io.File) {
+        val client = sshClient ?: return
+        val home = remoteHome ?: return
+        val remoteRoot = "${home.trimEnd('/')}/shared"
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val s = client.startSession()
+                // 只取 <=1MB 的普通文件，与推送上限一致；文件名与修改时间用 tab 分隔。
+                val cmd = s.exec(
+                    "cd ${shellQuote(remoteRoot)} 2>/dev/null || exit 0; " +
+                        "find . -type f -size -1M -printf '%T@\\t%p\\n' 2>/dev/null"
+                )
+                val listing = cmd.inputStream.bufferedReader().readText()
+                cmd.join(); s.close()
+                val sftp = sftp()
+                var pulled = 0
+                listing.lineSequence().forEach { line ->
+                    val parts = line.split('\t', limit = 2)
+                    if (parts.size != 2) return@forEach
+                    val remoteEpoch = parts[0].toDoubleOrNull()?.times(1000)?.toLong() ?: return@forEach
+                    val rel = parts[1].removePrefix("./").trim()
+                    if (rel.isEmpty() || rel.startsWith("..") || rel.contains("/../")) return@forEach
+                    val dest = java.io.File(localRoot, rel)
+                    // 本地更新就不覆盖：用户的本地编辑不该被远端旧版本冲掉。
+                    if (dest.isFile && dest.lastModified() >= remoteEpoch) return@forEach
+                    runCatching {
+                        dest.parentFile?.mkdirs()
+                        // RemoteFile 不是 InputStream，读法只能是 read(offset, buf, off, len)，
+                        // 而这里只回拉 <=1MB 的小文件，直接整块读完再写盘。
+                        val bytes = sftp.open(remoteRoot + "/" + rel).use { rf ->
+                            val buf = ByteArray(64 * 1024)
+                            val out = java.io.ByteArrayOutputStream()
+                            var offset = 0L
+                            while (true) {
+                                val n = rf.read(offset, buf, 0, buf.size)
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                offset += n
+                            }
+                            out.toByteArray()
+                        }
+                        dest.writeBytes(bytes)
+                        dest.setLastModified(remoteEpoch)
+                        pulled++
+                    }.onFailure { FileLogger.w(TAG, "回拉共享区文件失败: $rel", it) }
+                }
+                if (pulled > 0) FileLogger.i(TAG, "已从远端回拉 $pulled 个共享区文件")
+            }.onFailure { FileLogger.w(TAG, "回拉远端共享区失败", it) }
+        }
+    }
+
     suspend fun sftp(): SFTPClient = sftpLock.withLock {
         val cfg = config ?: throw IllegalStateException("SSH 未配置")
         sftpClient
@@ -301,6 +370,9 @@ class RemoteSshConnection @Inject constructor(
             throw e
         } catch (e: Exception) {
             FileLogger.w(TAG, "SSH 重连失败（前台触发）", e)
+            // 认证类失败单独记：反复重试会触发服务器防爆破，比「连不上」严重得多。
+            isAuthFailure = friendlySshError(e).contains("认证", ignoreCase = true) ||
+                e.message?.contains("auth", ignoreCase = true) == true
             _connectionState.value = ConnectionState.FAILED
             false
         }
@@ -355,12 +427,19 @@ class RemoteSshConnection @Inject constructor(
                     continue
                 }
                 // 连接已断，尝试重连
-                tryReconnectIfDisconnected()
-                // 重连失败后指数退避
-                if (!isConnected()) {
+                val ok = tryReconnectIfDisconnected()
+                // 认证失败单独长退避：密码错/账号改了时反复重连会触发服务器防爆破（fail2ban），
+                // 实测直接把手机 IP 封了。这种失败重试再快也没用，只会把事情弄得更糟。
+                val authFailed = !ok && isAuthFailure
+                if (!ok) {
+                    backoffMs = if (authFailed) {
+                        AUTH_FAILURE_BACKOFF_MS
+                    } else {
+                        (backoffMs * 2).coerceAtMost(maxBackoffMs)
+                    }
                     delay(backoffMs)
-                    backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
                 } else {
+                    isAuthFailure = false
                     backoffMs = 15000
                 }
             }

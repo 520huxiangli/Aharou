@@ -60,6 +60,9 @@ class RemoteBootstrapSync @Inject constructor(
             val sharedFiles = collectSharedFiles()
             if (sharedFiles.isNotEmpty()) connection.uploadBuiltinFiles("shared", sharedFiles, rootDir = "")
             FileLogger.i(TAG, "共享区小文件已同步 ${sharedFiles.size} 个（跳过 >1MB 的）")
+            // 推送后立即回拉：远端可能也有别人/自己新写的（信箱、待办），只推不拉会让那些内容
+            // 永远回不到手机，App 也不会投递，下次连上还会被本地旧版本盖掉。
+            sharedDir()?.let { connection.pullSharedFiles(it) }
         }.onFailure { FileLogger.w(TAG, "同步共享区到远程失败：$key", it) }
 
         synchronized(lock) { syncedKey = key }

@@ -5,7 +5,10 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
 import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.CommandEngine
+import com.aharou.feature.credentials.data.CredentialInjectSettingsRepository
+import com.aharou.feature.credentials.domain.repository.CredentialRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +55,9 @@ class RemoteSshEngine @Inject constructor(
     private val connection: RemoteSshConnection,
     private val profileResolver: ContainerProfileResolver,
     private val connectionResolver: ActiveRemoteConnectionResolver,
-    private val bootstrapSync: RemoteBootstrapSync
+    private val bootstrapSync: RemoteBootstrapSync,
+    private val credentialRepository: CredentialRepository,
+    private val injectSettings: CredentialInjectSettingsRepository
 ) : CommandEngine {
 
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -81,6 +86,30 @@ class RemoteSshEngine @Inject constructor(
         // 连上后把内置文档/子代理/团队铺到远端（同一目标只铺一次）：不铺的话远端 ~/.aharou 下
         // 只有 workspaces，AI 读不到文档、内置 Explore 子代理也不存在。
         bootstrapSync.syncIfNeeded()
+        // git 凭据：用户开了「自动注入」才铺，否则不动服务器上的任何 git 配置。
+        // 之前这条只在凭据页手动切换开关时才触发，按工作区连上（全局仍是本地）时不会同步，
+        // 远程里 `git push` 就会认证失败。
+        syncGitCredentialsIfEnabled()
+        // `~/workspace` 指向本工作区（远程路径与本地区别大，AI 习惯用这个别名）
+        projectPath?.takeIf { it.isNotBlank() }
+            ?.let { connection.remoteWorkspaceFor(it) }
+            ?.let { connection.updateWorkspaceSymlink(it) }
+    }
+
+    /** 用户为该服务器开了「自动注入」时，把 App 的 git 凭据铺到远端；关闭时什么都不做。 */
+    private suspend fun syncGitCredentialsIfEnabled() {
+        runCatching {
+            val cfg = connection.config ?: return@runCatching
+            val host = cfg.host
+            val port = cfg.port
+            val key = injectSettings.serverKey(host, port)
+            if (!injectSettings.isAutoInjectEnabled(key)) return@runCatching
+            val creds = credentialRepository.getAll().first()
+            val workspaceRoot = cfg.remoteWorkspacePath.orEmpty()
+            if (workspaceRoot.isBlank() || creds.isEmpty()) return@runCatching
+            connection.uploadGitCredentialConfig(creds, workspaceRoot)
+            FileLogger.i(TAG, "已向远程注入 ${creds.size} 条 git 凭据（$host:$port）")
+        }.onFailure { FileLogger.w(TAG, "远程 git 凭据注入失败", it) }
     }
 
     override fun runCommandStream(
@@ -272,8 +301,7 @@ class RemoteSshEngine @Inject constructor(
 
     override fun defaultShell(): String = "/bin/bash"
 
-    override suspend fun ensureInstalled() = connectMutex.withLock {
-        if (connection.isConnected()) {
+    override suspend fun ensureInstalled() = connectMutex.withLock {        if (connection.isConnected()) {
             _initProgress.value = ContainerInitState.Ready
             return@withLock
         }
