@@ -57,7 +57,14 @@ class ToolCallGuard @Inject constructor(
 
         /** 同名同参的判定与工作流里的批内去重保持一致：工具名 + 规范化后的参数对象。 */
         private fun signatureOf(toolName: String, args: Map<String, JsonElement>): String =
-            toolName + "\u0000" + JsonObject(args).toString()
+            toolName + "\u0000" + JsonObject(args.filterKeys { it != DISPLAY_ONLY_ARG }).toString()
+
+        /**
+         * 只用于展示、不参与「是否同一次调用」判定的参数。
+         * tool_title 是给人看的卡标题，换个措辞是日常行为；把它算进签名等于给守卫留一个后门
+         * （实测：三次调用只改标题就完全不触发拦截）。
+         */
+        private const val DISPLAY_ONLY_ARG = "tool_title"
     }
 
     private data class Attempt(
