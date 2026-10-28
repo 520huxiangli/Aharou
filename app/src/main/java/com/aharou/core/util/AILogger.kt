@@ -305,6 +305,8 @@ object AILogger {
 
     /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先滚动归档。 */
     private fun appendToSession(sessionId: String?, block: (Writer) -> Unit) {
+        // 日志等级为 NONE 时整体关闭：设置页把它当「关闭日志」的开关，AI 请求日志不能例外。
+        if (FileLogger.isSilenced()) return
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
         val safeId = (sessionId ?: "unknown").replace(Regex("[^A-Za-z0-9_-]"), "_")
         ioExecutor.execute {

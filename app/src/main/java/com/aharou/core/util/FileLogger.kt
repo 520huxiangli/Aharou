@@ -75,6 +75,14 @@ object FileLogger {
 
     private fun shouldLog(level: LogLevel): Boolean = level.ordinal >= minLevel.ordinal
 
+    /**
+     * 是否已整体关闭日志（NONE）。
+     *
+     * 按会话归档的 [AILogger] 沿用同一开关：两者虽然独立存储，但对用户就是一个「日志」开关，
+     * 设置页写着「NONE 关闭日志」却只关一半，用户会以为清理完就安全了。
+     */
+    fun isSilenced(): Boolean = minLevel == LogLevel.NONE
+
     /** 初始化日志目录。重复调用安全。 */
     fun init(context: Context) {
         if (logDir != null) return
