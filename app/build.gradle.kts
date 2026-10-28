@@ -9,6 +9,9 @@ plugins {
     kotlin("plugin.serialization") version "2.2.21"
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
+    // 声明本模块是 baseline profile 的被测方：插件会把 benchmark 模块产出的 profile
+    // 合入 release 构建（手写基线仍在 app/src/main/baseline-prof.txt，两者取并集）。
+    id("androidx.baselineprofile")
 }
 
 // 从本地 keystore.properties 读取 release 签名密钥（已 gitignore，不入库）。
@@ -431,6 +434,9 @@ dependencies {
 
     // Core Android
     implementation("androidx.core:core:1.16.0")
+    // Baseline Profile 安装器：把 baseline-prof.txt 编译出的热路径预编译包在安装时装上，
+    // 冷启动与首次交互的快路径直接走 AOT，不用等运行一段时间才被 JIT 暖起来。
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

@@ -1,0 +1,47 @@
+# Baseline Profile：启动热路径。
+#
+# 这里只写「启动时必然被调用、且类名/方法一定存在」的条目——手写规则不参与编译校验，
+# 写错只会静默失效，不会报错，所以宁可少写也不猜。
+#
+# 规则含义（dart 的四种标记）：
+#   H = Hot（多次调用） S = Startup（启动时调用） P = PostStartup L = Live
+#
+# 真正的 profile 应该由 macrobenchmark 在真机上跑出来后生成；这份是手写的保守版本，
+# 覆盖 Application.onCreate 里那 25 个 config 字段注册这条确定的启动热路径。
+
+# 应用入口
+HSPLcom/aharou/AIEditorApp;->onCreate()V
+
+# 配置注册表初始化与单例持有（均在 companion object 里，编译后属 ConfigRegistry$Companion）
+HSPLcom/aharou/core/config/ConfigRegistry$Companion;->init(Landroid/content/Context;)Lcom/aharou/core/config/ConfigRegistry;
+HSPLcom/aharou/core/config/ConfigRegistry$Companion;->get()Lcom/aharou/core/config/ConfigRegistry;
+
+# 主界面
+HSPLcom/aharou/MainActivity;->onCreate(Landroid/os/Bundle;)V
+
+# 启动时逐个注册的配置字段（onCreate 里串行调用，是最长的一段确定性工作）
+HSPLcom/aharou/feature/settings/data/ConfigAppFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigAppearanceFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigNetworkFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigContainerFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigProviderFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/workspace/data/ConfigRemoteFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigMemorySyncFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigModelRoleFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigEnvFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigScheduledTaskFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigMcpFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigSkillFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigSkillMarketFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigVoiceFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigChatFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/browser/data/ConfigBrowserFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/im/data/ConfigImFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigStewardFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/agent/data/ConfigSubAgentFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigExperimentFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/pet/data/ConfigPetFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/remotedevice/data/ConfigRemoteDeviceFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigCredentialFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigBackupFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
+HSPLcom/aharou/feature/settings/data/ConfigFtpFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
