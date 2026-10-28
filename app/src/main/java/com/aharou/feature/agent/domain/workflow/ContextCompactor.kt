@@ -145,8 +145,6 @@ class ContextCompactor @Inject constructor(
             "能压缩的内容都压完了，最近这段（多为刚跑完的工具输出或图片）仍然装不下。可以新建会话接着聊，或换成上下文窗口更大的模型。"
         const val OVER_BUDGET_REASON =
             "压缩后的摘要与保留内容仍装不进当前模型的输入预算。可以关掉不用的 MCP 连接器或技能，或换成上下文窗口更大的模型。"
-        const val EXHAUSTED_REASON =
-            "这段历史已经压不动了（分级裁剪后总量没降反升）。可以新建会话接着聊，或换成上下文窗口更大的模型。"
         const val ALREADY_FAILED_REASON =
             "这段历史刚压缩失败过，暂不重复尝试。过几秒会自动放开，也可以手动压缩立即再试。"
         const val TIMEOUT_REASON =
@@ -364,13 +362,6 @@ class ContextCompactor @Inject constructor(
                     if (ladder.changed && ladder.after <= ladderTarget) {
                         FileLogger.i(TAG, "分级裁剪顶替压缩：${ladder.before} → ${ladder.after} tokens（目标 $ladderTarget），${ladder.steps.joinToString(" ")}")
                         return@withTimeoutOrNull CompactionResult(ladder.messages, compacted = true)
-                    }
-                    if (ladder.after >= ladder.before) {
-                        // 裁剪后总量没降反升：可压缩空间已经挤干，再调摘要模型只会重复空转
-                        //（线上实测连续 104 次「收益不足」、token 还往上走，白烧 CPU 和额度）。
-                        FileLogger.w(TAG, "分级裁剪无收益：${ladder.before} → ${ladder.after} tokens（目标 $ladderTarget），放弃本轮压缩")
-                        onEvent(AgentEvent.CompactionFailed(EXHAUSTED_REASON))
-                        return@withTimeoutOrNull unchanged
                     }
                     FileLogger.i(TAG, "分级裁剪收益不足：${ladder.before} → ${ladder.after} tokens（目标 $ladderTarget，${ladder.steps.joinToString(" ")}），继续摘要压缩")
                 }
