@@ -228,8 +228,16 @@ class ConfigMcpFields @Inject constructor(
                     existing?.command
                 },
                 args = if (obj.containsKey("args")) {
-                    (obj["args"] as? ConfigValue.Str)?.value
-                        ?.split(' ')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                    // 兼容两种写法：字符串（空格分隔，字段说明里的口径）与数组。
+                    // 只认字符串时，模型顺手传 ["-y","pkg"] 会被静默忽略成空数组——
+                    // 于是 `npx` 不带包名直接进交互模式，表现为“启动后一直没响应”，
+                    // 极难查（2026-10-28 实测踩到）。
+                    when (val raw = obj["args"]) {
+                        is ConfigValue.Str -> raw.value.split(' ').map { it.trim() }.filter { it.isNotEmpty() }
+                        is ConfigValue.Arr -> raw.value.mapNotNull { (it as? ConfigValue.Str)?.value?.trim() }
+                            .filter { it.isNotEmpty() }
+                        else -> existing?.args.orEmpty()
+                    }
                 } else {
                     existing?.args.orEmpty()
                 },
