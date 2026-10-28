@@ -85,6 +85,16 @@ class RemoteSshConnection @Inject constructor(
     @Volatile
     private var isAuthFailure = false
 
+    /**
+     * 上一次认证失败的时间与当时的配置。冷却检查放在 [connect] 而不是只放 supervisor，
+     * 是因为工具调用、文件访问、MCP 重建这些入口各自直接连，绕开 supervisor 的退避后
+     * 实测能在两分钟内撞十几次认证（触发云厂商爆破告警）。
+     */
+    @Volatile
+    private var authFailureAt = 0L
+    @Volatile
+    private var authFailureConfig: RemoteConnectionConfig? = null
+
     private companion object {
         /** 认证失败后的重试间隔：5 分钟，足够避开大多数 fail2ban 窗口。 */
         const val AUTH_FAILURE_BACKOFF_MS = 5 * 60 * 1000L
@@ -107,6 +117,24 @@ class RemoteSshConnection @Inject constructor(
     var config: RemoteConnectionConfig? = null
         private set
 
+    /** 是否认证类失败（密码错、账号被拒、密钥不被接受）：重试再快也没用，只会撞防爆破。 */
+    private fun isAuthError(e: Throwable): Boolean {
+        // 冷却期内的拦截异常不是新的一次认证失败，否则每拦一次都会把冷却起点往后推。
+        if (e is AuthCooldownException) return false
+        return friendlySshError(e).contains("认证", ignoreCase = true) ||
+            e.message?.contains("auth", ignoreCase = true) == true
+    }
+
+    /** 冷却期内拦截 connect 时抛出；不参与「认证失败」判定，也不刷新冷却起点。 */
+    private class AuthCooldownException(message: String) : IllegalStateException(message)
+
+    /** 剩余冷却时长（毫秒）；配置变了（改密码、换主机）说明用户已修正，冷却作废。 */
+    private fun remainingAuthCooldownMs(cfg: RemoteConnectionConfig): Long {
+        val at = authFailureAt
+        if (at == 0L || authFailureConfig != cfg) return 0
+        return (AUTH_FAILURE_BACKOFF_MS - (System.currentTimeMillis() - at)).coerceAtLeast(0)
+    }
+
     suspend fun connect(config: RemoteConnectionConfig) = mutex.withLock {
         // 凭据为空时直接报根因：否则 sshj 只会抛出
         // 「Exhausted available authentication methods」，与「密码错」「服务器拒绝」分不开，
@@ -118,6 +146,13 @@ class RemoteSshConnection @Inject constructor(
             is RemoteAuth.PrivateKey -> if (auth.privateKeyPath.isBlank()) {
                 throw IllegalStateException("SSH 连接失败：未填写私钥路径（凭据为空）")
             }
+        }
+        // 配置没变时，冷却期内不发起真实连接。所有入口最终都走这里，退避才真的拦得住。
+        val cooldownLeftMs = remainingAuthCooldownMs(config)
+        if (cooldownLeftMs > 0) {
+            throw AuthCooldownException(
+                "SSH 认证失败：距上次失败不足 5 分钟，已暂停连接（还需 ${(cooldownLeftMs + 59_999) / 60_000} 分钟）"
+            )
         }
         if (isConnected() && this.config == config) return@withLock
         disconnectInternal()
@@ -143,8 +178,16 @@ class RemoteSshConnection @Inject constructor(
                 FileLogger.i(TAG, "SSH 已连接 ${config.host}:${config.port} as ${config.username}")
             }
             _connectionState.value = ConnectionState.CONNECTED
+            authFailureAt = 0L
+            authFailureConfig = null
+            isAuthFailure = false
         } catch (e: Exception) {
             _connectionState.value = ConnectionState.FAILED
+            if (isAuthError(e)) {
+                authFailureAt = System.currentTimeMillis()
+                authFailureConfig = config
+                isAuthFailure = true
+            }
             throw e
         }
     }
@@ -389,8 +432,12 @@ class RemoteSshConnection @Inject constructor(
         } catch (e: Exception) {
             FileLogger.w(TAG, "SSH 重连失败（前台触发）", e)
             // 认证类失败单独记：反复重试会触发服务器防爆破，比「连不上」严重得多。
-            isAuthFailure = friendlySshError(e).contains("认证", ignoreCase = true) ||
-                e.message?.contains("auth", ignoreCase = true) == true
+            isAuthFailure = isAuthError(e)
+            if (isAuthFailure) {
+                // 与 connect() 共用同一份冷却时间戳，避免各入口各记一套。
+                authFailureAt = System.currentTimeMillis()
+                authFailureConfig = cfg
+            }
             _connectionState.value = ConnectionState.FAILED
             false
         }
@@ -455,7 +502,8 @@ class RemoteSshConnection @Inject constructor(
                     } else {
                         (backoffMs * 2).coerceAtMost(maxBackoffMs)
                     }
-                    delay(backoffMs)
+                    // 不在这里 delay：循环顶部已按 backoffMs 等过一次，再等一次会让
+                    // 认证失败实际变成 10 分钟。
                 } else {
                     isAuthFailure = false
                     backoffMs = 15000
@@ -631,7 +679,10 @@ class RemoteSshConnection @Inject constructor(
 
                     val credentialConfig = buildString {
                         append("[credential]\n")
-                        append("    helper = !AICODE_CRED_NO_PROMPT=1 $aharouDir/git-credential-aicode\n")
+                        // AICODE_DIR 必须显式给出：helper 默认读 $HOME/.aicode/git-credentials，
+                        // 那是本地容器 /root/.aicode 与 /root/.aharou 同源绑定下的旧路径；
+                        // 真机远程没有这层绑定，不指定就会去读一个不存在的文件，凭据永远取不到。
+                        append("    helper = !AICODE_CRED_NO_PROMPT=1 AICODE_DIR=$aharouDir $aharouDir/git-credential-aicode\n")
                     }
                     writeRemoteFile(client, "$aharouDir/gitconfig.credential", credentialConfig)
                     FileLogger.i(TAG, "已注入 git 凭据到远程 $aharouDir（限定 $wsRoot/）")
@@ -707,6 +758,8 @@ enum class ConnectionState {
 fun friendlySshError(e: Throwable): String {
     val msg = e.message.orEmpty()
     return when {
+        // 已是明确文案（例如冷却提示），原样透出，别再套一层「SSH 连接失败」。
+        "认证失败" in msg -> msg
         e is KeyDecryptionFailedException ->
             "SSH 认证失败：私钥口令不正确或私钥格式不受支持（$msg）"
         e is UserAuthException ->

@@ -85,6 +85,12 @@ class RemoteSshEngine @Inject constructor(
     private var lastSharedPullAt = 0L
 
     /**
+     * 上一次注入到远端的凭据指纹（主机 + 凭据 + 工作区）。切工作区容器不会断开 SSH，
+     * 所以同步必须靠每次命令前的检查；又不能让每条命令都重写远端三个文件，故用指纹去重。
+     */
+    private var lastInjectSignature: String? = null
+
+    /**
      * 按**本次执行所属工作区**解析容器与它的 SSH 连接，配置不一致就重连。
      *
      * 不能依赖全局 active_profile 那条：容器可以按工作区指定，全局仍是本地时那条收集器
@@ -109,6 +115,9 @@ class RemoteSshEngine @Inject constructor(
             // 连接已就绪：这里就必须回拉——下面的「建连」分支只在首次连接时跑，
             // 挂在这里之后会导致首次之后再也不回拉（实测各条命令都只刷首次那一次）。
             maybePullShared()
+            // 凭据同步同理，而且更隐蔽：切工作区容器不会断开连接，只挂在建连分支上会让
+            // 「自动注入」开关打开后远端一直停在旧配置（实测 debug 包重连两次都没有注入日志）。
+            syncGitCredentialsIfEnabled()
             return
         }
         connectMutex.withLock {
@@ -145,11 +154,23 @@ class RemoteSshEngine @Inject constructor(
             val host = cfg.host
             val port = cfg.port
             val key = injectSettings.serverKey(host, port)
-            if (!injectSettings.isAutoInjectEnabled(key)) return@runCatching
+            if (!injectSettings.isAutoInjectEnabled(key)) {
+                // 关掉开关后凭据页会撤销远端文件，指纹必须一并作废，
+                // 否则重新打开时签名没变会跳过上传，远端就一直是空的。
+                lastInjectSignature = null
+                return@runCatching
+            }
             val creds = credentialRepository.getAll().first()
             val workspaceRoot = cfg.remoteWorkspacePath.orEmpty()
             if (workspaceRoot.isBlank() || creds.isEmpty()) return@runCatching
+            // 指纹去重：内容没变就不重写远端文件；开关关闭后重新打开（或凭据改了）指纹会变。
+            val signature = buildString {
+                append(key).append('|').append(workspaceRoot).append('|')
+                creds.sortedBy { it.host }.forEach { append(it.host).append(':').append(it.username).append(':').append(it.token.hashCode()).append(',') }
+            }
+            if (signature == lastInjectSignature) return@runCatching
             connection.uploadGitCredentialConfig(creds, workspaceRoot)
+            lastInjectSignature = signature
             FileLogger.i(TAG, "已向远程注入 ${creds.size} 条 git 凭据（$host:$port）")
         }.onFailure { FileLogger.w(TAG, "远程 git 凭据注入失败", it) }
     }
