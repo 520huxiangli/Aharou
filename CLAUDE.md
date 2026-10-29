@@ -17,11 +17,9 @@
 
 明确禁止：用「排期里、待办中、下个版本」代替完成；只报做过的部分让用户自己发现漏项。
 
-2026-10-22 教训：用户多次问「全部做完了吗」，都答「做完了」，实际 `STALE_FILE` 冲突来源、信箱投递 `channel` 一直挂在「排期」里没做。
-
 ## 基本约定
 
-- Android 应用：Kotlin + Compose + Hilt + Coroutines/Flow，模块 `:app` / `:terminal-emulator` / `:terminal-view`。后两个是 Termux 终端组件（包名 `com.termux.terminal` / `com.termux.view`），改终端功能优先动 `feature/terminal/`。
+- Android 应用：Kotlin + Compose + Hilt + Coroutines/Flow，模块 `:app` / `:terminal-emulator` / `:terminal-view` / `:benchmark`。中间两个是 Termux 终端组件（包名 `com.termux.terminal` / `com.termux.view`），改终端功能优先动 `feature/terminal/`；`:benchmark` 是 Macrobenchmark，只在真机上用 `./gradlew :benchmark:connectedCheck` 生成 `app/src/main/baseline-prof.txt`，日常不碰。
 - **优先使用项目自定义组件（硬规则）**：
   - **输入框**：优先使用 `core/ui/AppTextField.kt`（及其配套配色 `appTextFieldColors()`、弹窗专用 `dialogTextFieldColors()`），禁止在业务页面无故裸写带有长下划线的原生 `TextField`，禁止在各模块私自重复包装 OutlinedTextField。
   - **开关**：一律使用 `core/ui/AppSwitch.kt`，禁止使用原生 M3 `Switch`。
@@ -38,7 +36,20 @@
 
 ## 构建与验证
 
-**先问再编**：每次构建前都要重新问（细则与命令约束见全局 `40-work-discipline`）。Aharou 特有的部分是：子代理交付后只做只读核实（读文件、抽查它自报的 file:line、跑 `python3 scripts/check_architecture.py`），不要顺手起构建；同一任务里的多处改动攒齐一次再编，不要做一个功能编一个功能。
+**先问再编**：每次构建前都要重新问（细则与命令约束见全局 `40-work-discipline`）。
+
+**`gradlew` 有硬闸门**（`gradlew` 开头的脚本段）：没有 `.aharou/build-allowed` 就拒绝执行任何 Gradle 任务，包括单测和 `checkMigrations`。主人明确同意后写入：
+
+```
+authorized_by: 主人
+quote: "<主人原话>"
+at: 2026-10-29T21:00
+```
+
+- `quote` 必须含「编 / build / 打包 / APK / 出包」之一，`at` 超过 30 分钟作废；可选 `commit: <HEAD>`，HEAD 变了就作废。
+- 令牌一次性：每调一次 `gradlew` 就被删掉并记进 `.aharou/build-audit.log`，所以一次授权只够一条 gradlew 命令，需要多个任务就写进同一条命令；当天满 20 次直接拒。
+- CI 靠 job 级 `AHAROU_CI_BUILD=1` 放行，本地不许设这个变量绕过。
+Aharou 特有的部分是：子代理交付后只做只读核实（读文件、抽查它自报的 file:line、跑 `python3 scripts/check_architecture.py`），不要顺手起构建；同一任务里的多处改动攒齐一次再编，不要做一个功能编一个功能。
 
 **经用户同意后**，改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
 
@@ -58,7 +69,7 @@
 
 - **别用聚合任务做日常验证**：`assembleDebug` / `assembleRelease` / `test` / `build` 都会跨三个 flavor 全跑，耗时极长。
 - **别用 `--rerun-tasks` 强制全量重编**：它与 dex 增量缓存冲突，会在 `dexBuilderUniversalDebug` 上报 `NoSuchFileException` 并让后续编译停在 `UP-TO-DATE`（日志照样写 SUCCESSFUL，但 APK 不更新）。真要强制重编就删中间产物。
-- 产物：`app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`、`.../bundle/<flavor>/release/app-<flavor>-release.aab`。
+- 产物：冒烟编译出 `app/build/outputs/apk/universal/debug/app-universal-debug.apk`；发版出 `app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`、`.../bundle/<flavor>/release/app-<flavor>-release.aab`。
 - flavor 按 ABI 拆分：`universal`（arm64-v8a + x86_64）、`armsolo`（仅 arm64-v8a）、`x86solo`（仅 x86_64）。
 - buildType 三个：`debug`（applicationId 后缀 `.debug`）、`beta`（后缀 `.beta`，与 release 同配置同签名，CI 用它出测试包）、`release`。三者可与正式版同机共存，日常验证用 `.debug` 即可。
 - release 签名凭据读 `app/keystore.properties`（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`）；本地通常不存放签名文件，CI 从 GitHub secret 还原到 `app/aicode.jks`。
@@ -68,14 +79,13 @@
 
 **编译产物交付按全局规则**（复制到跨工作区共享区 `~/shared`，汇报「文件名 + 字节数 + sha256」）。Aharou 特有的部分：
 
-- 复制时文件名带上版本与短 hash，例如 `Aharou-2.14.0-dirty-1152-<sha8>.apk`
-- 汇报时必须给出：**文件名 + 字节数 + sha256**
-- 装完核对：用 `Shizuku` 读设备上 `/data/app/**/base.apk` 的字节数与 sha256，与共享区那份对比——同 versionCode 的覆盖安装可能被 ROM 跳过，字节数/哈希是唯一可靠判据（2026-10-08 就因此白测两轮）
-- 主人已多次强调此约定（原话：「构建的放共享区，我 tm 说多少次了」），不要再问、也不要自行决定输出路径
+- 复制时文件名带上版本与短 hash，例如 `Aharou-2.14.0-dirty-1152-<sha8>.apk`；不要再问放哪，也不要自定输出路径。
+- 装完核对：用 `Shizuku` 读设备上 `/data/app/**/base.apk` 的字节数与 sha256，与共享区那份对比。同 versionCode 的覆盖安装可能被 ROM 跳过，字节数和哈希是唯一可靠判据。
+- 正式版发版包不用交付，主人自己在「软件更新下载」里取。
 
 ### CI 全景（`.github/workflows/`）
 
-- `ci.yml`：push 与 PR 门禁，构建前跑迁移对账、官方技能自检与同一套单测。
+- `ci.yml`：push 与 PR 门禁，依次跑迁移对账、技能自检、架构门禁、`:app:assembleUniversalDebug`、`:app:testUniversalDebugUnitTest`。
 - `android-release.yml`：由 push `v*` tag 触发，构建 APK / AAB 并发布 GitHub Release；构建前同样跑迁移对账、技能自检与单测，失败会拦住发版。
 - `beta.yml`：push `master` 时自动构建 `.beta` 测试包（universal、正式签名、与 release 同配置），**只传 Actions Artifacts（保留 90 天），不进 Release**；纯文档/资源改动按 `paths-ignore` 跳过。
 - `docs-deploy.yml`：**只在 push `v*` tag 时部署**文档站到 GitHub Pages（https://520huxiangli.github.io/Aharou/）——改完 `docs-site/` 推 `master` 不会上线，要等下一次发版才生效。
@@ -85,7 +95,7 @@
 
 feature-based 分层 + DDD。入口 `AIEditorApp` 初始化 `FileLogger`、`TerminalKeepaliveService`、`McpManager`。
 
-- **`core/`**：跨 feature 基础设施 —— `db/`（含 `MigrationLoader.kt`）、`net/`、`theme/`、`ui/`、`util/`（含 `FileLogger`）。
+- **`core/`**：跨 feature 基础设施，常改的是 `db/`（含 `MigrationLoader.kt`）、`net/`、`theme/`、`ui/`（项目自定义组件都在这）、`util/`（含 `FileLogger`）、`security/`、`memory/`。
 - **`feature/`**（`app/src/main/java/com/aharou/feature/`）：
   - `agent`：AI agent 核心 —— 提示词、工具注册与权限、MCP、provider 适配（`data/remote/` 下 `anthropic` / `openai` / `gemini`）。
   - `terminal`：终端与会话。本地模式 Termux 组件 + PRoot（`LinuxContainerEngine`）；远程模式 sshj。
@@ -93,7 +103,8 @@ feature-based 分层 + DDD。入口 `AIEditorApp` 初始化 `FileLogger`、`Term
   - `editor`：sora-editor 编辑器。`git`：Git 操作。`settings`：provider、日志、保活等设置。
   - `browser`：内置 WebView 浏览器与网页自动化（`BrowserUseManager` / `BrowserTool`）；`sandbox`：容器文件浏览与预览（`FileBrowserScreen` / `FilePreviewScreen`）。
   - `voice`：语音识别、合成、通话、唤醒（`call/` / `assistant/`）；`pet`：桌面伙伴小染（`PetOverlayService`）；`onboarding`：首次启动引导。
-  - `backup`：备份恢复与加密。`credentials`：凭据管理与注入容器。
+  - `backup`：备份恢复与加密。`credentials`：凭据管理与注入容器。`vault`：敏感信息脱敏（`VaultRedactor`）。
+  - `im`：微信 / 飞书 / QQ / Telegram 机器人接入（凭证一律用户自填，禁止内置）；`remotedevice`：远程设备配对与控制；`connectors` / `plugin` / `extension`：外部连接器与插件。
 - **远程 SSH 链路**：`RemoteSshConnection`（共享 sshj client）+ `RemoteSshEngine`（执行命令）+ `RemoteSftpFileAccess`（文件）+ `RemoteTerminalSessionManager`（终端）。
 - **工具系统**：`feature/agent/domain/tool/` 下各工具经 `ToolRegistry` 注册，执行权限由 `ToolPermissionManager` 与 `ToolPermissionPolicyEngine` 管控。
 - **MCP**：`feature/agent/domain/mcp/`，连接远端 server 并动态注册其工具。**DI**：Hilt，各 feature 自带 DI 模块。
@@ -108,7 +119,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 改 schema 三步：
 
-1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 67）。
+1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前值看文件，它必须等于 `migrations/` 里最大的编号）。
 2. 文件式：在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**；AutoMigration：加注解，保证 `to == SCHEMA_VERSION` 且 `from` 衔接文件式最大版本。
 3. 写入 DDL/SQL，启动时自动执行并记入 `migration_history` 表。
 
@@ -134,7 +145,7 @@ Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁�
 
 ## Git 提交规范
 
-Conventional Commits，格式 `<type>(<scope>): <subject>`，正文空行隔开。校验脚本在 `.githooks/commit-msg`，但 **hook 需要先启用才生效**：`git config core.hooksPath .githooks`（新 clone 后不会自动启用，没配就相当于没有校验）。
+Conventional Commits，格式 `<type>(<scope>): <subject>`，正文空行隔开。校验脚本在 `.githooks/commit-msg`，但 **hook 需要先启用才生效**：`git config core.hooksPath .githooks`（新 clone 后不会自动启用，没配就相当于没有校验）。`.githooks/pre-commit` 会跑 `check_task_list.py`，`.aharou/task-list.md` 里还有 `- [ ]` 时提交会被拒。
 
 - **type** ∈ `feat | fix | refactor | docs | style | chore | ci | build | perf | test`
 - **scope** 可选，用功能模块：`agent | settings | terminal | workspace | git | ui | mcp | db | core | docs | build | deps`
@@ -181,7 +192,7 @@ Tag 驱动发版，平时 `master` 上的提交不影响发布包。
 3. **评估是否合适**：结合项目约束判断该改动该不该做——
    - 是否符合 feature-based 分层 + DDD 现有结构，是否重复造已有轮子；
    - 是否触碰硬约束（`targetSdk` 35、迁移编号连续、双语 strings.xml、`prompts/` / 文档同步等〈资产同步〉各项）；
-   - 改动范围与风险：是否触及启动 / 容器 / 签名 / CI 等敏感面（此类改动发版需按〈发版〉先发 RC）。
+   - 改动范围与风险：是否触及启动 / 容器 / 签名 / CI 等敏感面（这类改动要在真机测试包上重点验）。
 4. **平替方案**：不受 issue 提案的局限，以核实过的代码与查证资料为依据，给出至少一个替代实现并对比（实现成本、风险、维护性、对既有用户的影响），给出推荐结论；需要用户取舍时用选择题征询，别替用户拍板。
 5. **输出报告**：以对话回复形式输出报告，包含：结论（采纳 / 拒绝 / 待定）、理由、相关代码位置（带行号链接）、方案对比、建议的下一步（是否进入 PLAN、是否开分支按〈分支工作流〉）。报告不落盘，除非用户明确要求写文件。
 
@@ -198,7 +209,7 @@ Tag 驱动发版，平时 `master` 上的提交不影响发布包。
 0. **更新内置模型数据（发版前跑，但不单独成笔提交）**：`python3 scripts/update-models-dev-assets.py` 从 models.dev 刷新 `app/src/main/assets/api.official.json`（只保留内置 12 个官方 provider、不引入新 provider，现有 provider 下可扩充模型与单价）。**流程照旧每版跑**，但跑完要把快照改动 squash 进本版最近的实质提交（在功能提交上 `git commit --amend`，或 `fixup` + `rebase --autosquash`），**不要单独出一笔 `chore(build): 更新内置模型数据`，也不在发版记录 / 版本说明里列条目**——它在 Release changelog 里只会是噪音（2026-10-20 主人定）。**失败时脚本非零退出且不改快照——直接跳过发版此步，不要重试或手改文件**。
 1. **在 `master` 最新提交上打 Tag 并推送**：`git tag v1.7.0-rc1 && git push origin v1.7.0-rc1`。**严禁在 `feat/*` / `refactor/*` 上打 Tag 发版**，必须先合入 `master`。
 2. CI 捕获 `v*` Tag 后自动推导版本、构建 APK、发布 Release。
-3. **真机装 RC 包**，至少跑通 AI 对话 + 终端 + 容器启动三条主线。
+3. **真机装包**，至少跑通 AI 对话、终端、容器启动三条主线。
 4. **有问题**：从该 RC Tag 拉 `hotfix/xxx` 修复（**勿从最新 `master` 或功能分支拉**，否则会把已合入的未发版功能带进修复包）→ 升 rc 序号打 Tag 重发 → 修复合回 `master` 并推送 → 删 hotfix 分支。这是允许在非 `master` 分支打 Tag 的唯一例外。**无问题**：直接打正式 Tag（`v1.7.0`）转正。
    - 若 hotfix 带数据库迁移：迁移号随 tag 发布即冻结（发布即冻结），合回 `master` 时 `master` 上编号更小的未发布迁移必须后移（见〈数据库与迁移〉合流后移），push 前先跑 `check_migrations.py`，CI 兜底拦截。
 
