@@ -28,7 +28,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * 与 [com.aharou.feature.agent.domain.tool.a11y.A11yTool] / vscreen 同构——一个工具带 action 分发，
  * 而不是每个能力单独占一个工具位：设备能力之间参数高度重叠，拆开只会撑大每轮的 tools 数组。
  *
- * 读类动作免确认，写类动作（建闹钟、写日历/联系人、写剪贴板、控制媒体）由 [effectiveCapabilities]
+ * 读类动作免确认，写类动作（建闹钟、写日历/联系人、写剪贴板、控制媒体、发或回复通知）由 [effectiveCapabilities]
  * 升到 [ToolCapability.MODIFY_DEVICE_STATE]，交给权限策略引擎裁决。
  */
 @Singleton
@@ -53,7 +53,7 @@ class DeviceTool @Inject constructor(
         /** 会改变设备状态的动作：只有它们这次调用才算「改设备」。 */
         val WRITE_ACTIONS = setOf(
             "alarm", "timer", "clipboard_write", "calendar_add", "contacts_add", "media_control",
-            "notification_send",
+            "notification_send", "notification_reply",
         )
 
         val ACTIONS = listOf(
@@ -62,7 +62,7 @@ class DeviceTool @Inject constructor(
             "contacts_search", "contacts_add",
             "clipboard_read", "clipboard_write",
             "location", "weather", "media_control",
-            "notification_read", "notification_send",
+            "notification_read", "notification_send", "notification_reply",
             "device_info", "photos_recent",
         )
 
@@ -83,9 +83,10 @@ class DeviceTool @Inject constructor(
             "media_control=控制正在播放的媒体（media_action：play / pause / toggle / next / previous / stop / volume_up / volume_down / mute）；" +
             "notification_read=读最近的通知（limit 默认 20，可选 package 只看某个应用；需要用户先开「通知使用权」）；" +
             "notification_send=发一条通知提醒用户（title、text）；" +
+            "notification_reply=直接在通知里回复（key 取自 notification_read，text 为回复内容；只有 can_reply=true 的通知能回）；" +
             "device_info=机型/系统/电量/存储/内存/网络快照；" +
             "photos_recent=相册最近图片的元数据（limit 默认 20、最多 200，只给文件名与路径，不给图片本体）。" +
-            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体按写操作处理。" +
+            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体、发通知、回复通知按写操作处理。" +
             "权限不足时错误里带 capabilityId 与「去系统设置哪里开」，不要自动重试；" +
             "想知道各能力当前能不能用（含短信/通话记录/应用使用统计），先调 personal_context(action=capabilities)。"
 
@@ -119,7 +120,11 @@ class DeviceTool @Inject constructor(
         "name" to ToolParameter("name", ParameterType.STRING, "contacts_add 专用：联系人姓名", false),
         "phone" to ToolParameter("phone", ParameterType.STRING, "contacts_add 专用：电话号码", false),
         "email" to ToolParameter("email", ParameterType.STRING, "contacts_add 专用：邮箱", false),
-        "text" to ToolParameter("text", ParameterType.STRING, "clipboard_write 专用：要写入剪贴板的文本", false),
+        "text" to ToolParameter("text", ParameterType.STRING, "clipboard_write：要写入剪贴板的文本；notification_send：通知正文；notification_reply：要发出的回复内容", false),
+        "key" to ToolParameter(
+            "key", ParameterType.STRING,
+            "notification_reply 专用：notification_read 返回的那条通知的 key", false,
+        ),
         "city" to ToolParameter("city", ParameterType.STRING, "weather 专用：城市名，留空用当前位置", false),
         "package" to ToolParameter("package", ParameterType.STRING, "notification_read 专用：只看这个包名的应用，留空看全部", false),
         "media_action" to ToolParameter(
@@ -232,6 +237,16 @@ class DeviceTool @Inject constructor(
                     }
                 }
 
+                "notification_reply" -> {
+                    val key = args.str("key")
+                    val text = args.str("text")
+                    if (key == null || text == null) {
+                        ToolResult.Error("notification_reply 需要 key 与 text", "MISSING_REPLY_ARGS")
+                    } else {
+                        notification.reply(key, text)
+                    }
+                }
+
                 "device_info" -> deviceInfo.snapshot()
 
                 "photos_recent" -> photos.recent(args["limit"]?.jsonPrimitive?.intOrNull, null)
@@ -273,7 +288,7 @@ class DeviceTool @Inject constructor(
         "clipboard_read", "clipboard_write" -> PersonalCapability.CLIPBOARD
         "location", "weather" -> PersonalCapability.LOCATION
         "media_control" -> PersonalCapability.MEDIA_CONTROL
-        "notification_read" -> PersonalCapability.NOTIFICATIONS_READ
+        "notification_read", "notification_reply" -> PersonalCapability.NOTIFICATIONS_READ
         "notification_send" -> PersonalCapability.NOTIFICATIONS_POST
         "photos_recent" -> PersonalCapability.PHOTOS
         "device_info" -> PersonalCapability.DEVICE_INFO

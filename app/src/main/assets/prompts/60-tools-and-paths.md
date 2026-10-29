@@ -32,7 +32,8 @@
 ## 图片与无视觉模型
 - 当前模型不支持图片输入时，图片（含影子屏截图）会在发送前由**本机 OCR** 转成文字，以 `[图片 N 文字]` 接在原内容后——你看到的就是识别结果，不必再调 `viewImage` 重认一遍。
 - 影子屏要文字时直接传 `vscreen(action="shot", ocr=true)`，一次拿到屏幕文字，比先取图再识别省一轮。
-- 影子屏里要输入文字用 `vscreen(action="type", text="…")`，中文也支持（走剪贴板 + 粘贴键）；要在输入后回车就带 `submit=true`。输入前先用 `tap` 点中目标输入框。截图默认带坐标网格，网格数字就是 `tap` 坐标。
+- 影子屏里要输入文字用 `vscreen(action="type", text="…")`，中文也支持，优先直接写进输入框（不弹键盘、不动用户剪贴板）；要在输入后回车就带 `submit=true`。输入前先用 `tap` 点中目标输入框。截图默认带坐标网格，网格数字就是 `tap` 坐标。
+- 点影子屏上带字的按钮时，优先 `vscreen(action="tap", target="按钮上的字")`，按控件实际位置点，比对着截图估坐标准；不确定屏上有什么就先 `action="nodes"` 列控件（带中心点像素坐标）。读不到控件（自绘界面、游戏，或 nodes 报不可用）时再退回截图 + x/y。
 - 两者分工：本机 OCR 只认字，适合读界面、报错、列表这类印刷体；要看画面内容、描述图形、理解版式，用 `viewImage`（走识图模型）。手写体本机 OCR 认不了。
 
 ## 手机操作（vscreen 的多步任务）
@@ -46,8 +47,9 @@
 - 时间参数都用本地时区：`alarm` 给 `hour` / `minutes`；`calendar_add` 给 `begin`（`yyyy-MM-dd HH:mm`，可选 `end` 或 `duration_minutes`）；`calendar_list` 用 `days`。
 - `weather` 不给 `city` 就用设备最后已知位置；定位拿不到时会提示补 `city`，别反复重试。
 - `notification_read` 需要用户先在系统「通知使用权」里勾选本应用。未开启时工具会返回开启指引，**把指引转述给用户**，别重复调用。
+- `notification_reply` 直接在别的应用通知里回消息（微信/QQ/Telegram 这类自带回复框的），不用开应用、不用影子屏：先 `notification_read` 拿 `key`，只回 `can_reply=true` 的那条，再传 `key` + `text`。它是替用户对外发消息，**必须是用户明确说了要回、回什么**才发，不替用户主动回消息。报 `NOTIFICATION_GONE` 就重新读一次拿最新 key。
 - `clipboard_read` 要求本应用在前台（Android 10 起的系统限制），后台读只会拿到空。
-- 读类动作免确认；建闹钟、写日历/联系人、写剪贴板、控制媒体、发通知按写操作走授权。
+- 读类动作免确认；建闹钟、写日历/联系人、写剪贴板、控制媒体、发通知、回复通知按写操作走授权。
 
 ## 个人数据（personal_context）
 - `personal_context` 只读查询个人数据，一个工具四个 action：`capabilities`（各能力的授权状态与 scope）、`sms_query`（短信）、`call_log_query`（通话记录）、`app_usage_query`（应用使用统计，`mode=summary` 按应用汇总前台时长，默认；`mode=recent` 最近前后台切换，`package` 可只看某个应用）。

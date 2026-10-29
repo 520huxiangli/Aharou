@@ -58,6 +58,9 @@ class VdTool @Inject constructor(
         const val MAX_IMAGE_EDGE = 1440
         const val JPEG_QUALITY = 75
 
+        /** 子代理每看一屏附带的控件上限：再多会把每一步的提示撑大，模型也读不过来。 */
+        const val MAX_OBSERVE_NODES = 80
+
         /** 有「手指下是什么」这回事、需要 label 的动作：语义风控只看这几个。 */
         val LABEL_ACTIONS = setOf("tap", "type")
     }
@@ -69,7 +72,9 @@ class VdTool @Inject constructor(
             "操作宿主上第三方 App 的标准手段——要动 Aharou 以外的应用就用它，别用 a11y 抢占用户主屏。" +
             "action=start 创建（可选 width/height/dpi）；status 查询；stop 停止；launch 启动应用（component=\"包名/Activity\" 或仅包名）；" +
             "shot 截图（图片随结果返回，图上带坐标网格；传 ocr=true 则改回文字、传 grid=false 关闭网格）；" +
-            "tap / swipe / key 触控；type 往焦点输入框输文字（text=内容，可选 submit=true 回车，支持中文）。" +
+            "nodes 列出屏上控件（文字、类型、中心点像素坐标），比对着截图估坐标准；" +
+            "tap / swipe / key 触控，tap 可以不给 x/y、改传 target=控件上的文字，按控件实际位置点；" +
+            "type 往焦点输入框输文字（text=内容，可选 submit=true 回车，支持中文；优先直接写进输入框，不弹键盘、不动用户剪贴板）。" +
             "task 把「看屏→决策→动作→再看屏」的多步循环交给手机操作子代理：goal 是要完成的事，一次调用返回一个结果（不逐步吃上下文）；" +
             "子代理内部的动作坐标是 0..1000 归一化值（换分辨率不失效），与本工具 tap/swipe 用的像素坐标不是一套，不要把两者混用；" +
             "trace 列出或回放手机操作记录（traceId 为空则列出）。需 root 或 Shizuku 就绪；未就绪时改用 a11y 并在操作前告知用户。"
@@ -81,8 +86,8 @@ class VdTool @Inject constructor(
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             "action", ParameterType.STRING,
-            "操作：start / status / stop / launch / shot / tap / swipe / key / type / task / trace", true,
-            enum = listOf("start", "status", "stop", "launch", "shot", "tap", "swipe", "key", "type", "task", "trace"),
+            "操作：start / status / stop / launch / shot / nodes / tap / swipe / key / type / task / trace", true,
+            enum = listOf("start", "status", "stop", "launch", "shot", "nodes", "tap", "swipe", "key", "type", "task", "trace"),
         ),
         "width" to ToolParameter("width", ParameterType.INTEGER, "start 专用：宽（默认 1080）", false),
         "height" to ToolParameter("height", ParameterType.INTEGER, "start 专用：高（默认 1920）", false),
@@ -90,6 +95,11 @@ class VdTool @Inject constructor(
         "component" to ToolParameter("component", ParameterType.STRING, "launch 专用：组件（\"pkg/act\" 或 \"pkg\"）", false),
         "x" to ToolParameter("x", ParameterType.INTEGER, "tap/swipe 起点 X（像素，直接读图上网格数字）", false),
         "y" to ToolParameter("y", ParameterType.INTEGER, "tap/swipe 起点 Y（像素，直接读图上网格数字）", false),
+        "target" to ToolParameter(
+            "target", ParameterType.STRING,
+            "tap 专用：要点的控件上的文字（先完全相等、再包含），给了就不用 x/y。屏上读不到控件时会报错，改用 x/y。",
+            false,
+        ),
         "x2" to ToolParameter("x2", ParameterType.INTEGER, "swipe 终点 X", false),
         "y2" to ToolParameter("y2", ParameterType.INTEGER, "swipe 终点 Y", false),
         "duration" to ToolParameter("duration", ParameterType.INTEGER, "swipe 持续时间（毫秒，默认 300）", false),
@@ -106,7 +116,7 @@ class VdTool @Inject constructor(
         ),
         "text" to ToolParameter(
             "text", ParameterType.STRING,
-            "type 专用：要输入到焦点输入框的文字。支持中文等非 ASCII（内部走剪贴板粘贴）。",
+            "type 专用：要输入到焦点输入框的文字，接在原有内容后面。支持中文。",
             false
         ),
         "submit" to ToolParameter(
@@ -160,7 +170,10 @@ class VdTool @Inject constructor(
     private fun assessArgs(args: Map<String, JsonElement>): ScreenActionSemantics.Assessment? {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase() ?: return null
         if (action !in LABEL_ACTIONS) return null
-        return ScreenActionSemantics.assess(args["label"]?.jsonPrimitive?.contentOrNull)
+        // 按文字点时 target 就是手指下的东西，没给 label 就拿它做敏感词判断。
+        val label = args["label"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            ?: args["target"]?.jsonPrimitive?.contentOrNull
+        return ScreenActionSemantics.assess(label)
     }
 
     override fun buildPermissionRequest(
@@ -177,6 +190,7 @@ class VdTool @Inject constructor(
             args["package"]?.jsonPrimitive?.contentOrNull?.let { "package = $it" },
             args["text"]?.jsonPrimitive?.contentOrNull?.let { "text = $it" },
             args["label"]?.jsonPrimitive?.contentOrNull?.let { "label = $it" },
+            args["target"]?.jsonPrimitive?.contentOrNull?.let { "target = $it" },
             args["goal"]?.jsonPrimitive?.contentOrNull?.let { "goal = $it" },
         ).joinToString("\n")
         val assessment = assessArgs(args)
@@ -221,14 +235,23 @@ class VdTool @Inject constructor(
         }
     }
 
-    /** 看一次屏：复用 shot 分支（带坐标网格），取回 caption、图片与界面指纹。 */
+    /**
+     * 看一次屏：复用 shot 分支（带坐标网格），取回 caption、图片与界面指纹。
+     * 读得到控件时一并附上：模型照着控件的实际位置瞄准，比对着缩小的截图估坐标准。
+     */
     override suspend fun observe(): HandObservation {
         return try {
             val snap = capture(withGrid = true)
+            val nodes = runCatching { vdController.nodes() }.getOrNull()
+                ?.filter { it.text.isNotBlank() || it.desc.isNotBlank() || it.editable }
+                ?.take(MAX_OBSERVE_NODES)
+                ?.joinToString("\n") { it.render() }
+                ?.takeIf { it.isNotBlank() }
             HandObservation(
                 caption = snap.caption,
                 image = snap.shot.base64.takeIf { it.isNotEmpty() }
                     ?.let { AgentImage(mimeType = "image/jpeg", base64Data = it) },
+                nodesText = nodes,
                 width = snap.shot.inputWidth,
                 height = snap.shot.inputHeight,
                 fingerprint = snap.fingerprint,
@@ -276,7 +299,7 @@ class VdTool @Inject constructor(
 
     private suspend fun executeInternal(args: Map<String, JsonElement>, sessionId: String?): ToolResult {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return ToolResult.Error("缺少 action（start / status / stop / launch / shot / tap / swipe / key / type / task / trace）", "MISSING_ACTION")
+            ?: return ToolResult.Error("缺少 action（start / status / stop / launch / shot / nodes / tap / swipe / key / type / task / trace）", "MISSING_ACTION")
         return try {
             when (action) {
                 "task" -> runMobileTask(args, sessionId)
@@ -348,10 +371,30 @@ class VdTool @Inject constructor(
                     }
                 }
 
+                "nodes" -> {
+                    val list = vdController.nodes()
+                    ToolResult.Success(
+                        buildJsonObject {
+                            put("count", list.size)
+                            put(
+                                "message",
+                                if (list.isEmpty()) "屏上没有读到可交互或带文字的控件（可能是自绘界面，改看截图）"
+                                else "每行：文字 · 类型 [标志] @ 中心点像素坐标（c 可点 / e 可输入 / x、X 可勾选 / s 可滚动 / f 焦点 / - 禁用）\n" +
+                                    list.joinToString("\n") { it.render() },
+                            )
+                        }
+                    )
+                }
+
                 "tap" -> {
+                    val target = args["target"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+                    if (target != null) {
+                        val hit = vdController.tapByText(target)
+                        return ToolResult.Success(buildJsonObject { put("message", "已点「${hit.render()}」") })
+                    }
                     val x = args["x"]?.jsonPrimitive?.intOrNull
                     val y = args["y"]?.jsonPrimitive?.intOrNull
-                    if (x == null || y == null) return ToolResult.Error("tap 需要 x / y", "MISSING_ARGS")
+                    if (x == null || y == null) return ToolResult.Error("tap 需要 x / y，或给 target（控件上的文字）", "MISSING_ARGS")
                     vdController.tap(x, y)
                     ToolResult.Success(buildJsonObject { put("message", "已点击 ($x, $y)") })
                 }

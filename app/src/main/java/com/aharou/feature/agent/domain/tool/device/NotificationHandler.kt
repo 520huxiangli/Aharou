@@ -22,7 +22,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** 通知的读（靠 [DeviceNotificationListener] 的缓存）与发。 */
+/** 通知的读（靠 [DeviceNotificationListener] 的缓存）、发，以及在别的应用通知里直接回复。 */
 @Singleton
 class NotificationHandler @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -62,15 +62,41 @@ class NotificationHandler @Inject constructor(
             put("notifications", buildJsonArray {
                 entries.forEach { entry ->
                     add(buildJsonObject {
+                        put("key", entry.key)
                         put("app", entry.packageName)
                         put("title", entry.title)
                         put("text", entry.text)
                         put("time", formatter.format(Date(entry.postedAt)))
                         put("ongoing", entry.ongoing)
+                        put("can_reply", entry.canReply)
                     })
                 }
             })
         })
+    }
+
+    fun reply(key: String, text: String): ToolResult {
+        if (!DeviceNotificationListener.isEnabled(context)) {
+            return ToolResult.Error(LISTENER_HINT, "NOTIFICATION_ACCESS_MISSING")
+        }
+        return when (val result = DeviceNotificationListener.reply(context, key, text)) {
+            is DeviceNotificationListener.ReplyResult.Sent -> ToolResult.Success(buildJsonObject {
+                put("message", "已回复：${result.packageName}/${result.title}")
+            })
+            DeviceNotificationListener.ReplyResult.Gone -> ToolResult.Error(
+                "这条通知已经不在了（被划掉、被应用收回，或已滚出缓存），没法再回。" +
+                    "先重新 notification_read 拿最新的 key。",
+                "NOTIFICATION_GONE",
+            )
+            DeviceNotificationListener.ReplyResult.NoReply -> ToolResult.Error(
+                "这条通知不支持直接回复（没有回复框），只有 can_reply=true 的通知能回。",
+                "NOTIFICATION_NO_REPLY",
+            )
+            is DeviceNotificationListener.ReplyResult.Failed -> {
+                FileLogger.w(TAG, "通知回复失败：${result.reason}")
+                ToolResult.Error("回复没发出去：${result.reason}", "NOTIFICATION_REPLY_FAILED")
+            }
+        }
     }
 
     fun send(title: String, text: String): ToolResult {

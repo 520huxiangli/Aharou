@@ -45,6 +45,25 @@ touch /data/local/tmp/aharou-vd.shot   # 触发一次出图 → /sdcard/out.png�
 - `input -d 5 tap` 导航全通：抽屉 → 设置 →「Aharou 助手」分组 → 人格 (Soul) 页 → 配置审计页。
 - 主屏焦点全程未变（零打扰）；截图证据存 `mounts/Aharou/vd_*.png`。
 
+## 命令通道（2026-10-30 起）
+
+App 启动 runner 时传 8 个参数：`宽 高 dpi "截图输出" 截图请求 显示名 停止文件 控制目录`。
+
+- **按包名隔离**：正式包用 `aharou-vd`，`.debug` / `.beta` 用 `aharou-vd-debug` / `aharou-vd-beta`，
+  jar、日志、停止文件、截图请求也都带后缀。两个包同机各开各的屏，点击不会串。
+- **输入法**：建屏后对这块屏设 `DISPLAY_IME_POLICY_HIDE`，日志 `VD_READY ... ime=hidden`。
+  不设的话输入法会回落到主屏弹出来。
+- **命令**：App 往控制目录写 `cmd-<序号>.txt`（首行动作），runner 执行后写 `res-<序号>.txt`
+  （首行 `OK` / `ERR`）。动作：`ping` / `tap x y` / `swipe x1 y1 x2 y2 ms` / `key 键码` /
+  `settext append|replace 文字` / `dump`。
+- **点按与按键**：runner 自己反射调 `InputManager.injectInputEvent` 注入到这块屏，不再每一下都拉 `input` 进程。
+- **读控件与写字**：runner 以 shell 身份连 UiAutomation（`uiautomator` 同款，带
+  `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`），不需要用户开无障碍服务。日志 `VD_CTL ok` 表示连上，
+  `VD_CTL no-uiautomation ...` 表示只有注入能力。写字走 `ACTION_SET_TEXT`，不经输入法、不经剪贴板。
+- 任一能力不可用时，App 退回旧路径（`input -d` / 剪贴板粘贴）。
+
+重新打包：`sh tools/aharou-vd/build.sh`（会同步到 `app/src/main/assets/vd/`）。
+
 ## 注
 
 - 进程死 = 虚拟屏消失；重启执行第 2 步。
