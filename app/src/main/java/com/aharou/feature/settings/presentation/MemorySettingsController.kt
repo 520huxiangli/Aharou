@@ -2,6 +2,9 @@ package com.aharou.feature.settings.presentation
 
 import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryArchiveInfo
+import com.aharou.feature.agent.domain.memory.MemoryAutoCompactSettings
+import com.aharou.feature.agent.domain.memory.MemoryOrganizeReport
+import com.aharou.feature.agent.domain.memory.MemoryTopicOrganizer
 import com.aharou.feature.agent.domain.memory.MemoryCompactReport
 import com.aharou.feature.agent.domain.memory.MemoryCompactor
 import com.aharou.feature.agent.domain.memory.MemoryDistiller
@@ -65,7 +68,15 @@ class MemorySettingsController @Inject constructor(
     private val memoryCompactor: MemoryCompactor,
     private val memoryDistiller: MemoryDistiller,
     private val workspaceRepository: WorkspaceRepository,
+    private val autoCompactSettings: MemoryAutoCompactSettings,
+    private val topicOrganizer: MemoryTopicOrganizer,
 ) {
+    private val _autoOrganize = MutableStateFlow(autoCompactSettings.autoOrganize)
+    val autoOrganize: StateFlow<Boolean> = _autoOrganize.asStateFlow()
+
+    private val _organizeReport = MutableStateFlow(autoCompactSettings.lastOrganizeReport)
+    val organizeReport: StateFlow<MemoryOrganizeReport?> = _organizeReport.asStateFlow()
+
     /** 当前浏览的作用域：全局 / 项目。 */
     private val _scope = MutableStateFlow(MemoryScope.GLOBAL)
     val scope: StateFlow<MemoryScope> = _scope.asStateFlow()
@@ -211,6 +222,27 @@ class MemorySettingsController @Inject constructor(
 
     fun consumeCompactResult() {
         _compactResult.value = null
+    }
+
+    /**
+     * 打开时立刻跑一次，不等每日任务：用户刚打开就想看到效果，等一天会以为开关没生效。
+     * 只整理全局与当前工作区，其余工作区留给每日任务。
+     */
+    suspend fun setAutoOrganize(on: Boolean) {
+        autoCompactSettings.autoOrganize = on
+        _autoOrganize.value = on
+        if (!on) return
+        withContext(Dispatchers.IO) {
+            runCatching { topicOrganizer.organizeIfDue(listOfNotNull(projectRoot()), force = true) }
+        }
+        _organizeReport.value = autoCompactSettings.lastOrganizeReport
+        refresh()
+    }
+
+    /** 设置页回到前台时重读：后台每日任务或配置通道可能已经改过。 */
+    fun reloadAutoOrganize() {
+        _autoOrganize.value = autoCompactSettings.autoOrganize
+        _organizeReport.value = autoCompactSettings.lastOrganizeReport
     }
 
     /**

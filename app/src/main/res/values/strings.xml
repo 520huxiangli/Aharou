@@ -2846,6 +2846,9 @@
     <string name="memory_confirm_entry">确认此条并保存</string>
     <string name="memory_compact_title">整理记忆</string>
     <string name="memory_compact_subtitle">把同一主题的重复条目合并成一条，原版会自动归档、可恢复</string>
+    <string name="memory_auto_organize_title">自动整理记忆</string>
+    <string name="memory_auto_organize_subtitle">每天让模型按主题合并重复条目、补写摘要，会消耗模型调用；合并前原版自动归档</string>
+    <string name="memory_auto_organize_last">上次：合并 %1$d 组，重写摘要 %2$d 条</string>
     <string name="memory_compact_merged">整理完成：合并 %1$d 条，归档 %2$d 条</string>
     <string name="memory_compact_nothing">没有需要整理的重复条目</string>
     <string name="memory_archive_header">归档（旧版本）</string>

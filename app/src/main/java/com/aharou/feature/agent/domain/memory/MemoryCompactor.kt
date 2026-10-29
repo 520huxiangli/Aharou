@@ -317,8 +317,22 @@ class MemoryCompactor @Inject constructor(
         return now - reference > days * DAY_MILLIS
     }
 
+    /**
+     * 对一组已认定同主题的条目走一遍「模型合并稿 → 防编造检查 → 先归档再落盘」。
+     * 供 [MemoryTopicOrganizer] 复用，三道保险与本类自己的整理完全一致。
+     */
+    internal suspend fun tryMerge(group: List<Memory>): Boolean {
+        if (group.size < MIN_CLUSTER_SIZE) return false
+        val systemPrompt = promptFileResolver.resolve(PROMPT_FILE)
+            .replace(LEADING_COMMENT, "").trim()
+        if (systemPrompt.isEmpty()) return false
+        val proposal = propose(systemPrompt, group) ?: return false
+        if (proposal.action != CompactAction.MERGE || !passesGuard(group, proposal)) return false
+        return merge(group, proposal)
+    }
+
     /** 一个作用域下参与整理的候选条目：事件类只留档、核心档案整份不可拆，都不算候选。 */
-    private fun compactionCandidates(projectRoot: String?, scope: MemoryScope): List<Memory> =
+    internal fun compactionCandidates(projectRoot: String?, scope: MemoryScope): List<Memory> =
         memoryRepository.listMemories(projectRoot)
             .filter { it.scope == scope }
             .filter { it.type != MemoryType.EVENT && !it.pending && it.content.length <= MAX_ITEM_CHARS }

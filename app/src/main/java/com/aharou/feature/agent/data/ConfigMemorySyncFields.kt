@@ -8,6 +8,7 @@ import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.feature.agent.domain.memory.MemoryAutoCompactSettings
 import com.aharou.feature.agent.domain.memory.MemorySyncScheduler
 import com.aharou.feature.agent.domain.memory.MemorySyncSettings
 import com.aharou.feature.credentials.data.repository.FileCredentialRepository
@@ -31,9 +32,28 @@ class ConfigMemorySyncFields @Inject constructor(
     private val settings: MemorySyncSettings,
     private val scheduler: MemorySyncScheduler,
     private val credentials: FileCredentialRepository,
+    private val autoCompactSettings: MemoryAutoCompactSettings,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
+        // 同属记忆后台任务的配置，放这里而不是 ConfigBuiltins：那边拿不到 Hilt 注入的单例。
+        registry.register(
+            ClosureField(
+                path = "memory.auto_organize",
+                displayName = "自动整理记忆",
+                description = "开启后后台每天最多跑一次深度整理：让模型按主题归拢讲同一件事的条目、把没写清「何时该读」的摘要重写。" +
+                    "每次都要花模型调用，默认关闭；关闭时不影响每日的归档、压缩与字面去重。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(autoCompactSettings.autoOrganize) },
+                writer = { v ->
+                    val flag = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("boolean")
+                    autoCompactSettings.autoOrganize = flag
+                },
+            ),
+        )
+
         registry.register(
             ClosureField(
                 path = "memory.sync.repo_url",

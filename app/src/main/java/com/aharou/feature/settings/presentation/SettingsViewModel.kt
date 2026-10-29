@@ -8,6 +8,7 @@ import com.aharou.core.net.AppProxy
 import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryArchiveInfo
 import com.aharou.feature.agent.domain.memory.MemoryCompactReport
+import com.aharou.feature.agent.domain.memory.MemoryOrganizeReport
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.voice.domain.VoiceModelManager
@@ -306,6 +307,15 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun consumeCompactResult() = memorySettings.consumeCompactResult()
+
+    val memoryAutoOrganize: StateFlow<Boolean> get() = memorySettings.autoOrganize
+    val memoryOrganizeReport: StateFlow<MemoryOrganizeReport?> get() = memorySettings.organizeReport
+
+    fun setMemoryAutoOrganize(on: Boolean) {
+        viewModelScope.launch { memorySettings.setAutoOrganize(on) }
+    }
+
+    fun reloadMemoryAutoOrganize() = memorySettings.reloadAutoOrganize()
 
     fun distillNow() {
         if (memorySettings.distilling.value) return

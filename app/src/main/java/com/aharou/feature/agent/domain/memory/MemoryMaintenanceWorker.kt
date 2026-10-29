@@ -64,6 +64,9 @@ class MemoryMaintenanceWorker(
             runCatching { entryPoint.memoryRepository().pruneArchive(MemoryScope.PROJECT, root) }
                 .onFailure { FileLogger.w(TAG, "工作区归档清理失败（$root）：${it.message}") }
         }
+        // 深度整理放最后：先让便宜的归档、压缩把候选变少，再花模型调用。开关关着时内部直接返回。
+        runCatching { entryPoint.memoryTopicOrganizer().organizeIfDue(roots) }
+            .onFailure { FileLogger.w(TAG, "深度整理失败：${it.message}") }
         return Result.success()
     }
 }
@@ -75,6 +78,7 @@ interface MemoryMaintenanceEntryPoint {
     fun memoryCompactor(): MemoryCompactor
     fun workspaceRepository(): WorkspaceRepository
     fun memoryRepository(): MemoryRepository
+    fun memoryTopicOrganizer(): MemoryTopicOrganizer
 }
 
 /** 按天排定记忆维护任务；重复调用不会重置周期（KEEP）。 */

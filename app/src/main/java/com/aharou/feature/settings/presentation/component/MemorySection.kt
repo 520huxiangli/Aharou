@@ -82,6 +82,8 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
     val archives by viewModel.memoryArchives.collectAsStateWithLifecycle()
     val compacting by viewModel.compacting.collectAsStateWithLifecycle()
     val compactResult by viewModel.compactResult.collectAsStateWithLifecycle()
+    val autoOrganize by viewModel.memoryAutoOrganize.collectAsStateWithLifecycle()
+    val organizeReport by viewModel.memoryOrganizeReport.collectAsStateWithLifecycle()
     val distilling by viewModel.distilling.collectAsStateWithLifecycle()
     val distillResult by viewModel.distillResult.collectAsStateWithLifecycle()
     val actionError by viewModel.memoryActionError.collectAsStateWithLifecycle()
@@ -102,6 +104,7 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
 
     LifecycleResumeEffect(Unit) {
         viewModel.refreshMemory()
+        viewModel.reloadMemoryAutoOrganize()
         records = trace.recent(TRACE_DISPLAY_LIMIT)
         enabled = store.isMemoryEnabled()
         onPauseOrDispose { }
@@ -277,6 +280,20 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
                     }
                 },
                 onClick = { if (!compacting) viewModel.compactMemory() },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Zap,
+                title = stringResource(R.string.memory_auto_organize_title),
+                subtitle = organizeReport?.let {
+                    stringResource(R.string.memory_auto_organize_last, it.merged, it.described)
+                } ?: stringResource(R.string.memory_auto_organize_subtitle),
+                trailing = {
+                    AppSwitch(
+                        checked = autoOrganize,
+                        onCheckedChange = { on -> viewModel.setMemoryAutoOrganize(on) },
+                    )
+                },
             )
             SettingsDivider()
             SettingsRow(

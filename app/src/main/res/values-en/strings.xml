@@ -2848,6 +2848,9 @@
     <string name="memory_confirm_entry">Confirm this entry and save</string>
     <string name="memory_compact_title">Compact memory</string>
     <string name="memory_compact_subtitle">Merge duplicate entries on the same topic; originals are archived and can be restored</string>
+    <string name="memory_auto_organize_title">Auto-organize memory</string>
+    <string name="memory_auto_organize_subtitle">Daily, let the model merge entries on the same topic and rewrite summaries. Uses model calls; originals are archived first</string>
+    <string name="memory_auto_organize_last">Last run: merged %1$d groups, rewrote %2$d summaries</string>
     <string name="memory_compact_merged">Compacted: merged %1$d, archived %2$d</string>
     <string name="memory_compact_nothing">Nothing to compact</string>
     <string name="memory_archive_header">Archive (previous versions)</string>
