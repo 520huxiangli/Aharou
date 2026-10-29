@@ -277,6 +277,16 @@ private fun ScheduledTaskRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // 条件设了却不展示，用户看到「条件不满足」时无从对照
+                conditionSummary(task)?.let { summary ->
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
                     text = nextText,
                     style = MaterialTheme.typography.bodySmall,
@@ -391,13 +401,29 @@ private fun eventDescription(task: ScheduledTaskEntity, limitText: String): Stri
 
 /** 上次结果里值得说一句的那几种；没说头的结果返回 null。 */
 @StringRes
-private fun outcomeLabel(outcome: String?): Int? = when (outcome) {
-    OUTCOME_SKIPPED, OUTCOME_SKIPPED_MISSED -> R.string.scheduled_tasks_missed
-    OUTCOME_SKIPPED_CONDITION -> R.string.scheduled_tasks_skipped_condition
-    OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
-    OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
-    OUTCOME_FAILED -> R.string.scheduled_tasks_failed
-    else -> null
+private fun outcomeLabel(outcome: String?): Int? {
+    if (outcome == null) return null
+    return when {
+        // 带原因后缀的取值见 ScheduledTaskWorker.outcomeOf；旧数据没有后缀，回落到通用文案
+        outcome.startsWith("$OUTCOME_SKIPPED_CONDITION:") ->
+            conditionReasonLabel(outcome.substringAfter(':'))
+        outcome == OUTCOME_SKIPPED_CONDITION -> R.string.scheduled_tasks_skipped_condition
+        outcome == OUTCOME_SKIPPED || outcome == OUTCOME_SKIPPED_MISSED -> R.string.scheduled_tasks_missed
+        outcome == OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
+        outcome == OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
+        outcome == OUTCOME_FAILED -> R.string.scheduled_tasks_failed
+        else -> null
+    }
+}
+
+/** 具体是哪条条件没过；认不出的后缀回落到通用「条件不满足」。 */
+@StringRes
+private fun conditionReasonLabel(reason: String): Int = when (reason) {
+    "out_of_window" -> R.string.scheduled_tasks_skip_reason_window
+    "not_charging" -> R.string.scheduled_tasks_skip_reason_charging
+    "battery_too_low" -> R.string.scheduled_tasks_skip_reason_battery
+    "state_unknown" -> R.string.scheduled_tasks_skip_reason_unknown
+    else -> R.string.scheduled_tasks_skipped_condition
 }
 
 @StringRes

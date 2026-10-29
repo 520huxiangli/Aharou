@@ -71,8 +71,8 @@ data class ScheduledTaskEntity(
     val lastRunAt: Long? = null,
     /**
      * 上次结果（取值与 [ScheduledTaskWorker] 的 `OUTCOME_*` 一致）：dispatched 已派发；
-     * skipped_missed 错过太久；skipped_condition 条件不满足；skipped_debounce 在防抖窗口内；
-     * skipped_running 上一次还在跑；skipped 投递失败。
+     * skipped_missed 错过太久；skipped_condition 条件不满足（后接 `:原因`，见 Worker 的 outcomeOf）；
+     * skipped_debounce 在防抖窗口内；skipped_running 上一次还在跑；skipped 投递失败。
      */
     val lastOutcome: String? = null,
     /** 已运行次数。 */

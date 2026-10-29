@@ -53,7 +53,7 @@
 | 自动化任务 | 按时间或事件（收到通知 / 电量变化 / 网络变化 / 开机）在指定会话里自动跑一条指令，可限次、可设条件、错过不补跑 → [文档](/guide/scheduled-tasks) |
 | 设备能力 | 让 AI 用上手机本体：闹钟、日历、联系人、剪贴板、定位、天气、媒体、通知、相册、设备信息；短信 / 通话记录 / 应用使用统计走同页的「个人数据查询」，只读、可收回 → [文档](/guide/device) |
 | 自定义提示词 | 覆盖与定制 AI 系统的提示词片段 → [文档](/guide/custom-prompts) |
-| 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md 项目规则 → [文档](/guide/memory) |
+| 记忆与项目规则 | 跨会话长期记忆，以及 AGENTS.md / CLAUDE.md / rules.md 项目规则 → [文档](/guide/memory) |
 | 共享知识库 | 从一个公开 Markdown 仓库同步资料到本地，AI 用 `knowledge_search` 检索 → [文档](/guide/knowledge-base) |
 | Telegram 机器人 | 在 Telegram 里给机器人发消息，本机跑 AI 并流式回复，需先配对 → [文档](/guide/telegram-bot) |
 | 微信 / 飞书 / QQ 接入 | 同样的能力接到微信（iLink）、飞书、QQ，都是长连接、不用公网 → [文档](/guide/im-bots) |

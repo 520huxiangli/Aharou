@@ -153,6 +153,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Teams(R.string.settings_teams),
     Experiments(R.string.settings_experiments),
     Prompts(R.string.prompts_title),
+    Rules(R.string.rules_title),
     PromptDetail(R.string.prompts_title),
     PromptEditor(R.string.prompts_title),
     Container(R.string.settings_container),
@@ -443,6 +444,7 @@ fun SettingsScreen(
         SettingsSection.Experiments -> SettingsSection.MoreGroup
         SettingsSection.About -> SettingsSection.HelpGroup
         SettingsSection.Prompts -> SettingsSection.AharouGroup
+        SettingsSection.Rules -> SettingsSection.AharouGroup
         SettingsSection.ProviderEditor -> SettingsSection.Providers
         SettingsSection.Log -> logReturnSection.takeUnless { expanded && it == SettingsSection.Menu }
         SettingsSection.SkillDetail, SettingsSection.SkillMarket -> SettingsSection.Skills
@@ -1181,6 +1183,16 @@ fun SettingsScreen(
                         onDeleteFragment = promptsViewModel::deleteFragment,
                         onReorder = promptsViewModel::reorderFragments,
                         onToggleBuiltinDisabled = promptsViewModel::setBuiltinDisabled
+                    )
+                }
+                SettingsSection.Rules -> {
+                    val rulesViewModel: com.aharou.feature.settings.presentation.RulesViewModel =
+                        androidx.hilt.navigation.compose.hiltViewModel()
+                    val rulesState by rulesViewModel.state.collectAsStateWithLifecycle()
+                    LaunchedEffect(Unit) { rulesViewModel.refresh() }
+                    RulesSection(
+                        state = rulesState,
+                        viewModel = rulesViewModel
                     )
                 }
                 SettingsSection.PromptDetail -> {

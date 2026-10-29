@@ -46,7 +46,7 @@ Entries marked with a version (e.g. "since v1.11.0-dev") were introduced in that
 | Skills | On-demand specialist extension packs |
 | Subagents | Spawn independent sessions to run tasks in parallel; create, edit, enable and disable in settings, with custom models and tool sets (since v1.11.0-dev) |
 | Custom prompts | Override and customize AI system prompt fragments |
-| Memory & project rules | Cross-session long-term memory, plus AGENTS.md / CLAUDE.md project rules |
+| Memory & project rules | Cross-session long-term memory, plus AGENTS.md / CLAUDE.md / rules.md project rules and rules.d fragments |
 | Personality (Soul) | The assistant's name, icon, style and personality text, injected into the system prompt |
 
 ### Environment

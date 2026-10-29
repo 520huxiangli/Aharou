@@ -59,7 +59,9 @@ object ConditionEvaluator {
                 true -> Unit
             }
         }
-        if (task.condMinBattery >= 0) {
+        // 电量 0 与不填等价（「不能低于 0%」恒真）：只有正数才算设了下限，
+        // 否则会为一个没有约束力的条件去读电量，读不到就误判成跳过（2026-10-29 群友踩过）。
+        if (task.condMinBattery > 0) {
             val battery = context.batteryPercent
                 ?: return ConditionResult.Unsatisfied(ConditionFailure.STATE_UNKNOWN)
             if (battery < task.condMinBattery) {
@@ -81,6 +83,9 @@ object ConditionEvaluator {
      */
     private fun inWindow(minute: Int, from: Int, to: Int): Boolean {
         if (from < 0 && to < 0) return true
+        // 两端都是 00:00 是常见误填（表单默认值残留、AI 建任务时把「不限」写成 0）：
+        // 按字面算它只覆盖 00:00 那一分钟，等于把「每天定时」的任务静默停掉。按不限处理。
+        if (from == 0 && to == 0) return true
         val start = if (from < 0) 0 else from.coerceIn(0, MINUTES_PER_DAY - 1)
         val end = if (to < 0) MINUTES_PER_DAY - 1 else to.coerceIn(0, MINUTES_PER_DAY - 1)
         return if (start <= end) minute in start..end else minute >= start || minute <= end

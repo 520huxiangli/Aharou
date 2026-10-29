@@ -318,7 +318,7 @@ class ConfigScheduledTaskFields @Inject constructor(
                     ConfigValue.Str(t.lastRunAt?.toString().orEmpty())
                 },
 
-                ReadOnlyField("$basePath.$forId.last_outcome", "上次结果（$forId）", "dispatched（已派发）/ skipped_missed（错过太久未补跑）/ skipped_condition（条件不满足）/ skipped_debounce（在防抖窗口内）/ skipped_running（上一次还在跑）；从未运行为空串。", ConfigSchema.Str()) {
+                ReadOnlyField("$basePath.$forId.last_outcome", "上次结果（$forId）", "dispatched（已派发）/ skipped_missed（错过太久未补跑）/ skipped_condition:原因（条件不满足，原因取 out_of_window / not_charging / battery_too_low / state_unknown，旧值只有 skipped_condition）/ skipped_debounce（在防抖窗口内）/ skipped_running（上一次还在跑）；从未运行为空串。", ConfigSchema.Str()) {
                     ConfigValue.Str(t.lastOutcome.orEmpty())
                 },
             )

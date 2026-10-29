@@ -221,44 +221,97 @@ class SystemPromptProvider @Inject constructor(
         @Volatile private var snapshot: ProjectRuleSnapshot? = null
 
         override fun build(ctx: AgentContext): String? {
-            val global = resolveRuleFile(containerInstaller.aharouDir)
-            val project = ctx.projectRoot.takeIf { it.isNotBlank() }?.let { resolveRuleFile(File(it)) }
-            if (global == null && project == null) return null
-
-            val signature = buildString {
-                append(global?.first?.absolutePath).append(':').append(global?.first?.lastModified() ?: 0)
-                append('|')
-                append(project?.first?.absolutePath).append(':').append(project?.first?.lastModified() ?: 0)
+            val globalDir = containerInstaller.aharouDir
+            val projectDir = ctx.projectRoot.takeIf { it.isNotBlank() }?.let { File(it) }
+            val globalMain = resolveRuleFile(globalDir)
+            val projectMain = projectDir?.let { resolveRuleFile(it) }
+            val globalFragments = fragmentFiles(globalDir)
+            val projectFragments = projectDir?.let { fragmentFiles(it) }.orEmpty()
+            if (globalMain == null && projectMain == null &&
+                globalFragments.isEmpty() && projectFragments.isEmpty()
+            ) {
+                return null
             }
+
+            val signature = signatureOf(globalDir) + '#' + signatureOf(projectDir)
             snapshot?.takeIf { it.signature == signature }?.let { return it.content }
 
             // 全局在前、工作区在后：工作区更具体，放后面供模型就近覆盖。
             val content = listOfNotNull(
-                global?.let { renderRule("~/.aharou", it) },
-                project?.let { renderRule("~/workspace", it) }
+                renderRule("~/.aharou", globalMain, globalFragments),
+                renderRule("~/workspace", projectMain, projectFragments)
             ).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
             snapshot = ProjectRuleSnapshot(signature, content)
             return content
         }
 
-        /** 目录内 `AGENTS.md` 优先、否则回退 `CLAUDE.md`；全局与工作区各自独立判断，互不影响。 */
-        private fun resolveRuleFile(dir: File): Pair<File, String>? {
-            val agents = File(dir, AGENTS_FILE)
-            if (agents.isFile && agents.canRead()) return agents to AGENTS_FILE
-            val claude = File(dir, CLAUDE_FILE)
-            if (claude.isFile && claude.canRead()) return claude to CLAUDE_FILE
-            return null
+        /** 目录内 `AGENTS.md` → `CLAUDE.md` → `rules.md` 依次回退；全局与工作区各自独立判断，互不影响。 */
+        private fun resolveRuleFile(dir: File): Pair<File, String>? =
+            listOf(AGENTS_FILE, CLAUDE_FILE, RULES_FILE)
+                .map { File(dir, it) }
+                .firstOrNull { it.isFile && it.canRead() }
+                ?.let { it to it.name }
+
+        /** 规则片段目录 rules.d：按文件名排序，接在主规则后面一起注入。 */
+        private fun fragmentFiles(dir: File): List<File> =
+            File(dir, RULES_DIR).listFiles { file -> file.isFile && file.name.endsWith(".md") }
+                ?.sortedBy { it.name }
+                .orEmpty()
+
+        /** 主规则与每个片段的路径 / mtime 都要进签名（片段再加长度），只盯主文件会让改片段不生效。 */
+        private fun signatureOf(dir: File?): String {
+            if (dir == null) return ""
+            return buildString {
+                listOf(AGENTS_FILE, CLAUDE_FILE, RULES_FILE).forEach { name ->
+                    val file = File(dir, name)
+                    append(file.absolutePath).append(':')
+                        .append(if (file.isFile) file.lastModified() else -1L).append('|')
+                }
+                fragmentFiles(dir).forEach { file ->
+                    append(file.name).append(':').append(file.lastModified()).append(':').append(file.length()).append('|')
+                }
+            }
         }
 
-        private fun renderRule(dirLabel: String, file: Pair<File, String>): String? {
-            val text = try { file.first.readText() } catch (e: Exception) { return null }
-            if (text.isBlank()) return null
-            val body = if (text.length > MAX_AGENTS_CHARS) {
-                text.take(MAX_AGENTS_CHARS) + "\n…（${file.second} 过长，已截断）"
+        /**
+         * 主规则 + 片段合成一段注入文本。
+         *
+         * 三级回退与片段目录的口径对齐简云的现成实现：`AGENTS.md` → `CLAUDE.md` → `rules.md`，
+         * 片段按文件名顺序接在后面。单文件与合并结果都要封顶，避免把提示词挤爆。
+         */
+        private fun renderRule(dirLabel: String, main: Pair<File, String>?, fragments: List<File>): String? {
+            val body = buildString {
+                main?.let { file -> readRuleText(file.first, file.second)?.let { append(it.trim()) } }
+                fragments.forEach { file ->
+                    val text = readRuleText(file, file.name) ?: return@forEach
+                    if (isNotEmpty()) append("\n\n")
+                    append(text.trim())
+                }
+            }
+            if (body.isBlank()) return null
+            val capped = if (body.length > MAX_AGENTS_CHARS) {
+                body.take(MAX_AGENTS_CHARS) + "\n…（规则过长，已截断）"
+            } else {
+                body
+            }
+            val source = when {
+                main != null && fragments.isNotEmpty() -> "$dirLabel/${main.second} + ${fragments.size} 个片段"
+                main != null -> "$dirLabel/${main.second}"
+                else -> "$dirLabel/$RULES_DIR"
+            }
+            return "项目规则 (来自 $source，务必遵守):\n$capped"
+        }
+
+        private fun readRuleText(file: File, label: String): String? = try {
+            val text = file.readText()
+            if (text.length > MAX_AGENTS_CHARS) {
+                text.take(MAX_AGENTS_CHARS) + "\n…（$label 过长，已截断）"
             } else {
                 text
             }
-            return "项目规则 (来自 $dirLabel/${file.second}，务必遵守):\n${body.trim()}"
+        } catch (e: Exception) {
+            FileLogger.w(TAG, "读取规则失败 ${file.absolutePath}: ${e.message}", e)
+            null
         }
     }
 
@@ -845,6 +898,12 @@ class SystemPromptProvider @Inject constructor(
         const val TAG = "SystemPromptProvider"
         const val AGENTS_FILE = "AGENTS.md"
         const val CLAUDE_FILE = "CLAUDE.md"
+
+        /** 第三级回退：前两份都没有时读它。 */
+        const val RULES_FILE = "rules.md"
+
+        /** 规则片段目录：目录内每个 `*.md` 都当成一段规则，按文件名顺序接在主规则之后。 */
+        const val RULES_DIR = "rules.d"
         const val SUBAGENT_BASE_FILE = "agent/subagent-base.md"
         const val MEMORY_DISCIPLINE_FILE = "agent/memory-discipline.md"
         const val MAX_AGENTS_CHARS = 32_000

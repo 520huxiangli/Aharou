@@ -23,6 +23,8 @@ import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.settings.data.repository.AppThemeMode
+import com.aharou.feature.settings.presentation.RulesUiState
+import com.aharou.feature.settings.presentation.RulesViewModel
 import com.aharou.feature.settings.presentation.TerminalCleanupSettingsViewModel
 import com.aharou.feature.terminal.data.repository.TerminalSettings
 import compose.icons.FeatherIcons
@@ -66,6 +68,9 @@ import compose.icons.feathericons.Users
 
 @Composable
 internal fun SettingsAharouGroupScreen(onOpen: (SettingsSection) -> Unit) {
+    // 入口行直接给字数摘要：不用点进去就能看出规则配没配（对齐简云的做法）
+    val rulesViewModel: RulesViewModel = hiltViewModel()
+    val rulesState by rulesViewModel.state.collectAsStateWithLifecycle()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -100,6 +105,13 @@ internal fun SettingsAharouGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.FileText,
+                title = stringResource(SettingsSection.Rules.titleRes),
+                subtitle = rulesSummary(rulesState),
+                onClick = { onOpen(SettingsSection.Rules) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Power,
                 title = stringResource(R.string.assistant_digital_title),
                 onClick = { onOpen(SettingsSection.AssistantDigital) }
@@ -111,7 +123,30 @@ internal fun SettingsAharouGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 onClick = { onOpen(SettingsSection.Pet) }
             )
         }
+    }}
+
+/** 规则入口的摘要：没配显示「未配置」，否则给出各作用域的字数或片段数（对齐简云的做法）。 */
+@Composable
+private fun rulesSummary(state: RulesUiState): String {
+    val parts = ArrayList<String>()
+    state.global?.let { doc ->
+        val chars = doc.content.trim().length
+        when {
+            chars > 0 -> parts.add(stringResource(R.string.rules_summary_global_chars, chars))
+            doc.fragments.isNotEmpty() ->
+                parts.add(stringResource(R.string.rules_summary_global_fragments, doc.fragments.size))
+        }
     }
+    state.project?.let { doc ->
+        val chars = doc.content.trim().length
+        when {
+            chars > 0 -> parts.add(stringResource(R.string.rules_summary_project_chars, chars))
+            doc.fragments.isNotEmpty() ->
+                parts.add(stringResource(R.string.rules_summary_project_fragments, doc.fragments.size))
+        }
+    }
+    if (parts.isEmpty()) return stringResource(R.string.rules_summary_none)
+    return parts.joinToString(" · ")
 }
 
 @Composable

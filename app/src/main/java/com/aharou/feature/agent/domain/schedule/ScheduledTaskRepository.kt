@@ -63,6 +63,9 @@ class ScheduledTaskRepository @Inject constructor(
         now: Long = System.currentTimeMillis()
     ): ScheduledTaskEntity {
         val interval = ScheduledTaskScheduler.normalizeInterval(intervalMinutes)
+        // 两端都填 00:00 的窗口没有实用价值（任务时刻本身就是 00:00 的话不需要窗口），落库前抹成「不限」，
+        // 否则它会变成一道每天只开一分钟的隐形闸门（2026-10-29 群友踩过）。
+        val unlimitedWindow = conditionWindowFrom == 0 && conditionWindowTo == 0
         val timeTriggered = TriggerType.isTimeTrigger(triggerType)
         val scheduleChanged = existing == null ||
             existing.triggerType != triggerType ||
@@ -85,10 +88,10 @@ class ScheduledTaskRepository @Inject constructor(
             triggerBatteryBelow = triggerBatteryBelow.coerceIn(-1, 100),
             triggerOnCharging = triggerOnCharging,
             triggerSsid = triggerSsid,
-            conditionWindowFrom = windowBound(conditionWindowFrom),
-            conditionWindowTo = windowBound(conditionWindowTo),
+            conditionWindowFrom = if (unlimitedWindow) -1 else windowBound(conditionWindowFrom),
+            conditionWindowTo = if (unlimitedWindow) -1 else windowBound(conditionWindowTo),
             condRequireCharging = condRequireCharging,
-            condMinBattery = condMinBattery.coerceIn(-1, 100),
+            condMinBattery = condMinBattery.takeIf { it > 0 }?.coerceIn(1, 100) ?: -1,
             debounceMinutes = debounceMinutes.coerceAtLeast(0),
             runMode = existing?.runMode ?: ScheduledTaskEntity.RUN_SINGLE,
             enabled = enabled,

@@ -8,6 +8,7 @@ import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.domain.schedule.trigger.ConditionContext
 import com.aharou.feature.agent.domain.schedule.trigger.ConditionEvaluator
+import com.aharou.feature.agent.domain.schedule.trigger.ConditionFailure
 import com.aharou.feature.agent.domain.schedule.trigger.ConditionResult
 import com.aharou.feature.agent.domain.schedule.trigger.DeviceStateMonitor
 import com.aharou.feature.agent.domain.schedule.trigger.DeviceStateSnapshot
@@ -108,7 +109,7 @@ class ScheduledTaskWorker(
             // 过了迟到这关才轮到条件：条件求值 → 防抖 → 准入，哪一步不过都只推进时间并记下具体原因。
             val condition = ConditionEvaluator.evaluate(task, conditions)
             if (condition is ConditionResult.Unsatisfied) {
-                dao.recordOutcome(task.id, OUTCOME_SKIPPED_CONDITION, now)
+                dao.recordOutcome(task.id, outcomeOf(condition.failure), now)
                 FileLogger.w(TAG, "自动化任务条件不满足(${condition.failure})，跳过: ${task.name}")
                 return@forEach
             }
@@ -212,9 +213,22 @@ class ScheduledTaskWorker(
         const val OUTCOME_SKIPPED = "skipped"
 
         const val OUTCOME_SKIPPED_MISSED = "skipped_missed"
+
+        /** 前缀，后接具体原因（见 [outcomeOf]）：设置页靠后缀告诉用户卡在哪条，旧值（无后缀）当通用文案。 */
         const val OUTCOME_SKIPPED_CONDITION = "skipped_condition"
         const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
         const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
+
+        /** 把失败原因带进 lastOutcome：只写「条件不满足」的话用户看不出是时段、充电还是电量。 */
+        fun outcomeOf(failure: ConditionFailure): String {
+            val reason = when (failure) {
+                ConditionFailure.OUT_OF_WINDOW -> "out_of_window"
+                ConditionFailure.NOT_CHARGING -> "not_charging"
+                ConditionFailure.BATTERY_TOO_LOW -> "battery_too_low"
+                ConditionFailure.STATE_UNKNOWN -> "state_unknown"
+            }
+            return "$OUTCOME_SKIPPED_CONDITION:$reason"
+        }
 
         /** 会话层跑完一轮后的真实结果，由 AIAgentViewModel 回写（取值定义见 [ScheduledTaskOutcome]）。 */
         const val OUTCOME_COMPLETED = ScheduledTaskOutcome.COMPLETED
