@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!-- miaoda-super-design | title: 杂志长卷 | skeleton: editorial-columns | sig: 巨型 Aharou 字标配规格参数表，核心特性用发丝线分隔的编号矩阵行，标题逐行 clip-path 揭示 -->
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aharou · 手机上的 AI 助手与 Coding Agent</title>
+  <link rel="stylesheet" href="./landing.css">
+  <style>
+    /* ===== FONT-FACE:BEGIN ===== */
+    @font-face { font-family: "Source Han Mono SC"; src: url("https://resource-static.bj.bcebos.com/fonts-skill/SourceHanMonoSC-Light.woff2") format("woff2"); font-weight: 300; font-display: swap; }
+    @font-face { font-family: "Source Han Mono SC"; src: url("https://resource-static.bj.bcebos.com/fonts-skill/SourceHanMonoSC-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+    @font-face { font-family: "Source Han Mono SC"; src: url("https://resource-static.bj.bcebos.com/fonts-skill/SourceHanMonoSC-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+    @font-face { font-family: "Source Han Mono SC"; src: url("https://resource-static.bj.bcebos.com/fonts-skill/SourceHanMonoSC-Heavy.woff2") format("woff2"); font-weight: 900; font-display: swap; }
+    /* ===== FONT-FACE:END ===== */
+
+    /* ===== DESIGN-TOKENS:BEGIN ===== */
+    :root {
+      --radius: 0.375rem;
+      --background: 210 8% 4%;
+      --foreground: 0 0% 98%;
+      --card: 210 6% 9%;
+      --card-foreground: 0 0% 98%;
+      --primary: 64 89% 54%;
+      --primary-foreground: 222 47% 11%;
+      --secondary: 210 8% 14%;
+      --secondary-foreground: 0 0% 98%;
+      --muted: 210 9% 15%;
+      --muted-foreground: 216 9% 64%;
+      --accent: 234 56% 60%;
+      --accent-foreground: 0 0% 100%;
+      --destructive: 0 78% 65%;
+      --destructive-foreground: 0 0% 100%;
+      --border: 210 6% 20%;
+      --input: 210 6% 20%;
+      --ring: 64 89% 54%;
+      --popover: 210 8% 6%;
+      --popover-foreground: 0 0% 98%;
+    }
+    /* ===== DESIGN-TOKENS:END ===== */
+
+    /* ===== CUSTOM-TOKENS:BEGIN ===== */
+    :root {
+      --sig-lime: hsl(64 89% 54%);
+      --sig-indigo: hsl(234 56% 60%);
+      --sig-ease: cubic-bezier(.23, 1, .32, 1);
+    }
+    /* ===== CUSTOM-TOKENS:END ===== */
+
+    /* ===== SIGNATURE-CSS:BEGIN ===== */
+    body { font-family: "Source Han Mono SC", ui-monospace, SFMono-Regular, Menlo, monospace; }
+    ::selection { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+    * { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+
+    /* oversized editorial wordmark */
+    .sig-display { font-size: clamp(3.5rem, 14vw, 12rem); line-height: 0.88; letter-spacing: -0.045em; }
+
+    /* feature row hover */
+    .sig-feat { transition: background-color .3s var(--sig-ease); }
+    .sig-feat:hover { background: hsl(var(--muted) / 0.3); }
+    .sig-feat .sig-feat-num { transition: color .3s var(--sig-ease); }
+    .sig-feat:hover .sig-feat-num { color: hsl(var(--primary)); }
+
+    /* marquee (self-contained) */
+    .sig-marquee { overflow: hidden; }
+    .sig-marquee-track { display: flex; width: max-content; animation: sig-marquee 40s linear infinite; }
+    .sig-marquee:hover .sig-marquee-track { animation-play-state: paused; }
+    @keyframes sig-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+    /* terminal chrome */
+    .sig-term { border: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
+    .sig-term-bar { border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--muted) / 0.4); }
+    .sig-dot { width: 10px; height: 10px; border-radius: 9999px; background: hsl(var(--muted-foreground) / 0.4); }
+    .sig-caret::after { content: "▋"; margin-left: 2px; color: hsl(var(--primary)); animation: sig-blink 1.1s step-end infinite; }
+    @keyframes sig-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .sig-eyebrow { font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+    .sig-params { font-variant-numeric: tabular-nums; }
+
+    /* sandbox tabs */
+    #sb3 .sb-tab { color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border)); transition: background-color .2s, color .2s, border-color .2s; }
+    #sb3 .sb-tab:hover { color: hsl(var(--foreground)); }
+    #sb3[data-tab="chat"] .sb-tab[data-tab="chat"],
+    #sb3[data-tab="term"] .sb-tab[data-tab="term"],
+    #sb3[data-tab="shadow"] .sb-tab[data-tab="shadow"] {
+      background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: hsl(var(--primary));
+    }
+    #sb3 .sb-panel { display: none; }
+    #sb3[data-tab="chat"] [data-panel="chat"],
+    #sb3[data-tab="term"] [data-panel="term"],
+    #sb3[data-tab="shadow"] [data-panel="shadow"] { display: block; }
+
+    /* toast */
+    .sig-toast { opacity: 0; translate: -50% 1rem; transition: opacity .3s ease, translate .3s ease; }
+    .sig-toast-show { opacity: 1; translate: -50% 0; }
+    /* ===== SIGNATURE-CSS:END ===== */
+  </style>
+</head>
+<body class="bg-background text-foreground antialiased">
+
+  <!-- ============ NAV ============ -->
+  <header class="fixed top-0 inset-x-0 z-50 border-b border-border bg-background/85 backdrop-blur-md">
+    <nav class="container flex h-16 items-center justify-between gap-4">
+      <a href="#top" class="text-base font-black tracking-tight">Aharou<span class="text-primary">.</span></a>
+      <div class="hidden md:flex items-center gap-8 text-sm text-muted-foreground">
+        <a href="#features" class="hover:text-foreground transition-colors">特性</a>
+        <a href="#sandbox" class="hover:text-foreground transition-colors">体验</a>
+        <a href="#download" class="hover:text-foreground transition-colors">下载</a>
+        <a href="#docs" class="hover:text-foreground transition-colors">文档</a>
+        <a href="#community" class="hover:text-foreground transition-colors">社区</a>
+      </div>
+      <a href="https://github.com/520huxiangli/Aharou" target="_blank" rel="noopener" class="bg-primary px-4 py-2 text-sm font-bold text-primary-foreground">GitHub</a>
+    </nav>
+  </header>
+
+  <!-- ============ HERO 巨型字标 ============ -->
+  <section id="top" class="flex min-h-screen flex-col justify-center border-b border-border pt-24 pb-16">
+    <div class="container">
+      <p class="sig-eyebrow opacity-0 intersect:animate-fade-up intersect-once" no-intersect>开源 · GPL-3.0 · Android 8.0+</p>
+      <h1 class="sig-display mt-4 font-black text-foreground [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once" no-intersect>Aharou</h1>
+      <div class="mt-8 grid gap-10 md:grid-cols-12">
+        <div class="space-y-5 md:col-span-7">
+          <p class="text-balance text-xl font-bold leading-snug opacity-0 intersect:animate-fade-up intersect-once md:text-2xl" style="animation-delay:.1s" no-intersect>
+            手机上的 <span class="text-primary">AI 助手</span> · <span class="text-primary">Coding Agent</span> · 内置 Linux 环境
+          </p>
+          <p class="max-w-prose text-pretty text-sm leading-relaxed text-muted-foreground opacity-0 intersect:animate-fade-up intersect-once md:text-base" style="animation-delay:.18s" no-intersect>
+            内置 Alpine 容器与多标签终端，Agent 能读写文件、执行命令、跑构建；也能把后端切到远程 SSH。
+            模型、密钥、端点全部由你配置——不内置模型，不绑定供应商，全程本机运行。
+          </p>
+          <div class="flex flex-col gap-3 sm:flex-row opacity-0 intersect:animate-fade-up intersect-once" style="animation-delay:.26s" no-intersect>
+            <a href="#download" class="inline-flex items-center justify-center gap-2 bg-primary px-6 py-3 text-sm font-bold text-primary-foreground"><span class="text-primary-foreground/70">$</span> 下载 v2.47.3</a>
+            <a href="https://github.com/520huxiangli/Aharou" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 border border-border bg-card px-6 py-3 text-sm font-bold">查看源码</a>
+          </div>
+        </div>
+        <!-- spec table -->
+        <div class="md:col-span-5 opacity-0 intersect:animate-fade-up intersect-once" style="animation-delay:.2s" no-intersect>
+          <dl class="border-t border-border text-sm">
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">版本</dt><dd class="sig-params font-bold">v2.47.3</dd></div>
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">协议</dt><dd class="font-bold">GPL-3.0</dd></div>
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">最低系统</dt><dd class="sig-params font-bold">Android 8.0 · SDK 26</dd></div>
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">技术栈</dt><dd class="font-bold">Kotlin · Compose</dd></div>
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">架构</dt><dd class="sig-params font-bold">arm64 · x86_64</dd></div>
+            <div class="flex items-center justify-between border-b border-border py-3"><dt class="text-muted-foreground">Stars</dt><dd class="sig-params font-bold text-primary">29</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MARQUEE ============ -->
+  <div class="sig-marquee border-b border-border bg-card/40 py-4">
+    <div class="sig-marquee-track gap-8 text-sm text-muted-foreground">
+      <span class="flex shrink-0 items-center gap-8">
+        <span>内置 Linux 终端</span><span class="text-primary">/</span>
+        <span>影子屏</span><span class="text-primary">/</span>
+        <span>多模型 AI 对话</span><span class="text-primary">/</span>
+        <span>沙箱文件预览</span><span class="text-primary">/</span>
+        <span>Shizuku 免 Root</span><span class="text-primary">/</span>
+        <span>SOUL.md 人格</span><span class="text-primary">/</span>
+        <span>MCP · Skills</span><span class="text-primary">/</span>
+        <span>远程 SSH</span><span class="text-primary">/</span>
+      </span>
+      <span class="flex shrink-0 items-center gap-8" aria-hidden="true">
+        <span>内置 Linux 终端</span><span class="text-primary">/</span>
+        <span>影子屏</span><span class="text-primary">/</span>
+        <span>多模型 AI 对话</span><span class="text-primary">/</span>
+        <span>沙箱文件预览</span><span class="text-primary">/</span>
+        <span>Shizuku 免 Root</span><span class="text-primary">/</span>
+        <span>SOUL.md 人格</span><span class="text-primary">/</span>
+        <span>MCP · Skills</span><span class="text-primary">/</span>
+        <span>远程 SSH</span><span class="text-primary">/</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- ============ SHOWCASE 真机 ============ -->
+  <section class="border-b border-border">
+    <div class="container grid items-center gap-10 py-16 md:grid-cols-2 md:py-24">
+      <div class="overflow-hidden border border-border bg-card p-2 opacity-0 intersect:animate-fade-in intersect-once" no-intersect>
+        <div class="aspect-square w-full overflow-hidden">
+          <img src="/workspace/app-ff6vqz266uwx/tasks/design/assets/944711260053587140_0.jpg" alt="Aharou 手机终端与 AI 编程界面" class="h-full w-full object-cover" />
+        </div>
+      </div>
+      <div class="space-y-4">
+        <p class="sig-eyebrow">真机运行</p>
+        <h2 class="text-balance text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>不用电脑，<br/>也不用自己搭环境</h2>
+        <p class="max-w-prose text-pretty text-sm leading-relaxed text-muted-foreground md:text-base">
+          所有能力在本机完成。Agent 在内置 Linux 里读文件、跑构建；影子屏让它在后台自主操作 App；
+          小屏幕把每一步实时可视化——终端逐行输出、网页快照、影子屏直播同屏呈现。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES 编号矩阵（主导） ============ -->
+  <section id="features" class="border-b border-border py-20 md:py-28">
+    <div class="container">
+      <div class="flex items-end justify-between gap-4 border-b border-border pb-6">
+        <h2 class="text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>核心特性</h2>
+        <span class="sig-params text-sm text-muted-foreground">08 modules</span>
+      </div>
+
+      <div class="border-b border-border">
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">01</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">内置 Linux 与终端</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">Alpine（PRoot）容器 + 多标签终端，导入自定义镜像、挂载宿主目录、切换远程 SSH 后端。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ apk add · ssh remote</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">02</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">影子屏 Shadow Screen</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">无头虚拟显示屏：Agent 在「看不见的屏幕」里运行、截图、操作 App，完全不打扰手机前台。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ display :0 · headless</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">03</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">全能 AI 对话</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">多供应商 / 多模型无缝切换，Markdown、图片与思考过程（思维链）实时展示。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ model · chain-of-thought</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">04</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">小屏幕实时监控</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">工具执行实时可视化：终端逐行输出、网页快照、影子屏直播同屏呈现。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ tail -f · snapshot · live</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">05</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">智能浏览器面板</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">内置浏览器，Agent 自主驱动打开页面、点击与操作，完成端到端任务。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ open url · act · scrape</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">06</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">沙箱文件与预览</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">文件浏览器与预览：图片 / 文本 / Markdown / 音频 / 视频 / PDF / APK / 压缩包。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ ls -la · preview</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">07</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">Shizuku 与加密变量</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">经 Shizuku 在系统层执行命令、读写其它应用目录，无需 root；环境变量加密存储自动注入。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ shizuku · export KEY=***</div>
+        </div>
+        <div class="sig-feat grid gap-3 border-t border-border py-8 md:grid-cols-12 md:items-baseline">
+          <div class="sig-feat-num sig-params text-4xl font-black text-muted-foreground md:col-span-2 md:text-6xl">08</div>
+          <div class="md:col-span-6"><h3 class="text-xl font-bold md:text-2xl">人格引擎与开放生态</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">SOUL.md 定义名字 / 图标 / 语言 / 人格，随手改即时生效；MCP、技能、子代理自由拓展。</p></div>
+          <div class="sig-params text-sm text-primary md:col-span-4">$ soul.md · mcp · skills</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SANDBOX ============ -->
+  <section id="sandbox" class="border-b border-border bg-card/20 py-20 md:py-28">
+    <div class="container">
+      <p class="sig-eyebrow">在线体验</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>先跑一遍</h2>
+      <div id="sb3" data-tab="chat" class="mt-10">
+        <div class="flex flex-row gap-2 overflow-x-auto pb-2">
+          <button class="sb-tab shrink-0 whitespace-nowrap px-4 py-2.5 text-sm" data-tab="chat" role="tab">AI 对话 · 思维链</button>
+          <button class="sb-tab shrink-0 whitespace-nowrap px-4 py-2.5 text-sm" data-tab="term" role="tab">虚拟 Linux 终端</button>
+          <button class="sb-tab shrink-0 whitespace-nowrap px-4 py-2.5 text-sm" data-tab="shadow" role="tab">影子屏任务</button>
+        </div>
+        <div class="sig-term">
+          <div class="sig-term-bar flex items-center gap-2 px-4 py-2.5">
+            <span class="sig-dot"></span><span class="sig-dot"></span><span class="sig-dot"></span>
+            <span id="sb3-title" class="ml-2 text-xs text-muted-foreground">aharou chat</span>
+          </div>
+          <div class="min-h-[340px] p-6 text-sm">
+            <div data-panel="chat" class="sb-panel space-y-4">
+              <div class="rounded-md bg-muted/50 p-3"><span class="text-primary">你</span> · 帮我写个脚本统计当前目录文件数</div>
+              <div class="rounded-md border border-border p-3">
+                <p class="text-xs text-muted-foreground">思考中… → 列出目录 → os.listdir 计数 → 输出</p>
+                <pre class="mt-3 overflow-x-auto rounded bg-background p-3 text-xs text-foreground">import os
+print(len(os.listdir('.')))</pre>
+                <p class="mt-2 text-xs text-muted-foreground">已写入 <span class="text-primary">count.py</span> 并执行，返回 <span class="text-primary">42</span> 个文件。</p>
+              </div>
+            </div>
+            <div data-panel="term" class="sb-panel">
+              <pre class="text-xs leading-relaxed text-muted-foreground"><span class="text-primary">$</span> apk add python3
+(1/1) Installing python3
+<span class="text-primary">$</span> python3 --version
+Python 3.11.9
+<span class="text-primary">$</span> echo "hello from alpine"
+hello from alpine
+<span class="sig-caret text-primary">$</span></pre>
+            </div>
+            <div data-panel="shadow" class="sb-panel">
+              <div class="flex items-center gap-2 text-xs text-muted-foreground"><span class="inline-block h-2 w-2 animate-pulse rounded-full bg-primary"></span> 影子屏 :0 · 后台运行中，前台无感知</div>
+              <div class="mt-4 space-y-2 text-xs">
+                <p><span class="text-primary">[1]</span> 启动目标 App …… 完成</p>
+                <p><span class="text-primary">[2]</span> 截图识别界面元素 …… 完成</p>
+                <p><span class="text-primary">[3]</span> 点击「开始」按钮 …… 完成</p>
+                <p><span class="text-primary">[4]</span> 等待结果并回填 …… 进行中</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DOWNLOAD ============ -->
+  <section id="download" class="border-b border-border py-20 md:py-28">
+    <div class="container">
+      <div class="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-6">
+        <h2 class="text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>下载 <span class="text-primary">v2.47.3</span></h2>
+        <a href="https://github.com/520huxiangli/Aharou/releases" target="_blank" rel="noopener" class="text-sm text-muted-foreground hover:text-primary">全部历史版本 →</a>
+      </div>
+      <p class="mt-6 max-w-prose text-sm text-muted-foreground">本次更新：<span class="text-foreground">feat(settings)</span> 设置里编辑全局/项目规则，修复自动化任务条件误判。允许「安装未知应用」后安装即可，无需 root。</p>
+
+      <div class="mt-8 border-b border-border">
+        <div class="flex flex-col gap-4 border-t border-border py-6 md:flex-row md:items-center md:justify-between">
+          <div class="min-w-0">
+            <h3 class="text-lg font-bold">Aharou-arm64-v2.47.3.apk</h3>
+            <p class="sig-params mt-1 text-xs text-muted-foreground">arm64 · 38 MB · SHA256 5fd697da…dea5b4f0</p>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <button class="sig-copy border border-border px-3 py-2 text-xs" data-copy="5fd697daeeb17e8229970638e6135719b0a9c866806b5eda871ba880dea5b4f0">复制校验</button>
+            <a href="https://github.com/520huxiangli/Aharou/releases/download/v2.47.3/Aharou-arm64-v2.47.3.apk" target="_blank" rel="noopener" class="bg-primary px-5 py-2 text-sm font-bold text-primary-foreground">下载</a>
+          </div>
+        </div>
+        <div class="flex flex-col gap-4 border-t border-border py-6 md:flex-row md:items-center md:justify-between">
+          <div class="min-w-0">
+            <h3 class="text-lg font-bold">Aharou-x86_64-v2.47.3.apk</h3>
+            <p class="sig-params mt-1 text-xs text-muted-foreground">x86_64 · 39 MB · SHA256 0d67ebec…074f1f66d</p>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <button class="sig-copy border border-border px-3 py-2 text-xs" data-copy="0d67ebecc0165718b9f1c229ccd4d2e64e77e8be48d57e44c6aab2b074f1f66d">复制校验</button>
+            <a href="https://github.com/520huxiangli/Aharou/releases/download/v2.47.3/Aharou-x86_64-v2.47.3.apk" target="_blank" rel="noopener" class="border border-border bg-secondary px-5 py-2 text-sm font-bold">下载</a>
+          </div>
+        </div>
+        <div class="flex flex-col gap-4 border-t border-border py-6 md:flex-row md:items-center md:justify-between">
+          <div class="min-w-0">
+            <h3 class="text-lg font-bold">arm64-mapping.txt.gz</h3>
+            <p class="sig-params mt-1 text-xs text-muted-foreground">arm64 · 11 MB · SHA256 a2e96c57…91e753fd</p>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <button class="sig-copy border border-border px-3 py-2 text-xs" data-copy="a2e96c57e966a78423791ad6055368da45acd8543361df75008f9aca91e753fd">复制校验</button>
+            <a href="https://github.com/520huxiangli/Aharou/releases/download/v2.47.3/Aharou-arm64-v2.47.3-mapping.txt.gz" target="_blank" rel="noopener" class="border border-border bg-secondary px-5 py-2 text-sm font-bold">下载</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DOCS ============ -->
+  <section id="docs" class="border-b border-border bg-card/20 py-20 md:py-28">
+    <div class="container">
+      <p class="sig-eyebrow">快速上手</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>5 分钟跑起来</h2>
+      <div class="mt-10 grid gap-px bg-border md:grid-cols-2">
+        <div class="bg-background p-6"><p class="sig-params text-3xl font-black text-primary">01</p><h3 class="mt-3 text-lg font-bold">安装与初始化</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">下载对应架构 APK，允许「安装未知应用」后安装。首次启动自动初始化内置 Alpine 环境。</p></div>
+        <div class="bg-background p-6"><p class="sig-params text-3xl font-black text-primary">02</p><h3 class="mt-3 text-lg font-bold">配置模型与 API Key</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">填入你自己的模型端点与 API Key，支持任意 OpenAI 兼容供应商，密钥仅本机加密存储。</p></div>
+        <div class="bg-background p-6"><p class="sig-params text-3xl font-black text-primary">03</p><h3 class="mt-3 text-lg font-bold">激活 Shizuku（可选）</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">经无线调试启动 Shizuku，Agent 即可在系统层执行命令、读写其它应用目录，无需 root。</p></div>
+        <div class="bg-background p-6"><p class="sig-params text-3xl font-black text-primary">04</p><h3 class="mt-3 text-lg font-bold">编写 SOUL.md 人格</h3><p class="mt-2 text-sm leading-relaxed text-muted-foreground">定义名字、图标、语言与人格正文，保存后聊天里即时生效。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMMUNITY ============ -->
+  <section id="community" class="py-20 md:py-28">
+    <div class="container">
+      <p class="sig-eyebrow">开源社区</p>
+      <h2 class="mt-3 text-3xl font-black tracking-tight [clip-path:inset(0_100%_0_0)] intersect:animate-clip-reveal intersect-once md:text-5xl" no-intersect>一起玩终端</h2>
+      <div class="mt-10 grid gap-px bg-border md:grid-cols-3">
+        <a href="https://github.com/520huxiangli/Aharou" target="_blank" rel="noopener" class="bg-background p-6"><p class="sig-params text-4xl font-black text-primary">29</p><p class="mt-1 text-sm text-muted-foreground">GitHub Stars · 3 Forks</p><p class="mt-4 text-sm font-bold">进入仓库 →</p></a>
+        <div class="bg-background p-6"><p class="sig-params text-4xl font-black text-primary">141882781</p><p class="mt-1 text-sm text-muted-foreground">QQ 交流群 · 实时讨论</p><p class="mt-4 text-sm font-bold">搜索入群</p></div>
+        <a href="https://github.com/520huxiangli/Aharou/issues" target="_blank" rel="noopener" class="bg-background p-6"><p class="sig-params text-4xl font-black text-primary">Issues</p><p class="mt-1 text-sm text-muted-foreground">Bug 反馈 · 功能建议 · PR</p><p class="mt-4 text-sm font-bold">提交 Issue →</p></a>
+      </div>
+      <p class="mt-8 max-w-prose text-xs leading-relaxed text-muted-foreground">本项目以 GPL-3.0 协议开源，基于 AiCode 改造：部分代码版权归 AiCode contributors，新增与改动部分版权归 Aharou contributors。项目中使用的开源组件，其版权与许可声明见 LICENSE 与相关 NOTICE 文件。</p>
+    </div>
+  </section>
+
+  <!-- ============ FOOTER ============ -->
+  <footer class="border-t border-border py-12">
+    <div class="container flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
+      <a href="#top" class="text-base font-black tracking-tight">Aharou<span class="text-primary">.</span></a>
+      <div class="flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+        <a href="#features" class="hover:text-foreground">特性</a>
+        <a href="#sandbox" class="hover:text-foreground">体验</a>
+        <a href="#download" class="hover:text-foreground">下载</a>
+        <a href="#docs" class="hover:text-foreground">文档</a>
+        <a href="#community" class="hover:text-foreground">社区</a>
+      </div>
+      <p class="text-xs text-muted-foreground">GPL-3.0 · 手机端 AI 助手与 Coding Agent</p>
+    </div>
+  </footer>
+
+  <!-- toast -->
+  <div id="toast" class="sig-toast pointer-events-none fixed bottom-6 left-1/2 z-[60] border border-primary/50 bg-card px-4 py-2 text-sm"></div>
+
+  <!-- P4 丢弃以下全部 data-preview-only 脚本 -->
+  <script>
+    /* 滚动入场：元素在 HTML 里就带 no-intersect（避免脚本执行前闪播），
+       这里只负责在进入视口时移除，交给 CSS 的 intersect: 变体播放动画。 */
+    (function () {
+      var pending = Array.prototype.slice.call(document.querySelectorAll('[no-intersect]'));
+      if (!pending.length) return;
+      function check() {
+        if (!pending.length) return;
+        var limit = window.innerHeight * 0.92;
+        pending = pending.filter(function (el) {
+          if (el.getBoundingClientRect().top <= limit) {
+            el.removeAttribute('no-intersect');
+            return false;
+          }
+          return true;
+        });
+      }
+      check();
+      window.addEventListener('scroll', check, { passive: true });
+      window.addEventListener('resize', check);
+      window.addEventListener('load', check);
+      setTimeout(check, 120);
+    })();
+      /* ===== MOTION-SCRIPT:BEGIN ===== */
+      // sandbox tabs
+      (function () {
+        const hub = document.getElementById('sb3');
+        if (!hub) return;
+        const title = document.getElementById('sb3-title');
+        const titles = { chat: 'aharou chat', term: 'aharou@mobile: ~', shadow: 'shadow screen :0' };
+        hub.querySelectorAll('.sb-tab').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            hub.dataset.tab = btn.dataset.tab;
+            if (title) title.textContent = titles[btn.dataset.tab];
+          });
+        });
+      })();
+
+      // copy + toast
+      (function () {
+        const toast = document.getElementById('toast');
+        let timer;
+        function show(msg) {
+          if (!toast) return;
+          toast.textContent = msg;
+          toast.classList.add('sig-toast-show');
+          clearTimeout(timer);
+          timer = setTimeout(function () { toast.classList.remove('sig-toast-show'); }, 1800);
+        }
+        document.querySelectorAll('.sig-copy').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const val = btn.dataset.copy;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(val).then(function () { show('SHA256 已复制'); }, function () { show('复制失败，请手动选择'); });
+            } else { show('复制失败，请手动选择'); }
+          });
+        });
+      })();
+      /* ===== MOTION-SCRIPT:END ===== */
+  </script>
+</body>
+</html>
