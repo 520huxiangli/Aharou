@@ -84,6 +84,33 @@ class VdController @Inject constructor(
          * 按包名取实例后缀：正式包为空（沿用旧文件名），`.debug` / `.beta` 各带后缀。
          * 两个包同机时各开各的影子屏；共用一块屏时，两边都往里发点击，用户的按键会被打乱。
          */
+        /**
+         * 从 `am stack list` 的输出里取出位于 [displayId] 的 RootTask 号。主屏（0）一律不返回：
+         * 这个结果拿去做 `am stack remove`，结束主屏任务等于关掉用户正在用的应用。
+         */
+        internal fun rootTasksOnDisplay(stackList: String, displayId: Int): List<String> {
+            if (displayId == 0) return emptyList()
+            return Regex("RootTask id=(\\d+)[^\\n]*?displayId=(\\d+)").findAll(stackList)
+                .filter { it.groupValues[2].toIntOrNull() == displayId }
+                .map { it.groupValues[1] }
+                .distinct()
+                .toList()
+        }
+
+        /**
+         * 从 `am stack list` 取 [displayId] 那块屏上各任务的顶层 Activity（`包名/类名`），
+         * 顺序同系统输出（最前面的在前）。主屏（0）一律不返回。
+         */
+        internal fun activitiesOnDisplay(stackList: String, displayId: Int): List<String> {
+            if (displayId == 0) return emptyList()
+            val blocks = stackList.split("RootTask id=").drop(1)
+            return blocks.filter { block ->
+                Regex("^\\d+[^\\n]*?displayId=(\\d+)").find(block)?.groupValues?.get(1)?.toIntOrNull() == displayId
+            }.flatMap { block ->
+                Regex("topActivity=ComponentInfo\\{([^}]+)\\}").findAll(block).map { it.groupValues[1] }.toList()
+            }
+        }
+
         internal fun instanceSuffix(packageName: String): String =
             packageName.removePrefix("com.aharou.agent").trimStart('.')
                 .replace(Regex("[^A-Za-z0-9_]"), "_")
@@ -248,10 +275,18 @@ class VdController @Inject constructor(
         return info
     }
 
-    /** 停止影子屏。 */
+    /**
+     * 停止影子屏。
+     *
+     * 先把屏上还开着的任务结束掉再拆屏：直接拆的话系统会把这些任务搬回主屏，搬的时候
+     * 持着窗口管理的全局锁去截过渡画面；一旦 surfaceflinger 正好卡在拆屏，整机就冻住
+     * （2026-10-30 真机看门狗记录）。任务都结束了，搬家那条路就不会走。
+     */
     suspend fun stop() {
+        (_state.value ?: runCatching { refresh() }.getOrNull())?.displayId?.let { removeTasksOn(it) }
         exec("touch $stopFile && echo OK", 15_000L)
-        delay(600L)
+        // runner 拆屏后还要排空一会儿帧缓冲再退出，等它走完。
+        delay(1_200L)
         startedHere = false
         ctlAvailable = null
         uiaAvailable = null
@@ -337,14 +372,30 @@ class VdController @Inject constructor(
         )
     }
 
-    /** 目标包是否已是 [displayId] 那块屏的栈顶（每块屏只有一条 topResumedActivity，用作落屏校验）。 */
+    /**
+     * 结束 [displayId] 那块屏上的全部任务（best-effort：取不到就跳过，不拦着不让停）。
+     *
+     * 从 `am stack list` 取：每个 RootTask 行都标了 displayId，不会认错屏。不要改回按
+     * `dumpsys activity activities` 的 `Display #N` 分段去抓：影子屏排在最后时，那一段后面紧跟
+     * 全局区域，里面全是主屏的任务，曾把 Aharou 自己结束掉（2026-10-30 真机）。
+     */
+    private suspend fun removeTasksOn(displayId: Int) {
+        if (displayId == 0) return
+        val out = runCatching { exec("am stack list", 15_000L).output }.getOrDefault("")
+        val ids = rootTasksOnDisplay(out, displayId)
+        if (ids.isEmpty()) return
+        runCatching { exec(ids.joinToString("; ") { "am stack remove $it" }, 20_000L) }
+            .onFailure { FileLogger.i(TAG, "结束影子屏上的任务失败：${it.message}") }
+        // 等任务关闭的过渡走完，再拆屏。
+        delay(500L)
+    }
+
+    /**
+     * 目标包是否已经有任务落在 [displayId] 那块屏上（落屏校验）。
+     * 同 [removeTasksOn]，用 `am stack list` 的 displayId 按屏取，不按 dumpsys 分段去抓。
+     */
     private suspend fun hasTaskOnDisplay(pkg: String, displayId: Int): Boolean = runCatching {
-        // 不能改用「整段 section 里 grep 包名」：屏幕段之后还跟着全局区域，会把别的屏上的包一起数进来。
-        exec(
-            "dumpsys activity activities | awk '/Display #$displayId \\(activities from top to bottom\\)/{f=1;next}" +
-                " f&&/Display #/{exit} f&&/topResumedActivity/{print;exit}'",
-            15_000L,
-        ).output.contains("$pkg/")
+        activitiesOnDisplay(exec("am stack list", 15_000L).output, displayId).any { it.startsWith("$pkg/") }
     }.getOrDefault(false)
 
     /**

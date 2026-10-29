@@ -65,6 +65,10 @@ public final class VdMain {
 
     private static Object uiAutomation;
     private static String uiAutomationError;
+    private static HandlerThread uiaThread;
+
+    /** 释放虚拟屏后继续排空帧缓冲的时长：等 surfaceflinger 把这块屏拆完（它会回头和消费端断开连接）。 */
+    private static final long RELEASE_DRAIN_MS = 500L;
 
     public static void main(String[] args) {
         try {
@@ -152,14 +156,28 @@ public final class VdMain {
                 if (ctl != null) handleCommands(ctl, id);
                 Thread.sleep(20);
             }
+            // 顺序不能乱（2026-10-30 整机卡死的教训）：先断开 UiAutomation、收掉它的线程，
+            // 再释放虚拟屏，并在 surfaceflinger 拆屏期间继续排空帧；最后才关 ImageReader 并强制退出。
+            // surfaceflinger 拆屏时会同步等消费端（本进程）回话，这边要是卡在半退出状态不理它，
+            // 它的主线程就卡住，窗口管理等它截图时又持着全局锁，整机跟着冻住。
             disconnectUiAutomation();
             vd.release();
+            long until = System.currentTimeMillis() + RELEASE_DRAIN_MS;
+            while (System.currentTimeMillis() < until) {
+                Image img = reader.acquireLatestImage();
+                if (img != null) img.close();
+                Thread.sleep(20);
+            }
             reader.close();
             System.out.println("VD_STOPPED");
+            System.out.flush();
         } catch (Throwable t) {
             t.printStackTrace();
             System.out.println("VD_ERROR " + t);
+            System.out.flush();
         }
+        // 不等 JVM 自己收尾：哪怕还有漏掉的线程，进程也要立刻消失，系统拿到的是干净的「对端已死」。
+        System.exit(0);
     }
 
     // ------------------------------------------------------------------ 命令通道
@@ -321,7 +339,10 @@ public final class VdMain {
     private static void connectUiAutomation() {
         try {
             HandlerThread thread = new HandlerThread("aharou-vd-uia");
+            // 守护线程：主流程结束时不能拖住进程退出。
+            thread.setDaemon(true);
             thread.start();
+            uiaThread = thread;
             Class<?> connCls = Class.forName("android.app.UiAutomationConnection");
             Constructor<?> connCtor = connCls.getDeclaredConstructor();
             connCtor.setAccessible(true);
@@ -345,12 +366,19 @@ public final class VdMain {
     }
 
     private static void disconnectUiAutomation() {
-        if (uiAutomation == null) return;
-        try {
-            Method m = uiAutomation.getClass().getDeclaredMethod("disconnect");
-            m.setAccessible(true);
-            m.invoke(uiAutomation);
-        } catch (Throwable ignored) {
+        if (uiAutomation != null) {
+            try {
+                Method m = uiAutomation.getClass().getDeclaredMethod("disconnect");
+                m.setAccessible(true);
+                m.invoke(uiAutomation);
+            } catch (Throwable t) {
+                System.out.println("VD_UIA_DISCONNECT_FAILED " + t);
+            }
+            uiAutomation = null;
+        }
+        if (uiaThread != null) {
+            uiaThread.quitSafely();
+            uiaThread = null;
         }
     }
 

@@ -540,13 +540,10 @@ class VdTool @Inject constructor(
 
     /** 影子屏上的前台包名与 Activity（best-effort：拿不到返回 null，不让截图因此失败）。 */
     private suspend fun shadowForeground(displayId: Int): Pair<String?, String?> = runCatching {
-        val out = hostShell.run(
-            "dumpsys activity activities | awk '/Display #$displayId \\(activities from top to bottom\\)/{f=1;next}" +
-                " f&&/Display #/{exit} f&&/topResumedActivity/{print;exit}'",
-            15_000L,
-        ).output
-        val m = Regex("([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)").find(out)
-        m?.groupValues?.get(1) to m?.groupValues?.get(2)
+        // 影子屏没有前台 Activity 时，按 dumpsys 分段抓会串到主屏的全局区域，把主屏应用当成影子屏的。
+        val top = VdController.activitiesOnDisplay(hostShell.run("am stack list", 15_000L).output, displayId)
+            .firstOrNull() ?: return@runCatching null to null
+        top.substringBefore('/') to top.substringAfter('/', "").ifEmpty { null }
     }.getOrNull() ?: (null to null)
 
     /** 键盘是否弹出（best-effort：dumpsys 报得不明就返回 null，caption 里略去）。 */
