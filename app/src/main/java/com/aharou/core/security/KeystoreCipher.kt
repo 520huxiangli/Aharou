@@ -3,7 +3,6 @@ package com.aharou.core.security
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
-import java.security.GeneralSecurityException
 import java.security.KeyStore
 import java.util.Base64
 import javax.crypto.Cipher
@@ -28,6 +27,14 @@ object KeystoreCipher {
     private const val GCM_TAG_BITS = 128
     private const val IV_LEN = 12
 
+    /** 密钥生成重试次数与间隔：设备重启后 keystore2 还没就绪是最常见的失败原因，等一下就过了。 */
+    private const val GENERATE_ATTEMPTS = 2
+    private const val RETRY_DELAY_MS = 150L
+
+    /** 密钥库不可用（重启未解锁、ROM 服务异常、密钥被作废且重建失败）。加密不能降级，由调用方提示。 */
+    class KeystoreUnavailableException(cause: Throwable?) :
+        IllegalStateException("系统密钥库不可用，密钥生成失败", cause)
+
     /** 字符串密文前缀；不含此前缀的值按旧明文处理。 */
     private const val STRING_PREFIX = "AICODEENC1:"
 
@@ -37,21 +44,46 @@ object KeystoreCipher {
     private val lock = Any()
 
     private fun secretKey(): SecretKey = synchronized(lock) {
-        val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey ?: run {
-            val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
-            generator.init(
-                KeyGenParameterSpec.Builder(
-                    ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        // 读已有条目也可能抛 ProviderException（服务未就绪），一并按「需要生成」处理。
+        val existing = runCatching {
+            val keyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
+            (keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+        }.getOrNull()
+        existing ?: generateWithRetry()
+    }
+
+    /**
+     * 生成密钥并重试一次。
+     *
+     * `generateKey()` 抛的是 `ProviderException`（RuntimeException），不是 `GeneralSecurityException`，
+     * 下层那两处 catch 兜不住，所以必须在源头处理——否则密钥库一不可用就直接把 App 打挂
+     * （群友 2.47.3 的崩溃就是这么来的）。
+     */
+    private fun generateWithRetry(): SecretKey {
+        var last: Exception? = null
+        repeat(GENERATE_ATTEMPTS) { attempt ->
+            try {
+                val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
+                generator.init(
+                    KeyGenParameterSpec.Builder(
+                        ALIAS,
+                        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                    )
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                        .setKeySize(256)
+                        .build()
                 )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .build()
-            )
-            generator.generateKey()
+                return generator.generateKey()
+            } catch (e: Exception) {
+                last = e
+                Log.w(TAG, "生成密钥失败（第 ${attempt + 1}/$GENERATE_ATTEMPTS 次）", e)
+                if (attempt + 1 < GENERATE_ATTEMPTS) {
+                    runCatching { Thread.sleep(RETRY_DELAY_MS) }
+                }
+            }
         }
+        throw KeystoreUnavailableException(last)
     }
 
     fun encryptBytes(plain: ByteArray): ByteArray {
@@ -73,9 +105,9 @@ object KeystoreCipher {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             cipher.doFinal(ciphertext)
-        } catch (e: GeneralSecurityException) {
-            // 密钥与密文不匹配（换机、清数据后 Keystore 重建、字段被截断）时返回空数据而非抛出，
-            // 避免单个坏字段把整条读取流程带崩。
+        } catch (e: Exception) {
+            // 密钥与密文不匹配（换机、清数据后 Keystore 重建、字段被截断）或密钥库暂时不可用时
+            // 返回空数据而非抛出，避免单个坏字段把整条读取流程带崩。
             Log.w(TAG, "密文解密失败，按空数据降级", e)
             ByteArray(0)
         }
@@ -89,13 +121,13 @@ object KeystoreCipher {
         return STRING_PREFIX + Base64.getEncoder().encodeToString(encryptBytes(plain.toByteArray(Charsets.UTF_8)))
     }
 
-    /** 解密字符串；非密文（旧明文）原样返回。 */
+    /** 解密字符串；非密文（旧明文）原样返回，密文解不开时降为空串。 */
     fun decryptString(value: String): String {
         if (!isEncryptedString(value)) return value
         return try {
             val body = Base64.getDecoder().decode(value.removePrefix(STRING_PREFIX))
             String(decryptBytes(body), Charsets.UTF_8)
-        } catch (e: IllegalArgumentException) {
+        } catch (e: Exception) {
             // 密文结构损坏（坏 base64、被截断）时按空串降级。
             Log.w(TAG, "密文字符串格式不合法，按空值降级", e)
             ""
