@@ -977,17 +977,16 @@ class ContainerInstaller @Inject constructor(
     }
 
     /**
-     * 写入容器内 DNS，否则 apk/npm 等联网操作会因无法解析域名而失败。
-     * 用阿里云公共 DNS：国内解析更快/更稳，8.8.8.8 在部分网络环境会被拦截。
-     * 已是有效配置（普通文件且含 nameserver）则不动，尊重容器内已有设置；
-     * 空文件或坏链（Ubuntu/Debian base 常把 resolv.conf 链到 systemd-resolved 的 stub，PRoot 下不可用）先删再写。
+     * 写入容器内 DNS（阿里云公共 DNS，8.8.8.8 在部分网络被拦）。
+     * 有效配置（含 nameserver 且非 systemd-resolved stub）则不动；空文件/坏链/stub 先删再写。
      */
     private fun configureResolvConf(rootfs: File = rootfsDir) {
         val etc = File(rootfs, "etc").apply { mkdirs() }
         val conf = File(etc, "resolv.conf")
         if (conf.isFile) {
             runCatching {
-                if (conf.readText().contains("nameserver")) {
+                val text = conf.readText()
+                if (text.contains("nameserver") && !text.contains("127.0.0.53") && !text.contains("nameserver 127.0.0.1")) {
                     FileLogger.d(TAG, "resolv.conf 已有有效配置，保持不动：${conf.absolutePath}")
                     return
                 }
