@@ -3474,4 +3474,5 @@
     <string name="personal_access_unavailable">%1$s has no data service on this device, so granting permission won\'t help. Use another way</string>
     <string name="personal_access_special_usage">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Usage access</string>
     <string name="personal_access_special_notification">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Notification access</string>
+    <string name="document_picker_unavailable">System file picker is unavailable. Enable the system "Files" app (Settings → Apps → Show system apps) or import the file another way</string>
 </resources>
