@@ -7,8 +7,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import com.aharou.core.ui.rememberSafeDocumentPicker
 import androidx.annotation.StringRes
 import com.aharou.feature.plugin.presentation.PluginSettingsSection
 import androidx.core.content.FileProvider
@@ -373,13 +372,14 @@ fun SettingsScreen(
     var skillImportScope by remember { mutableStateOf(SkillScope.GLOBAL) }
     // 最近一次发起搬运的目标作用域：结果回来时靠它决定提示文案（详情页与列表长按菜单共用）。
     var skillMoveTarget by remember { mutableStateOf(SkillScope.GLOBAL) }
-    // 技能文件 / 压缩包选择器：结果交给 ViewModel 读取并落盘到所选作用域。
-    val skillFileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) viewModel.importSkillFromMarkdown(uri, skillImportScope)
-    }
-    val skillZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) viewModel.importSkillsFromZip(uri, skillImportScope)
-    }
+    // 技能文件 / 压缩包选择器：结果交给 ViewModel 读取并落盘到所选作用域；系统无文件选择器时只提示不崩。
+    val pickerUnavailable = { Toast.makeText(context, R.string.document_picker_unavailable, Toast.LENGTH_LONG).show() }
+    val pickSkillFile = rememberSafeDocumentPicker(
+        arrayOf("text/*", "application/octet-stream"), pickerUnavailable,
+    ) { viewModel.importSkillFromMarkdown(it, skillImportScope) }
+    val pickSkillZip = rememberSafeDocumentPicker(
+        arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"), pickerUnavailable,
+    ) { viewModel.importSkillsFromZip(it, skillImportScope) }
     var selectedSubAgent by remember { mutableStateOf<SubAgentUiEntry?>(null) }
     var subAgentToDelete by remember { mutableStateOf<SubAgentUiEntry?>(null) }
     // 子代理编辑目标：null 表示新建一个；编辑现有定义时指向被编辑的条目。
@@ -1409,11 +1409,11 @@ fun SettingsScreen(
             },
             onPickFile = {
                 showSkillAddSheet = false
-                skillFileLauncher.launch(arrayOf("text/*", "application/octet-stream"))
+                pickSkillFile()
             },
             onPickZip = {
                 showSkillAddSheet = false
-                skillZipLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream"))
+                pickSkillZip()
             },
             onMarket = {
                 showSkillAddSheet = false

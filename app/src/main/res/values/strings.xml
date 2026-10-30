@@ -3472,4 +3472,5 @@
     <string name="personal_access_unavailable">「%1$s」在本机没有可用的数据服务，授权也无法解决，请改用其他方式</string>
     <string name="personal_access_special_usage">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 使用情况访问」手动开启</string>
     <string name="personal_access_special_notification">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 通知使用权」手动开启</string>
+    <string name="document_picker_unavailable">系统文件选择器不可用：请在「设置 → 应用 → 显示系统应用」中启用「文件」应用，或换一种方式导入</string>
 </resources>
