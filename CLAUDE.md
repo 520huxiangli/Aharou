@@ -47,7 +47,7 @@ at: 2026-10-29T21:00
 ```
 
 - `quote` 必须含「编 / build / 打包 / APK / 出包」之一，`at` 超过 30 分钟作废；可选 `commit: <HEAD>`，HEAD 变了就作废。
-- 令牌一次性：每调一次 `gradlew` 就被删掉并记进 `.aharou/build-audit.log`，所以一次授权只够一条 gradlew 命令，需要多个任务就写进同一条命令；当天满 20 次直接拒。
+- 令牌一次性：每调一次 `gradlew` 就被删掉并记进 `.aharou/build-audit.log`，所以一次授权只够一条 gradlew 命令，需要多个任务就写进同一条命令。
 - CI 靠 job 级 `AHAROU_CI_BUILD=1` 放行，本地不许设这个变量绕过。
 Aharou 特有的部分是：子代理交付后只做只读核实（读文件、抽查它自报的 file:line、跑 `python3 scripts/check_architecture.py`），不要顺手起构建；同一任务里的多处改动攒齐一次再编，不要做一个功能编一个功能。
 

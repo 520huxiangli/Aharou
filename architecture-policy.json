@@ -1,7 +1,10 @@
 {
   "//": "架构门禁规则，由 scripts/check_architecture.py 读取（挂在 Gradle preBuild 与 CI）。调整规则或新增源码根目录时必须同步本文件。",
   "sourceRoots": [
-    "app/src/main/java/com/aharou"
+    "app/src/main/java/com/aharou",
+    "core-agent/src/main/java/com/aharou",
+    "core-storage/src/commonMain/kotlin/com/aharou",
+    "desktop/src/main/kotlin/com/aharou"
   ],
   "//maxFileLines": "单文件行数上限，超限文件登记在 .architecture-baseline.json 且只许缩减。",
   "maxFileLines": 1000,

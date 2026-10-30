@@ -304,6 +304,10 @@ gradle.projectsEvaluated {
 }
 
 dependencies {
+    // 与平台无关的 agent 内核（模型 / provider / 工具契约 / 提示词），:desktop 同样依赖它
+    implementation(project(":core-agent"))
+    implementation(project(":core-storage"))
+
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2026.01.00")
     implementation(composeBom)

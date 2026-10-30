@@ -305,13 +305,16 @@ class GenerateImageTool @Inject constructor(
             try {
                 val bytes: ByteArray
                 val base64: String
+                // 跨模块时 public val 无法 smart cast，先取到局部变量
+                val b64 = item.b64_json
+                val url = item.url
                 when {
-                    !item.b64_json.isNullOrBlank() -> {
-                        base64 = item.b64_json
+                    !b64.isNullOrBlank() -> {
+                        base64 = b64
                         bytes = decodeImageBase64(base64)
                     }
-                    !item.url.isNullOrBlank() -> {
-                        bytes = downloadImageBytes(item.url)
+                    !url.isNullOrBlank() -> {
+                        bytes = downloadImageBytes(url)
                         base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                     }
                     else -> throw IOException("结果中缺少 base64 与 URL")

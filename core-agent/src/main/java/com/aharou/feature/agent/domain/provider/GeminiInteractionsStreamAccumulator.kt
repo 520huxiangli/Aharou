@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 
 /** Interactions `steps` 数组的解析结果。 */
-internal data class InteractionsOutput(
+data class InteractionsOutput(
     val text: String = "",
     val reasoning: String = "",
     val toolCalls: List<ToolCall> = emptyList(),
@@ -52,7 +52,7 @@ internal fun parseInteractionsUsage(usage: JsonObject?): InteractionsUsage {
  * 而是时间线上各自独立的 step —— 工具调用是 `function_call` step（自带 `id` / `name` /
  * `arguments` 对象），按旧写法去 content 里找永远解析不到。
  */
-internal fun parseInteractionSteps(steps: JsonArray?): InteractionsOutput {
+fun parseInteractionSteps(steps: JsonArray?): InteractionsOutput {
     if (steps == null) return InteractionsOutput()
     val text = StringBuilder()
     val reasoning = StringBuilder()

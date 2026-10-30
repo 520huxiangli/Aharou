@@ -11,7 +11,7 @@ import android.os.Process
 import androidx.work.Configuration
 import androidx.hilt.work.HiltWorkerFactory
 import com.aharou.core.net.AppProxy
-import com.aharou.core.util.AILogger
+import com.aharou.core.util.initAndroidLogging
 import com.aharou.core.util.CrashRecorder
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.TombstoneParser
@@ -127,8 +127,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         // 最早入口：在任何 Hilt 注入/业务初始化之前就绪日志与崩溃落盘。
         // 启动早期（如 Hilt 注入链实例化 @Singleton 工具）的崩溃若发生在 FileLogger 初始化之前
         // 会不留任何痕迹，故把日志与全局崩溃处理器提到 attachBaseContext 最前。
-        FileLogger.init(base)
-        AILogger.init(base)
+        initAndroidLogging(base)
         // WorkManager 的 setLogger 只认首次设置，必须赶在它自己初始化（ContentProvider）之前
         WorkManagerFileLogger.install()
         installCrashHandler()

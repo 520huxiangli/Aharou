@@ -1,7 +1,5 @@
 package com.aharou.core.util
 
-import android.content.Context
-import android.util.Log
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -29,22 +27,30 @@ interface UpstreamErrorBodyCarrier {
  * AI 提供商「完整请求 / 响应」日志：**每个会话(sessionId)一个文件**，逐次详细落盘每一次
  * 调用的 URL、请求体(body) 与响应(response)，便于在没有抓包工具时离线诊断模型交互问题。
  *
- * 与 [FileLogger]（按天分文件的通用应用日志）相互独立：本类按「会话」维度归档，体量更大、
- * 内容更全（含完整对话历史、工具定义、原始 SSE 流），因此单独成文件、单独清理。
+ * 与应用通用日志（Android 侧 FileLogger，按天分文件）相互独立：本类按「会话」维度归档，
+ * 体量更大、内容更全（含完整对话历史、工具定义、原始 SSE 流），因此单独成文件、单独清理。
  *
- * 文件落在外部私有目录 `getExternalFilesDir/ai-logs/session-<id>.log`（不可用时回退内部
- * `filesDir/ai-logs/`）。所有写入串行化到单线程后台执行，不阻塞调用方协程。
+ * 日志落盘位置由宿主平台在 [init] 时传入的目录决定（Android 用外部私有目录，桌面用用户配置目录）。
+ * 所有写入串行化到单线程后台执行，不阻塞调用方协程。
  * 请求体不含 API Key（密钥在 HTTP 头，本类只记录 URL 与 body），可安全留存。
  *
  * 不做长度截断：请求/响应体在写入线程里序列化后直接写盘，不构造整段大字符串；原始 SSE 分批
  * 落盘——因此长历史 / 大附件也不会 OOM，日志保持完整以便复现问题。超大 base64 媒体（图片等）
  * 在写入前按 **JSON 结构**（字段名 + 值的形态）脱敏为占位符，避免单行几 MB 撑爆日志文件。
  *
- * 使用前需在 [android.app.Application.onCreate] 调用一次 [init]。
+ * 使用前需在应用启动时调用一次 [init]，并由宿主接好 [infoSink] / [errorSink] / [isEnabled]。
  */
 object AILogger {
 
-    private const val TAG = "AILogger"
+    /** 普通输出端口，由宿主接入（Android 接 FileLogger，桌面接自己的输出）。 */
+    var infoSink: (String) -> Unit = {}
+
+    /** 错误输出端口，由宿主接入。 */
+    var errorSink: (String, Throwable) -> Unit = { _, _ -> }
+
+    /** 全局日志开关：返回 false 时不再写会话日志，对应 Android 侧 FileLogger 的 NONE 等级。 */
+    var isEnabled: () -> Boolean = { true }
+
     private const val MAX_AGE_DAYS = 7
     private const val MAX_FILE_BYTES = 20 * 1024 * 1024 // 单会话文件上限 20MB（每轮重发完整历史，增长快）
     /** 单会话日志滚动归档的保留份数（.1/.2/…），连同当前文件最多 [MAX_ARCHIVE_FILES] + 1 份。 */
@@ -79,15 +85,13 @@ object AILogger {
     /** 每会话的调用计数：用于把同一次交互的 REQUEST / RESPONSE 配上同一序号。 */
     private val counters = ConcurrentHashMap<String, AtomicInteger>()
 
-    /** 初始化日志目录。重复调用安全。 */
-    fun init(context: Context) {
+    /** 初始化日志目录（在其下建 `ai-logs/`）。重复调用安全。 */
+    fun init(baseDir: File) {
         if (logDir != null) return
-        // 优先外部私有目录，便于（root 或 adb 下）取出；不可用时回退内部存储。
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        val dir = File(base, "ai-logs").apply { mkdirs() }
+        val dir = File(baseDir, "ai-logs").apply { mkdirs() }
         logDir = dir
         ioExecutor.execute { cleanupOldLogs(dir) }
-        FileLogger.i(TAG, "AILogger 初始化完成，AI 会话日志目录: ${dir.absolutePath}")
+        infoSink("AILogger 初始化完成，AI 会话日志目录: ${dir.absolutePath}")
     }
 
     /**
@@ -229,7 +233,7 @@ object AILogger {
                     if (file.delete()) freed.addAndGet(size)
                 }
                 counters.clear()
-            }.onFailure { Log.e(TAG, "清空 AI 会话日志失败", it) }
+            }.onFailure { errorSink("清空 AI 会话日志失败", it) }
             latch.countDown()
         }
         runCatching { latch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
@@ -306,7 +310,7 @@ object AILogger {
     /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先滚动归档。 */
     private fun appendToSession(sessionId: String?, block: (Writer) -> Unit) {
         // 日志等级为 NONE 时整体关闭：设置页把它当「关闭日志」的开关，AI 请求日志不能例外。
-        if (FileLogger.isSilenced()) return
+        if (!isEnabled()) return
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
         val safeId = (sessionId ?: "unknown").replace(Regex("[^A-Za-z0-9_-]"), "_")
         ioExecutor.execute {
@@ -326,7 +330,7 @@ object AILogger {
                     block(w)
                     w.flush()
                 }
-            }.onFailure { Log.e(TAG, "写入 AI 会话日志失败", it) }
+            }.onFailure { errorSink("写入 AI 会话日志失败", it) }
         }
     }
 

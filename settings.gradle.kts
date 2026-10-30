@@ -19,6 +19,9 @@ dependencyResolutionManagement {
 rootProject.name = "app"
 
 include(":app")
+include(":core-agent")
+include(":core-storage")
+include(":desktop")
 include(":terminal-emulator")
 include(":terminal-view")
 include(":benchmark")

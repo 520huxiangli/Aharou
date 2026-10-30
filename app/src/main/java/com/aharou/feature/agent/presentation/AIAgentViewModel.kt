@@ -29,6 +29,7 @@ import com.aharou.feature.agent.data.local.dao.TodoItemDao
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
+import com.aharou.feature.agent.data.local.entity.toUIMessage
 import com.aharou.feature.agent.domain.container.ContainerInitState
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.settings.domain.model.ProviderType

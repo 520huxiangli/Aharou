@@ -1,5 +1,7 @@
 package com.aharou.feature.settings.domain.model
 
+import kotlinx.serialization.Serializable
+
 data class AIProviderConfig(
     val id: String,
     val name: String,
@@ -149,6 +151,8 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
         .filterKeys { it.isNotEmpty() }
 )
 
+// 桌面端的本地配置直接以枚举存 provider 类型，需要它自带序列化器
+@Serializable
 enum class ProviderType {
     OPENAI, ANTHROPIC, GEMINI
 }

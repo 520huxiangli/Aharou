@@ -676,7 +676,7 @@ class ContextCompactor @Inject constructor(
         FileLogger.w(
             TAG,
             "摘要响应不可用（$firstFailure，reasoning=" +
-                (if (first.reasoning.isNullOrBlank()) "无" else "${first.reasoning.length} 字") +
+                (first.reasoning?.takeIf { it.isNotBlank() }?.let { "${it.length} 字" } ?: "无") +
                 "），输出上限 $outputLimit → $retryLimit 重试一次"
         )
         provider.maxOutputTokens = retryLimit

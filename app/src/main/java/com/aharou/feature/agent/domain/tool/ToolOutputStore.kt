@@ -102,12 +102,15 @@ class ToolOutputStore @Inject constructor(
      * 结构化结果存带缩进的 JSON——存传输串会把换行全转义成 `\n`，整份存档只剩一行，
      * 截断标记里给出的行号就没法用来续读。
      */
-    private fun ToolResult.toArchiveText(): String =
-        if (this is ToolResult.Success && data is JsonPrimitive && data.isString) {
-            data.content
+    private fun ToolResult.toArchiveText(): String {
+        // 跨模块时 public val 无法 smart cast，先取到局部变量
+        val primitive = (this as? ToolResult.Success)?.data as? JsonPrimitive
+        return if (primitive != null && primitive.isString) {
+            primitive.content
         } else {
             archiveJson.encodeToString(this)
         }
+    }
 
     private fun metadataFallback(result: ToolResult, stored: StoredToolOutput): ToolResult {
         val metadata = stored.toJsonObject().toMutableMap().apply {
