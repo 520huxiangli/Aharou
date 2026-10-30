@@ -1,0 +1,47 @@
+name: Desktop
+
+# 桌面版安装包只能在目标平台上打（jpackage 的硬限制），所以交给对应 runner 构建。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build MSI
+        shell: bash
+        env:
+          AHAROU_CI_BUILD: 1
+        run: ./gradlew :desktop:packageMsi --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AharouDesktop-windows
+          path: desktop/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Build DMG
+        shell: bash
+        env:
+          AHAROU_CI_BUILD: 1
+        run: ./gradlew :desktop:packageDmg --console=plain
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AharouDesktop-macos
+          path: desktop/build/compose/binaries/main/dmg/*.dmg
+          if-no-files-found: error
