@@ -27,7 +27,17 @@ base_pkgs() {
     case "$PMGR" in
         apt)     echo "$BASE_PKGS dnsutils" ;;
         dnf|yum) echo "$BASE_PKGS bind-utils" ;;
+        # Arch/Manjaro：netcat 包叫 openbsd-netcat（无 netcat-openbsd），dig 所在的包叫 bind（无 bind-tools）
+        pacman)  echo "bash curl wget jq rsync git ripgrep net-tools openbsd-netcat less file bind" ;;
         *)       echo "$BASE_PKGS bind-tools" ;;
+    esac
+}
+
+# 基础工具包名按发行版修正：检测缺失后按货名补装时用。
+tool_pkg() {
+    case "$PMGR:$1" in
+        pacman:netcat-openbsd) echo openbsd-netcat ;;
+        *) echo "$1" ;;
     esac
 }
 
@@ -98,7 +108,7 @@ pkg_add() {
             ;;
         dnf) dnf install -y "$@" ;;
         yum) yum install -y "$@" ;;
-        pacman) pacman -Sy --noconfirm "$@" ;;
+        pacman) pacman -Sy --noconfirm --needed "$@" ;;
         *)
             echo "未支持的包管理器（apk/apt-get/dnf/yum/pacman）" >&2
             return 1
@@ -315,7 +325,7 @@ ensure_base_tools() {
     ebt_missing=""
     for ebt_entry in $BASE_TOOL_BINS; do
         ebt_bin="${ebt_entry##*:}"
-        command -v "$ebt_bin" >/dev/null 2>&1 || ebt_missing="$ebt_missing ${ebt_entry%%:*}"
+        command -v "$ebt_bin" >/dev/null 2>&1 || ebt_missing="$ebt_missing $(tool_pkg "${ebt_entry%%:*}")"
     done
     [ -z "$ebt_missing" ] && return 0
     echo "  · 检测到缺失的基础工具，正在补齐：$ebt_missing"
