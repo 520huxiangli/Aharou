@@ -96,12 +96,16 @@ class ContainerImageCatalogParseTest {
         for (entry in data.images) {
             assertTrue("${entry.id} 的 distro 为空", entry.distro.isNotBlank())
             assertTrue("${entry.id} 的 path 为空", entry.path.isNotBlank())
+            // Arch/Manjaro 精简包官方没有，只在自建源提供，故要求「至少一个源有非空前缀」而不是必须 official
             assertTrue(
-                "${entry.id} 的 distro=${entry.distro} 不在 official 源的 distros 表里",
-                data.sources.getValue("official").distros[entry.distro]?.isNotBlank() == true
+                "${entry.id} 的 distro=${entry.distro} 在任何源的 distros 表里都没有非空前缀",
+                data.sources.values.any { it.distros[entry.distro]?.isNotBlank() == true }
             )
             assertTrue("${entry.id} 缺 abiNames 的 arm64", entry.abiNames.containsKey("arm64"))
-            assertTrue("${entry.id} 缺 abiNames 的 x86_64", entry.abiNames.containsKey("x86_64"))
+            // 只在 official 源提供的条目要求 x86_64；Arch/Manjaro 只有 aarch64 的 rootfs
+            if (data.sources.getValue("official").distros[entry.distro]?.isNotBlank() == true) {
+                assertTrue("${entry.id} 缺 abiNames 的 x86_64", entry.abiNames.containsKey("x86_64"))
+            }
             for (sourceId in entry.paths.keys) {
                 assertTrue("${entry.id} 的 paths 引用了 sources 表里没有的源 $sourceId", sourceId in sourceIds)
             }
