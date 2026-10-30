@@ -84,6 +84,14 @@ DISCOVERY_BASES = {
 ARCH_ARM_URL = "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
 MANJARO_ARM_API = "https://api.github.com/repos/manjaro-arm/rootfs/releases/latest"
 
+# Manjaro ARM 默认 mirrorlist 全是国外源（nchc.org.tw / up.pt / dotsrc.org），国内常直接
+# 解析失败导致 pacman -Sy 跑不下去。精简时换成国内镜像（实测 200）。
+MANJARO_MIRRORLIST = """## Manjaro ARM 国内镜像（由 Aharou 容器精简时写入）
+Server = https://mirrors.tuna.tsinghua.edu.cn/manjaro/arm-stable/$repo/$arch
+Server = https://mirrors.ustc.edu.cn/manjaro/arm-stable/$repo/$arch
+Server = https://mirrors.aliyun.com/manjaro/arm-stable/$repo/$arch
+"""
+
 HREF_RE = re.compile(r'href="([^"]+)"')
 
 # EOL 数据源：endoflife.date 的结构化 API（一个发行版一个 slug）。
@@ -839,7 +847,7 @@ def main() -> int:
     return 0
 
 
-def slim_rootfs(src_tar: str, dest_tar: str) -> None:
+def slim_rootfs(src_tar: str, dest_tar: str, distro: str = "") -> None:
     """把官方完整 rootfs 精简成容器可用 base：删固件/内核/文档/多语言，重打包。
 
     Arch/Manjaro 官方包面向物理 ARM 板子，塞了固件、内核模块、设备树、文档与多语言，
@@ -862,6 +870,12 @@ def slim_rootfs(src_tar: str, dest_tar: str) -> None:
             "usr/share/i18n",
         ):
             shutil.rmtree(os.path.join(work, rel), ignore_errors=True)
+        # Manjaro 官方 mirrorlist 全是国外源，国内 pacman -Sy 直接解析失败；换成国内镜像。
+        if distro == "manjaro":
+            mirrorlist = os.path.join(work, "etc/pacman.d/mirrorlist")
+            os.makedirs(os.path.dirname(mirrorlist), exist_ok=True)
+            with open(mirrorlist, "w", encoding="utf-8") as f:
+                f.write(MANJARO_MIRRORLIST)
         # 解压过程把硬链接转成了 .l2s 符号链接环（Android 无硬链接，proot 的 link2symlink），
         # 打包时排除，避免 tar 卡在符号链接循环上。
         for root, dirs, files in os.walk(work):
@@ -910,7 +924,7 @@ def apply_changes(changes: list) -> tuple:
                         break
                     print(f"  官方包下载完成（{time.time() - started:.0f}s），开始精简...")
                     slim = os.path.join(tmpdir, "slim-" + name)
-                    slim_rootfs(dest, slim)
+                    slim_rootfs(dest, slim, entry["distro"])
                     got = sha256_file(slim)
                     old = entry.get("sha256ByAbi", {}).get(abi)
                     if old == got:
