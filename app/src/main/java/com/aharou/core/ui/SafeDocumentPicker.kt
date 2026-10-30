@@ -8,7 +8,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
 import com.aharou.core.util.FileLogger
 
@@ -18,15 +20,15 @@ private const val TAG = "SafeDocumentPicker"
  * 容错的「选一个文件」入口，用来兜住系统文件选择器缺席时的闪退。
  *
  * 现场（Issue #47）：`ActivityResultContracts.OpenDocument` 的 createIntent 就是
- * `Intent(ACTION_OPEN_DOCUMENT).setType("*/*")`，`launch()` 内部直接 startActivityForResult，
+ * `Intent(ACTION_OPEN_DOCUMENT).setType(通配 MIME)`，`launch()` 内部直接 startActivityForResult，
  * 既不预检处理者也没有 try/catch。部分定制 ROM（HyperOS 等）会精简或停用系统「文件」组件
  * （DocumentsUI），分身 / 工作资料空间里也常常看不到它；此时 startActivityForResult 抛
  * ActivityNotFoundException 并冒到主线程，用户侧看到的就是「应用遇到未知错误」+ 设置页闪退，
- * 崩溃日志里只剩一句 `typ=*/* (has extras)`。
+ * 崩溃日志里只剩一句 `typ=通配 MIME (has extras)`。
  *
  * 三层防御：
  *  1. 启动前用 PackageManager 预检处理者，按 OPEN_DOCUMENT → GET_CONTENT(+EXTRA_MIME_TYPES)
- *     → GET_CONTENT("*/*") 逐级降级。很多第三方文件管理器只注册 GET_CONTENT，降级后这类
+ *     → GET_CONTENT（带 MIME 过滤）逐级降级。很多第三方文件管理器只注册 GET_CONTENT，降级后这类
  *     机器仍能正常导入，不至于直接把功能判死。
  *  2. 预检命中但启动瞬间仍抛异常（组件被冻结 / 卸载的竞态）时捕获，回调 [onUnavailable]。
  *  3. 无处理者时落一条日志，便于按机型复查同类报告。
@@ -102,20 +104,22 @@ fun rememberSafeDocumentPicker(
     val launcher = rememberLauncherForActivityResult(contract) { uri ->
         uri?.let(onPicked)
     }
+    // onUnavailable 每次重组都是新的 lambda，用 rememberUpdatedState 保证闭包里读到的永远是最新那份。
+    val currentUnavailable by rememberUpdatedState(onUnavailable)
     // Array 用引用相等，按内容哈希做 key，避免每次重组都重建闭包。
     return remember(mimeTypes.contentHashCode(), launcher) {
         {
             val resolved = SafeDocumentPicker.resolve(context, mimeTypes)
             if (resolved == null) {
                 FileLogger.w(TAG, "no handler for OPEN_DOCUMENT / GET_CONTENT, mimes=${mimeTypes.toList()}")
-                onUnavailable()
+                currentUnavailable()
             } else {
                 try {
                     launcher.launch(mimeTypes)
                 } catch (e: ActivityNotFoundException) {
                     // 预检命中、启动瞬间处理者被停用 / 卸载的竞态：只提示，不崩。
                     FileLogger.w(TAG, "picker rejected ${resolved.action}", e)
-                    onUnavailable()
+                    currentUnavailable()
                 }
             }
         }
