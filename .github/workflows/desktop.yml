@@ -21,6 +21,14 @@ jobs:
         env:
           AHAROU_CI_BUILD: 1
         run: ./gradlew :desktop:packageMsi --console=plain
+      - name: Show jpackage logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          find desktop/build/compose/logs -type f -name "*.txt" | while read -r f; do
+            echo "=== $f ==="
+            cat "$f"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: AharouDesktop-windows

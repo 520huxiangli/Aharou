@@ -52,7 +52,8 @@ compose.desktop {
             )
             packageName = "AharouDesktop"
             packageVersion = "1.0.0"
-            description = "Aharou 桌面版"
+            // 保持 ASCII：jpackage 在 Windows 上把中文描述交给 WiX 时会出错
+            description = "Aharou Desktop"
         }
     }
 }
