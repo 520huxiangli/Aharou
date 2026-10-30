@@ -92,7 +92,12 @@ fun FileTreePanel(root: File, onOpen: (File) -> Unit, modifier: Modifier = Modif
 }
 
 @Composable
-fun FilePreviewPanel(file: File?, content: String, modifier: Modifier = Modifier) {
+fun FilePreviewPanel(
+    file: File?,
+    content: String,
+    editorVisible: Boolean,
+    modifier: Modifier = Modifier
+) {
     Column(modifier) {
         Text(
             text = file?.absolutePath ?: "未打开文件",
@@ -102,7 +107,16 @@ fun FilePreviewPanel(file: File?, content: String, modifier: Modifier = Modifier
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
         )
         DividerLine()
-        CodeViewerPanel(file, content, Modifier.fillMaxSize())
+        when {
+            file == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("从左边选一个文件", style = MaterialTheme.typography.bodySmall)
+            }
+            // SwingPanel 是 AWT heavyweight，会盖住 Compose 的弹窗，所以有浮层时先摘掉
+            !editorVisible -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(file.name, style = MaterialTheme.typography.bodySmall)
+            }
+            else -> CodeViewerPanel(file, content, Modifier.fillMaxSize())
+        }
     }
 }
 

@@ -48,7 +48,12 @@ private val SYSTEM_PROMPT = """
 """.trimIndent()
 
 @Composable
-fun ChatPanel(settings: DesktopSettings, onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
+fun ChatPanel(
+    settings: DesktopSettings,
+    onOpenSettings: () -> Unit,
+    onOverlayChange: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier
+) {
     val entries = remember { mutableStateListOf<ChatEntry>() }
     // 普通 MutableList：只在后台协程里被工具循环改写，不需要驱动重组
     val history = remember { mutableListOf<AgentMessage>() }
@@ -62,6 +67,10 @@ fun ChatPanel(settings: DesktopSettings, onOpenSettings: () -> Unit, modifier: M
     val workspaceRoot = remember(settings.workspacePath) {
         File(settings.workspacePath.ifBlank { System.getProperty("user.home") })
     }
+
+    // 审批弹窗开着时告知外层，让它把 SwingPanel 摘掉，否则弹窗会被 AWT 组件盖住
+    val pendingApproval = gate.current.value
+    LaunchedEffect(pendingApproval) { onOverlayChange(pendingApproval != null) }
 
     // 启动时接着上次那个会话继续聊，没有就新建
     LaunchedEffect(settings.workspacePath) {

@@ -24,9 +24,13 @@ import java.io.File
 @Composable
 fun AppShell() {
     var settings by remember { mutableStateOf(DesktopSettingsStore.load()) }
-    var showSettings by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var chatOverlay by remember { mutableStateOf(false) }
     var openedFile by remember { mutableStateOf<File?>(null) }
     var openedText by remember { mutableStateOf("") }
+
+    // 任何 Compose 浮层打开时都要把编辑区摘掉：SwingPanel 是 heavyweight，会盖住弹窗
+    val overlayOpen = settingsOpen || chatOverlay
 
     val root = remember(settings.workspacePath) {
         File(settings.workspacePath.ifBlank { System.getProperty("user.home") })
@@ -42,23 +46,24 @@ fun AppShell() {
             modifier = Modifier.width(280.dp).fillMaxHeight()
         )
         DividerLine(vertical = true)
-        FilePreviewPanel(openedFile, openedText, Modifier.weight(1f).fillMaxHeight())
+        FilePreviewPanel(openedFile, openedText, !overlayOpen, Modifier.weight(1f).fillMaxHeight())
         DividerLine(vertical = true)
         ChatPanel(
             settings = settings,
-            onOpenSettings = { showSettings = true },
+            onOpenSettings = { settingsOpen = true },
+            onOverlayChange = { chatOverlay = it },
             modifier = Modifier.width(440.dp).fillMaxHeight()
         )
     }
 
-    if (showSettings) {
+    if (settingsOpen) {
         SettingsDialog(
             initial = settings,
-            onDismiss = { showSettings = false },
+            onDismiss = { settingsOpen = false },
             onSave = {
                 settings = it
                 DesktopSettingsStore.save(it)
-                showSettings = false
+                settingsOpen = false
             }
         )
     }
