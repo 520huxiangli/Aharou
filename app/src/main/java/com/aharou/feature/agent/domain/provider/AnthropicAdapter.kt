@@ -24,7 +24,7 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -147,7 +147,10 @@ class AnthropicAdapter @Inject constructor(
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
         reasoningEffort: String?
-    ): Flow<AIStreamChunk> = flow {
+    // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
+    // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
+    // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
+    ): Flow<AIStreamChunk> = channelFlow {
         val anthropicMessages = convertToAnthropicMessages(messages, cacheBreakpointsEnabled)
         val toolDefs = tools.takeIf { it.isNotEmpty() }?.mapIndexed { index, tool ->
             AnthropicToolDefinition(
@@ -183,7 +186,7 @@ class AnthropicAdapter @Inject constructor(
                 onKeyFailure = { e, canRetry ->
                     val outcome = switchKeyOnFailure(e, triedKeys)
                     if (outcome != null && canRetry) {
-                        emit(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
+                        send(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
                         true
                     } else false
                 },
@@ -261,7 +264,7 @@ class AnthropicAdapter @Inject constructor(
                                             )
                                             // 工具名先于参数到达：立刻告诉 UI「模型准备调什么」，
                                             // 免得参数流式期间一直停在「正在思考」
-                                            if (name.isNotEmpty()) emit(AIStreamChunk.ToolCallDeclared(name))
+                                            if (name.isNotEmpty()) send(AIStreamChunk.ToolCallDeclared(name))
                                         }
                                         "thinking" -> thinkingBlocks[index] = ThinkingBlockAcc(type = "thinking").also { acc ->
                                             val initial = block.get("thinking")?.takeIf { !it.isJsonNull }?.asString ?: ""
@@ -293,7 +296,7 @@ class AnthropicAdapter @Inject constructor(
                                                 textBuilder.append(t)
                                                 firstContent.receivedContent()
                                                 onContent()
-                                                emit(AIStreamChunk.TextDelta(t))
+                                                send(AIStreamChunk.TextDelta(t))
                                             }
                                         }
                                         "thinking_delta" -> {
@@ -307,7 +310,7 @@ class AnthropicAdapter @Inject constructor(
                                                 // 思考内容不落库、可重试重流出，但收到即说明连接已活，取消首字节超时。
                                                 firstContent.receivedContent()
                                                 onContent()
-                                                emit(AIStreamChunk.ReasoningDelta(t))
+                                                send(AIStreamChunk.ReasoningDelta(t))
                                             }
                                         }
                                         "signature_delta" -> {
@@ -372,10 +375,10 @@ class AnthropicAdapter @Inject constructor(
             val toolCalls = toolBlocks.values.map { acc ->
                 ToolCall(id = acc.id, name = acc.name, arguments = parseToolArguments(acc.args.toString()))
             }
-            emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, stopDetail = stopDetail, signature = signature, thinkingBlocksJson = encodeThinkingBlocks(thinkingBlocks.values.map { it.toBlock() }), inputTokens = totalInputTokens(streamInputTokens, streamCachedInputTokens, streamCacheCreationTokens), outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens))))
+            send(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, stopDetail = stopDetail, signature = signature, thinkingBlocksJson = encodeThinkingBlocks(thinkingBlocks.values.map { it.toBlock() }), inputTokens = totalInputTokens(streamInputTokens, streamCachedInputTokens, streamCacheCreationTokens), outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens))))
                     }
                 },
-                onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
+                onRetry = { attempt, max, error -> send(AIStreamChunk.Retrying(attempt, max, error)) }
             )
         } catch (e: CancellationException) {
             throw e

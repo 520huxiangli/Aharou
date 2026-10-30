@@ -9,6 +9,8 @@ import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
+import com.aharou.feature.agent.domain.tool.question.AskUserQuestionManager
+import com.aharou.feature.agent.domain.tool.question.QuestionNotificationActions
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -33,11 +35,18 @@ class AgentPermissionActionReceiver : BroadcastReceiver() {
 
     @Inject lateinit var notifier: AgentPermissionNotifier
 
+    @Inject lateinit var askUserQuestionManager: AskUserQuestionManager
+
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             AgentPermissionNotifier.ACTION_ALLOW -> resolve(intent, PermissionChoice.ONCE)
             AgentPermissionNotifier.ACTION_REJECT -> resolve(intent, PermissionChoice.REJECT)
             AgentPermissionNotifier.ACTION_PLAN_DECISION -> resolvePlan(intent)
+            QuestionNotificationActions.ACTION_ANSWER -> {
+                if (!QuestionNotificationActions.handleAnswer(askUserQuestionManager, intent)) {
+                    FileLogger.w(TAG, "忽略陈旧的提问作答动作")
+                }
+            }
             AgentPermissionNotifier.ACTION_REPLY -> {
                 val sessionId = intent.getStringExtra(AgentPermissionNotifier.EXTRA_SESSION_ID).orEmpty()
                 val text = RemoteInput.getResultsFromIntent(intent)

@@ -18,6 +18,12 @@ class ContextTokenEstimatorTest {
     }
 
     @Test
+    fun realUsageAnchorsPredictionEvenWhenEstimateIsHigher() {
+        assertEquals(12_000, ContextTokenEstimator.calibrated(22_000, 20_000, 10_000))
+        assertEquals(22_000, ContextTokenEstimator.calibrated(22_000, 20_000, 0))
+    }
+
+    @Test
     fun inputLimitOverridesLargerSharedContext() {
         assertEquals(272_000, ModelContextPolicy.effectiveInputBudget(
             ModelMetadata(id = "model", contextTokens = 400_000, inputTokens = 272_000, outputTokens = 128_000)))

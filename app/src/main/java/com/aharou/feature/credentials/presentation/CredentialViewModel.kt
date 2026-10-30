@@ -9,6 +9,7 @@ import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.credentials.data.CredentialInjectSettingsRepository
 import com.aharou.feature.credentials.data.remote.GitHubDeviceFlowClient
 import com.aharou.feature.credentials.data.remote.GitHubTokenPollResult
+import com.aharou.feature.credentials.data.repository.CredentialStorageReadOnlyException
 import com.aharou.feature.credentials.domain.model.GitCredential
 import com.aharou.feature.credentials.domain.repository.CredentialRepository
 import com.aharou.feature.git.domain.GitRepository
@@ -141,6 +142,9 @@ class CredentialViewModel @Inject constructor(
                 credentialRepository.save(credential)
                 syncInjectionIfEnabled() // 凭据变更后重新同步到已开启注入的远程服务器
                 toast(context.getString(R.string.credential_toast_saved))
+            } catch (e: CredentialStorageReadOnlyException) {
+                FileLogger.w(TAG, "保存凭据被拒（凭据文件读取失败，只读保护）: ${e.reason}")
+                toast(context.getString(R.string.credential_toast_storage_read_only))
             } catch (e: Exception) {
                 FileLogger.e(TAG, "保存凭据失败", e)
                 toast(context.getString(R.string.credential_toast_save_failed, e.message))
@@ -150,9 +154,17 @@ class CredentialViewModel @Inject constructor(
 
     fun deleteCredential(id: String) {
         viewModelScope.launch {
-            credentialRepository.delete(id)
-            syncInjectionIfEnabled() // 删凭据后从远程注入文件移除，否则远程仍能用旧凭据
-            toast(context.getString(R.string.credential_toast_deleted))
+            try {
+                credentialRepository.delete(id)
+                syncInjectionIfEnabled() // 删凭据后从远程注入文件移除，否则远程仍能用旧凭据
+                toast(context.getString(R.string.credential_toast_deleted))
+            } catch (e: CredentialStorageReadOnlyException) {
+                FileLogger.w(TAG, "删除凭据被拒（凭据文件读取失败，只读保护）: ${e.reason}")
+                toast(context.getString(R.string.credential_toast_storage_read_only))
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "删除凭据失败", e)
+                toast(context.getString(R.string.credential_toast_delete_failed, e.message))
+            }
         }
     }
 
@@ -245,9 +257,18 @@ class CredentialViewModel @Inject constructor(
             ?: DEFAULT_GITHUB_LOGIN
         // 查询失败时默认视为已安装，避免因接口异常误导用户去装 App。
         val installed = runCatching { deviceFlowClient.isAppInstalled(token) }.getOrDefault(true)
-        credentialRepository.save(
-            GitCredential(id = GITHUB_HOST, host = GITHUB_HOST, username = login, token = token)
-        )
+        try {
+            credentialRepository.save(
+                GitCredential(id = GITHUB_HOST, host = GITHUB_HOST, username = login, token = token)
+            )
+        } catch (e: CredentialStorageReadOnlyException) {
+            // 登录本身成功但凭据文件读不到，这里必须终止而不是假装成功。
+            FileLogger.w(TAG, "快捷登录写入凭据被拒（只读保护）: ${e.reason}")
+            _quickLogin.value = QuickLoginUiState.Failed(
+                context.getString(R.string.credential_toast_storage_read_only)
+            )
+            return
+        }
         syncInjectionIfEnabled()
         toast(context.getString(R.string.credential_quick_login_success_toast))
         _quickLogin.value = QuickLoginUiState.Success(login, needsInstall = !installed)
@@ -298,6 +319,12 @@ class CredentialViewModel @Inject constructor(
     private suspend fun applyInjection(key: String, enabled: Boolean) {
         if (!enabled) {
             remoteSshConnection.removeGitCredentialConfig()
+            return
+        }
+        // 凭据文件读不到时内存是空表：上传等于把远程服务器上的凭据一起抹掉。
+        if (credentialRepository.storageReadOnly.value) {
+            FileLogger.w(TAG, "跳过远程凭据注入：本地凭据读取失败（只读保护）")
+            toast(context.getString(R.string.credential_toast_storage_read_only))
             return
         }
         val creds = credentialRepository.getAll().first()

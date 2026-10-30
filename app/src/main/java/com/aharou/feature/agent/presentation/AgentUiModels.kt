@@ -237,7 +237,9 @@ data class ChatMessagesState(
     val messages: List<AgentUIMessage>,
     val loaded: Boolean,
     val hasMore: Boolean = false,
-    val isLoadingMore: Boolean = false
+    val isLoadingMore: Boolean = false,
+    /** 这批消息对应的分页上限；每次补载完成都会变，哪怕补载的行全被过滤、可见消息数没变。 */
+    val limit: Int = 0
 )
 
 /**

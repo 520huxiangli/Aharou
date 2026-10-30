@@ -175,7 +175,17 @@ class AskUserQuestionTool @Inject constructor(
         FileLogger.d(TAG, "ask_user_question 发起: ${questions.size} 个问题，等待用户回答...")
 
         // 挂起，等待用户在 UI 做出选择
-        val answer = questionManager.awaitAnswer(pending)
+        val answer = when (val result = questionManager.awaitAnswer(pending)) {
+            is AskUserQuestionResult.Answered -> result.answer
+            is AskUserQuestionResult.Timeout -> {
+                FileLogger.w(TAG, "ask_user_question 等待超时: ${result.timeoutMs / 60_000} 分钟，已作废")
+                return ToolResult.Error(
+                    "用户在 ${result.timeoutMs / 60_000} 分钟内没有作答，本次提问已作废。" +
+                        "不要原样重发同一个问题：先说明你需要用户决定什么，或在无法确认时按最稳妥的默认方案继续并注明。",
+                    "QUESTION_TIMEOUT"
+                )
+            }
+        }
 
         FileLogger.d(TAG, "ask_user_question 用户已回答: ${answer.answers.size} 条")
 

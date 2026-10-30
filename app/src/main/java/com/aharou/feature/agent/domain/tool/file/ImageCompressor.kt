@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.file
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.util.Base64OutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 
@@ -20,6 +21,12 @@ object ImageCompressor {
     const val HIGH_TARGET_BYTES = 512 * 1024
 
     private val JPEG_QUALITIES = listOf(90, 86, 78, 70, 62)
+
+    /** 流式读盘的块大小：够大以摊销系统调用，够小以不抬高峰值内存。 */
+    private const val STREAM_CHUNK_BYTES = 64 * 1024
+
+    /** 输出缓冲预分配上限：源文件异常巨大时不按它的长度申请，免得还没读就先 OOM。 */
+    private const val MAX_PREALLOC_BYTES = 16 * 1024 * 1024
 
     data class Bounds(val width: Int, val height: Int)
 
@@ -69,7 +76,56 @@ object ImageCompressor {
         }
     }
 
-    fun rawBase64(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
+    /**
+     * 分块流式读文件并编码成 NO_WRAP base64。
+     *
+     * 整份 `readBytes()` 再编码会让大图同时占着「原字节 + base64 字节 + 结果串」三份内存，
+     * 相机直出十几 MB 的照片在低端机上直接顶爆。改成按块喂编码器后峰值只剩一个块缓冲，
+     * 输出与 `Base64.encodeToString(bytes, NO_WRAP)` 逐字符一致（同字母表、无换行、末尾无补换行）。
+     */
+    fun rawBase64(file: File): String {
+        val out = ByteArrayOutputStream(initialCapacity(file.length()))
+        Base64OutputStream(out, Base64.NO_WRAP).use { encoder ->
+            file.inputStream().use { input ->
+                val buffer = ByteArray(STREAM_CHUNK_BYTES)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    encoder.write(buffer, 0, read)
+                }
+            }
+        }
+        // base64 是纯 ASCII，按 US_ASCII 建串与逐字节比较等价，且不必再过一遍校验
+        return String(out.toByteArray(), Charsets.US_ASCII)
+    }
+
+    /**
+     * 输出缓冲的预分配长度：长度可算准（n/3*4 + 填充）时一次到位，省掉扩容时的整份拷贝。
+     */
+    private fun initialCapacity(byteCount: Long): Int {
+        if (byteCount <= 0L) return 0
+        val exact = byteCount / 3 * 4 + 4
+        return exact.coerceAtMost(MAX_PREALLOC_BYTES.toLong()).toInt()
+    }
+
+    /**
+     * 进请求用的 base64 与 mime：最长边超过 [HIGH_MAX_EDGE] 的大图优先走压缩管线（采样解码 + 逐档降质），
+     * 只有「不需要缩放」时才按原格式流式直传（小图重编码只会更大，格式由调用方给的 [fallbackMime] 决定）；
+     * 压不动（格式怪、解码失败）时也回退流式原字节，宁大不丢。两条路都不把整份原字节一起读进内存。
+     *
+     * 选图时与历史回放时共用同一套参数，保证同一张图在“刚发出去”与“下一轮重发历史”
+     * 两种情形下发的是同一份字节。
+     */
+    fun encodeForRequest(file: File, fallbackMime: String): Pair<String, String> {
+        val longEdge = decodeBounds(file)?.let { maxOf(it.width, it.height) } ?: 0
+        if (longEdge > HIGH_MAX_EDGE) {
+            runCatching {
+                encodeToJpeg(file, HIGH_MAX_EDGE, HIGH_TARGET_BYTES)
+            }.getOrNull()?.let { return it.base64Data to "image/jpeg" }
+        }
+        return rawBase64(file) to fallbackMime
+    }
 
     private fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int): Int {
         var sample = 1

@@ -14,10 +14,10 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import java.io.IOException
 
@@ -177,10 +177,13 @@ class GeminiAdapter @Inject constructor(
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
         reasoningEffort: String?
-    ): Flow<AIStreamChunk> = flow {
+    // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
+    // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
+    // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
+    ): Flow<AIStreamChunk> = channelFlow {
         if (useResponseApi) {
             streamViaInteractions(systemPrompt, messages, tools, reasoningEffort)
-            return@flow
+            return@channelFlow
         }
 
         val request = buildRequestBody(systemPrompt, messages, tools, reasoningEffort)
@@ -206,7 +209,7 @@ class GeminiAdapter @Inject constructor(
                 onKeyFailure = { e, canRetry ->
                     val outcome = switchKeyOnFailure(e, triedKeys)
                     if (outcome != null && canRetry) {
-                        emit(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
+                        send(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
                         true
                     } else false
                 },
@@ -291,12 +294,12 @@ class GeminiAdapter @Inject constructor(
                                                     // 思考增量：仅 UI 实时展示，不计入正文、不计入正文（不落库，重试时可安全重新流出）
                                                     firstContent.receivedContent()
                                                     onContent()
-                                                    emit(AIStreamChunk.ReasoningDelta(text))
+                                                    send(AIStreamChunk.ReasoningDelta(text))
                                                 } else {
                                                     textBuilder.append(text)
                                                     firstContent.receivedContent()
                                                     onContent()
-                                                    emit(AIStreamChunk.TextDelta(text))
+                                                    send(AIStreamChunk.TextDelta(text))
                                                 }
                                             }
                                         }
@@ -309,7 +312,7 @@ class GeminiAdapter @Inject constructor(
                                             val fnCall = part.getAsJsonObject("functionCall")
                                             val name = fnCall.get("name")?.asString ?: ""
                                             // 工具名一出现就通知 UI，把「正在思考」换成具体场景
-                                            if (name.isNotEmpty()) emit(AIStreamChunk.ToolCallDeclared(name))
+                                            if (name.isNotEmpty()) send(AIStreamChunk.ToolCallDeclared(name))
                                             val callId = fnCall.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
                                             val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
                                             val argsJson = parseToolArguments(argsStr)
@@ -333,10 +336,10 @@ class GeminiAdapter @Inject constructor(
                     }
                 }
 
-                emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images))))
+                send(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images))))
                     }
                 },
-                onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
+                onRetry = { attempt, max, error -> send(AIStreamChunk.Retrying(attempt, max, error)) }
             )
         } catch (e: CancellationException) {
             throw e
@@ -455,7 +458,7 @@ class GeminiAdapter @Inject constructor(
      * （见 [GeminiInteractionsStreamAccumulator]），且没有 `[DONE]`：结束按 interaction 的
      * status 到终态判定，读到流尾仍未终止才算被截断。
      */
-    private suspend fun FlowCollector<AIStreamChunk>.streamViaInteractions(
+    private suspend fun ProducerScope<AIStreamChunk>.streamViaInteractions(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
@@ -473,7 +476,7 @@ class GeminiAdapter @Inject constructor(
                 onKeyFailure = { e, canRetry ->
                     val outcome = switchKeyOnFailure(e, triedKeys)
                     if (outcome != null && canRetry) {
-                        emit(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
+                        send(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
                         true
                     } else false
                 },
@@ -528,19 +531,19 @@ class GeminiAdapter @Inject constructor(
                                     is InteractionsDelta.Text -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.TextDelta(delta.text))
+                                        send(AIStreamChunk.TextDelta(delta.text))
                                     }
                                     // 思考增量仅用于 UI 展示，不计入正文；收到即说明连接已活。
                                     is InteractionsDelta.Reasoning -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.ReasoningDelta(delta.text))
+                                        send(AIStreamChunk.ReasoningDelta(delta.text))
                                     }
                                     // 工具名先于参数到达：通知 UI 提前把状态换成具体场景
                                     is InteractionsDelta.ToolCallDeclared -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.ToolCallDeclared(delta.name))
+                                        send(AIStreamChunk.ToolCallDeclared(delta.name))
                                     }
                                     null -> {}
                                 }
@@ -551,10 +554,10 @@ class GeminiAdapter @Inject constructor(
                         }
                     }
 
-                    emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
+                    send(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
                     }
                 },
-                onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
+                onRetry = { attempt, max, error -> send(AIStreamChunk.Retrying(attempt, max, error)) }
             )
         } catch (e: CancellationException) {
             throw e

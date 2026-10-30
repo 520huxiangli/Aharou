@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.session
 
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
+import com.aharou.feature.agent.data.local.dao.toHistoryRow
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -45,7 +46,7 @@ class MessagePersistenceArchiveTest {
         useCase.persist("session", MessageRole.ASSISTANT, content, id = "message", reasoning = reasoning)
         assertTrue(saved.captured.content.toByteArray().size <= MessagePersistenceUseCase.MAX_CONTENT_BYTES)
         assertTrue(requireNotNull(saved.captured.reasoning).toByteArray().size <= MessagePersistenceUseCase.MAX_CONTENT_BYTES)
-        coEvery { dao.getMessagesBySessionOnce("session") } returns listOf(saved.captured)
+        coEvery { dao.getHistoryRowsBySessionOnce("session") } returns listOf(saved.captured.toHistoryRow())
         val reloaded = persistence(MessageArchiveStore(File(temporaryFolder.root, "archive")))
         assertEquals(content, reloaded.restore(saved.captured).content)
         assertEquals(reasoning, reloaded.restore(saved.captured).reasoning)

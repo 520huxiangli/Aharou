@@ -483,6 +483,8 @@
     <string name="credential_auto_inject_prompt_title">自动注入 git 凭证？</string>
     <string name="credential_auto_inject_prompt_body">是否让 Aharou 把应用中保存的 git 凭据同步到该远程服务器？仅对当前工作区根目录下的仓库生效，不会改动服务器的全局 git 配置。</string>
     <string name="credential_auto_inject_enable">开启</string>
+    <string name="credential_toast_storage_read_only">凭据文件读取失败，已进入只读保护，暂不能保存或删除；原文件已另存备份，修复文件后重开应用即可继续</string>
+    <string name="credential_toast_delete_failed">删除失败：%1$s</string>
     <string name="common_rename">重命名</string>
     <string name="common_hide">隐藏</string>
 

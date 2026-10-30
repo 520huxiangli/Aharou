@@ -39,8 +39,7 @@ import com.aharou.core.theme.Brand
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.LocalImageViewer
-import com.aharou.core.ui.THUMBNAIL_MAX_EDGE
-import com.aharou.core.ui.decodeSampledBitmap
+import com.aharou.core.ui.ThumbnailCache
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.workspace.domain.FileAccessProvider
@@ -189,11 +188,10 @@ private fun AttachmentThumb(attachment: AgentAttachment) {
 @Composable
 private fun AttachmentImageThumb(attachment: AgentAttachment) {
     // 读盘 + 解码放 IO 线程：以前在 remember 里同步 decodeFile，滚到带图消息时会卡主线程。
-    // 采样与 OOM 兜底统一走 decodeSampledBitmap。
-    val bitmap by produceState<ImageBitmap?>(null, attachment.localPath) {
-        value = withContext(Dispatchers.IO) {
-            decodeSampledBitmap(attachment.localPath, THUMBNAIL_MAX_EDGE)
-        }
+    // 走 [ThumbnailCache]：滑出视口再滑回来不必重读盘重解码；命中时直接作初值，不闪占位图。
+    val path = attachment.localPath
+    val bitmap by produceState<ImageBitmap?>(ThumbnailCache.peek(path), path) {
+        value = ThumbnailCache.peek(path) ?: withContext(Dispatchers.IO) { ThumbnailCache.load(path) }
     }
     val loaded = bitmap
     if (loaded != null) {

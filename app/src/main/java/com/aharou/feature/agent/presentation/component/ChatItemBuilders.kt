@@ -41,13 +41,16 @@ import com.aharou.feature.agent.presentation.TOOL_GROUP_CONTENT_TYPE
 import com.aharou.feature.agent.presentation.TURN_HEADER_CONTENT_TYPE
 import com.aharou.feature.agent.presentation.TurnHeaderState
 import com.aharou.feature.agent.presentation.hasVisibleContent
+import com.aharou.feature.agent.presentation.flattenTurnProcesses
 import com.aharou.feature.agent.presentation.leadingHeadKey
 import com.aharou.feature.agent.presentation.leadingHeadSessionKey
 import com.aharou.feature.agent.presentation.turnKeyOf
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
 import compose.icons.feathericons.ArrowUp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * 「消息 → 渲染项」的全部构造逻辑：分组判定、单条消息拆块（[messageRenderItems]）、整轮折叠与过程项
@@ -591,4 +594,51 @@ private fun CircleScrollButton(
             )
         }
     }
+}
+
+/** 消息条数超过此值后，渲染项列表改在后台线程重建。 */
+private const val ASYNC_CHAT_ITEMS_THRESHOLD = 120
+
+private class AsyncChatItems(val sessionId: String?, val items: List<ChatRenderItem>)
+
+/**
+ * 构建 LazyColumn 的渲染项。
+ *
+ * 长会话里重建整张列表要遍历全部消息（拆轮、分组、拆块），在主线程上做会卡住每次落库与
+ * 补载历史。超过阈值后改在后台算，算完前继续显示上一版（LazyColumn 与它的条数一直自洽）；
+ * 切换会话后的首版仍同步算，避免短暂显示上一个会话的内容。
+ */
+@Composable
+internal fun rememberChatRenderItems(
+    messages: List<AgentUIMessage>,
+    groupOverrides: Map<String, Boolean>,
+    turnOverrides: Map<String, Boolean>,
+    activeTurnKey: String?,
+    cancelledTurnKey: String?,
+    sessionId: String?,
+    turnKeys: Map<String, String>,
+): List<ChatRenderItem> {
+    val key = remember(
+        messages, groupOverrides, turnOverrides, activeTurnKey, cancelledTurnKey, sessionId, turnKeys
+    ) { Any() }
+    val build = {
+        keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
+            messages = messages,
+            groupOverrides = groupOverrides,
+            turnOverrides = turnOverrides,
+            activeTurnKey = activeTurnKey,
+            sessionId = sessionId,
+            turnKeys = turnKeys,
+            cancelledTurnKey = cancelledTurnKey,
+        )), messages)
+    }
+    val useAsync = messages.size > ASYNC_CHAT_ITEMS_THRESHOLD
+    var asyncItems by remember { mutableStateOf<AsyncChatItems?>(null) }
+    LaunchedEffect(key, useAsync) {
+        if (!useAsync) return@LaunchedEffect
+        val built = withContext(Dispatchers.Default) { build() }
+        asyncItems = AsyncChatItems(sessionId, built)
+    }
+    val ready = asyncItems?.takeIf { useAsync && it.sessionId == sessionId }
+    return ready?.items ?: remember(key) { build() }
 }

@@ -3,12 +3,14 @@ package com.aharou.feature.agent.domain.session
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.ChatSearchMatch
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
+import com.aharou.feature.agent.data.local.dao.toEntity
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
 import com.aharou.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
 import com.aharou.feature.agent.domain.tool.ToolCall
+import com.aharou.feature.agent.domain.tool.boundedJsonForParse
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.DIRECTORY_MIME_TYPE
 import com.aharou.feature.agent.presentation.MessageRole
@@ -70,24 +72,27 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     /** 内嵌图片 base64 的 LRU 缓存：key = path:size:lastModified，避免工具循环中
-     *  每轮 LLM 调用都重读文件 + base64 编码。带条目与总字节双重上限。 */
-    private val imageBase64Cache = object : LinkedHashMap<String, String>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+     *  每轮 LLM 调用都重读文件 + 编码。带条目与总字节双重上限。
+     *  必须连 mime 一起缓存：缩小后的副本会从 png 变成 jpeg。 */
+    private class CachedImage(val mimeType: String, val base64: String)
+
+    private val imageBase64Cache = object : LinkedHashMap<String, CachedImage>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedImage>?): Boolean =
             size > MAX_IMAGE_CACHE_ENTRIES
     }
     private var imageCacheBytes = 0L
 
-    private fun cachedImageBase64(key: String): String? = synchronized(imageBase64Cache) { imageBase64Cache[key] }
+    private fun cachedImageBase64(key: String): CachedImage? = synchronized(imageBase64Cache) { imageBase64Cache[key] }
 
-    private fun cacheImageBase64(key: String, value: String) {
+    private fun cacheImageBase64(key: String, value: CachedImage) {
         synchronized(imageBase64Cache) {
             val old = imageBase64Cache.put(key, value)
-            imageCacheBytes += value.length - (old?.length ?: 0)
+            imageCacheBytes += value.base64.length - (old?.base64?.length ?: 0)
             while (imageCacheBytes > MAX_IMAGE_CACHE_BYTES && imageBase64Cache.isNotEmpty()) {
                 val it = imageBase64Cache.entries.iterator()
                 val eldest = it.next()
                 it.remove()
-                imageCacheBytes -= eldest.value.length
+                imageCacheBytes -= eldest.value.base64.length
             }
         }
     }
@@ -307,6 +312,15 @@ class MessagePersistenceUseCase @Inject constructor(
         const val MAX_ATTACHMENTS_BYTES = 20_000
         /** 工具入参上限：与正文同量级，长参数（如大段文件内容）能完整落库、由 UI 限高滚动查看。 */
         const val MAX_TOOL_ARGS_BYTES = 150_000
+
+        /**
+         * 回放时单个归档字段最多读回的字节数。
+         *
+         * 上面几个落库上限只约束数据库行；超限的部分归档到磁盘，回放时读回的是**原长整串**。
+         * 回放只要「能解析、能拼进上下文」的量，整份读回等于把长会话所有大字段同时物化到堆上。
+         * 50 万字节比落库上限留了三倍余量，正常消息一条都不会被截。
+         */
+        const val MAX_HISTORY_FIELD_BYTES = 500_000
         const val IMAGE_OMITTED_MARKER = "[图片已省略：内嵌图片数据过大]"
         const val CONTENT_TRUNCATED_MARKER = "…[内容过长，已截断]"
         /** 图片 base64 缓存条目上限。 */
@@ -391,14 +405,16 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     private suspend fun buildHistoryUncached(sessionId: String, pendingToolMarker: String): List<AgentMessage> {
-        val stored = agentMessageDao.getMessagesBySessionOnce(sessionId)
+        val stored = agentMessageDao.getHistoryRowsBySessionOnce(sessionId)
+            .map { it.toEntity() }
             .filter { !it.isCompacted && !it.isContextExcluded }
         val ghost = GhostModeStore.ghostMessages(sessionId)
             .filter { !it.isCompacted && !it.isContextExcluded }
-        val entities = restoreAll(
-            if (ghost.isEmpty()) stored
-            else (stored + ghost).sortedWith(compareBy({ it.timestamp }, { it.id }))
-        )
+        // 回放只要「解析得动、拼得进上下文」的量：超长字段有界读回（带截断标记），
+        // 否则几千条消息的会话会在每轮 LLM 调用前把档案里所有大字段同时拉上堆。
+        val ordered = if (ghost.isEmpty()) stored
+        else (stored + ghost).sortedWith(compareBy({ it.timestamp }, { it.id }))
+        val entities = ordered.map { messageArchiveStore.restoreBounded(it, MAX_HISTORY_FIELD_BYTES) }
 
         // 第一遍：求 assistant 声明的 toolCallId 与 tool 结果 toolCallId 的交集。
         val declaredIds = mutableSetOf<String>()
@@ -406,7 +422,7 @@ class MessagePersistenceUseCase @Inject constructor(
         for (e in entities) {
             when (MessageRole.valueOf(e.role)) {
                 MessageRole.ASSISTANT -> e.toolCallsJson?.let {
-                    runCatching { json.decodeFromString<List<ToolCall>>(it) }
+                    runCatching { json.decodeFromString<List<ToolCall>>(boundedJsonForParse(it)) }
                         .getOrNull()?.forEach { tc -> declaredIds.add(tc.id) }
                 }
                 MessageRole.TOOL -> {
@@ -430,7 +446,7 @@ class MessagePersistenceUseCase @Inject constructor(
                     val rawContent = if (e.isCompactionMarker) CONTEXT_COMPACTION_MARKER else e.content
                     val attachments = if (!e.isCompactionMarker) {
                         e.attachmentsJson?.let {
-                            runCatching { json.decodeFromString<List<AgentAttachment>>(it) }.getOrNull()
+                            runCatching { json.decodeFromString<List<AgentAttachment>>(boundedJsonForParse(it)) }.getOrNull()
                         } ?: emptyList()
                     } else emptyList()
 
@@ -468,10 +484,10 @@ class MessagePersistenceUseCase @Inject constructor(
                 }
                 MessageRole.ASSISTANT -> {
                     val toolCalls = e.toolCallsJson?.let {
-                        runCatching { json.decodeFromString<List<ToolCall>>(it) }.getOrNull()
+                        runCatching { json.decodeFromString<List<ToolCall>>(boundedJsonForParse(it)) }.getOrNull()
                     }?.filter { it.id in validIds } ?: emptyList()
                     val imageAttachments = e.attachmentsJson?.let {
-                        runCatching { json.decodeFromString<List<AgentAttachment>>(it) }.getOrNull()
+                        runCatching { json.decodeFromString<List<AgentAttachment>>(boundedJsonForParse(it)) }.getOrNull()
                     }.orEmpty()
                     if (e.content.isNotBlank() || toolCalls.isNotEmpty() || imageAttachments.isNotEmpty()) {
                         val previous = result.lastOrNull()
@@ -522,17 +538,19 @@ class MessagePersistenceUseCase @Inject constructor(
         val key = "$localPath:${file.length()}:${file.lastModified()}"
         cachedImageBase64(key)?.let { cached ->
             return com.aharou.feature.agent.domain.model.AgentImage(
-                mimeType = mimeType.ifBlank { "image/jpeg" },
-                base64Data = cached,
+                mimeType = cached.mimeType,
+                base64Data = cached.base64,
                 path = containerPath
             )
         }
         return try {
-            val bytes = file.readBytes()
-            val base64 = java.util.Base64.getEncoder().encodeToString(bytes)
-            cacheImageBase64(key, base64)
+            // 每轮历史回放都会重发这张图：原图整份上送只是白占请求体，模型侧本来也会把长边
+            // 超过 1568 的图再缩一次。压与不压走同一条管线，与刚发出去那份字节一致。
+            val (mime, base64) = com.aharou.feature.agent.domain.tool.file.ImageCompressor
+                .encodeForRequest(file, mimeType.ifBlank { "image/jpeg" })
+            cacheImageBase64(key, CachedImage(mime, base64))
             com.aharou.feature.agent.domain.model.AgentImage(
-                mimeType = mimeType.ifBlank { "image/jpeg" },
+                mimeType = mime,
                 base64Data = base64,
                 path = containerPath
             )

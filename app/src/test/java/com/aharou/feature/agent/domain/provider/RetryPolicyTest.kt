@@ -3,6 +3,8 @@ package com.aharou.feature.agent.domain.provider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.buffer
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -163,6 +165,47 @@ class RetryPolicyTest {
         job.join()
         assertEquals(true, closed)
         assertEquals(true, cancellation)
+    }
+
+    /**
+     * 复刻 provider 的流式结构：重试循环跑在 channelFlow 里，attempt 由首字节超时兜底。
+     *
+     * buffer(0) 使 send 成为会合点：首个元素被消费端取走后，第二次 send 挂起等待下一个
+     * 接收者，100ms 定时器恰在此期间触发——首字节超时的取消信号落在挂起的 send 上，
+     * 这正是线上「Flow exception transparency is violated / LLM 调用失败」的触发路径。
+     * 因此 provider 侧必须用 channelFlow + send（adapter 有注释说明），若退回 flow + emit，
+     * 本测试会以 IllegalStateException（透明性违规）失败。
+     */
+    @Test
+    fun firstContent_timeout_during_suspended_send_retries_cleanly() = runTest {
+        val events = mutableListOf<String>()
+        var attempt = 0
+        val chunks = channelFlow {
+            streamWithStaircaseRetry(
+                maxRetries = 1,
+                attemptOnce = { onContent ->
+                    withFirstContentTimeout(100) { guard ->
+                        onContent()
+                        if (attempt++ == 0) {
+                            send("content-1")
+                            // 会合点挂起（消费端 delay 中），超时取消信号落点
+                            send("content-2")
+                            org.junit.Assert.fail("首次尝试应在挂起的 send 上被首字节超时打断")
+                        } else {
+                            guard.receivedContent()
+                            send("recovered")
+                        }
+                    }
+                },
+                onRetry = { a, _, _ -> send("retry-$a") }
+            )
+        }.buffer(0)
+
+        chunks.collect {
+            delay(1_000)
+            events.add(it)
+        }
+        assertEquals(listOf("content-1", "retry-1", "recovered"), events)
     }
 
     @Test

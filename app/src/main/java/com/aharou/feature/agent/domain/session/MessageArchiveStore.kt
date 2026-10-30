@@ -57,20 +57,94 @@ class MessageArchiveStore internal constructor(private val root: File) {
             transform(entity) { field, value, _, text ->
                 val match = value?.let { reference(it, field) }
                 if (match == null) value
-                else {
-                    try {
-                        val file = archiveFile(entity, field, match.groupValues[2])
-                        val bytes = readChecked(file, match.groupValues[2])
-                        bytes.toString(Charsets.UTF_8)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: IOException) {
-                        FileLogger.w(TAG, "Archive unavailable for field=$field message=${hash(entity.id.toByteArray())}")
-                        if (text) requireNotNull(value).substring(0, match.range.first) + UNAVAILABLE_MARKER else null
-                    }
-                }
+                else restoreWhole(entity, field, value, text, match)
             }
         }
+    }
+
+    /**
+     * 历史回放用的有界恢复：单个字段最多读回 [maxBytes] 字节，超出部分丢弃并打截断标记。
+     *
+     * 回放链路的下一步是 JSON 解析与上下文拼装，整份读回没有意义——一个长会话几千条消息时，
+     * 全量恢复等于把档案里所有大字段同时物化到堆上，而回放实际只用得上前几段。
+     * 档案文件本身保持完整：界面展示、备份导出、复制会话仍走 [restore] 读全量。
+     * 签名例外：[FIELD_SIGNATURE] 走全量——Anthropic thinking 的签名改一个字节就会 400，截断等于报废。
+     */
+    suspend fun restoreBounded(entity: AgentMessageEntity, maxBytes: Int): AgentMessageEntity = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            transform(entity) { field, value, _, text ->
+                val match = value?.let { reference(it, field) }
+                if (match == null) value
+                else if (field == FIELD_SIGNATURE) restoreWhole(entity, field, value, text, match)
+                else restoreHead(entity, field, value, text, match, maxBytes)
+            }
+        }
+    }
+
+    private suspend fun restoreWhole(
+        entity: AgentMessageEntity,
+        field: String,
+        value: String?,
+        text: Boolean,
+        match: MatchResult
+    ): String? = try {
+        val file = archiveFile(entity, field, match.groupValues[2])
+        readChecked(file, match.groupValues[2]).toString(Charsets.UTF_8)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: IOException) {
+        unavailable(entity, field, value, text, match)
+    }
+
+    private suspend fun restoreHead(
+        entity: AgentMessageEntity,
+        field: String,
+        value: String?,
+        text: Boolean,
+        match: MatchResult,
+        maxBytes: Int
+    ): String? = try {
+        readHead(archiveFile(entity, field, match.groupValues[2]), maxBytes)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: IOException) {
+        unavailable(entity, field, value, text, match)
+    }
+
+    /** 档案读不回来时的兜底：文本字段保留库里的预览（标记之前那段），其余字段当没存过。 */
+    private fun unavailable(
+        entity: AgentMessageEntity,
+        field: String,
+        value: String?,
+        text: Boolean,
+        match: MatchResult
+    ): String? {
+        FileLogger.w(TAG, "Archive unavailable for field=$field message=${hash(entity.id.toByteArray())}")
+        return if (text) (value ?: "").substring(0, match.range.first) + UNAVAILABLE_MARKER else null
+    }
+
+    /**
+     * 只读档案文件的前 [maxBytes] 字节。整份校验和在这里不成立（摘要针对全量），只保证文件存在；
+     * 末尾正好落在半个多字节字符上时丢掉那段残字符，避免回放里出现替换符。
+     */
+    private suspend fun readHead(file: File, maxBytes: Int): String {
+        if (!file.isFile) throw IOException("Message archive missing")
+        val buffer = ByteArray(maxBytes.coerceAtLeast(0))
+        var read = 0
+        file.inputStream().use { input ->
+            while (read < buffer.size) {
+                currentCoroutineContext().ensureActive()
+                val count = input.read(buffer, read, buffer.size - read)
+                if (count < 0) break
+                read += count
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        var head = String(buffer, 0, read, Charsets.UTF_8)
+        while (head.isNotEmpty() && head.last() == '\uFFFD') head = head.dropLast(1)
+        val total = file.length()
+        if (total <= read) return head
+        return head + TRUNCATED_MARKER_PREFIX + "${head.length} chars kept, ${total - read} bytes omitted]"
     }
 
     suspend fun restoreContentForSearch(entity: AgentMessageEntity): String = withContext(Dispatchers.IO) {
@@ -195,6 +269,8 @@ class MessageArchiveStore internal constructor(private val root: File) {
         private const val TAG = "MessageArchiveStore"
         private const val IO_CHUNK = 64 * 1024
         internal const val UNAVAILABLE_MARKER = "\n[message archive unavailable]"
+        private const val TRUNCATED_MARKER_PREFIX = "\n[truncated: "
+        private const val FIELD_SIGNATURE = "signature"
         private val REFERENCE = Regex("\\n\\[aharou-message-archive:v1:([a-zA-Z]+):([0-9a-f]{64})]$")
     }
 }

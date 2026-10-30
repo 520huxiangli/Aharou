@@ -21,6 +21,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.tool.ToolRegistry
+import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionStore
 import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.presentation.AgentAttachment
@@ -95,6 +96,7 @@ class AgentTurnRunner @Inject constructor(
     private val subAgentEventBus: SubAgentEventBus,
     private val subAgentWriteLease: SubAgentWriteLease,
     private val workspaceRepository: WorkspaceRepository,
+    private val pendingQuestionStore: PendingUserQuestionStore,
     @param:ApplicationContext private val context: Context,
 ) {
 
@@ -126,6 +128,29 @@ class AgentTurnRunner @Inject constructor(
         )
 
     /** 取该工作区最近聊过的会话，没有就建一个。不碰调用方的「当前会话」缓存。 */
+    /**
+     * 把「进程死掉后才作答」的提问答案补回会话。
+     *
+     * 这些答案已经没有协程在等，只能作为一条用户消息落库，模型本轮才看得到；
+     * 不补的话用户看到自己的选择石沉大海。
+     */
+    private suspend fun flushAnsweredQuestions(sessionId: String) {
+        val answered = pendingQuestionStore.takeAnswered(sessionId)
+        if (answered.isEmpty()) return
+        answered.forEach { item ->
+            val text = buildString {
+                append("[提问已作答]")
+                item.answer.answers.forEach { a ->
+                    append("\n问题：").append(a.question)
+                    append("\n回答：").append(a.selected.joinToString("、"))
+                    a.customText?.takeIf { it.isNotBlank() }?.let { append("（").append(it).append("）") }
+                }
+            }
+            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, text, id = UUID.randomUUID().toString())
+        }
+        messagePersistenceUseCase.invalidateHistory(sessionId)
+    }
+
     suspend fun ensureSession(workspacePath: String): String {
         sessionUseCase.getMostRecentSessionOfWorkspace(workspacePath)?.let { return it.id }
         val entity = createSessionEntity(workspacePath)
@@ -172,6 +197,8 @@ class AgentTurnRunner @Inject constructor(
             }
         }
 
+        // 进程死掉后才作答的提问先补回会话，否则模型看不到用户的选择。
+        flushAnsweredQuestions(sessionId)
         // 必须在插入本次用户消息之前取历史：workflow 会自己把 userRequest 加进去，避免重复。
         val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
         val isFirst = history.isEmpty()

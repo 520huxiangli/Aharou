@@ -26,6 +26,16 @@ interface AgentMessageDao {
     @Query("SELECT * FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessagesBySessionOnce(sessionId: String): List<AgentMessageEntity>
 
+    /**
+     * 历史回放专用：只取 [com.aharou.feature.agent.domain.session.MessagePersistenceUseCase] 真正要用的列，
+     * 不拉 toolArgs（单行可达 150KB）。字段列表必须与 [HistoryRow] 一致。
+     */
+    @Query("SELECT id, sessionId, role, content, timestamp, toolCallsJson, toolCallId, toolName, " +
+        "attachmentsJson, reasoning, signature, thinkingBlocksJson, inputTokens, isCompacted, " +
+        "isContextExcluded, isContextSummary, isCompactionMarker " +
+        "FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
+    suspend fun getHistoryRowsBySessionOnce(sessionId: String): List<HistoryRow>
+
     @Query("DELETE FROM agent_messages WHERE sessionId = :sessionId")
     suspend fun deleteBySession(sessionId: String)
 

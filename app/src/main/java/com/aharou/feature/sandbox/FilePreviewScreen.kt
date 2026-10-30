@@ -7,7 +7,6 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Build
@@ -247,86 +246,6 @@ fun FilePreviewScreen(
                 item.isOfficeFile -> OfficeOpenExternal(item)
                 item.isTextFile -> TextPreview(item)
                 else -> FileInfoView(item)
-            }
-        }
-    }
-}
-
-// ==================== Image Preview ====================
-
-@Composable
-private fun ImagePreview(item: FileItem) {
-    var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-
-    LaunchedEffect(item.file) {
-        withContext(Dispatchers.IO) {
-            try {
-                val bmp = BitmapFactory.decodeFile(item.file.absolutePath)
-                if (bmp != null) {
-                    bitmap = bmp
-                } else {
-                    error = ctx.getString(R.string.filepreview_image_decode_error)
-                }
-            } catch (e: Exception) {
-                error = e.message ?: ctx.getString(R.string.filepreview_image_load_error)
-            }
-        }
-    }
-
-    when {
-        error != null -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.InsertDriveFile,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        error!!,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-
-        bitmap != null -> {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = item.name,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.FillWidth,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Image info
-                Text(
-                    text = "${bitmap!!.width} x ${bitmap!!.height} px  |  ${item.formattedSize}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-        }
-
-        else -> {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(stringResource(R.string.filepreview_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

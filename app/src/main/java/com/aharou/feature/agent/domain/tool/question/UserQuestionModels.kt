@@ -60,3 +60,16 @@ data class SingleAnswer(
     val selected: List<String>,
     val customText: String? = null
 )
+
+/**
+ * `askUserQuestion` 的等待结果。
+ *
+ * 提问可能等不到人：进程被杀后恢复的旧问题没人接续、用户长时间离开。工具侧必须拿到明确结果，
+ * 不能永久挂起等一个也许永远不会来的回答。
+ */
+sealed interface AskUserQuestionResult {
+    data class Answered(val answer: UserQuestionAnswer) : AskUserQuestionResult
+
+    /** 超过最长等待上限仍未作答；[timeoutMs] 即该上限，供工具侧向模型说明。 */
+    data class Timeout(val timeoutMs: Long) : AskUserQuestionResult
+}

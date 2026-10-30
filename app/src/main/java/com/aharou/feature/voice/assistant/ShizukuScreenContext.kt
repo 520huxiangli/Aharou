@@ -2,7 +2,7 @@ package com.aharou.feature.voice.assistant
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import com.aharou.core.ui.decodeSampledAndroidBitmap
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.shizuku.ShizukuManager
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
@@ -44,8 +44,12 @@ class ShizukuScreenContext @Inject constructor(
             FileLogger.w(TAG, "抓屏命令返回 ${result?.exitCode}")
         }
 
+        // 截屏是给识图模型看的，不能缩得太狠，否则屏上小字就糊了：2400 覆盖常见超长屏，
+        // 真正异常的超大屏仍会被采样，真 OOM 时解码器还会自己降档
         val bitmap = runCatching {
-            if (shot.exists() && shot.length() > 0) BitmapFactory.decodeFile(shot.absolutePath) else null
+            if (shot.exists() && shot.length() > 0) {
+                decodeSampledAndroidBitmap(shot.absolutePath, SCREENSHOT_MAX_EDGE)
+            } else null
         }.getOrNull()
         val text = runCatching {
             if (dump.exists() && dump.length() > 0) extractText(dump.readText(), maxChars) else ""
@@ -89,6 +93,9 @@ class ShizukuScreenContext @Inject constructor(
     private companion object {
         const val TAG = "ShizukuScreen"
         const val CAPTURE_TIMEOUT_MS = 25_000L
+
+        /** 截屏采样上限：见 capture() 里对文字可读性的说明。 */
+        const val SCREENSHOT_MAX_EDGE = 2400
 
         /** 一行超过这个长度多半是整段长文本（或垃圾数据），跳过避免把上下文挤爆。 */
         const val MAX_LINE_CHARS = 500

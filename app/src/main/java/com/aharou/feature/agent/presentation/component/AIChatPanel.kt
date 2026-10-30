@@ -102,7 +102,6 @@ import com.aharou.feature.agent.presentation.MessageRole
 import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.agent.presentation.WorkflowStatus
 import com.aharou.feature.agent.presentation.REASONING_CONTENT_TYPE
-import com.aharou.feature.agent.presentation.flattenTurnProcesses
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.agent.presentation.turnKeyOf
 import com.aharou.feature.onboarding.domain.OnboardingStep
@@ -404,20 +403,16 @@ fun AIChatPanel(
         if (isBusy || status != WorkflowStatus.CANCELLED) null
         else messages.lastOrNull { it.isTurnHead() }?.let { turnKeyOf(it.id) }
     }
-    val chatItems = remember(
-        messages, toolGroupOverrideSnapshot, turnOverrideSnapshot, activeTurnKey, cancelledTurnKey,
-        currentSessionId, turnKeys
-    ) {
-        keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
-            messages = messages,
-            groupOverrides = toolGroupOverrideSnapshot,
-            turnOverrides = turnOverrideSnapshot,
-            activeTurnKey = activeTurnKey,
-            sessionId = currentSessionId,
-            turnKeys = turnKeys,
-            cancelledTurnKey = cancelledTurnKey,
-        )), messages)
-    }
+    // 长会话在后台线程重建渲染项，具体见 [rememberChatRenderItems]。
+    val chatItems = rememberChatRenderItems(
+        messages = messages,
+        groupOverrides = toolGroupOverrideSnapshot,
+        turnOverrides = turnOverrideSnapshot,
+        activeTurnKey = activeTurnKey,
+        cancelledTurnKey = cancelledTurnKey,
+        sessionId = currentSessionId,
+        turnKeys = turnKeys,
+    )
     // 每轮任务的总耗时（用户发送 → 本轮 AI 收工）与 token 合计，都只挂在轮末助手气泡下方
     val taskDurations = remember(messages, isBusy) {
         computeTaskDurations(messages, lastTurnFinished = !isBusy)
@@ -1068,17 +1063,23 @@ fun AIChatPanel(
     // 顶部快到头时加载更多历史。绝不能把 firstVisibleItemIndex 作为组合期读取的 effect key：
     // fling 中 index 每跨一个 item 就变一次，会让整个 AIChatPanel 大函数随之重组、连带全部可见
     // item 重组，是快速滚动掉帧（进而 fling 补偿跳变、抽搐）的主要放大器。改为在协程内用
-    // snapshotFlow 观察 index，组合体完全不读它。
+    // snapshotFlow 观察，组合体完全不读它。
+    // 信号里必须带上分页上限：消息按条数分页，一轮长过程折叠后整页补载可能一个可见项都不增加，
+    // index 不再变化；只监听 index 会卡在这里，要用户上下晃动才能再触发一页。
     val latestMessagesState = rememberUpdatedState(messagesState)
     LaunchedEffect(listState, messagesReady) {
         if (!messagesReady) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
+        snapshotFlow {
+            val ms = latestMessagesState.value
+            Triple(
+                listState.firstVisibleItemIndex <= 3 && ms.hasMore && !ms.isLoadingMore,
+                ms.sessionId,
+                ms.limit
+            )
+        }
             .distinctUntilChanged()
-            .collect { index ->
-                val ms = latestMessagesState.value
-                if (index <= 3 && ms.hasMore && !ms.isLoadingMore) {
-                    viewModel.loadMoreMessages()
-                }
+            .collect { (shouldLoad, _, _) ->
+                if (shouldLoad) viewModel.loadMoreMessages()
             }
     }
 

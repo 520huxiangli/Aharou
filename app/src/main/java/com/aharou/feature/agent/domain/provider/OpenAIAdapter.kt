@@ -19,10 +19,10 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.json.JsonObject
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolCall
@@ -385,10 +385,13 @@ class OpenAIAdapter @Inject constructor(
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
         reasoningEffort: String?
-    ): Flow<AIStreamChunk> = flow {
+    // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
+    // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
+    // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
+    ): Flow<AIStreamChunk> = channelFlow {
         if (useResponseApi) {
             streamViaResponses(systemPrompt, messages, tools, reasoningEffort)
-            return@flow
+            return@channelFlow
         }
 
         val openAIMessages = buildList {
@@ -432,7 +435,7 @@ class OpenAIAdapter @Inject constructor(
                 onKeyFailure = { e, canRetry ->
                     val outcome = switchKeyOnFailure(e, triedKeys)
                     if (outcome != null && canRetry) {
-                        emit(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
+                        send(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
                         true
                     } else false
                 },
@@ -511,7 +514,7 @@ class OpenAIAdapter @Inject constructor(
                                     textBuilder.append(c)
                                     firstContent.receivedContent()
                                     onContent()
-                                    emit(AIStreamChunk.TextDelta(c))
+                                    send(AIStreamChunk.TextDelta(c))
                                 }
                             }
                             // 思考过程增量：标准 OpenAI 走 reasoning_content，部分第三方兼容服务
@@ -528,7 +531,7 @@ class OpenAIAdapter @Inject constructor(
                                 budget.add(reasoningText)
                                 firstContent.receivedContent()
                                 onContent()
-                                emit(AIStreamChunk.ReasoningDelta(reasoningText))
+                                send(AIStreamChunk.ReasoningDelta(reasoningText))
                             }
                             // 工具调用增量：按 index 聚合 id/name/arguments 片段。
                             // 有些模型（如 DeepSeek）在后续增量 chunk 中只传 arguments 片段，
@@ -548,7 +551,7 @@ class OpenAIAdapter @Inject constructor(
                                     fn.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotEmpty() }?.let { name ->
                                         // 首次拿到工具名（后续增量只给 arguments 片段）：通知 UI
                                         // 「模型准备调什么」，免得长参数流式期间一直停在「正在思考」
-                                        if (acc.name.isEmpty()) emit(AIStreamChunk.ToolCallDeclared(name))
+                                        if (acc.name.isEmpty()) send(AIStreamChunk.ToolCallDeclared(name))
                                         acc.name = name
                                     }
                                     fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let { budget.add(it); acc.args.append(it) }
@@ -581,10 +584,10 @@ class OpenAIAdapter @Inject constructor(
             val toolCalls = toolAccs.values
                 .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseToolArguments(acc.args.toString())) }
-            emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens, images = streamedImages))))
+            send(AIStreamChunk.Final(sanitizeTruncatedToolCalls(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, cacheCreationTokens = streamCacheCreationTokens, images = streamedImages))))
                     }
             },
-            onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
+            onRetry = { attempt, max, error -> send(AIStreamChunk.Retrying(attempt, max, error)) }
             )
         } catch (e: CancellationException) {
             throw e
@@ -605,7 +608,7 @@ class OpenAIAdapter @Inject constructor(
      * incomplete / failed 判定。沿用旧的“没收到 [DONE] 就报断流”会把正常结束当成错误，
      * 故这里以 [ResponsesStreamAccumulator.terminated] 作为退出条件，读到流尾仍未终止才算被截断。
      */
-    private suspend fun FlowCollector<AIStreamChunk>.streamViaResponses(
+    private suspend fun ProducerScope<AIStreamChunk>.streamViaResponses(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
@@ -623,7 +626,7 @@ class OpenAIAdapter @Inject constructor(
                 onKeyFailure = { e, canRetry ->
                     val outcome = switchKeyOnFailure(e, triedKeys)
                     if (outcome != null && canRetry) {
-                        emit(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
+                        send(AIStreamChunk.KeySwitched(outcome.newIndex, outcome.total))
                         true
                     } else false
                 },
@@ -684,19 +687,19 @@ class OpenAIAdapter @Inject constructor(
                                     is ResponsesDelta.Text -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.TextDelta(delta.text))
+                                        send(AIStreamChunk.TextDelta(delta.text))
                                     }
                                     // 思考增量仅用于 UI 展示，不计入正文；收到即说明连接已活，取消首字节超时。
                                     is ResponsesDelta.Reasoning -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.ReasoningDelta(delta.text))
+                                        send(AIStreamChunk.ReasoningDelta(delta.text))
                                     }
                                     // 工具名先于参数到达：通知 UI 提前把状态换成具体场景
                                     is ResponsesDelta.ToolCallDeclared -> {
                                         firstContent.receivedContent()
                                         onContent()
-                                        emit(AIStreamChunk.ToolCallDeclared(delta.name))
+                                        send(AIStreamChunk.ToolCallDeclared(delta.name))
                                     }
                                     null -> {}
                                 }
@@ -707,10 +710,10 @@ class OpenAIAdapter @Inject constructor(
                         }
                     }
 
-                    emit(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
+                    send(AIStreamChunk.Final(sanitizeTruncatedToolCalls(acc.toResponse())))
                     }
                 },
-                onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
+                onRetry = { attempt, max, error -> send(AIStreamChunk.Retrying(attempt, max, error)) }
             )
         } catch (e: CancellationException) {
             throw e

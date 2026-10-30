@@ -125,6 +125,17 @@ class WorkspaceRepository @Inject constructor(
     }
 
     private val currentNameKey = stringPreferencesKey("current_workspace_name")
+
+    /**
+     * 当前工作区名按模式分开存：本地沿用原 key，远程按服务器（host:port）单独存。
+     * 共用一个 key 时，切到远程会把本地选中的工作区名覆盖成远程的，切回本地就丢了。
+     */
+    private fun currentNameKeyForMode(): androidx.datastore.preferences.core.Preferences.Key<String> {
+        if (isLocal()) return currentNameKey
+        val cfg = remoteSshConnection.config
+        val suffix = if (cfg != null) "${cfg.host}:${cfg.port}" else ""
+        return stringPreferencesKey("current_workspace_name_remote_$suffix")
+    }
     private val externalWarningDismissedKey = booleanPreferencesKey("external_workspace_warning_dismissed")
     val externalWarningDismissed = context.workspaceDataStore.data
         .map { it[externalWarningDismissedKey] ?: false }
@@ -173,8 +184,10 @@ class WorkspaceRepository @Inject constructor(
             waitForConnection()
             ensureRemoteWorkspaceRoot()
         }
+        // 清掉上一个模式遗留的当前工作区：它不属于本模式的列表，留着会让下面的可达性校验
+        // 误判为“当前工作区失效”而回退，并把本模式已保存的选择覆盖掉。
+        _current.value = null
         refreshWorkspaces()
-
         // 没有可用工作区时创建默认工作区（本地/远程一致），保证 AI 始终有可用目录；
         // 全部工作区失联（如唯一外部目录被删除）也走这里，避免 currentPath 回退到父目录。
         if (_workspaces.value.none { it.available }) {
@@ -188,7 +201,7 @@ class WorkspaceRepository @Inject constructor(
             }
         }
 
-        val savedName = context.workspaceDataStore.data.first()[currentNameKey]
+        val savedName = context.workspaceDataStore.data.first()[currentNameKeyForMode()]
         val saved = savedName?.let { name -> _workspaces.value.firstOrNull { it.name == name } }
         val target = saved?.takeIf { it.available }
             ?: _workspaces.value.firstOrNull { it.available }
@@ -262,7 +275,8 @@ class WorkspaceRepository @Inject constructor(
         }
         _current.value = fallback
         context.workspaceDataStore.edit { prefs ->
-            if (fallback != null) prefs[currentNameKey] = fallback.name else prefs.remove(currentNameKey)
+            val key = currentNameKeyForMode()
+            if (fallback != null) prefs[key] = fallback.name else prefs.remove(key)
         }
         if (fallback != null && fallback.name != current.name) {
             _initError.value = context.getString(R.string.workspace_unavailable_fallback, current.name, fallback.name)
@@ -370,7 +384,7 @@ class WorkspaceRepository @Inject constructor(
     private suspend fun selectWorkspaceBy(match: (Workspace) -> Boolean) = withContext(Dispatchers.IO) {
         val target = _workspaces.value.firstOrNull { it.available && match(it) } ?: return@withContext
         _current.value = target
-        context.workspaceDataStore.edit { it[currentNameKey] = target.name }
+        context.workspaceDataStore.edit { it[currentNameKeyForMode()] = target.name }
         FileLogger.i(TAG, "切换工作区: ${target.name}")
         // 远程模式：切换后更新符号链接指向新工作区
         if (!isLocal()) {
@@ -673,7 +687,7 @@ class WorkspaceRepository @Inject constructor(
         // 重命名当前工作区变成切换工作区，后面那段 if 也再不会成立。
         if (_current.value?.name == oldName) {
             _current.value = Workspace(name = newName, path = newPath, type = target.type)
-            context.workspaceDataStore.edit { it[currentNameKey] = newName }
+            context.workspaceDataStore.edit { it[currentNameKeyForMode()] = newName }
             if (target.type == WorkspaceType.REMOTE) {
                 runCatching { remoteSshConnection.updateWorkspaceSymlink(newPath) }
             }

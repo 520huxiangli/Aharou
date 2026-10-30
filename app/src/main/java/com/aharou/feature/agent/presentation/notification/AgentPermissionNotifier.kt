@@ -24,6 +24,7 @@ import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalRequest
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestion
+import com.aharou.feature.agent.domain.tool.question.QuestionNotificationActions
 import com.aharou.feature.widget.WidgetActions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -265,6 +266,12 @@ class AgentPermissionNotifier @Inject constructor(
         notice.planRequestId?.let { planId ->
             builder.addAction(planAction(planId, PlanApprovalChoice.REFINE))
             builder.addAction(planAction(planId, PlanApprovalChoice.APPROVE))
+        }
+        // 提问也可在通知里直接作答：只有一个问题且选项不多时才挂动作，否则点回面板。
+        if (notice.kind == KIND_QUESTION) {
+            pendingQuestion?.let { question ->
+                QuestionNotificationActions.buildActions(context, question).forEach(builder::addAction)
+            }
         }
         val notification = builder.build()
         runCatching { NotificationManagerCompat.from(context).notify(id, notification) }

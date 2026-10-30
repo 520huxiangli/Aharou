@@ -3,7 +3,6 @@ package com.aharou.feature.agent.domain.tool
 import com.aharou.feature.agent.domain.model.AgentMessage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -14,6 +13,32 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /** 折叠时保留原样的“最近工具结果”条数：更早的才换成引用。 */
 private const val KEEP_RECENT_TOOL_RESULTS = 8
+
+/**
+ * 交给 JSON 解析器之前的单值上限（字符数）。
+ *
+ * 正常工具结果落库前已被 ToolOutputStore 截到 40k 字符，正文 / 入参字段另有 150KB 字节上限，
+ * 40 万字符足够覆盖所有正常值；超过它的只可能是历史遗留或异常膨胀的整串。
+ * 为什么必须在解析前截：即便换成流式 JsonReader，解析这一层也必然把字符串整段造出来
+ * （`nextString()` / `decodeFromString` 都要一份连续字符串），几百 KB 的文本会连带撑出
+ * 数倍的 JsonElement 树，堆上同时存在好几份。
+ */
+const val MAX_PARSED_JSON_CHARS = 400_000
+
+/**
+ * 把待解析的 JSON 文本限长到 [maxChars]，超限时截断并追加可读标记。
+ *
+ * 截断后的文本不再是合法 JSON——所有调用方都按 `runCatching{}.getOrNull()` 消费，
+ * 结果只是这一条降级（工具调用 / 附件解析为空、投影退回原文），不会抛异常。
+ * 需要从超长结果里取短字段的场景不要走解析，见 [findStoredField]。
+ */
+fun boundedJsonForParse(raw: String, maxChars: Int = MAX_PARSED_JSON_CHARS): String {
+    if (raw.length <= maxChars) return raw
+    var end = maxChars.coerceAtLeast(0)
+    // 别把代理对切一半：半个字符会变成替换符，白占一个位置还破坏可读性。
+    if (end > 0 && end < raw.length && raw[end - 1].isHighSurrogate() && raw[end].isLowSurrogate()) end--
+    return raw.substring(0, end) + "\n[truncated ${raw.length - end} chars]"
+}
 
 /**
  * 把较早且已完整落盘的工具结果换成一句引用，减少长会话里反复重发的体积。
@@ -40,10 +65,9 @@ fun foldStoredToolResults(messages: List<AgentMessage>, keepRecent: Int = KEEP_R
 /** 结果里带“已落盘”标记时给出折叠后的引用文本；否则 null（不动）。 */
 private fun foldedReference(message: AgentMessage.ToolResultMessage): String? {
     val raw = message.result
-    if (raw.isBlank() || !raw.contains("output_path")) return null
-    val root = runCatching { projectionJson.parseToJsonElement(raw) }.getOrNull() ?: return null
-    val path = findString(root, "output_path") ?: return null
-    val total = findString(root, "output_total_chars")?.toLongOrNull()
+    if (raw.isBlank() || !raw.contains("\"output_path\"")) return null
+    val path = findStoredField(raw, OUTPUT_PATH_FIELD) ?: return null
+    val total = findStoredField(raw, OUTPUT_TOTAL_CHARS_FIELD)?.toLongOrNull()
     return buildString {
         append("[早期工具结果已折叠：")
         append(message.toolName)
@@ -52,15 +76,18 @@ private fun foldedReference(message: AgentMessage.ToolResultMessage): String? {
     }
 }
 
-/** 递归找第一个同名字符串字段（落盘标记可能落在 data 里，也可能在顶层）。 */
-private fun findString(element: JsonElement, key: String): String? = when (element) {
-    is JsonObject -> {
-        (element[key] as? JsonPrimitive)?.contentOrNull
-            ?: element.values.firstNotNullOfOrNull { findString(it, key) }
-    }
-    is JsonArray -> element.firstNotNullOfOrNull { findString(it, key) }
-    else -> null
-}
+private val OUTPUT_PATH_FIELD = Regex("\"output_path\"\\s*:\\s*\"([^\"]*)\"")
+private val OUTPUT_TOTAL_CHARS_FIELD = Regex("\"output_total_chars\"\\s*:\\s*\"?([0-9]+)\"?")
+
+/**
+ * 从结果文本里线性扫出某个短字段的值，不建 JsonElement 树。
+ *
+ * 落盘标记（output_path / output_total_chars）总在预览正文之后，而预览正文恰恰是结果里最长的一段：
+ * 为取两个短字段把整串解析成树，等于白造一棵几百 KB 的对象树，超长结果尤其亏。
+ * 这两个值都是 ToolOutputStore 直接写入的纯字符串 / 整数，不含需要反转义的转义序列。
+ */
+private fun findStoredField(raw: String, pattern: Regex): String? =
+    pattern.find(raw)?.groupValues?.get(1)
 
 private val projectionJson = Json { ignoreUnknownKeys = true }
 
@@ -75,7 +102,9 @@ private val projectionJson = Json { ignoreUnknownKeys = true }
 fun modelToolResultText(toolName: String, transportJson: String): String? {
     val raw = transportJson.trim()
     if (raw.isEmpty()) return null
-    val obj = runCatching { projectionJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return null
+    // 解析前先限长：超长结果直接降级成「不投影」，由调用方回退用原文，比先造树再说安全。
+    val bounded = boundedJsonForParse(raw)
+    val obj = runCatching { projectionJson.parseToJsonElement(bounded) as? JsonObject }.getOrNull() ?: return null
     if (obj["status"]?.jsonPrimitive?.contentOrNull != "success") return null
     val data = obj["data"] as? JsonObject ?: return null
     val written = (when (toolName) {
