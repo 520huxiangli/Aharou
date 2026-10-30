@@ -80,7 +80,9 @@ data class ScheduledTaskEntity(
     /** 运行次数上限；0 表示不限。 */
     val maxRuns: Int = 0,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /** 已认领但还没跑起来（总线投递失败时落库，会话层就绪后捡起）；空 = 没有挂起。 */
+    val pendingRunPrompt: String? = null,
 ) {
     companion object {
         /** 周期：每 intervalMinutes 跑一次。 */

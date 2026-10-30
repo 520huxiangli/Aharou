@@ -1570,6 +1570,8 @@
     <string name="scheduled_tasks_condition_battery_only">电量 ≥ %1$d%%</string>
     <string name="scheduled_tasks_skipped_debounce">防抖中</string>
     <string name="scheduled_tasks_skipped_running">上一次还在跑</string>
+    <string name="scheduled_task_service_channel">自动化任务执行</string>
+    <string name="scheduled_task_service_title">自动化任务</string>
     <string name="scheduled_tasks_failed">上次执行失败</string>
 
     <!-- Subagent Settings -->

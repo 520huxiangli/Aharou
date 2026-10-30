@@ -87,8 +87,8 @@ class EventTriggerBus @Inject constructor(
     fun postAppStart() {
         if (!appStartDispatched.compareAndSet(false, true)) return
         scope.launch {
-            // 稍等片刻再投递：会话层（AIAgentViewModel）在 Activity 起来后才订阅 ScheduledRunBus，
-            // 订阅前投递的请求会被无 replay 的 SharedFlow 直接丢弃——任务记成「已派发」却没人跑。
+            // 稍等片刻再投递：让 Application 的初始化（工作区、容器、调度器）先就位，
+            // 免得到了派发环节才发现依赖还没准备好。
             delay(APP_START_SETTLE_MS)
             dispatch(ScheduledTaskEntity.TYPE_APP_START, EventPayload(timeMillis = System.currentTimeMillis())) { true }
         }

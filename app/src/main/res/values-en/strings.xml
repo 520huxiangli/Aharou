@@ -1571,6 +1571,8 @@
     <string name="scheduled_tasks_condition_battery_only">Battery ≥ %1$d%%</string>
     <string name="scheduled_tasks_skipped_debounce">In the debounce window</string>
     <string name="scheduled_tasks_skipped_running">Previous run still going</string>
+    <string name="scheduled_task_service_channel">Automation task execution</string>
+    <string name="scheduled_task_service_title">Automation task</string>
     <string name="scheduled_tasks_failed">Last run failed</string>
 
     <!-- Subagent Settings -->

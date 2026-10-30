@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.data
 
+import android.content.Context
 import com.aharou.core.config.ConfigCollection
 import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigField
@@ -12,6 +13,7 @@ import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskRepository
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.runBlocking
@@ -28,11 +30,22 @@ import kotlinx.coroutines.runBlocking
  */
 @Singleton
 class ConfigScheduledTaskFields @Inject constructor(
-    private val tasks: ScheduledTaskRepository
+    private val tasks: ScheduledTaskRepository,
+    private val scheduler: ScheduledTaskScheduler,
+    @param:ApplicationContext private val context: Context,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
         registry.register(TaskCollection())
+    }
+
+    /**
+     * 配置通道增删改任务后都必须重排调度：Worker 周期任务与精确闹钟只在这里排。
+     * 设置页 UI 路径各自调过，但 config 通道（AI 用 config set 建任务）不调的话，
+     * 任务会建在库里却永远到不了点（2026-10-30 真机：任务到点 9 分钟 Worker 没被拉起）。
+     */
+    private fun reschedule() {
+        runBlocking { scheduler.ensureScheduled(context) }
     }
 
     private fun all(): List<ScheduledTaskEntity> = runBlocking { tasks.all() }
@@ -44,6 +57,7 @@ class ConfigScheduledTaskFields @Inject constructor(
 
     private fun mutate(id: String, transform: (ScheduledTaskEntity) -> ScheduledTaskEntity) {
         runBlocking { tasks.upsert(transform(require(id))) }
+        reschedule()
     }
 
     private fun now() = System.currentTimeMillis()
@@ -400,12 +414,14 @@ class ConfigScheduledTaskFields @Inject constructor(
                 tasks.upsert(task)
                 task
             }
+            reschedule()
             return saved.id
         }
 
         override fun remove(id: String) {
             require(id)
             runBlocking { tasks.delete(id) }
+            reschedule()
         }
 
         /** 一个读写标量字段：省掉逐个重复的 ClosureField 样板。 */        private fun scalar(

@@ -65,4 +65,26 @@ interface ScheduledTaskDao {
     /** 记下这次运行的结果（时间已由 [claim] 推进）。 */
     @Query("UPDATE scheduled_tasks SET lastOutcome = :outcome, updatedAt = :now WHERE id = :id")
     suspend fun recordOutcome(id: String, outcome: String, now: Long)
+
+    /** 总线投递失败时把渲染好的 prompt 落库，等会话层就绪后捡跑。 */
+    @Query(
+        "UPDATE scheduled_tasks SET pendingRunPrompt = :prompt, lastOutcome = 'dispatched', updatedAt = :now " +
+            "WHERE id = :id"
+    )
+    suspend fun markPendingRun(id: String, prompt: String, now: Long): Int
+
+    /** 已挂起、还没被捡走的任务（会话层启动时扫一遍）。 */
+    @Query(
+        "SELECT * FROM scheduled_tasks WHERE pendingRunPrompt IS NOT NULL AND pendingRunPrompt != '' " +
+            "AND enabled = 1 ORDER BY updatedAt ASC"
+    )
+    suspend fun pendingRuns(): List<ScheduledTaskEntity>
+
+    /** 捡走：清掉挂起标记，避免下次启动再跑一遍。 */
+    @Query("UPDATE scheduled_tasks SET pendingRunPrompt = NULL, updatedAt = :now WHERE id = :id")
+    suspend fun clearPendingRun(id: String, now: Long): Int
+
+    /** 还有多少挂起任务（日志观测用）。 */
+    @Query("SELECT COUNT(*) FROM scheduled_tasks WHERE pendingRunPrompt IS NOT NULL AND pendingRunPrompt != '' AND enabled = 1")
+    suspend fun pendingRunsCount(): Int
 }

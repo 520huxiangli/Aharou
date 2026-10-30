@@ -71,7 +71,7 @@ import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.asDirtySignal
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
-import com.aharou.feature.agent.domain.schedule.ScheduledRunBus
+import com.aharou.feature.agent.domain.schedule.ScheduledPendingRunner
 import com.aharou.feature.agent.domain.schedule.ScheduledRunRequest
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskOutcome
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
@@ -202,7 +202,6 @@ class AIAgentViewModel @Inject constructor(
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val keepaliveSettings: KeepaliveSettingsRepository,
     private val subAgentEventBus: SubAgentEventBus,
-    private val scheduledRunBus: ScheduledRunBus,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val sharedInbox: SharedInbox,
     private val sharedInboxDelivery: SharedInboxDelivery,
@@ -1594,15 +1593,13 @@ class AIAgentViewModel @Inject constructor(
             }
         }
 
-        // 定时任务到点：Worker 经总线派发，这里负责真正跑起来（复用普通会话链路）。
+        // 定时任务：Worker 认领后交给前台服务后台跑，这里只负责捡「服务没起来」时落库的活。
         viewModelScope.launch {
-            scheduledRunBus.requests.collect { request -> runScheduledTask(request) }
+            ScheduledPendingRunner(scheduledTaskDao) { request -> runScheduledTask(request) }.drain()
         }
         viewModelScope.launch { awaitingPermissionSessionIds.collect { agentPermissionNotifier.sync(it) } }
-        // 提问 / 计划审批这两类待批事件只做后台提示，点通知回到会话，用户处理完状态清空后自动撤下。
         viewModelScope.launch {
-            combine(askUserQuestionManager.pendingQuestion, planApprovalManager.pendingApproval) { q, p -> q to p }
-                .collect { (question, plan) -> agentPermissionNotifier.syncPrompts(question, plan) }
+            combine(askUserQuestionManager.pendingQuestion, planApprovalManager.pendingApproval) { q, p -> q to p }.collect { (question, plan) -> agentPermissionNotifier.syncPrompts(question, plan) }
         }
         viewModelScope.launch { agentPermissionNotifier.replies.collect { r -> enqueueAgentRequest(request = r.text, projectRoot = workspaceOf(r.sessionId), targetSessionId = r.sessionId) } }
     }

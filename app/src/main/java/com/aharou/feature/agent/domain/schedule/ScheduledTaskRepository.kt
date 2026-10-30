@@ -114,7 +114,9 @@ class ScheduledTaskRepository @Inject constructor(
             runCount = existing?.runCount ?: 0,
             maxRuns = maxRuns,
             createdAt = existing?.createdAt ?: now,
-            updatedAt = now
+            updatedAt = now,
+            // 编辑任务不打断已经派发、还没跑的指令：挂起的照旧捡起。
+            pendingRunPrompt = existing?.pendingRunPrompt,
         )
         dao.upsert(task)
         return task

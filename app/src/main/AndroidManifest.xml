@@ -271,6 +271,18 @@
                 android:resource="@xml/aharou_accessibility_service" />
         </service>
 
+        <!-- 自动化任务后台执行：到点任务在 App 不处于前台时也真跑，跑完即停。
+             用 specialUse（理由同 IM 机器人服务）；执行期间通知栏出现一条任务通知。 -->
+        <service
+            android:name=".feature.agent.domain.schedule.ScheduledTaskExecutionService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="到点执行自动化任务，跑完即停" />
+        </service>
+
         <!-- 通知读取：让 Agent 能回答「刚才谁给我发消息了」。这个权限只能由用户在系统
              「通知使用权」里手动勾选，应用无法自行申请，也不该假装能申请。 -->
         <service
