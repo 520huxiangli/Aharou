@@ -27,6 +27,8 @@ fun containerOsLogo(osId: String?): Painter? = when (osId) {
     "centos" -> painterResource(R.drawable.logo_centos)
     "ubuntu" -> painterResource(R.drawable.logo_ubuntu)
     "debian" -> painterResource(R.drawable.logo_debian)
+    "archarm" -> painterResource(R.drawable.logo_arch)
+    "manjaro-arm" -> painterResource(R.drawable.logo_manjaro)
     else -> null
 }
 

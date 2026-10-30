@@ -86,6 +86,8 @@ private fun distroLogo(distro: String): Painter? = when (distro) {
     "ubuntu" -> painterResource(R.drawable.logo_ubuntu)
     "debian" -> painterResource(R.drawable.logo_debian)
     "centos" -> painterResource(R.drawable.logo_centos)
+    "arch" -> painterResource(R.drawable.logo_arch)
+    "manjaro" -> painterResource(R.drawable.logo_manjaro)
     else -> null
 }
 

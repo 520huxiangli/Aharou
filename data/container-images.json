@@ -49,7 +49,9 @@
       "distros": {
         "alpine": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
         "ubuntu": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
-        "debian": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images"
+        "debian": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
+        "arch": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images",
+        "manjaro": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/container-images"
       }
     }
   },
@@ -302,6 +304,42 @@
       "abiNames": {
         "arm64": "arm64v8",
         "x86_64": "amd64"
+      }
+    },
+    {
+      "id": "arch-lite",
+      "name": "Arch Linux",
+      "version": "20260805",
+      "description": "Arch Linux ARM 精简 base：去桌面/固件/文档，仅留开发基础与 pacman",
+      "sizeBytes": 173613755,
+      "distro": "arch",
+      "path": "arch-lite-{abi}.tar.gz",
+      "paths": {
+        "aharou": "arch-lite-{abi}.tar.gz"
+      },
+      "abiNames": {
+        "arm64": "aarch64"
+      },
+      "sha256ByAbi": {
+        "arm64": "36e243ee733f274e61d3eeff4905d36e3cd1552aabca8c63c58f20fcb977216b"
+      }
+    },
+    {
+      "id": "manjaro-lite",
+      "name": "Manjaro",
+      "version": "20261012",
+      "description": "Manjaro ARM 精简 base：去文档/多语言，仅留开发基础与 pacman",
+      "sizeBytes": 168438918,
+      "distro": "manjaro",
+      "path": "manjaro-lite-{abi}.tar.gz",
+      "paths": {
+        "aharou": "manjaro-lite-{abi}.tar.gz"
+      },
+      "abiNames": {
+        "arm64": "aarch64"
+      },
+      "sha256ByAbi": {
+        "arm64": "ee436bcf041cfd53ce96f350fae4aa4d079803e841dcaa68e0a61e8dc0b3394e"
       }
     }
   ]

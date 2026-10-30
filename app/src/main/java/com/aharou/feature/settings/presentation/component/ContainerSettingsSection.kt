@@ -3,8 +3,7 @@ package com.aharou.feature.settings.presentation.component
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
+import com.aharou.core.ui.rememberSafeDocumentPicker
 import androidx.compose.material3.Surface
 import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.SegmentedTabs
@@ -313,6 +313,8 @@ private fun osLogo(osId: String?): Painter? = when (osId) {
     "centos" -> painterResource(R.drawable.logo_centos)
     "ubuntu" -> painterResource(R.drawable.logo_ubuntu)
     "debian" -> painterResource(R.drawable.logo_debian)
+    "archarm" -> painterResource(R.drawable.logo_arch)
+    "manjaro-arm" -> painterResource(R.drawable.logo_manjaro)
     else -> null
 }
 
@@ -533,9 +535,11 @@ private fun ProfileEditSheet(
     LaunchedEffect(pickedUri) {
         pickedName = pickedUri?.let { queryImageDisplayName(context, it) }
     }
-    val pickLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) pickedUri = uri.toString() }
+    // 系统文件选择器缺席时只提示不崩（与技能导入同一套容错组件，见 core/ui/SafeDocumentPicker.kt）
+    val pickFile = rememberSafeDocumentPicker(
+        arrayOf("*/*"),
+        { Toast.makeText(context, R.string.document_picker_unavailable, Toast.LENGTH_LONG).show() },
+    ) { uri -> pickedUri = uri.toString() }
     // 远程 SSH 字段
     val initialSsh = (initial?.rootfsSource as? RootfsSource.RemoteSsh)
     var selectedConnId by remember { mutableStateOf(initialSsh?.connectionId ?: sshConnections.firstOrNull()?.id ?: "") }
@@ -666,7 +670,7 @@ private fun ProfileEditSheet(
                         if (initial?.rootfsSource !is RootfsSource.Asset) {
                             Spacer(modifier = Modifier.size(Spacing.xs))
                             Surface(
-                                onClick = { pickLauncher.launch(arrayOf("*/*")) },
+                                onClick = { pickFile() },
                                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
                             ) {
                                 Row(

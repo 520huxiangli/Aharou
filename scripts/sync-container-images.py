@@ -40,6 +40,7 @@ import os
 import re
 import shutil
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.error
@@ -54,7 +55,7 @@ MANIFESTS = [
     os.path.join(ROOT, "data/container-images.json"),
 ]
 ABIS = ("arm64", "x86_64")
-DISTROS = ("alpine", "ubuntu", "debian")
+DISTROS = ("alpine", "ubuntu", "debian", "arch", "manjaro")
 CNB_OWNER = os.environ.get("CNB_OWNER") or "huxiangli"
 CNB_REPO = os.environ.get("CNB_REPO") or "aharou-releases"
 CNB_TAG = os.environ.get("CNB_TAG") or "container-images"
@@ -76,6 +77,12 @@ DISCOVERY_BASES = {
     ],
     "debian": ["https://doi-janky.infosiftr.net"],
 }
+
+# Arch/Manjaro 是滚动发行版，官方只出 aarch64 的 rootfs，且没有稳定版本号：
+#  - Arch：文件名固定 latest，内容随时间变，用体积/更新时间判断是否要重同步；
+#  - Manjaro：GitHub 上每天一个 release（tag 即日期），查 latest 拿版本。
+ARCH_ARM_URL = "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+MANJARO_ARM_API = "https://api.github.com/repos/manjaro-arm/rootfs/releases/latest"
 
 HREF_RE = re.compile(r'href="([^"]+)"')
 
@@ -162,6 +169,27 @@ def download(url: str, dest: str) -> bool:
 
 # ---------------------------------------------------------------- 版本工具
 
+def http_last_modified(url: str, timeout: int = 30) -> str:
+    """HEAD 请求拿 Last-Modified 头；拿不到返回空串（调用方按无法判断处理）。"""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA}, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.headers.get("Last-Modified") or ""
+    except Exception:  # noqa: BLE001 — 拿不到就不判新，下次再试
+        return ""
+
+
+def http_date_to_version(header: str) -> str:
+    """HTTP 日期（RFC 1123）→ `yyyyMMdd` 版本串；解析失败抛异常（调用方记探测失败）。"""
+    for fmt in ("%a, %d %b %Y %H:%M:%S %Z", "%a, %d %b %Y %H:%M:%S GMT"):
+        try:
+            t = time.strptime(header.strip(), fmt)
+            return time.strftime("%Y%m%d", t)
+        except ValueError:
+            continue
+    raise ValueError(f"无法解析 HTTP 日期：{header!r}")
+
+
 def version_tuple(v: str) -> tuple:
     m = re.match(r"^\s*(\d+(?:\.\d+)*)", v)
     if not m:
@@ -203,6 +231,9 @@ def path_for(entry: dict, version: str) -> str:
     if d == "debian":
         return ("job/tianon/job/debuerreotype/job/{abi}/lastSuccessfulBuild/artifact/"
                 f"{suite_of(entry)}/rootfs.tar.xz")
+    # arch/manjaro 精简包名固定（不带版本），版本变化只体现在清单 version 与哈希上。
+    if d in ("arch", "manjaro"):
+        return f"{d}-lite-{{abi}}.tar.gz"
     raise RuntimeError(f"未知发行版：{d}")
 
 
@@ -256,6 +287,29 @@ def discover(entry: dict, base: str) -> dict:
                      f"/lastSuccessfulBuild/artifact/{suite}/rootfs.tar.xz" for abi in ABIS}
         return {"version": debian_version_str(ver, suite), "urls": urls,
                 "extra": f"build #{meta.get('number')}"}
+
+    if d == "arch":
+        # 滚动版无版本号：HEAD 拿 Last-Modified 当版本（日期），变了说明官方 rootfs 更新。
+        # 只处理 arm64：archlinuxarm 只出 aarch64，清单里也只列了 arm64。
+        lm = http_last_modified(ARCH_ARM_URL)
+        if not lm:
+            raise RuntimeError("archlinuxarm 没返回 Last-Modified，无法判断版本")
+        ver = http_date_to_version(lm)
+        urls = {"arm64": ARCH_ARM_URL}
+        return {"version": ver, "urls": urls, "extra": "archlinuxarm latest"}
+
+    if d == "manjaro":
+        # GitHub release tag 即日期版本（如 20261012），资产固定叫 latest。
+        rel = json.loads(http_text(MANJARO_ARM_API))
+        assets = {a.get("name"): a for a in (rel.get("assets") or []) if a.get("name")}
+        asset = assets.get("Manjaro-ARM-aarch64-latest.tar.gz")
+        if not asset:
+            raise RuntimeError(f"Manjaro latest release 里没有 Manjaro-ARM-aarch64-latest.tar.gz")
+        ver = str(rel.get("tag_name") or "").strip()
+        if not re.match(r"^\d{8}$", ver):
+            raise RuntimeError(f"Manjaro release tag 格式异常：{ver!r}")
+        urls = {"arm64": asset.get("browser_download_url")}
+        return {"version": ver, "urls": urls, "extra": f"GitHub release {ver}"}
 
     raise RuntimeError(f"未知发行版：{d}")
 
@@ -359,6 +413,12 @@ def sync_eol_fields(data: dict, targets: list) -> list:
 
 def probe_versions(entry: dict) -> tuple:
     """只探版本（1~2 个请求），返回 (info, error)。「无更新」这条便宜路径上不碰产物体积。"""
+    # arch/manjaro 只有单一官方源（无镜像），不走 DISCOVERY_BASES 轮询。
+    if entry.get("distro") in ("arch", "manjaro"):
+        try:
+            return discover(entry, None), None
+        except Exception as e:  # noqa: BLE001
+            return None, str(e)
     errs = []
     for base in DISCOVERY_BASES[entry["distro"]]:
         try:
@@ -372,12 +432,13 @@ def probe_versions(entry: dict) -> tuple:
 
 
 def probe_artifacts(entry: dict) -> tuple:
-    """确认真有新版本后才跑：HEAD 出两个 ABI 产物的字节数（不下载产物本体）。"""
+    """确认真有新版本后才跑：HEAD 出各 ABI 产物的字节数（不下载产物本体）。"""
     errs = []
     for base in DISCOVERY_BASES[entry["distro"]]:
         try:
             info = discover(entry, base)
-            sizes = {abi: http_size(info["urls"][abi]) for abi in ABIS}
+            abis = [a for a in ABIS if a in info["urls"]]
+            sizes = {abi: http_size(info["urls"][abi]) for abi in abis}
         except Exception as e:  # noqa: BLE001
             errs.append(f"{urllib.parse.urlsplit(base).netloc} → {e}")
             continue
@@ -434,7 +495,8 @@ def backfill_checksums(latest: list) -> list:
     """
     out = []
     for entry, info in latest:
-        if entry["distro"] == "debian":
+        # arch/manjaro 的哈希是精简产物的自算值，官方不提供，不回填。
+        if entry["distro"] in ("debian", "arch", "manjaro"):
             continue
         have = entry.get("sha256ByAbi") or {}
         if all(have.get(abi) for abi in ABIS):
@@ -677,6 +739,12 @@ def main() -> int:
             latest.append((entry, info))
             continue
 
+        # arch/manjaro 无「官方精简包体积」可探测：体积由精简产物决定，直接进待更新列表。
+        if entry.get("distro") in ("arch", "manjaro"):
+            print(f"[{eid}] {entry['version']} → {info['version']}（{info['extra']}）")
+            changes.append({"entry": entry, "info": info})
+            continue
+
         # 有新版本才去 HEAD 产物体积（这一步只为报体积与后续幂等判断，不下载）
         info, err = probe_artifacts(entry)
         if err:
@@ -731,9 +799,9 @@ def main() -> int:
     for c in changes:
         entry, info = c["entry"], c["info"]
         print(f"  {entry['id']}  {entry['version']} → {info['version']}")
-        for abi in ABIS:
+        for abi in info["urls"]:
             print(f"    [{entry['abiNames'][abi]}] {info['urls'][abi]}")
-            print(f"          → cnb 资产 {asset_name(entry, abi)}（{info['sizes'][abi]} 字节）")
+            print(f"          → cnb 资产 {asset_name(entry, abi)}（{info.get('sizes', {}).get(abi, '精简后')} 字节）")
 
     if not args.apply:
         print(f"\ndry-run 结束：{len(changes)} 条待更新，未下载未上传。"
@@ -771,6 +839,42 @@ def main() -> int:
     return 0
 
 
+def slim_rootfs(src_tar: str, dest_tar: str) -> None:
+    """把官方完整 rootfs 精简成容器可用 base：删固件/内核/文档/多语言，重打包。
+
+    Arch/Manjaro 官方包面向物理 ARM 板子，塞了固件、内核模块、设备树、文档与多语言，
+    容器里全用不上（proot 借宿主内核，无头无桌面）。解压后删掉这些再重打包，
+    体积从 800MB/200MB 级降到 160MB 级，下载与存储都友好。
+    """
+    work = tempfile.mkdtemp(prefix="slim-rootfs-")
+    try:
+        # 3.11 兼容：extractall 不传 filter（3.12+ 才有）；循环符号链接（.l2s）在解压后统一清掉。
+        with tarfile.open(src_tar, "r:gz") as tf:
+            tf.extractall(work)
+        for rel in (
+            "boot",
+            "usr/lib/firmware",
+            "usr/lib/modules",
+            "usr/share/locale",
+            "usr/share/man",
+            "usr/share/doc",
+            "usr/share/info",
+            "usr/share/i18n",
+        ):
+            shutil.rmtree(os.path.join(work, rel), ignore_errors=True)
+        # 解压过程把硬链接转成了 .l2s 符号链接环（Android 无硬链接，proot 的 link2symlink），
+        # 打包时排除，避免 tar 卡在符号链接循环上。
+        for root, dirs, files in os.walk(work):
+            for fn in files:
+                if ".l2s." in fn:
+                    os.unlink(os.path.join(root, fn))
+        with tarfile.open(dest_tar, "w:gz") as tf:
+            for name in sorted(os.listdir(work)):
+                tf.add(os.path.join(work, name), arcname=name, recursive=True)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def apply_changes(changes: list) -> tuple:
     """下载 + 校验 + 上传。返回 (成功列表, 失败描述列表)。"""
     rel = ensure_release()
@@ -787,6 +891,46 @@ def apply_changes(changes: list) -> tuple:
         entry, info = c["entry"], c["info"]
         eid = entry["id"]
         print(f"\n[{eid}] {entry['version']} → {info['version']}")
+
+        # arch/manjaro：下载官方包 → 精简 → 重打包 → 自算哈希 → 上传（只 arm64，见清单 abiNames）。
+        # 幂等判据是精简包哈希而非体积：官方包天天变，体积判断对不上精简产物。
+        if entry["distro"] in ("arch", "manjaro"):
+            names = {abi: asset_name(entry, abi) for abi in info["urls"]}
+            tmpdir = tempfile.mkdtemp(prefix=f"cimg-{eid}-")
+            ok = True
+            try:
+                for abi, url in info["urls"].items():
+                    name = names[abi]
+                    dest = os.path.join(tmpdir, name)
+                    print(f"  下载官方包 {name}（{url}）...")
+                    started = time.time()
+                    if not download(url, dest):
+                        print(f"  [失败] {name} 官方包下载失败")
+                        ok = False
+                        break
+                    print(f"  官方包下载完成（{time.time() - started:.0f}s），开始精简...")
+                    slim = os.path.join(tmpdir, "slim-" + name)
+                    slim_rootfs(dest, slim)
+                    got = sha256_file(slim)
+                    old = entry.get("sha256ByAbi", {}).get(abi)
+                    if old == got:
+                        print(f"  精简包哈希与清单一致（{got[:16]}…），跳过上传")
+                        continue
+                    if not upload(release_id, slim):
+                        print(f"  [失败] {name} 精简包上传失败")
+                        ok = False
+                        break
+                    print(f"  [成功] {name} 精简包 → cnb {CNB_TAG}（SHA256 {got[:16]}…）")
+                    info.setdefault("hashes", {})[abi] = got
+                    info.setdefault("slimSizes", {})[abi] = os.path.getsize(slim)
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            if ok:
+                applied.append(c)
+            else:
+                failed.append(f"{eid}（{entry['version']} → {info['version']}）")
+            continue
+
         # 官方 SHA256 在「cnb 上已有同体积资产、跳过下载」那条捷径上也要取：
         # 否则清单里的 sha256ByAbi 永远写不进去。Debian 的地址是 Jenkins lastSuccessfulBuild，
         # 同版本重跑会换字节，写死哈希会把合法下载判成校验失败，故不记录。
@@ -850,14 +994,23 @@ def apply_changes(changes: list) -> tuple:
         else:
             failed.append(f"{eid}（{entry['version']} → {info['version']}）")
 
-    for c in applied:  # 清单只对「两个 ABI 都到位」的条目改动
+    for c in applied:  # 清单只对「产物到位」的条目改动
         e, info = c["entry"], c["info"]
         e["version"] = info["version"]
         e["path"] = path_for(e, info["version"])
-        e["sizeBytes"] = info["sizes"]["arm64"]  # 与现有 12 条一致：取 arm64 产物
-        hashes = info.get("hashes") or {}
-        if hashes:  # 取不到就保留现值：没哈希时 App 侧只是跳过校验
-            e["sha256ByAbi"] = {abi: hashes[abi] for abi in ABIS if abi in hashes}
+        if e.get("distro") in ("arch", "manjaro"):
+            # 精简产物：体积取精简包，哈希取自算值（官方包体积/哈希与上传产物无关）
+            sizes = info.get("slimSizes") or {}
+            if sizes:
+                e["sizeBytes"] = sizes.get("arm64") or next(iter(sizes.values()))
+            hashes = info.get("hashes") or {}
+            if hashes:
+                e["sha256ByAbi"] = {abi: hashes[abi] for abi in hashes}
+        else:
+            e["sizeBytes"] = info["sizes"]["arm64"]  # 与现有 12 条一致：取 arm64 产物
+            hashes = info.get("hashes") or {}
+            if hashes:  # 取不到就保留现值：没哈希时 App 侧只是跳过校验
+                e["sha256ByAbi"] = {abi: hashes[abi] for abi in ABIS if abi in hashes}
     return applied, failed
 
 

@@ -163,8 +163,8 @@ App 被系统杀掉时，它启动的容器进程有可能变成孤儿继续留�
 ### 方式一：内置镜像下载（推荐）
 
 1. 打开「设置 → 更多 → 容器与镜像」，点右上角的下载图标。
-2. 页面会列出可下载的镜像（Alpine、Ubuntu、Debian 等），点一行看详情并下载。
-3. 右上角可以切换下载源，默认是「Aharou 自建源」，另有官方源 / 华为云 / 阿里云 / 腾讯云。国内网络建议用自建源或国内云源——官方源在部分网络下会极慢甚至连不上。
+2. 页面会列出可下载的镜像（Alpine、Ubuntu、Debian、Arch Linux、Manjaro 等），点一行看详情并下载。
+3. 右上角可以切换下载源，默认是「Aharou 自建源」，另有官方源 / 华为云 / 阿里云 / 腾讯云。国内网络建议用自建源或国内云源——官方源在部分网络下会极慢甚至连不上。Arch 与 Manjaro 的镜像只有自建源提供（官方没有容器用的精简包，App 同步时自动把它精简后再上传）。
 4. 下载完成后点「导入」，镜像就加入容器列表了，选中即可使用。
 
 已下载的镜像可以重复导入；左滑可以删除下载好的镜像文件。
@@ -195,8 +195,12 @@ App 被系统杀掉时，它启动的容器进程有可能变成孤儿继续留�
 - Alpine（体积小、启动快）：`https://alpine.linuxhub.cn/alpine/edge/releases/`，在 aarch64 目录下选 `alpine-minirootfs-*-aarch64.tar.gz`
 - Ubuntu：`https://cdimage.ubuntu.com/ubuntu-base/releases/`，选 `ubuntu-base-*-base-arm64.tar.gz`
 - Debian：可以从 Docker Hub 的官方镜像（如 `arm64v8/debian`）导出
+- Arch Linux（ARM）：`https://mirror.archlinuxarm.org/os/`，选 `ArchLinuxARM-aarch64-latest.tar.gz`。官方包面向 ARM 开发板，包含内核与固件（几百 MB），容器里用不上这些，导入后可在容器里自行精简，或直接用内置下载里的 Arch 精简包
+- Manjaro（ARM）：GitHub 上的 manjaro-arm/rootfs 仓库每周发布，`https://github.com/manjaro-arm/rootfs/releases`，选 `Manjaro-ARM-aarch64-latest.tar.gz`
+- Fedora：`https://dl.fedoraproject.org/pub/fedora/linux/releases/`，进对应版本的 `Container/$arch/images/` 目录选 `Fedora-Container-Base-*.tar.xz`（官方容器镜像，本身就是精简 rootfs）
+- openSUSE：`https://download.opensuse.org/ports/aarch64/distribution/`，进对应版本的 `appliances/` 目录选镜像
 
-有 Docker 环境的话，从任意镜像导出 rootfs：
+**通用方法：从任意 Docker 镜像导出 rootfs**：
 
 ```bash
 docker pull debian:bookworm
@@ -205,7 +209,17 @@ docker export temp-rootfs | gzip > debian-rootfs.tar.gz
 docker rm temp-rootfs
 ```
 
-也可以在已有的 Linux 环境里用 `debootstrap`（Debian / Ubuntu）或 `alpine-make-rootfs`（Alpine）自己做。
+有 Docker 的话这是最通用的路子——Docker Hub 上几乎所有发行版都有官方镜像（`arm64v8/ubuntu`、`arm64v8/fedora`、`arm64v8/opensuse` 等），导出即得完整 rootfs。
+
+也可以在已有的 Linux 环境里用 `debootstrap`（Debian / Ubuntu）或 `alpine-make-rootfs`（Alpine）自己做，Arch 用 `pacstrap`。
+
+**选镜像的三条硬规则**：
+
+1. **架构必须匹配**：ARM64 手机用 aarch64/arm64 镜像，x86 手机用 x86_64/amd64。选错会在解压后启动失败（exec format error）。
+2. **优先容器版而非桌面版**：带桌面环境的镜像（如 Ubuntu 桌面 ISO）体积巨大且无头容器用不上，选 `base`/`minirootfs`/`Container-Base` 这类最小变体。
+3. **shell 不能缺**：rootfs 里至少要有 `/bin/sh` 或 `/bin/bash`，否则容器起不来。
+
+**导入后包管理器支持**：App 能自动识别容器里的包管理器并按需补装基础工具，目前支持 apk（Alpine）、apt-get（Debian/Ubuntu）、pacman（Arch/Manjaro）、dnf/yum（Fedora/RHEL 系）。其他发行版没识别到包管理器时，自动补装会提示「认不出包管理器」，手动装工具即可。
 
 **导入步骤**：
 

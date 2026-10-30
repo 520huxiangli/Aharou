@@ -66,7 +66,7 @@ sealed interface InstallOutcome {
     /** 沙箱未就绪，没法执行。 */
     data object NotReady : InstallOutcome
 
-    /** 认不出包管理器（既没 apk 也没 apt-get）。 */
+    /** 认不出包管理器（apk / apt-get / pacman / dnf / yum 都没有）。 */
     data object NoPackageManager : InstallOutcome
 
     /** 装了但失败，[output] 是末尾输出，用来告诉用户到底卡在哪。 */
@@ -333,13 +333,19 @@ class ContainerDoctor @Inject constructor(
     }.getOrDefault(false)
 
     private suspend fun detectPackageManager(): PackageManagerKind? {
-        // 快路径：原生说某个包管理器在就直接采信（两个都判不出来才走容器探测复核）
+        // 快路径：原生说某个包管理器在就直接采信（都判不出来才走容器探测复核）
         if (engine.probeContainerExecutable("apk") == true) return PackageManagerKind.APK
         if (engine.probeContainerExecutable("apt-get") == true) return PackageManagerKind.APT
+        if (engine.probeContainerExecutable("pacman") == true) return PackageManagerKind.PACMAN
+        if (engine.probeContainerExecutable("dnf") == true) return PackageManagerKind.DNF
+        if (engine.probeContainerExecutable("yum") == true) return PackageManagerKind.YUM
         val result = runCatching {
             engine.runCommandSyncIfReady(
                 "command -v apk >/dev/null 2>&1 && echo apk; " +
-                    "command -v apt-get >/dev/null 2>&1 && echo apt-get",
+                    "command -v apt-get >/dev/null 2>&1 && echo apt-get; " +
+                    "command -v pacman >/dev/null 2>&1 && echo pacman; " +
+                    "command -v dnf >/dev/null 2>&1 && echo dnf; " +
+                    "command -v yum >/dev/null 2>&1 && echo yum",
                 null,
                 PROBE_TIMEOUT_MS
             )
@@ -348,22 +354,28 @@ class ContainerDoctor @Inject constructor(
         return when {
             names.any { it == "apk" } -> PackageManagerKind.APK
             names.any { it == "apt-get" } -> PackageManagerKind.APT
+            names.any { it == "pacman" } -> PackageManagerKind.PACMAN
+            names.any { it == "dnf" } -> PackageManagerKind.DNF
+            names.any { it == "yum" } -> PackageManagerKind.YUM
             else -> null
         }
     }
 
     private enum class PackageManagerKind {
         APK,
-        APT;
+        APT,
+        PACMAN,
+        DNF,
+        YUM;
 
         /**
          * 工具名到包名的映射。
          *
-         * Alpine 下这些工具名就是包名；Debian 系把 xz 放在 xz-utils 里，sh 由 dash 提供。
+         * Alpine 与 Arch 系下这些工具名就是包名；Debian 系把 xz 放在 xz-utils 里，sh 由 dash 提供。
          * 不在表里的按同名试，比不认识就放弃有用地多。
          */
         fun packageFor(tool: String): String = when (this) {
-            APK -> tool
+            APK, PACMAN, DNF, YUM -> tool
             APT -> APT_PACKAGES[tool] ?: tool
         }
 
@@ -373,6 +385,11 @@ class ContainerDoctor @Inject constructor(
                 APK -> "apk add --no-cache $list"
                 // update 先跑：自定义镜像的索引可能从来没刷过，直接 install 会 404。
                 APT -> "apt-get update -qq && apt-get install -y --no-install-recommends $list"
+                // pacman 需要先刷新数据库（首次运行/长期未更新时索引为空），再装。
+                PACMAN -> "pacman -Sy --noconfirm $list"
+                // RPM 系同样先建索引：Fedora/RHEL 系首次 makecache 才产生本地元数据。
+                DNF -> "dnf makecache -q && dnf install -y --setopt=install_weak_deps=False $list"
+                YUM -> "yum makecache -q && yum install -y $list"
             }
         }
     }
