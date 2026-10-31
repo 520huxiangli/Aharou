@@ -174,6 +174,7 @@ object AgentNotificationFormatter {
         AgentNotificationKind.AGENT_MESSAGE ->
             when {
                 fromParent -> "主会话发来一条消息"
+                fromSibling -> "队友「$title」发来一条消息"
                 sourceId == SharedInbox.NOTIFICATION_SENDER_ID -> "共享区信箱发来一条消息"
                 else -> "子代理「$title」发来一条消息"
             }
@@ -196,10 +197,14 @@ object AgentNotificationFormatter {
                 "detail 已含结论摘要与改动文件；需完整报告或核对细节时用 task(action=\"read\", id=\"$sourceId\")。"
         }
         AgentNotificationKind.AGENT_MESSAGE ->
-            if (fromParent) {
-                "需要协调时用 messageParent(message=\"...\") 回复主会话，无需逐条回执。"
-            } else {
-                "可用 task(action=\"send\", id=\"$sourceId\", message=\"...\") 回复该子代理；若无需回复可忽略。"
+            when {
+                fromParent ->
+                    "需要协调时用 messageParent(message=\"...\") 回复主会话，无需逐条回执。"
+                // 队友之间是平级的，回复必须用 tell；用 send 会被当成「不是你的子代理」直接拒掉（NOT_YOUR_SUBAGENT）。
+                fromSibling ->
+                    "可用 task(action=\"tell\", id=\"$sourceId\", message=\"...\") 回复该队友；若无需回复可忽略。"
+                else ->
+                    "可用 task(action=\"send\", id=\"$sourceId\", message=\"...\") 回复该子代理；若无需回复可忽略。"
             }
         AgentNotificationKind.MODE_CHANGE ->
             "后续操作按新模式权限执行，任务范围保持不变。"

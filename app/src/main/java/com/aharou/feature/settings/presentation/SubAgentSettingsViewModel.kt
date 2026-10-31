@@ -20,6 +20,11 @@ class SubAgentSettingsViewModel @Inject constructor(
     /** 当前上限；设置页改动与配置通道改动都走同一份单例，界面跟着刷新。 */
     val maxRunning: StateFlow<Int> = settings.maxRunningFlow
 
+    /** 子代理之间能否互相对话（team / tell）；关闭后 task 工具直接拒绝这两个动作。 */
+    val communicationEnabled: StateFlow<Boolean> = settings.communicationEnabledFlow
+
     /** 写入前由 [SubAgentSettings] 收敛到合法范围，界面不必自己再判一次。 */
     fun setMaxRunning(value: Int) = settings.setMaxRunning(value)
+
+    fun setCommunicationEnabled(enabled: Boolean) = settings.setCommunicationEnabled(enabled)
 }

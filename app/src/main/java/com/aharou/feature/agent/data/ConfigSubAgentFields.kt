@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.data
 
+import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
@@ -34,6 +35,23 @@ class ConfigSubAgentFields @Inject constructor(
                     // 缺值/类型不对时回落到默认上限，而不是保留旧值：写入方拿到的应当是可预期的结果。
                     subAgentSettings.setMaxRunning(
                         (v as? ConfigValue.Int)?.value ?: SubAgentEventBus.DEFAULT_MAX_RUNNING,
+                    )
+                },
+            ),
+        )
+        register(
+            ClosureField(
+                path = "subagent.communication_enabled",
+                displayName = "子代理通信开关",
+                description = "是否允许同一批次内的子代理互相交流（task 工具的 team / tell 动作）。" +
+                    "关闭后子代理只能向父代理汇报，不能互相通气；主代理对子代理的 send / read / stop 不受影响。默认开启。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(subAgentSettings.communicationEnabled()) },
+                writer = { v ->
+                    subAgentSettings.setCommunicationEnabled(
+                        (v as? ConfigValue.Bool)?.value
+                            ?: throw ConfigError.TypeMismatch("boolean"),
                     )
                 },
             ),
