@@ -88,7 +88,7 @@ class InlineHintCodeEditor(context: Context) : CodeEditor(context) {
         val minWidth = MIN_HINT_WIDTH_DP * density
 
         // 内容区左边界：行号栏右侧。超出这个范围的绘制要裁掉，否则提示会压到行号上。
-        val contentLeft = offsetX
+        val contentLeft = offsetX.toFloat()
         val scrollX = scroller.currX
         val scrollY = scroller.currY
 
