@@ -42,6 +42,7 @@ import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.BatchDeleteConfirmDialog
 import com.aharou.core.ui.SelectionAction
@@ -56,6 +57,7 @@ import com.aharou.feature.settings.presentation.SubAgentUiEntry
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Users
 
@@ -74,11 +76,16 @@ internal fun SubAgentsSection(
     limitViewModel: SubAgentSettingsViewModel = hiltViewModel()
 ) {
     val maxRunning by limitViewModel.maxRunning.collectAsStateWithLifecycle()
+    val communicationEnabled by limitViewModel.communicationEnabled.collectAsStateWithLifecycle()
     var editingLimit by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // 并发上限是整个应用共享的名额，与具体子代理无关；空列表时也要能改，所以放在列表判定之外
         MaxRunningGroup(maxRunning = maxRunning, onClick = { editingLimit = true })
+        CommunicationSwitchGroup(
+            enabled = communicationEnabled,
+            onToggle = { limitViewModel.setCommunicationEnabled(it) }
+        )
         TeamsEntryGroup(onClick = onOpenTeams)
         Box(modifier = Modifier.weight(1f)) {
             SubAgentsList(
@@ -402,6 +409,28 @@ private fun SubAgentEmptyHint(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)
     )
+}
+
+/**
+ * 子代理通信总开关：同一批次内的子代理能不能互相说话（task 的 team / tell）。
+ *
+ * 放在并发上限下面：两者都是「整个应用共享的运行时开关」，与具体某个子代理无关。
+ * 关闭时上下级通道（父代理对子代理的 send / read / stop）照常可用。
+ */
+@Composable
+private fun CommunicationSwitchGroup(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
+        SettingsGroup {
+            SettingsRow(
+                icon = FeatherIcons.MessageSquare,
+                title = stringResource(R.string.subagent_comm_enabled),
+                subtitle = stringResource(R.string.subagent_comm_enabled_desc),
+                trailing = {
+                    AppSwitch(checked = enabled, onCheckedChange = onToggle)
+                }
+            )
+        }
+    }
 }
 
 /**

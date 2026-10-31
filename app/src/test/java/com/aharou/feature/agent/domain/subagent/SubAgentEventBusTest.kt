@@ -11,9 +11,11 @@ import org.junit.Test
  */
 class SubAgentEventBusTest {
 
-    /** 事件总线只依赖 [MaxRunningSource]，测试直接给固定值；默认取 [SubAgentEventBus.DEFAULT_MAX_RUNNING]。 */
-    private fun busWith(limit: Int = SubAgentEventBus.DEFAULT_MAX_RUNNING) =
-        SubAgentEventBus(MaxRunningSource { limit })
+    /** 事件总线依赖 [MaxRunningSource] 与 [CommunicationEnabledSource]，测试直接给固定值。 */
+    private fun busWith(
+        limit: Int = SubAgentEventBus.DEFAULT_MAX_RUNNING,
+        commEnabled: Boolean = true,
+    ) = SubAgentEventBus(MaxRunningSource { limit }, CommunicationEnabledSource { commEnabled })
 
     private fun spawn(bus: SubAgentEventBus, id: String) = bus.emit(
         SubAgentEvent(subSessionId = id, parentSessionId = "parent", type = SubAgentEventType.SPAWNED)

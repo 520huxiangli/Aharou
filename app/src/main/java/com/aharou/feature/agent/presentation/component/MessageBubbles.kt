@@ -256,6 +256,8 @@ internal fun AgentMessageItem(
     onVariantSelect: ((Int) -> Unit)? = null,
     /** 删除当前展示的版本；null 时不显示删除入口。 */
     onVariantDelete: (() -> Unit)? = null,
+    /** 本轮系统默认注入的正文快照；非 null 时在用户气泡右下角挂「显示全部」（见 [InjectedContextButton]）。 */
+    injectedContextText: String? = null,
 ) {
     if (message.isCompactionMarker) {
         // 压缩内部锚点不再渲染分隔线：摘要卡片已提供压缩反馈，避免与卡片重复。
@@ -509,6 +511,11 @@ internal fun AgentMessageItem(
                         if (isUser && actionsVisible) {
                             if (emitted) Spacer(Modifier.width(Spacing.xs))
                             if (hasContent) copyButton()
+                            // 「显示全部」：摊开本轮系统默认注入的内容（不是主人打的那部分）
+                            if (injectedContextText != null) {
+                                Spacer(Modifier.width(Spacing.xs))
+                                InjectedContextButton(text = injectedContextText)
+                            }
                             if (onRewindClick != null) {
                                 MessageActionIconButton(
                                     icon = FeatherIcons.RotateCcw,

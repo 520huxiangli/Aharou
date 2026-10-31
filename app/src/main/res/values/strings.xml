@@ -832,6 +832,9 @@
     <!-- Chat Message Bubbles -->
     <string name="chat_copied">已复制</string>
     <string name="chat_copy">复制</string>
+    <string name="chat_show_injected">显示全部</string>
+    <string name="chat_injected_title">本轮默认注入的内容</string>
+    <string name="chat_injected_desc">下面这些不是你打的字，是系统每轮自动拼进模型上下文的内容（人格、规则、记忆、技能索引、当前时间等）。</string>
     <string name="chat_task_duration">本轮总耗时 %1$s</string>
     <string name="chat_cache_hit_rate">缓存命中率 %1$s</string>
     <string name="chat_status_generating">正在生成</string>
@@ -1580,6 +1583,8 @@
     <string name="settings_subagents">子代理</string>
     <string name="subagent_max_running">并发上限</string>
     <string name="subagent_max_running_hint">同时运行的子代理数量上限，范围 %1$d~%2$d。名额整个应用共享，不按会话分组。</string>
+    <string name="subagent_comm_enabled">允许子代理互相对话</string>
+    <string name="subagent_comm_enabled_desc">同一批次的子代理可以互相查看队友、发消息（team / tell）；关闭后它们只能向上汇报，主代理对子代理的收发不受影响。</string>
     <string name="settings_teams">团队预设</string>
     <string name="settings_experiments">实验开关</string>
     <string name="experiment_quote_reply">长按引用回复</string>
