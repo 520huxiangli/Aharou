@@ -107,12 +107,18 @@ class AgentTurnTelemetry private constructor(
         inputTokens: Int,
         outputTokens: Int,
         retryCount: Int,
+        /** 本次输入中命中服务端缓存的 token 数；厂商不报则为 0。 */
+        cachedInputTokens: Int = 0,
     ) {
         val start = llmStartElapsed.remove(callId)
         mark(AgentTurnPhase.LLM_STREAM_END,
             "call" to callId, "textChars" to textChars, "reasoningChars" to reasoningChars,
             "toolCalls" to toolCalls, "stopReason" to stopReason, "inputTokens" to inputTokens,
             "outputTokens" to outputTokens, "retryCount" to retryCount,
+            // 缓存命中率按厂商口径算：cached / input（input 已含 cached 部分）。
+            // 没有这两个字段，调缓存就只能靠猜。
+            "cachedInputTokens" to cachedInputTokens,
+            "cacheHitPct" to if (inputTokens > 0) cachedInputTokens * 100 / inputTokens else 0,
             "durationMs" to start?.let { SystemClock.elapsedRealtime() - it })
     }
 

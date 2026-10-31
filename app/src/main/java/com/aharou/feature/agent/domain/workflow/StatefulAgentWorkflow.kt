@@ -774,7 +774,7 @@ class StatefulAgentWorkflow @Inject constructor(
             flushPendingReasoningDelta()
             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
             val snapshot = captureSnapshot()
-            telemetry.llmStreamEnd(callId, acc.length, reasoningAcc.length, snapshot.toolCalls.size, aiResponse.stopReason, aiResponse.inputTokens, aiResponse.outputTokens, retryAttempts)
+            telemetry.llmStreamEnd(callId, acc.length, reasoningAcc.length, snapshot.toolCalls.size, aiResponse.stopReason, aiResponse.inputTokens, aiResponse.outputTokens, retryAttempts, aiResponse.cachedInputTokens)
             callCompleted = true
             if (aiResponse.stopReason == "model_context_window_exceeded" && !budget.overflowRecoveryAttempted) {
                 budget.overflowRecoveryAttempted = true

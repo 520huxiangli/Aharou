@@ -39,14 +39,19 @@ class ToolRegistry @Inject constructor(
      */
     fun getAvailableTools(): List<AgentTool> {
         synchronized(tools) {
-            return tools.values.toList()
+            // 按名字排序，而不是只靠注册顺序：内建工具在 `AgentModule` 里注册顺序固定，
+            // 但 **MCP 工具是各服务器连上后异步追加的**，哪个服务器先回就先注册。
+            // 连接快慢一抖，tools 数组顺序就变——而 tools 排在 system prompt 之前，
+            // 是整条前缀里最靠前的一段，顺序一变整段缓存全废。
+            return tools.values.sortedBy { it.name }
         }
     }
 
     /** 延迟加载工具的目录（名称 + 描述），供 `tool_search` 检索。 */
     fun getDeferredTools(): List<AgentTool> {
         synchronized(tools) {
-            return tools.values.filter { it.deferredLoading }
+            // 同样排序：tool_search 的目录顺序稳定，模型两次检索看到的结果才一致。
+            return tools.values.filter { it.deferredLoading }.sortedBy { it.name }
         }
     }
 
