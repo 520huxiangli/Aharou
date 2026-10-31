@@ -484,9 +484,16 @@ fun CodeEditorScreen(
                 }
                 // 没有语言服务器时（如 Python）退回容器内的轻量语法检查，同样画波浪线；
                 // 两种都不影响正常编辑：容器未就绪、检查器未装、文件过大都安静跳过。
-                LaunchedEffect(lspEditor, activePath, baselineText.value, lspAttached) {
-                    if (lspAttached) return@LaunchedEffect
-                    EditorDiagnostics.refresh(context, lspEditor, activePath, baselineText.value.length)
+                // 有语言服务器时诊断留在 editor-lsp 内部，这里只负责清掉上个文件的行尾提示。
+                LaunchedEffect(lspEditor, activePath, baselineText.value, lspAttached, settings.errorLens) {
+                    EditorDiagnostics.refresh(
+                        context,
+                        lspEditor,
+                        activePath,
+                        baselineText.value.length,
+                        lspAttached,
+                        settings.errorLens
+                    )
                 }
                 if (previewMode) {
                     // 预览覆盖在编辑器上方（编辑器保留在组合中不销毁，切回源码不丢状态）。
@@ -683,7 +690,7 @@ private fun EditorSurface(
             TextMateSetup.applyTheme(dark)
             // sora 默认把 8 秒内的连续输入并成一条撤销记录，一次撤销会吞掉整段输入。
             UndoManager.setMergeTimeLimit(UNDO_MERGE_WINDOW_MS)
-            CodeEditor(ctx).apply {
+            InlineHintCodeEditor(ctx).apply {
                 // sora 的 getScrollMaxY() 在 LayoutParams 为空或高度是 WRAP_CONTENT 时会跳过
                 // verticalExtraSpaceFactor，底部额外滚动空间（下面那行设的半屏留白）就没了。
                 // Compose 的 AndroidView 添加子 View 时用的正是默认 WRAP_CONTENT，必须显式改掉。

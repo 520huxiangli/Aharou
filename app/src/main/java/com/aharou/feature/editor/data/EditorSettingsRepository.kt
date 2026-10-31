@@ -27,7 +27,8 @@ data class EditorSettings(
     val wordWrap: Boolean = false,
     val showIndentGuide: Boolean = true,
     val showWrapArrow: Boolean = false,
-    val showWhitespace: Boolean = false
+    val showWhitespace: Boolean = false,
+    val errorLens: Boolean = true
 )
 
 /** 持久化编辑器的字体大小与自动换行偏好，跨会话保留。 */
@@ -41,6 +42,7 @@ class EditorSettingsRepository @Inject constructor(
         val SHOW_INDENT_GUIDE_KEY = booleanPreferencesKey("show_indent_guide")
         val SHOW_WRAP_ARROW_KEY = booleanPreferencesKey("show_wrap_arrow")
         val SHOW_WHITESPACE_KEY = booleanPreferencesKey("show_whitespace")
+        val ERROR_LENS_KEY = booleanPreferencesKey("error_lens")
     }
 
     val settingsFlow: Flow<EditorSettings> = context.editorSettingsDataStore.data.map { prefs ->
@@ -49,7 +51,8 @@ class EditorSettingsRepository @Inject constructor(
             wordWrap = prefs[WORD_WRAP_KEY] ?: false,
             showIndentGuide = prefs[SHOW_INDENT_GUIDE_KEY] ?: true,
             showWrapArrow = prefs[SHOW_WRAP_ARROW_KEY] ?: false,
-            showWhitespace = prefs[SHOW_WHITESPACE_KEY] ?: false
+            showWhitespace = prefs[SHOW_WHITESPACE_KEY] ?: false,
+            errorLens = prefs[ERROR_LENS_KEY] ?: true
         )
     }
 
@@ -72,5 +75,9 @@ class EditorSettingsRepository @Inject constructor(
 
     suspend fun setShowWhitespace(enabled: Boolean) {
         context.editorSettingsDataStore.edit { it[SHOW_WHITESPACE_KEY] = enabled }
+    }
+
+    suspend fun setErrorLens(enabled: Boolean) {
+        context.editorSettingsDataStore.edit { it[ERROR_LENS_KEY] = enabled }
     }
 }

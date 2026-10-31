@@ -60,5 +60,7 @@ internal fun toolRunningLabelRes(toolName: String?): Int = when (toolName?.lower
     "task" -> R.string.chat_status_starting_subagent
     "memory" -> R.string.chat_status_reading_memory
     "check_dependencies" -> R.string.chat_status_checking_dependencies
+    "diagnostics" -> R.string.chat_status_checking_diagnostics
+    "git_blame" -> R.string.chat_status_querying_blame
     else -> R.string.chat_status_calling_tool
 }

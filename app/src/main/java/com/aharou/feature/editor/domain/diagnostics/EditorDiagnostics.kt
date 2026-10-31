@@ -1,6 +1,7 @@
 package com.aharou.feature.editor.domain.diagnostics
 
 import android.content.Context
+import com.aharou.feature.editor.presentation.InlineHintCodeEditor
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -30,10 +31,27 @@ object EditorDiagnostics {
      * 对 [path] 指向的文件跑一次语法检查并应用到 [editor]。
      *
      * [editor] 为 null（编辑器尚未创建）时直接返回；[contentLength] 为编辑器内字符数，用于体积阈值。
+     * [lspAttached] 为 true 时不再跑轻量检查（诊断由 editor-lsp 自己推），只清掉行尾提示。
+     * [errorLens] 控制是否把同一份诊断再画成行尾文字。
      * 必须在协程中调用；内部自行切 IO 跑命令、切主线程应用诊断。
      */
-    suspend fun refresh(context: Context, editor: CodeEditor?, path: String, contentLength: Int) {
+    suspend fun refresh(
+        context: Context,
+        editor: CodeEditor?,
+        path: String,
+        contentLength: Int,
+        lspAttached: Boolean = false,
+        errorLens: Boolean = true,
+    ) {
         val target = editor ?: return
+        if (lspAttached) {
+            // LSP 的诊断由 editor-lsp 直接推给编辑器，app 侧拿不到列表，行尾提示无从生成。
+            // 切到有语言服务器的文件时，要把上一个文件留下的行尾提示清掉。
+            withContext(Dispatchers.Main.immediate) {
+                (target as? InlineHintCodeEditor)?.inlineHints = emptyList()
+            }
+            return
+        }
         val runner = EntryPointAccessors.fromApplication(
             context.applicationContext,
             EditorDiagnosticsEntryPoint::class.java,
@@ -43,6 +61,8 @@ object EditorDiagnostics {
         }
         withContext(Dispatchers.Main.immediate) {
             EditorDiagnosticsApplier.apply(target, diagnostics)
+            // 行尾提示与波浪线共用同一份诊断：关掉开关时给空列表，避免旧提示残留。
+            (target as? InlineHintCodeEditor)?.inlineHints = if (errorLens) diagnostics else emptyList()
         }
     }
 }

@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.rule
 import android.content.Context
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.agent.domain.prompt.PromptFragmentResolver
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -20,21 +21,53 @@ class RuleRepository @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val containerInstaller: ContainerInstaller
 ) {
-    data class RuleEntry(val name: String, val description: String, val content: String)
+    data class RuleEntry(
+        val name: String,
+        val description: String,
+        val content: String,
+        /** 关掉的规则不进注入清单，`loadRule` 也取不到正文；设置页里仍可见并重新打开。 */
+        val enabled: Boolean = true,
+        /** 是否已被 `~/.aharou/rules/<同名>.md` 覆盖。 */
+        val overridden: Boolean = false
+    )
 
     private val globalDir: File get() = File(containerInstaller.aharouDir, RULES_DIR)
 
-    /** 注入清单用：按名称排序的全部规则块。 */
-    fun listRules(): List<RuleEntry> = merged().values.sortedBy { it.name.lowercase() }
+    /** 注入清单用：按名称排序的已启用规则块。 */
+    fun listRules(): List<RuleEntry> = listAllRules().filter { it.enabled }
 
-    /** 读取规则块正文；不存在返回 null。 */
-    fun loadText(name: String): String? = merged()[name.trim().lowercase()]?.content
+    /** 设置页用：全部规则块（含被关掉的）。 */
+    fun listAllRules(): List<RuleEntry> = merged().values.sortedBy { it.name.lowercase() }
+
+    /** 读取规则块正文；不存在或已被关掉返回 null。 */
+    fun loadText(name: String): String? {
+        val entry = merged()[name.trim().lowercase()] ?: return null
+        return entry.content.takeIf { entry.enabled }
+    }
+
+    /** 单条规则的启用/关闭；标记落在 `~/.aharou/rules/.disabled/`。 */
+    fun setEnabled(name: String, enabled: Boolean): Boolean =
+        PromptFragmentResolver.setNamedDisabled(globalDir, name, !enabled)
+
+    /** 把正文写成同名覆盖文件 `~/.aharou/rules/<名称>.md`。 */
+    fun saveOverride(name: String, content: String): Boolean = try {
+        val file = File(globalDir, "$name$EXT")
+        file.parentFile?.mkdirs()
+        file.writeText(content)
+        true
+    } catch (e: Exception) {
+        FileLogger.e(TAG, "写规则覆盖失败: $name", e)
+        false
+    }
 
     private fun merged(): Map<String, RuleEntry> {
         val byName = LinkedHashMap<String, RuleEntry>()
         builtinRules().forEach { byName[it.name.lowercase()] = it }
-        globalRules().forEach { byName[it.name.lowercase()] = it }
-        return byName
+        globalRules().forEach { byName[it.name.lowercase()] = it.copy(overridden = true) }
+        val disabled = PromptFragmentResolver.disabledFileNames(globalDir)
+        return byName.mapValues { (_, entry) ->
+            entry.copy(enabled = "${entry.name}$EXT" !in disabled)
+        }
     }
 
     private fun builtinRules(): List<RuleEntry> = runCatching {

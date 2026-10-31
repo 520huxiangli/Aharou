@@ -21,10 +21,16 @@ data class PromptFragment(
     /** 生效层文件；来源为内置时为 null。 */
     val file: File?,
     /** 正文开头的 `<!-- ... -->` 注释，作为列表摘要。 */
-    val description: String
+    val description: String,
+    /** 该片段本轮是否会被注入：关掉的片段仍在列表里，只是不进系统提示词。 */
+    val enabled: Boolean = true
 ) {
     val stableReorderKey: String
         get() = "$title:${content.hashCode()}"
+
+    /** 自定义来源（可删、可改）；内置与本地副本只能关开关或另存覆盖。 */
+    val custom: Boolean
+        get() = source == PromptFragmentSource.PROJECT || source == PromptFragmentSource.GLOBAL
 
     val body: String
         get() = content.replace(LEADING_COMMENT, "")
@@ -41,6 +47,15 @@ data class PromptFragment(
         get() = source == PromptFragmentSource.PROJECT || source == PromptFragmentSource.GLOBAL
 }
 
+/** 按需片段（`prompts/agent/` 下的单个 md）：无数字身份，按名称覆盖，用到时才读取。 */
+data class PromptAuxFragment(
+    val name: String,
+    val title: String,
+    val source: PromptFragmentSource,
+    val enabled: Boolean,
+    val content: String
+)
+
 /**
  * 提示词片段的四级来源解析：同一编号只生效优先级最高的一层。
  *
@@ -55,7 +70,8 @@ data class PromptFragment(
 class PromptFragmentCatalog @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val containerInstaller: ContainerInstaller,
-    private val projectAharouRoot: ProjectAharouRoot
+    private val projectAharouRoot: ProjectAharouRoot,
+    private val promptFileResolver: PromptFileResolver
 ) {
 
     private val globalDir: File get() = File(containerInstaller.aharouDir, CUSTOM_DIR)
@@ -69,7 +85,7 @@ class PromptFragmentCatalog @Inject constructor(
     /** 编辑/新增的写入层：有工作区写项目层，否则写全局层。 */
     fun writableDir(projectRoot: String?): File = projectDir(projectRoot) ?: globalDir
 
-    /** 按编号升序列出所有生效片段。 */
+    /** 按编号升序列出所有生效片段，含被单片段开关关掉的（界面要能再打开）；[PromptFragment.enabled] 即注入与否。 */
     fun list(projectRoot: String?): List<PromptFragment> {
         val builtin = builtinFiles()
         val project = numberedFragments(projectDir(projectRoot))
@@ -79,14 +95,14 @@ class PromptFragmentCatalog @Inject constructor(
             addAll(project.keys)
             addAll(global.keys)
         }
-        val all = numbers.sorted().mapNotNull { resolve(it, builtin, project, global) }
-        // 「完全禁用内置提示词」时列表只保留自定义来源，与注入结果一致。
-        return if (isBuiltinDisabled()) {
-            all.filter {
-                it.source == PromptFragmentSource.PROJECT || it.source == PromptFragmentSource.GLOBAL
+        // 关闭标记项目层与全局层各记一份，任一层关掉就不注入（关闭的语义是「别给我用」，无需逐层叠加）。
+        val disabled = (projectDir(projectRoot)?.let { PromptFragmentResolver.disabledNumbers(it) } ?: emptySet()) +
+            PromptFragmentResolver.disabledNumbers(globalDir)
+        val builtinOff = isBuiltinDisabled()
+        return numbers.sorted().mapNotNull { number ->
+            resolve(number, builtin, project, global)?.let { fragment ->
+                fragment.copy(enabled = number !in disabled && !(builtinOff && !fragment.custom))
             }
-        } else {
-            all
         }
     }
 
@@ -97,21 +113,106 @@ class PromptFragmentCatalog @Inject constructor(
         numberedFragments(globalDir)
     )
 
-    /** 静态基线正文：所有生效片段去掉前导注释后按编号拼接。 */
+    /** 静态基线正文：所有启用的片段去掉前导注释后按编号拼接。 */
     fun renderStatic(projectRoot: String?): String =
         list(projectRoot)
+            .filter { it.enabled }
             .mapNotNull { it.content.replace(LEADING_COMMENT, "").trim().takeIf { text -> text.isNotEmpty() } }
             .joinToString("\n\n")
 
     /** 「仅自定义片段」模式：只取项目层与全局层的自定义片段正文。 */
     fun renderCustomOnly(projectRoot: String?): String =
         list(projectRoot)
-            .filter { it.source == PromptFragmentSource.PROJECT || it.source == PromptFragmentSource.GLOBAL }
+            .filter { it.custom && it.enabled }
             .mapNotNull { it.content.replace(LEADING_COMMENT, "").trim().takeIf { text -> text.isNotEmpty() } }
             .joinToString("\n\n")
 
     /** 是否存在「完全禁用内置提示词」标记（全局层）。 */
     fun isBuiltinDisabled(): Boolean = PromptFragmentResolver.isBuiltinDisabled(globalDir)
+
+    /**
+     * 提示词页上的按需片段列表。只列真会进对话的那几个：起标题/压缩/记忆整理这类内部一次性提示词
+     * 关掉只会让对应功能悄悄退化，不值得给开关，但仍可用 `prompts.custom/agent/<同名>` 覆盖。
+     */
+    fun auxFragments(projectRoot: String?): List<PromptAuxFragment> {
+        val disabled = PromptFragmentResolver.disabledFileNames(globalDir)
+        val project = projectDir(projectRoot)
+        return AUX_NAMES.mapNotNull { name ->
+            val content = runCatching { promptFileResolver.resolveRaw(name) }.getOrNull()
+                ?: return@mapNotNull null
+            val source = when {
+                auxFile(project, name) != null -> PromptFragmentSource.PROJECT
+                auxFile(globalDir, name) != null -> PromptFragmentSource.GLOBAL
+                auxFile(localDir, name) != null -> PromptFragmentSource.LOCAL
+                else -> PromptFragmentSource.BUILTIN
+            }
+            PromptAuxFragment(
+                name = name,
+                title = titleOf(name),
+                source = source,
+                enabled = name.substringAfterLast('/') !in disabled,
+                content = content
+            )
+        }
+    }
+
+    /** 按需片段的覆盖写入：写到 [target] 指定层（项目/全局），同名文件即覆盖。 */
+    fun saveAuxOverride(
+        name: String,
+        content: String,
+        projectRoot: String?,
+        target: PromptFragmentSource
+    ): Boolean = try {
+        val dir = when (target) {
+            PromptFragmentSource.PROJECT -> projectDir(projectRoot) ?: globalDir
+            else -> globalDir
+        }
+        val file = File(dir, name)
+        file.parentFile?.mkdirs()
+        file.writeText(content)
+        true
+    } catch (e: Exception) {
+        FileLogger.e(TAG, "写按需片段失败: $name", e)
+        false
+    }
+
+    /** 按需片段的启用/关闭；标记与数字片段同在 `.disabled/`，键是片段文件名。 */
+    fun setAuxEnabled(name: String, enabled: Boolean, projectRoot: String?): Boolean {
+        val ok = PromptFragmentResolver.setNamedDisabled(globalDir, name, !enabled)
+        if (enabled) {
+            projectDir(projectRoot)?.takeIf { it.isDirectory }?.let { dir ->
+                PromptFragmentResolver.setNamedDisabled(dir, name, false)
+            }
+        }
+        if (!ok) FileLogger.e(TAG, "切换按需片段开关失败: $name")
+        return ok
+    }
+
+    private fun auxFile(dir: File?, name: String): File? =
+        dir?.let { File(it, name).takeIf { file -> file.isFile } }
+
+    /** 被关掉的动态注入区块：`prompts.custom/.disabled-blocks/<key>` 存在即关。 */
+    fun disabledBlocks(): Set<String> =
+        File(globalDir, BLOCK_DIR).listFiles()
+            ?.filter { it.isFile }
+            ?.map { it.name }
+            ?.toSet()
+            ?: emptySet()
+
+    /** 开关一个动态注入区块（全局偏好，不跟随工作区）。 */
+    fun setBlockEnabled(block: InjectionBlock, enabled: Boolean): Boolean = try {
+        val marker = File(File(globalDir, BLOCK_DIR), block.key)
+        if (enabled) {
+            marker.delete()
+        } else {
+            marker.parentFile?.mkdirs()
+            marker.writeText("")
+        }
+        true
+    } catch (e: Exception) {
+        FileLogger.e(TAG, "切换注入区块失败: ${block.key}", e)
+        false
+    }
 
     /**
      * 保存某编号的覆盖。
@@ -202,6 +303,21 @@ class PromptFragmentCatalog @Inject constructor(
         }
     }
 
+    /**
+     * 单个片段的启用/关闭。标记统一写在全局层（这是跨项目的偏好，不跟随当前工作区），
+     * 读取时项目层与全局层都认同——手工放在项目层 `.disabled/` 里的标记同样生效。
+     */
+    fun setFragmentEnabled(number: Int, enabled: Boolean, projectRoot: String?): Boolean {
+        val ok = PromptFragmentResolver.setDisabled(globalDir, number, !enabled)
+        if (enabled) {
+            projectDir(projectRoot)?.takeIf { it.isDirectory }?.let { dir ->
+                PromptFragmentResolver.setDisabled(dir, number, false)
+            }
+        }
+        if (!ok) FileLogger.e(TAG, "切换片段开关失败: $number")
+        return ok
+    }
+
     private fun resolve(
         number: Int,
         builtin: Map<Int, String>,
@@ -285,6 +401,19 @@ class PromptFragmentCatalog @Inject constructor(
         const val ASSET_DIR = "prompts"
         const val CUSTOM_DIR = "prompts.custom"
         const val LOCAL_DIR = "prompts"
+        const val BLOCK_DIR = ".disabled-blocks"
+
+        /** 页面上可开关的按需片段（会进对话的那几个）。 */
+        val AUX_NAMES = listOf(
+            "agent/plan-mode.md",
+            "agent/auto-mode.md",
+            "agent/subagent-base.md",
+            "agent/memory-discipline.md",
+            "agent/stuck-nudge.md",
+            "agent/workspace-android.md",
+            "agent/workspace-flutter.md",
+            "agent/workspace-node.md"
+        )
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
         val DESCRIPTION = Regex("^\\s*<!--\\s*(.*?)\\s*-->", RegexOption.DOT_MATCHES_ALL)
     }

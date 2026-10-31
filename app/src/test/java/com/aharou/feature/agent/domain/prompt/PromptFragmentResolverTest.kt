@@ -80,6 +80,61 @@ class PromptFragmentResolverTest {
     }
 
     @Test
+    fun disabledNumbers_只认数字文件名_忽略其余() {
+        File(dir, ".disabled").mkdirs()
+        File(dir, ".disabled/60").writeText("")
+        File(dir, ".disabled/05").writeText("")
+        File(dir, ".disabled/README.md").writeText("x")
+
+        val result = PromptFragmentResolver.disabledNumbers(dir)
+
+        assertEquals(setOf(60, 5), result)
+    }
+
+    @Test
+    fun disabledNumbers_没有标记目录_返回空() {
+        assertTrue(PromptFragmentResolver.disabledNumbers(dir).isEmpty())
+    }
+
+    @Test
+    fun setDisabled_开启写入关闭标记_关闭删除标记() {
+        assertTrue(PromptFragmentResolver.setDisabled(dir, 60, true))
+        val marker = File(dir, ".disabled/60")
+        assertTrue("编号按两位数字命名", marker.isFile)
+        assertEquals(setOf(60), PromptFragmentResolver.disabledNumbers(dir))
+
+        assertTrue(PromptFragmentResolver.setDisabled(dir, 60, false))
+        assertFalse(marker.exists())
+        assertTrue("重复删除不报错", PromptFragmentResolver.setDisabled(dir, 60, false))
+        assertTrue(PromptFragmentResolver.disabledNumbers(dir).isEmpty())
+    }
+
+    @Test
+    fun disabledFileNames_只认非数字文件名() {
+        File(dir, ".disabled").mkdirs()
+        File(dir, ".disabled/60").writeText("")
+        File(dir, ".disabled/plan-mode.md").writeText("")
+
+        assertEquals(setOf("plan-mode.md"), PromptFragmentResolver.disabledFileNames(dir))
+        assertEquals(
+            "两种标记共存时不互相干扰",
+            setOf(60),
+            PromptFragmentResolver.disabledNumbers(dir)
+        )
+    }
+
+    @Test
+    fun setNamedDisabled_写入与清除() {
+        assertTrue(PromptFragmentResolver.setNamedDisabled(dir, "agent/plan-mode.md", true))
+        val marker = File(dir, ".disabled/plan-mode.md")
+        assertTrue("标记只用文件名，不带 agent/ 前缀", marker.isFile)
+        assertEquals(setOf("plan-mode.md"), PromptFragmentResolver.disabledFileNames(dir))
+
+        assertTrue(PromptFragmentResolver.setNamedDisabled(dir, "agent/plan-mode.md", false))
+        assertFalse(marker.exists())
+    }
+
+    @Test
     fun mergeStatic_覆盖与新增片段按数字合并() {
         val custom5 = File(dir, "05-新增.md")
         val custom50 = File(dir, "50-自定义安全.md")

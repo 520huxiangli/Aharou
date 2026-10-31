@@ -703,25 +703,26 @@ class SystemPromptProvider @Inject constructor(
         // 隐身会话只保留核心档案：记忆清单与常驻记忆全部不注入（写入侧已由 GhostModeStore 拦住，
         // 读取侧不拦的话，「隐身」只挡住了落盘、挡不住模型把旧会话里的用户信息读进上下文）。
         val ghost = isGhostSession(agentContext)
+        // 用户在提示词页关掉的动态区块：不取内容也不追加（与片段里的 {{AICODE_*}} 变量同一语义）。
+        val offBlocks = promptFragmentCatalog.disabledBlocks()
         val rawStatic = staticRuleSource.build(agentContext)
-        val soulContent = soulSource.build(agentContext)
-        val aharouMemoryContent =
-            if (ghost) coreArchiveSource.build(agentContext) else aharouMemorySource.build(agentContext)
-        val skillsContent = activeSkillsSource.build(agentContext)
-        val subAgentsContent = subAgentListSource.build(agentContext)
-        val teamsContent = teamListSource.build(agentContext)
-        val memoriesContent = if (ghost) null else memoryListSource.build(agentContext)
-        val projectRules = projectRuleSource.build(agentContext)
-        val rulesContent = availableRulesSource.build(agentContext)
-        val workspaceTypeContent = workspaceTypeSource.build(agentContext)
+        val soulContent = gate(InjectionBlock.SOUL, offBlocks) { soulSource.build(agentContext) }
+        val aharouMemoryContent = gate(InjectionBlock.ARCHIVE, offBlocks) { if (ghost) coreArchiveSource.build(agentContext) else aharouMemorySource.build(agentContext) }
+        val skillsContent = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(agentContext) }
+        val subAgentsContent = gate(InjectionBlock.SUB_AGENTS, offBlocks) { subAgentListSource.build(agentContext) }
+        val teamsContent = gate(InjectionBlock.TEAMS, offBlocks) { teamListSource.build(agentContext) }
+        val memoriesContent = gate(InjectionBlock.MEMORIES, offBlocks) { if (ghost) null else memoryListSource.build(agentContext) }
+        val projectRules = gate(InjectionBlock.PROJECT_RULES, offBlocks) { projectRuleSource.build(agentContext) }
+        val rulesContent = gate(InjectionBlock.RULES, offBlocks) { availableRulesSource.build(agentContext) }
+        val workspaceTypeContent = gate(InjectionBlock.WORKSPACE_TYPE, offBlocks) { workspaceTypeSource.build(agentContext) }
         val projectIndexContent = projectIndexSource.build(agentContext)
-        val modelIdentityContent = modelIdentitySource.build(agentContext)
+        val modelIdentityContent = gate(InjectionBlock.MODEL_IDENTITY, offBlocks) { modelIdentitySource.build(agentContext) }
         // 隐身会话不读也不消费信箱：不把其他工作区的内容带进隐身对话，也不替用户吃掉这些消息。
-        val inboxContent = if (ghost) null else sharedInboxSource.build(agentContext, consumeInbox)
+        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { if (ghost) null else sharedInboxSource.build(agentContext, consumeInbox) }
 
         // 2. Workspace 上下文固定输出（内容已精简，无需快照占位）
-        val effectiveWorkspaceContent = workspaceSource.build(agentContext)
-        val timeContent = currentTimeSource.build(agentContext)
+        val effectiveWorkspaceContent = if (InjectionBlock.WORKSPACE.key in offBlocks) "" else workspaceSource.build(agentContext)
+        val timeContent = if (InjectionBlock.TIME.key in offBlocks) null else currentTimeSource.build(agentContext)
 
         // 3. 变量就地展开：片段里写了 {{AICODE_*}} 就替换为真实内容，并跳过下方对应的自动追加，避免重复。
         val staticContent = renderVariables(
@@ -754,7 +755,7 @@ class SystemPromptProvider @Inject constructor(
                 modelIdentity = modelIdentityContent,
                 inbox = inboxContent,
                 time = timeContent,
-                workspaceChange = workspaceChangeSource.build(agentContext)
+                workspaceChange = gate(InjectionBlock.WORKSPACE_CHANGE, offBlocks) { workspaceChangeSource.build(agentContext) }
             )
         )
     }
@@ -780,22 +781,24 @@ class SystemPromptProvider @Inject constructor(
             return ""
         }
         val ghost = isGhostSession(ctx)
+        // 与内置路径同一套开关：关掉的动态区块在「只用自定义片段」模式下也不追加。
+        val offBlocks = promptFragmentCatalog.disabledBlocks()
 
         // 先算好每一段，再交给 PromptTailAssembler 按「片段里有没有写占位符」决定追加与否。
-        val skillsContent = activeSkillsSource.build(ctx)
-        val subAgentsContent = subAgentListSource.build(ctx)
-        val teamsContent = teamListSource.build(ctx)
-        val memoriesContent = if (ghost) null else memoryListSource.build(ctx)
-        val projectRules = projectRuleSource.build(ctx)
-        val rulesContent = availableRulesSource.build(ctx)
-        val soulContent = soulSource.build(ctx)
-        val archiveContent =
-            if (ghost) coreArchiveSource.build(ctx) else aharouMemorySource.build(ctx)
-        val workspaceContent = workspaceSource.build(ctx)
-        val workspaceTypeContent = workspaceTypeSource.build(ctx)
-        val modelIdentityContent = modelIdentitySource.build(ctx)
-        val inboxContent = if (ghost) null else sharedInboxSource.build(ctx, consumeInbox)
-        val timeContent = currentTimeSource.build(ctx)
+        val skillsContent = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(ctx) }
+        val subAgentsContent = gate(InjectionBlock.SUB_AGENTS, offBlocks) { subAgentListSource.build(ctx) }
+        val teamsContent = gate(InjectionBlock.TEAMS, offBlocks) { teamListSource.build(ctx) }
+        val memoriesContent = gate(InjectionBlock.MEMORIES, offBlocks) { if (ghost) null else memoryListSource.build(ctx) }
+        val projectRules = gate(InjectionBlock.PROJECT_RULES, offBlocks) { projectRuleSource.build(ctx) }
+        val rulesContent = gate(InjectionBlock.RULES, offBlocks) { availableRulesSource.build(ctx) }
+        val soulContent = gate(InjectionBlock.SOUL, offBlocks) { soulSource.build(ctx) }
+        val archiveContent = gate(InjectionBlock.ARCHIVE, offBlocks) { if (ghost) coreArchiveSource.build(ctx) else aharouMemorySource.build(ctx) }
+        val workspaceContent = if (InjectionBlock.WORKSPACE.key in offBlocks) "" else workspaceSource.build(ctx)
+        val workspaceTypeContent = gate(InjectionBlock.WORKSPACE_TYPE, offBlocks) { workspaceTypeSource.build(ctx) }
+        val projectIndexContent = projectIndexSource.build(ctx)
+        val modelIdentityContent = gate(InjectionBlock.MODEL_IDENTITY, offBlocks) { modelIdentitySource.build(ctx) }
+        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { if (ghost) null else sharedInboxSource.build(ctx, consumeInbox) }
+        val timeContent = if (InjectionBlock.TIME.key in offBlocks) null else currentTimeSource.build(ctx)
 
         val rendered = renderVariables(
             content,
@@ -824,7 +827,7 @@ class SystemPromptProvider @Inject constructor(
                 modelIdentity = modelIdentityContent,
                 inbox = inboxContent,
                 time = timeContent,
-                workspaceChange = workspaceChangeSource.build(ctx)
+                workspaceChange = gate(InjectionBlock.WORKSPACE_CHANGE, offBlocks) { workspaceChangeSource.build(ctx) }
             )
         )
         FileLogger.d(
@@ -910,6 +913,10 @@ class SystemPromptProvider @Inject constructor(
     }
 
     /** 把片段里的 `{{AICODE_*}}` 占位符替换为真实内容；未出现的占位符保持原样，不影响 `{{INSTRUCTION}}` 等其它占位符。 */
+    /** 动态区块被用户关掉时整段返回 null，注入侧据此跳过；[build] 只在真正需要时才执行。 */
+    private fun <T> gate(block: InjectionBlock, disabled: Set<String>, build: () -> T?): T? =
+        if (block.key in disabled) null else build()
+
     private fun renderVariables(
         text: String,
         skills: String?,

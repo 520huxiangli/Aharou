@@ -779,6 +779,7 @@
     <string name="editor_show_indent_guide">Show indent guides</string>
     <string name="editor_show_wrap_arrow">Show word-wrap arrows</string>
     <string name="editor_show_whitespace">Show whitespace</string>
+    <string name="editor_error_lens">Show diagnostics inline</string>
     <string name="editor_language_extensions">Language extensions</string>
     <string name="editor_language_extensions_desc">Language servers are usually installed together with the container (Alpine image); use this page to check status or install one manually. Once installed, opening a matching file shows its diagnostics (red/yellow squiggles). If the container is not running yet, start it from the Terminal page first.</string>
     <string name="editor_extension_installed">Installed %1$s</string>
@@ -3087,6 +3088,28 @@
     <string name="prompts_add_prompt">Add fragment</string>
     <string name="prompts_add_prompt_hint">Insert a new fragment with a free number</string>
     <string name="prompts_disable_builtin">Disable all built-in prompts</string>
+    <string name="prompts_fragment_toggle">Enable this fragment</string>
+    <string name="prompts_aux_title">On-demand fragments</string>
+    <string name="prompts_aux_editor_hint">Saving writes a copy into your custom directory that overrides the built-in one; turning the switch off stops it from being injected.</string>
+    <string name="rules_builtin_title">Built-in on-demand rules</string>
+    <string name="prompts_blocks_title">Dynamic injected blocks</string>
+    <string name="prompts_fragments_title">Static baseline fragments</string>
+    <string name="prompts_block_soul">Persona (SOUL.md)</string>
+    <string name="prompts_block_archive">Core archive and memory body</string>
+    <string name="prompts_block_skills">Available skills</string>
+    <string name="prompts_block_sub_agents">Sub-agent index</string>
+    <string name="prompts_block_teams">Team presets</string>
+    <string name="prompts_block_memories">Memory index</string>
+    <string name="prompts_block_project_rules">Project rules (AGENTS.md)</string>
+    <string name="prompts_block_workspace">Workspace context</string>
+    <string name="prompts_block_rules">On-demand rule index</string>
+    <string name="prompts_block_workspace_type">Project-type conventions</string>
+    <string name="prompts_block_model_identity">Model identity</string>
+    <string name="prompts_block_inbox">Shared inbox</string>
+    <string name="prompts_block_time">Current time</string>
+    <string name="prompts_block_workspace_change">Workspace switch notice</string>
+    <string name="rules_builtin_subtitle">Low-frequency rules; the AI loads the body with loadRule when needed</string>
+    <string name="rules_builtin_editor_hint">Saving writes a same-named file under ~/.aharou/rules/, overriding the built-in copy.</string>
     <string name="prompts_disable_builtin_hint">Keep only your own fragments; you must supply every rule yourself</string>
     <!-- Checkpoint: conflict detection and undo -->
     <string name="checkpoint_conflict_title">Some files were not restored</string>
@@ -3138,6 +3161,8 @@
     <string name="knowledge_base_invalid_repo">That repository address is not recognised</string>
     <string name="knowledge_base_no_source">No knowledge base configured yet</string>
     <string name="chat_status_checking_dependencies">Checking dependency versions</string>
+    <string name="chat_status_checking_diagnostics">Checking code</string>
+    <string name="chat_status_querying_blame">Tracing changes</string>
     <string name="dependency_check_title">Dependency version check</string>
     <string name="dependency_check_updates_count">%1$d update(s) available</string>
     <string name="dependency_check_network_failed">Couldn\'t reach repositories, versions may be stale</string>

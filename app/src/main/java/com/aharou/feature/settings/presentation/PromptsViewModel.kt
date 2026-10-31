@@ -2,6 +2,8 @@ package com.aharou.feature.settings.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aharou.feature.agent.domain.prompt.InjectionBlock
+import com.aharou.feature.agent.domain.prompt.PromptAuxFragment
 import com.aharou.feature.agent.domain.prompt.PromptFragment
 import com.aharou.feature.agent.domain.prompt.PromptFragmentCatalog
 import com.aharou.feature.agent.domain.prompt.PromptFragmentSource
@@ -16,9 +18,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
+/** 一个动态注入区块的开关状态。 */
+data class InjectionBlockState(val block: InjectionBlock, val enabled: Boolean)
+
 /** 提示词页状态：按编号列出最终生效的片段（含来源），以及内置开关。 */
 data class PromptsUiState(
     val fragments: List<PromptFragment> = emptyList(),
+    /** 按需注入片段（`prompts/agent/` 下的单个 md），用于页面上单独开关与改内容。 */
+    val auxFragments: List<PromptAuxFragment> = emptyList(),
+    /** 动态注入区块（技能清单 / 记忆索引 / 工作区等）的开关。 */
+    val blocks: List<InjectionBlockState> = emptyList(),
     val builtinDisabled: Boolean = false,
     /** 没有选中工作区时项目层不可写，编辑/新建回落到全局层。 */
     val hasWorkspace: Boolean = false,
@@ -47,8 +56,13 @@ class PromptsViewModel @Inject constructor(
         viewModelScope.launch {
             val projectRoot = workspaceRepository.currentPath()
             val loaded = withContext(Dispatchers.IO) {
+                val disabledBlocks = catalog.disabledBlocks()
                 PromptsUiState(
                     fragments = catalog.list(projectRoot),
+                    auxFragments = catalog.auxFragments(projectRoot),
+                    blocks = InjectionBlock.values().map { block ->
+                        InjectionBlockState(block, block.key !in disabledBlocks)
+                    },
                     builtinDisabled = catalog.isBuiltinDisabled(),
                     hasWorkspace = projectRoot.isNotBlank(),
                     loading = false
@@ -142,8 +156,12 @@ class PromptsViewModel @Inject constructor(
 
     /** 拖拽重排：按新顺序重新编号并落盘，改变注入顺序。乐观更新本地状态，避免重读导致列表跳动。 */
     fun reorderFragments(reordered: List<PromptFragment>) {
-        val numbers = reordered.map { it.number }.sorted()
-        val renumbered = reordered.mapIndexed { index, fragment -> fragment.copy(number = numbers[index]) }
+        // 开了「完全禁用内置提示词」时列表仍会列出内置片段（供单条开关查看），但它们不能参与重排：
+        // 重排是把内容写成自定义片段，内置正文一旦落盘就会在只在自定义模式里开始注入。
+        val targets = reordered.filter { it.custom || it.enabled }
+        if (targets.isEmpty()) return
+        val numbers = targets.map { it.number }.sorted()
+        val renumbered = targets.mapIndexed { index, fragment -> fragment.copy(number = numbers[index]) }
         _state.update { it.copy(fragments = renumbered) }
         viewModelScope.launch {
             val projectRoot = workspaceRepository.currentPath()
@@ -161,6 +179,44 @@ class PromptsViewModel @Inject constructor(
     fun setBuiltinDisabled(disabled: Boolean) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { catalog.setBuiltinDisabled(disabled) }
+            refresh()
+        }
+    }
+
+    /** 单个片段的启用/关闭：内置与本地片段也能单独关，不必整体关内置提示词。 */
+    fun setFragmentEnabled(number: Int, enabled: Boolean) {
+        viewModelScope.launch {
+            val projectRoot = workspaceRepository.currentPath()
+            withContext(Dispatchers.IO) { catalog.setFragmentEnabled(number, enabled, projectRoot) }
+            refresh()
+        }
+    }
+
+    /** 按需片段的启用/关闭（与数字片段同一套标记）。 */
+    fun setAuxEnabled(name: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val projectRoot = workspaceRepository.currentPath()
+            withContext(Dispatchers.IO) { catalog.setAuxEnabled(name, enabled, projectRoot) }
+            refresh()
+        }
+    }
+
+    /** 动态注入区块的开关（技能清单、记忆索引、工作区上下文等整段）。 */
+    fun setBlockEnabled(block: InjectionBlock, enabled: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { catalog.setBlockEnabled(block, enabled) }
+            refresh()
+        }
+    }
+
+    /** 按需片段的覆盖保存：有工作区写项目层，否则写全局层。 */
+    fun saveAuxFragment(name: String, content: String) {
+        viewModelScope.launch {
+            val projectRoot = workspaceRepository.currentPath()
+            val target = if (projectRoot.isBlank()) PromptFragmentSource.GLOBAL else PromptFragmentSource.PROJECT
+            withContext(Dispatchers.IO) {
+                catalog.saveAuxOverride(name, content, projectRoot, target)
+            }
             refresh()
         }
     }

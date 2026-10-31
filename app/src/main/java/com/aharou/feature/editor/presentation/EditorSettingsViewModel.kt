@@ -77,4 +77,8 @@ class EditorSettingsViewModel @Inject constructor(
     fun setShowWhitespace(enabled: Boolean) {
         viewModelScope.launch { editorSettings.setShowWhitespace(enabled) }
     }
+
+    fun setErrorLens(enabled: Boolean) {
+        viewModelScope.launch { editorSettings.setErrorLens(enabled) }
+    }
 }

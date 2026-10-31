@@ -91,6 +91,9 @@ object TextMateSetup {
         "lua" -> "source.lua"
         "xml" -> "text.xml"
         "html", "htm" -> "text.html.basic"
+        // .vue 没有打包 source.vue 语法，先复用 html 语法：<template> / <style> 能上色，
+        // <script> 只有 JS 变体有嵌套高亮（languages.json 里 html 只登记了 source.js）。
+        "vue" -> "text.html.basic"
         "md", "markdown" -> "text.html.markdown"
         else -> null
     }
