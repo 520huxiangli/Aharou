@@ -1726,7 +1726,7 @@ class AIAgentViewModel @Inject constructor(
             senderSessionId = event.subSessionId,
             senderTitle = senderTitle,
             message = event.detail,
-            fromParent = false
+            fromParent = false, fromSibling = event.fromSibling
         )
     }
 
@@ -1771,7 +1771,7 @@ class AIAgentViewModel @Inject constructor(
         senderSessionId: String,
         senderTitle: String,
         message: String,
-        fromParent: Boolean
+        fromParent: Boolean, fromSibling: Boolean = false
     ) {
         if (message.isBlank()) return
         if (sessionUseCase.getSessionById(recipientSessionId) == null) return
@@ -1781,7 +1781,7 @@ class AIAgentViewModel @Inject constructor(
             title = senderTitle,
             outcome = NotificationOutcome.COMPLETED,
             message = message,
-            fromParent = fromParent
+            fromParent = fromParent, fromSibling = fromSibling
         )
         deliverSystemEvent(recipientSessionId, item)
     }

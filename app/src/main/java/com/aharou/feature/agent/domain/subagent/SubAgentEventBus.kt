@@ -49,7 +49,14 @@ data class SubAgentEvent(
      * 子代理收尾时是否被交付判定接受（与 `task` 读取路径同一份结论）；
      * null 表示未判定（例如消息读取失败），消费方按事件类型处理。
      */
-    val accepted: Boolean? = null
+    val accepted: Boolean? = null,
+
+    /**
+     * MESSAGE_FROM_SUB 的发送方是不是收件人的同批队友（子代理→子代理，`task(action="tell")`）。
+     * false 时发送方向是「子代理→父会话」（`messageParent`），两者回复方式不同：
+     * 队友间回信用 tell，向上回信用 send。
+     */
+    val fromSibling: Boolean = false
 )
 
 /**
@@ -62,7 +69,10 @@ data class SubAgentEvent(
 @Singleton
 class SubAgentEventBus @Inject constructor(
     private val maxRunningSource: MaxRunningSource,
+    private val communicationSource: CommunicationEnabledSource,
 ) {
+    /** 子代理之间的对等通信（team / tell）是否开启；工具层与手册层都据此决定说不说、做不做。 */
+    fun communicationEnabled(): Boolean = communicationSource.communicationEnabled()
     private val _events = MutableSharedFlow<SubAgentEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SubAgentEvent> = _events.asSharedFlow()
 
@@ -76,6 +86,9 @@ class SubAgentEventBus @Inject constructor(
      * emit 可能被多协程并发调用，故用并发 Map。
      */
     private val parentOfSub = ConcurrentHashMap<String, String>()
+
+    /** 最近一批子会话的终态事件，供晚到的等待方回捞（见 [terminalEvent]）。只留终态，量级与一次派的子代理数同阶。 */
+    private val terminalCache = ConcurrentHashMap<String, SubAgentEvent>()
 
     /**
      * 活跃集合的读-改-写锁：[emit] 与 [release] 都可能被不同协程同时调用，
@@ -125,13 +138,29 @@ class SubAgentEventBus @Inject constructor(
                 parentOfSub[event.subSessionId] = event.parentSessionId
             }
             SubAgentEventType.COMPLETED, SubAgentEventType.FAILED,
-            SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> unmarkActive(event.subSessionId)
+            SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> {
+                unmarkActive(event.subSessionId)
+                if (event.type.isTerminal()) terminalCache[event.subSessionId] = event
+            }
             SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> {
                 // 收发消息不改变运行状态，活跃集合保持不变。
             }
         }
         _events.tryEmit(event)
     }
+
+    private fun SubAgentEventType.isTerminal(): Boolean =
+        this == SubAgentEventType.COMPLETED || this == SubAgentEventType.FAILED ||
+            this == SubAgentEventType.STOPPED
+
+    /**
+     * 回捞某个子会话已经发过的终态事件。
+     *
+     * 为什么需要：`events` 是无 replay 的 SharedFlow，只发给"此刻已订阅"的收集者。pipeline 要等
+     * 一整层子代理派发完毕才开始等待终态，期间秒完成的子代理事件早已过去，单靠 `first{}` 会一路等到
+     * 30 分钟超时。这里留一份最近终态的短期缓存，让晚到的等待方能补上。
+     */
+    fun terminalEvent(subSessionId: String): SubAgentEvent? = terminalCache[subSessionId]
 
     companion object {
         /** 同时运行的子代理上限的默认值。实际值由 [SubAgentSettings] 给，工具层只读实例值。 */
@@ -142,8 +171,7 @@ class SubAgentEventBus @Inject constructor(
     // 与「父 → 子」「子 → 父」两条旧通道并存，行为不变：这里只新增一条兄弟可见的通道。
 
     /** 与 [subSessionId] 同父的其它子代理 id（本进程登记过的），供「团队名单」与兄弟路由使用。 */
-    fun siblingsOf(subSessionId: String): List<String> {
-        val parent = parentOfSub[subSessionId] ?: return emptyList()
+    fun siblingsOf(subSessionId: String): List<String> {        val parent = parentOfSub[subSessionId] ?: return emptyList()
         return parentOfSub.entries.filter { it.value == parent && it.key != subSessionId }.map { it.key }
     }
 
@@ -162,6 +190,16 @@ class SubAgentEventBus @Inject constructor(
      * 空闲或已完成时被唤醒起新一轮，与「子 → 父」通道共用同一套分发逻辑。非兄弟、消息为空或收件人未登记
      * 时返回 false，由调用方决定提示；本方法不抛异常，任何失败都不影响主流程。
      */
+    /**
+     * 用数据库已证实的兄弟关系补登记内存表。
+     *
+     * 内存表只在 SPAWNED 事件时写入，进程重启后为空。调用方既然已从会话记录的 parentId 确认了
+     * 二者同父，这里补一笔即可，否则重启后第一次 `tell` 会被当成「不是队友」直接拒掉。
+     */
+    fun registerSibling(subSessionId: String, parentSessionId: String) {
+        parentOfSub[subSessionId] = parentSessionId
+    }
+
     fun sendToSibling(fromSessionId: String, toSessionId: String, message: String): Boolean {
         if (message.isBlank() || !areSiblings(fromSessionId, toSessionId)) return false
         emit(
@@ -169,7 +207,8 @@ class SubAgentEventBus @Inject constructor(
                 subSessionId = fromSessionId,
                 parentSessionId = toSessionId,
                 type = SubAgentEventType.MESSAGE_FROM_SUB,
-                detail = message
+                detail = message,
+                fromSibling = true
             )
         )
         return true

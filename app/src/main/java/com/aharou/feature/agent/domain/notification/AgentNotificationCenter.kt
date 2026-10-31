@@ -21,7 +21,9 @@ enum class NotificationOutcome { COMPLETED, FAILED, STOPPED }
  * @property detail 结束原因补充：子代理失败时的错误信息、被终止时的说明；正常完成时为 null。
  * @property message [AgentNotificationKind.AGENT_MESSAGE] / [AgentNotificationKind.USER_MESSAGE] 的消息正文。
  * @property fromParent [AgentNotificationKind.AGENT_MESSAGE] 的方向：true 表示发送方是主会话（收件人为子代理），
- *   false 表示发送方是子代理（收件人为主会话）。供 Formatter 生成对应的回复提示。
+ *   false 表示发送方是子代理（收件人为主会话或同批队友，见 [fromSibling]）。供 Formatter 生成对应的回复提示。
+ * @property fromSibling [AgentNotificationKind.AGENT_MESSAGE] 且 fromParent=false 时：true 表示发送方是收件人的
+ *   同批队友（子代理互发），回信要用 `task(action="tell")`；false 表示子代理→父会话，回信要用 `send`。
  * @property newMode [AgentNotificationKind.MODE_CHANGE] 的目标模式：用户在工作期间切换后的新模式。
  * @property seq [AgentNotificationCenter] 分配的单调序号，供 peek 后精确 ack；未入队时为 0。
  */
@@ -36,6 +38,7 @@ data class PendingNotification(
     val detail: String? = null,
     val message: String? = null,
     val fromParent: Boolean = false,
+    val fromSibling: Boolean = false,
     val newMode: AgentMode? = null,
     val seq: Long = 0
 )

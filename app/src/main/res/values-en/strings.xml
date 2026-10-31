@@ -833,6 +833,9 @@
     <!-- Chat Message Bubbles -->
     <string name="chat_copied">Copied</string>
     <string name="chat_copy">Copy</string>
+    <string name="chat_show_injected">Show all</string>
+    <string name="chat_injected_title">What was injected this turn</string>
+    <string name="chat_injected_desc">None of this is text you typed. It is what the app automatically feeds into the model each turn: persona, rules, memory, skill index, current time and more.</string>
     <string name="chat_task_duration">Total time %1$s</string>
     <string name="chat_cache_hit_rate">Cache hit rate %1$s</string>
     <string name="chat_status_generating">Generating</string>
@@ -1581,6 +1584,8 @@
     <string name="settings_subagents">Subagents</string>
     <string name="subagent_max_running">Concurrency limit</string>
     <string name="subagent_max_running_hint">Max subagents running at the same time, %1$d to %2$d. The quota is shared by the whole app, not per session.</string>
+    <string name="subagent_comm_enabled">Let subagents talk to each other</string>
+    <string name="subagent_comm_enabled_desc">Subagents in the same batch can list their teammates and message them (team / tell). When off, they can only report upward; the parent side is unaffected.</string>
     <string name="settings_teams">Team presets</string>
     <string name="settings_experiments">Experiments</string>
     <string name="experiment_quote_reply">Long-press quote</string>
