@@ -399,7 +399,9 @@ class StatefulAgentWorkflowTest {
         coEvery { persistence.buildHistory("session", "__manual_compress__") } returns listOf(
             AgentMessage.UserMessage(content = "one"), AgentMessage.AssistantMessage(content = "two"),
             AgentMessage.UserMessage(content = "three"))
-        val expectedTools = allTools.filter { it.name in expectedNames }
+        // ToolRegistry.getAvailableTools() 按名字排序返回（工具列表是前缀缓存最靠前的一段，顺序必须稳定），
+        // 所以这里不能按注册顺序断言。
+        val expectedTools = allTools.filter { it.name in expectedNames }.sortedBy { it.name }
         coEvery { compactor.compactIfNeeded(any(), provider, "session", true, provider,
             "system", expectedTools, 0, any()) } answers { CompactionResult(firstArg(), true) }
         assertTrue(workflow.compactSession("session") {})
