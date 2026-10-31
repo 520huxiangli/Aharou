@@ -110,6 +110,16 @@ enum class LanguageExtension(val spec: ServerSpec) {
             installKind = InstallKind.NPM,
             packageName = "yaml-language-server"
         )
+    ),
+    VUE(
+        ServerSpec(
+            id = "vue",
+            command = "vue-language-server",
+            displayName = "Vue Language Server",
+            installKind = InstallKind.NPM,
+            // Volar 的类型推断依赖 typescript 本体，与 typescript-language-server 同理一并装。
+            packageName = "@vue/language-server,typescript"
+        )
     );
 
     /** 状态文件里的键，也是扩展标识。 */

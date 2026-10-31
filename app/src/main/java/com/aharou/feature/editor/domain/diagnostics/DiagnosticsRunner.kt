@@ -59,10 +59,17 @@ class DiagnosticsRunner @Inject constructor(
     /**
      * 对 [path] 指向的磁盘文件跑一次检查。[contentLength] 为编辑器里的字符数，仅用于体积阈值判断。
      *
+     * [projectPath] 是命令执行时绑定的工作区：编辑器侧调用时缺省，走当前工作区；
+     * AI 工具侧必须传会话绑定的 `context.projectRoot`，否则多会话并行会串到别人工作区。
+     *
      * 注意：阶段 1 检查的是**磁盘上的文件**（触发点是打开/保存，此时磁盘内容与编辑器一致），
      * 因此未保存的编辑不会反映到结果里。
      */
-    suspend fun check(path: String, contentLength: Int): List<EditorDiagnostic> {
+    suspend fun check(
+        path: String,
+        contentLength: Int,
+        projectPath: String? = null,
+    ): List<EditorDiagnostic> {
         if (contentLength > MAX_FILE_BYTES) return emptyList()
         val checker = checkerFor(path) ?: return emptyList()
         val quoted = shellQuote(pathHomeResolver.expandHome(path))
@@ -71,8 +78,8 @@ class DiagnosticsRunner @Inject constructor(
                 command = checker.command(quoted),
                 // 必须带工作区路径：不带时容器实例不会把工作区绑到 /root/workspace，
                 // 检查器只会报 `No such file or directory`（2026-10-05 实机踩到，靠日志定位）。
-                // 同 SearchCodeTool 的取法：编排层没传就用当前工作区。
-                projectPath = workspaceRepository.currentPath(),
+                // 同 SearchCodeTool 的取法：调用方没传就用当前工作区。
+                projectPath = projectPath ?: workspaceRepository.currentPath(),
                 timeoutMs = TIMEOUT_MS,
             ) ?: run {
                 // 「静默跳过」最难看懂：日志里留一笔，用户问「怎么没反应」时有据可查。

@@ -766,6 +766,7 @@
     <string name="editor_show_indent_guide">显示缩进参考线</string>
     <string name="editor_show_wrap_arrow">显示自动换行箭头</string>
     <string name="editor_show_whitespace">显示空白符号</string>
+    <string name="editor_error_lens">行尾显示诊断提示</string>
     <string name="editor_language_extensions">语言扩展</string>
     <string name="editor_language_extensions_desc">语言服务器一般已跟容器一起装好（Alpine 镜像），这里可以查看状态或补装。装上后打开对应文件会由它给出诊断（红/黄波浪线）。容器还没初始化时，先去终端页把容器跑起来。</string>
     <string name="editor_extension_installed">已安装 %1$s</string>
@@ -3053,6 +3054,28 @@
     <string name="prompts_add_prompt">添加片段</string>
     <string name="prompts_add_prompt_hint">用未占用的编号新增一条片段</string>
     <string name="prompts_disable_builtin">完全禁用内置提示词</string>
+    <string name="prompts_fragment_toggle">启用此片段</string>
+    <string name="prompts_aux_title">按需注入片段</string>
+    <string name="prompts_aux_editor_hint">保存后写入你的自定义目录，同名覆盖内置版本；关掉开关则不再注入。</string>
+    <string name="rules_builtin_title">内置按需规则</string>
+    <string name="prompts_blocks_title">动态注入区块</string>
+    <string name="prompts_fragments_title">静态基线片段</string>
+    <string name="prompts_block_soul">人格（SOUL.md）</string>
+    <string name="prompts_block_archive">核心档案与记忆正文</string>
+    <string name="prompts_block_skills">可用技能清单</string>
+    <string name="prompts_block_sub_agents">子代理索引</string>
+    <string name="prompts_block_teams">团队预设清单</string>
+    <string name="prompts_block_memories">记忆索引</string>
+    <string name="prompts_block_project_rules">项目规则（AGENTS.md）</string>
+    <string name="prompts_block_workspace">工作区上下文</string>
+    <string name="prompts_block_rules">按需规则清单</string>
+    <string name="prompts_block_workspace_type">工程类型规约</string>
+    <string name="prompts_block_model_identity">模型身份</string>
+    <string name="prompts_block_inbox">共享区信箱</string>
+    <string name="prompts_block_time">当前时间</string>
+    <string name="prompts_block_workspace_change">工作区切换提醒</string>
+    <string name="rules_builtin_subtitle">低频规则，AI 需要时才用 loadRule 取正文</string>
+    <string name="rules_builtin_editor_hint">保存后写到 ~/.aharou/rules/ 下的同名文件，覆盖内置版本。</string>
     <string name="prompts_disable_builtin_hint">只保留你的片段；需要自己补全全部规则，谨慎开启</string>
     <!-- 检查点：冲突检测与撤销恢复 -->
     <string name="checkpoint_conflict_title">部分文件未还原</string>
@@ -3104,6 +3127,8 @@
     <string name="knowledge_base_invalid_repo">认不出这个仓库地址</string>
     <string name="knowledge_base_no_source">还没有配置任何知识库</string>
     <string name="chat_status_checking_dependencies">正在检查依赖版本</string>
+    <string name="chat_status_checking_diagnostics">正在检查代码</string>
+    <string name="chat_status_querying_blame">正在追溯改动</string>
     <string name="dependency_check_title">依赖版本检查</string>
     <string name="dependency_check_updates_count">%1$d 项可升级</string>
     <string name="dependency_check_network_failed">网络不可用，未能获取最新版本</string>

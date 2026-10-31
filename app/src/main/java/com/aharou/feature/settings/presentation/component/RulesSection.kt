@@ -28,9 +28,11 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.SegmentedTabs
 import com.aharou.feature.agent.domain.rule.RuleFileRepository
+import com.aharou.feature.agent.domain.rule.RuleRepository
 import com.aharou.feature.settings.presentation.FragmentError
 import com.aharou.feature.settings.presentation.RuleEditTarget
 import com.aharou.feature.settings.presentation.RuleScope
@@ -75,6 +77,8 @@ internal fun RulesSection(
     }
 
     var scopeTab by rememberSaveable { mutableStateOf(0) }
+    // 正在编辑正文的按需规则块（底栏里改）
+    var editingBuiltin by remember { mutableStateOf<RuleRepository.RuleEntry?>(null) }
     val scope = if (scopeTab == 0) RuleScope.GLOBAL else RuleScope.PROJECT
     val document = if (scopeTab == 0) state.global else state.project
     val enabled = if (scopeTab == 0) !state.loading else !state.loading && state.hasWorkspace
@@ -111,6 +115,51 @@ internal fun RulesSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.semanticColors.warning,
                 modifier = Modifier.padding(horizontal = Spacing.lg).padding(top = Spacing.sm)
+            )
+        }
+        BuiltinRuleGroup(
+            rules = state.builtin,
+            onToggle = viewModel::setBuiltinEnabled,
+            onOpen = { entry -> editingBuiltin = entry }
+        )
+    }
+
+    editingBuiltin?.let { entry ->
+        TextContentEditorSheet(
+            key = entry.name,
+            title = entry.name,
+            hint = stringResource(R.string.rules_builtin_editor_hint),
+            initialContent = entry.content,
+            onDismiss = { editingBuiltin = null },
+            onSave = { content ->
+                viewModel.saveBuiltinOverride(entry.name, content)
+                editingBuiltin = null
+            }
+        )
+    }
+}
+
+/** 按需规则块（内置 `assets/rules` + `~/.aharou/rules` 覆盖）：单条开关 + 点行改正文。 */
+@Composable
+private fun BuiltinRuleGroup(
+    rules: List<RuleRepository.RuleEntry>,
+    onToggle: (String, Boolean) -> Unit,
+    onOpen: (RuleRepository.RuleEntry) -> Unit
+) {
+    if (rules.isEmpty()) return
+    Spacer(Modifier.height(Spacing.lg))
+    SettingsGroupHeader(text = stringResource(R.string.rules_builtin_title))
+    SettingsGroup(modifier = Modifier.padding(horizontal = Spacing.lg)) {
+        rules.forEachIndexed { index, entry ->
+            if (index > 0) SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.FileText,
+                title = entry.name,
+                subtitle = entry.description.ifBlank { stringResource(R.string.rules_builtin_subtitle) },
+                onClick = { onOpen(entry) },
+                trailing = {
+                    AppSwitch(checked = entry.enabled, onCheckedChange = { onToggle(entry.name, it) })
+                }
             )
         }
     }

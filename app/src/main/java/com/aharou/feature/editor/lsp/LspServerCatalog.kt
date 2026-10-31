@@ -62,7 +62,16 @@ object LspServerCatalog {
         args = listOf("--stdio")
     )
 
-    val ALL: List<Entry> = listOf(LUA, PYTHON, TYPESCRIPT, SHELL, YAML)
+    /** Vue：走 npm 装 @vue/language-server（Volar），需 `--stdio`。 */
+    val VUE = Entry(
+        extension = LanguageExtension.VUE,
+        languageId = "vue",
+        fileExtensions = listOf("vue"),
+        program = "vue-language-server",
+        args = listOf("--stdio")
+    )
+
+    val ALL: List<Entry> = listOf(LUA, PYTHON, TYPESCRIPT, SHELL, YAML, VUE)
 
     init {
         // 条目的 program 与枚举的 command 必须一致：前者拼进容器启动命令，后者用于探活与安装，

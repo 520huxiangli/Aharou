@@ -37,7 +37,9 @@ import com.aharou.feature.agent.domain.tool.file.SendFileTool
 import com.aharou.feature.agent.domain.tool.file.GenerateImageTool
 import com.aharou.feature.agent.domain.tool.file.ViewImageTool
 import com.aharou.feature.agent.domain.tool.file.WriteFileTool
+import com.aharou.feature.agent.domain.tool.editor.DiagnosticsTool
 import com.aharou.feature.agent.domain.tool.editor.EditFileTool
+import com.aharou.feature.agent.domain.tool.git.GitBlameTool
 import com.aharou.feature.agent.domain.tool.dependency.DependencyCheckTool
 import com.aharou.feature.agent.domain.tool.device.DeviceTool
 import com.aharou.feature.agent.domain.tool.container.ExecuteCommandTool
@@ -435,6 +437,8 @@ object AgentModule {
         deviceTool: DeviceTool,
         personalContextTool: PersonalContextTool,
         petAvatarTool: PetAvatarTool,
+        diagnosticsTool: DiagnosticsTool,
+        gitBlameTool: GitBlameTool,
         guard: ToolCallGuard
     ): ToolRegistry {
         return ToolRegistry(guard).apply {
@@ -473,6 +477,8 @@ object AgentModule {
             register("device", deviceTool)
             register("personal_context", personalContextTool)
             register("petAvatar", petAvatarTool)
+            register("diagnostics", diagnosticsTool)
+            register("git_blame", gitBlameTool)
         }
     }
 

@@ -127,6 +127,11 @@ fun EditorSettingsScreen(
                 checked = settings.showWhitespace,
                 onCheckedChange = viewModel::setShowWhitespace
             )
+            SettingSwitchRow(
+                label = stringResource(R.string.editor_error_lens),
+                checked = settings.errorLens,
+                onCheckedChange = viewModel::setErrorLens
+            )
 
             // 语言扩展（语言服务器）：装上后打开对应文件会由 LSP 给出诊断波浪线。
             Text(

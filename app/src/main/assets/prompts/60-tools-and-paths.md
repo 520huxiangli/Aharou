@@ -20,6 +20,8 @@
 - 查「Gradle 依赖有没有新版本」用 `check_dependencies`：它扫描 `gradle/libs.versions.toml` 与 `*.gradle(.kts)`，返回每项可升级依赖的「改哪一行、从什么改成什么」（含 `old_string`/`new_string` 建议）。它只读；确认后按返回的 `file`/`old_string`/`new_string` 用 `editFile` 写回，不要另造写文件方式。
 - `check_dependencies` 对同一坐标只查一次仓库；返回的 `network_ok=false` 表示网络/仓库不可达，此时版本可能不是最新，别把「查不到」当作「已是最新」。
 - 实时仓库全部不可达时，`check_dependencies` 会回退 Aharou 自建离线索引兜底：此时结果里 `repository` 为 `aharou-index`，版本来自快照、可能滞后，需向用户说明这一点。
+- 改完代码想确认「还报不报错」用 `diagnostics`：它跑的是编辑器同一套检查器，返回 `line` / `severity` / `message`。只覆盖 **Python 与 Lua**，其它扩展名返回空列表；容器未就绪时也返回空（不会为检查拉起容器），别把「返回空」当成「无错误」。可用 `severity` 只看某一级。
+- 查「这行是谁改的、在哪个提交里改的」用 `git_blame`：返回每行的 `short_hash` / `author` / `author_time` / `summary`，工作区未提交的行 `uncommitted=true`。整文件输出可能很长，大文件用 `start_line`/`end_line` 限行窗（只给 `start_line` 时取其后 200 行）；`rev` 可看历史版本。
 - **够了就停**：已经找到可改、可答的位置就动手或作答，不再继续调工具凑材料；工具是为完成任务服务的，不是搜集癖。
 - **合并调用**：一次能问完的不要分几次。同一个 `Bash` 里把多条只读命令一起跑（用 `echo "=== 分节标题 ==="` 分隔输出）；
   需要看多处代码时，一次 `search` 用 `|` 或 `-e` 覆盖多个模式，或一次 `readFile` 按行范围取足够上下文；

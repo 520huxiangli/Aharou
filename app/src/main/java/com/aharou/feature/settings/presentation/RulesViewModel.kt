@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.feature.agent.domain.rule.RuleFileRepository
+import com.aharou.feature.agent.domain.rule.RuleRepository
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.File
@@ -37,6 +38,8 @@ data class RuleEditTarget(
 data class RulesUiState(
     val global: RuleFileRepository.RuleDocument? = null,
     val project: RuleFileRepository.RuleDocument? = null,
+    /** 按需规则块（内置 + `~/.aharou/rules` 覆盖），列表里可单条开关与改正文。 */
+    val builtin: List<RuleRepository.RuleEntry> = emptyList(),
     val hasWorkspace: Boolean = false,
     val loading: Boolean = true,
     val savingScope: RuleScope? = null,
@@ -52,6 +55,7 @@ data class RulesUiState(
 @HiltViewModel
 class RulesViewModel @Inject constructor(
     private val rules: RuleFileRepository,
+    private val ruleRepository: RuleRepository,
     private val workspaceRepository: WorkspaceRepository
 ) : ViewModel() {
 
@@ -69,6 +73,7 @@ class RulesViewModel @Inject constructor(
                 RulesUiState(
                     global = rules.readGlobal(),
                     project = rules.readProject(projectRoot),
+                    builtin = ruleRepository.listAllRules(),
                     hasWorkspace = projectRoot.isNotBlank(),
                     loading = false
                 )
@@ -96,6 +101,22 @@ class RulesViewModel @Inject constructor(
                 editingName = "",
                 fragmentError = null
             )
+        }
+    }
+
+    /** 按需规则的单条开关：关掉后不再进提示词清单，`loadRule` 也取不到正文。 */
+    fun setBuiltinEnabled(name: String, enabled: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ruleRepository.setEnabled(name, enabled) }
+            refresh()
+        }
+    }
+
+    /** 按需规则的正文修改：写成 `~/.aharou/rules/<名称>.md` 覆盖内置版本。 */
+    fun saveBuiltinOverride(name: String, content: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ruleRepository.saveOverride(name, content) }
+            refresh()
         }
     }
 

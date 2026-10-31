@@ -31,6 +31,17 @@ class PromptFileResolver @Inject constructor(
     }
 
     fun resolve(name: String): String {
+        // 按需片段在提示词页被关掉时返回空串，注入侧自然不追加（调用方都已处理空内容）。
+        if (isDisabled(name)) return ""
+        return resolveRaw(name)
+    }
+
+    /** 该按需片段是否被关闭（标记只看全局层：`prompts.custom/.disabled/<文件名>`）。 */
+    fun isDisabled(name: String): Boolean =
+        name.substringAfterLast('/') in PromptFragmentResolver.disabledFileNames(customDir)
+
+    /** 不看清开关的原始内容，供设置页编辑预览与覆盖写入。 */
+    fun resolveRaw(name: String): String {
         PromptFragmentResolver.parseNumber(name)
             ?.let { number -> readFileOrNull(customFragmentsByNumber[number])?.let { return it } }
         readFileOrNull(File(customDir, name))?.let { return it }

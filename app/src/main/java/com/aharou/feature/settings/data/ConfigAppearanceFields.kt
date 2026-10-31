@@ -161,6 +161,16 @@ class ConfigAppearanceFields @Inject constructor(
         )
 
         registry.register(
+            DataStoreBoolField(
+                path = "editor.error_lens",
+                displayName = "行尾诊断提示",
+                description = "在报错行的行尾直接显示诊断文字，不必悬停看气泡。默认开启。",
+                flow = editorSettings.settingsFlow.map { it.errorLens },
+                setter = { editorSettings.setErrorLens(it) },
+            ),
+        )
+
+        registry.register(
             DataStoreStrField(
                 path = "terminal.theme_id",
                 displayName = "终端配色",
