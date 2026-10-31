@@ -148,7 +148,8 @@ class PromptFragmentCatalog @Inject constructor(
             }
             PromptAuxFragment(
                 name = name,
-                title = titleOf(name),
+                // 片段名带 `-`，不能用 titleOf（它按第一个 `-` 切，会切成 mode）
+                title = name.substringAfterLast('/').removeSuffix(".md"),
                 source = source,
                 enabled = name.substringAfterLast('/') !in disabled,
                 content = content
