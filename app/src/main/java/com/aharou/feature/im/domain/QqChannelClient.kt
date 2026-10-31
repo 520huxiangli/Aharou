@@ -1,7 +1,6 @@
 package com.aharou.feature.im.domain
 
 import android.content.Context
-import com.aharou.core.ui.decodeSampledAndroidBitmap
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.im.data.repository.QqConfig
 import com.aharou.feature.im.domain.model.ImAttachment
@@ -610,9 +609,7 @@ class QqChannelClient @Inject constructor(
 
     /** 把图片重新编码成 PNG：部分 jpg 的编码/EXIF 不被 QQ 接受，重编码后能正常当图片发。 */
     private fun transcodeToPng(file: File): File? = runCatching {
-        // 走采样解码：整尺寸解码 + PNG 编码在相机原图上动辄几十 MB，低端机直接 OOM；
-        // 采样限制与 OOM 降档都在解码器里，超过上限的图会被缩小后再转
-        val bitmap = decodeSampledAndroidBitmap(file.absolutePath, TRANSCODE_MAX_EDGE) ?: return null
+        val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return null
         val target = File(context.cacheDir, "qq_upload_${System.currentTimeMillis()}.png")
         target.outputStream().use { out ->
             bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
@@ -770,9 +767,6 @@ class QqChannelClient @Inject constructor(
 
         /** 富媒体预上传要求单独提供前 10002432 字节的 MD5。 */
         private const val MD5_10M = 10_002_432L
-
-        /** 转存 PNG 前的采样上限：FF 图片消息本身会再压，2048 足够清楚又不会把原图整份解开。 */
-        private const val TRANSCODE_MAX_EDGE = 2048
 
         /** 平台认为图片格式不支持时的错误码，可降级为普通文件。 */
         private const val CODE_FORMAT_UNSUPPORTED = 850019L

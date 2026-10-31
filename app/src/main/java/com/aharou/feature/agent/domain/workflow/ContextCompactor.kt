@@ -34,7 +34,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -725,7 +724,7 @@ class ContextCompactor @Inject constructor(
             error = e.message ?: e.javaClass.simpleName
             throw e
         } finally {
-            withContext(NonCancellable) {
+            com.aharou.core.util.runCancellationSafeTail {
                 try {
                     llmCallRecordDao.insert(LlmCallRecordEntity(
                         sessionId = sessionId,

@@ -1,5 +1,6 @@
 package com.aharou.feature.account.presentation
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,7 +28,6 @@ import com.aharou.core.identity.UserIdentityStore
 import com.aharou.core.soul.SoulIcon
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AppTextField
-import com.aharou.core.ui.decodeSampledAndroidBitmap
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
 import com.aharou.feature.settings.presentation.component.SettingsGroupHeader
@@ -43,9 +43,6 @@ import kotlinx.coroutines.withContext
 
 /** 用户头像未设置时的占位图标；和助手的 ✨ 区分开。 */
 private const val USER_AVATAR_FALLBACK = "\uD83D\uDE42"
-
-/** 头像落库才 96px，采样到 512 已远高于展示需求，又不至于把相册原图整份解开。 */
-private const val AVATAR_DECODE_MAX_EDGE = 512
 
 /**
  * 「我的身份」卡片：头像 + 显示名。
@@ -75,11 +72,9 @@ internal fun UserIdentityCard() {
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                // 相册里随手一张就是几千万像素，先取字节再按头像档位采样解码；OOM 时解码器会自动降档
-                val bytes = runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                val bitmap = runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
                 }.getOrNull()
-                val bitmap = bytes?.let { decodeSampledAndroidBitmap(it, AVATAR_DECODE_MAX_EDGE) }
                 if (bitmap == null) {
                     SoulIcon.EncodeResult.Failure(SoulIcon.Rejection.UNREADABLE)
                 } else {

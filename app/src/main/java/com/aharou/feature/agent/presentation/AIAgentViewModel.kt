@@ -15,7 +15,6 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.SessionStopEpochs
 import com.aharou.core.util.toUserMessage
 import com.aharou.core.util.formatCostUsd
 import com.aharou.feature.agent.data.local.dao.AgentMessageDao
@@ -226,9 +225,6 @@ class AIAgentViewModel @Inject constructor(
 ) : ViewModel(), SlashCommandContext {
 
     private val sessionJobs = mutableMapOf<String, Job>()
-    /** 本次软停还没收拾完的会话：软停不建排队占位，靠纪元让旧任务自己退出，此处只管别把队列消息接上来。 */
-    private val softStoppedSessions = mutableSetOf<String>()
-
     private val stoppingSessions = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
 
     /** 记忆兑现节流：每个会话上次自动整理的时间戳，10 分钟内不重复跑。 */
@@ -2076,10 +2072,12 @@ class AIAgentViewModel @Inject constructor(
         }
         val currentJob = requireNotNull(coroutineContext[Job])
         try {
-            awaitPreviousSessionWork(
-                stoppingSessions[sessionId], sessionJobs[sessionId], currentJob,
-                softStopped = sessionId in softStoppedSessions
-            )
+            while (true) {
+                stoppingSessions[sessionId]?.await()
+                val previousJob = sessionJobs[sessionId]
+                if (previousJob == null || previousJob === currentJob || previousJob.isCompleted) break
+                previousJob.join()
+            }
             if (!skipCommandDispatch && request.startsWith("/")) {
                 slashCommandRegistry.resolve(request)?.let { command ->
                     runResolvedCommand(command, request, sessionId)
@@ -2087,15 +2085,13 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
             sessionJobs[sessionId] = currentJob
-            softStoppedSessions.remove(sessionId)
             _activeAgentSessions.value = _activeAgentSessions.value + sessionId
             currentJob.invokeOnCompletion {
                 viewModelScope.launch {
                     if (sessionJobs[sessionId] !== currentJob) return@launch
                     sessionJobs.remove(sessionId)
                     _activeAgentSessions.value = _activeAgentSessions.value - sessionId
-                    // 停止之后不自动接队列：用户要的是停下来，不是接着跑下一条。
-                    if (!softStoppedSessions.remove(sessionId) && sessionId !in stoppingSessions) {
+                    if (sessionId !in stoppingSessions) {
                         flushPendingNotifications(sessionId)
                         processNextInQueue(sessionId)
                     }
@@ -2404,13 +2400,10 @@ class AIAgentViewModel @Inject constructor(
      * 界面立刻放开，不等收尾（旧写法 cancel + 等 join，命令一慢就永久卡住停止按钮）。
      */
     fun stopAgentSession(sessionId: String) {
-        if (sessionId in softStoppedSessions) return
-        if (sessionJobs[sessionId]?.isActive != true) return
+        if (sessionId in stoppingSessions) return
+        val job = sessionJobs[sessionId] ?: return
+        if (!job.isActive) return
         releaseStoppedSubAgent(sessionId)
-        // 推进纪元：正在跑的工具/命令在下一个等待点自己发现「已停止」，不必等它们跑完；
-        // 不建 stoppingSessions 占位，新消息因此不会被压在旧任务后面排队（插话直接生效）。
-        SessionStopEpochs.bump(sessionId)
-        softStoppedSessions += sessionId
         agentNotificationCenter.enqueue(
             sessionId,
             PendingNotification(
@@ -2420,7 +2413,19 @@ class AIAgentViewModel @Inject constructor(
                 outcome = NotificationOutcome.STOPPED
             )
         )
-        FileLogger.d(TAG, "stopAgent: 纪元推进 sid=$sessionId state=${_agentStates.value[sessionId]}")
+        FileLogger.d(TAG, "stopAgent: 投递用户打断 sid=$sessionId state=${_agentStates.value[sessionId]}")
+        // stoppingSessions 只用于「停止期间不再起新轮」；清理由后台等 job 真正结束时做，不挡界面。
+        val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
+        stoppingSessions[sessionId] = stopped
+        viewModelScope.launch {
+            job.join()
+            if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
+            stopped.complete(Unit)
+            if (sessionJobs[sessionId]?.let { it !== job } != true) {
+                flushPendingNotifications(sessionId)
+                processNextInQueue(sessionId)
+            }
+        }
         // 界面立刻放开：输入框马上能用，不用等后台那步收尾。
         setCompacting(sessionId, false)
         setRetryState(sessionId, null)
@@ -2455,18 +2460,13 @@ class AIAgentViewModel @Inject constructor(
         // 软打断留下的占位先放行：可能有协程正挂在它上面等（排队的新消息），只替换引用会让那些
         // 等待者永远醒不过来。放行后它们会重新读 map，挂到下面这份新占位上。
         stoppingSessions.remove(sessionId)?.complete(Unit)
-        SessionStopEpochs.bump(sessionId) // 取消管不到阻塞读写，纪元让它们在下个比对点退出
         val stopped = kotlinx.coroutines.CompletableDeferred<Unit>()
         stoppingSessions[sessionId] = stopped
         job?.cancel()
         viewModelScope.launch {
-            val settled = withTimeoutOrNull(SESSION_GATE_TIMEOUT_MS) { job?.join() } != null
+            job?.join()
             if (stoppingSessions[sessionId] === stopped) stoppingSessions.remove(sessionId)
             stopped.complete(Unit)
-            if (!settled) {
-                FileLogger.w(TAG, "forceStopAgent: 收尾超时，放弃等待并清理 sid=$sessionId")
-                if (sessionJobs[sessionId] === job) sessionJobs.remove(sessionId)
-            }
             if (sessionJobs[sessionId]?.let { it !== job } == true) return@launch
             settleStoppedTools(sessionId, runningTools, pendingPermissions, stoppedText)
             setStreamingText(sessionId, null)

@@ -4,7 +4,6 @@ import com.aharou.core.util.BoundedLineReader
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
 import com.aharou.core.util.ProcessIdentity
-import com.aharou.core.util.launchKillOnStop
 import com.aharou.R
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -255,10 +254,14 @@ class LinuxContainerEngine @Inject constructor(
         // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
         // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
         // 协程不响应取消、job 停在 cancelling 永不完成，钩子便永远不触发、进程也就杀不掉。
-        val processKiller = CoroutineScope(currentCoroutineContext()).launchKillOnStop {
-            if (process.isAlive) {
-                FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                terminateTree(process, identity, command)
+        val processKiller = CoroutineScope(currentCoroutineContext()).launch {
+            try {
+                awaitCancellation()
+            } finally {
+                if (process.isAlive) {
+                    FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
+                    terminateTree(process, identity, command)
+                }
             }
         }
         val reader = BoundedLineReader(InputStreamReader(process.inputStream))
@@ -398,10 +401,14 @@ class LinuxContainerEngine @Inject constructor(
             // 取消监听挂在当前 job 下、用 awaitCancellation 挂起：父 job 一取消它就立刻走到 finally。
             // 不能用 invokeOnCompletion——默认重载只在 job 完成时回调，而命令卡在阻塞的 readLine 上时
             // 协程不响应取消、job 停在 cancelling 永不完成，钩子便永远不触发、进程也就杀不掉。
-            val processKiller = CoroutineScope(currentCoroutineContext()).launchKillOnStop {
-                if (process.isAlive) {
-                    FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
-                    terminateTree(process, identity, command)
+            val processKiller = CoroutineScope(currentCoroutineContext()).launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    if (process.isAlive) {
+                        FileLogger.i(TAG, "命令被取消，终止进程: ${sanitizeCommandForLog(command)}")
+                        terminateTree(process, identity, command)
+                    }
                 }
             }
 

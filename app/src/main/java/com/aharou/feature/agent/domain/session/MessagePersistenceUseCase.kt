@@ -72,27 +72,24 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     /** 内嵌图片 base64 的 LRU 缓存：key = path:size:lastModified，避免工具循环中
-     *  每轮 LLM 调用都重读文件 + 编码。带条目与总字节双重上限。
-     *  必须连 mime 一起缓存：缩小后的副本会从 png 变成 jpeg。 */
-    private class CachedImage(val mimeType: String, val base64: String)
-
-    private val imageBase64Cache = object : LinkedHashMap<String, CachedImage>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedImage>?): Boolean =
+     *  每轮 LLM 调用都重读文件 + 编码。带条目与总字节双重上限。 */
+    private val imageBase64Cache = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
             size > MAX_IMAGE_CACHE_ENTRIES
     }
     private var imageCacheBytes = 0L
 
-    private fun cachedImageBase64(key: String): CachedImage? = synchronized(imageBase64Cache) { imageBase64Cache[key] }
+    private fun cachedImageBase64(key: String): String? = synchronized(imageBase64Cache) { imageBase64Cache[key] }
 
-    private fun cacheImageBase64(key: String, value: CachedImage) {
+    private fun cacheImageBase64(key: String, value: String) {
         synchronized(imageBase64Cache) {
             val old = imageBase64Cache.put(key, value)
-            imageCacheBytes += value.base64.length - (old?.base64?.length ?: 0)
+            imageCacheBytes += value.length - (old?.length ?: 0)
             while (imageCacheBytes > MAX_IMAGE_CACHE_BYTES && imageBase64Cache.isNotEmpty()) {
                 val it = imageBase64Cache.entries.iterator()
                 val eldest = it.next()
                 it.remove()
-                imageCacheBytes -= eldest.value.base64.length
+                imageCacheBytes -= eldest.value.length
             }
         }
     }
@@ -538,19 +535,17 @@ class MessagePersistenceUseCase @Inject constructor(
         val key = "$localPath:${file.length()}:${file.lastModified()}"
         cachedImageBase64(key)?.let { cached ->
             return com.aharou.feature.agent.domain.model.AgentImage(
-                mimeType = cached.mimeType,
-                base64Data = cached.base64,
+                mimeType = mimeType.ifBlank { "image/jpeg" },
+                base64Data = cached,
                 path = containerPath
             )
         }
         return try {
-            // 每轮历史回放都会重发这张图：原图整份上送只是白占请求体，模型侧本来也会把长边
-            // 超过 1568 的图再缩一次。压与不压走同一条管线，与刚发出去那份字节一致。
-            val (mime, base64) = com.aharou.feature.agent.domain.tool.file.ImageCompressor
-                .encodeForRequest(file, mimeType.ifBlank { "image/jpeg" })
-            cacheImageBase64(key, CachedImage(mime, base64))
+            val bytes = file.readBytes()
+            val base64 = java.util.Base64.getEncoder().encodeToString(bytes)
+            cacheImageBase64(key, base64)
             com.aharou.feature.agent.domain.model.AgentImage(
-                mimeType = mime,
+                mimeType = mimeType.ifBlank { "image/jpeg" },
                 base64Data = base64,
                 path = containerPath
             )

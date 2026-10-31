@@ -3,8 +3,7 @@ package com.aharou.feature.agent.domain.workflow
 import android.os.SystemClock
 import android.util.Base64
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.ToolStopEpoch
-import com.aharou.core.util.toolStopContext
+import com.aharou.core.util.runCancellationSafeTail
 import com.aharou.feature.agent.domain.privacy.maskIfNeeded
 import com.aharou.feature.agent.domain.privacy.maskedForOutbound
 import com.aharou.feature.agent.domain.privacy.outboundMaskerOrNull
@@ -691,12 +690,11 @@ class StatefulAgentWorkflow @Inject constructor(
             var samplingLoopCut = false
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。
             var userInterruptCut = false
-            val stopEpoch = toolStopContext(currentContext.sessionId)[ToolStopEpoch]
             callId = telemetry.llmRequest(providerInUse.providerId, providerInUse.model, messagesToSend.size, promptTools.size, predictedInput)
             providerInUse.completeStream(requestSystemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
                 .takeWhile { !samplingLoopCut && !userInterruptCut }
                 .collect { chunk ->
-                    if (!userInterruptCut && (stopEpoch?.stopped() == true || consumeUserInterrupt(currentContext.sessionId))) {
+                    if (!userInterruptCut && consumeUserInterrupt(currentContext.sessionId)) {
                         userInterruptCut = true
                     }
                 when (chunk) {
@@ -800,7 +798,6 @@ class StatefulAgentWorkflow @Inject constructor(
                     messageId = responseMessageId
                 )
             )
-            if (userInterruptCut) actionQueue.clear() // 信号已被 ack，不清队列会继续跑工具、再起下一轮
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -845,7 +842,7 @@ class StatefulAgentWorkflow @Inject constructor(
             // 取消展开期间绝不允许异常逃出 finally：待传播的取消异常一旦再叠上抛出的异常
             //（落库失败、日志格式化、OOM 等），ART 会直接 AssertNoPendingException 终止进程。
             try {
-                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.IO) {
+                runCancellationSafeTail {
                     currentContext.sessionId?.let { sid ->
                         if (finalResponse != null || acc.isNotEmpty() || reasoningAcc.isNotEmpty()) runCatching {
                             val snapshot = captureSnapshot()
@@ -1002,8 +999,6 @@ class StatefulAgentWorkflow @Inject constructor(
         }
 
         val pathLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>() // 同批内写同一文件的调用按 path 取锁串行化，避免并行互相干扰
-        // 等待锁、容器启动、命令排队都能在这里命中「用户已停止」
-        val batchStop = toolStopContext(currentContext.sessionId)[ToolStopEpoch]
         val runResults = if (toolCalls.isEmpty()) {
             emptyList()
         } else {
@@ -1011,9 +1006,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 toolCalls.map { toolCall ->
                     val isDuplicate = toolCallSignature(toolCall) in duplicateSignatures
                     async {
-                        if (batchStop?.stopped() == true) {
-                            ToolRunResult(toolError(toolCall, "用户已停止，该工具未执行", "USER_STOPPED"), true)
-                        } else if (isDuplicate) {
+                        if (isDuplicate) {
                             ToolRunResult(
                                 toolError(toolCall, "与本次响应中前面同名的调用参数完全相同，已跳过重复执行。", "DUPLICATE_TOOL_CALL"),
                                 true
@@ -1151,7 +1144,7 @@ class StatefulAgentWorkflow @Inject constructor(
             return ToolRunResult(toolError(toolCall, "工具 $name 不存在", "TOOL_NOT_FOUND"), true)
         }
         return try {
-            withContext(Dispatchers.IO + toolStopContext(context.sessionId)) {
+            withContext(Dispatchers.IO) {
                 val result = tool.executeWithContext(vault.execArgs(tool.acceptsSecrets, toolCall.arguments), context)
                 val attachments = if (name == "sendFile" || name == "generateImage") extractAttachments(result) else emptyList()
                 val images = if (result is ToolResult.Success) result.images else emptyList()
@@ -1382,7 +1375,7 @@ class StatefulAgentWorkflow @Inject constructor(
         onEvent: suspend (AgentEvent) -> Unit
     ): ToolRunResult {
         return try {
-            withContext(Dispatchers.IO + toolStopContext(context.sessionId)) {
+            withContext(Dispatchers.IO) {
                 val live = StringBuilder()
                 var lastEmitMs = 0L
                 var finalResult: ToolResult? = null

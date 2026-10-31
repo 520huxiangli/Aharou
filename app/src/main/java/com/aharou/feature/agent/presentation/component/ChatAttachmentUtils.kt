@@ -105,8 +105,20 @@ internal fun AgentAttachment.toPendingAttachment(): PendingUploadAttachment {
     )
 }
 
-private fun attachmentImageBase64(file: File, fallbackMime: String): Pair<String, String> =
-    ImageCompressor.encodeForRequest(file, fallbackMime)
+/**
+ * 附件图片进请求用的 base64：最长边超过 [ImageCompressor.HIGH_MAX_EDGE] 时走与截图同一条压缩管线，
+ * 否则原样读出——小图重编码只会更大。压不动（格式怪、解码失败）时回退原字节，宁大不丢。
+ */
+private fun attachmentImageBase64(file: File, fallbackMime: String): Pair<String, String> {
+    val bounds = ImageCompressor.decodeBounds(file)
+    val longEdge = bounds?.let { maxOf(it.width, it.height) } ?: 0
+    if (longEdge > ImageCompressor.HIGH_MAX_EDGE) {
+        runCatching {
+            ImageCompressor.encodeToJpeg(file, ImageCompressor.HIGH_MAX_EDGE, ImageCompressor.HIGH_TARGET_BYTES)
+        }.getOrNull()?.let { return it.base64Data to "image/jpeg" }
+    }
+    return ImageCompressor.rawBase64(file.readBytes()) to fallbackMime
+}
 
 private fun PendingUploadAttachment.toAgentAttachment(): AgentAttachment =
     AgentAttachment(
@@ -144,7 +156,7 @@ internal fun hasAttachmentSlots(currentCount: Int): Boolean =
     currentCount < MAX_PENDING_ATTACHMENTS
 
 private fun imageLimitError(context: Context): String =
-    context.getString(R.string.chat_image_too_large, formatBytes(MAX_IMAGE_SOURCE_BYTES))
+    context.getString(R.string.chat_image_too_large, formatBytes(MAX_IMAGE_UPLOAD_BYTES))
 
 internal fun emptyWorkspaceMessage(context: Context): String =
     context.getString(R.string.chat_select_workspace_first)
@@ -192,11 +204,9 @@ internal suspend fun copyUriToWorkspace(
     }
 
     // 图片要整份读进来做 base64，先按 provider 报的大小拦一道；SIZE 拿不到时下面还有兜底判断。
-    // 拦的是原图尺寸：进请求的副本会在 [attachmentImageBase64] 里压到最长边 1536，
-    // 所以这里只防“顶爆堆”的超大文件，相机直出的大图能进来。
     if (includeImageData) {
         val declared = context.contentSize(uri)
-        if (declared != null && declared > MAX_IMAGE_SOURCE_BYTES) error(imageLimitError(context))
+        if (declared != null && declared > MAX_IMAGE_UPLOAD_BYTES) error(imageLimitError(context))
     }
 
     val sizeBytes: Long
@@ -204,7 +214,7 @@ internal suspend fun copyUriToWorkspace(
     if (includeImageData) {
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error(unreadableFileMessage(context))
-        if (bytes.size > MAX_IMAGE_SOURCE_BYTES) error(imageLimitError(context))
+        if (bytes.size > MAX_IMAGE_UPLOAD_BYTES) error(imageLimitError(context))
         fileAccess.writeBytes(containerPath, bytes, overwrite = true)
         sizeBytes = bytes.size.toLong()
         val (base64, outMime) = attachmentImageBase64(fileAccess.copyToLocal(containerPath), mimeType)
@@ -292,9 +302,9 @@ private val SUPPORTED_IMAGE_MIME_TYPES = setOf(
 )
 
 // 选图门槛只影响「能不能选进来」，不是模型上限：图片进请求前会经 ImageCompressor 采样解码
-// （inSampleSize）并压到最长边 1536 / 目标 ~512KB。40MB 覆盖手机相机直出的大图（48MP 常见
-// 15~30MB）；再往上加只会让原图像素在压缩完成前常驻内存更久。
-private const val MAX_IMAGE_SOURCE_BYTES = 40L * 1024 * 1024
+// （inSampleSize）并压到最长边 1536 / 目标 ~512KB。20MB 已经覆盖手机原图（12MP 常见 4~8MB）；
+// 再往上加只会让 base64 字符串在选中到发送之间常驻内存更久。
+private const val MAX_IMAGE_UPLOAD_BYTES = 20L * 1024 * 1024
 internal const val MAX_PENDING_ATTACHMENTS = 8
 
 internal fun formatBytes(bytes: Long): String {

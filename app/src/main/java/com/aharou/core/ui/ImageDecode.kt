@@ -63,26 +63,13 @@ fun calculateInSampleSize(width: Int, height: Int, maxEdge: Int, maxPixels: Long
 }
 
 /** 采样解码本地文件。文件不存在、不是图片或解码失败均返回 null。 */
-fun decodeSampledBitmap(path: String, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): ImageBitmap? =
-    decodeSampledAndroidBitmap(path, maxEdge, maxPixels)?.asImageBitmap()
-
-/** 采样解码内存中的图片字节。 */
-fun decodeSampledBitmap(bytes: ByteArray, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): ImageBitmap? =
-    decodeSampledAndroidBitmap(bytes, maxEdge, maxPixels)?.asImageBitmap()
-
-/**
- * 同 [decodeSampledBitmap]，但直接返回 `android.graphics.Bitmap`。
- *
- * 解码之后还要调平台位图 API（`compress()` / `createScaledBitmap()` 等）的调用方用这一版，
- * 免得为了拿 Compose 的 ImageBitmap 再绕一圈，也免得它们继续裸写 [BitmapFactory] 丢掉采样与 OOM 兜底。
- */
-fun decodeSampledAndroidBitmap(path: String, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): Bitmap? {
+fun decodeSampledBitmap(path: String, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): ImageBitmap? {
     val bounds = decodeBounds(path) { BitmapFactory.decodeFile(path, it) } ?: return null
     return decodeWithOomRetry(path, bounds, maxEdge, maxPixels) { BitmapFactory.decodeFile(path, it) }
 }
 
-/** 采样解码内存中的图片字节，返回 `android.graphics.Bitmap`。 */
-fun decodeSampledAndroidBitmap(bytes: ByteArray, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): Bitmap? {
+/** 采样解码内存中的图片字节。 */
+fun decodeSampledBitmap(bytes: ByteArray, maxEdge: Int, maxPixels: Long = Long.MAX_VALUE): ImageBitmap? {
     val what = "byte[${bytes.size}]"
     val decode: (BitmapFactory.Options) -> Bitmap? = { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, it) }
     val bounds = decodeBounds(what, decode) ?: return null
@@ -113,11 +100,11 @@ private fun decodeWithOomRetry(
     maxEdge: Int,
     maxPixels: Long,
     decode: (BitmapFactory.Options) -> Bitmap?
-): Bitmap? {
+): ImageBitmap? {
     var sample = calculateInSampleSize(bounds.first, bounds.second, maxEdge, maxPixels)
     repeat(OOM_RETRIES) {
         try {
-            return decode(BitmapFactory.Options().apply { inSampleSize = sample })
+            return decode(BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
         } catch (e: OutOfMemoryError) {
             FileLogger.w(TAG, "解码 OOM，inSampleSize $sample -> ${sample * 2}: $what")
             sample *= 2
@@ -132,31 +119,6 @@ private fun decodeWithOomRetry(
 
 /** 解码档位：最大边（像素）+ 总像素上限。 */
 data class ImageDecodeSpec(val maxEdge: Int, val maxPixels: Long)
-
-/**
- * 缩略图内存缓存：聊天列表里带图消息滑出视口就会被回收，滑回来时每次都要重新读盘解码原图。
- * 按路径索引：附件落盘时已保证文件名唯一、不会被原地替换，也因此 [peek] 在组合阶段调用时
- * 不做任何文件 IO。缩略图最大边 180px，单张约 130KB，条数上限即内存上限。
- */
-object ThumbnailCache {
-    private const val MAX_ENTRIES = 96
-
-    private val cache = object : LinkedHashMap<String, ImageBitmap>(32, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>?): Boolean =
-            size > MAX_ENTRIES
-    }
-
-    /** 命中则同步返回（可作 produceState 初值，避免闪占位图）。 */
-    fun peek(path: String): ImageBitmap? = synchronized(cache) { cache[path] }
-
-    /** 取缓存，未命中则解码并写入；解码失败不缓存。应在后台线程调用。 */
-    fun load(path: String): ImageBitmap? {
-        peek(path)?.let { return it }
-        val decoded = decodeSampledBitmap(path, THUMBNAIL_MAX_EDGE) ?: return null
-        synchronized(cache) { cache[path] = decoded }
-        return decoded
-    }
-}
 
 /**
  * 全屏查看器的解码档位，跟当前窗口走而不写死。
