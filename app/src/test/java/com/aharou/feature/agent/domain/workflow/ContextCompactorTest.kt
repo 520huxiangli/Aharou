@@ -448,9 +448,6 @@ class ContextCompactorTest {
     @Test
     fun outputStarvedRetrySharesTheOriginalDeadline() = runTest {
         compactor.backgroundDispatcher = StandardTestDispatcher(testScheduler)
-        // 统计落库那条尾段也走虚拟时间：真实 IO 跳转可能让 runTest 先把时钟推到超时点，
-        // 重试请求就再也发不出去（CI 上偶发 expected:<2> but was:<1> 就是这个）。
-        compactor.tailDispatcher = StandardTestDispatcher(testScheduler)
         prepare()
         var calls = 0
         coEvery { provider.complete(any(), any(), any(), any()) } coAnswers {

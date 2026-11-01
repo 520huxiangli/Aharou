@@ -19,8 +19,8 @@ import kotlinx.coroutines.withContext
  *
  * 阻塞只在取消路径上发生一次，代价是调用线程停一下；正常路径行为不变。
  *
- * [dispatcher] 可换：测试里用虚拟时间调度器，否则 `Dispatchers.IO` 会让虚拟时间失控
- * （定时任务的截止时间会先于下一次调用到期，调用计数就少了）。
+ * [dispatcher] 默认 IO；调用方有自己的后台调度器时可以传入，测试里传虚拟时间调度器，
+ * 否则这次真实线程跳转会让 runTest 把虚拟时钟推过截止点，后续重试还没来得及发起就被取消。
  */
 suspend fun runCancellationSafeTail(
     dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -32,6 +32,5 @@ suspend fun runCancellationSafeTail(
         // 取消路径固定用真实 IO：runBlocking 等的是阻塞线程，配上虚拟时间调度器会两边互等
         // （调度器只能由测试线程推进，而测试线程正卡在这里）——曾经把整个测试卡死过一次。
         runBlocking(NonCancellable + Dispatchers.IO) { block() }
-        runBlocking(NonCancellable + dispatcher) { block() }
     }
 }
