@@ -74,12 +74,6 @@ class ContextCompactor @Inject constructor(
      */
     internal var backgroundDispatcher: CoroutineDispatcher = Dispatchers.Default
 
-    /**
-     * 摘要调用统计落库那条尾段跑的调度器。默认 IO；测试里换成虚拟时间调度器，
-     * 否则这步真实线程跳转会让 runTest 把虚拟时钟直接推到超时点，重试还没发起就被取消。
-     */
-    internal var tailDispatcher: CoroutineDispatcher = Dispatchers.IO
-
     /** 分级裁剪的规划与执行（级别定义、最小够用前缀、落盘/骨架化都在 [ContextTrimPlanner]）。 */
     private val trimPlanner = ContextTrimPlanner(fileAccess, pathHomeResolver)
     internal companion object {
@@ -730,7 +724,7 @@ class ContextCompactor @Inject constructor(
             error = e.message ?: e.javaClass.simpleName
             throw e
         } finally {
-            com.aharou.core.util.runCancellationSafeTail(tailDispatcher) {
+            com.aharou.core.util.runCancellationSafeTail(backgroundDispatcher) {
                 try {
                     llmCallRecordDao.insert(LlmCallRecordEntity(
                         sessionId = sessionId,
