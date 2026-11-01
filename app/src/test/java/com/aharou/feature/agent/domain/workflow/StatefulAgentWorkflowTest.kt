@@ -11,6 +11,7 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
 import com.aharou.feature.agent.domain.provider.AIStreamChunk
@@ -110,6 +111,8 @@ class StatefulAgentWorkflowTest {
         eventInjector = mockk(),
         memoryCurator = mockk(),
         fileAccess = mockk(),
+        // 回执是旁路记录，这些用例不断言它，relaxed mock 兜住全部写入路径。
+        receiptRepository = mockk(relaxed = true),
         ocrEngine = mockk(),
         // vault 在结果脱敏与占位符把关路径上会被调到。用 relaxed mock 兜住全部方法（未打桩的
         // hasPlaceholders 默认即 false），只把 redact 显式打桩成原样返回 —— 等价于空库的真实行为。
