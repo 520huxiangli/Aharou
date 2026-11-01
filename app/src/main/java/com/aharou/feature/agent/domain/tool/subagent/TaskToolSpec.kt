@@ -15,7 +15,7 @@ internal object TaskToolSpec {
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）/ teams（列出团队预设 teams/*.md；给 team 参数看单个预设的阶段与成员）/ team_run（按团队预设跑完整流程：team + goal，阶段内并行、阶段间串行）",
+            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）/ teams（列出团队预设 teams/*.md；给 team 参数看单个预设的阶段与成员；给 workflow 列工作流）/ team_run（按团队预设跑完整流程：team + goal，阶段内并行、阶段间串行；给 workflow 则走多团队逐层流转与驳回）",
             required = false
         ),
         "id" to ToolParameter(
@@ -114,6 +114,12 @@ internal object TaskToolSpec {
             name = "goal",
             type = ParameterType.STRING,
             description = "本次团队要达成的目标（team_run 必填）：会写进每个成员的任务指令，成员按阶段分工把它做完",
+            required = false
+        ),
+        "workflow" to ToolParameter(
+            name = "workflow",
+            type = ParameterType.STRING,
+            description = "多团队工作流名（workflows/*.md）：给了就走逐层流转，每层协调者自己决定处理完或转交，下层专家可把上游某份交付驳回给具体专家；省略则按单个团队跑。传 `*` 列工作流清单，传名字看详情",
             required = false
         ),
         "message" to ToolParameter(

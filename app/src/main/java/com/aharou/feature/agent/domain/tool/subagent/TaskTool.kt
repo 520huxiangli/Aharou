@@ -69,6 +69,7 @@ class TaskTool @Inject constructor(
     private val eventBus: SubAgentEventBus,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val teamTasks: TeamTasks,
+    private val workflowRunner: WorkflowRunner,
     private val aiProviderRepository: AIProviderRepository,
     private val subAgentWriteLease: SubAgentWriteLease
 ) : AbstractContextualTool() {
@@ -99,6 +100,9 @@ class TaskTool @Inject constructor(
         const val TEAM_ROSTER_LIMIT = 20
         /** 发给队友的单条消息长度上限（与 messageParent 一致）。 */
         const val SIBLING_MESSAGE_MAX = 4000
+
+        /** 回传给调用方的各任务产出上限（保留尾部：判定与结论都在结尾）。 */
+        const val PIPELINE_OUTPUT_TAIL_MAX = 6000
     }
 
     override val name = "task"
@@ -135,7 +139,7 @@ class TaskTool @Inject constructor(
             "team" -> if (eventBus.communicationEnabled()) listTeam(context) else SubAgentCommGate.disabledError()
             "tell" -> if (eventBus.communicationEnabled()) tellSibling(args, context) else SubAgentCommGate.disabledError()
             "grant" -> grantWrite(args, context)
-            "teams" -> teamTasks.list(args)
+            "teams" -> workflowTarget(args)?.let { workflowRunner.list(it) } ?: teamTasks.list(args)
             "team_run" -> runTeam(args, context)
             else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant / teams / team_run", "INVALID_ARGS")
         }
@@ -303,6 +307,16 @@ class TaskTool @Inject constructor(
                 put("state", "done")
                 put("layers", layers.size)
                 put("report", summary)
+                // 工作流要拿某层协调者的判定，必须能按任务 id 取回产出；只回 report 文本的话，
+                // 上层只能去解析正则或重新 read 一遍，两条路都脆。
+                put(
+                    "outputs",
+                    buildJsonObject {
+                        outputs.forEach { (taskId, text) ->
+                            put(taskId, text.takeLast(PIPELINE_OUTPUT_TAIL_MAX))
+                        }
+                    }
+                )
                 put(
                     "message",
                     "流水线已跑完（共 ${tasks.size} 个任务、${layers.size} 层）：\n$summary\n" +
@@ -917,11 +931,21 @@ class TaskTool @Inject constructor(
     }
 
     /**
-     * 按团队预设执行：编排的校验与 pipeline 展开在 [TeamTasks] / [TeamRunner] 里，
-     * 这里只把展开结果交给 [runPipeline]，复用它现成的分层调度、上游产出接力与写冲突拦截。
+     * 按预设执行：给了 `workflow` 就走多团队工作流（逐层判定 + 专家级驳回），否则按单个团队跑。
+     * 两条路共用 [runPipeline]，分层调度与写冲突拦截不重复实现。
      */
     private suspend fun runTeam(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
-        teamTasks.run(args) { pipeline ->
-            runPipeline(buildJsonObject { put("pipeline", pipeline) }, context)
+        if (workflowTarget(args) != null) {
+            workflowRunner.run(args) { pipeline ->
+                runPipeline(buildJsonObject { put("pipeline", pipeline) }, context)
+            }
+        } else {
+            teamTasks.run(args) { pipeline ->
+                runPipeline(buildJsonObject { put("pipeline", pipeline) }, context)
+            }
         }
+
+    /** `workflow` 参数：空或缺失返回 null（按单团队跑），`*` 用于列工作流清单。 */
+    private fun workflowTarget(args: Map<String, JsonElement>): String? =
+        (args["workflow"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
 }

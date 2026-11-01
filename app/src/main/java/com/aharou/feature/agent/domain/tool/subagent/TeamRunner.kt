@@ -7,6 +7,9 @@ import com.aharou.feature.agent.domain.subagent.AgentTeamEntry
 import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
 import com.aharou.feature.agent.domain.subagent.TeamStage
 import com.aharou.feature.agent.domain.subagent.TeamTask
+import com.aharou.feature.agent.domain.teamworkflow.TeamWorkflow
+import com.aharou.feature.agent.domain.teamworkflow.WorkflowOrchestrator
+import com.aharou.feature.agent.domain.teamworkflow.WorkflowTeamRef
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -39,22 +42,7 @@ object TeamRunner {
      * 成员不该逼用户去拆阶段。
      */
     fun build(team: AgentTeam, goal: String, enabled: List<AgentDefinition>, maxRunning: Int): Plan {
-        val badRoles = mutableListOf<String>()
-        team.stages.forEach { stage ->
-            stage.tasks.forEach { task ->
-                val agentName = task.agent
-                if (agentName != null) {
-                    if (enabled.none { it.name.equals(agentName, ignoreCase = true) }) {
-                        badRoles += "${stage.title} → $agentName"
-                    }
-                } else if (
-                    SubAgentProfileMatcher.match(enabled, task.department, task.agentQuery)
-                    is SubAgentProfileMatcher.MatchOutcome.Unmatched
-                ) {
-                    badRoles += "${stage.title} → ${task.memberLabel()}"
-                }
-            }
-        }
+        val badRoles = unknownRoles(team, enabled)
         if (badRoles.isNotEmpty()) {
             return Plan.Rejected(
                 "AGENT_NOT_FOUND",
@@ -95,6 +83,177 @@ object TeamRunner {
         return Plan.Ready(pipeline, layers, team.taskCount)
     }
 
+    /**
+     * 把工作流的第 [layerIndex] 层（1 起）展开成一个可独立执行的 pipeline：按团队预设的阶段跑完，
+     * 最后追加一个协调者任务输出判定。
+     *
+     * 层与层之间不复用 dependsOn：每层是一次独立的 pipeline 调用，上游事实靠 [upstreamBrief] 文本传递。
+     * 这样驳回时只需重跑某一层，不必把整条链拼成一个大图。
+     */
+    fun buildWorkflowLayer(
+        workflow: TeamWorkflow,
+        layerIndex: Int,
+        ref: WorkflowTeamRef,
+        team: AgentTeam,
+        goal: String,
+        upstreamBrief: String,
+        enabled: List<AgentDefinition>,
+        maxRunning: Int
+    ): Plan {
+        val badRoles = unknownRoles(team, enabled).toMutableList()
+        val lead = ref.lead?.trim()?.takeIf { it.isNotEmpty() }
+        if (lead != null && enabled.none { it.name.equals(lead, ignoreCase = true) }) {
+            badRoles += "协调者 → $lead"
+        }
+        if (badRoles.isNotEmpty()) {
+            return Plan.Rejected(
+                "AGENT_NOT_FOUND",
+                "工作流「${workflow.name}」第 $layerIndex 层团队「${team.name}」引用了不可用的角色：" +
+                    "${badRoles.joinToString("；")}。可用部门：${SubAgentProfileMatcher.departmentHint(enabled)}。"
+            )
+        }
+
+        // 协调者三级回退：工作流里点名的 lead → 该团队首个任务点名的角色 → 首个任务的部门/关键词选角。
+        val firstTask = team.stages.firstOrNull()?.tasks?.firstOrNull()
+        val judgeAgent = lead ?: firstTask?.agent
+        val judgeDepartment = if (judgeAgent == null) firstTask?.department else null
+        val judgeQuery = if (judgeAgent == null) firstTask?.agentQuery else null
+
+        val batchSize = maxRunning.coerceAtLeast(1)
+        var layers = 0
+        // 本层全部成员任务的 id：协调者要看到整层的产出，不能只看最后一批。
+        val members = mutableListOf<String>()
+        val pipeline = buildJsonArray {
+            var upstream: List<String> = emptyList()
+            team.stages.forEachIndexed { stageIndex, stage ->
+                stage.tasks.chunked(batchSize).forEachIndexed { batchIndex, batch ->
+                    val ids = batch.indices.map { "w$layerIndex-s${stageIndex + 1}-b${batchIndex + 1}-t${it + 1}" }
+                    batch.forEachIndexed { taskIndex, task ->
+                        addJsonObject {
+                            put("id", ids[taskIndex])
+                            put("description", "第$layerIndex 层·${stage.title}·${task.memberLabel()}".take(DESCRIPTION_MAX))
+                            put("prompt", taskPrompt(team, stage, task, goal, upstreamBrief))
+                            task.agent?.let { put("agent", it) }
+                            task.department?.let { put("department", it) }
+                            task.agentQuery?.let { put("agentQuery", it) }
+                            if (task.writePaths.isNotEmpty()) {
+                                put("writePaths", buildJsonArray { task.writePaths.forEach { add(JsonPrimitive(it)) } })
+                            }
+                            if (upstream.isNotEmpty()) {
+                                put("dependsOn", buildJsonArray { upstream.forEach { add(JsonPrimitive(it)) } })
+                            }
+                        }
+                    }
+                    upstream = ids
+                    members += ids
+                    layers++
+                }
+            }
+            addJsonObject {
+                put("id", judgeId(layerIndex))
+                put("description", "第$layerIndex 层判定·${team.name}".take(DESCRIPTION_MAX))
+                put(
+                    "prompt",
+                    buildString {
+                        if (upstreamBrief.isNotBlank()) append("## 上游交付摘要\n").append(upstreamBrief).append("\n\n---\n\n")
+                        append(
+                            WorkflowOrchestrator.judgePrompt(
+                                workflow = workflow,
+                                layerIndex = layerIndex,
+                                teamName = team.name,
+                                goal = goal,
+                                hasNextLayer = layerIndex < workflow.layerCount
+                            )
+                        )
+                    }
+                )
+                judgeAgent?.let { put("agent", it) }
+                judgeDepartment?.let { put("department", it) }
+                judgeQuery?.let { put("agentQuery", it) }
+                if (members.isNotEmpty()) {
+                    put("dependsOn", buildJsonArray { members.forEach { add(JsonPrimitive(it)) } })
+                }
+            }
+        }
+        return Plan.Ready(pipeline, layers + 1, team.taskCount + 1)
+    }
+
+    /**
+     * 驳回后的返工：只给被点名的那位上游专家派一个任务，附带下游理由与轮次。
+     * writePaths 不跟着传：返工范围由下游在理由里说清，硬塞路径反而会把无关文件也授出去。
+     */
+    fun buildReworkTask(
+        workflow: TeamWorkflow,
+        targetLayer: Int,
+        targetTeam: String,
+        targetExpert: String,
+        reject: WorkflowOrchestrator.Verdict.Reject,
+        goal: String,
+        round: Int,
+        upstreamBrief: String,
+        enabled: List<AgentDefinition>
+    ): Plan {
+        if (enabled.none { it.name.equals(targetExpert, ignoreCase = true) }) {
+            return Plan.Rejected(
+                "AGENT_NOT_FOUND",
+                "驳回目标「$targetTeam·$targetExpert」不是可用角色：驳回必须指名到具体专家，" +
+                    "可先 task(action=\"roles\") 查名字。可用部门：${SubAgentProfileMatcher.departmentHint(enabled)}"
+            )
+        }
+        val pipeline = buildJsonArray {
+            addJsonObject {
+                put("id", reworkId(targetLayer))
+                put("description", "第$targetLayer 层返工·$targetExpert".take(DESCRIPTION_MAX))
+                put(
+                    "prompt",
+                    buildString {
+                        if (upstreamBrief.isNotBlank()) append("## 当前已有交付\n").append(upstreamBrief).append("\n\n---\n\n")
+                        append(
+                            WorkflowOrchestrator.reworkPrompt(
+                                workflow = workflow,
+                                targetLayer = targetLayer,
+                                targetTeam = targetTeam,
+                                targetExpert = targetExpert,
+                                reject = reject,
+                                goal = goal,
+                                round = round
+                            )
+                        )
+                    }
+                )
+                put("agent", targetExpert)
+            }
+        }
+        return Plan.Ready(pipeline, 1, 1)
+    }
+
+    /** 每层协调者任务的 id；执行层按它取判定文本。 */
+    fun judgeId(layerIndex: Int): String = "w$layerIndex-judge"
+
+    /** 返工任务的 id。 */
+    fun reworkId(layerIndex: Int): String = "w$layerIndex-rework"
+
+    /** 角色引用一次性查完：写错角色名会让前面几个子代理白烧 token。 */
+    private fun unknownRoles(team: AgentTeam, enabled: List<AgentDefinition>): List<String> {
+        val badRoles = mutableListOf<String>()
+        team.stages.forEach { stage ->
+            stage.tasks.forEach { task ->
+                val agentName = task.agent
+                if (agentName != null) {
+                    if (enabled.none { it.name.equals(agentName, ignoreCase = true) }) {
+                        badRoles += "${stage.title} → $agentName"
+                    }
+                } else if (
+                    SubAgentProfileMatcher.match(enabled, task.department, task.agentQuery)
+                    is SubAgentProfileMatcher.MatchOutcome.Unmatched
+                ) {
+                    badRoles += "${stage.title} → ${task.memberLabel()}"
+                }
+            }
+        }
+        return badRoles
+    }
+
     /** 全部团队的一行式清单。 */
     fun renderList(entries: List<AgentTeamEntry>): String = buildString {
         append("团队预设（共 ").append(entries.size).append(" 个）：\n")
@@ -130,8 +289,9 @@ object TeamRunner {
         if (scope == AgentDefinitionScope.GLOBAL) "全局" else "项目"
 
     /** 单个团队成员的任务指令：团队公约 + 本次目标 + 本阶段任务。 */
-    private fun taskPrompt(team: AgentTeam, stage: TeamStage, task: TeamTask, goal: String): String =
+    private fun taskPrompt(team: AgentTeam, stage: TeamStage, task: TeamTask, goal: String, upstreamBrief: String = ""): String =
         buildString {
+            if (upstreamBrief.isNotBlank()) append("## 上游交付摘要\n").append(upstreamBrief).append("\n\n---\n\n")
             append("你是团队「").append(team.name).append("」在阶段「").append(stage.title).append("」的成员。\n")
             append("本次团队目标：").append(goal).append("\n")
             if (team.charter.isNotBlank()) append("\n团队公约：\n").append(team.charter).append("\n")
