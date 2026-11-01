@@ -25,9 +25,9 @@ import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
-import com.aharou.feature.agent.data.local.dao.TodoItemDao
 import com.aharou.feature.agent.domain.model.TodoItem
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
+import com.aharou.feature.agent.data.local.entity.ToolCallReceiptEntity
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.domain.container.ContainerInitState
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
@@ -210,7 +210,7 @@ class AIAgentViewModel @Inject constructor(
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
     private val turnEndBridge: AgentTurnEndBridge,
-    private val todoItemDao: TodoItemDao,
+    private val sessionPanels: SessionPanelController,
     private val scheduledTaskDao: ScheduledTaskDao,
     val fileAccess: FileAccessProvider,
     private val fileChangeHub: FileChangeHub,
@@ -292,13 +292,12 @@ class AIAgentViewModel @Inject constructor(
     private val _sessionSwitchEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val sessionSwitchEvents: SharedFlow<Unit> = _sessionSwitchEvents.asSharedFlow()
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val currentSessionTodoItems: StateFlow<List<TodoItem>> = _currentSessionId
-        .flatMapLatest { id ->
-            if (id.isNullOrBlank()) flowOf(emptyList())
-            else todoItemDao.getBySession(id).map { entities -> entities.map { it.toDomain() } }
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val currentSessionTodoItems: StateFlow<List<TodoItem>> =
+        sessionPanels.todoItems(_currentSessionId, viewModelScope)
+
+    /** 会话活动面板：当前会话的工具执行回执（含被拒与编译）。 */
+    val currentSessionReceipts: StateFlow<List<ToolCallReceiptEntity>> =
+        sessionPanels.receipts(_currentSessionId, viewModelScope)
 
     private val _agentStates = MutableStateFlow<Map<String, AgentUIState>>(emptyMap())
     val agentStates: StateFlow<Map<String, AgentUIState>> = _agentStates.asStateFlow()

@@ -545,6 +545,13 @@
     <string name="chat_open_git">打开 Git</string>
     <string name="chat_open_terminal">打开终端</string>
     <string name="chat_open_browser">打开浏览器</string>
+    <string name="chat_open_activity">活动记录</string>
+    <string name="activity_sheet_title">活动记录</string>
+    <string name="activity_sheet_empty">还没有记录。工具执行、被你拒掉的调用和每次编译都会出现在这里。</string>
+    <string name="activity_sheet_args">参数</string>
+    <string name="activity_sheet_denied">已拒绝</string>
+    <string name="activity_sheet_build">编译</string>
+    <string name="activity_sheet_build_auth">编译授权：%1$s</string>
     <string name="chat_open_sandbox">打开沙箱文件</string>
     <string name="chat_open_shared">打开共享区</string>
     <string name="chat_tools_expand">展开 Git、终端与浏览器</string>

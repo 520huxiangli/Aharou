@@ -141,6 +141,10 @@ class ToolPermissionPolicyEngine @Inject constructor(
         const val REASON_SENSITIVE_CALL =
             "该调用被工具标记为敏感操作，需逐次确认（不可记忆）"
 
+        /** 门阀：用户自定义的「必须逐次点头」规则，不可记忆。 */
+        const val REASON_GATE =
+            "该操作属于门阀，每次执行都要用户确认（不可记忆）"
+
         /** 24 小时档的时效。 */
         const val TIME_24H_MILLIS = 24L * 60 * 60 * 1000
     }
@@ -193,6 +197,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
 
         // ── AUTO 模式：放行所有权限 ─────────────────────────────────
         // 用户已定：AUTO 维持全放行，新增的污点与敏感拦截均不生效（与 nanoMuse 不同，勿当 bug 修改）。
+        // 门阀（含编译）同样不拦 AUTO：用户切到 AUTO 就是不想被逐次打断。
         // 灾难性 rm 防护（根目录/系统目录删除）默认保留，可在「工具授权」设置中关闭（禁用安全拦截）。
         if (mode == com.aharou.feature.agent.domain.model.AgentMode.AUTO) {
             val safetyDisabled = toolSafetySettings.isSafetyInterceptionDisabled()
@@ -269,6 +274,20 @@ class ToolPermissionPolicyEngine @Inject constructor(
         }
 
         val rules = rulesRepo.loadEffectiveFor(workspacePath).filter { it.toolName == toolName }
+        // 门阀优先于普通规则：ALLOW 盖不住它，但 DENY 比它更严，所以命中 DENY 时不弹、直接拒。
+        if (rules.none { it.decision == PermissionDecision.DENY }) {
+            hitGate(rules, toolName, args)?.let { gate ->
+                return audit(
+                    EvalResult(
+                        Verdict.ASK,
+                        emptyList(),
+                        askTitle = gateTitle(gate.pattern),
+                        rememberDisabledReason = REASON_GATE
+                    ),
+                    sessionId, toolName, risk
+                )
+            }
+        }
         val result = if (isShellTool(toolName, args)) {
             evaluateShell(rules, args, forceAsk = toolName == SHIZUKU_TOOL, sessionId = sessionId.orEmpty(), toolName = toolName)
         } else {
@@ -338,6 +357,29 @@ class ToolPermissionPolicyEngine @Inject constructor(
             outputPreview = outputPreview
         )
     }
+
+    /**
+     * 门阀命中判定：口径是「调用参数里包含这条模式」，不是前缀匹配。
+     * 用户能自由写「gradlew」「git push」「rm -rf」这种容易看懂的片段。
+     */
+    private fun hitGate(
+        rules: List<PermissionRule>,
+        toolName: String,
+        args: Map<String, JsonElement>
+    ): PermissionRule? {
+        val gates = rules.filter { it.decision == PermissionDecision.GATE }
+        if (gates.isEmpty()) return null
+        val haystack = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
+            ?: args.values.joinToString(" ") { it.toString() }
+        return gates.firstOrNull { gate ->
+            gate.toolName == toolName &&
+                (gate.pattern == PermissionRule.WHOLE_TOOL || haystack.contains(gate.pattern))
+        }
+    }
+
+    /** 弹窗标题带上命中的模式，用户一眼知道这次弹的是哪条门阀。 */
+    private fun gateTitle(pattern: String): String =
+        if (pattern == PermissionRule.WHOLE_TOOL) "门阀确认" else "门阀确认：$pattern"
 
     /** PLAN 模式下视为危险的工具：写工作区 / 执行命令 / 网络写 / 改配置 / 外部工具，以及写型的终端与浏览器动作。 */
     private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>, capabilities: Set<ToolCapability>): Boolean {

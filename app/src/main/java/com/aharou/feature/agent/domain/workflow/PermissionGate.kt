@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.permission.ApprovalScope
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
@@ -54,6 +55,8 @@ internal class PermissionGate(
     private val policyEngine: ToolPermissionPolicyEngine,
     private val permissionManager: ToolPermissionManager,
     private val fileAccess: FileAccessProvider,
+    /** 审批侧的拒绝回执落点：被拒的调用不会执行，只能在审批环节补记。 */
+    private val receiptRepository: ToolCallReceiptRepository,
     /**
      * 协助模式判定：为 true 时把所有 ASK 直接降为放行。
      *
@@ -152,7 +155,7 @@ internal class PermissionGate(
     }
 
     /** 记录用户对一次 ASK 的最终裁决（批准与否、授权档位、耗时）。超时以「超时未答复」为原因。 */
-    private fun auditResolution(
+    private suspend fun auditResolution(
         ask: PermissionVerdict.Ask,
         choice: PermissionChoice,
         scope: ApprovalScope,
@@ -182,6 +185,15 @@ internal class PermissionGate(
             durationMs = durationMs,
             outputPreview = null
         )
+        // 被拒的调用不会走到工具执行，没有人给它写执行回执，活动面板上就会凭空少一步；
+        // 在审批这一侧补记，用户才能事后看到「这一步是我拒的」。审批超时同样按拒绝处理。
+        if (!approved) {
+            receiptRepository.recordDenied(
+                sessionId = ask.request.sessionId,
+                toolName = ask.request.toolName,
+                argsPreview = ask.request.argsPreview
+            )
+        }
     }
 
     /**

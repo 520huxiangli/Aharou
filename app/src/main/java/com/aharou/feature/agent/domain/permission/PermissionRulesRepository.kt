@@ -42,10 +42,14 @@ import javax.inject.Singleton
  * {
  *   "permissions": {
  *     "allow": ["Bash(git pull)", "writeFile"],
- *     "deny": ["Bash(rm -rf /)"]
+ *     "deny": ["Bash(rm -rf /)"],
+ *     "gate": ["Bash(gradlew)"]
  *   }
  * }
  * ```
+ *
+ * `gate` 是门阀：命中即逐次弹窗确认、不可记忆，「始终允许」也盖不住它。
+ * 判定口径是「参数里包含该模式」（对 shell 命令即命令文本包含），不是前缀匹配。
  *
  * 安全要点：全局规则存在 app 私有目录，AI 无法篡改；项目级规则存在工作区内，
  * 可被 AI 修改，但作为项目级声明式配置这是有意为之（可 git 追踪/回滚）。
@@ -65,6 +69,14 @@ class PermissionRulesRepository @Inject constructor(
         const val PERMISSIONS_FILE = "permissions.json"
         /** 项目级配置目录名，容器内即 `~/workspace/.aicode`。 */
         const val AHAROU_DIR_NAME = ".aharou"
+
+        /**
+         * 尚未写过 permissions.json 时生效的默认门阀：编译必须逐次确认。
+         * 一旦用户建了该文件，规则就完全以文件为准（包括把门阀删光）。
+         */
+        val DEFAULT_RULES = listOf(
+            PermissionRule("Bash", "gradlew", PermissionDecision.GATE)
+        )
         val JSON = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
     }
 
@@ -150,7 +162,7 @@ class PermissionRulesRepository @Inject constructor(
 
     private suspend fun loadFromFile(file: File): List<PermissionRule> =
         withContext(Dispatchers.IO) {
-            if (!file.isFile) return@withContext emptyList()
+            if (!file.isFile) return@withContext DEFAULT_RULES
             runCatching {
                 JSON.decodeFromString<PermissionFile>(file.readText()).toRuleList()
                     // 过滤已过期规则（如 24 小时档）：过期即视为不存在，评估与 UI 都不再看到它。

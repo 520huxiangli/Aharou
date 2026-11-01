@@ -10,6 +10,8 @@ import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.TodoItemDao
+import com.aharou.feature.agent.data.local.dao.ToolCallReceiptDao
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.settings.data.local.dao.AIProviderDao
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import com.aharou.feature.agent.data.local.database.AgentDatabase
@@ -182,6 +184,12 @@ object AgentModule {
     @Singleton
     fun provideTodoItemDao(database: AgentDatabase): TodoItemDao {
         return database.todoItemDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideToolCallReceiptDao(database: AgentDatabase): ToolCallReceiptDao {
+        return database.toolCallReceiptDao()
     }
 
     @Provides
@@ -512,6 +520,7 @@ object AgentModule {
         memoryCurator: MemoryCurator,
         memoryCompactor: Lazy<MemoryCompactor>,
         fileAccess: FileAccessProvider,
+        receiptRepository: ToolCallReceiptRepository,
         ocrEngine: TesseractOcrEngine,
         vault: VaultRepository
     ): AgentWorkflow {
@@ -544,6 +553,7 @@ object AgentModule {
             eventInjector,
             memoryCurator,
             fileAccess,
+            receiptRepository,
             ocrEngine,
             vault,
             memoryCompactor

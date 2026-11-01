@@ -546,6 +546,13 @@
     <string name="chat_open_git">Open Git</string>
     <string name="chat_open_terminal">Open terminal</string>
     <string name="chat_open_browser">Open browser</string>
+    <string name="chat_open_activity">Activity</string>
+    <string name="activity_sheet_title">Activity</string>
+    <string name="activity_sheet_empty">Nothing yet. Tool runs, calls you denied, and every build will show up here.</string>
+    <string name="activity_sheet_args">Arguments</string>
+    <string name="activity_sheet_denied">Denied</string>
+    <string name="activity_sheet_build">Build</string>
+    <string name="activity_sheet_build_auth">Build authorized by: %1$s</string>
     <string name="chat_open_sandbox">Open sandbox files</string>
     <string name="chat_open_shared">Open shared folder</string>
     <string name="chat_tools_expand">Show Git, terminal and browser</string>
