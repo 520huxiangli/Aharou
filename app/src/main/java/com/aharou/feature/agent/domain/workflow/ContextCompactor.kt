@@ -724,7 +724,7 @@ class ContextCompactor @Inject constructor(
             error = e.message ?: e.javaClass.simpleName
             throw e
         } finally {
-            com.aharou.core.util.runCancellationSafeTail(backgroundDispatcher) {
+            com.aharou.core.util.runCancellationSafeTail {
                 try {
                     llmCallRecordDao.insert(LlmCallRecordEntity(
                         sessionId = sessionId,
