@@ -332,6 +332,7 @@ fun AIChatPanel(
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
     var crossCheckMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
+    var showActivity by remember { mutableStateOf(false) }
     val quoteReplyEnabled = rememberQuoteReplyEnabled()
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
     var queuedEditing by remember { mutableStateOf<QueuedRequest?>(null) }
@@ -1211,6 +1212,7 @@ fun AIChatPanel(
                 onNavigateToBrowser = onNavigateToBrowser,
                 onNavigateToSandbox = onNavigateToSandbox,
                 onNavigateToShared = onNavigateToShared,
+                onOpenActivity = { showActivity = true },
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) },
                 connectionState = connectionState?.takeIf { isRemote },
@@ -1801,6 +1803,10 @@ fun AIChatPanel(
             }
 
             crossCheckMessage?.let { message -> CrossCheckSheet(message, currentSessionId) { crossCheckMessage = null } }
+            if (showActivity) {
+                val receipts by viewModel.currentSessionReceipts.collectAsStateWithLifecycle()
+                ActivityTimelineSheet(receipts = receipts, onDismiss = { showActivity = false })
+            }
             editingMessage?.let { message ->
                 EditMessageDialog(
                     initialText = message.content,

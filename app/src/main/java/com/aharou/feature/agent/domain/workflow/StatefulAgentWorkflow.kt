@@ -33,6 +33,7 @@ import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
@@ -138,6 +139,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private val eventInjector: AgentEventInjector,
     private val memoryCurator: MemoryCurator,
     private val fileAccess: FileAccessProvider,
+    private val receiptRepository: ToolCallReceiptRepository,
     private val ocrEngine: TesseractOcrEngine,
     private val vault: VaultRepository,
     private val memoryCompactor: Lazy<MemoryCompactor> // Lazy 断环：MemoryCompactor 自己依赖 AgentWorkflow
@@ -905,7 +907,9 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue: ArrayDeque<AgentAction>,
         emit: suspend (AgentEvent) -> Unit
     ) {
-        val gate = PermissionGate(policyEngine, permissionManager, fileAccess) { remoteDeviceSettings.current().enabled }
+        val gate = PermissionGate(policyEngine, permissionManager, fileAccess, receiptRepository) {
+            remoteDeviceSettings.current().enabled
+        }
         val approved = mutableListOf<ToolCall>()
         val rejectedResults = mutableMapOf<String, ToolBatchResult>()
         val asks = mutableListOf<Pair<ToolCall, PermissionVerdict.Ask>>()

@@ -5,6 +5,7 @@ import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
@@ -31,6 +32,7 @@ import javax.inject.Singleton
 @Singleton
 class ToolCallGuard @Inject constructor(
     private val memoryRepository: MemoryRepository,
+    private val receiptRepository: ToolCallReceiptRepository,
 ) {
     companion object {
         /** 同名同参连续失败到这个次数就不再执行，先让模型改策略。 */
@@ -119,6 +121,27 @@ class ToolCallGuard @Inject constructor(
 
     private fun historyOf(context: AgentContext?): ArrayDeque<Attempt> =
         histories.getOrPut(context?.sessionId ?: "no-session") { ArrayDeque() }
+
+    /**
+     * 把这次执行落成一条回执。回执是旁路记录：写不进去只影响活动面板，不能连累工具结果，
+     * 故仓储内部已吞掉写入异常，这里也不捕获。
+     */
+    suspend fun recordReceipt(
+        toolName: String,
+        args: Map<String, JsonElement>,
+        context: AgentContext?,
+        result: ToolResult,
+        durationMs: Long,
+    ) {
+        receiptRepository.recordExecution(
+            sessionId = context?.sessionId,
+            toolName = toolName,
+            args = args,
+            result = result,
+            durationMs = durationMs,
+            projectRoot = context?.projectRoot,
+        )
+    }
 
     private fun persistAndBuild(toolName: String, reason: String, context: AgentContext?): String {
         runCatching { persistLesson(toolName, context) }
@@ -220,8 +243,10 @@ class ToolCallGuard @Inject constructor(
             guard.beforeInvoke(name, args, context)?.let { blocked ->
                 return ToolResult.Error(blocked, GUARDED_CODE)
             }
+            val startedAt = System.currentTimeMillis()
             val result = run()
             guard.record(name, args, context, result is ToolResult.Error, result.toString())
+            guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
             return result
         }
     }
@@ -270,12 +295,14 @@ class ToolCallGuard @Inject constructor(
                 return@flow
             }
             var finalResult: ToolResult? = null
+            val startedAt = System.currentTimeMillis()
             (delegate as StreamingAgentTool).executeStream(args, context).collect { event ->
                 if (event is ToolStreamEvent.Completed) finalResult = event.result
                 emit(event)
             }
             finalResult?.let { result ->
                 guard.record(name, args, context, result is ToolResult.Error, result.toString())
+                guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
             }
         }
 
@@ -287,8 +314,10 @@ class ToolCallGuard @Inject constructor(
             guard.beforeInvoke(name, args, context)?.let { blocked ->
                 return ToolResult.Error(blocked, GUARDED_CODE)
             }
+            val startedAt = System.currentTimeMillis()
             val result = run()
             guard.record(name, args, context, result is ToolResult.Error, result.toString())
+            guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
             return result
         }
     }

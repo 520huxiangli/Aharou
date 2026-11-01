@@ -12,7 +12,7 @@ enum class PermissionScope { PROJECT, GLOBAL }
  * 规则的判定方向。弹窗的「始终允许」只会产生 [ALLOW]；[DENY] 仅由权限配置文件（deny 列表）提供，
  * 评估时 DENY 跨 scope 优先于 ALLOW（安全优先：全局禁可挡项目允许）。
  */
-enum class PermissionDecision { ALLOW, DENY }
+enum class PermissionDecision { ALLOW, DENY, GATE }
 
 /**
  * 授权弹窗的用户选择。
@@ -118,7 +118,9 @@ data class PermissionFile(
     @Serializable
     data class PermissionSection(
         val allow: List<String> = emptyList(),
-        val deny: List<String> = emptyList()
+        val deny: List<String> = emptyList(),
+        /** 门阀：命中即逐次确认、不可记忆，且 ALLOW 规则盖不住它。 */
+        val gate: List<String> = emptyList()
     )
 
     companion object {
@@ -131,15 +133,19 @@ data class PermissionFile(
 /** 从 [PermissionFile] 解析为规则列表。 */
 fun PermissionFile.toRuleList(): List<PermissionRule> =
     permissions.allow.map { PermissionRule.fromCompact(it, PermissionDecision.ALLOW) } +
-            permissions.deny.map { PermissionRule.fromCompact(it, PermissionDecision.DENY) }
+            permissions.deny.map { PermissionRule.fromCompact(it, PermissionDecision.DENY) } +
+            permissions.gate.map { PermissionRule.fromCompact(it, PermissionDecision.GATE) }
 
 /** 从规则列表构建 [PermissionFile]。 */
 fun List<PermissionRule>.toPermissionFile(): PermissionFile {
-    val (allow, deny) = partition { it.decision == PermissionDecision.ALLOW }
+    val allow = filter { it.decision == PermissionDecision.ALLOW }
+    val deny = filter { it.decision == PermissionDecision.DENY }
+    val gate = filter { it.decision == PermissionDecision.GATE }
     return PermissionFile(
         permissions = PermissionFile.PermissionSection(
             allow = allow.map { it.toCompact() },
-            deny = deny.map { it.toCompact() }
+            deny = deny.map { it.toCompact() },
+            gate = gate.map { it.toCompact() }
         )
     )
 }

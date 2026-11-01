@@ -9,6 +9,7 @@ import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.dao.TodoItemDao
+import com.aharou.feature.agent.data.local.dao.ToolCallReceiptDao
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.data.local.entity.AgentTaskEntity
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
@@ -17,6 +18,7 @@ import com.aharou.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.data.local.entity.TodoItemEntity
+import com.aharou.feature.agent.data.local.entity.ToolCallReceiptEntity
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionDao
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionEntity
 import com.aharou.feature.backup.data.local.dao.BackupTargetDao
@@ -28,7 +30,7 @@ import com.aharou.feature.workspace.data.local.entity.RemoteConnectionEntity
 import com.aharou.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
-    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class, BackupTargetEntity::class, PendingUserQuestionEntity::class],
+    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class, BackupTargetEntity::class, PendingUserQuestionEntity::class, ToolCallReceiptEntity::class],
     version = AgentDatabase.SCHEMA_VERSION,
     exportSchema = true
 )
@@ -44,9 +46,10 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun llmCallRecordDao(): LlmCallRecordDao
     abstract fun backupTargetDao(): BackupTargetDao
     abstract fun pendingUserQuestionDao(): PendingUserQuestionDao
+    abstract fun toolCallReceiptDao(): ToolCallReceiptDao
 
     companion object {
-        const val SCHEMA_VERSION = 79
+        const val SCHEMA_VERSION = 80
 
         /** 数据库文件名（落在 `databases/` 下，另有 Room 默认 WAL 模式产生的 `-wal`/`-shm`）。 */
         const val DATABASE_NAME = "aicode_agent_db"

@@ -39,7 +39,8 @@ class ConfigPermissionFields @Inject constructor(
         override val displayName = "工具授权规则（全局）"
         override val description =
             "长期有效的全局授权规则；会话内与 24 小时临时授权不在此列。子字段：tool / pattern / decision / expires_at。" +
-                "新增时传 {\"tool\":\"Bash\",\"pattern\":\"git pull\",\"decision\":\"ALLOW\"}；非 shell 工具 pattern 填 *。"
+                "新增时传 {\"tool\":\"Bash\",\"pattern\":\"git pull\",\"decision\":\"ALLOW\"}；非 shell 工具 pattern 填 *。" +
+                "decision 填 GATE 即门阀：每次执行都要用户点确认，不可记忆（默认的编译门阀就是 Bash + gradlew + GATE）。"
         override val addable = true
         override val removable = true
 
@@ -73,7 +74,7 @@ class ConfigPermissionFields @Inject constructor(
                 ClosureField(
                     path = "$basePath.$forId.decision",
                     displayName = "判定（$label）",
-                    description = "ALLOW 直接放行；DENY 直接拒绝（DENY 跨作用域优先于 ALLOW）。",
+                    description = "ALLOW 直接放行；DENY 直接拒绝（DENY 跨作用域优先于 ALLOW）；GATE 门阀——每次都要用户确认，且不可记忆。",
                     valueSchema = ConfigSchema.Str(),
                     revertable = true,
                     reader = { ConfigValue.Str(rule.decision.name) },
@@ -81,7 +82,7 @@ class ConfigPermissionFields @Inject constructor(
                         val name = (v as? ConfigValue.Str)?.value?.uppercase()
                             ?: throw ConfigError.TypeMismatch("string")
                         val decision = PermissionDecision.entries.firstOrNull { it.name == name }
-                            ?: throw ConfigError.InvalidValue("decision 只能是 ALLOW 或 DENY")
+                            ?: throw ConfigError.InvalidValue("decision 只能是 ALLOW / DENY / GATE")
                         val current = globalRules().toMutableList()
                         if (index !in current.indices) throw ConfigError.InvalidValue("规则已变化，请重新读取")
                         current[index] = rule.copy(decision = decision)
@@ -111,7 +112,7 @@ class ConfigPermissionFields @Inject constructor(
             val decisionName = (obj["decision"] as? ConfigValue.Str)?.value?.uppercase()
             val decision = decisionName?.let { name ->
                 PermissionDecision.entries.firstOrNull { it.name == name }
-                    ?: throw ConfigError.InvalidValue("decision 只能是 ALLOW 或 DENY")
+                    ?: throw ConfigError.InvalidValue("decision 只能是 ALLOW / DENY / GATE")
             } ?: PermissionDecision.ALLOW
             val rule = PermissionRule(tool, pattern, decision)
             runBlocking { rules.add(PermissionScope.GLOBAL, rule, "") }

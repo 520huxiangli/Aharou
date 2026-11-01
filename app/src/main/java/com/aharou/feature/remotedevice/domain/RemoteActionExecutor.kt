@@ -10,6 +10,7 @@ import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
@@ -85,6 +86,7 @@ class RemoteActionExecutor @Inject constructor(
     private val policyEngine: ToolPermissionPolicyEngine,
     private val permissionManager: ToolPermissionManager,
     private val fileAccess: FileAccessProvider,
+    private val receiptRepository: ToolCallReceiptRepository,
     private val workspaceRepository: WorkspaceRepository,
     private val notifier: AgentPermissionNotifier,
     private val settings: RemoteDeviceSettings,
@@ -244,7 +246,9 @@ class RemoteActionExecutor @Inject constructor(
         // 协作开启即免逐次审批：协助者往往不在这台手机上，弹窗等于把功能用废。
         // 与本机 agent 同一套语义——PermissionGate 只降 ASK，DENY（越界、灾难性命令）照旧直接拒。
         val collaborationActive = settings.current().enabled
-        val gate = PermissionGate(policyEngine, permissionManager, fileAccess) { collaborationActive }
+        val gate = PermissionGate(policyEngine, permissionManager, fileAccess, receiptRepository) {
+            collaborationActive
+        }
         val verdict = gate.evaluate(
             tool = tool,
             callId = callId,

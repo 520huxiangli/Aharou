@@ -50,6 +50,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Archive
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Clock
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Globe
 import compose.icons.feathericons.HardDrive
@@ -70,6 +71,7 @@ internal fun ChatHeader(
     onNavigateToBrowser: () -> Unit = {},
     onNavigateToSandbox: () -> Unit = {},
     onNavigateToShared: () -> Unit = {},
+    onOpenActivity: () -> Unit = {},
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
     connectionState: com.aharou.feature.agent.domain.container.ConnectionState? = null,
@@ -137,6 +139,12 @@ internal fun ChatHeader(
                         contentDescription = stringResource(R.string.chat_open_browser),
                         active = browserActive,
                         onClick = onNavigateToBrowser
+                    )
+                    WorkbenchIconButton(
+                        icon = FeatherIcons.Clock,
+                        contentDescription = stringResource(R.string.chat_open_activity),
+                        active = false,
+                        onClick = onOpenActivity
                     )
                     IconButton(onClick = { toolsExpanded = false }) {
                         Icon(
