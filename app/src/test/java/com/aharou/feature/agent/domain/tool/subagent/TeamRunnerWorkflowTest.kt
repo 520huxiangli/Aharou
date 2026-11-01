@@ -164,7 +164,7 @@ class TeamRunnerWorkflowTest {
         val rework = tasks.single()
         assertEquals(TeamRunner.reworkId(1), rework.text("id"))
         assertEquals("需求分析师", rework.text("agent"))
-        assertTrue(rework.text("prompt").contains("现有交付"))
+        assertTrue(rework.text("prompt").contains("已有交付"))
         assertTrue(rework.text("prompt").contains("缺分页约定"))
         // 返工只授任务、不授写路径：范围由下游在理由里说清。
         assertTrue(rework.stringList("writePaths").isEmpty())

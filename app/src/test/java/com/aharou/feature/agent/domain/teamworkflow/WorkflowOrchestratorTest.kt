@@ -60,7 +60,7 @@ class WorkflowOrchestratorTest {
     @Test
     fun parseVerdict_rejectWithoutTeamFallsBackToExpertName() {
         val reject = WorkflowOrchestrator.parseVerdict(
-            "[[JUDGE]] REJECT：需求分析师 / 索引设计 / 用了全表扫描"
+            "[[JUDGE]] REJECT | 需求分析师 | 索引设计 | 用了全表扫描"
         ) as WorkflowOrchestrator.Verdict.Reject
 
         assertNull(reject.targetTeam)
