@@ -32,5 +32,6 @@ suspend fun runCancellationSafeTail(
         // 取消路径固定用真实 IO：runBlocking 等的是阻塞线程，配上虚拟时间调度器会两边互等
         // （调度器只能由测试线程推进，而测试线程正卡在这里）——曾经把整个测试卡死过一次。
         runBlocking(NonCancellable + Dispatchers.IO) { block() }
+        runBlocking(NonCancellable + dispatcher) { block() }
     }
 }
