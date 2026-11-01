@@ -1,5 +1,6 @@
 package com.aharou.core.util
 
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -18,10 +19,13 @@ import kotlinx.coroutines.withContext
  *
  * 阻塞只在取消路径上发生一次，代价是调用线程停一下；正常路径行为不变。
  */
-suspend fun runCancellationSafeTail(block: suspend () -> Unit) {
+suspend fun runCancellationSafeTail(
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    block: suspend () -> Unit
+) {
     if (currentCoroutineContext().isActive) {
-        withContext(NonCancellable + Dispatchers.IO) { block() }
+        withContext(NonCancellable + dispatcher) { block() }
     } else {
-        runBlocking(NonCancellable + Dispatchers.IO) { block() }
+        runBlocking(NonCancellable + dispatcher) { block() }
     }
 }
