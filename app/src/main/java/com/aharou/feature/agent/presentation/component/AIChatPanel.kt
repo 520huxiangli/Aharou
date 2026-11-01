@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -41,7 +40,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -89,6 +87,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.ImageViewerHost
+import com.aharou.core.ui.LocalMainBottomBarReserve
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.readableContentMaxWidth
 import com.aharou.core.util.FileLogger
@@ -168,7 +167,7 @@ fun AIChatPanel(
     settingsViewModel: SettingsViewModel? = null,
     workspaceViewModel: WorkspaceViewModel? = null,
     onOpenDrawer: () -> Unit,
-    showMenuButton: Boolean = true,
+    onOpenWorkflow: () -> Unit = {},
     /** 大屏右栏当前开的是终端 / Git 时，顶栏对应图标高亮。 */
     terminalActive: Boolean = false,
     gitActive: Boolean = false,
@@ -1200,12 +1199,13 @@ fun AIChatPanel(
             ChatHeader(
                 inputTokens = sessionInputTokens,
                 outputTokens = sessionOutputTokens,
-                sessionId = currentSessionId,
+                sessionId = currentSessionId, sessionTitle = currentSession?.title,
                 onOpenDrawer = {
                     keyboardController?.hide()
                     onOpenDrawer()
                 },
                 onNewChat = { viewModel.newSession() },
+                onOpenWorkflow = onOpenWorkflow,
                 onNavigateToTerminal = onNavigateToTerminal,
                 onNavigateToGit = onNavigateToGit,
                 onNavigateToBrowser = onNavigateToBrowser,
@@ -1214,7 +1214,6 @@ fun AIChatPanel(
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) },
                 connectionState = connectionState?.takeIf { isRemote },
-                showMenuButton = showMenuButton,
                 terminalActive = terminalActive,
                 gitActive = gitActive,
                 browserActive = browserActive
@@ -1569,6 +1568,7 @@ fun AIChatPanel(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onboardingTarget(OnboardingStep.SEND_MESSAGE)
+                        .padding(bottom = LocalMainBottomBarReserve.current)
                 )
             }
             } // 悬浮层结束

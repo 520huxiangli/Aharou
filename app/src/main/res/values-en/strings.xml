@@ -3477,4 +3477,13 @@
     <string name="personal_access_special_usage">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Usage access</string>
     <string name="personal_access_special_notification">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Notification access</string>
     <string name="document_picker_unavailable">System file picker is unavailable. Enable the system "Files" app (Settings → Apps → Show system apps) or import the file another way</string>
+    <string name="nav_home">Home</string>
+    <string name="config_title">Configure</string>
+    <string name="config_subtitle">AI capabilities and assets</string>
+    <string name="config_memory_desc">Long-term memory, recall and sync</string>
+    <string name="config_skills_desc">Install and manage skill packs</string>
+    <string name="config_knowledge_desc">Shared knowledge bases</string>
+    <string name="config_teams_desc">Team presets and roles</string>
+    <string name="config_prompts_desc">System prompt fragments</string>
+    <string name="config_rules_desc">Global and project rules</string>
 </resources>

@@ -97,6 +97,7 @@ import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.util.FileLogger
+import com.aharou.core.ui.LocalMainBottomBarReserve
 import com.aharou.core.ui.rememberImeBottomInset
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
@@ -299,7 +300,7 @@ internal fun ChatInputBar(
                     .graphicsLayer { alpha = contentAlpha }
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.md)
-                    .padding(bottom = imeInset)
+                    .padding(bottom = imeInset + LocalMainBottomBarReserve.current)
             ) {
             if (filteredCommands.isNotEmpty()) {
                 Surface(
