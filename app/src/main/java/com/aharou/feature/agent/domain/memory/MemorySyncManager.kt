@@ -307,6 +307,9 @@ class MemorySyncManager @Inject constructor(
         val failed = mutableListOf<String>()
         localRoots().forEach { root ->
             walkFiles(root.dir) { src, relWithin ->
+                // 人格文件有自己的一套 frontmatter（name/icon/style/lang），混进记忆同步就会被
+                // 当成普通条目对待。它只存在于本机，不进仓库。
+                if (isSoulFile(relWithin)) return@walkFiles
                 val rel = "${root.repoPrefix}/$relWithin"
                 localPaths += rel
                 val target = File(repoDir, rel)
@@ -343,6 +346,8 @@ class MemorySyncManager @Inject constructor(
         localRoots().forEach { root ->
             val repoRoot = File(repoDir, root.repoPrefix)
             walkFiles(repoRoot) { repoFile, relWithin ->
+                // 仓库里即使残留旧的人格文件，也不拿来覆盖本机那份。
+                if (isSoulFile(relWithin)) return@walkFiles
                 val rel = "${root.repoPrefix}/$relWithin"
                 if (rel in locallyModified) {
                     localKept++
