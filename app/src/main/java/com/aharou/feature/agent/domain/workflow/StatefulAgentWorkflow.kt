@@ -400,13 +400,17 @@ class StatefulAgentWorkflow @Inject constructor(
         ).systemPrompt
     }
 
+    override fun executeEvents(userRequest: String, context: AgentContext, tools: List<AgentTool>): Flow<AgentEvent> =
+        executeEvents(userRequest, context, tools, AgentTurnTrigger.UNKNOWN)
+
     override fun executeEvents(
         userRequest: String,
         context: AgentContext,
-        tools: List<AgentTool>
+        tools: List<AgentTool>,
+        trigger: AgentTurnTrigger
     ): Flow<AgentEvent> = channelFlow {
         runAgentLoop(userRequest, context, tools) { send(it) }
-    }
+    }.attributedToTurn(context.sessionId, trigger)
 
     /**
      * Agent 主循环：初始化运行期上下文，然后反复「取动作 → Reducer → 执行副作用」，

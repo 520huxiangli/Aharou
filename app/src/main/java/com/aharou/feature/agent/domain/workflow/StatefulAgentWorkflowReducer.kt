@@ -172,6 +172,12 @@ internal fun StatefulAgentWorkflow.reduce(
             }
             // 卡死探测（零额外模型调用）：最近 3 条 assistant 整体重复时注入一次提示让模型换招。
             // 只在历史里还没有同一句提示时注入，避免每批都插、也避免重启后重复。
+            //
+            // 存活白名单（AgentTurnLifecycle.isSubstantiveActivity）刻意没接进这里，也没接上面的工具循环判定：
+            // 现有口径只看「3 条 assistant 完全重复」/「同参同结果重复 N 次」，而 3 条重复之前必然先有过
+            // ToolCallFinished，把白名单当成豁免条件会把所有既有命中一律排掉——那是实打实的行为变化。
+            // 真要接，位置就是在下面这个 if 处：把 isSubstantiveActivity 当「本轮仍在产出」的旁证，
+            // 与 detectStuck 取合，由行为回归一并决定。
             if (!newState.isFinished && detectStuck(newState.messages) && !nudgedAlready(newState.messages, stuckNudgeText)) {
                 newState = newState.copy(messages = newState.messages + AgentMessage.UserMessage(content = stuckNudgeText))
                 FileLogger.i(StatefulAgentWorkflow.TAG, "检测到连续重复动作，注入卡死提示")

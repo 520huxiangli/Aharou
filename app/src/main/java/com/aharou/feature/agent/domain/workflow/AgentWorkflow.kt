@@ -16,6 +16,15 @@ import java.security.MessageDigest
  * 每个事件对应聊天里的一条（或对一条的更新），由 ViewModel 落库并渲染。
  */
 sealed class AgentEvent {
+    /**
+     * 本条事件归属的轮次（会话 + 世代号 + 触发来源），由事件流出口统一盖上（见 [attributedToTurn]）。
+     *
+     * 放基类而不是加进 17 个子类的构造参数：子类的构造点遍布主循环与工具执行路径，逐个加参数
+     * 会把归属逻辑摊成十几份；也刻意不参与 data class 的 equals，事件比较语义与既有测试断言都不变。
+     * 未经流出口的事件（压缩回调、测试里直接构造的）为 null，表示「不属于任何具体轮次」。
+     */
+    internal var turn: AgentTurnStamp? = null
+
     /** 模型产出的一段文字回复（可能同时伴随工具调用）。[reasoning] 为本轮思考过程，落库供历史展示，空串表示无。 */
     data class AssistantText(
         val content: String,
@@ -114,6 +123,19 @@ interface AgentWorkflow {
         context: AgentContext,
         tools: List<AgentTool>
     ): Flow<AgentEvent>
+
+    /**
+     * 同 [executeEvents]，额外声明本轮由谁触发（用户手打 / 定时任务 / 托管续跑）。
+     *
+     * 单独一个带默认实现的重载而不是给三参版本加默认值：默认值只对**接口**静态类型的调用生效，
+     * 测试里以具体类型调用三参版本会编译不过；这样既有的三参调用点一行都不用改。
+     */
+    fun executeEvents(
+        userRequest: String,
+        context: AgentContext,
+        tools: List<AgentTool>,
+        trigger: AgentTurnTrigger
+    ): Flow<AgentEvent> = executeEvents(userRequest, context, tools)
 
     /**
      * 手动触发指定会话的上下文压缩（供 /compress 命令调用）。

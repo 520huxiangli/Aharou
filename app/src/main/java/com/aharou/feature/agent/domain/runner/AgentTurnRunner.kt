@@ -23,6 +23,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionStore
 import com.aharou.feature.agent.domain.workflow.AgentEvent
+import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.COMPACTION_FAILURE_TOOL_NAME
@@ -60,6 +61,8 @@ data class AgentTurnRequest(
     val inputAttachments: List<AgentAttachment> = emptyList(),
     /** 非用户手打的请求（斜杠命令、定时任务、后台通知合并等）：落 [text]、不动标题。 */
     val isAutoTrigger: Boolean = false,
+    /** 这一轮由谁触发；只进事件归属与日志，不参与任何判定。 */
+    val trigger: AgentTurnTrigger = AgentTurnTrigger.USER,
     /** 子代理等场景已预设标题，跳过首条消息的标题推导与生成。 */
     val skipTitleUpdate: Boolean = false,
     /**
@@ -315,6 +318,7 @@ class AgentTurnRunner @Inject constructor(
             userRequest = turn.modelRequest,
             context = agentContext,
             tools = tools,
+            trigger = turn.trigger,
         ).collect { event ->
             // 先转发、后落库：调用方先清流式气泡，落库消息才不会与它同屏并存。
             emit(event)
