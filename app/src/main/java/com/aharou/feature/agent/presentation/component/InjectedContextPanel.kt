@@ -16,6 +16,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.aharou.feature.agent.presentation.InjectedContextViewModel
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -95,4 +98,16 @@ private fun InjectedContextSheet(text: String, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * 「显示全部」的数据源：本轮注入正文按会话存。
+ *
+ * 抽到这里是为了让 `AIChatPanel` 不再变长——它已经贴着行数基线，加任何逻辑都会触发门禁。
+ */
+@Composable
+internal fun rememberInjectedContextText(currentSessionId: String?): String? {
+    val vm: InjectedContextViewModel = hiltViewModel()
+    val bySession by vm.bySession.collectAsStateWithLifecycle()
+    return currentSessionId?.let { bySession[it] }
 }

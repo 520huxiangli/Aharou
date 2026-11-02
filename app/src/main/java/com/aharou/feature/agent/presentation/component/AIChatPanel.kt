@@ -285,8 +285,6 @@ fun AIChatPanel(
 
     // 朗读：气泡上的喇叭按钮读这一条；开了自动朗读时，每条回复落地就念
     val readAloudViewModel: ReadAloudViewModel = hiltViewModel()
-    // 「显示全部」的数据源：本轮系统默认注入的正文（不在主 ViewModel 里，见 InjectedContextViewModel）
-    val injectedVm = hiltViewModel<com.aharou.feature.agent.presentation.InjectedContextViewModel>()
     val readingText by readAloudViewModel.currentText.collectAsStateWithLifecycle()
     // 边回边念：流式文本每帧喂给播报队列（开关关着时 ViewModel 会直接丢）；
     // 文本清空 = 本轮结束，收尾把最后没成句的尾巴也读掉。
@@ -406,11 +404,7 @@ fun AIChatPanel(
         if (isBusy || status != WorkflowStatus.CANCELLED) null
         else messages.lastOrNull { it.isTurnHead() }?.let { turnKeyOf(it.id) }
     }
-    // 「显示全部」的数据源：本轮注入正文按会话存；按钮只挂在最新一条用户消息上
-    val injectedBySession by injectedVm.bySession.collectAsStateWithLifecycle()
-    val injectedContextText = currentSessionId?.let { injectedBySession[it] }
-
-    // 长会话在后台线程重建渲染项，具体见 [rememberChatRenderItems]。
+    val injectedContextText = rememberInjectedContextText(currentSessionId)
     val chatItems = rememberChatRenderItems(
         messages = messages,
         groupOverrides = toolGroupOverrideSnapshot,
