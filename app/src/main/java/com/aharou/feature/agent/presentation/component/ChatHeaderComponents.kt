@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,12 +44,14 @@ import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.GlassSurface
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Archive
+import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.GitBranch
@@ -57,6 +60,7 @@ import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Menu
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Terminal
+import compose.icons.feathericons.Users
 
 @Composable
 internal fun ChatHeader(
@@ -64,8 +68,12 @@ internal fun ChatHeader(
     outputTokens: Int,
     /** 当前会话 id：定时任务胶囊据此判断本会话是不是某个任务的目标。 */
     sessionId: String? = null,
+    /** 当前会话标题：显示在左侧胶囊里，空会话回退成「新建会话」。 */
+    sessionTitle: String? = null,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
+    /** 打开子代理工作流（顶栏常驻入口，不再走侧栏 Tab）。 */
+    onOpenWorkflow: () -> Unit = {},
     onNavigateToTerminal: () -> Unit,
     onNavigateToGit: () -> Unit,
     onNavigateToBrowser: () -> Unit = {},
@@ -75,7 +83,6 @@ internal fun ChatHeader(
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
     connectionState: com.aharou.feature.agent.domain.container.ConnectionState? = null,
-    showMenuButton: Boolean = true,
     terminalActive: Boolean = false,
     gitActive: Boolean = false,
     browserActive: Boolean = false
@@ -94,84 +101,128 @@ internal fun ChatHeader(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
-                // 大屏常驻侧栏时隐掉汉堡键：侧栏已经摆在左边，再给个开关反而困惑。
-                if (showMenuButton) {
-                    IconButton(
-                        onClick = onOpenDrawer,
-                        modifier = Modifier.onboardingTarget(OnboardingStep.OPEN_SIDEBAR)
+                // 左侧玻璃胶囊：会话标题 + 新建。汉堡键并入这里——点胶囊就是开侧栏，
+                // 顶栏不再单独摆一个菜单钮。
+                GlassSurface(
+                    modifier = Modifier.weight(1f, fill = false),
+                    shape = RoundedCornerShape(Radius.pill),
+                    shadowElevation = 4.dp
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            modifier = Modifier
+                                .onboardingTarget(OnboardingStep.OPEN_SIDEBAR)
+                                .clip(RoundedCornerShape(Radius.pill))
+                                .clickable(onClick = onOpenDrawer)
+                                .padding(start = Spacing.sm, end = Spacing.xs, top = Spacing.xs, bottom = Spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                        ) {
+                            Icon(
+                                FeatherIcons.Menu,
+                                contentDescription = stringResource(R.string.chat_open_sidebar),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = sessionTitle?.takeIf { it.isNotBlank() }
+                                    ?: stringResource(R.string.chat_new_session),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Icon(
+                                FeatherIcons.ChevronDown,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                        IconButton(onClick = onNewChat, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                FeatherIcons.Plus,
+                                contentDescription = stringResource(R.string.chat_new_session),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                // 右侧玻璃胶囊：工作流常驻 + 工具组（展开时原位换成 Git / 终端 / 浏览器）
+                GlassSurface(
+                    shape = RoundedCornerShape(Radius.pill),
+                    shadowElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            FeatherIcons.Menu,
-                            contentDescription = stringResource(R.string.chat_open_sidebar),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(Spacing.sm))
-                }
-                // 新建会话常驻菜单键旁边，不跟着右侧那组图标走
-                IconButton(onClick = onNewChat) {
-                    Icon(
-                        FeatherIcons.Plus,
-                        contentDescription = stringResource(R.string.chat_new_session),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
-                Spacer(modifier = Modifier.weight(1f))
-                if (toolsExpanded) {
-                    // 展开态：只有工具三入口 + 收起，其余一律让位
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.GitBranch,
-                        contentDescription = stringResource(R.string.chat_open_git),
-                        active = gitActive,
-                        onClick = onNavigateToGit
-                    )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.Terminal,
-                        contentDescription = stringResource(R.string.chat_open_terminal),
-                        active = terminalActive,
-                        onClick = onNavigateToTerminal
-                    )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.Globe,
-                        contentDescription = stringResource(R.string.chat_open_browser),
-                        active = browserActive,
-                        onClick = onNavigateToBrowser
-                    )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.Clock,
-                        contentDescription = stringResource(R.string.chat_open_activity),
-                        active = false,
-                        onClick = onOpenActivity
-                    )
-                    IconButton(onClick = { toolsExpanded = false }) {
-                        Icon(
-                            FeatherIcons.ChevronRight,
-                            contentDescription = stringResource(R.string.chat_tools_collapse),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    // 智能托管常驻顶栏：AI 空闲时自动判断任务是否完成并续写下一步
-                    sessionId?.takeIf { it.isNotBlank() }?.let { StewardEntryButton(sessionId = it) }
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.Folder,
-                        contentDescription = stringResource(R.string.chat_open_sandbox),
-                        active = false,
-                        onClick = onNavigateToSandbox
-                    )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.HardDrive,
-                        contentDescription = stringResource(R.string.chat_open_shared),
-                        active = false,
-                        onClick = onNavigateToShared
-                    )
-                    IconButton(onClick = { toolsExpanded = true }) {
-                        Icon(
-                            FeatherIcons.Archive,
-                            contentDescription = stringResource(R.string.chat_tools_expand),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        WorkbenchIconButton(
+                            icon = FeatherIcons.Users,
+                            contentDescription = stringResource(R.string.drawer_tab_workflow),
+                            active = false,
+                            onClick = onOpenWorkflow
+                        )
+                        if (toolsExpanded) {
+                            // 展开态：只有工具三入口 + 收起，其余一律让位
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.GitBranch,
+                                contentDescription = stringResource(R.string.chat_open_git),
+                                active = gitActive,
+                                onClick = onNavigateToGit
+                            )
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.Terminal,
+                                contentDescription = stringResource(R.string.chat_open_terminal),
+                                active = terminalActive,
+                                onClick = onNavigateToTerminal
+                            )
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.Globe,
+                                contentDescription = stringResource(R.string.chat_open_browser),
+                                active = browserActive,
+                                onClick = onNavigateToBrowser
+                            )
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.Clock,
+                                contentDescription = stringResource(R.string.chat_open_activity),
+                                active = false,
+                                onClick = onOpenActivity
+                            )
+                            IconButton(onClick = { toolsExpanded = false }) {
+                                Icon(
+                                    FeatherIcons.ChevronRight,
+                                    contentDescription = stringResource(R.string.chat_tools_collapse),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            // 智能托管常驻顶栏：AI 空闲时自动判断任务是否完成并续写下一步
+                            sessionId?.takeIf { it.isNotBlank() }?.let { StewardEntryButton(sessionId = it) }
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.Folder,
+                                contentDescription = stringResource(R.string.chat_open_sandbox),
+                                active = false,
+                                onClick = onNavigateToSandbox
+                            )
+                            WorkbenchIconButton(
+                                icon = FeatherIcons.HardDrive,
+                                contentDescription = stringResource(R.string.chat_open_shared),
+                                active = false,
+                                onClick = onNavigateToShared
+                            )
+                            IconButton(onClick = { toolsExpanded = true }) {
+                                Icon(
+                                    FeatherIcons.Archive,
+                                    contentDescription = stringResource(R.string.chat_tools_expand),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
@@ -205,7 +256,8 @@ private fun WorkbenchIconButton(
     active: Boolean,
     onClick: () -> Unit
 ) {
-    IconButton(onClick = onClick) {
+    // 38dp：顶栏胶囊里要横向排五个入口，默认 48dp 点击区会把胶囊挤满
+    IconButton(onClick = onClick, modifier = Modifier.size(38.dp)) {
         Box(
             modifier = Modifier
                 .size(32.dp)

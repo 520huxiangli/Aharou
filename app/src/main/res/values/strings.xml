@@ -3512,4 +3512,13 @@
     <string name="personal_access_special_usage">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 使用情况访问」手动开启</string>
     <string name="personal_access_special_notification">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 通知使用权」手动开启</string>
     <string name="document_picker_unavailable">系统文件选择器不可用：请在「设置 → 应用 → 显示系统应用」中启用「文件」应用，或换一种方式导入</string>
+    <string name="nav_home">首页</string>
+    <string name="config_title">配置</string>
+    <string name="config_subtitle">AI 能力与资产</string>
+    <string name="config_memory_desc">长期记忆、检索与同步</string>
+    <string name="config_skills_desc">技能包的安装与管理</string>
+    <string name="config_knowledge_desc">共享知识库检索</string>
+    <string name="config_teams_desc">团队预设与角色分工</string>
+    <string name="config_prompts_desc">系统提示词片段</string>
+    <string name="config_rules_desc">全局与项目规则</string>
 </resources>
