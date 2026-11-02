@@ -81,9 +81,12 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
     val pairing by viewModel.pairing.collectAsStateWithLifecycle()
     val assist by viewModel.assist.collectAsStateWithLifecycle()
     val config = state.config
+    val devices by viewModel.devices.collectAsStateWithLifecycle()
 
     var showPairSheet by remember { mutableStateOf(false) }
     var showAssistDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) { viewModel.refreshDevices() }
 
     Column(
         modifier = Modifier
@@ -117,6 +120,49 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                     title = stringResource(R.string.settings_remote_device_pair_code),
                     subtitle = stringResource(R.string.settings_remote_device_pair_hint),
                     onClick = { showPairSheet = true }
+                )
+            }
+
+            // 已授权设备：授权出去的东西必须看得见、收得回，否则用户只能改配置文件才能撤销。
+            SettingsGroupHeader(text = stringResource(R.string.settings_remote_device_paired_title))
+            SettingsGroup {
+                if (devices.isEmpty()) {
+                    SettingsRow(
+                        icon = FeatherIcons.Smartphone,
+                        title = stringResource(R.string.settings_remote_device_paired_empty)
+                    )
+                } else {
+                    devices.forEachIndexed { index, device ->
+                        if (index > 0) SettingsDivider()
+                        SettingsRow(
+                            icon = FeatherIcons.Smartphone,
+                            title = device.deviceName.ifBlank { device.deviceId.take(8) },
+                            // 同名设备很常见，光靠 4 位 token 提示分不出是哪台；把上次活跃时间一并给上。
+                            subtitle = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                                .format(Date(device.lastSeenAt)) + " · " + device.tokenHint,
+                            trailing = {
+                                TextButton(onClick = { viewModel.revoke(device.deviceId) }) {
+                                    Text(stringResource(R.string.settings_remote_device_paired_revoke))
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 两端动作清单版本不一致时提前告知：否则远端调一个本机根本没有的动作，只会得到一个笼统的拒绝。
+        state.actionMismatch?.let { mismatch ->
+            SettingsGroup {
+                SettingsRow(
+                    icon = FeatherIcons.Shield,
+                    title = stringResource(R.string.settings_remote_device_action_mismatch),
+                    subtitle = stringResource(
+                        R.string.settings_remote_device_action_mismatch_hint,
+                        mismatch.peer,
+                        mismatch.peerFingerprint,
+                        mismatch.localFingerprint
+                    )
                 )
             }
         }

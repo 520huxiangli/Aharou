@@ -9,6 +9,7 @@ import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.ToolResult
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.json.JsonElement
@@ -46,6 +47,14 @@ data class RemoteAction(
      * info 不升级：它只回设备名/版本/能力清单，不含任何用户数据。
      */
     val escalateWhenAllowed: Boolean = true,
+    /**
+     * 是否幂等：同一参数重复调用不会多出副作用。
+     *
+     * 只用来给执行窗口分档（见 [RemoteActionExecutor]）：非幂等动作一旦被早断，对端重试就会把
+     * 写文件 / 发消息 / 点屏幕再做一遍，所以要给足时间；幂等动作重试无副作用，短窗口够用。
+     * 默认 false（按非幂等处理）：漏标只会等得久，不会因为早断而被重试。
+     */
+    val idempotent: Boolean = false,
     /**
      * 某些参数只允许取固定几个值（如 vscreen 的 `action`）。两个作用：
      *  - [RemoteActionCatalog.inputSchema] 用它缩窄 enum，让对端只看到合法取值；
@@ -101,6 +110,13 @@ class RemoteActionCatalog @Inject constructor(
         /** 远端 shell 单次执行上限（秒）：给长任务留足时间，只防卡死不断正常操作。 */
         const val REMOTE_SHELL_MAX_TIMEOUT_SECONDS = 600L
 
+        /**
+         * initialize 回包里携带动作清单指纹的扩展字段名（挂在 `result.serverInfo` 下）。
+         *
+         * 对端回包里没有这个字段 = 它还是老版本、不认识这项探活，接的人一律不做比对。
+         */
+        const val FINGERPRINT_FIELD = "actionFingerprint"
+
         /** 本机工具的挂载名（与 di/AgentModule.kt 的注册名一致）。 */
         const val TOOL_READ_FILE = "readFile"
         const val TOOL_WRITE_FILE = "writeFile"
@@ -121,7 +137,8 @@ class RemoteActionCatalog @Inject constructor(
                 "不读取任何用户数据，因此不需要本机用户审批。",
             toolName = null,
             allowedArgs = emptySet(),
-            escalateWhenAllowed = false
+            escalateWhenAllowed = false,
+            idempotent = true
         ),
         RemoteAction(
             name = ACTION_READ_FILE,
@@ -129,7 +146,8 @@ class RemoteActionCatalog @Inject constructor(
             description = "读取本机文件。path 用 ~/workspace/... 表示工作区文件，绝对路径（/etc/... 等）表示系统文件；" +
                 "单次有条数与字节上限，超出用 start_line 分段续读。",
             toolName = TOOL_READ_FILE,
-            allowedArgs = setOf("path", "start_line", "end_line")
+            allowedArgs = setOf("path", "start_line", "end_line"),
+            idempotent = true
         ),
         RemoteAction(
             name = ACTION_WRITE_FILE,
@@ -138,7 +156,8 @@ class RemoteActionCatalog @Inject constructor(
                 "落盘前会做越界校验（只允许工作区 / 容器 rootfs / AI 配置 / 记忆 / 共享区之内），越界直接拒绝。" +
                 "文件不存在时自动创建（含父目录）。每次写入都需要本机用户审批。",
             toolName = TOOL_WRITE_FILE,
-            allowedArgs = setOf("path", "content", "overwrite")
+            allowedArgs = setOf("path", "content", "overwrite"),
+            idempotent = false
         ),
         RemoteAction(
             name = ACTION_SHELL,
@@ -147,7 +166,8 @@ class RemoteActionCatalog @Inject constructor(
                 "单次建议不超过 $REMOTE_SHELL_MAX_TIMEOUT_SECONDS 秒；" +
                 "不支持后台任务与提权参数——远端调用不提供这两条路径。",
             toolName = TOOL_BASH,
-            allowedArgs = setOf("command", "timeout", "elevate", "reason", "background")
+            allowedArgs = setOf("command", "timeout", "elevate", "reason", "background"),
+            idempotent = false
         ),
         RemoteAction(
             name = ACTION_SCREENSHOT,
@@ -155,20 +175,22 @@ class RemoteActionCatalog @Inject constructor(
             description = "截取本机当前屏幕（图片随结果返回）。需本机已开启无障碍服务，且 Android 11+。",
             toolName = TOOL_A11Y,
             allowedArgs = emptySet(),
-            forcedArgs = mapOf("action" to "shot")
+            forcedArgs = mapOf("action" to "shot"),
+            idempotent = true
         ),
         RemoteAction(
             name = ACTION_UI,
             kind = RemoteActionKind.UI,
-            description = "在**影子屏**里驱动这台手机：launch 启动 App、shot 截图（传 ocr=true 则只回文字）、" +
-                "tap / swipe / key 触控、type 输入文字。全程跑在宿主上的无头虚拟屏，不打断本机用户的主屏。" +
-                "只支持这七个操作——start 是驱动的前提（先 start，再 launch 目标 App）；" +
-                "stop 与 task（多步子代理）不开放给远端。需本机已就绪 root 或 Shizuku。",
+            description = "在**影子屏**里驱动这台手机：start 启动影子屏（驱动的前提）、stop 关闭、" +
+                "launch 启动 App、shot 截图（传 ocr=true 则只回文字）、tap / swipe / key 触控、" +
+                "type 输入文字、task 交多步子代理、trace 查看操作记录。全程跑在宿主上的无头虚拟屏，" +
+                "不打断本机用户的主屏。需本机已就绪 root 或 Shizuku。",
             toolName = TOOL_VSCREEN,
             allowedArgs = setOf(
                 "action", "component", "x", "y", "x2", "y2", "duration", "keycode", "text", "submit", "ocr"
             ),
-            argAllowedValues = mapOf("action" to UI_ALLOWED_ACTIONS)
+            argAllowedValues = mapOf("action" to UI_ALLOWED_ACTIONS),
+            idempotent = false
         ),
         RemoteAction(
             name = ACTION_FETCH_FILE,
@@ -185,7 +207,8 @@ class RemoteActionCatalog @Inject constructor(
                     description = "要取回的文件路径，写法与 read_file 一致（~/workspace/... 或绝对路径）",
                     required = true
                 )
-            )
+            ),
+            idempotent = true
         ),
         RemoteAction(
             name = ACTION_PUSH_FILE,
@@ -202,7 +225,8 @@ class RemoteActionCatalog @Inject constructor(
                     description = "要写入的文件路径，写法与 write_file 一致；文件不存在时自动创建（含父目录）",
                     required = true
                 )
-            )
+            ),
+            idempotent = false
         ),
         RemoteAction(
             name = ACTION_SEND_MESSAGE,
@@ -233,7 +257,8 @@ class RemoteActionCatalog @Inject constructor(
                     description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
                     required = false
                 )
-            )
+            ),
+            idempotent = false
         ),
         RemoteAction(
             name = ACTION_READ_LOGS,
@@ -262,7 +287,8 @@ class RemoteActionCatalog @Inject constructor(
                     description = "最多返回行数，默认 200，上限 2000",
                     required = false
                 )
-            )
+            ),
+            idempotent = true
         ),
         RemoteAction(
             name = ACTION_ASK_AI,
@@ -299,11 +325,20 @@ class RemoteActionCatalog @Inject constructor(
                     description = "目标会话 id；不传=该工作区最近活跃会话（没有则新建）",
                     required = false
                 )
-            )
+            ),
+            idempotent = false
         )
     )
 
     fun byName(name: String): RemoteAction? = actions.firstOrNull { it.name == name }
+
+    /**
+     * 动作清单的稳定指纹：两端清单版本是否一致，靠它一眼对比。
+     *
+     * 两端清单不一致时，远端调用只会收到「未知动作」这种笼统拒绝，分不清是权限不够还是对端
+     * 根本没有这个动作；把指纹放进 initialize 回包，对端在配对/连上时就能立刻看出差异。
+     */
+    fun fingerprint(): String = actionFingerprint(actions)
 
     /** 能力清单（info 用）：按动作去重后的能力位。 */
     fun capabilityList(): List<String> = actions.map { it.kind.capability }.distinct()
@@ -352,6 +387,30 @@ class RemoteActionCatalog @Inject constructor(
         ParameterType.ARRAY -> "array"
         ParameterType.OBJECT -> "object"
     }
+}
+
+/**
+ * 由动作清单算出指纹：动作名与各自允许的参数名排序后拼成唯一文本，再取 SHA-256 前 8 字节。
+ *
+ * 为什么先排序：动作的声明顺序、`Set` 的迭代顺序都跟实现细节有关，不排序的话同一份清单
+ * 在不同版本里能算出不同结果。排序后拼成的文本只由「有哪些动作、每个动作收哪些参数」决定，
+ * 因此跨设备、跨版本、跨运行时都可比，两端也不需要另外约定码表。
+ *
+ * 为什么只取 8 字节十六进制：日志与设置页里要放得下；而这个判定只有「同一份清单 / 不同清单」
+ * 两种答案，64 位截断的碰撞概率对这里的目的等于零。
+ *
+ * 抽成顶层函数是为了能脱离 Android / Hilt 直接单测。
+ */
+internal fun actionFingerprint(actions: List<RemoteAction>): String {
+    val canonical = actions
+        .sortedBy { it.name }
+        .joinToString("\n") { action ->
+            action.name + "|" + action.allowedArgs.sorted().joinToString(",")
+        }
+    val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+    // 手写十六进制而不是 `String.format`：格式化输出会跟着设备的 Locale 走，
+    // 而指纹必须在任何语言环境下算出同一个值。
+    return digest.take(8).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 }
 
 /**

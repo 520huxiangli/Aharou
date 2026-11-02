@@ -127,9 +127,8 @@ class RemoteActionExecutor @Inject constructor(
             RemoteActionCatalog.ACTION_SCREENSHOT
         )
 
-        /** 单次远端动作的执行上限，只用来防「永久卡死」，不构成正常操作的天花板。 */
-        const val ACTION_TIMEOUT_MS = 15_000L
-        const val LONG_ACTION_TIMEOUT_MS = 600_000L
+        /** 幂等动作的执行窗口（毫秒）：重试安全，短窗口只为尽快把卡住的错误交回去。 */
+        const val IDEMPOTENT_ACTION_TIMEOUT_MS = 15_000L
     }
 
     /** 每台设备一把短动作锁：串行执行，避免多张审批同时挂起把用户淹没。 */
@@ -155,22 +154,16 @@ class RemoteActionExecutor @Inject constructor(
         rawArgs: Map<String, JsonElement>,
         caller: RemotePairedDevice
     ): RemoteActionResult {
-        val isLongTask = action.name == RemoteActionCatalog.ACTION_ASK_AI
+        // 整轮问 AI 单独一把锁，免得把它后面的投递类动作堵到超时。
+        val usesAiTurnLock = action.name == RemoteActionCatalog.ACTION_ASK_AI
         val lock = when {
-            // 整轮问 AI 单独一把锁，免得把它后面的投递类动作堵到超时。
-            isLongTask -> lockFor(deviceLongLocks, caller)
+            usesAiTurnLock -> lockFor(deviceLongLocks, caller)
             // 只读动作不排队：对端查日志、看状态时不该等另一个长动作跑完。
             action.name in READ_ONLY_ACTIONS -> null
             else -> lockFor(deviceLocks, caller)
         }
         val queuedAt = System.currentTimeMillis()
-        val timeoutMs = if (isLongTask || action.name == RemoteActionCatalog.ACTION_SHELL ||
-            action.name == RemoteActionCatalog.ACTION_UI
-        ) {
-            LONG_ACTION_TIMEOUT_MS
-        } else {
-            ACTION_TIMEOUT_MS
-        }
+        val timeoutMs = actionTimeoutMs(action)
         val body: suspend () -> RemoteActionResult = {
             FileLogger.i(
                 TAG,
@@ -201,6 +194,20 @@ class RemoteActionExecutor @Inject constructor(
 
     private fun deviceKey(caller: RemotePairedDevice): String =
         caller.deviceId.ifBlank { caller.tokenHint }
+
+    /**
+     * 按动作的幂等性取执行窗口——超时只在这一处决定，不再另设第二套判断。
+     *
+     *  - 幂等（重试无副作用）：短窗口够用，真卡住就尽早把错误交回去；
+     *  - 非幂等：用 shell 单次上限（600 秒）当这一档的天花板。早断之后对端一重试，写文件 / 发消息 /
+     *    点屏幕就会再做一遍，宁可让调用方看到「慢」，也不要让它误以为没成功。
+     */
+    private fun actionTimeoutMs(action: RemoteAction): Long =
+        if (action.idempotent) {
+            IDEMPOTENT_ACTION_TIMEOUT_MS
+        } else {
+            RemoteActionCatalog.REMOTE_SHELL_MAX_TIMEOUT_SECONDS * 1000L
+        }
 
     private fun lockFor(locks: ConcurrentHashMap<String, Mutex>, caller: RemotePairedDevice): Mutex {
         if (locks.size > MAX_DEVICE_LOCKS) locks.clear()

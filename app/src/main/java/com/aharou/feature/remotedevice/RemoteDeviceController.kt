@@ -20,6 +20,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -28,6 +29,21 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+
+/**
+ * 一段「两端动作清单不一致」的提示数据。
+ *
+ * 控制器不持有用户可见文字（文案由 UI 层用资源渲染），这里只给渲染所需的事实。
+ */
+data class RemoteActionMismatch(
+    /** 对端标识（接受协助时填的地址）。 */
+    val peer: String,
+    /** 对端 initialize 回包里带的指纹。 */
+    val peerFingerprint: String,
+    /** 本机清单的指纹。 */
+    val localFingerprint: String
+)
 
 /** 设置页要展示的一份状态快照。 */
 data class RemoteDeviceUiState(
@@ -38,20 +54,24 @@ data class RemoteDeviceUiState(
     /** 本机能力清单（info 会回给对端）。 */
     val capabilities: List<String>,
     /** 上一次反向配对失败的原因；null 表示没出问题。 */
-    val pairBackIssue: String? = null
+    val pairBackIssue: String? = null,
+    /**
+     * 上一次接受协助时发现的两端动作清单指纹不一致；null = 一致 / 对端老版本没这项 / 还没探过。
+     */
+    val actionMismatch: RemoteActionMismatch? = null
 )
 
 /**
  * 「跨设备协作」的统一入口：设置页、应用启动接线都只跟它打交道。
  *
- * 本次改动不做设置页 UI（见报告里的落点方案），本类即 UI 要绑的那层：
+ * 设置页（`presentation/RemoteDeviceSection.kt`）绑的就是这层：
  *  - 开关/端口/设备名/是否每次都问 → [setEnabled] / [setPort] / [setDeviceName] / [setAlwaysAskRemote]；
  *  - 配对码展示 → [pairingCode]（打开面板或点「生成配对码」时调用）；
  *  - 已授权设备列表与撤销 → [devices] / [revoke] / [revokeAll]；
  *  - 本机端点 URL → [state] 里的 endpoints（念给对端/生成二维码都用它）。
  *
  * 接入另一台设备（对端 = 本机 agent 连别人的 Aharou）用 [mcpConfigFor]：填进既有 MCP 配置即可，
- * 走现成的 MCP 客户端与工具注册（详见报告「接入方式」）。
+ * 走现成的 MCP 客户端与工具注册。
  */
 @Singleton
 class RemoteDeviceController @Inject constructor(
@@ -71,19 +91,23 @@ class RemoteDeviceController @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 最近一次探到的两端动作清单不一致（供设置页提示）；null 表示一致、没探到或对端老版本。 */
+    private val _actionMismatch = MutableStateFlow<RemoteActionMismatch?>(null)
+
     val state: Flow<RemoteDeviceUiState> = combine(
-        settings.config, server.state, server.pairBackIssue
-    ) { config, serverState, pairBackIssue ->
+        settings.config, server.state, server.pairBackIssue, _actionMismatch
+    ) { config, serverState, pairBackIssue, actionMismatch ->
         RemoteDeviceUiState(
             config = config,
             server = serverState,
             endpoints = endpointsFor(serverState),
             capabilities = catalog.capabilityList(),
-            pairBackIssue = pairBackIssue
+            pairBackIssue = pairBackIssue,
+            actionMismatch = actionMismatch
         )
     }
 
-    /** 应用启动时调用：配置里开着就把服务拉起来（接线点见报告，本次不改 AIEditorApp）。 */
+    /** 应用启动时调用：配置里开着就把服务拉起来（接线见 AIEditorApp）。 */
     suspend fun startIfEnabled() {
         val enabled = settings.current().enabled
         // 协作开即放开远端路径越界校验；关则恢复成只允许工作区/容器/配置/记忆/共享区。
@@ -233,8 +257,89 @@ class RemoteDeviceController @Inject constructor(
         val config = mcpConfigFor(serverName, target, port, token)
         val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
         mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
+        // 配对已经落地，探活只负责提示：它失败不会把已经建立好的协助关系弄丢。
+        // url 为空说明这份配置不是 HTTP 传输，没有可探的端点。
+        config.url?.let { compareActionFingerprint(target, it, token) }
         return AssistOutcome.Ok(serverName)
     }
+
+    /**
+     * 比对两端动作清单的指纹，不一致就留一条明确警告并写进状态流。
+     *
+     * 为什么值得比：两端清单不一致时，本机调用对端没有的动作只会收到「未知动作」这类笼统拒绝，
+     * 与「权限不够」在调用方看来一模一样。
+     */
+    private suspend fun compareActionFingerprint(peer: String, endpoint: String, token: String) {
+        val local = catalog.fingerprint()
+        val remote = probePeerFingerprint(endpoint, token)
+        if (remote == null) {
+            // 对端是老版本（回包里没这个字段）或这次没探通：一律不比对，正常放行。
+            _actionMismatch.value = null
+            return
+        }
+        if (remote == local) {
+            _actionMismatch.value = null
+            FileLogger.i(TAG, "两端动作清单指纹一致: $local（对端 $peer）")
+            return
+        }
+        _actionMismatch.value = RemoteActionMismatch(peer, remote, local)
+        FileLogger.w(
+            TAG,
+            "两端动作清单不一致：本机 $local，对端 $peer 是 $remote。" +
+                "调用对端没有的动作只会收到笼统拒绝，先对齐两端版本，或改用对端清单里的动作。"
+        )
+    }
+
+    /**
+     * 探一次对端的动作清单指纹：向它的 `/mcp` 发一条 initialize，读回 `serverInfo` 里的扩展字段。
+     *
+     * 返回 null = **不比对**：对端回包里没有该字段、HTTP 非 2xx、连不上都走这条分支。
+     * 这是硬要求：探活只是提示，任何时候都不能因为它把配对或后续调用拦下。
+     */
+    private suspend fun probePeerFingerprint(endpoint: String, token: String): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val payload = buildJsonObject {
+                    put("jsonrpc", "2.0")
+                    put("id", 1)
+                    put("method", "initialize")
+                    putJsonObject("params") {
+                        put("protocolVersion", RemoteMcpServer.PROTOCOL_VERSION)
+                        putJsonObject("capabilities") { }
+                        putJsonObject("clientInfo") { put("name", "aharou-remote-device") }
+                    }
+                }.toString()
+                val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = CONNECT_TIMEOUT_MS
+                    readTimeout = READ_TIMEOUT_MS
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+                connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                connection.disconnect()
+                if (status !in 200..299) {
+                    FileLogger.i(TAG, "对端指纹探活没成功（HTTP $status），本次不做清单比对: $endpoint")
+                    return@runCatching null
+                }
+                json.parseToJsonElement(body).jsonObject["result"]
+                    ?.jsonObject?.get("serverInfo")
+                    ?.jsonObject?.get(RemoteActionCatalog.FINGERPRINT_FIELD)
+                    ?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.isNotBlank() }
+            }.getOrElse {
+                FileLogger.i(
+                    TAG,
+                    "对端指纹探活没成功（${it.javaClass.simpleName}: ${it.message}），本次不做清单比对: $endpoint"
+                )
+                null
+            }
+        }
 
     /**
      * 组装一条指向「另一台 Aharou」的 MCP 配置：对端地址 + 配对换来的 token。

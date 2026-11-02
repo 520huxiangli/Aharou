@@ -99,7 +99,8 @@ class RemoteMcpServer @Inject constructor(
         /** 文件下载/上传的路径前缀，后面接一次性票据 id（见 [RemoteFileTicketStore]）。 */
         const val FILE_PATH = "/file"
         const val UPLOAD_PATH = "/upload"
-        private const val PROTOCOL_VERSION = "2025-06-18"
+        /** MCP 协议版本：initialize 回包里回它，本机作为客户端探活时也用它。 */
+        const val PROTOCOL_VERSION = "2025-06-18"
         private const val SERVER_NAME = "aharou-remote-device"
 
         /** 单条连接的请求读取超时：只覆盖「读一条请求」，执行耗时不受它限制。 */
@@ -510,6 +511,9 @@ class RemoteMcpServer @Inject constructor(
         putJsonObject("serverInfo") {
             put("name", SERVER_NAME)
             put("version", appVersion())
+            // 扩展字段：动作清单指纹。老版本对端不认识它会直接忽略，行为不变；
+            // 新版本靠它判断两端清单是否一致（不一致时远端调用只会被笼统拒掉，很难看出是对端没这个动作）。
+            put(RemoteActionCatalog.FINGERPRINT_FIELD, catalog.fingerprint())
         }
     }
 
