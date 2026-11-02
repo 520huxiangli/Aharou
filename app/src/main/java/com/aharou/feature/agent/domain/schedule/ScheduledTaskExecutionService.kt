@@ -19,6 +19,7 @@ import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.workflow.AgentEvent
+import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -92,6 +93,7 @@ class ScheduledTaskExecutionService : Service() {
                     text = prompt,
                     projectRoot = effectiveRoot,
                     isAutoTrigger = true,
+                    trigger = AgentTurnTrigger.SCHEDULED_TASK,
                     skipTitleUpdate = true,
                 )
             ).collect { event ->

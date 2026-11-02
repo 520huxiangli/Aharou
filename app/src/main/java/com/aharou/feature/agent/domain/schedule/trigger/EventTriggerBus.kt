@@ -9,6 +9,7 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
@@ -46,6 +47,15 @@ class EventTriggerBus @Inject constructor(
 
     /** 本次进程是否已投递过「应用启动」触发：进程重建才会重置，见 [postAppStart]。 */
     private val appStartDispatched = AtomicBoolean(false)
+
+    /**
+     * 事件去重凭据。落盘在私有目录：通知监听服务会被系统回收重建，只放内存的话重连后
+     * 重放的通知会再跑一遍。用 lazy 推迟到第一次投递才读盘——构造发生在 Hilt 建单例时，
+     * 不该在那时候碰磁盘。
+     */
+    private val dedup: EventDedupStore by lazy {
+        EventDedupStore(File(context.filesDir, "event-trigger-dedup.tsv"))
+    }
 
     /**
      * 通知事件入口。**立即返回**：本方法在系统通知回调的主线程上被调用，任何等待都会拖慢
@@ -118,9 +128,11 @@ class EventTriggerBus @Inject constructor(
      */
     private suspend fun dispatch(
         type: String,
-        payload: EventPayload,
+        rawPayload: EventPayload,
         matches: (ScheduledTaskEntity) -> Boolean,
     ) {
+        // 所有事件都从这里进，载荷收敛与去重都只在这一处做，不会因为多一个入口就漏掉。
+        val payload = rawPayload.limited()
         val now = System.currentTimeMillis()
         val candidates = runCatching { dao.enabledByTriggerType(type) }.getOrElse { e ->
             FileLogger.e(TAG, "读取事件触发任务失败: $type", e)
@@ -134,13 +146,36 @@ class EventTriggerBus @Inject constructor(
                 FileLogger.i(TAG, "「${task.name}」在防抖窗口内，本次事件忽略")
                 return@forEach
             }
+            val decision = if (EventDedupStore.appliesTo(type)) {
+                dedup.accept(task.id, type, payload, now)
+            } else {
+                DedupDecision.ACCEPTED
+            }
+            if (decision != DedupDecision.ACCEPTED) {
+                // 拒收要留痕：用户得能看出这次为什么没跑，否则只会当成「事件触发坏了」。
+                val outcome = if (decision == DedupDecision.DUPLICATE) {
+                    OUTCOME_SKIPPED_DUPLICATE
+                } else {
+                    OUTCOME_SKIPPED_DEDUP_FULL
+                }
+                runCatching { dao.recordOutcome(task.id, outcome, now) }
+                    .onFailure { FileLogger.w(TAG, "记录去重跳过结果失败: ${task.id}", it) }
+                FileLogger.i(TAG, "「${task.name}」事件重复（或去重表已满），本次事件忽略")
+                return@forEach
+            }
             // 现场先存后拨：拨完 Worker 可能立刻被唤醒，晚一步就取不到标题/正文。
             payloads[task.id] = payload
             // 单列 UPDATE 而不是整行回写：本轮读到的快照之后，设置页可能已经改过同一行。
             val ok = runCatching { dao.armEvent(task.id, now, now) > 0 }
                 .onFailure { FileLogger.e(TAG, "投递事件给「${task.name}」失败", it) }
                 .getOrDefault(false)
-            if (ok) armed++ else payloads.remove(task.id)
+            if (ok) {
+                armed++
+            } else {
+                // 没拨成就不该占用凭据，否则这条事件在这 24 小时里再也投不进来。
+                payloads.remove(task.id)
+                if (EventDedupStore.appliesTo(type)) dedup.forget(task.id, type, payload)
+            }
         }
 
         if (armed > 0) {
@@ -187,6 +222,12 @@ class EventTriggerBus @Inject constructor(
 
         /** App 启动投递前的静置时长，等会话层先订阅上总线，见 [postAppStart]。 */
         const val APP_START_SETTLE_MS = 5_000L
+
+        /** 同一条事件 24 小时内已投递过。 */
+        const val OUTCOME_SKIPPED_DUPLICATE = "skipped_duplicate"
+
+        /** 去重凭据表满了，本次事件拒收。 */
+        const val OUTCOME_SKIPPED_DEDUP_FULL = "skipped_dedup_full"
     }
 }
 
