@@ -327,9 +327,9 @@
     {
       "id": "manjaro-lite",
       "name": "Manjaro",
-      "version": "20261012",
+      "version": "20261102",
       "description": "Manjaro ARM 精简 base：去文档/多语言，仅留开发基础与 pacman",
-      "sizeBytes": 168438838,
+      "sizeBytes": 163669173,
       "distro": "manjaro",
       "path": "manjaro-lite-{abi}.tar.gz",
       "paths": {
@@ -339,7 +339,7 @@
         "arm64": "aarch64"
       },
       "sha256ByAbi": {
-        "arm64": "64074bc8d2d4ef4847a46da5a36999ff46cffa6e35a58b3c8f6d1dbe031a3dbb"
+        "arm64": "8e781a052d62c25337f617b1e830704880c939e1e8d90af0b9751de27569c094"
       }
     }
   ]
