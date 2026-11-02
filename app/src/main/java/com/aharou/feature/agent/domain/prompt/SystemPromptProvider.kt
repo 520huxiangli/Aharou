@@ -6,6 +6,7 @@ import com.aharou.core.util.SecretMasker
 import com.aharou.core.util.TextSanitizer
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.container.ContainerInstaller
+import com.aharou.feature.agent.domain.context.ProjectIndex
 import com.aharou.feature.agent.domain.inbox.InboxDirectory
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.memory.MemoryRepository
@@ -53,7 +54,8 @@ class SystemPromptProvider @Inject constructor(
     private val ruleRepository: RuleRepository,
     private val chatSessionDao: ChatSessionDao,
     private val sharedInbox: SharedInbox,
-    private val containerProfileResolver: com.aharou.feature.agent.domain.container.ContainerProfileResolver
+    private val containerProfileResolver: com.aharou.feature.agent.domain.container.ContainerProfileResolver,
+    private val projectIndex: ProjectIndex
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -343,6 +345,16 @@ class SystemPromptProvider @Inject constructor(
     }
 
     /**
+     * 项目上下文分层索引（模块目录）。
+     *
+     * 不缓存：静态资产重读得到的字符串一致，KV Cache 照常命中；而缓存的代价是多一份失效判断。
+     * 识别与降级都在 [ProjectIndex] 里，这里只负责往提示词里接一段。
+     */
+    private inner class ProjectIndexSource : PromptSource {
+        override fun build(ctx: AgentContext): String? = projectIndex.build(ctx.projectRoot)
+    }
+
+    /**
      * 跨工作区信箱：本工作区 `~/shared/inbox/<标识>.md` 里的未送达消息，汇总成**一条**系统提示。
      *
      * 无未读时整段不出现（零开销、不打扰）；有未读时提示完就把这些行从文件里清掉，所以同一批消息只提醒一次。
@@ -557,6 +569,7 @@ class SystemPromptProvider @Inject constructor(
     private val activeSkillsSource = ActiveSkillsSource()
     private val projectRuleSource = ProjectRuleSource()
     private val workspaceTypeSource = WorkspaceTypeSource()
+    private val projectIndexSource = ProjectIndexSource()
     private val sharedInboxSource = SharedInboxSource()
     private val workspaceSource = WorkspaceSource()
     private val workspaceChangeSource = WorkspaceChangeSource()
@@ -691,6 +704,7 @@ class SystemPromptProvider @Inject constructor(
         val projectRules = projectRuleSource.build(agentContext)
         val rulesContent = availableRulesSource.build(agentContext)
         val workspaceTypeContent = workspaceTypeSource.build(agentContext)
+        val projectIndexContent = projectIndexSource.build(agentContext)
         val modelIdentityContent = modelIdentitySource.build(agentContext)
         // 隐身会话不读也不消费信箱：不把其他工作区的内容带进隐身对话，也不替用户吃掉这些消息。
         val inboxContent = if (ghost) null else sharedInboxSource.build(agentContext, consumeInbox)
@@ -732,6 +746,7 @@ class SystemPromptProvider @Inject constructor(
             }
             rulesContent?.let { append("\n\n"); append(it) }
             workspaceTypeContent?.let { append("\n\n"); append(it) }
+            projectIndexContent?.let { append("\n\n"); append(it) }
             // 模型身份放在变化区末尾：会话内稳定，但切模型时会变，不放在 KV Cache 前缀里。
             modelIdentityContent?.let { if (it.isNotEmpty()) { append("\n\n"); append(it) } }
             // 信箱只在有新消息时出现，内容本身就在变，同样只放在末尾。
