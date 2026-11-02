@@ -1580,9 +1580,34 @@
     <string name="scheduled_tasks_condition_battery_only">Battery ≥ %1$d%%</string>
     <string name="scheduled_tasks_skipped_debounce">In the debounce window</string>
     <string name="scheduled_tasks_skipped_running">Previous run still going</string>
+    <string name="scheduled_tasks_skipped_duplicate">Duplicate of a recent run</string>
+    <string name="scheduled_tasks_skipped_dedup_full">Dedup store full, this run was dropped</string>
     <string name="scheduled_task_service_channel">Automation task execution</string>
     <string name="scheduled_task_service_title">Automation task</string>
     <string name="scheduled_tasks_failed">Last run failed</string>
+
+    <!-- Automation task built-in templates -->
+    <string name="scheduled_tasks_from_template">Create from template</string>
+    <string name="scheduled_tasks_from_template_hint">Pick a scenario; the name, instruction and trigger time are prefilled and stay editable</string>
+    <string name="scheduled_tasks_templates_title">Choose a template</string>
+    <string name="scheduled_tasks_templates_intro">A template is only a starting point: the name, instruction and trigger time are prefilled into the editor and everything stays editable before you save. Templates read only the working directory, repositories and public web pages - never mail, chats or calendar.</string>
+    <string name="scheduled_tasks_template_category_dev">Development</string>
+    <string name="scheduled_tasks_template_category_radar">Info radar</string>
+    <string name="scheduled_tasks_template_category_doc">Docs and office</string>
+    <string name="scheduled_tasks_template_nightly_test">Nightly test heal</string>
+    <string name="scheduled_tasks_template_nightly_test_desc">Runs the tests at 02:00 daily and fixes only failures with clear evidence</string>
+    <string name="scheduled_tasks_template_pr_guard">PR gatekeeper</string>
+    <string name="scheduled_tasks_template_pr_guard_desc">Reviews open pull requests at 10:00 daily and reports risks by severity</string>
+    <string name="scheduled_tasks_template_domain_radar">Topic radar</string>
+    <string name="scheduled_tasks_template_domain_radar_desc">Collects the last 24 hours of news around one topic at 08:00 daily</string>
+    <string name="scheduled_tasks_template_competitor">Competitor watch</string>
+    <string name="scheduled_tasks_template_competitor_desc">Tracks releases and changes of a chosen project or product at 09:00 daily</string>
+    <string name="scheduled_tasks_template_weekly_report">Weekly report draft</string>
+    <string name="scheduled_tasks_template_weekly_report_desc">Summarises the work output into a weekly draft every 7 days</string>
+    <string name="scheduled_tasks_template_docs_fresh">Docs freshness</string>
+    <string name="scheduled_tasks_template_docs_fresh_desc">Checks docs against the code every 3 days and lists paragraphs that need updating</string>
+    <string name="scheduled_tasks_template_topic">Topic</string>
+    <string name="scheduled_tasks_template_topic_hint">Replaces {{topic}} in the instruction; leave it empty to keep the example topic</string>
 
     <!-- Subagent Settings -->
     <string name="settings_subagents">Subagents</string>
@@ -3342,6 +3367,11 @@
     <string name="settings_remote_device_allow_ask_ai">Let paired devices ask this device\'s AI</string>
     <string name="settings_remote_device_allow_ask_ai_hint">When on, paired devices can use ask_ai to send a question in your voice — this device\'s AI answers it as if you asked. That is letting them work through your AI, so it is on by default; tool calls still go through this device\'s permission layer.</string>
     <string name="settings_remote_device_pair_hint">Enter this 6-digit code in Aharou on the other device to pair</string>
+    <string name="settings_remote_device_paired_title">Authorized devices</string>
+    <string name="settings_remote_device_paired_empty">No authorized devices yet</string>
+    <string name="settings_remote_device_paired_revoke">Revoke</string>
+    <string name="settings_remote_device_action_mismatch">Action list mismatch</string>
+    <string name="settings_remote_device_action_mismatch_hint">The peer %1$s reports fingerprint %2$s while this device has %3$s, so it may call actions that don\'t exist here</string>
     <string name="settings_remote_device_pair_remaining">Expires in %1$s</string>
     <string name="settings_remote_device_pair_expired">Pairing code expired</string>
     <string name="settings_remote_device_pair_regen">Regenerate</string>
