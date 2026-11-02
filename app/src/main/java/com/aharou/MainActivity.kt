@@ -10,17 +10,22 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -34,8 +39,8 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
@@ -45,8 +50,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavType
-import androidx.navigation.navArgument
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import dagger.hilt.android.EntryPointAccessors
@@ -62,18 +65,18 @@ import com.aharou.feature.agent.presentation.component.ShareIntakeDialog
 import com.aharou.feature.agent.presentation.component.copyUriToWorkspace
 import com.aharou.feature.agent.presentation.component.toPendingAttachment
 import com.aharou.feature.workspace.domain.FileAccessProvider
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.aharou.core.ui.BetaWatermark
 import com.aharou.core.ui.ImageSource
 import com.aharou.core.ui.ImageViewerHost
 import com.aharou.core.ui.ImageViewerRequest
 import com.aharou.core.ui.LocalImageViewer
-import com.aharou.core.ui.LocalMainBottomBarReserve
-import com.aharou.core.ui.MainBottomBar
-import com.aharou.core.ui.MainBottomBarHeight
+import com.aharou.core.ui.PAGE_MOTION_MS
 import com.aharou.core.ui.RootBackHandler
 import com.aharou.core.ui.SplitPaneLayout
 import com.aharou.core.ui.drawerWidth
@@ -86,7 +89,6 @@ import com.aharou.feature.agent.presentation.AIAgentViewModel
 import com.aharou.feature.agent.presentation.AgentAttachment
 import com.aharou.feature.agent.presentation.component.AIChatPanel
 import com.aharou.feature.agent.presentation.component.ChatDrawerContent
-import com.aharou.feature.agent.presentation.component.WorkflowScreen
 import com.aharou.feature.agent.presentation.component.DrawerSearchOpenRequest
 import com.aharou.feature.agent.presentation.component.chatImageLoader
 import com.aharou.feature.agent.presentation.component.openSentAttachment
@@ -114,9 +116,7 @@ import com.aharou.feature.settings.presentation.UpdateCheckUiState
 import com.aharou.feature.settings.presentation.component.githubReleaseUrl
 import com.aharou.feature.settings.presentation.component.installDownloadedApk
 import com.aharou.feature.settings.presentation.component.AppThemeHost
-import com.aharou.feature.settings.presentation.component.ConfigScreen
 import com.aharou.feature.settings.presentation.component.SettingsScreen
-import com.aharou.feature.settings.presentation.component.SettingsSection
 import com.aharou.feature.settings.presentation.component.rememberAppAppearance
 import com.aharou.feature.settings.presentation.component.UpdateCheckDialog
 import com.aharou.feature.settings.presentation.component.decodeBackgroundBitmap
@@ -642,11 +642,17 @@ fun AppNavigation(
 
     // ── 大屏（平板横屏及以上）布局 ──
     val expanded = isExpandedWidth()
+    // 常驻侧栏只在聊天页开：终端 / 编辑器 / 设置都是全屏页，被侧栏挤窄反而难用。
+    // 常驻侧栏只看窗口宽度：它只在聊天页展开，切到其他页会滑回去（见下方 sidebarWidth）。
+    val permanentDrawer = expanded
 
     // 侧栏出现时刷一次文件列表：本地模式兼顾 inotify 漏事件，远程模式无 inotify 则完全靠它。
-    // 侧栏现在只有抽屉一种形态（底部导航取代了大屏常驻侧栏），可见性就等于抽屉开没开。
-    LaunchedEffect(drawerState.isOpen) {
-        if (drawerState.isOpen) agentViewModel.refreshBrowse()
+    // 不能直接盯 drawerState.isOpen：大屏常驻侧栏不走 ModalNavigationDrawer，drawerState 永远是 Closed，
+    // 那样大屏远程模式下文件树只能靠手动刷新按钮。改取「侧栏可见」：窄窗看抽屉开没开，
+    // 大屏看是否停在聊天页（侧栏只在聊天页展开）。
+    val sidebarVisible = if (permanentDrawer) currentRoute == "chat" else drawerState.isOpen
+    LaunchedEffect(sidebarVisible) {
+        if (sidebarVisible) agentViewModel.refreshBrowse()
     }
 
     // 右栏工作台：大屏下编辑器 / 终端 / Git 与聊天并排，窄窗仍走全屏路由。
@@ -687,7 +693,7 @@ fun AppNavigation(
                 editorLeaveGuard.requestLeave(apply)
             }
             // 常驻侧栏不需要关；平板竖屏等仍用 modal 抽屉的情况下选完文件要收起。
-            scope.launch { drawerState.close() }
+            if (!permanentDrawer) scope.launch { drawerState.close() }
         } else {
             scope.launch { drawerState.close() }
             navController.navigate(
@@ -827,7 +833,7 @@ fun AppNavigation(
             onCancelPasteOverwrite = { agentViewModel.clearPasteConflict() },
             onSelect = {
                 agentViewModel.selectSession(it.id)
-                scope.launch { drawerState.close() }
+                if (!permanentDrawer) scope.launch { drawerState.close() }
             },
             onDelete = { agentViewModel.deleteSession(it.id) },
             onDeleteSessions = { agentViewModel.deleteSessions(it) },
@@ -840,7 +846,7 @@ fun AppNavigation(
             },
             onNavigateToSettings = {
                 navController.navigate("settings")
-                scope.launch { drawerState.snapTo(DrawerValue.Closed) }
+                if (!permanentDrawer) scope.launch { drawerState.snapTo(DrawerValue.Closed) }
             },
             searchQuery = chatSearchQuery,
             searchState = chatSearchState,
@@ -848,18 +854,13 @@ fun AppNavigation(
             onClearSearch = { agentViewModel.clearChatSearch() },
             onOpenSearchHit = { hit ->
                 agentViewModel.openChatSearchHit(hit)
-                scope.launch { drawerState.close() }
+                if (!permanentDrawer) scope.launch { drawerState.close() }
             }
         )
     }
 
     // 页面主体（NavHost）：大屏放进 Row 的右侧，窄窗放进 modal 抽屉容器里。
     val navBody: @Composable () -> Unit = {
-        Box(modifier = Modifier.fillMaxSize()) {
-        // 聊天页有悬浮底栏：给输入栏一个占位值，其它页面置 0
-        CompositionLocalProvider(
-            LocalMainBottomBarReserve provides if (currentRoute == "chat") MainBottomBarHeight else 0.dp
-        ) {
         NavHost(
             navController = navController,
             startDestination = "chat",
@@ -939,7 +940,7 @@ fun AppNavigation(
                                 settingsViewModel = settingsViewModel,
                                 workspaceViewModel = workspaceViewModel,
                                 onOpenDrawer = { scope.launch { drawerState.open() } },
-                                onOpenWorkflow = { navController.navigate("workflow") },
+                                showMenuButton = !permanentDrawer,
                                 onNavigateToTerminal = { openWorkbench(WorkbenchPaneKind.TERMINAL) },
                                 onNavigateToGit = { openWorkbench(WorkbenchPaneKind.GIT) },
                                 onNavigateToBrowser = { openWorkbench(WorkbenchPaneKind.BROWSER) },
@@ -973,21 +974,17 @@ fun AppNavigation(
                     },
                 )
             }
-            composable(
-                route = "settings?section={section}",
-                arguments = listOf(navArgument("section") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                })
-            ) { entry ->
-                // 配置页的六个入口直接落到设置页对应分区（不另做一套编辑界面）
-                val requestedSection = entry.arguments?.getString("section")
-                    ?.let { name -> SettingsSection.values().firstOrNull { it.name == name } }
+            composable("settings") {
+                // 复用 Activity 级 settingsViewModel（MainActivity 顶部已创建并 init），
+                // 避免进入设置页时再建一个 NavBackStackEntry 级实例、重复跑 init 与 9 路 flow 订阅，
+                // 这是侧边栏点设置「卡一下」的主因。
                 SettingsScreen(
                     viewModel = settingsViewModel,
-                    initialSection = requestedSection,
-                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateBack = {
+                        navController.popBackStack()
+                        // 大屏返回聊天页后侧栏本就常驻，不再弹 modal 抽屉。
+                        if (!expanded) scope.launch { drawerState.open() }
+                    },
                     onStopAllAndCloseTerminal = { agentViewModel.stopAllAndCloseTerminal() },
                     onboardingStep = onboardingUiState.step.takeIf { onboardingUiState.active },
                     onOnboardingModelAdded = {
@@ -1001,26 +998,6 @@ fun AppNavigation(
                             onboardingCoordinator.goToStep(OnboardingStep.PROVIDER_FETCH_MODELS)
                         }
                     }
-                )
-            }
-            composable("config") {
-                ConfigScreen(
-                    onOpenSection = { section ->
-                        navController.navigate("settings?section=${section.name}")
-                    }
-                )
-            }
-            composable("workflow") {
-                WorkflowScreen(
-                    sessions = sessions,
-                    subSessionsByParent = subSessionsByParent,
-                    agentStates = agentStates,
-                    currentSessionId = currentSessionId,
-                    onSelect = { session ->
-                        agentViewModel.selectSession(session.id)
-                        navController.popBackStack()
-                    },
-                    onNavigateBack = { navController.popBackStack() }
                 )
             }
             composable("terminal") { entry ->
@@ -1159,21 +1136,6 @@ fun AppNavigation(
                 )
             }
         }
-            // 一级页面底栏：首页 / 设置 / 配置。二级页的 route 匹配不上，组件自己就不渲染。
-            MainBottomBar(
-                currentRoute = currentRoute,
-                onNavigate = { route ->
-                    navController.navigate(route) {
-                        // 三个一级页互为平级：栈底始终留首页，不在它们之间堆栈
-                        popUpTo("chat") { inclusive = false }
-                        launchSingleTop = true
-                    }
-                },
-                maskColor = settingsPageBackground(),
-                modifier = Modifier.align(Alignment.BottomCenter)
-            )
-        }
-        }
     }
 
     CompositionLocalProvider(
@@ -1183,7 +1145,46 @@ fun AppNavigation(
     Box(modifier = Modifier.fillMaxSize()) {
     // 文件树里点开的图片走这个查看器；聊天面板自带一个，两层互不影响。
     ImageViewerHost(state = drawerImageViewerState, load = drawerImageLoad)
-    ModalNavigationDrawer(
+    if (expanded) {
+        // 大屏不套 ModalNavigationDrawer：侧栏常驻在左，抽屉那套 scrim / 手势 / 锚点在这里完全用不上。
+        // 侧栏只在聊天页展开：设置页自己就是「菜单 + 详情」两栏，外面再套一层会话侧栏就成了三栏。
+        // 宽度走补间而不是直接增删，否则右侧区域宽度突变，切页时会明显闪一下；
+        // 时长与页面过渡取同一个值，两段动画同时收尾。
+        val sidebarWidth by animateDpAsState(
+            targetValue = if (currentRoute == "chat") drawerWidth() else 0.dp,
+            animationSpec = tween(durationMillis = PAGE_MOTION_MS),
+            label = "sidebar-width"
+        )
+        // 侧栏完全收起后整棵子树离开组合，要拿 SaveableStateHolder 接住内部状态，
+        // 否则每次从设置页回来 tab 都跳回「会话」、文件树滚动位置也丢。
+        val sidebarStateHolder = rememberSaveableStateHolder()
+        Row(modifier = Modifier.fillMaxSize()) {
+            if (sidebarWidth > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .width(sidebarWidth)
+                        .fillMaxHeight()
+                        .clipToBounds()
+                ) {
+                    // 内容按完整宽度渲染再裁剪：收起过程中不去重排侧栏内部布局。
+                    Box(
+                        modifier = Modifier
+                            .width(drawerWidth())
+                            .fillMaxHeight()
+                    ) {
+                        sidebarStateHolder.SaveableStateProvider("chat-sidebar") {
+                            drawerBody()
+                        }
+                    }
+                }
+                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                navBody()
+            }
+        }
+    } else {
+        ModalNavigationDrawer(
             drawerState = drawerState,
             // 仅在聊天页启用手势滑出；其他页面禁止（但已打开时始终可关闭）。
             gesturesEnabled = currentRoute == "chat" || drawerState.isOpen,
@@ -1200,6 +1201,7 @@ fun AppNavigation(
         ) {
             navBody()
         }
+    }
 
     // 检查更新弹窗（全局宿主：自动检测与关于页手动检查共用，覆盖所有页面）
     val updateCheckState by settingsViewModel.updateCheckState.collectAsStateWithLifecycle()

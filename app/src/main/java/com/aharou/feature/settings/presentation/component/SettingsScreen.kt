@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import com.aharou.core.ui.rememberSafeDocumentPicker
@@ -119,7 +120,7 @@ private val SettingsMenuWidth = 320.dp
 private val SettingsTwoPaneMinWidth = 840.dp
 
 /** 设置页内部二级菜单分区。Menu 为首页菜单，其余为各自的二级页。 */
-enum class SettingsSection(@param:StringRes val titleRes: Int) {
+internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Menu(R.string.settings_title),
     Soul(R.string.soul_settings_title),
     ConfigAudit(R.string.config_audit_title),
@@ -204,7 +205,7 @@ private fun SettingsSection.depth(): Int = when (this) {
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onNavigateBack: () -> Unit, initialSection: SettingsSection? = null,
+    onNavigateBack: () -> Unit,
     onStopAllAndCloseTerminal: () -> Unit = {},
     onboardingStep: OnboardingStep? = null,
     onOnboardingModelAdded: (() -> Unit)? = null,
@@ -301,7 +302,7 @@ fun SettingsScreen(
             ?: stringResource(R.string.language_follow_system)
     }
 
-    var section by remember { mutableStateOf(initialSection ?: SettingsSection.Menu) }
+    var section by remember { mutableStateOf(SettingsSection.Menu) }
     // 市场列表的滚动位置：放在这一层，进技能详情页再返回时不会跳回第一条
     val marketListState = rememberLazyListState()
     var logReturnSection by remember { mutableStateOf(SettingsSection.Menu) }

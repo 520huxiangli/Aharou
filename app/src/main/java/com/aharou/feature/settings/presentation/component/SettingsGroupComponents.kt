@@ -31,7 +31,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import com.aharou.core.ui.ChevronRotationStyle
 import com.aharou.core.ui.ExpandableChevronIcon
-import com.aharou.core.ui.GlassSurface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
@@ -140,9 +139,9 @@ internal fun SettingsGroupHeader(
 }
 
 /** 分组卡片圆角：[SettingsGroup] 与 [LazyGroupItem] 共用，保证「整块卡片」与「逐条拼出」两种形态外观一致。 */
-private val GroupCardCorner = 22.dp
+private val GroupCardCorner = 14.dp
 
-/** 液态玻璃分组卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。[visible] 为 false 时整组不渲染（可折叠分组用）。 */
+/** 白色/深色分组圆角卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。[visible] 为 false 时整组不渲染（可折叠分组用）。 */
 @Composable
 internal fun SettingsGroup(
     modifier: Modifier = Modifier,
@@ -152,10 +151,11 @@ internal fun SettingsGroup(
     // 不用「调用方 if 包一层」：`if (x) SettingsGroup { ... }` 里的花括号会被 Kotlin 当成 if 的语句块，
     // 整块结构会错位，所以显隐放在组件内部
     if (!visible) return
-    GlassSurface(
+    Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(GroupCardCorner),
-        shadowElevation = 6.dp
+        color = MaterialTheme.semanticColors.cardSurface,
+        shadowElevation = 0.dp
     ) {
         Column(content = content)
     }
@@ -178,8 +178,7 @@ internal fun LazyGroupItem(
 ) {
     val isFirst = index == 0
     val isLast = index == count - 1
-    // 逐条拼卡片：投影只在整卡形态（SettingsGroup）上给，这里逐条投影会看到横向分层
-    GlassSurface(
+    Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(
             topStart = if (isFirst) GroupCardCorner else 0.dp,
@@ -187,6 +186,7 @@ internal fun LazyGroupItem(
             bottomStart = if (isLast) GroupCardCorner else 0.dp,
             bottomEnd = if (isLast) GroupCardCorner else 0.dp
         ),
+        color = MaterialTheme.semanticColors.cardSurface,
         shadowElevation = 0.dp
     ) {
         Column(content = content)

@@ -179,8 +179,6 @@ fun ChatDrawerContent(
     // tab 与展开状态进 saveable：大屏下侧栏收起后整棵子树会离开组合（见 MainActivity 的
     // SaveableStateProvider），用 remember 存会让每次回到聊天页都重置回「会话」页。
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    // 工作流 Tab 已搬到顶栏：旧存档里恢复出的 tab=2 收敛回会话列表，否则两个 Tab 的选块索引会越界
-    LaunchedEffect(Unit) { if (selectedTab > 1) selectedTab = 0 }
     var isSelectionMode by rememberSaveable { mutableStateOf(false) }
     val selectedSessionIds = remember { mutableStateListOf<String>() }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
@@ -220,12 +218,13 @@ fun ChatDrawerContent(
             .padding(bottom = imeInset + Spacing.xl),
         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
-        // 顶部 Tab 切换（工作流已移到顶栏，侧栏只留会话与文件）
+        // 顶部 Tab 切换
         SegmentedTabs(
             selected = selectedTab,
             labels = listOf(
                 stringResource(R.string.subagent_tab_sessions),
-                stringResource(R.string.drawer_tab_files)
+                stringResource(R.string.drawer_tab_files),
+                stringResource(R.string.drawer_tab_workflow)
             ),
             onSelect = { selectedTab = it }
         )
@@ -339,7 +338,8 @@ fun ChatDrawerContent(
                     onLongClick = { menuSession = it },
                     onOpenSearchHit = onOpenSearchHit
                 )
-                else -> if (fileSearchQuery.isNotBlank()) {
+                2 -> WorkflowTab(sessions, subSessionsByParent, agentStates, currentSessionId, onSelect)
+                1 -> if (fileSearchQuery.isNotBlank()) {
                     // 命中行点击：先把要定位的行号交给打开动作，再走与文件树同一条打开链路。
                     FileSearchResults(
                         state = fileSearchState,
