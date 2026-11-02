@@ -67,6 +67,8 @@ private const val OUTCOME_SKIPPED_MISSED = "skipped_missed"
 private const val OUTCOME_SKIPPED_CONDITION = "skipped_condition"
 private const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
 private const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
+private const val OUTCOME_SKIPPED_DUPLICATE = "skipped_duplicate"
+private const val OUTCOME_SKIPPED_DEDUP_FULL = "skipped_dedup_full"
 private const val OUTCOME_FAILED = "failed"
 
 private const val MAX_SESSION_CHOICES = 30
@@ -82,6 +84,8 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
     var editing by remember { mutableStateOf<ScheduledTaskEntity?>(null) }
     var showEditor by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ScheduledTaskEntity?>(null) }
+    // 从模板创建时先摊成一份实体当编辑器初始值；它只喂表单，保存时仍按「新建」处理。
+    var templateSeed by remember { mutableStateOf<ScheduledTaskEntity?>(null) }
 
     // 下次运行文案里的倒计时需要随时间推进，不需要秒级精度，半分钟刷新一次就够。
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -149,14 +153,22 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
                     showEditor = true
                 }
             )
+            ScheduledTaskTemplateEntry(
+                onTemplatePicked = { seed ->
+                    editing = null
+                    templateSeed = seed
+                    showEditor = true
+                }
+            )
         }
     }
 
     if (showEditor) {
         ScheduledTaskEditorSheet(
-            initial = editing,
+            initial = editing ?: templateSeed,
+            isNewTask = editing == null,
             sessions = sessions,
-            onDismiss = { showEditor = false },
+            onDismiss = { showEditor = false; templateSeed = null },
             onSave = { draft ->
                 viewModel.save(
                     existing = editing,
@@ -182,6 +194,7 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
                     debounceMinutes = draft.debounceMinutes
                 )
                 showEditor = false
+                templateSeed = null
             }
         )
     }
@@ -411,6 +424,8 @@ private fun outcomeLabel(outcome: String?): Int? {
         outcome == OUTCOME_SKIPPED || outcome == OUTCOME_SKIPPED_MISSED -> R.string.scheduled_tasks_missed
         outcome == OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
         outcome == OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
+        outcome == OUTCOME_SKIPPED_DUPLICATE -> R.string.scheduled_tasks_skipped_duplicate
+        outcome == OUTCOME_SKIPPED_DEDUP_FULL -> R.string.scheduled_tasks_skipped_dedup_full
         outcome == OUTCOME_FAILED -> R.string.scheduled_tasks_failed
         else -> null
     }
@@ -463,6 +478,8 @@ private data class ScheduledTaskDraft(
 @Composable
 private fun ScheduledTaskEditorSheet(
     initial: ScheduledTaskEntity?,
+    // 模板预填时也传 initial，但它不是已有任务：标题得还显示「新建」。
+    isNewTask: Boolean = initial == null,
     sessions: List<ChatSessionEntity>,
     onDismiss: () -> Unit,
     onSave: (ScheduledTaskDraft) -> Unit
@@ -535,7 +552,7 @@ private fun ScheduledTaskEditorSheet(
         ) {
             Text(
                 text = stringResource(
-                    if (initial == null) R.string.scheduled_tasks_editor_new
+                    if (isNewTask) R.string.scheduled_tasks_editor_new
                     else R.string.scheduled_tasks_editor_edit
                 ),
                 style = MaterialTheme.typography.titleMedium,
