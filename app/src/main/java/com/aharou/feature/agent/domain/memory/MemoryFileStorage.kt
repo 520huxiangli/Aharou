@@ -169,6 +169,14 @@ internal object MemoryFileStorage {
             } else {
                 null
             }
+            // 摘要（digest）是压缩留档，正文只能由 [MemoryDigestWriter] 写入；普通保存把它的 type
+            // 改成别的类型，那段被压掉的历史就会以「现行知识」的身份重新进注入清单，等于把留档
+            // 当知识用。改内容不改类型则放行：人工编辑、摘要二次整理走这条。
+            if (existing?.type == MemoryType.DIGEST && type != null && type != MemoryType.DIGEST) {
+                return@synchronized MemoryWriteResult.Failure(
+                    "DIGEST_PROTECTED", "「${existing.name}」是上下文压缩摘要，不能改成其它类型"
+                )
+            }
             val payload = MemoryParser.format(
                 MemorySource.sanitizeName(name), description, content,
                 type ?: existing?.type,

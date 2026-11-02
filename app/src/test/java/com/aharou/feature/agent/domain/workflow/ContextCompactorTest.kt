@@ -41,7 +41,8 @@ class ContextCompactorTest {
     private val provider = mockk<AIProvider>(relaxed = true)
     private val files = mockk<FileAccessProvider>(relaxed = true)
     private val paths = mockk<PathHomeResolver>()
-    private val compactor = ContextCompactor(dao, metadata, prompts, records, settings, persistence, files, paths)
+    private val digestWriter = mockk<com.aharou.feature.agent.domain.memory.MemoryDigestWriter>(relaxed = true)
+    private val compactor = ContextCompactor(dao, metadata, prompts, records, settings, persistence, files, paths, digestWriter)
 
     private fun prepare(context: Int = 16_000) {
         every { provider.providerId } returns "provider"

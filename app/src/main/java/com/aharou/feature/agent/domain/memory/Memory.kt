@@ -57,10 +57,18 @@ enum class MemoryType(val key: String) {
     FACT("fact"),
 
     /** 一次性事件（某次测试结果、某天的排查记录）。**不进注入清单**。 */
-    EVENT("event");
+    EVENT("event"),
 
-    /** 是否注入系统提示词清单。事件类只留档，需要时靠 search / read 取回。 */
-    val injected: Boolean get() = this != EVENT
+    /**
+     * 上下文压缩产出的会话摘要。**不进注入清单**：它是某段对话的留档，不是跨会话仍成立的知识，
+     * 放进清单只会把真正该被记住的东西挤淡；被压掉的细节要靠 search / read 取回。
+     * 只由 [MemoryDigestWriter] 写入，普通保存路径不许把它改成别的类型
+     * （见 [MemoryFileStorage.saveChecked]）。
+     */
+    DIGEST("digest");
+
+    /** 是否注入系统提示词清单。事件与压缩摘要只留档，需要时靠 search / read 取回。 */
+    val injected: Boolean get() = this != EVENT && this != DIGEST
 
     companion object {
         fun from(raw: String?): MemoryType? =

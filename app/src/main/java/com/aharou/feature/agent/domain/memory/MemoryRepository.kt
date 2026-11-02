@@ -432,6 +432,9 @@ class MemoryRepository @Inject constructor(
         val query = "$name $description".lowercase()
         val candidates = listMemories(projectRoot, scope)
             .filterNot { it.name.equals(name, ignoreCase = true) }
+            // 摘要（digest）只留档、不进注入：被相似度选中就会引导调用方把新知识 edit 进这条
+            // 看不见的条目里，写进去等于写进黑洞。
+            .filterNot { it.type == MemoryType.DIGEST }
         val frequencies = documentFrequencies(candidates)
         return candidates
             .asSequence()

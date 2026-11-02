@@ -6,6 +6,7 @@ import com.aharou.feature.agent.data.local.dao.AgentMessageDao
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
+import com.aharou.feature.agent.domain.memory.MemoryDigestWriter
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
 import com.aharou.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
@@ -60,7 +61,7 @@ class ContextCompactor @Inject constructor(
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
     private val fileAccess: FileAccessProvider,
-    private val pathHomeResolver: PathHomeResolver
+    private val pathHomeResolver: PathHomeResolver, private val memoryDigestWriter: MemoryDigestWriter
 ) {
     // 失败材料拉黑表：key = 材料指纹，value = 最近一次失败（含是否属于「换模型也压不下」的确定性失败）。
     private val failedMaterials = LinkedHashMap<String, FailedMaterial>()
@@ -625,7 +626,7 @@ class ContextCompactor @Inject constructor(
             )
             messagePersistenceUseCase.invalidateHistory(sessionId)
         }
-        FileLogger.i(TAG, "上下文压缩完成：${prepared.blockCount} 块，压缩后 ${prepared.tokens} tokens")
+        recordCompactionDone(memoryDigestWriter, prepared.blockCount, prepared.tokens, prepared.summary, sessionId)
         return CompactionResult(prepared.messages, compacted = true)
     }
 

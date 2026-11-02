@@ -178,7 +178,8 @@ class MemoryCompactor @Inject constructor(
     suspend fun compressOversizedIfDue(projectRoot: String?, scope: MemoryScope): Int = runCatching {
         val oversized = memoryRepository.listMemories(projectRoot)
             .filter { it.scope == scope && !it.pending }
-            .filter { it.type != MemoryType.EVENT }
+            // 摘要（digest）本身就是压缩产物：再让模型压一遍等于洗掉它存在的理由。
+            .filter { it.type != MemoryType.EVENT && it.type != MemoryType.DIGEST }
             .filterNot { isCoreArchiveName(it.name) }
             .filter { it.content.length > OVERSIZED_CHARS }
             .take(MAX_COMPRESS_PER_RUN)
@@ -331,11 +332,14 @@ class MemoryCompactor @Inject constructor(
         return merge(group, proposal)
     }
 
-    /** 一个作用域下参与整理的候选条目：事件类只留档、核心档案整份不可拆，都不算候选。 */
+    /** 一个作用域下参与整理的候选条目：事件类只留档、压缩摘要只留档不可改写、核心档案整份不可拆，都不算候选。 */
     internal fun compactionCandidates(projectRoot: String?, scope: MemoryScope): List<Memory> =
         memoryRepository.listMemories(projectRoot)
             .filter { it.scope == scope }
-            .filter { it.type != MemoryType.EVENT && !it.pending && it.content.length <= MAX_ITEM_CHARS }
+            .filter {
+                it.type != MemoryType.EVENT && it.type != MemoryType.DIGEST &&
+                    !it.pending && it.content.length <= MAX_ITEM_CHARS
+            }
             .filterNot { isCoreArchiveName(it.name) }
 
     /**
