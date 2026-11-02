@@ -36,7 +36,10 @@ class BrowserTool @Inject constructor(
             "action 取值：navigate/screenshot/click/type/get_text/scroll/get_page_info/execute_js/" +
             "find_elements/hover/get_readable/set_user_agent/set_viewport/get_backbone/fetch/" +
             "new_tab/close_tab/list_tabs/get_cookies/set_cookies/scroll_and_collect/wait_for_dom_stable/" +
-            "console/wait/press/select。" +
+            "console/wait/press/select/extract。" +
+            "声明式抽取用 extract：不写 JS，只交字段声明——from 选容器（缺省整文档），" +
+            "multiple 为真时每个容器匹配项各出一条记录，fields 是 {字段名: \"css\"} 或 " +
+            "{字段名: {selector, attr, type}}（type=text/html/href/attr，默认 text），limit 缺省 50（超出截断）。" +
             "交互类动作用 selector（支持 CSS、text=、text*=、role=、ref=、xpath=，ref= 来自 get_backbone 的节点 ref）；" +
             "需要看到页面视觉内容时显式调用 action=screenshot（会作为图片返回）；" +
             "多标签操作可带 tab_id（缺省作用于当前激活标签）。"
@@ -78,6 +81,13 @@ class BrowserTool @Inject constructor(
         "level" to ToolParameter("level", ParameterType.STRING, "console：日志级别过滤", false,
             enum = listOf("error", "warning", "debug", "log")),
         "clear" to ToolParameter("clear", ParameterType.BOOLEAN, "console：读取后清空缓冲（默认 false）", false),
+        "from" to ToolParameter("from", ParameterType.STRING, "extract：容器选择器（缺省整个文档）", false),
+        "multiple" to ToolParameter("multiple", ParameterType.BOOLEAN,
+            "extract：每个容器匹配项各出一条记录（默认 false）", false),
+        "fields" to ToolParameter("fields", ParameterType.OBJECT,
+            "extract：字段声明，{字段名: \"css 选择器\"} 取文本，或 {字段名: {selector, attr, type}}" +
+                "（type=text/html/href/attr；给 attr 时 type 默认 attr）", false),
+        "limit" to ToolParameter("limit", ParameterType.INTEGER, "extract：最多返回记录数（默认 50，超出截断）", false),
     )
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {

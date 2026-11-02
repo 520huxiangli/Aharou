@@ -1,7 +1,8 @@
 <!-- 内置浏览器与网页自动化：browser 工具的动作选择、抓取与交互效率 -->
 # 内置浏览器自动化
 
-- 用 `browser` 工具操作内置浏览器，动作包括：navigate / screenshot / click / type / press / select / get_text / get_page_info / execute_js / find_elements / hover / get_readable / scroll / scroll_and_collect / wait / wait_for_dom_stable / console / fetch / new_tab / close_tab / list_tabs / get_cookies / set_cookies / set_user_agent / set_viewport 等。
+- 用 `browser` 工具操作内置浏览器，动作包括：navigate / screenshot / click / type / press / select / get_text / get_page_info / execute_js / find_elements / hover / get_readable / scroll / scroll_and_collect / wait / wait_for_dom_stable / console / fetch / new_tab / close_tab / list_tabs / get_cookies / set_cookies / set_user_agent / set_viewport / extract 等。
+- **要结构化字段用 `extract`**：交一份字段声明（`fields` 里写选择器字符串或 `{selector, attr, type}`，`from` 限容器、`multiple` 决定多条、`limit` 限条数），宿主在页面里按声明抽取并返回 `{ok, count, records}`。比 `get_text` 拿整页再自己捞省得多；选择器写错不会报错中断，会回 `hint` 教你怎么写。
 - **要页面文字优先用 `get_readable`**（去掉广告与脚本），比截图省得多；只有需要看画面时才 `screenshot`（会作为图片返回，占上下文）。
 - 静态页面用 `webfetch`；需要点按、填表、依赖登录态的用 `browser`。
 - **选择器支持多种写法**：CSS（默认）、`text=`（精确文本）、`text*=`（包含文本）、`role=`（ARIA 角色，可带 `[name=...]`）、`ref=`（`get_backbone` 给的引用）、`xpath=`。动态站点优先用 `text=` / `role=`，比猜 CSS 类名稳得多。

@@ -73,6 +73,7 @@ AI 可通过 `browser` 工具控制浏览器执行以下操作：
 | `get_readable` | 提取页面的可读正文（去掉导航、广告与脚本） |
 | `set_user_agent` | 切换 UA 档位（`default` / `android_phone` / `android_tablet` / `desktop_pc` / `iphone` / `ipad` / `custom`；另兼容旧的 `mobile_chrome` / `desktop_chrome`） |
 | `set_viewport` | 设置视口尺寸（`viewport_width` / `viewport_height`，`reset` 清除会话级覆盖） |
+| `extract` | 按字段声明结构化抽取（`from` 限容器、`multiple` 是否多条、`fields` 字段规则、`limit` 条数上限），返回 `{ok, count, records}`；选择器非法时回 `hint` |
 | `get_backbone` | 提取页面几何树（字段与截断规则见下） |
 | `fetch` | 直接发起 HTTP 请求取回内容，不经过页面渲染 |
 | `new_tab` / `close_tab` / `list_tabs` | 标签页管理（最多 3 个标签页） |

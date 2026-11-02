@@ -651,7 +651,7 @@ class BrowserUseManager(
                 input.scrollCount, input.itemSelector, input.keywords,
             )
             BrowserAction.WAIT_FOR_DOM_STABLE -> return waitForDomStable(input.timeoutMs)
-            BrowserAction.CONSOLE, BrowserAction.WAIT, BrowserAction.PRESS, BrowserAction.SELECT ->
+            BrowserAction.CONSOLE, BrowserAction.WAIT, BrowserAction.PRESS, BrowserAction.SELECT, BrowserAction.EXTRACT ->
                 return BrowserExtras.run(webView, input)
             BrowserAction.NEW_TAB, BrowserAction.CLOSE_TAB, BrowserAction.LIST_TABS ->
                 return BrowserActionResult.error("Tab management actions must be routed through BrowserTabPool")

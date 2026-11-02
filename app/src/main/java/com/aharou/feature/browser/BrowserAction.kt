@@ -31,7 +31,8 @@ enum class BrowserAction(val value: String) {
     CONSOLE("console"),
     WAIT("wait"),
     PRESS("press"),
-    SELECT("select");
+    SELECT("select"),
+    EXTRACT("extract");
 
     /**
      * [T-browser-readaction-follow-tab-and-yolo-android] True when this action

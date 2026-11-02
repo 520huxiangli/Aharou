@@ -51,6 +51,14 @@ data class BrowserActionInput(
      * (Unix seconds). Values are loosely typed (String / Boolean / Number).
      */
     val cookies: List<Map<String, Any?>>? = null,
+    /** extract：容器选择器，缺省整个文档。 */
+    val extractFrom: String? = null,
+    /** extract：容器匹配到多个时，每项各出一条记录。 */
+    val extractMultiple: Boolean = false,
+    /** extract：字段名 → 取值声明；简写字符串即纯 CSS 选择器（取 textContent）。 */
+    val extractFields: Map<String, ExtractField>? = null,
+    /** extract：最多返回多少条记录（缺省 50，超出截断）。 */
+    val extractLimit: Int? = null,
 ) {
     companion object {
         fun parse(json: String): BrowserActionInput? {
@@ -89,6 +97,10 @@ data class BrowserActionInput(
                     clearConsole = obj.optBoolean("clear", false),
                     fullPage = obj.optBoolean("full_page", false),
                     cookies = parseCookies(obj),
+                    extractFrom = obj.optString("from").ifEmpty { null },
+                    extractMultiple = obj.optBoolean("multiple", false),
+                    extractFields = parseExtractFields(obj),
+                    extractLimit = if (obj.has("limit")) obj.optInt("limit") else null,
                 )
             } catch (_: Exception) {
                 null
@@ -113,5 +125,41 @@ data class BrowserActionInput(
                 }
             }.takeIf { it.isNotEmpty() }
         }
+
+        /**
+         * `fields` 的两种写法：`{"名字": "css"}` 或 `{"名字": {"selector":…, "attr":…, "type":…}}`。
+         * 与 cookies 同理，部分模型会把声明好的 object 参数序列化成 JSON 字符串，两种都收。
+         */
+        private fun parseExtractFields(obj: JSONObject): Map<String, ExtractField>? {
+            val raw = obj.optJSONObject("fields")
+                ?: obj.optString("fields").takeIf { it.isNotBlank() }
+                    ?.let { runCatching { JSONObject(it) }.getOrNull() }
+                ?: return null
+            val out = LinkedHashMap<String, ExtractField>()
+            raw.keys().forEach { name ->
+                parseExtractField(raw.opt(name))?.let { out[name] = it }
+            }
+            return out.takeIf { it.isNotEmpty() }
+        }
+
+        private fun parseExtractField(raw: Any?): ExtractField? = when (raw) {
+            is String -> raw.takeIf { it.isNotBlank() }?.let { ExtractField(selector = it) }
+            is JSONObject -> raw.optString("selector").ifEmpty { null }?.let { selector ->
+                val attr = raw.optString("attr").ifEmpty { null }
+                val type = raw.optString("type").ifEmpty { null }?.lowercase()
+                ExtractField(selector, attr, type ?: if (attr != null) "attr" else "text")
+            }
+            else -> null
+        }
     }
 }
+
+/**
+ * extract 的一条字段声明。`type` 取 text / html / href / attr；给不出 type 时
+ * 按「有 attr 取属性，否则取文本」推断，与模型写简写时的直觉一致。
+ */
+data class ExtractField(
+    val selector: String,
+    val attr: String? = null,
+    val type: String = "text",
+)
