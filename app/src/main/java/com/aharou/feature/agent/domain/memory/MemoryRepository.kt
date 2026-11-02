@@ -451,6 +451,8 @@ class MemoryRepository @Inject constructor(
         findMemory(name, projectRoot, scope)?.content
 
     fun saveMemory(name: String, description: String, content: String, scope: MemoryScope, projectRoot: String?, type: MemoryType? = null, expiresAt: Long? = null, pending: Boolean? = null, keywords: List<String>? = null): Boolean {
+        // SOUL.md 的 frontmatter 是人格自己的 schema，记忆格式写过去会抹掉头像与风格。
+        if (isSoulFile(name)) return false
         val existing = existingMemoryOf(name, scope, projectRoot)
         // 未显式指定的字段沿用原值：否则覆盖 / 合并一条 identity 记忆会抹掉它的 type，
         // 重写一条短期记忆也会把它变成永久（反过来同理）；「待确认」标记同理，
@@ -487,6 +489,11 @@ class MemoryRepository @Inject constructor(
         keywords: List<String>? = null,
         expectedVersion: String? = null
     ): MemoryWriteResult {
+        // 人格文件必须走 SoulStore 或直接写文件，不能拿记忆条目的格式覆盖。
+        if (isSoulFile(name)) return MemoryWriteResult.Failure(
+            "PROTECTED_FILE",
+            "SOUL.md 是人格文件，frontmatter 用 icon/style/lang；用记忆格式写会抹掉头像与风格。改人格请直接写文件或在设置里改"
+        )
         val existing = existingMemoryOf(name, scope, projectRoot)
         val effectiveType = type ?: existing?.type
         val effectiveExpiresAt = expiresAt ?: existing?.expiresAt
@@ -562,6 +569,7 @@ class MemoryRepository @Inject constructor(
     }
 
     fun deleteMemory(name: String, scope: MemoryScope, projectRoot: String?): Boolean {
+        if (isSoulFile(name)) return false
         return when (scope) {
             MemoryScope.GLOBAL -> globalMemorySource.deleteMemory(name)
             MemoryScope.PROJECT -> {

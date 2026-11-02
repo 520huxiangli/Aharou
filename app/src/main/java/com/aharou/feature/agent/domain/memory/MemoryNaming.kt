@@ -15,6 +15,17 @@ internal fun isCoreArchiveName(name: String): Boolean {
 }
 
 /**
+ * 人格文件：SOUL.md 的 frontmatter 是自己的 schema（name / icon / style / lang），由 SoulStore
+ * 解析。用记忆条目的格式（description / type）重写它，会把头像与风格抹掉。
+ *
+ * 2026-11-01 就这么丢过一次：`memory save name=SOUL` 把它重写成了一条普通记忆，
+ * icon 换成 description、style 换成 type，升级后同步把错的版本拉了回来。
+ */
+internal fun isSoulFile(name: String): Boolean =
+    name.substringBeforeLast('.').equals("SOUL", ignoreCase = true) &&
+        (name.endsWith(".md", ignoreCase = true) || !name.contains('.'))
+
+/**
  * 行为红线与关系锚点：自动降级永不碰，注入时优先占常驻位。
  *
  * 名字是「本案 12 条 + 小染回信的 11 条」的并集，宁可多锁——红线一旦不在上下文里，等于没定。
