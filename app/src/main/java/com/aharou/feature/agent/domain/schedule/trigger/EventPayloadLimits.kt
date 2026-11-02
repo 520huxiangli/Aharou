@@ -60,7 +60,7 @@ fun EventPayload.limited(): EventPayload {
         val excess = size - EventPayloadLimits.TOTAL_JSON_MAX_BYTES
         // 先砍最长的：长度越接近上限，越可能是「没有增量信息」的那一段。
         val longest = fields
-            .filter { it.rendered().length > EventPayloadLimits.MIN_FIELD_CHARS }
+            .filter { it.canShrink() }
             .maxByOrNull { it.rendered().length }
             ?: break
         longest.shrink(excess)
@@ -89,6 +89,12 @@ private class PayloadField(initial: String, maxChars: Int) {
     private var cut: Boolean = initial.length > maxChars
 
     fun rendered(): String = if (cut) value + EventPayloadLimits.TRUNCATION_MARK else value
+
+    /**
+     * 是否还能再截。判断的是 [value] 而不是 [rendered]：渲染后的长度含截断标记，
+     * 拿它跟字符下限比，会把已经砍到底的字段误判成「还能砍」，循环永远不收敛（曾是死循环）。
+     */
+    fun canShrink(): Boolean = value.length > EventPayloadLimits.MIN_FIELD_CHARS
 
     /** 至少砍掉一个字，保证 [limited] 的循环会收敛；已到下限就不再动。 */
     fun shrink(excessBytes: Int) {
