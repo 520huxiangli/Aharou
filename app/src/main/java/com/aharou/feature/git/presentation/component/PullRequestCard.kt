@@ -38,6 +38,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.dialogTextFieldColors
+import com.aharou.core.util.ExternalUrlPolicy
 import com.aharou.feature.git.data.PrErrorKind
 import com.aharou.feature.git.domain.pr.CiStatus
 import com.aharou.feature.git.domain.pr.PrState
@@ -179,7 +180,7 @@ private fun PrContent(state: PullRequestUiState, showAnalyze: Boolean, onAnalyze
             }
         },
         onClick = {
-            if (pr.url.isNotBlank()) {
+            if (ExternalUrlPolicy.isSafeExternalUrl(pr.url)) {
                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(pr.url))) }
             }
         }

@@ -840,9 +840,6 @@
     <!-- Chat Message Bubbles -->
     <string name="chat_copied">已复制</string>
     <string name="chat_copy">复制</string>
-    <string name="chat_show_injected">显示全部</string>
-    <string name="chat_injected_title">本轮默认注入的内容</string>
-    <string name="chat_injected_desc">下面这些不是你打的字，是系统每轮自动拼进模型上下文的内容（人格、规则、记忆、技能索引、当前时间等）。</string>
     <string name="chat_task_duration">本轮总耗时 %1$s</string>
     <string name="chat_cache_hit_rate">缓存命中率 %1$s</string>
     <string name="chat_status_generating">正在生成</string>
@@ -3395,6 +3392,8 @@
     <string name="settings_remote_device_allow_ask_ai">允许已配对设备向本机 AI 提问</string>
     <string name="settings_remote_device_allow_ask_ai_hint">开启后，已配对设备可用 ask_ai 以你的口吻把问题交给本机 AI——它会当成你说的来回答。等于让它们借你的 AI 办事，所以默认开启；工具调用仍走本机权限，该审批的照旧。</string>
     <string name="settings_remote_device_pair_hint">在另一台设备的 Aharou 里输入这枚 6 位码完成配对</string>
+    <string name="settings_remote_device_peer_address">对方的地址（可粘贴整条配对链接）</string>
+    <string name="settings_remote_device_peer_code">对方给的 6 位配对码</string>
     <string name="settings_remote_device_paired_title">已授权设备</string>
     <string name="settings_remote_device_paired_empty">还没有已授权的设备</string>
     <string name="settings_remote_device_paired_revoke">撤销</string>

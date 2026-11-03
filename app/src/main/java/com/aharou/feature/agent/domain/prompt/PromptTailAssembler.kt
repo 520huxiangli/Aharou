@@ -56,7 +56,7 @@ internal data class PromptTail(
  * 把 [PromptTail] 按**固定顺序**追加在静态前缀之后。
  *
  * 存在的理由有三条：
- * 1. 内置路径（`buildUnrecorded`）与 `.no-builtin` 路径（`buildCustomOnly`）共用同一段拼装逻辑，
+ * 1. 内置路径（`build`）与 `.no-builtin` 路径（`buildCustomOnly`）共用同一段拼装逻辑，
  *    否则两条路线的段落顺序迟早漂移——custom-only 之前就是漏了 9 个段落。
  * 2. 顺序刻意固定为「静态 → 慢变 → 快变」，让前缀尽量落进可复用的 KV Cache。
  * 3. `SystemPromptProvider` 有 1000 行硬上限（`scripts/check_architecture.py`），这段逻辑留在这里更合适。

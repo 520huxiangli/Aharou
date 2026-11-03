@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.util.ExternalUrlPolicy
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronUp
@@ -182,7 +183,7 @@ private fun WebSearchResultItem(index: Int, item: ParsedWebSearchItem) {
         Column(
             modifier = Modifier
                 .clickable {
-                    if (item.url.isNotBlank()) {
+                    if (ExternalUrlPolicy.isSafeExternalUrl(item.url)) {
                         runCatching {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
                         }

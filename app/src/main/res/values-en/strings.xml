@@ -841,9 +841,6 @@
     <!-- Chat Message Bubbles -->
     <string name="chat_copied">Copied</string>
     <string name="chat_copy">Copy</string>
-    <string name="chat_show_injected">Show all</string>
-    <string name="chat_injected_title">What was injected this turn</string>
-    <string name="chat_injected_desc">None of this is text you typed. It is what the app automatically feeds into the model each turn: persona, rules, memory, skill index, current time and more.</string>
     <string name="chat_task_duration">Total time %1$s</string>
     <string name="chat_cache_hit_rate">Cache hit rate %1$s</string>
     <string name="chat_status_generating">Generating</string>
@@ -3397,6 +3394,8 @@
     <string name="settings_remote_device_allow_ask_ai">Let paired devices ask this device\'s AI</string>
     <string name="settings_remote_device_allow_ask_ai_hint">When on, paired devices can use ask_ai to send a question in your voice — this device\'s AI answers it as if you asked. That is letting them work through your AI, so it is on by default; tool calls still go through this device\'s permission layer.</string>
     <string name="settings_remote_device_pair_hint">Enter this 6-digit code in Aharou on the other device to pair</string>
+    <string name="settings_remote_device_peer_address">Peer address (you can paste the whole pairing link)</string>
+    <string name="settings_remote_device_peer_code">6-digit code from the other device</string>
     <string name="settings_remote_device_paired_title">Authorized devices</string>
     <string name="settings_remote_device_paired_empty">No authorized devices yet</string>
     <string name="settings_remote_device_paired_revoke">Revoke</string>

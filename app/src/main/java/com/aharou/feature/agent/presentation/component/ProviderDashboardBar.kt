@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.util.ExternalUrlPolicy
 import com.aharou.R
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.AdaptiveCardAction
@@ -175,7 +176,9 @@ fun ProviderDashboardBar(
                     val onCardAction: (AdaptiveCardAction) -> Unit = { action ->
                         when (action) {
                             is AdaptiveCardAction.OpenUrl -> {
-                                if (onOpenInBrowser != null) {
+                                if (!ExternalUrlPolicy.isSafeExternalUrl(action.url)) {
+                                    Toast.makeText(context, context.getString(R.string.common_open_link_failed), Toast.LENGTH_SHORT).show()
+                                } else if (onOpenInBrowser != null) {
                                     onOpenInBrowser(action.url)
                                 } else {
                                     runCatching {
