@@ -52,6 +52,7 @@ Tag 驱动发版，平时 `master` 上的提交不影响发布包。
 
 0. **更新内置模型数据（发版前跑，但不单独成笔提交）**：`python3 scripts/update-models-dev-assets.py` 从 models.dev 刷新 `app/src/main/assets/api.official.json`（只保留内置 12 个官方 provider、不引入新 provider，现有 provider 下可扩充模型与单价）。**流程照旧每版跑**，但跑完要把快照改动 squash 进本版最近的实质提交（在功能提交上 `git commit --amend`，或 `fixup` + `rebase --autosquash`），**不要单独出一笔 `chore(build): 更新内置模型数据`，也不在发版记录 / 版本说明里列条目**——它在 Release changelog 里只会是噪音（2026-10-20 主人定）。**失败时脚本非零退出且不改快照——直接跳过发版此步，不要重试或手改文件**。
 1. **在 `master` 最新提交上打 Tag 并推送**：`git tag v1.7.0-rc1 && git push origin v1.7.0-rc1`。**严禁在 `feat/*` / `refactor/*` 上打 Tag 发版**，必须先合入 `master`。
+   - **推送失败不许停手（硬规则）**：分支或 Tag 的 `git push` 报 GnuTLS、连接超时、443 不通这类网络错误时，最多再重试 1 次；仍不通**立刻改用 API 推送**——分支 `python3 scripts/push/gh_api_push.py master`，Tag `python3 scripts/push/push_tag.py <tag>`，只改少量文件时 `python3 scripts/push/push_paths.py <文件...> --branch master`（都不碰 tag）。推完按脚本提示 `git fetch origin && git reset --hard origin/<分支>` 对齐本地（API 建的 commit sha 与本地不同）。**推上去之前不许结束本轮、不许以「等网络恢复」收尾**；脚本本身报错就照记忆 `gh_api_push_script` 的流程现写，不许撂手。
 2. CI 捕获 `v*` Tag 后自动推导版本、构建 APK、发布 Release。
 3. **真机装包**，至少跑通 AI 对话、终端、容器启动三条主线。
 4. **有问题**：从该 RC Tag 拉 `hotfix/xxx` 修复（**勿从最新 `master` 或功能分支拉**，否则会把已合入的未发版功能带进修复包）→ 升 rc 序号打 Tag 重发 → 修复合回 `master` 并推送 → 删 hotfix 分支。这是允许在非 `master` 分支打 Tag 的唯一例外。**无问题**：直接打正式 Tag（`v1.7.0`）转正。

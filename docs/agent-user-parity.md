@@ -110,9 +110,9 @@
 | 开/关本机 MCP 服务 | `feature/remotedevice/presentation/RemoteDeviceSection.kt:105` | 有 | `config` `remote.device.enabled`（`feature/remotedevice/data/ConfigRemoteDeviceFields.kt:36`） | 无 |
 | 查看配对码 | `RemoteDeviceSection.kt:119`（配对码面板 `:188`） | 有 | `config` `action=get path=remote.device.pair_code`（只读，`ConfigRemoteDeviceFields.kt:153`） | 只读；要换码得等对端配对成功后自动轮换 |
 | 接受协助（主动连到别人） | `RemoteDeviceSection.kt:131`、`:139`（`acceptAssistance`） | 无 | 未找到（config 只有只读 state/pair_code） | **缺口**：agent 不能代用户发起一次协助连接 |
-| 改端口 | 界面未找到（`RemoteDeviceViewModel.kt:81` 有 `setPort`，`RemoteDeviceSection.kt` 无任何调用点） | 有 | `config` `remote.device.port`（`ConfigRemoteDeviceFields.kt:53`） | 反向缺口：agent 能改，用户只能在 `config` 之外的入口（无） |
-| 查看已配对设备 | 界面未找到 | 有 | `config` `action=get path=remote.devices.<设备id>`（`ConfigRemoteDeviceFields.kt:211`） | 反向缺口 |
-| 撤销某台设备授权 | 界面未找到（`RemoteDeviceViewModel.kt:115` 有 `revoke`，无 UI 调用点） | 有 | `config` `action=remove path=remote.devices id=<设备id>`（`ConfigRemoteDeviceFields.kt:246`） | 反向缺口 |
+| 改端口 | 有意不做界面：设置页没有端口输入，需要时由 agent 走 `config` | 有 | `config` `remote.device.port`（`ConfigRemoteDeviceFields.kt:53`） | 只有端口撞车才需要改，不做入口（2026-11-03 定） |
+| 查看已配对设备 | `RemoteDeviceSection.kt:135`（`devices.forEachIndexed` 列表） | 有 | `config` `action=get path=remote.devices.<设备id>`（`ConfigRemoteDeviceFields.kt:211`） | 有 |
+| 撤销某台设备授权 | `RemoteDeviceSection.kt:144`（`viewModel.revoke`） | 有 | `config` `action=remove path=remote.devices id=<设备id>`（`ConfigRemoteDeviceFields.kt:246`） | 有 |
 
 ## 9. IM 接入
 
@@ -159,7 +159,7 @@
 
 ## 13. 缺口汇总
 
-统计（86 条能力）：**有对应工具 49 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 3 条反向缺口。
+统计（86 条能力）：**有对应工具 49 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 1 条反向缺口（远程设备端口，属有意不做界面）。
 
 ### A. 用户能做、agent 完全没有工具（26 条）
 
@@ -201,17 +201,14 @@
 
 共同问题：这些动作**没有专用工具，所以不在工具名层面可发现**——agent 得先知道“可以用 shell 凑”，才做得出来；也没有 UI 那层的合法性校验（片段命名、技能目录必须含 SKILL.md）。
 
-### C. 反向缺口：agent 有 `config` 字段，用户却没有界面入口（3 条）
+### C. 反向缺口：agent 有 `config` 字段，用户却没有界面入口（1 条，且属有意设计）
 
-- 远程设备端口：`ConfigRemoteDeviceFields.kt:53` 可写；`RemoteDeviceSection.kt` 里没有端口输入。
-- 已配对设备列表：`ConfigRemoteDeviceFields.kt:211` 可读；设置页没有列表。
-- 撤销设备授权：`ConfigRemoteDeviceFields.kt:246` 可删；`RemoteDeviceViewModel.kt:115` 的 `revoke` 没有任何 Compose 调用点。
-
-即这三项当前**只有 agent 能操作**，用户反而要借 agent 或借 `config` 通道，与“同权”方向相反。
+- 远程设备端口：`ConfigRemoteDeviceFields.kt:53` 可写；设置页没有端口输入——**有意不做界面**（只有端口撞车才需要改，不做入口），不算缺口。
+- （已消）已配对设备列表与撤销设备授权均已接入设置页：`RemoteDeviceSection.kt:135` 列表、`:144` 撤销按钮（提交 `201e3c60`）。
 
 ### D. 双方都没有（3 条）
 
-自动化任务“手动跑一次”、采样温度调节、会话归档。写在这里是为了说明：它们不是 agent 工具缺口，不要照着补工具。
+采样温度调节、会话归档。自动化任务「手动跑一次」已明确不做（2026-11-03 主人定，调试用单次任务凑合）。写在这里是为了说明：它们不是 agent 工具缺口，不要照着补工具。
 
 ## 14. 方法说明
 
