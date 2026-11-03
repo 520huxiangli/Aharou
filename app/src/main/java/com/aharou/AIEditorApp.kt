@@ -205,7 +205,7 @@ class AIEditorApp : Application(), Configuration.Provider {
     lateinit var configEnvFields: com.aharou.feature.settings.data.ConfigEnvFields
 
     @Inject lateinit var configScheduledTaskFields: com.aharou.feature.agent.data.ConfigScheduledTaskFields
-    @Inject lateinit var configRuleFields: com.aharou.feature.agent.data.ConfigRuleFields
+    @Inject lateinit var configRuleFields: com.aharou.feature.agent.data.ConfigRuleFields; @Inject lateinit var configReminderFields: com.aharou.feature.agent.data.ConfigReminderFields
     /** 语音合成（TTS）字段注册。 */
     @Inject
     lateinit var configVoiceFields: com.aharou.feature.settings.data.ConfigVoiceFields
@@ -416,7 +416,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configModelRoleFields.registerInto(configRegistry)
         configEnvFields.registerInto(configRegistry)
         configScheduledTaskFields.registerInto(configRegistry)
-        configRuleFields.registerInto(configRegistry)
+        configRuleFields.registerInto(configRegistry); configReminderFields.registerInto(configRegistry)
         configMcpFields.registerInto(configRegistry)
         configSkillFields.registerInto(configRegistry)
         configSkillMarketFields.registerInto(configRegistry)

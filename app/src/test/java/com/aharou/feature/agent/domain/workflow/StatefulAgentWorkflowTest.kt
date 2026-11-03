@@ -41,6 +41,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
+import io.mockk.thirdArg
 import io.mockk.slot
 import io.mockk.spyk
 import io.mockk.unmockkObject
@@ -119,6 +120,12 @@ class StatefulAgentWorkflowTest {
         vault = mockk(relaxed = true) {
             every { redact(any()) } answers { firstArg<String>() }
         },
+        // 规则提醒：这些用例不验证提醒，打桩成「原样返回结果」，保持工具结果不变。
+        reminderEngine = mockk<com.aharou.feature.agent.domain.reminder.ReminderEngine>(relaxed = true) {
+            coEvery { decorate(any(), any(), any(), any()) } answers {
+                thirdArg<com.aharou.feature.agent.domain.tool.ToolResult>().toTransportString()
+            }
+        },
         // 协作开关：这些用例不碰跨设备协作，relaxed mock 下 current().enabled 为 false（等价关闭）。
         remoteDeviceSettings = mockk(relaxed = true),
         // 记忆整理入口：这些用例不会走到自动整理，Lazy 里放个 relaxed mock 即可（注入形式是 dagger.Lazy 为了断环）。
@@ -126,6 +133,7 @@ class StatefulAgentWorkflowTest {
     ), recordPrivateCalls = true)
 
     init {
+        coEvery { reminderEngine.turnEndReminder(any(), any(), any()) } returns null
         // relaxed mock 对「返回对象」的可空方法会给个空壳配置，导致 getEffectiveProvider 认为没填 Key；
         // 这些用例不覆盖跨供应商回退，显式打成未激活。
         coEvery { failoverCoordinator.overrideConfig(any()) } returns null

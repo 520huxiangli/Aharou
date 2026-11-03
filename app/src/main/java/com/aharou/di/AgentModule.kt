@@ -528,7 +528,8 @@ object AgentModule {
         fileAccess: FileAccessProvider,
         receiptRepository: ToolCallReceiptRepository,
         ocrEngine: TesseractOcrEngine,
-        vault: VaultRepository
+        vault: VaultRepository,
+        reminderEngine: com.aharou.feature.agent.domain.reminder.ReminderEngine
     ): AgentWorkflow {
         return StatefulAgentWorkflow(
             toolRegistry,
@@ -562,6 +563,7 @@ object AgentModule {
             receiptRepository,
             ocrEngine,
             vault,
+            reminderEngine,
             memoryCompactor
         )
     }

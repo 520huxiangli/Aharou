@@ -17,7 +17,9 @@ import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow.AgentSideE
 internal fun StatefulAgentWorkflow.reduce(
     state: AgentSessionState,
     action: AgentAction,
-    stuckNudgeText: String = STUCK_NUDGE_TEXT
+    stuckNudgeText: String = STUCK_NUDGE_TEXT,
+    /** 收尾层提醒：本轮该做没做的事，由调用方预先算好；null 表示没有 */
+    turnEndNudge: String? = null
 ): Pair<AgentSessionState, List<AgentSideEffect>> {
     var newState = state
     val effects = mutableListOf<AgentSideEffect>()
@@ -65,6 +67,10 @@ internal fun StatefulAgentWorkflow.reduce(
                     // 空响应（无正文、无思考、无图）：静默收尾会让用户只看到一张空白气泡，
                     // 与「模型真的答完了」无法区分；交给 UI 按 errorCode 展示原因并允许重试。
                     newState = newState.copy(isFinished = true, error = "", errorCode = "empty_response")
+                } else if (!turnEndNudge.isNullOrBlank() && !nudgedAlready(newState.messages, turnEndNudge)) {
+                    // 提醒只塞一次（nudgedAlready 挡住重复）：塞过之后模型仍选择收尾就放行，不死循环。
+                    newState = newState.copy(messages = newState.messages + AgentMessage.UserMessage(content = turnEndNudge))
+                    FileLogger.i(StatefulAgentWorkflow.TAG, "收尾提醒：规则未完成，塞回一句让模型继续")
                 } else {
                     newState = newState.copy(isFinished = true)
                 }

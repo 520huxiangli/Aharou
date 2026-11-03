@@ -141,7 +141,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private val fileAccess: FileAccessProvider,
     private val receiptRepository: ToolCallReceiptRepository,
     private val ocrEngine: TesseractOcrEngine,
-    private val vault: VaultRepository,
+    private val vault: VaultRepository, private val reminderEngine: com.aharou.feature.agent.domain.reminder.ReminderEngine,
     private val memoryCompactor: Lazy<MemoryCompactor> // Lazy 断环：MemoryCompactor 自己依赖 AgentWorkflow
 ) : AgentWorkflow {
 
@@ -490,7 +490,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 break
             }
             val action = actionQueue.removeFirst()
-            val (newState, effects) = reduce(state, action, stuckNudgeText)
+            val (newState, effects) = reduce(state, action, stuckNudgeText, reminderEngine.turnEndReminder(state.messages, currentContext.projectRoot, action))
             state = newState
 
             for (effect in effects) {
@@ -1158,7 +1158,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 val images = if (result is ToolResult.Success) result.images else emptyList()
                 val transportResult = if (attachments.isNotEmpty()) stripAttachments(result) else result
                 val processed = toolOutputStore.process(name, toolCall.id, transportResult.redactWith(vault))
-                ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, attachments, images)
+                ToolRunResult(reminderEngine.decorate(name, toolCall.arguments, processed, context.projectRoot), processed is ToolResult.Error, attachments, images)
             }
         } catch (e: CancellationException) {
             throw e
@@ -1406,7 +1406,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 val result = finalResult ?: ToolResult.Error("流式工具未返回结果", "MISSING_STREAM_RESULT")
                 val processed = toolOutputStore.process(toolCall.name, toolCall.id, result.redactWith(vault))
                 val images = if (result is ToolResult.Success) result.images else emptyList()
-                ToolRunResult(processed.toTransportString(), processed is ToolResult.Error, images = images)
+                ToolRunResult(reminderEngine.decorate(toolCall.name, toolCall.arguments, processed, context.projectRoot), processed is ToolResult.Error, images = images)
             }
         } catch (e: CancellationException) {
             throw e

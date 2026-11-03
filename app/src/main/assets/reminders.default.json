@@ -1,0 +1,168 @@
+{
+  "reminders": [
+    {
+      "id": "git_push_failure_direct_to_api",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "Bash"
+      ],
+      "conditions": [
+        {
+          "type": "args_regex",
+          "pattern": "git\\s+push"
+        },
+        {
+          "type": "result_regex",
+          "pattern": "GnuTLS|TLS connection|Connection timed out|Failed to connect|443|unable to access"
+        }
+      ],
+      "match": "all",
+      "message": "直连推不动，按记忆 gh_api_push_script 改走 GitHub API 推送，最多再重试 1 次，推上去之前不许停手等网络。",
+      "refs": [
+        "gh_api_push_script",
+        "release_push_fallback_to_api"
+      ]
+    },
+    {
+      "id": "git_push_failure_turn_end",
+      "enabled": true,
+      "layer": "turn_end",
+      "tools": [],
+      "conditions": [
+        {
+          "type": "trigger",
+          "conditions": [
+            {
+              "type": "args_regex",
+              "pattern": "git\\s+push"
+            },
+            {
+              "type": "result_regex",
+              "pattern": "GnuTLS|TLS connection|Connection timed out|Failed to connect|443|unable to access"
+            }
+          ],
+          "match": "all"
+        },
+        {
+          "type": "resolve",
+          "conditions": [
+            {
+              "type": "args_regex",
+              "pattern": "git\\s+push"
+            },
+            {
+              "type": "result_regex",
+              "pattern": "->|up-to-date|→.*远端"
+            },
+            {
+              "type": "is_error",
+              "value": false
+            }
+          ],
+          "match": "all"
+        }
+      ],
+      "match": "all",
+      "message": "本轮 push 失败后还没推上去，不许收尾，按 gh_api_push_script 走 API 继续推。",
+      "refs": [
+        "gh_api_push_script",
+        "release_push_fallback_to_api"
+      ]
+    },
+    {
+      "id": "git_tag_check_remote_first",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "Bash"
+      ],
+      "conditions": [
+        {
+          "type": "args_regex",
+          "pattern": "git\\s+tag\\s+v"
+        }
+      ],
+      "match": "all",
+      "message": "打 tag 前先 git ls-remote --tags 确认远端最新 tag，读 aharou_release_flow。",
+      "refs": [
+        "aharou_release_flow"
+      ]
+    },
+    {
+      "id": "gh_cli_not_found",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "Bash"
+      ],
+      "conditions": [
+        {
+          "type": "result_regex",
+          "pattern": "gh:\\s*not\\s+found"
+        }
+      ],
+      "match": "all",
+      "message": "本机没有 gh，改走 GitHub HTTP API。",
+      "refs": []
+    },
+    {
+      "id": "prompts_require_approval",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "editFile",
+        "writeFile"
+      ],
+      "conditions": [
+        {
+          "type": "args_regex",
+          "pattern": "assets/prompts/"
+        }
+      ],
+      "match": "all",
+      "message": "改提示词前必须征得主人明确同意（记忆 no_prompt_edits_without_approval）。",
+      "refs": [
+        "no_prompt_edits_without_approval"
+      ]
+    },
+    {
+      "id": "migrations_run_check",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "editFile",
+        "writeFile"
+      ],
+      "conditions": [
+        {
+          "type": "args_regex",
+          "pattern": "assets/migrations/|AgentDatabase\\\\.kt"
+        }
+      ],
+      "match": "all",
+      "message": "改完跑 python3 scripts/check_migrations.py。",
+      "refs": []
+    },
+    {
+      "id": "strings_xml_bilingual",
+      "enabled": true,
+      "layer": "tool",
+      "tools": [
+        "editFile",
+        "writeFile"
+      ],
+      "conditions": [
+        {
+          "type": "args_regex",
+          "pattern": "res/values(-en)?/strings\\.xml"
+        }
+      ],
+      "match": "all",
+      "message": "中英两份 strings.xml 同批改，英文里的撇号要转义成 \\'。",
+      "refs": [
+        "aharou_strings_xml_ownership"
+      ]
+    }
+  ]
+}
