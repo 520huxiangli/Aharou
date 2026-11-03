@@ -41,7 +41,6 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
-import io.mockk.thirdArg
 import io.mockk.slot
 import io.mockk.spyk
 import io.mockk.unmockkObject
@@ -69,6 +68,8 @@ class StatefulAgentWorkflowTest {
     private val metadata = mockk<ModelMetadataService>()
     private val compactionSettings = mockk<CompactionModelSettingsRepository>()
     private val outputStore = mockk<ToolOutputStore>()
+    // 规则提醒：这些用例不验证提醒，relaxed mock 下所有方法不抛异常（decorate 在 init 里打桩成原样返回）。
+    private val reminderEngine = mockk<com.aharou.feature.agent.domain.reminder.ReminderEngine>(relaxed = true)
     private val provider = mockk<AIProvider>(relaxed = true)
     // 直出图片落盘已抽成独立类；这些用例只关心「图片被换成路径」，行为用 stub 保留
     private val imagePersister = mockk<GeneratedImagePersister>(relaxed = true)
@@ -120,12 +121,8 @@ class StatefulAgentWorkflowTest {
         vault = mockk(relaxed = true) {
             every { redact(any()) } answers { firstArg<String>() }
         },
-        // 规则提醒：这些用例不验证提醒，打桩成「原样返回结果」，保持工具结果不变。
-        reminderEngine = mockk<com.aharou.feature.agent.domain.reminder.ReminderEngine>(relaxed = true) {
-            coEvery { decorate(any(), any(), any(), any()) } answers {
-                thirdArg<com.aharou.feature.agent.domain.tool.ToolResult>().toTransportString()
-            }
-        },
+        // 规则提醒：保持工具结果不变，与未接提醒时一致。
+        reminderEngine = reminderEngine,
         // 协作开关：这些用例不碰跨设备协作，relaxed mock 下 current().enabled 为 false（等价关闭）。
         remoteDeviceSettings = mockk(relaxed = true),
         // 记忆整理入口：这些用例不会走到自动整理，Lazy 里放个 relaxed mock 即可（注入形式是 dagger.Lazy 为了断环）。
@@ -133,6 +130,9 @@ class StatefulAgentWorkflowTest {
     ), recordPrivateCalls = true)
 
     init {
+        coEvery { reminderEngine.decorate(any(), any(), any(), any()) } answers {
+            arg<com.aharou.feature.agent.domain.tool.ToolResult>(2).toTransportString()
+        }
         coEvery { reminderEngine.turnEndReminder(any(), any(), any()) } returns null
         // relaxed mock 对「返回对象」的可空方法会给个空壳配置，导致 getEffectiveProvider 认为没填 Key；
         // 这些用例不覆盖跨供应商回退，显式打成未激活。

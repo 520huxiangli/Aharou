@@ -10,7 +10,10 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal object ReminderMatcher {
 
-    private val regexCache = ConcurrentHashMap<String, Regex?>()
+    private val regexCache = ConcurrentHashMap<String, Regex>()
+
+    // 编译失败的正则单独记，否则每次调用都会重试编译并重复刷日志。
+    private val invalidPatterns = ConcurrentHashMap.newKeySet<String>()
 
     fun matchesAll(
         conditions: List<ReminderCondition>,
@@ -37,9 +40,17 @@ internal object ReminderMatcher {
         is ReminderCondition.TriggerCondition, is ReminderCondition.ResolveCondition -> false
     }
 
-    private fun regexOf(pattern: String): Regex? = regexCache.getOrPut(pattern) {
-        runCatching { Regex(pattern, RegexOption.IGNORE_CASE) }
-            .onFailure { FileLogger.w("ReminderMatcher", "规则提醒正则无效，已跳过：$pattern - ${it.message}") }
+    private fun regexOf(pattern: String): Regex? {
+        regexCache[pattern]?.let { return it }
+        if (pattern in invalidPatterns) return null
+        return runCatching { Regex(pattern, RegexOption.IGNORE_CASE) }
+            .onFailure {
+                invalidPatterns += pattern
+                FileLogger.w(TAG, "规则提醒正则无效，已跳过：$pattern - ${it.message}")
+            }
             .getOrNull()
+            ?.also { regexCache[pattern] = it }
     }
+
+    private const val TAG = "ReminderMatcher"
 }
