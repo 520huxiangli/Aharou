@@ -3544,8 +3544,6 @@
     <string name="personal_access_special_notification">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Notification access</string>
     <string name="document_picker_unavailable">System file picker is unavailable. Enable the system "Files" app (Settings → Apps → Show system apps) or import the file another way</string>
     <!-- 2026-11-03 界面修复批次新增 -->
-    <string name="settings_default_assistant_group">Voice assistant</string>
-    <string name="settings_default_assistant_title">Default voice assistant</string>
     <string name="browser_history_group_today">Today</string>
     <string name="browser_history_group_yesterday">Yesterday</string>
     <string name="browser_history_group_date">%1$d/%2$d</string>
