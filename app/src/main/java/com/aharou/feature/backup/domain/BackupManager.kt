@@ -124,7 +124,13 @@ data class RestoreStats(
     val memoryFiles: Int = 0,
     val projectMemoryFiles: Int = 0,
     /** 本次恢复是否真的套用了应用设置段：未含设置的备份不碰本机设置，导入汇总不应声称已覆盖。 */
-    val appSettingsRestored: Boolean = false
+    val appSettingsRestored: Boolean = false,
+    /**
+     * 本次导入里「源设备密文解不开」的凭据条数（换机恢复时基本都会命中）。
+     *
+     * 这些字段导入后是空的，不提示的话用户只会看到「未填写 API Key」，不知道是换机导致的。
+     */
+    val secretsUnavailable: Int = 0
 ) {
     operator fun plus(other: RestoreStats) = RestoreStats(
         providers = providers + other.providers,
@@ -138,6 +144,7 @@ data class RestoreStats(
         workspaceFiles = workspaceFiles + other.workspaceFiles,
         memoryFiles = memoryFiles + other.memoryFiles,
         projectMemoryFiles = projectMemoryFiles + other.projectMemoryFiles,
-        appSettingsRestored = appSettingsRestored || other.appSettingsRestored
+        appSettingsRestored = appSettingsRestored || other.appSettingsRestored,
+        secretsUnavailable = secretsUnavailable + other.secretsUnavailable
     )
 }

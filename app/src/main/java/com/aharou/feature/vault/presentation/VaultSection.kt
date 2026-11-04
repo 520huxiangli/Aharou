@@ -51,8 +51,10 @@ import compose.icons.feathericons.Plus
 @Composable
 internal fun VaultSection(viewModel: VaultViewModel = hiltViewModel()) {
     val names by viewModel.names.collectAsStateWithLifecycle()
+    val writeBlocked by viewModel.writeBlocked.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<String?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -71,6 +73,24 @@ internal fun VaultSection(viewModel: VaultViewModel = hiltViewModel()) {
         }
 
         SettingsGroupHeader(text = stringResource(R.string.vault_list_header))
+        if (writeBlocked) {
+            SettingsGroup {
+                Text(
+                    text = stringResource(R.string.vault_read_only_hint),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)
+                )
+                // 只读标记是进程级的，不给出口的话换机后整份凭据库永远存不进新凭据。
+                SettingsDivider()
+                SettingsRow(
+                    icon = null,
+                    title = stringResource(R.string.vault_reset_entry),
+                    subtitle = stringResource(R.string.vault_reset_subtitle),
+                    onClick = { confirmReset = true }
+                )
+            }
+        }
         if (names.isEmpty()) {
             SettingsGroup {
                 Text(
@@ -107,6 +127,25 @@ internal fun VaultSection(viewModel: VaultViewModel = hiltViewModel()) {
             onSave = { name, value ->
                 viewModel.save(name, value)
                 showAdd = false
+            }
+        )
+    }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text(stringResource(R.string.vault_reset_title)) },
+            text = { Text(stringResource(R.string.vault_reset_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.reset()
+                    confirmReset = false
+                }) {
+                    Text(stringResource(R.string.vault_reset_confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReset = false }) { Text(stringResource(R.string.common_cancel)) }
             }
         )
     }

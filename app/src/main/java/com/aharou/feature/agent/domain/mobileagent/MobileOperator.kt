@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.mobileagent
 
 import android.content.Context
+import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
@@ -476,7 +477,8 @@ class MobileOperator @Inject constructor(
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
-        provider.logSessionId = sessionId
+        // 隐身会话不落 AI 日志（否则明文落到 ai-logs/session-*.log），判定策略与主链路共用一份。
+        provider.logSessionId = AILogger.loggableSessionId(sessionId, sessionUseCase::isGhostSession)
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         provider.maxOutputTokens = metadata.outputTokens

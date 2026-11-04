@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
+import com.aharou.core.security.KeystoreCipher
 import com.aharou.feature.im.domain.ImChannelConfig
 import com.aharou.feature.im.domain.ImSettingsSource
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -60,7 +61,8 @@ class TelegramSettingsRepository @Inject constructor(
     override val configFlow: Flow<TelegramConfig> = context.telegramImDataStore.data.map { prefs ->
         TelegramConfig(
             enabled = prefs[ENABLED_KEY] ?: false,
-            botToken = prefs[TOKEN_KEY] ?: "",
+            // 旧版本存的是明文，decryptString 对非密文原样返回，于是不用另做迁移；下次保存时写成密文。
+            botToken = KeystoreCipher.decryptString(prefs[TOKEN_KEY] ?: ""),
             baseUrl = prefs[BASE_URL_KEY]?.takeIf { it.isNotBlank() } ?: TelegramConfig.DEFAULT_BASE_URL,
             proxy = prefs[PROXY_KEY] ?: ""
         )
@@ -73,8 +75,11 @@ class TelegramSettingsRepository @Inject constructor(
         context.telegramImDataStore.edit { it[ENABLED_KEY] = enabled }
     }
 
-    suspend fun setBotToken(token: String) {
-        context.telegramImDataStore.edit { it[TOKEN_KEY] = token.trim() }
+    /** 写入 Bot Token；密钥库不可用时返回 false（不抛异常，界面据此提示重试）。 */
+    suspend fun setBotToken(token: String): Boolean {
+        val encrypted = ImSecretCrypto.encryptOrNull(token.trim()) ?: return false
+        context.telegramImDataStore.edit { it[TOKEN_KEY] = encrypted }
+        return true
     }
 
     suspend fun setBaseUrl(baseUrl: String) {

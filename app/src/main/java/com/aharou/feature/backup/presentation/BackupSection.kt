@@ -647,7 +647,11 @@ private fun buildImportSummary(context: android.content.Context, stats: com.ahar
     if (stats.workspaceFiles > 0) appendLine(context.getString(R.string.backup_stat_workspace_files, stats.workspaceFiles))
     if (stats.memoryFiles > 0) appendLine(context.getString(R.string.backup_stat_memory_files, stats.memoryFiles))
     if (stats.projectMemoryFiles > 0) appendLine(context.getString(R.string.backup_stat_project_memory_files, stats.projectMemoryFiles))
-    if (stats.appSettingsRestored) append(context.getString(R.string.backup_settings_covered))
+    if (stats.appSettingsRestored) appendLine(context.getString(R.string.backup_settings_covered))
+    // 换机恢复时凭据解不开，条目会是空的；不说一句用户只会以为备份没带上 API Key
+    if (stats.secretsUnavailable > 0) {
+        append(context.getString(R.string.backup_secrets_unavailable, stats.secretsUnavailable))
+    }
 }
 
 /** 网络 tab 的内容：目标列表（左滑删除）+ 添加入口。 */

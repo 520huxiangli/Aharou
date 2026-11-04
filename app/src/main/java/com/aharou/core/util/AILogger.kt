@@ -91,7 +91,17 @@ object AILogger {
     }
 
     /**
-     * 记录一次请求的 URL 与请求体，并把本会话计数 +1（作为本次交互的序号）。
+     * 日志侧的会话判定：只有确认不是隐身会话时才返回 [sessionId]，否则返回 null（该请求整份不落盘）。
+     *
+     * 隐身会话的正文绝不能写到磁盘上，所以查库失败按隐身处理——宁可少记一份日志。
+     * 判定做成「传入查库函数」是因为各个调用方手里拿的是不同的 use case（MessagePersistence /
+     * Session），但策略必须是同一份：主链路、手机操作子代理、视觉调用、交叉复审全走这里，
+     * 各自复制一份就会漏掉某条路径（隐身会话仍然明文落盘）。
+     */
+    suspend fun loggableSessionId(sessionId: String?, isGhost: suspend (String) -> Boolean): String? =
+        sessionId?.takeIf { sid -> runCatching { isGhost(sid) }.getOrNull() == false }
+
+    /** 记录一次请求的 URL 与请求体，并把本会话计数 +1（作为本次交互的序号）。
      *
      * @return 本次分配的序号 `n`，调用方必须把它原样回传给对应的 [logResponse] /
      *   [logError] / [beginRawSse]，否则同会话内并发请求（如标题生成与主请求并行）
@@ -305,10 +315,13 @@ object AILogger {
 
     /** 在后台单线程上打开会话日志文件（追加模式）执行写入块；文件超上限则先滚动归档。 */
     private fun appendToSession(sessionId: String?, block: (Writer) -> Unit) {
+        // null 是调用方显式要求不落盘（隐身会话会传 null）：以前这里回退成 "unknown"，
+        // 等于隐身会话的完整请求体依然写进 session-unknown.log，隐身就白隐了。
+        val sid = sessionId ?: return
         // 日志等级为 NONE 时整体关闭：设置页把它当「关闭日志」的开关，AI 请求日志不能例外。
         if (FileLogger.isSilenced()) return
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
-        val safeId = (sessionId ?: "unknown").replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val safeId = sid.replace(Regex("[^A-Za-z0-9_-]"), "_")
         ioExecutor.execute {
             runCatching {
                 val file = File(dir, "session-$safeId.log")

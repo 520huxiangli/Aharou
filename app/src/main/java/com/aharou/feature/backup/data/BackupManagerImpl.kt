@@ -115,6 +115,9 @@ class BackupManagerImpl @Inject constructor(
 
     private fun currentSchemaVersion(): Int = AgentDatabase.SCHEMA_VERSION
 
+    /** 本轮导入里「源设备密文解不开」的凭据条数；导入串行执行，结束时取用并清零。 */
+    private val unreadableSecrets = java.util.concurrent.atomic.AtomicInteger(0)
+
     private fun appVersionName(): String = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
     }.getOrDefault("")
@@ -205,10 +208,12 @@ class BackupManagerImpl @Inject constructor(
         return withContext(Dispatchers.IO) {
             FileLogger.i(TAG, "导入备份开始（${if (pw != null) "加密" else "明文"}${if (selectedWorkspaces != null) "，勾选工作区=${selectedWorkspaces.size}个" else "，全量"}，供应商冲突处置=$providerConflict）")
             runCatching {
+                unreadableSecrets.set(0)
                 openTar(input, pw).use { source ->
                     restoreFromTar(source.tar, selectedWorkspaces, providerConflict)
                 }
             }
+            .map { it.copy(secretsUnavailable = unreadableSecrets.getAndSet(0)) }
             .onSuccess { FileLogger.i(TAG, "导入备份完成：$it") }
             .onFailure { FileLogger.e(TAG, "导入备份失败", it) }
             .recoverCatching { e -> mapImportError(e, pw, sourceAlreadyDecrypted) }
@@ -804,13 +809,34 @@ class BackupManagerImpl @Inject constructor(
 
     private fun createTempFile(): File = File.createTempFile("backup", ".tmp", context.cacheDir)
 
+    /**
+     * 导入时的凭据字段处理。
+     *
+     * 新备份里存的是源设备密文：本机 Keystore 能解开就原样保留（同机恢复），
+     * 解不开说明来自别的设备，只能留空让用户重填——绝不能再套一层加密把密文当明文存进去。
+     * 旧备份（以及更早的明文库）里是没有前缀的明文，加密后落库。
+     */
+    private fun restoreSecret(value: String?): String {
+        val raw = value.orEmpty()
+        // 旧备份（以及更早的明文库）里是没有前缀的明文：按本机密钥加密后落库。
+        if (!KeystoreCipher.isEncryptedString(raw)) return KeystoreCipher.encryptString(raw)
+        // 同机恢复能解开，直接保留原密文，不再套一层。
+        if (KeystoreCipher.decryptString(raw).isNotEmpty()) return raw
+        // 换设备恢复时解不开：留空待重填，并计数供导入结果提示，否则用户只看到「未填写 API Key」。
+        unreadableSecrets.incrementAndGet()
+        FileLogger.w(TAG, "备份里的凭据密文无法用本机密钥解开（换设备恢复），已留空待用户重新填写")
+        return ""
+    }
+
     // ── Entity ↔ DTO 转换 ──────────────────────────────────────
 
     private fun AIProviderEntity.toDto() = ProviderDto(
         id = id,
         name = name,
         type = type,
-        apiKey = KeystoreCipher.decryptString(apiKey),
+        // 导出不再解密：备份包里只留本机密文，否则 tar 中的明文凭据一旦外流即等于全部密钥泄露。
+        // 代价是换机恢复时这些密文解不开（Keystore 与设备绑定），导入侧会留空待重填。
+        apiKey = apiKey,
         baseUrl = baseUrl,
         defaultModel = defaultModel,
         models = models,
@@ -824,11 +850,11 @@ class BackupManagerImpl @Inject constructor(
         dashboardRefreshInterval = dashboardRefreshInterval,
         sortOrder = sortOrder,
         multiKeyEnabled = multiKeyEnabled,
-        apiKeys = KeystoreCipher.decryptString(apiKeys),
+        apiKeys = apiKeys,
         keyRotationStrategy = keyRotationStrategy,
         keyFailoverThreshold = keyFailoverThreshold,
         keyCooldownMinutes = keyCooldownMinutes,
-        scriptParams = KeystoreCipher.decryptString(scriptParams),
+        scriptParams = scriptParams,
         keySwitchStatusCodes = keySwitchStatusCodes,
         customIcon = customIcon
     )
@@ -837,7 +863,7 @@ class BackupManagerImpl @Inject constructor(
         id = id,
         name = name,
         type = type,
-        apiKey = KeystoreCipher.encryptString(apiKey),
+        apiKey = restoreSecret(apiKey),
         baseUrl = baseUrl,
         defaultModel = defaultModel,
         models = models,
@@ -851,18 +877,18 @@ class BackupManagerImpl @Inject constructor(
         dashboardRefreshInterval = dashboardRefreshInterval ?: 5,
         sortOrder = sortOrder ?: 0,
         multiKeyEnabled = multiKeyEnabled ?: false,
-        apiKeys = KeystoreCipher.encryptString(apiKeys ?: ""),
+        apiKeys = restoreSecret(apiKeys),
         keyRotationStrategy = keyRotationStrategy ?: "SEQUENTIAL",
         keyFailoverThreshold = keyFailoverThreshold ?: 2,
         keyCooldownMinutes = keyCooldownMinutes ?: 5,
-        scriptParams = KeystoreCipher.encryptString(scriptParams ?: ""),
+        scriptParams = restoreSecret(scriptParams),
         keySwitchStatusCodes = keySwitchStatusCodes ?: "",
         customIcon = customIcon ?: ""
     )
 
     private fun RemoteConnectionEntity.toDto() = RemoteConnectionDto(
         id, name, protocol.name, host, port, username, authType,
-        KeystoreCipher.decryptString(authData), passphrase?.let { KeystoreCipher.decryptString(it) },
+        authData, passphrase,
         sortOrder
     )
 
@@ -872,8 +898,9 @@ class BackupManagerImpl @Inject constructor(
         return RemoteConnectionEntity(
             id, name, parsed, host, port, username, authType,
             // 忽略大小写：旧版本导出的备份里 authType 可能是 PASSWORD/PRIVATE_KEY。
-            if (authType.equals("PASSWORD", ignoreCase = true)) KeystoreCipher.encryptString(authData) else authData,
-            passphrase?.let { KeystoreCipher.encryptString(it) },
+            // PASSWORD 存的是密文（见 SecretEncryptionMigrator）；私钥 PEM 本来就不加密，保持原样。
+            if (authType.equals("PASSWORD", ignoreCase = true)) restoreSecret(authData) else authData,
+            passphrase?.let { restoreSecret(it) },
             sortOrder = sortOrder ?: 0
         )
     }

@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.aharou.core.datastore.preferencesCorruptionHandler
+import com.aharou.core.security.KeystoreCipher
 import com.aharou.feature.im.domain.ImChannelConfig
 import com.aharou.feature.im.domain.ImSettingsSource
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -58,7 +59,8 @@ class FeishuSettingsRepository @Inject constructor(
         FeishuConfig(
             enabled = prefs[ENABLED_KEY] ?: false,
             appId = prefs[APP_ID_KEY] ?: "",
-            appSecret = prefs[APP_SECRET_KEY] ?: "",
+            // 旧版本存的是明文，decryptString 对非密文原样返回，于是不用另做迁移；下次保存时写成密文。
+            appSecret = KeystoreCipher.decryptString(prefs[APP_SECRET_KEY] ?: ""),
             baseUrl = prefs[BASE_URL_KEY]?.takeIf { it.isNotBlank() } ?: FeishuConfig.DEFAULT_BASE_URL,
             proxy = prefs[PROXY_KEY] ?: ""
         )
@@ -74,8 +76,11 @@ class FeishuSettingsRepository @Inject constructor(
         context.feishuImDataStore.edit { it[APP_ID_KEY] = id.trim() }
     }
 
-    suspend fun setAppSecret(secret: String) {
-        context.feishuImDataStore.edit { it[APP_SECRET_KEY] = secret.trim() }
+    /** 写入 App Secret；密钥库不可用时返回 false（不抛异常，界面据此提示重试）。 */
+    suspend fun setAppSecret(secret: String): Boolean {
+        val encrypted = ImSecretCrypto.encryptOrNull(secret.trim()) ?: return false
+        context.feishuImDataStore.edit { it[APP_SECRET_KEY] = encrypted }
+        return true
     }
 
     suspend fun setBaseUrl(url: String) {

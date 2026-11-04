@@ -49,7 +49,10 @@ class ImBotBridge (
     private val agentTurnRunner: AgentTurnRunner,
     private val sessionUseCase: SessionUseCase,
     private val toolPermissionManager: ToolPermissionManager,
-    @param:ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context,
+    // 所有者绑定用 Hilt 的 @Singleton 实例；给默认值是为了不动 di/ImBridgeModule 的四个构造点，
+    // 显式传入时以传入的为准（DataStore 由文件级委托统一持有，多实例不会各开一份）
+    private val owners: ImOwnerStore = ImOwnerStore(context)
 ) {
     /** 设置界面的 ViewModel 拿它读写本渠道的配对记录。 */
     val id: String get() = channelId
@@ -76,6 +79,9 @@ class ImBotBridge (
 
     /** 已发过审批卡片的请求 id，防重复推送。 */
     private val askedApprovals = ConcurrentHashMap.newKeySet<String>()
+
+    /** 审批 id → 发起这次审批的 chatId：按钮回调必须来自同一个聊天，别的聊天点不到。 */
+    private val chatOfApproval = ConcurrentHashMap<String, String>()
 
     /** 无按钮平台（微信/QQ）的待批审批：chatId → 请求，用户回「允许/拒绝」时消化。 */
     private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
@@ -139,6 +145,42 @@ class ImBotBridge (
 
     /** 最近活跃的聊天 id；从没收到过消息时为 null。 */
     fun activeChatId(): String? = lastActiveChat
+
+    /**
+     * 解绑本渠道的全部所有者：之后第一个说话的聊天会重新成为所有者。
+     * 给设置界面留的入口，换人接手时不必清应用数据。
+     */
+    suspend fun clearOwners() {
+        owners.clearOwners(channelId)
+        lastActiveChat = null
+    }
+
+    /**
+     * 所有者门禁 + 认主，消息与回调共用的头一道关。
+     *
+     * 已有绑定：只认集合内的聊天，其余一律丢弃。
+     * 尚无绑定：确认这个聊天确实在跟机器人说话（[directed]）才把它认成所有者；
+     * 群聊里不带 @ 的路人发言不认，否则群里任何人说一句话就把整个群变成了所有者。
+     *
+     * 判据是 chatId 而不是 senderId：群聊里一个 chat 可能有多人说话，但会话与审批都按聊天走，
+     * 按聊天判才与 runTurn 的会话映射、审批回写路径对齐。
+     */
+    private suspend fun acceptChatId(chatId: String, directed: Boolean): Boolean {
+        if (chatId.isBlank()) return false
+        val current = owners.owners(channelId)
+        if (chatId in current) return true
+        if (current.isNotEmpty()) {
+            FileLogger.d(TAG, "[$channelId] 丢弃非所有者聊天 $chatId（已绑定 ${current.size} 个）")
+            return false
+        }
+        if (!directed) return true
+        if (owners.bindIfEmpty(channelId, chatId)) {
+            FileLogger.i(TAG, "[$channelId] 首次使用，已把 chat=$chatId 绑定为所有者")
+            return true
+        }
+        // 并发下别的聊天抢先绑上了：以落盘结果为准再判一次
+        return owners.isOwner(channelId, chatId)
+    }
 
     /**
      * 把本地文件发到最近活跃的聊天，给 agent 侧的工具用。
@@ -250,6 +292,9 @@ class ImBotBridge (
 
     private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage): Boolean {
         val result = runCatching {
+            // 所有者校验摆在最前面：没有绑定时这里会把当前聊天认成所有者，已有绑定时陌生聊天直接丢弃，
+            // 不再往下走到 @ 判定与 runTurn（否则任何能给 bot 发消息的人都能驱动本机的 agent）
+            if (!acceptChatId(msg.chatId, directed = !msg.isGroup || mentioned(msg))) return@runCatching
             if (msg.isGroup && !mentioned(msg)) {
                 FileLogger.d(TAG, "[$channelId] 群里没有 @机器人，忽略 chat=${msg.chatId}")
                 return@runCatching
@@ -312,6 +357,8 @@ class ImBotBridge (
         if (id.isBlank() || sessionId.isBlank()) return
         val chatId = chatOfSession[sessionId] ?: return
         if (!askedApprovals.add(id)) return
+        // 记下这次的发起聊天，回调回来时据此判断是不是本人点的
+        chatOfApproval[id] = chatId
         val cfg = settings.currentConfig()
         if (!cfg.enabled || !cfg.ready) return
         val body = buildString {
@@ -340,10 +387,20 @@ class ImBotBridge (
     }
 
     private suspend fun handleCallback(cfg: ImChannelConfig, cb: ImCallbackQuery): Boolean = runCatching {
+        // 回调与消息同一条门禁：非所有者聊天里根本不会有审批卡片
+        if (!acceptChatId(cb.chatId, directed = true)) return@runCatching
         channel.acknowledgeCallback(cfg, cb.id)
         if (cb.messageId.isNotBlank()) channel.clearMarkup(cfg, cb.chatId, cb.messageId)
         val parts = cb.data.split(":", limit = 3)
         if (parts.size < 3 || parts[2].isBlank()) return@runCatching
+        // 只认发起这次审批的聊天：同一渠道可能有多个绑定聊天，A 聊天里的按钮不该能批 B 聊天发起的工具调用。
+        // 查不到发起记录（进程重启后内存映射已空）一并丢弃，宁可让审批超时也不接受来源不明的放行。
+        val origin = chatOfApproval[parts[2]]
+        if (origin == null || origin != cb.chatId) {
+            FileLogger.d(TAG, "[$channelId] 丢弃来源不符的审批回调 chat=${cb.chatId} 发起=$origin")
+            return@runCatching
+        }
+        chatOfApproval.remove(parts[2])
         val choice = if (parts[1] == "y") PermissionChoice.ONCE else PermissionChoice.REJECT
         when (parts[0]) {
             "a" -> toolPermissionManager.resolve(parts[2], choice)
