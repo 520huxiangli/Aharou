@@ -795,6 +795,9 @@ class SettingsViewModel @Inject constructor(
     val imageSourceOptions: StateFlow<List<String>> get() = containerImageController.sourceOptions
     val selectedImageSource: StateFlow<String> get() = containerImageController.selectedSource
     val downloadedImages: StateFlow<Map<String, DownloadedImageRecord>> get() = containerImageController.downloaded
+    /** 删除已下载镜像被拒的原因（该镜像已被某个容器导入）；null 表示无提示。 */
+    val containerImageDeleteBlocked: StateFlow<String?> get() = containerImageController.deleteBlocked
+    fun clearContainerImageDeleteBlocked() = containerImageController.clearDeleteBlocked()
     val sourceUnavailableIds: StateFlow<Set<String>> get() = containerImageController.unavailableIds
     val containerImageDownload: StateFlow<ContainerImageDownloadUiState> get() = containerImageController.download
 

@@ -462,6 +462,8 @@ internal class VoiceCallSession @Inject constructor(
                 }
             }.onFailure { FileLogger.e(TAG, "通话一轮失败", it) }
 
+            // 本轮回复已收完：最后那句没带句末标点的补投出去，否则它一个字也不会被念。
+            speechQueue.finishUtterance()
             awaitSpeechDone()
             if (_state.value == State.Idle) return@launch
             if (wakeMode) beginWakeListening() else beginListening()

@@ -52,6 +52,9 @@ class ContainerImageDownloader @Inject constructor(
             cont.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
+                    // 失败/取消时把已写出的半成品删掉：残留文件不在已下载记录里，界面上看不到也删不掉。
+                    // （进程被系统直接杀掉时这里跑不到，靠 Controller 启动时的目录兜底扫描清理。）
+                    dest.delete()
                     if (cont.isCancelled) return
                     cont.resumeWithException(e)
                 }

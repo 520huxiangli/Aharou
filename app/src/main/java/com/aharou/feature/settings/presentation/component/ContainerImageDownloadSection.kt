@@ -31,6 +31,7 @@ import com.aharou.core.ui.AdaptiveModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -149,11 +150,14 @@ internal fun ContainerImageDownloadSection(
     var deleteEntry by remember { mutableStateOf<ContainerImageEntry?>(null) }
     // 只显示当前源下可用的镜像；切源后列表自动过滤
     val visibleCatalog = catalog.filter { it.id !in sourceUnavailableIds }
-    // 只有已下载且文件真在的行可删，也只有它们能参与多选；行内复用这份集合，免得每行重复 stat
-    val downloadedIdSet = visibleCatalog
-        .filter { entry -> downloadedImages[entry.id]?.let { File(Uri.parse(it.fileUri).path ?: "").exists() } == true }
-        .map { it.id }
-        .toSet()
+    // 只有已下载且文件真在的行可删，也只有它们能参与多选；行内复用这份集合，免得每行重复 stat。
+    // 每次重组都 stat 一遍整个目录既贵也无意义：目录项与已下载记录不变时结果就不会变。
+    val downloadedIdSet = remember(downloadedImages, visibleCatalog) {
+        visibleCatalog
+            .filter { entry -> downloadedImages[entry.id]?.let { File(Uri.parse(it.fileUri).path ?: "").exists() } == true }
+            .map { it.id }
+            .toSet()
+    }
     val settingsViewModel = rememberSettingsViewModel()
     val selection = rememberListSelectionState()
     LaunchedEffect(downloadedIdSet) { selection.retain(downloadedIdSet) }
@@ -171,6 +175,18 @@ internal fun ContainerImageDownloadSection(
             .padding(horizontal = Spacing.lg)
             .padding(bottom = Spacing.xl)
     ) {
+        // 删除被拒时留一行可见提示：只靠日志的话用户看到的是「点了没反应」。
+        val deleteBlocked by settingsViewModel.containerImageDeleteBlocked.collectAsStateWithLifecycle()
+        if (deleteBlocked != null) {
+            Text(
+                text = deleteBlocked.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+            TextButton(onClick = { settingsViewModel.clearContainerImageDeleteBlocked() }) {
+                Text(stringResource(R.string.common_ok))
+            }
+        }
         if (selection.selectionMode) {
             SelectionActionBar(
                 selectedCount = selection.selectedCount,

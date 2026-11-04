@@ -3541,4 +3541,36 @@
     <string name="personal_access_special_usage">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 使用情况访问」手动开启</string>
     <string name="personal_access_special_notification">「%1$s」需要到「设置 → 权限与后台 → 软件权限 → 通知使用权」手动开启</string>
     <string name="document_picker_unavailable">系统文件选择器不可用：请在「设置 → 应用 → 显示系统应用」中启用「文件」应用，或换一种方式导入</string>
+    <!-- 2026-11-03 界面修复批次新增 -->
+    <string name="settings_default_assistant_group">语音助手</string>
+    <string name="settings_default_assistant_title">默认语音助手</string>
+    <string name="browser_history_group_today">今天</string>
+    <string name="browser_history_group_yesterday">昨天</string>
+    <string name="browser_history_group_date">%1$d/%2$d</string>
+    <string name="browser_history_group_results">搜索结果</string>
+    <string name="computer_open_in_terminal_hint">右上角可在终端 / 浏览器中打开</string>
+    <string name="computer_capture_pending">正在抓取页面…</string>
+    <string name="computer_capture_none">（暂无实时画面）</string>
+    <string name="mini_screen_capture_busy">抓取页面…</string>
+    <string name="mini_screen_capture_none">（暂无画面）</string>
+    <string name="mini_screen_vd_busy">抓取画面…</string>
+    <string name="mini_screen_vd_idle">影子屏未运行</string>
+    <string name="mcp_batch_enable">启用</string>
+    <string name="mcp_batch_disable">停用</string>
+    <string name="mcp_batch_reconnect">重连</string>
+    <string name="vault_read_only_hint">凭据库暂时不可读，写入已拒绝；请先导出或重置</string>
+    <string name="connector_install_failed">接入失败：%1$s</string>
+    <string name="connector_reauth_oauth">重新授权</string>
+    <string name="connector_reauth_key">重新填写密钥</string>
+    <string name="connector_reauth_none">重新接入</string>
+    <string name="container_not_ready_hint_profile">该工作区使用容器「%1$s」，它还没安装；请先安装它，或把默认容器切换成「%2$s」</string>
+    <string name="memory_conflict_local_notice">当前作用域有 %1$d 条与另一台设备的版本冲突，本机版本仍在生效</string>
+    <string name="memory_entry_local_conflict">本机版本生效中</string>
+    <string name="vault_reset_entry">清空凭据库重来</string>
+    <string name="vault_reset_subtitle">库解不开时，只能清空后重新录入</string>
+    <string name="vault_reset_title">清空凭据库？</string>
+    <string name="vault_reset_body">本机保存的全部凭据会被删除，无法恢复。确定继续？</string>
+    <string name="vault_reset_confirm">清空</string>
+    <string name="im_secret_write_failed">保存失败：系统密钥库暂不可用，请稍后再试</string>
+    <string name="backup_secrets_unavailable">其中 %1$d 项凭据无法在本机解出，需要重新填写</string>
 </resources>

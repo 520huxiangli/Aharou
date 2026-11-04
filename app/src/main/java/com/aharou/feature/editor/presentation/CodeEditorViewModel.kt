@@ -82,8 +82,55 @@ class CodeEditorViewModel @Inject constructor(
 
     private var currentPath: String? = null
 
-    /** 每个路径只读一次盘，结果缓存下来供标签页来回切换复用。 */
-    private val loadedStates = mutableMapOf<String, EditorUiState>()
+    /**
+     * 每个路径只读一次盘，结果缓存下来供标签页来回切换复用；按「条数 + 总字符数」淘汰，
+     * 见 [DocumentCache]。
+     */
+    private val loadedStates = DocumentCache()
+
+    /**
+     * 打开过的文件内容缓存（LRU）。
+     *
+     * 以前只在关标签页时删条目，翻过的文件就全量常驻：单文件门禁 2MB，翻十几个大文件
+     * 就能把堆顶穿。改为按条数 + 总字符数双阈值淘汰；淘汰不动 [loadedFingerprints]，
+     * 保存冲突检测依赖每个路径各自的基线指纹。
+     */
+    private class DocumentCache {
+        private companion object {
+            /** 最多缓存几篇：按标签页常用量取，够来回切即可。 */
+            const val MAX_DOCUMENTS = 8
+            /** 总字符数上限（约 8MB 纯 ASCII）：比单文件门禁 2MB 高，几个大文件能同时留住。 */
+            const val MAX_CHARS = 8L * 1024 * 1024
+        }
+
+        /** accessOrder = true：命中即刷新，淘汰最久未用的那篇。 */
+        private val entries = LinkedHashMap<String, EditorUiState>(8, 0.75f, true)
+        private var chars = 0L
+
+        @Synchronized
+        operator fun get(path: String): EditorUiState? = entries[path]
+
+        @Synchronized
+        operator fun set(path: String, state: EditorUiState) {
+            entries.remove(path)?.let { chars -= weightOf(it) }
+            entries[path] = state
+            chars += weightOf(state)
+            while (entries.size > MAX_DOCUMENTS || chars > MAX_CHARS) {
+                val iterator = entries.entries.iterator()
+                if (!iterator.hasNext()) break
+                val eldest = iterator.next()
+                iterator.remove()
+                chars -= weightOf(eldest.value)
+            }
+        }
+
+        @Synchronized
+        fun remove(path: String): EditorUiState? = entries.remove(path)?.also { chars -= weightOf(it) }
+
+        /** 只算正文：非 Success 状态（Loading/TooLarge/Binary/Error）本身就是个空壳。 */
+        private fun weightOf(state: EditorUiState): Long =
+            if (state is EditorUiState.Success) state.content.length.toLong() else 0L
+    }
 
     /** 各路径「打开时磁盘内容」的指纹，用于保存前判断文件是否被 AI/其他会话改过。 */
     private val loadedFingerprints = mutableMapOf<String, String?>()

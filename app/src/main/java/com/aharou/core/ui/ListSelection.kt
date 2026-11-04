@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -163,7 +164,12 @@ fun SelectionActionBar(
                 .padding(horizontal = Spacing.md, vertical = Spacing.xs),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onExit, modifier = Modifier.size(32.dp)) {
+            // 图标按钮的可点区不得小于 48dp：这里的 .size(32.dp) 曾把 M3 IconButton 自带的最小触摸区夹没，
+            // 手指和读屏都很难命中；改成 sizeIn 后只多出透明区域，图标与背景一个像素不变
+            IconButton(
+                onClick = onExit,
+                modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            ) {
                 Icon(
                     imageVector = FeatherIcons.X,
                     contentDescription = stringResource(R.string.common_cancel),
@@ -191,7 +197,7 @@ fun SelectionActionBar(
                 IconButton(
                     onClick = action.onClick,
                     enabled = active,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 ) {
                     Icon(
                         imageVector = action.icon,

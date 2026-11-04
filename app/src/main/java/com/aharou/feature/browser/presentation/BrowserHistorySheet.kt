@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,7 +26,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -39,8 +39,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.aharou.core.theme.Radius
+import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.MinisTextButton
 import com.aharou.feature.browser.BrowserHistoryStore
+import com.aharou.feature.browser.HistoryDayGroup
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -58,7 +61,7 @@ fun BrowserHistorySheet(
 
     val entries = remember(searchQuery, historyStore.getEntries().size) {
         if (searchQuery.isBlank()) historyStore.groupedByDay()
-        else mapOf("Results" to historyStore.search(searchQuery))
+        else mapOf(HistoryDayGroup.SearchResults to historyStore.search(searchQuery))
     }
 
     ModalBottomSheet(
@@ -69,6 +72,7 @@ fun BrowserHistorySheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(0.8f)
+                .imePadding()
                 .navigationBarsPadding(),
         ) {
             // Header
@@ -96,15 +100,15 @@ fun BrowserHistorySheet(
             }
 
             // Search bar
-            OutlinedTextField(
+            AppTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text(stringResource(R.string.browser_history_search)) },
+                placeholder = stringResource(R.string.browser_history_search),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 singleLine = true,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(Radius.pill),
                 textStyle = MaterialTheme.typography.bodySmall,
             )
 
@@ -135,11 +139,11 @@ fun BrowserHistorySheet(
                 LazyColumn(
                     modifier = Modifier.weight(1f),
                 ) {
-                    for ((dayLabel, dayEntries) in entries) {
+                    for ((dayGroup, dayEntries) in entries) {
                         if (dayEntries.isEmpty()) continue
-                        item(key = "header_$dayLabel") {
+                        item(key = dayGroup) {
                             Text(
-                                dayLabel,
+                                historyGroupLabel(dayGroup),
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -210,4 +214,13 @@ fun BrowserHistorySheet(
             },
         )
     }
+}
+
+/** 分组标题按当前界面语言出文案（store 只给日期结构）。 */
+@Composable
+private fun historyGroupLabel(group: HistoryDayGroup): String = when (group) {
+    HistoryDayGroup.Today -> stringResource(R.string.browser_history_group_today)
+    HistoryDayGroup.Yesterday -> stringResource(R.string.browser_history_group_yesterday)
+    is HistoryDayGroup.Date -> stringResource(R.string.browser_history_group_date, group.month, group.day)
+    HistoryDayGroup.SearchResults -> stringResource(R.string.browser_history_group_results)
 }

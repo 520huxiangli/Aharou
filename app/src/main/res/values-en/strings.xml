@@ -3543,4 +3543,36 @@
     <string name="personal_access_special_usage">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Usage access</string>
     <string name="personal_access_special_notification">%1$s must be enabled manually in Settings → Permissions &amp; Background → App Permissions → Notification access</string>
     <string name="document_picker_unavailable">System file picker is unavailable. Enable the system "Files" app (Settings → Apps → Show system apps) or import the file another way</string>
+    <!-- 2026-11-03 界面修复批次新增 -->
+    <string name="settings_default_assistant_group">Voice assistant</string>
+    <string name="settings_default_assistant_title">Default voice assistant</string>
+    <string name="browser_history_group_today">Today</string>
+    <string name="browser_history_group_yesterday">Yesterday</string>
+    <string name="browser_history_group_date">%1$d/%2$d</string>
+    <string name="browser_history_group_results">Search results</string>
+    <string name="computer_open_in_terminal_hint">Open it in the terminal or browser from the top-right</string>
+    <string name="computer_capture_pending">Capturing the page…</string>
+    <string name="computer_capture_none">(No live view yet)</string>
+    <string name="mini_screen_capture_busy">Capturing…</string>
+    <string name="mini_screen_capture_none">(No view)</string>
+    <string name="mini_screen_vd_busy">Capturing…</string>
+    <string name="mini_screen_vd_idle">Shadow screen idle</string>
+    <string name="mcp_batch_enable">Enable</string>
+    <string name="mcp_batch_disable">Disable</string>
+    <string name="mcp_batch_reconnect">Reconnect</string>
+    <string name="vault_read_only_hint">The vault is temporarily unreadable; writes are blocked. Export or reset first.</string>
+    <string name="connector_install_failed">Failed to connect: %1$s</string>
+    <string name="connector_reauth_oauth">Re-authorize</string>
+    <string name="connector_reauth_key">Re-enter key</string>
+    <string name="connector_reauth_none">Reconnect</string>
+    <string name="container_not_ready_hint_profile">This workspace uses container "%1$s", which is not installed yet. Install it first, or switch the default container to "%2$s".</string>
+    <string name="memory_conflict_local_notice">%1$d memories in this scope conflict with another device; the local version is still in effect</string>
+    <string name="memory_entry_local_conflict">Local version in effect</string>
+    <string name="vault_reset_entry">Reset vault</string>
+    <string name="vault_reset_subtitle">When the vault cannot be decrypted, clearing it is the only way back</string>
+    <string name="vault_reset_title">Clear the vault?</string>
+    <string name="vault_reset_body">All credentials stored on this device will be deleted and cannot be recovered. Continue?</string>
+    <string name="vault_reset_confirm">Clear</string>
+    <string name="im_secret_write_failed">Save failed: the system keystore is unavailable right now. Try again later</string>
+    <string name="backup_secrets_unavailable">%1$d credentials could not be decrypted on this device and must be re-entered</string>
 </resources>

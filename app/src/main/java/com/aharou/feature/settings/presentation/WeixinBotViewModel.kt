@@ -71,8 +71,12 @@ class WeixinBotViewModel @Inject constructor(
         initialValue = WeixinBotUiState()
     )
 
+    /** 凭据写入失败（系统密钥库不可用）：界面据此提示「未保存」，否则用户会以为已经存好。 */
+    private val _secretWriteFailed = MutableStateFlow(false)
+    val secretWriteFailed: StateFlow<Boolean> = _secretWriteFailed.asStateFlow()
+
     fun setBotToken(token: String) {
-        viewModelScope.launch { settings.setBotToken(token) }
+        viewModelScope.launch { _secretWriteFailed.value = !settings.setBotToken(token) }
     }
 
     fun setIlinkUserId(id: String) {
@@ -140,7 +144,11 @@ class WeixinBotViewModel @Inject constructor(
                         _qr.value = QrScanState.Showing(fresh.display)
                     }
                     is WeixinIlinkClient.QrLoginState.Done -> {
-                        settings.setBotToken(state.botToken)
+                        // 拿到的 token 存不下去时不要再报「已绑定」，二维码弹层停在 Done 会误导用户
+                        if (!settings.setBotToken(state.botToken)) {
+                            _secretWriteFailed.value = true
+                            return@launch
+                        }
                         settings.setIlinkUserId(state.ilinkUserId)
                         state.baseUrl?.takeIf { it.isNotBlank() }?.let { settings.setBaseUrl(it) }
                         _qr.value = QrScanState.Done(state.ilinkUserId)

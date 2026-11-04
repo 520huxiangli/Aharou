@@ -395,6 +395,17 @@ public final class VdMain {
         List<AccessibilityWindowInfo> windows = all.get(displayId);
         List<AccessibilityNodeInfo> roots = new ArrayList<>();
         if (windows == null) return roots;
+        // 只取活动窗口：同一 displayId 上常常残留多个窗口（页面切换时旧页没销毁、弹层退场中），
+        // 全量导出会把上一页的控件也扫进来，App 侧据此算出的中心点落在旧位置上，
+        // 表现就是「点了没反应」或「nodes 和截图对不上」（2026-11-04 实机复现）。
+        for (AccessibilityWindowInfo win : windows) {
+            if (win.isActive()) {
+                AccessibilityNodeInfo root = win.getRoot();
+                if (root != null) roots.add(root);
+                return roots;
+            }
+        }
+        // 没有活动窗口时（刚启动或切后台）才退回全量，至少不至于读不到任何东西。
         for (AccessibilityWindowInfo win : windows) {
             AccessibilityNodeInfo root = win.getRoot();
             if (root != null) roots.add(root);

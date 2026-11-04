@@ -88,8 +88,6 @@ private val OUTPUT_COLOR = TokenStatsPalette.Output
 private val CACHE_COLOR = TokenStatsPalette.Cache
 private val ERROR_COLOR = TokenStatsPalette.Error
 private val CANCELLED_COLOR = TokenStatsPalette.Cancelled
-private val SUCCESS_COLOR = Color(0xFF2E7D32)
-private val WARNING_COLOR = Color(0xFFE65100)
 
 private const val STATS_PAGE_SIZE = 5
 private const val CALLS_PAGE_SIZE = 10
@@ -664,7 +662,8 @@ private fun ProviderStatsRow(
 ) {
     val successRateFloat = if (p.calls > 0) (p.calls - p.errors).toFloat() / p.calls else 0f
     val successRatePercent = String.format(Locale.getDefault(), "%.1f%%", successRateFloat * 100f)
-    val successColor = if (successRateFloat >= 0.95f) SUCCESS_COLOR else WARNING_COLOR
+    val successColor = if (successRateFloat >= 0.95f) MaterialTheme.semanticColors.success
+    else MaterialTheme.semanticColors.warning
 
     val backgroundColor = if (isSelected) {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)

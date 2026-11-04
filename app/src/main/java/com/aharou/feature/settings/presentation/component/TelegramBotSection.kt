@@ -67,6 +67,7 @@ internal fun TelegramBotSection(
 ) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val secretWriteFailed by viewModel.secretWriteFailed.collectAsStateWithLifecycle()
     val config = state.config
 
     // 通知权限申请只影响通知是否可见，不阻塞服务启停，回调里不做事。
@@ -169,6 +170,16 @@ internal fun TelegramBotSection(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }
+
+        // 密钥库不可用时 token 实际没存进去，不提示的话用户会以为已经保存
+        if (secretWriteFailed) {
+            Text(
+                text = stringResource(R.string.im_secret_write_failed),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)
+            )
         }
     }
 }

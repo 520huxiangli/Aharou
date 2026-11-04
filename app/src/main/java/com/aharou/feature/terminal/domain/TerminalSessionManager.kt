@@ -1,8 +1,8 @@
 package com.aharou.feature.terminal.domain
 
 import android.content.Context
-import android.content.Intent
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.terminal.presentation.component.AppTerminalSessionClient
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,11 +59,24 @@ class TerminalSessionManager @Inject constructor(
         const val DEFAULT_ROWS = 24
         /** 命令打印 `[command exited: N]` 后等待正常 onFinished 回调的缓冲（毫秒）。 */
         const val EXIT_MARKER_GRACE_MS = 1_500L
-        /** 完成兜底监控轮询屏幕缓冲的间隔（毫秒）。旧值 200ms 每轮都会构建 2000 行 transcript 字符串，
-         *  长命令（构建/安装）期间持续占 CPU；间隔放宽到 1s 并配合「输出无增长跳过扫描」后开销可忽略。 */
+        /** 完成兜底监控轮询屏幕缓冲的间隔（毫秒）。旧值 200ms、且每轮都构建一遍 2000 行 transcript，
+         *  长命令（构建/安装）期间持续占 CPU；现在每轮只读尾部若干行（见 [EXIT_MARKER_TAIL_ROWS]），
+         *  间隔保持 1s，发现退出标记的延迟不变。 */
         const val EXIT_MARKER_POLL_MS = 1_000L
         /** 匹配命令退出标记 `[command exited: N]` 的定位前缀（配合手工解析退出码，免全量正则扫描）。 */
         const val EXIT_MARKER_PREFIX = "[command exited: "
+        /**
+         * 兜底监控每轮只读屏幕尾部这么多行（含已滚出屏幕的历史行）。
+         *
+         * 退出标记是命令退出前打印的最后一段内容，必然落在尾部；读完整 transcript（2000 行 × 80 列）
+         * 再从中找它没有任何额外收益，只是每秒白烧一次 CPU。
+         */
+        const val EXIT_MARKER_TAIL_ROWS = 60
+        /**
+         * getSelectedText 的列上界：TerminalBuffer 的 rows/columns 没有公开 getter，
+         * 传一个必然大于真实列数的值，让它内部的钳制把 x2 收到 columns。
+         */
+        const val TAIL_SELECT_MAX_COLUMNS = 4096
         /** 交互标签创建后多久仍无任何输出就 dump 容器诊断（proot 没起来/卡住时的主动取证）。 */
         const val SILENT_DIAGNOSTIC_DELAY_MS = 10_000L
     }
@@ -110,10 +124,10 @@ class TerminalSessionManager @Inject constructor(
 
     private suspend fun createTab(workspacePath: String? = null): String {
         FileLogger.i(TAG, "新建交互终端标签：开始准备容器")
-        ensureContainer()
         val id = nextId()
         val workspace = resolveWorkspace(workspacePath)
-        val shellCommand = buildInteractiveCommand()
+        val profile = ensureContainer(workspace)
+        val shellCommand = buildInteractiveCommand(profile)
         FileLogger.i(TAG, "交互 shell 命令（$id）：$shellCommand")
         val (session, client) = try {
             buildSession(shellCommand, workspace)
@@ -145,13 +159,13 @@ class TerminalSessionManager @Inject constructor(
      * 靠 ENV=/etc/profile 加载登录环境；exec 让 shell 取代外层 sh -c 成为前台交互 shell。
      * 启动时跑首次初始化菜单（脚本自行判断已完成/已跳过则秒退）；用 `;` 分隔保证脚本任何失败都不阻塞进入 shell。
      */
-    private fun buildInteractiveCommand(): String {
+    private fun buildInteractiveCommand(profile: ContainerProfile): String {
         val startup = "[ -f /root/.aicode/provision.sh ] && sh /root/.aicode/provision.sh; "
         return "cd ~/workspace 2>/dev/null; export ENV=/etc/profile; " +
             startup +
             "export PS1='\\[\\033[01;32m\\]\\u@\\h\\[\\033[00m\\]:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '; " +
             "alias ls='ls --color=auto' 2>/dev/null; alias grep='grep --color=auto' 2>/dev/null; alias ll='ls -la --color=auto' 2>/dev/null; " +
-            "exec ${containerEngine.defaultShell()}"
+            "exec ${containerEngine.defaultShellFor(profile)}"
     }
 
     /**
@@ -164,7 +178,7 @@ class TerminalSessionManager @Inject constructor(
             delay(SILENT_DIAGNOSTIC_DELAY_MS)
             val tab = tab(tabId) ?: return@launch
             if (tab.runState !is RunState.Running) return@launch
-            if (!getTabOutput(tabId).isNullOrBlank()) return@launch
+            if (!readTabOutputOnMain(tabId).isNullOrBlank()) return@launch
             FileLogger.w(TAG, "终端标签 $tabId 启动 ${SILENT_DIAGNOSTIC_DELAY_MS}ms 后仍无任何输出，dump 容器状态")
             containerEngine.logContainerDiagnostics("终端标签 $tabId 静默")
         }
@@ -183,9 +197,9 @@ class TerminalSessionManager @Inject constructor(
         sourceSessionId: String?,
         workspacePath: String?
     ): String {
-        ensureContainer()
         val id = nextId()
         val workspace = resolveWorkspace(workspacePath)
+        val profile = ensureContainer(workspace)
         // 用 `ec=$?` 捕获命令真实退出码后再 echo，否则 echo 本身恒为 0 会覆盖进程退出码，导致
         // onFinished 回调里的 exitStatus 永远是 0、与屏幕上 echo 出来的码对不上。
         // notify=true：echo 后 `exit $ec` 让 shell 以命令真实退出码结束 → proot 透传 → 回调 exitStatus
@@ -193,7 +207,7 @@ class TerminalSessionManager @Inject constructor(
         //   污染成 0，而某些情况下进程不干净退出还会导致回调不触发。
         // notify=false：echo 后 `exec ${shell}` 保活，标签可复用（dev server 退出后也能继续输入）；
         //   此时进程不退出、不回调，退出码无意义，符合 dev server 场景设计。
-        val afterCommand = if (notify) "; exit \$ec" else "; exec ${containerEngine.defaultShell()}"
+        val afterCommand = if (notify) "; exit \$ec" else "; exec ${containerEngine.defaultShellFor(profile)}"
         val shellCommand = "cd ~/workspace 2>/dev/null; export ENV=/etc/profile; " +
             "$command; ec=\$?; echo \"[command exited: \$ec]\"$afterCommand"
         val (session, client) = buildSession(shellCommand, workspace)
@@ -276,6 +290,31 @@ class TerminalSessionManager @Inject constructor(
         }.getOrNull() ?: ""
     }
 
+    /**
+     * 供内部协程（[monitorScope] 跑在 IO 线程）读屏幕缓冲：emulator 的 append 发生在主线程，
+     * [com.termux.terminal.TerminalBuffer] 没有同步，在 IO 线程读会读到半更新的行数组。
+     * 工具侧的轮询已经这么做了，这里对齐；不加锁，锁会把主线程也拖进去。
+     */
+    private suspend fun readTabOutputOnMain(id: String): String? =
+        withContext(Dispatchers.Main) { getTabOutput(id) }
+
+    /**
+     * 读屏幕尾部 [rows] 行（含已滚出屏幕的历史行），供兜底监控找退出标记。
+     *
+     * 同样只能在主线程读（理由见 [readTabOutputOnMain]），但走的是 getSelectedText 的局部选区，
+     * 开销与行数成正比而不是与整个 2000 行 transcript 成正比。屏幕尺寸没有公开 getter，靠
+     * getSelectedText 自带的钳制取尾部：selY1 会被钳到 -activeTranscriptRows，selY2 钳到 screenRows-1。
+     */
+    private suspend fun readTabTailOnMain(id: String, rows: Int): String? =
+        withContext(Dispatchers.Main) {
+            val tab = tab(id) ?: return@withContext null
+            runCatching {
+                tab.session.emulator?.screen
+                    ?.getSelectedText(0, -rows, TAIL_SELECT_MAX_COLUMNS, Int.MAX_VALUE)
+                    ?.trimEnd('\n')
+            }.getOrNull() ?: ""
+        }
+
     /** 列出全部标签的摘要（id/标题/是否后台/运行状态/命令），供 AI 选目标。 */
     override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
 
@@ -330,13 +369,24 @@ class TerminalSessionManager @Inject constructor(
         return targets.size
     }
 
-    private suspend fun ensureContainer() {
+    /**
+     * 确保本次工作区该用的容器就绪，返回它。
+     *
+     * 必须按工作区解析出的容器装：以前无论工作区覆盖成什么都只装全局默认，
+     * 终端随即回退到默认容器，工作区覆盖形同虚设。
+     */
+    private suspend fun ensureContainer(workspace: String): ContainerProfile {
         val startedAt = System.currentTimeMillis()
-        containerEngine.ensureInstalled()
-        if (!containerEngine.isContainerInstalled()) {
-            throw IllegalStateException("容器未安装（缺少 rootfs/proot）")
+        val profile = containerEngine.profileForTerminal(workspace)
+        containerEngine.ensureInstalledFor(profile)
+        if (!containerEngine.isInstalledFor(profile)) {
+            throw IllegalStateException("容器未安装（缺少 rootfs/proot）：${profile.name}")
         }
-        FileLogger.i(TAG, "容器就绪（耗时 ${System.currentTimeMillis() - startedAt}ms）")
+        FileLogger.i(
+            TAG,
+            "容器就绪（profile=${profile.id}(${profile.name}) 耗时 ${System.currentTimeMillis() - startedAt}ms）"
+        )
+        return profile
     }
 
     private fun nextId(): String = "term-${idCounter.incrementAndGet()}"
@@ -367,23 +417,21 @@ class TerminalSessionManager @Inject constructor(
     private fun monitorBackgroundExit(tabId: String) {
         monitorScope.launch {
             var seenMarker = false
-            var lastOutputLen = -1
             while (true) {
                 val tab = tab(tabId) ?: return@launch
                 if (tab.runState !is RunState.Running) return@launch
-                val output = getTabOutput(tabId) ?: return@launch
                 if (!seenMarker) {
-                    // 输出无增长时跳过扫描：仅比较长度，省去每轮全量定位退出标记。
-                    if (output.length != lastOutputLen) {
-                        lastOutputLen = output.length
-                        if (extractExitCode(output) != null) seenMarker = true
-                    }
+                    // 每轮只读尾部若干行找退出标记，不再整体构建 transcript：轮询间隔保持 1s，
+                    // 「退出标记多久被发现」的时序与旧实现一致，省掉的是每秒十几万字符的拼串。
+                    val tail = readTabTailOnMain(tabId, EXIT_MARKER_TAIL_ROWS) ?: return@launch
+                    if (extractExitCode(tail) != null) seenMarker = true
                 } else {
                     delay(EXIT_MARKER_GRACE_MS)
                     // 缓冲后再查：正常 onFinished 回调若已触发，状态不再 Running，此处直接退出。
                     val current = tab(tabId) ?: return@launch
                     if (current.runState is RunState.Running) {
-                        val exitCode = extractExitCode(getTabOutput(tabId) ?: "") ?: 0
+                        val tail = readTabTailOnMain(tabId, EXIT_MARKER_TAIL_ROWS) ?: ""
+                        val exitCode = extractExitCode(tail) ?: 0
                         current.runState = RunState.Finished(exitCode)
                         bumpRevision()
                         FileLogger.i(TAG, "兜底：标签 $tabId 检测到退出标记，强制收尾 exit=$exitCode")
@@ -394,7 +442,7 @@ class TerminalSessionManager @Inject constructor(
                                 TabFinishedEvent(
                                     current.id, current.title, current.command, exitCode, current.sourceSessionId,
                                     startedAt = current.startedAt,
-                                    tailOutput = getTabOutput(current.id)?.takeTailLines(TAIL_LINES)
+                                    tailOutput = tail.takeTailLines(TAIL_LINES)
                                 )
                             )
                         }
@@ -413,6 +461,9 @@ class TerminalSessionManager @Inject constructor(
 
     private fun writeToSession(session: TerminalSession, text: String) {
         val bytes = text.toByteArray(Charsets.UTF_8)
+        // 空写入会让 ByteQueue.write 抛 IllegalArgumentException（上游认为 length<=0 是调用方错误），
+        // 而空串是合法输入：例如 AI 发了一条空回车以外的空文本。在 App 侧兜掉，不改上游语义。
+        if (bytes.isEmpty()) return
         session.write(bytes, 0, bytes.size)
     }
 
@@ -475,20 +526,14 @@ class TerminalSessionManager @Inject constructor(
     }
 
     private fun startKeepaliveService(workspacePath: String?) {
-        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
-            action = TerminalKeepaliveService.ACTION_START_SESSION
-            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
-        }
-        appContext.startService(intent)
+        // 走 companion 的包装：裸 startService 在后台会被系统拒（Android 8+ 后台启动限制）并抛
+        // IllegalStateException，未被捕获会直接崩在通知回调/监控协程里。
+        TerminalKeepaliveService.startSession(appContext, workspacePath?.takeIf { it.isNotBlank() })
         FileLogger.i(TAG, "后台保活 Service 已启动（workspace=$workspacePath）")
     }
 
     private fun stopKeepaliveService(workspacePath: String? = null) {
-        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
-            action = TerminalKeepaliveService.ACTION_STOP_SESSION
-            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
-        }
-        appContext.startService(intent)
+        TerminalKeepaliveService.stopSession(appContext, workspacePath?.takeIf { it.isNotBlank() })
         FileLogger.i(TAG, "后台保活 Service 已停止")
     }
 

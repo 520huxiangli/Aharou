@@ -121,6 +121,11 @@ public final class TerminalSession extends TerminalOutput {
             mDelegate.close();
         }
 
+        /** 用户主动关标签才会调：强杀只给持有真实 pid 的本地子进程。 */
+        void killProcess() {
+            if (mDelegate != null) mDelegate.killProcess();
+        }
+
         SubprocessBackend open(int columns, int rows) {
             mDelegate = new SubprocessBackend(mShellPath, mCwd, mArgs, mEnv, rows, columns);
             return mDelegate;
@@ -314,6 +319,12 @@ public final class TerminalSession extends TerminalOutput {
     /** Finish this terminal session by terminating the backend (SIGKILL for local, close for remote). */
     public void finishIfRunning() {
         if (isRunning()) {
+            // 只有用户主动关标签（closeTab / 切模式 / 关闭全部）才走到这里，强杀放在这一侧：
+            // 正常退出靠 MSG_PROCESS_EXITED → cleanupResources 收尾，那里进程已被 waitpid 回收，
+            // 再对同一个 pid 发 SIGKILL 可能误杀已被系统复用的无关进程。远程流没有 pid，跳过。
+            if (mBackend instanceof LocalBackendHolder) {
+                ((LocalBackendHolder) mBackend).killProcess();
+            }
             mBackend.close();
         }
     }

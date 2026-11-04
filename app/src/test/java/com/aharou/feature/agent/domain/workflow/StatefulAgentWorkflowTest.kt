@@ -22,6 +22,7 @@ import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
+import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.toTransportString
 import com.aharou.feature.agent.domain.workflow.GeneratedImagePersister
@@ -55,6 +56,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -68,6 +71,8 @@ class StatefulAgentWorkflowTest {
     private val metadata = mockk<ModelMetadataService>()
     private val compactionSettings = mockk<CompactionModelSettingsRepository>()
     private val outputStore = mockk<ToolOutputStore>()
+    // 授权策略：工具批用例要显式放行，否则 PermissionGate 会按 ASK 走弹窗路径（本类没有真实审批环境）。
+    private val policyEngine = mockk<ToolPermissionPolicyEngine>()
     // 规则提醒：这些用例不验证提醒，relaxed mock 下所有方法不抛异常（decorate 在 init 里打桩成原样返回）。
     private val reminderEngine = mockk<com.aharou.feature.agent.domain.reminder.ReminderEngine>(relaxed = true)
     private val provider = mockk<AIProvider>(relaxed = true)
@@ -93,7 +98,7 @@ class StatefulAgentWorkflowTest {
         geminiApi = mockk(),
         promptProvider = prompts,
         permissionManager = mockk(),
-        policyEngine = mockk<ToolPermissionPolicyEngine>(),
+        policyEngine = policyEngine,
         contextCompactor = compactor,
         planApprovalManager = mockk(),
         toolOutputStore = outputStore,
@@ -449,5 +454,307 @@ class StatefulAgentWorkflowTest {
         assertSame(definition, promptContext.captured.agentDefinition)
         coVerify(exactly = 1) { compactor.compactIfNeeded(any(), provider, "session", true, provider,
             "subagent system", listOf(readTool), 0, any()) }
+    }
+
+    // ───────────────────────── 批内去重（executeToolBatchEffect） ─────────────────────────
+
+    /**
+     * 批内去重：同一响应里两条同名同参调用只执行第一次，第二条补 DUPLICATE_TOOL_CALL 错误。
+     * 两条结果都必须按 toolCalls 原顺序回填——tool 消息条数必须与 assistant(toolCalls) 对齐，否则 API 报 400。
+     */
+    @Test
+    fun duplicateToolCallsInOneBatchExecuteTheFirstOnlyAndKeepResultOrder() = runTest {
+        val tool = FakeEchoTool()
+        val turn = runToolBatchTurn(tool, listOf(
+            ToolCall("dup-1", "echo", mapOf("text" to JsonPrimitive("same"))),
+            ToolCall("dup-2", "echo", mapOf("text" to JsonPrimitive("same")))
+        ))
+
+        assertEquals("同名同参只应执行第一次", 1, tool.executions.size)
+        assertEquals(listOf("dup-1", "dup-2"), turn.finished.map { it.id })
+        assertFalse("第一条是真实执行结果", turn.finished[0].isError)
+        assertTrue("第二条应带重复调用错误码", turn.finished[1].result.contains("DUPLICATE_TOOL_CALL"))
+        assertTrue(turn.finished[1].isError)
+
+        val toolMessages = turn.secondRoundMessages.filterIsInstance<AgentMessage.ToolResultMessage>()
+        assertEquals("tool 消息条数必须等于 toolCalls 条数", 2, toolMessages.size)
+        assertEquals(listOf("dup-1", "dup-2"), toolMessages.map { it.id })
+        assertTrue(toolMessages[1].result.contains("DUPLICATE_TOOL_CALL"))
+    }
+
+    /** 参数不同就是两个不同调用，去重不能把它们合并。 */
+    @Test
+    fun sameBatchWithDifferentArgumentsExecutesEveryCall() = runTest {
+        val tool = FakeEchoTool()
+        val turn = runToolBatchTurn(tool, listOf(
+            ToolCall("arg-1", "echo", mapOf("text" to JsonPrimitive("one"))),
+            ToolCall("arg-2", "echo", mapOf("text" to JsonPrimitive("two")))
+        ))
+
+        assertEquals("参数不同应为两次真调用", 2, tool.executions.size)
+        assertEquals(listOf("arg-1", "arg-2"), turn.finished.map { it.id })
+        assertFalse(turn.finished.any { it.isError })
+
+        val toolMessages = turn.secondRoundMessages.filterIsInstance<AgentMessage.ToolResultMessage>()
+        assertEquals(2, toolMessages.size)
+        assertFalse(toolMessages.any { it.result.contains("DUPLICATE_TOOL_CALL") })
+    }
+
+    // ───────────────────── Reducer：ToolBatchFinished 结果回填 ─────────────────────
+
+    /**
+     * 回填必须按 batchToolCalls 原顺序，而不是执行结果返回的顺序：
+     * assistant(toolCalls) 与后续 tool 消息一旦错位，OpenAI 会直接 400。
+     */
+    @Test
+    fun toolBatchFinishedBackfillsEveryResultInBatchOrder() {
+        val first = ToolCall("call-1", "readFile", emptyMap())
+        val second = ToolCall("call-2", "grep", emptyMap())
+        val third = ToolCall("call-3", "list", emptyMap())
+        val state = StatefulAgentWorkflow.AgentSessionState(
+            messages = listOf(AgentMessage.UserMessage(content = "hi")),
+            batchToolCalls = listOf(first, second, third),
+            pendingPermissionCalls = listOf(first, second, third),
+            approvedToolCalls = listOf(first, second, third)
+        )
+        val shuffledResults = listOf(
+            StatefulAgentWorkflow.ToolBatchResult("call-3", "list", "third", false),
+            StatefulAgentWorkflow.ToolBatchResult("call-1", "readFile", "first", false),
+            StatefulAgentWorkflow.ToolBatchResult("call-2", "grep", "second", false)
+        )
+
+        val (next, effects) = workflow.reduce(
+            state, StatefulAgentWorkflow.AgentAction.ToolBatchFinished(shuffledResults)
+        )
+
+        val toolMessages = next.messages.filterIsInstance<AgentMessage.ToolResultMessage>()
+        assertEquals(3, toolMessages.size)
+        assertEquals(listOf("call-1", "call-2", "call-3"), toolMessages.map { it.id })
+        assertEquals(listOf("first", "second", "third"), toolMessages.map { it.result })
+        assertEquals(4, next.messages.size)
+        assertTrue("批次结束后待办状态必须清空", next.batchToolCalls.isEmpty())
+        assertTrue(next.pendingPermissionCalls.isEmpty())
+        assertTrue(next.approvedToolCalls.isEmpty())
+        assertTrue(next.rejectedToolResults.isEmpty())
+        assertEquals(3, next.totalToolCalls)
+        assertFalse(next.isFinished)
+        assertEquals(
+            "成功批次要继续请求下一轮",
+            listOf(StatefulAgentWorkflow.AgentSideEffect.CallLlm), effects
+        )
+    }
+
+    /** 策略拒绝项没有执行结果，回填时优先用拒绝结果（真实原因不能被执行结果覆盖）。 */
+    @Test
+    fun toolBatchFinishedPrefersPolicyRejectionOverExecutionResult() {
+        val allowed = ToolCall("call-1", "readFile", emptyMap())
+        val denied = ToolCall("call-2", "grep", emptyMap())
+        val rejection = StatefulAgentWorkflow.ToolBatchResult("call-2", "grep", "被项目安全规则拒绝", true)
+        val state = StatefulAgentWorkflow.AgentSessionState(
+            batchToolCalls = listOf(allowed, denied),
+            rejectedToolResults = mapOf(denied.id to rejection)
+        )
+
+        val (next, _) = workflow.reduce(
+            state,
+            StatefulAgentWorkflow.AgentAction.ToolBatchFinished(listOf(
+                StatefulAgentWorkflow.ToolBatchResult("call-1", "readFile", "ok", false),
+                StatefulAgentWorkflow.ToolBatchResult("call-2", "grep", "本不该被执行", false)
+            ))
+        )
+
+        val toolMessages = next.messages.filterIsInstance<AgentMessage.ToolResultMessage>()
+        assertEquals(listOf("call-1", "call-2"), toolMessages.map { it.id })
+        assertEquals("ok", toolMessages[0].result)
+        assertEquals("被项目安全规则拒绝", toolMessages[1].result)
+    }
+
+    /** 单个工具报错不是本轮终止条件：结果照常回填、批次状态照常清空，循环继续问下一轮。 */
+    @Test
+    fun toolBatchFinishedWithErrorResultKeepsLoopRunning() {
+        val call = ToolCall("call-1", "readFile", emptyMap())
+        val state = StatefulAgentWorkflow.AgentSessionState(batchToolCalls = listOf(call))
+
+        val (next, effects) = workflow.reduce(
+            state,
+            StatefulAgentWorkflow.AgentAction.ToolBatchFinished(listOf(
+                StatefulAgentWorkflow.ToolBatchResult("call-1", "readFile", "工具执行失败", true)
+            ))
+        )
+
+        assertFalse("工具报错不应直接结束本轮", next.isFinished)
+        assertNull(next.error)
+        assertNull(next.errorCode)
+        assertTrue(next.batchToolCalls.isEmpty())
+        val toolMessages = next.messages.filterIsInstance<AgentMessage.ToolResultMessage>()
+        assertEquals(1, toolMessages.size)
+        assertEquals("工具执行失败", toolMessages.single().result)
+        assertEquals(
+            listOf(StatefulAgentWorkflow.AgentSideEffect.CallLlm), effects
+        )
+    }
+
+    // ───────────────────── Reducer：ToolBatchFinished 的循环判定 ─────────────────────
+
+    /** 连续 30 次同参同结果是熔断级：本批结果先补完（不留孤儿 tool_call），再以错误结束本轮且不再请求下一轮。 */
+    @Test
+    fun toolBatchFinishedCircuitBreaksOnRepeatedIdenticalResults() {
+        val lastCall = loopCall(30)
+        val state = StatefulAgentWorkflow.AgentSessionState(
+            messages = loopHistory(29) + loopAssistant(30),
+            batchToolCalls = listOf(lastCall)
+        )
+
+        val (next, effects) = workflow.reduce(
+            state,
+            StatefulAgentWorkflow.AgentAction.ToolBatchFinished(listOf(
+                StatefulAgentWorkflow.ToolBatchResult(lastCall.id, lastCall.name, "same", false)
+            ))
+        )
+
+        assertTrue("熔断要终止本轮", next.isFinished)
+        assertEquals(TOOL_LOOP_CIRCUIT_BREAK_CODE, next.errorCode)
+        assertEquals(toolLoopCircuitBreakText("readFile", 30), next.error)
+        assertTrue("熔断后不再请求下一轮", effects.isEmpty())
+        assertTrue(next.batchToolCalls.isEmpty())
+        assertEquals(
+            "熔断也要把本批结果补齐，不能留下孤儿 tool_call",
+            1, next.messages.count { it is AgentMessage.ToolResultMessage && it.id == lastCall.id }
+        )
+    }
+
+    /** 刚跨过警告阈值的那一批注入一次循环提醒（带固定 id 前缀，便于判定窗口识别）。 */
+    @Test
+    fun toolBatchFinishedInjectsLoopWarningOnceWhenCrossingThreshold() {
+        val lastCall = loopCall(10)
+        val state = StatefulAgentWorkflow.AgentSessionState(
+            messages = loopHistory(ToolLoopThresholds.WARNING - 1) + loopAssistant(10),
+            batchToolCalls = listOf(lastCall)
+        )
+
+        val (next, effects) = workflow.reduce(
+            state,
+            StatefulAgentWorkflow.AgentAction.ToolBatchFinished(listOf(
+                StatefulAgentWorkflow.ToolBatchResult(lastCall.id, lastCall.name, "same", false)
+            ))
+        )
+
+        val nudges = next.messages.filterIsInstance<AgentMessage.UserMessage>()
+            .filter { it.id.startsWith(TOOL_LOOP_NUDGE_ID) }
+        assertEquals(1, nudges.size)
+        assertEquals("$TOOL_LOOP_NUDGE_ID-${ToolLoopThresholds.WARNING}", nudges.single().id)
+        assertEquals(toolLoopWarningText("readFile", ToolLoopThresholds.WARNING), nudges.single().content)
+        assertFalse(next.isFinished)
+        assertEquals(listOf(StatefulAgentWorkflow.AgentSideEffect.CallLlm), effects)
+    }
+
+    /** 已站在阈值之上的后续批次不再重复提醒，否则每批插一句会把上下文刷满。 */
+    @Test
+    fun toolBatchFinishedDoesNotRepeatLoopWarningAboveThreshold() {
+        val history = loopHistory(ToolLoopThresholds.WARNING) + AgentMessage.UserMessage(
+            id = "$TOOL_LOOP_NUDGE_ID-${ToolLoopThresholds.WARNING}",
+            content = toolLoopWarningText("readFile", ToolLoopThresholds.WARNING)
+        )
+        val lastCall = loopCall(11)
+        val state = StatefulAgentWorkflow.AgentSessionState(
+            messages = history + loopAssistant(11),
+            batchToolCalls = listOf(lastCall)
+        )
+
+        val (next, _) = workflow.reduce(
+            state,
+            StatefulAgentWorkflow.AgentAction.ToolBatchFinished(listOf(
+                StatefulAgentWorkflow.ToolBatchResult(lastCall.id, lastCall.name, "same", false)
+            ))
+        )
+
+        val nudges = next.messages.filterIsInstance<AgentMessage.UserMessage>()
+            .filter { it.id.startsWith(TOOL_LOOP_NUDGE_ID) }
+        assertEquals("只保留既有那条提醒", 1, nudges.size)
+        assertEquals("本批只多了 assistant 与一条工具结果", history.size + 2, next.messages.size)
+    }
+
+    /** 循环判定用的同一调用：同工具、同参数、同结果。 */
+    private fun loopCall(index: Int) =
+        ToolCall("loop-$index", "readFile", mapOf("path" to JsonPrimitive("/a.txt")))
+
+    /**
+     * 本批对应的 assistant 消息：真实循环里 reduce(LlmResponse) 会先把它写进 messages，
+     * 循环判定要靠它反查调用参数（没有这条，最后的工具结果会被当作找不到调用的孤儿而跳过）。
+     */
+    private fun loopAssistant(index: Int) = AgentMessage.AssistantMessage(
+        id = "assistant-$index",
+        content = "",
+        toolCalls = listOf(loopCall(index))
+    )
+
+    /**
+     * 构造「同一调用同参同结果连续重复 [repeats] 次」的历史。
+     * 开头先放一条卡死提示，压掉 reducer 里与循环判定无关的卡死注入，让断言只盯循环分支。
+     */
+    private fun loopHistory(repeats: Int, result: String = "same"): List<AgentMessage> =
+        listOf(AgentMessage.UserMessage(content = STUCK_NUDGE_TEXT)) + (1..repeats).flatMap { index ->
+            val call = loopCall(index)
+            listOf(
+                AgentMessage.AssistantMessage(id = "assistant-$index", content = "", toolCalls = listOf(call)),
+                AgentMessage.ToolResultMessage(id = call.id, toolName = call.name, result = result)
+            )
+        }
+
+    /**
+     * 跑一轮「LLM 返回一批工具调用 → 执行 → 再问一次 LLM」的真实循环。
+     * 首轮响应带 [calls]，次轮收尾成普通文本；返回的工具完成事件与第二轮请求消息可供断言。
+     */
+    private suspend fun runToolBatchTurn(tool: AgentTool, calls: List<ToolCall>): ToolBatchTurn {
+        val sentMessages = mutableListOf<List<AgentMessage>>()
+        var round = 0
+        prepare(flow {})
+        // 策略放行 + 工具默认 AUTO_APPROVE：本批直接进入并行执行，不经过弹窗。
+        coEvery { policyEngine.evaluate(any(), any(), any(), any(), any(), any()) } returns
+            ToolPermissionPolicyEngine.EvalResult(ToolPermissionPolicyEngine.Verdict.ALLOW, emptyList())
+        every { outputStore.process(any(), any(), any()) } answers { arg<ToolResult>(2) }
+        every { provider.completeStream(any(), any(), any(), any()) } answers {
+            sentMessages.add(arg<List<AgentMessage>>(1))
+            val response = if (round++ == 0) AIResponse("", calls) else AIResponse("done")
+            flow { emit(AIStreamChunk.Final(response)) }
+        }
+        val finished = mutableListOf<AgentEvent.ToolCallFinished>()
+        workflow.executeEvents("request", context, listOf(tool)).collect { event ->
+            when (event) {
+                is AgentEvent.AssistantText -> event.persisted?.complete(Unit)
+                is AgentEvent.ToolCallFinished -> {
+                    finished.add(event)
+                    event.persisted?.complete(Unit)
+                }
+                else -> Unit
+            }
+        }
+        assertEquals("用例应恰好跑两轮 LLM 调用", 2, sentMessages.size)
+        return ToolBatchTurn(finished, sentMessages[1])
+    }
+
+    private class ToolBatchTurn(
+        val finished: List<AgentEvent.ToolCallFinished>,
+        /** 第二轮请求发给模型的完整消息列表：用来核对 tool 结果条数与顺序。 */
+        val secondRoundMessages: List<AgentMessage>
+    )
+
+    /**
+     * 真实工具实现（不用 mock）：token 估算会读 name / description / toJsonSchema()，
+     * mock 要逐项打桩，真实子类更接近生产路径且不会因为漏桩而抛 MockKException。
+     */
+    private class FakeEchoTool : AgentTool() {
+        override val name = "echo"
+        override val description = "测试用回声工具"
+        override val parameters: Map<String, ToolParameter> = emptyMap()
+        val executions = mutableListOf<Map<String, JsonElement>>()
+
+        override suspend fun executeWithContext(
+            args: Map<String, JsonElement>,
+            context: AgentContext
+        ): ToolResult {
+            executions.add(args)
+            return ToolResult.Success(JsonPrimitive("ok"))
+        }
     }
 }

@@ -162,14 +162,21 @@ private fun PluginCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (manifest.isService) {
-                    val running = plugin.status == PluginStatus.RUNNING
+                    // 启动失败与「已停止」是两回事：前者需要用户去查日志，不能只显示成停了
                     Text(
                         text = stringResource(
-                            if (running) R.string.plugin_status_running else R.string.plugin_status_stopped
+                            when (plugin.status) {
+                                PluginStatus.RUNNING -> R.string.plugin_status_running
+                                PluginStatus.FAILED -> R.string.extension_state_failed
+                                else -> R.string.plugin_status_stopped
+                            }
                         ),
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (running) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.semanticColors.subtleText
+                        color = when (plugin.status) {
+                            PluginStatus.RUNNING -> MaterialTheme.colorScheme.primary
+                            PluginStatus.FAILED -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.semanticColors.subtleText
+                        }
                     )
                 }
             }
@@ -195,6 +202,14 @@ private fun PluginCard(
                     text = manifest.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            // 失败原因直接写在卡片上，省得用户只能凭一句「失败」去猜
+            if (plugin.detail.isNotBlank()) {
+                Text(
+                    text = plugin.detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
                 )
             }
             if (manifest.permissions.isNotEmpty()) {

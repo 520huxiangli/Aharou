@@ -66,17 +66,38 @@ internal class SpeechQueue @Inject constructor(
     private val worker: Job = scope.launch { consume() }
 
     /**
+     * 切不出句末标点的那半句：先留着，等本轮结束或下一条消息进来再推。
+     * 通话路径每条回复只 [enqueue] 一次，丢了它末句就永远念不到。
+     */
+    private var pendingTail = ""
+
+    /**
      * 追加要播的文本，内部会按句切分。
+     *
+     * 上一条消息留下的尾巴要先补播，再排这次的句子——两条消息之间顺序不能颠倒。
      *
      * @param interrupt 这是新一轮回复的开头：丢掉队列里还没播的、以及正在播的那段
      */
     fun enqueue(text: String, interrupt: Boolean = false) {
         if (interrupt) stop()
         val current = generation.get()
-        val segments = splitComplete(text)
-        if (segments.isEmpty()) return
-        _pending.value += segments.size
-        segments.forEach { queue.trySend(SpeechSegment(it, current)) }
+        val (segments, rest) = splitInto(text)
+        val carry = pendingTail
+        pendingTail = rest.trim()
+        if (carry.isNotEmpty()) pushSegment(carry, current)
+        segments.forEach { pushSegment(it, current) }
+    }
+
+    /**
+     * 本轮回复结束：把最后没等到句末标点的半句也推入队列。
+     *
+     * 流式朗读靠 [feed] 的 `finish` 收尾；通话路径没有这个入口时，「好的」「已删除」
+     * 这类不带标点的末句一个字也念不出来，界面上有字、耳机里却是静音。
+     */
+    fun finishUtterance() {
+        val tail = pendingTail
+        pendingTail = ""
+        if (tail.isNotEmpty()) pushSegment(tail)
     }
 
     private var spokenLength = 0
@@ -109,9 +130,9 @@ internal class SpeechQueue @Inject constructor(
         spokenLength += consumed
     }
 
-    private fun pushSegment(sentence: String) {
+    private fun pushSegment(sentence: String, gen: Long = generation.get()) {
         _pending.value += 1
-        queue.trySend(SpeechSegment(sentence, generation.get()))
+        queue.trySend(SpeechSegment(sentence, gen))
     }
 
     /** 打断并清空：停掉当前播放，丢弃队列里排着的段。 */
@@ -124,6 +145,7 @@ internal class SpeechQueue @Inject constructor(
         _isSpeaking.value = false
         _currentText.value = ""
         spokenLength = 0
+        pendingTail = ""
     }
 
     private suspend fun consume() {
@@ -194,7 +216,12 @@ internal class SpeechQueue @Inject constructor(
         /**
          * 把文本切成一批可立即送合成的句子；返回切不掉的部分（等后续流式增量补齐）。
          */
-        fun splitComplete(text: String): List<String> {
+        fun splitComplete(text: String): List<String> = splitInto(text).first
+
+        /**
+         * 切出能立刻送合成的句子，同时把没切出去的尾巴带回去（末尾没标点、也没攒够长度）。
+         */
+        fun splitInto(text: String): Pair<List<String>, String> {
             val out = mutableListOf<String>()
             var rest = text
             while (true) {
@@ -203,7 +230,7 @@ internal class SpeechQueue @Inject constructor(
                 rest.substring(0, cut).trim().takeIf { it.isNotEmpty() }?.let { out += it }
                 rest = rest.substring(cut)
             }
-            return out
+            return out to rest
         }
 
         /** 返回下一个切点（不含）的下标；0 表示还切不了，得继续攒。 */

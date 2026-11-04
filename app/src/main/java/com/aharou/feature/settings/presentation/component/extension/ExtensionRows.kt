@@ -83,7 +83,7 @@ internal fun ExtensionEntryRow(
         ).joinToString(" · ")
     }
     // 只显示本地化的类型说明：各类自己那条 detail 是原始值（GLOBAL / oauth / 分支名），
-    // 直接洒到界面上是中文页面里冒英文，而这些信息在原页里都有
+    // 直接洒到界面上是中文页面里冒英文，而这些信息在原页里都有；失败原因例外，见 extensionSubtitle
     val detail = extensionSubtitle(entry)
 
     Column(
@@ -189,15 +189,17 @@ internal fun KindBadge(kind: ExtensionKind) {
 
 /** 类型专属说明：把这四类「已装 / 可用」的不同含义说清楚。 */
 @Composable
-internal fun extensionSubtitle(entry: ExtensionEntry): String = when (entry.kind) {
-    ExtensionKind.KNOWLEDGE -> stringResource(
+internal fun extensionSubtitle(entry: ExtensionEntry): String = when {
+    // 失败时原因比类型说明有用：文档承诺副标题带出失败原因，detail 里就是启动失败的具体提示
+    entry.state == ExtensionState.FAILED && entry.detail.isNotBlank() -> entry.detail
+    entry.kind == ExtensionKind.KNOWLEDGE -> stringResource(
         if (entry.state == ExtensionState.AVAILABLE) R.string.extension_subtitle_knowledge_factory
         else R.string.extension_subtitle_knowledge_custom
     )
-    ExtensionKind.CONNECTOR -> stringResource(R.string.extension_subtitle_connector)
-    ExtensionKind.SKILL -> stringResource(R.string.extension_subtitle_skill)
-    ExtensionKind.PLUGIN -> stringResource(R.string.extension_subtitle_plugin)
-    ExtensionKind.MCP -> stringResource(R.string.extension_subtitle_mcp)
+    entry.kind == ExtensionKind.CONNECTOR -> stringResource(R.string.extension_subtitle_connector)
+    entry.kind == ExtensionKind.SKILL -> stringResource(R.string.extension_subtitle_skill)
+    entry.kind == ExtensionKind.PLUGIN -> stringResource(R.string.extension_subtitle_plugin)
+    else -> stringResource(R.string.extension_subtitle_mcp)
 }
 
 /** 市场里的一条插件：名称 + 版本/作者/描述 + 安装（或已安装 / 更新）按钮。 */

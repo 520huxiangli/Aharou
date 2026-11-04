@@ -423,7 +423,10 @@ private fun LogLine(
         }
         Spacer(Modifier.width(Spacing.sm))
         Text(
-            text = entry.displayText(),
+            text = entry.displayText(
+                timeColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                tagColor = MaterialTheme.colorScheme.primary
+            ),
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
@@ -769,16 +772,16 @@ private fun parseLogLines(content: String): List<LogEntry> {
     return result
 }
 
-/** 日志行显示文本：时间灰、tag 蓝灰、消息主题色；非标准行整行原样。 */
-private fun LogEntry.displayText(): AnnotatedString {
+/** 日志行显示文本：时间弱化、tag 用主色、消息主题色；非标准行整行原样。颜色由调用方给，跨明暗主题都能达 AA。 */
+private fun LogEntry.displayText(timeColor: Color, tagColor: Color): AnnotatedString {
     val level = level ?: return AnnotatedString(raw)
     return buildAnnotatedString {
-        withStyle(SpanStyle(color = Color(0xFF9CA3AF))) {
+        withStyle(SpanStyle(color = timeColor)) {
             append(time ?: "")
             append(" ")
         }
         if (tag != null) {
-            withStyle(SpanStyle(color = Color(0xFF94A3B8))) {
+            withStyle(SpanStyle(color = tagColor)) {
                 append("[$tag] ")
             }
         }

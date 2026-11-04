@@ -3,7 +3,6 @@ package com.aharou.feature.terminal.domain
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.shellQuote
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
@@ -171,10 +170,15 @@ class RemoteTerminalSessionManager @Inject constructor(
         val termSession = TerminalSession(TRANSCRIPT_ROWS, AppRemoteSessionClient(), backend)
         termSession.updateSize(DEFAULT_COLUMNS, DEFAULT_ROWS)
         // shell 登录后默认在 home，先 cd 到当前工作区，与命令执行链路（RemoteSshEngine.buildCdCommand）保持一致：
-        // 优先 ~/workspace 符号链接，失败回退到真实工作区路径。
+        // 先 cd 真实工作区路径，再在 ~/workspace 指向同一物理目录时才切过去（用户自建同名真实目录时
+        // 不能先 cd ~/workspace，否则命令跑进用户自己的目录，而文件读写走 base/<工作区名>）。
         val wsPath = workspacePath?.takeIf { it.isNotBlank() } ?: workspaceRepository.currentPath()
         if (wsPath.isNotBlank() && wsPath != "/") {
-            termSession.write("cd ~/workspace 2>/dev/null || cd ${shellQuote(wsPath.trimEnd('/'))} 2>/dev/null\n")
+            val quoted = shellQuote(wsPath.trimEnd('/'))
+            termSession.write(
+                "cd $quoted 2>/dev/null; " +
+                    "if [ \"\$(cd ~/workspace 2>/dev/null && pwd -P)\" = \"\$(pwd -P)\" ]; then cd ~/workspace; fi\n"
+            )
         }
         if (command != null) {
             // sshj 的 Session.Shell 没有退出状态（SshShellBackend.waitForExit 恒 0），真实退出码只能靠命令
@@ -235,6 +239,13 @@ class RemoteTerminalSessionManager @Inject constructor(
             tab.session.emulator?.screen?.transcriptText?.trimEnd('\n')
         }.getOrNull() ?: ""
     }
+
+    /**
+     * 供 [monitorScope]（IO 线程）里的协程读屏幕缓冲：emulator 的 append 在主线程，
+     * TerminalBuffer 无同步，IO 线程直接读会读到半更新的数据结构。与本地版一致，不加锁。
+     */
+    private suspend fun readTabOutputOnMain(id: String): String? =
+        withContext(Dispatchers.Main) { getTabOutput(id) }
 
     override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
 
@@ -328,7 +339,7 @@ class RemoteTerminalSessionManager @Inject constructor(
      * 命令结束的统一收尾：写 RunState、按需停保活、发完成事件（finishedNotified 保证只发一次）。
      * 已非 Running 说明另一条收尾路径已处理，直接返回，避免重复。
      */
-    private fun finalizeTab(tabId: String, exitCode: Int) {
+    private fun finalizeTab(tabId: String, exitCode: Int, tail: String? = null) {
         val current = tab(tabId) ?: return
         if (current.runState !is RunState.Running) return
         current.runState = RunState.Finished(exitCode)
@@ -341,7 +352,9 @@ class RemoteTerminalSessionManager @Inject constructor(
                 TabFinishedEvent(
                     current.id, current.title, current.command, exitCode, current.sourceSessionId,
                     startedAt = current.startedAt,
-                    tailOutput = getTabOutput(current.id)?.takeTailLines(TAIL_LINES)
+                    // 监控协程在 IO 线程，屏缓冲由主线程写入，tail 由调用方在主线程取好传进来；
+                    // onFinished 回调本身就在主线程，不传时直接读。
+                    tailOutput = (tail ?: getTabOutput(current.id))?.takeTailLines(TAIL_LINES)
                 )
             )
         }
@@ -356,15 +369,16 @@ class RemoteTerminalSessionManager @Inject constructor(
         monitorScope.launch {
             var waited = 0L
             while (waited <= EXIT_MARKER_GRACE_MS) {
-                val code = extractExitCode(getTabOutput(tabId) ?: "")
+                val output = readTabOutputOnMain(tabId) ?: ""
+                val code = extractExitCode(output)
                 if (code != null) {
-                    finalizeTab(tabId, code)
+                    finalizeTab(tabId, code, output)
                     return@launch
                 }
                 delay(50)
                 waited += 50
             }
-            finalizeTab(tabId, fallbackExitCode)
+            finalizeTab(tabId, fallbackExitCode, readTabOutputOnMain(tabId))
         }
     }
 
@@ -378,12 +392,12 @@ class RemoteTerminalSessionManager @Inject constructor(
             while (true) {
                 val tab = tab(tabId) ?: return@launch
                 if (tab.runState !is RunState.Running) return@launch
-                val output = getTabOutput(tabId) ?: return@launch
+                val output = readTabOutputOnMain(tabId) ?: return@launch
                 if (output.length != lastOutputLen) {
                     lastOutputLen = output.length
                     val code = extractExitCode(output)
                     if (code != null) {
-                        finalizeTab(tabId, code)
+                        finalizeTab(tabId, code, output)
                         return@launch
                     }
                 }
@@ -393,20 +407,14 @@ class RemoteTerminalSessionManager @Inject constructor(
     }
 
     private fun startKeepaliveService(workspacePath: String? = null) {
-        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
-            action = TerminalKeepaliveService.ACTION_START_SESSION
-            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
-        }
-        appContext.startService(intent)
+        // 走 companion 包装：裸 startService 在后台会被系统拒并抛 IllegalStateException，
+        // 未捕获会崩在 SSH 回调/监控协程里。
+        TerminalKeepaliveService.startSession(appContext, workspacePath?.takeIf { it.isNotBlank() })
         FileLogger.i(TAG, "后台保活 Service 已启动（workspace=$workspacePath）")
     }
 
     private fun stopKeepaliveService(workspacePath: String? = null) {
-        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
-            action = TerminalKeepaliveService.ACTION_STOP_SESSION
-            workspacePath?.takeIf { it.isNotBlank() }?.let { putExtra(TerminalKeepaliveService.EXTRA_WORKSPACE, it) }
-        }
-        appContext.startService(intent)
+        TerminalKeepaliveService.stopSession(appContext, workspacePath?.takeIf { it.isNotBlank() })
         FileLogger.i(TAG, "后台保活 Service 已停止")
     }
 

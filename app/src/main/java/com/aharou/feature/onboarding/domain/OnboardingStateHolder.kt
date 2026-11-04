@@ -21,11 +21,11 @@ class OnboardingStateHolder {
     private val _state = MutableStateFlow(OnboardingUiState())
     val state: StateFlow<OnboardingUiState> = _state.asStateFlow()
 
-    /** 启动引导：从第一步 [OnboardingStep.OPEN_SIDEBAR] 开始。 */
-    fun start() {
+    /** 启动引导：默认从第一步 [OnboardingStep.OPEN_SIDEBAR] 开始，续跑时传入已存步骤。 */
+    fun start(startStep: OnboardingStep = OnboardingStep.all.first()) {
         _state.value = OnboardingUiState(
             active = true,
-            step = OnboardingStep.OPEN_SIDEBAR,
+            step = startStep,
             status = OnboardingStatus.IN_PROGRESS
         )
     }

@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation
 import android.content.Context
 import android.net.Uri
 import com.aharou.R
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerImageCatalog
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerProfile
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -69,6 +71,13 @@ class ContainerImageController @Inject constructor(
     private val _download = MutableStateFlow<ContainerImageDownloadUiState>(ContainerImageDownloadUiState.Idle)
     val download: StateFlow<ContainerImageDownloadUiState> = _download.asStateFlow()
 
+    /**
+     * 删除被拒时的占用方容器名（null = 没有提示）。
+     * 镜像一旦被导入为容器，rootfs 就是那个容器的根目录，删了文件容器就永久报「布局缺失」。
+     */
+    private val _deleteBlocked = MutableStateFlow<String?>(null)
+    val deleteBlocked: StateFlow<String?> = _deleteBlocked.asStateFlow()
+
     /** 当前下载任务句柄，取消下载时 cancel 它（底层 OkHttp call 同步中断）。 */
     private var downloadJob: Job? = null
 
@@ -100,6 +109,61 @@ class ContainerImageController @Inject constructor(
                     .map { it.id }.toSet()
             }.collect { _unavailableIds.value = it }
         }
+        sweepOrphanDownloads()
+    }
+
+    /** 消耗一条删除被拒提示。 */
+    fun clearDeleteBlocked() {
+        _deleteBlocked.value = null
+    }
+
+    /**
+     * 清掉下载目录里的半成品：进程被杀时下到一半的文件不在已下载记录里，用户在界面上看不到也删不掉，
+     * 会一直占着几百 MB。只删本类自己命名的 `download_*` 文件，且排除记录与容器引用（手动导入的
+     * 镜像副本也在同目录），免得误删真正在用的 rootfs。
+     */
+    private fun sweepOrphanDownloads() {
+        scope.launch {
+            runCatching {
+                val records = containerSettings.downloadedImagesFlow.first()
+                val profiles = containerSettings.customProfilesFlow.first()
+                val keep = buildSet {
+                    records.forEach { localPath(it.fileUri)?.let { p -> add(p) } }
+                    profiles.forEach { p ->
+                        (p.rootfsSource as? RootfsSource.LocalFile)?.let { localPath(it.uri)?.let { path -> add(path) } }
+                    }
+                }
+                val dir = File(context.filesDir, "rootfs_images")
+                val orphans = dir.listFiles().orEmpty().filter { file ->
+                    file.isFile && file.name.startsWith("download_") && file.absolutePath !in keep
+                }
+                if (orphans.isEmpty()) return@runCatching
+                // 正在进行的下载也还没进记录，别把它当垃圾删了
+                if (_download.value is ContainerImageDownloadUiState.Downloading) return@runCatching
+                var freed = 0L
+                orphans.forEach { file ->
+                    freed += file.length()
+                    if (file.delete()) FileLogger.i(TAG, "清理未完成的镜像下载：${file.name}（${file.length()}B）")
+                }
+                FileLogger.i(TAG, "清理未完成下载 ${orphans.size} 个，释放 ${freed / (1024 * 1024)}MB")
+            }.onFailure { FileLogger.w(TAG, "清理未完成下载失败", it) }
+        }
+    }
+
+    /** 把 file:// uri 换算成本地路径（容器 rootfs 引用与下载记录都用这个口径比对）。 */
+    private fun localPath(uriString: String): String? = runCatching {
+        Uri.parse(uriString).path
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    /** 该文件是否已被某个自定义容器当作 rootfs 使用；命中返回容器名。 */
+    private suspend fun containerUsing(fileUri: String): String? {
+        val target = localPath(fileUri) ?: return null
+        return containerSettings.customProfilesFlow.first()
+            .firstOrNull { profile ->
+                val uri = (profile.rootfsSource as? RootfsSource.LocalFile)?.uri ?: return@firstOrNull false
+                localPath(uri) == target
+            }
+            ?.name
     }
 
     /** 切换全局下载源（官方/华为云/阿里云/腾讯云等）。 */
@@ -188,13 +252,22 @@ class ContainerImageController @Inject constructor(
         }
     }
 
-    /** 删除已下载的镜像：清记录 + 删下载文件（仅限 rootfs_images 目录，防误删）；若正在下载该条目先取消。 */
+    /**
+     * 删除已下载的镜像：清记录 + 删下载文件（仅限 rootfs_images 目录，防误删）；若正在下载该条目先取消。
+     * 已被导入为容器（rootfs 指向这个文件）时**拒绝删除**：否则那个容器永久报「布局缺失」，只能靠
+     * 手工改库救。要连容器一起删是另一档操作（需二次确认），不在这里静默做。
+     */
     fun deleteDownloaded(entryId: String) {
         val record = _downloaded.value[entryId] ?: return
         if ((_download.value as? ContainerImageDownloadUiState.Downloading)?.entryId == entryId) {
             cancelDownload()
         }
         scope.launch {
+            containerUsing(record.fileUri)?.let { owner ->
+                _deleteBlocked.value = owner
+                FileLogger.w(TAG, "拒绝删除镜像 $entryId：已被容器「$owner」使用")
+                return@launch
+            }
             runCatching {
                 val file = File(Uri.parse(record.fileUri).path ?: return@runCatching)
                 if (file.parentFile?.name == "rootfs_images") file.delete()
@@ -206,7 +279,7 @@ class ContainerImageController @Inject constructor(
     /**
      * 批量删除已下载的镜像：逐个删磁盘文件（同上仅限 rootfs_images 目录），
      * 记录只写回一次——逐条删除会让 DataStore 每条发射一次，列表跟着刷新 N 遍。
-     * 正在下载的目标条目先取消。
+     * 正在下载的目标条目先取消；被容器占用的条目跳过并提示。
      */
     fun deleteDownloaded(entryIds: Collection<String>) {
         val targets = entryIds.filter { it.isNotBlank() }.distinct()
@@ -215,17 +288,36 @@ class ContainerImageController @Inject constructor(
         val downloading = (_download.value as? ContainerImageDownloadUiState.Downloading)?.entryId
         if (downloading != null && targets.any { it.first == downloading }) cancelDownload()
         scope.launch {
-            targets.forEach { (_, record) ->
+            val inUse = containerSettings.customProfilesFlow.first().mapNotNull { profile ->
+                (profile.rootfsSource as? RootfsSource.LocalFile)?.let { src -> localPath(src.uri)?.let { it to profile.name } }
+            }
+            val (removable, blocked) = targets.partition { (_, record) ->
+                val path = localPath(record.fileUri)
+                inUse.none { path != null && it.first == path }
+            }
+            removable.forEach { (_, record) ->
                 runCatching {
                     val file = File(Uri.parse(record.fileUri).path ?: return@runCatching)
                     if (file.parentFile?.name == "rootfs_images") file.delete()
                 }
             }
-            containerSettings.removeDownloadedImages(targets.map { it.first })
+            if (removable.isNotEmpty()) {
+                containerSettings.removeDownloadedImages(removable.map { it.first })
+            }
+            if (blocked.isNotEmpty()) {
+                val names = blocked.mapNotNull { (_, record) ->
+                    val path = localPath(record.fileUri)
+                    inUse.firstOrNull { path != null && it.first == path }?.second
+                }.distinct()
+                _deleteBlocked.value = names.joinToString("、")
+                FileLogger.w(TAG, "拒绝删除 ${blocked.size} 个镜像：已被容器 ${names.joinToString(", ")} 使用")
+            }
         }
     }
 
     private companion object {
+        const val TAG = "ContainerImageController"
+
         /** 目录清单里带哈希的源：只有这两个源会强制校验下载文件。 */
         val CHECKSUM_SOURCES = setOf("official", "aharou")
     }

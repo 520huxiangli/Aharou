@@ -38,6 +38,14 @@ final class SubprocessBackend implements SessionBackend {
         // 打一行 perror（落在 logcat，不进 App 日志）。若不在这里主动失败，会话会被当成「运行中」
         // （0 != -1）永久挂起、终端一片空白且无任何日志——正是用户报的形态。显式抛错让上层进失败态。
         if (mPtyFd < 0 || mPid <= 0) {
+            // fork 失败时原生层可能已经把 pty fd 建好了（fd>=0 而 pid<=0）：这里不关就永久漏一个 fd，
+            // 用户反复重试新建标签会把进程 fd 表耗光。上游没做这件事，仅作资源收尾，不改类语义。
+            if (mPtyFd >= 0) {
+                try {
+                    JNI.close(mPtyFd);
+                } catch (Exception ignored) {
+                }
+            }
             throw new IllegalStateException(
                 "createSubprocess 失败：ptyFd=" + mPtyFd + " pid=" + mPid
                     + " shell=" + shellPath + " cwd=" + cwd
@@ -81,16 +89,22 @@ final class SubprocessBackend implements SessionBackend {
         // 流的 close 自身幂等，JNI.close(mPtyFd) 却是裸关——第二次关的 fd 号可能已被系统复用给别的
         // socket/流，fdsan 会判「关闭不属于自己的 fd」并 SIGABRT，所以这里只允许真正关一次。
         if (!mClosed.compareAndSet(false, true)) return;
-        if (mPid > 0) {
-            try {
-                Os.kill(mPid, OsConstants.SIGKILL);
-            } catch (Exception ignored) {
-            }
-        }
+        // 这里不再发 SIGKILL：close 也走正常退出路径（MSG_PROCESS_EXITED → cleanupResources），
+        // 那时子进程已被 waitpid 回收，pid 可能已被系统复用给无关进程，再 kill 就是误杀。
+        // 强杀只在用户主动关标签时由 killProcess() 发出。
         // 各句柄关各自的：两个 dup 由流关（同时唤醒阻塞中的读写线程），原始 fd 交 JNI。
         closeQuietly(mInputStream);
         closeQuietly(mOutputStream);
         JNI.close(mPtyFd);
+    }
+
+    /** 用户主动关标签时的强制终止：此时进程很可能还活着（也没被任何人 waitpid 回收）。 */
+    void killProcess() {
+        if (mPid <= 0) return;
+        try {
+            Os.kill(mPid, OsConstants.SIGKILL);
+        } catch (Exception ignored) {
+        }
     }
 
     private static void closeQuietly(java.io.Closeable target) {

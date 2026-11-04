@@ -12,8 +12,10 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Named
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,12 +45,16 @@ class FeishuBotViewModel @Inject constructor(
         initialValue = FeishuBotUiState()
     )
 
+    /** 凭据写入失败（系统密钥库不可用）：界面据此提示「未保存」，否则用户会以为已经存好。 */
+    private val _secretWriteFailed = MutableStateFlow(false)
+    val secretWriteFailed: StateFlow<Boolean> = _secretWriteFailed.asStateFlow()
+
     fun setAppId(id: String) {
         viewModelScope.launch { settings.setAppId(id) }
     }
 
     fun setAppSecret(secret: String) {
-        viewModelScope.launch { settings.setAppSecret(secret) }
+        viewModelScope.launch { _secretWriteFailed.value = !settings.setAppSecret(secret) }
     }
 
     fun setBaseUrl(url: String) {

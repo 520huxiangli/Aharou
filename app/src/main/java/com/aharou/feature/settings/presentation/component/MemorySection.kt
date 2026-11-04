@@ -49,6 +49,7 @@ import com.aharou.core.ui.AppTextField
 import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
+import com.aharou.feature.agent.domain.memory.isLocalSideConflict
 import com.aharou.feature.settings.presentation.DistillOutcome
 import com.aharou.feature.settings.presentation.MemoryActionError
 import com.aharou.feature.settings.presentation.SettingsViewModel
@@ -322,6 +323,18 @@ internal fun MemorySection(viewModel: SettingsViewModel = hiltViewModel()) {
         MemorySyncSection()
 
         SettingsGroupHeader(text = stringResource(R.string.memory_entries_header))
+        // 跨设备冲突里本机这份仍在生效，但行里只有一个「待确认」标签，看不出还能不能照它执行。
+        val localConflicts = entries.count(::isLocalSideConflict)
+        if (localConflicts > 0) {
+            SettingsGroup {
+                Text(
+                    text = stringResource(R.string.memory_conflict_local_notice, localConflicts),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp),
+                )
+            }
+        }
         SettingsGroup {
             MemoryScopeSelector(
                 current = scope,
@@ -547,6 +560,14 @@ private fun MemoryEntryRow(memory: Memory, onClick: () -> Unit) {
                         text = stringResource(R.string.memory_entry_pending),
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = Spacing.sm),
+                    )
+                }
+                if (isLocalSideConflict(memory)) {
+                    Text(
+                        text = stringResource(R.string.memory_entry_local_conflict),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = Spacing.sm),
                     )
                 }

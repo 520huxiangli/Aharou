@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -89,16 +90,18 @@ fun SyncSettingsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState())
+                .imePadding()
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp)
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl)
         ) {
             Text(
                 text = stringResource(R.string.sync_settings_title),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(Spacing.lg))
             SettingsGroup {
                 Row(
                     modifier = Modifier
@@ -159,7 +162,7 @@ fun SyncSettingsSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(Radius.mdLarge)
             ) {
                 Text(stringResource(R.string.sync_save_settings))
             }

@@ -9,6 +9,18 @@ import java.net.URI
 import java.util.UUID
 
 /**
+ * 历史记录的日分组。文案要随语言变，所以 store 只给结构，标题由界面层取资源。
+ */
+sealed interface HistoryDayGroup {
+    data object Today : HistoryDayGroup
+    data object Yesterday : HistoryDayGroup
+    data class Date(val month: Int, val day: Int) : HistoryDayGroup
+
+    /** 搜索态的单一分组。 */
+    data object SearchResults : HistoryDayGroup
+}
+
+/**
  * Tracks browser history with 7-day retention, mirroring iOS BrowserHistoryStore.
  */
 class BrowserHistoryStore private constructor(private val context: Context) {
@@ -62,7 +74,7 @@ class BrowserHistoryStore private constructor(private val context: Context) {
         }.sortedByDescending { it.timestamp }
     }
 
-    fun groupedByDay(): Map<String, List<Entry>> {
+    fun groupedByDay(): Map<HistoryDayGroup, List<Entry>> {
         val cal = java.util.Calendar.getInstance()
         val today = java.util.Calendar.getInstance()
         val yesterday = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }
@@ -71,14 +83,13 @@ class BrowserHistoryStore private constructor(private val context: Context) {
             cal.timeInMillis = entry.timestamp
             when {
                 cal.get(java.util.Calendar.YEAR) == today.get(java.util.Calendar.YEAR) &&
-                    cal.get(java.util.Calendar.DAY_OF_YEAR) == today.get(java.util.Calendar.DAY_OF_YEAR) -> "Today"
+                    cal.get(java.util.Calendar.DAY_OF_YEAR) == today.get(java.util.Calendar.DAY_OF_YEAR) -> HistoryDayGroup.Today
                 cal.get(java.util.Calendar.YEAR) == yesterday.get(java.util.Calendar.YEAR) &&
-                    cal.get(java.util.Calendar.DAY_OF_YEAR) == yesterday.get(java.util.Calendar.DAY_OF_YEAR) -> "Yesterday"
-                else -> {
-                    val month = cal.get(java.util.Calendar.MONTH) + 1
-                    val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
-                    "$month/${day}"
-                }
+                    cal.get(java.util.Calendar.DAY_OF_YEAR) == yesterday.get(java.util.Calendar.DAY_OF_YEAR) -> HistoryDayGroup.Yesterday
+                else -> HistoryDayGroup.Date(
+                    month = cal.get(java.util.Calendar.MONTH) + 1,
+                    day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+                )
             }
         }
     }

@@ -16,8 +16,6 @@ data class PluginRecord(
     val name: String = "",
     val version: String = "",
     val installedAt: Long = 0L,
-    /** 是否随应用启动自动拉起（仅对常驻服务插件有意义）。 */
-    val autoStart: Boolean = false,
 )
 
 @Serializable
@@ -26,7 +24,7 @@ private data class PluginRecordData(val installed: Map<String, PluginRecord> = e
 /**
  * 插件安装记录：`filesDir/aharou/plugin-installs.json`。
  *
- * 与 `skill-installs.json` 同一取舍——独立于插件目录本身，只回答「装了哪些、什么版本、要不要自启」。
+ * 与 `skill-installs.json` 同一取舍——独立于插件目录本身，只回答「装了哪些、什么版本」。
  * 插件目录被手工删除时记录成为孤儿，列表加载前会对一次账。
  */
 @Singleton
@@ -42,12 +40,6 @@ class PluginRecordStore @Inject constructor(
 
     fun save(record: PluginRecord) {
         write(read().installed + (record.id to record))
-    }
-
-    /** 只更新自启开关；记录不存在时静默返回。 */
-    fun setAutoStart(id: String, autoStart: Boolean) {
-        val current = read().installed[id] ?: return
-        write(read().installed + (id to current.copy(autoStart = autoStart)))
     }
 
     fun remove(id: String) {

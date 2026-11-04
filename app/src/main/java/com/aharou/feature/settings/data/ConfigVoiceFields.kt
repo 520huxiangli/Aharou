@@ -1,14 +1,24 @@
 package com.aharou.feature.settings.data
 
+import android.content.Context
+import com.aharou.core.config.ConfigError
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigSchema
+import com.aharou.core.config.ConfigValue
+import com.aharou.core.config.fields.ClosureField
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreStrField
 import com.aharou.feature.settings.data.repository.AssistantOverlaySettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceSttSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.data.repository.VoiceWakeSettingsRepository
+import com.aharou.feature.voice.assistant.PowerKeyWatcherService
+import com.aharou.feature.voice.call.VoiceCallService
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * 语音合成与朗读偏好 → 配置通道。
@@ -19,6 +29,10 @@ import javax.inject.Singleton
  *
  * 三个 TTS 字段在仓库里也是同一个写入方法（`setTtsModel(providerId, model, voice)`），
  * 同理每个 setter 都要把另外两个的当前值带上。
+ *
+ * 两处开关除了写值还要**启停对应服务**（`voice.wake_enabled` → VoiceCallService，
+ * `voice.assistant_power_key` → PowerKeyWatcherService）。原来只有设置页的点击路径会启停，
+ * config 通道只写开关，结果关掉后麦克风仍常驻收音、通知栏还挂着「唤醒已开启」。
  */
 @Singleton
 class ConfigVoiceFields @Inject constructor(
@@ -26,6 +40,7 @@ class ConfigVoiceFields @Inject constructor(
     private val sttSettings: VoiceSttSettingsRepository,
     private val wakeSettings: VoiceWakeSettingsRepository,
     private val overlaySettings: AssistantOverlaySettingsRepository,
+    @param:ApplicationContext private val context: Context,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -94,12 +109,19 @@ class ConfigVoiceFields @Inject constructor(
         )
 
         registry.register(
-            DataStoreBoolField(
+            ClosureField(
                 path = "voice.wake_enabled",
                 displayName = "语音唤醒",
                 description = "常驻监听麦克风、用唤醒词唤起语音输入。默认关闭。",
-                flow = wakeSettings.enabledFlow,
-                setter = { wakeSettings.setEnabled(it) },
+                valueSchema = ConfigSchema.Bool,
+                // 写入要等 DataStore 落盘，而 writer 是同步签名，与 DataStoreBoolField 一样用 runBlocking 桥接。
+                reader = { ConfigValue.Bool(runBlocking { wakeSettings.enabledFlow.first() }) },
+                writer = { v ->
+                    val enabled = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("bool")
+                    runBlocking { wakeSettings.setEnabled(enabled) }
+                    if (enabled) VoiceCallService.start(context, wakeMode = true) else VoiceCallService.stop(context)
+                },
             ),
         )
         registry.register(
@@ -122,12 +144,18 @@ class ConfigVoiceFields @Inject constructor(
             ),
         )
         registry.register(
-            DataStoreBoolField(
+            ClosureField(
                 path = "voice.assistant_power_key",
                 displayName = "长按电源键唤起助手",
                 description = "靠 Shizuku 监听电源键，按住约 0.8 秒弹出助手浮层；短按不受影响。需保持 Shizuku 就绪。",
-                flow = overlaySettings.powerKeyFlow,
-                setter = { overlaySettings.setPowerKey(it) },
+                valueSchema = ConfigSchema.Bool,
+                reader = { ConfigValue.Bool(runBlocking { overlaySettings.powerKeyFlow.first() }) },
+                writer = { v ->
+                    val enabled = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("bool")
+                    runBlocking { overlaySettings.setPowerKey(enabled) }
+                    if (enabled) PowerKeyWatcherService.start(context) else PowerKeyWatcherService.stop(context)
+                },
             ),
         )
     }

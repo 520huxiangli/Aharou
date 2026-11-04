@@ -87,14 +87,8 @@ internal class ReadAloudViewModel @Inject constructor(
         lastStreamText = ""
     }
 
-    /** 立即停下播报。 */
-    fun stopStream() {
-        lastStreamText = ""
-        speechQueue.stop()
-    }
-
     /**
-     * 自动朗读（非流式兑底）：开关开着且这条还没念过，就整条念出来。由界面在「回复落地」时调。
+     * 自动朗读（非流式兜底）：开关开着且这条还没念过，就整条念出来。由界面在「回复落地」时调。
      * 开关关着时也要记 id——否则用户中途打开开关，会突然把好几条旧回复连着念一遍。
      */
     suspend fun autoRead(messageId: String, text: String) {

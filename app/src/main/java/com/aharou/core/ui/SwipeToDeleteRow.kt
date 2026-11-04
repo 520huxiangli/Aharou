@@ -37,6 +37,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -156,7 +158,8 @@ fun SwipeToDeleteRow(
                 ) {
                     Icon(
                         imageVector = FeatherIcons.Trash2,
-                        contentDescription = stringResource(R.string.common_delete),
+                        // 同一个可点击容器里已经有一行「删除」文字，图标再报一遍会变成「删除 删除」
+                        contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
@@ -228,10 +231,13 @@ fun SwipeToDeleteRow(
                     when {
                         // 多选态：点击与长按都切换选中；不可选中的行不接手势
                         selectionMode -> if (selectable) {
-                            Modifier.combinedClickable(
-                                onClick = onToggleSelect,
-                                onLongClick = onToggleSelect
-                            )
+                            Modifier
+                                .combinedClickable(
+                                    onClick = onToggleSelect,
+                                    onLongClick = onToggleSelect
+                                )
+                                // 多选态下选没选中只看颜色，读屏用户拿不到任何信号，必须把选中态说出来
+                                .semantics { this.selected = selected }
                         } else {
                             Modifier
                         }

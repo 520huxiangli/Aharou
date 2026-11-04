@@ -53,6 +53,7 @@ import compose.icons.feathericons.Globe
 import compose.icons.feathericons.Package
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Search
+import kotlinx.coroutines.delay
 
 /**
  * 扩展统一入口：把插件 / 技能 / MCP / 知识库 / 连接器五类收进一张列表，按类型筛选、按关键词搜索。
@@ -80,6 +81,14 @@ internal fun ExtensionsSection(
     val event by viewModel.event.collectAsStateWithLifecycle()
 
     var pendingUninstall by remember { mutableStateOf<ExtensionEntry?>(null) }
+
+    // 提示条说的是「刚发生了什么」，看完就该收走：否则「已安装 xxx」会一直挂在页面顶部
+    LaunchedEffect(event) {
+        if (event != null) {
+            delay(EVENT_NOTICE_MS)
+            viewModel.consumeEvent()
+        }
+    }
 
     // 只在切到「插件」分类时拉市场索引：不进这个分类就不产生网络请求
     LaunchedEffect(kindFilter, marketLoaded) {
@@ -164,7 +173,10 @@ internal fun ExtensionsSection(
                 }
             }
 
-            if (kindFilter == ExtensionKind.PLUGIN) {
+            // 源里确实没有插件时整块不渲染：一个永远空着的「插件市场」标题比不显示更让人困惑。
+            // 拉取中与拉取失败仍要露出，那里带着刷新按钮和原因说明。
+            val marketIdleEmpty = marketLoaded && marketPlugins.isEmpty() && !marketFailed
+            if (kindFilter == ExtensionKind.PLUGIN && !marketIdleEmpty) {
                 Spacer(Modifier.width(Spacing.xs))
                 Text(
                     text = stringResource(R.string.extension_market_title),
@@ -195,14 +207,11 @@ internal fun ExtensionsSection(
                 }
 
                 if (marketPlugins.isEmpty()) {
+                    // 能走到这里只剩「还在拉」与「没取到」：源里确实没有插件的情况整块已经被隐藏
                     HintText(
                         stringResource(
-                            when {
-                                marketLoading -> R.string.extension_market_loading
-                                marketFailed -> R.string.extension_market_failed
-                                marketLoaded -> R.string.extension_market_empty
-                                else -> R.string.extension_market_loading
-                            }
+                            if (marketFailed) R.string.extension_market_failed
+                            else R.string.extension_market_loading
                         )
                     )
                 } else {
@@ -297,3 +306,6 @@ private fun HintText(text: String) {
         textAlign = TextAlign.Center
     )
 }
+
+/** 操作提示条的存活时长：够看完一句话（失败原因可能挺长）。 */
+private const val EVENT_NOTICE_MS = 6_000L

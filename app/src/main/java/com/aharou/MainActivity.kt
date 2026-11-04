@@ -519,13 +519,27 @@ fun AppNavigation(
             onPersist = { status ->
                 onboardingRepository.markStatus(status)
             },
-            scope = onboardingScope
+            scope = onboardingScope,
+            onPersistStep = { step ->
+                onboardingRepository.saveStep(step)
+            }
         )
     }
-    // 启动判断：IN_PROGRESS 则激活引导。
+    // 启动与「设置里重新运行引导」共用一条通道：状态一旦是 IN_PROGRESS 就从已存步骤续跑
     LaunchedEffect(Unit) {
-        val status = onboardingRepository.status()
-        onboardingCoordinator.initialize(status ?: OnboardingStatus.IN_PROGRESS)
+        onboardingRepository.statusFlow.collect { status ->
+            if ((status == null || status == OnboardingStatus.IN_PROGRESS) && !onboardingStateHolder.isActive) {
+                onboardingCoordinator.initialize(OnboardingStatus.IN_PROGRESS, onboardingRepository.step())
+            }
+        }
+    }
+
+    // 续跑 / 重置后当前页可能不是该步所在页面：激活时先跳到该步路由，否则聚光圈找不到目标
+    LaunchedEffect(onboardingUiState.active) {
+        val route = onboardingUiState.step.route
+        if (onboardingUiState.active && currentRoute != null && currentRoute != route) {
+            navController.navigate(route) { launchSingleTop = true }
+        }
     }
 
     // 自动检查更新：进入主页时异步检测（开关开启且每天最多一次，失败静默）
@@ -1268,27 +1282,14 @@ fun AppNavigation(
                         scope.launch { drawerState.snapTo(DrawerValue.Closed) }
                         onboardingCoordinator.nextStep()
                     }
-                    OnboardingStep.CONFIG_PROVIDER -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_ADD -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_CONFIG_INFO -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_FETCH_MODELS -> {
-                        onboardingCoordinator.nextStep()
-                    }
+                    OnboardingStep.CONFIG_PROVIDER,
+                    OnboardingStep.PROVIDER_ADD,
+                    OnboardingStep.PROVIDER_CONFIG_INFO,
+                    OnboardingStep.PROVIDER_FETCH_MODELS,
+                    OnboardingStep.OPEN_MODEL_PICKER -> onboardingCoordinator.nextStep()
                     OnboardingStep.SIMULATE_FETCH_DIALOG -> {
-                        val current = settingsViewModel.providers.value.firstOrNull()
-                        if (current != null && current.models.isEmpty()) {
-                            settingsViewModel.saveProvider(current.copy(models = listOf("deepseek-v4-flash")))
-                        }
+                        // 弹窗里的模型是演示态，不落进用户真实的服务商配置
                         navController.popBackStack()
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.OPEN_MODEL_PICKER -> {
                         onboardingCoordinator.nextStep()
                     }
                     OnboardingStep.SIMULATE_CHOOSE_MODEL -> {
@@ -1315,27 +1316,14 @@ fun AppNavigation(
                         scope.launch { drawerState.snapTo(DrawerValue.Closed) }
                         onboardingCoordinator.nextStep()
                     }
-                    OnboardingStep.CONFIG_PROVIDER -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_ADD -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_CONFIG_INFO -> {
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.PROVIDER_FETCH_MODELS -> {
-                        onboardingCoordinator.nextStep()
-                    }
+                    OnboardingStep.CONFIG_PROVIDER,
+                    OnboardingStep.PROVIDER_ADD,
+                    OnboardingStep.PROVIDER_CONFIG_INFO,
+                    OnboardingStep.PROVIDER_FETCH_MODELS,
+                    OnboardingStep.OPEN_MODEL_PICKER -> onboardingCoordinator.nextStep()
                     OnboardingStep.SIMULATE_FETCH_DIALOG -> {
-                        val current = settingsViewModel.providers.value.firstOrNull()
-                        if (current != null && current.models.isEmpty()) {
-                            settingsViewModel.saveProvider(current.copy(models = listOf("deepseek-v4-flash")))
-                        }
+                        // 弹窗里的模型是演示态，不落进用户真实的服务商配置
                         navController.popBackStack()
-                        onboardingCoordinator.nextStep()
-                    }
-                    OnboardingStep.OPEN_MODEL_PICKER -> {
                         onboardingCoordinator.nextStep()
                     }
                     OnboardingStep.SIMULATE_CHOOSE_MODEL -> {

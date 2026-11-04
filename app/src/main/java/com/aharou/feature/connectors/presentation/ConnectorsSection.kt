@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ExternalLink
 import compose.icons.feathericons.Trash2
 import dagger.hilt.android.EntryPointAccessors
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -85,12 +87,36 @@ internal fun ConnectorsSection(
     }
     val installed by viewModel.installed.collectAsStateWithLifecycle()
     val installedByConnector = remember(installed) { installed.associateBy { it.server.name } }
+    val installError by viewModel.error.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var query by remember { mutableStateOf("") }
     var keyTarget by remember { mutableStateOf<Connector?>(null) }
     var clientTarget by remember { mutableStateOf<Connector?>(null) }
     var manageTarget by remember { mutableStateOf<Pair<Connector, McpServerEntry>?>(null) }
+
+    // 首次接入与「重新授权」共用同一套分流：按鉴权方式弹对应表单或直接写配置
+    val startAuth: (Connector) -> Unit = { connector ->
+        when (connector.authKind) {
+            ConnectorAuthKind.NONE -> viewModel.installOpen(connector)
+            ConnectorAuthKind.KEY_HEADER,
+            ConnectorAuthKind.KEY_QUERY -> keyTarget = connector
+            ConnectorAuthKind.OAUTH_CLIENT_ID -> clientTarget = connector
+            else -> scope.launch {
+                val prepared = viewModel.prepareOAuth(connector)
+                oauthController.open(prepared)
+                oauthController.start("", "", MCP_OAUTH_CUSTOM_SCHEME_REDIRECT)
+            }
+        }
+    }
+
+    // 接入失败的提示看完就收走，否则会一直压在列表上方
+    LaunchedEffect(installError) {
+        if (installError != null) {
+            delay(INSTALL_ERROR_NOTICE_MS)
+            viewModel.consumeError()
+        }
+    }
 
     val keyword = query.trim()
     val filtered = remember(viewModel.catalog, keyword, languageTag) {
@@ -114,6 +140,14 @@ internal fun ConnectorsSection(
                 placeholder = stringResource(R.string.connector_search_hint)
             )
             Spacer(Modifier.height(Spacing.sm))
+
+            installError?.let { message ->
+                Text(
+                    text = stringResource(R.string.connector_install_failed, message),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
 
             if (filtered.isEmpty()) {
                 Box(
@@ -145,21 +179,7 @@ internal fun ConnectorsSection(
                                         entry = installedByConnector[connector.id],
                                         onClick = {
                                             val entry = installedByConnector[connector.id]
-                                            when {
-                                                entry != null -> manageTarget = connector to entry
-                                                connector.authKind == ConnectorAuthKind.NONE ->
-                                                    viewModel.installOpen(connector)
-                                                connector.authKind == ConnectorAuthKind.KEY_HEADER ||
-                                                    connector.authKind == ConnectorAuthKind.KEY_QUERY ->
-                                                    keyTarget = connector
-                                                connector.authKind == ConnectorAuthKind.OAUTH_CLIENT_ID ->
-                                                    clientTarget = connector
-                                                else -> scope.launch {
-                                                    val prepared = viewModel.prepareOAuth(connector)
-                                                    oauthController.open(prepared)
-                                                    oauthController.start("", "", MCP_OAUTH_CUSTOM_SCHEME_REDIRECT)
-                                                }
-                                            }
+                                            if (entry != null) manageTarget = connector to entry else startAuth(connector)
                                         }
                                     )
                                 }
@@ -204,6 +224,11 @@ internal fun ConnectorsSection(
             onRemove = {
                 viewModel.remove(entry.server.name)
                 manageTarget = null
+            },
+            // 密钥过期 / 授权失效时不必先移除再接：直接重走对应的接入流程，凭据会被覆盖
+            onReauth = {
+                manageTarget = null
+                startAuth(connector)
             },
             onDismiss = { manageTarget = null }
         )
@@ -432,13 +457,14 @@ private fun ConnectorClientDialog(
     )
 }
 
-/** 已接入项的管理表单：启停开关 + 移除（移除二次确认）。 */
+/** 已接入项的管理表单：启停开关 + 重新授权 / 重新填密钥 + 移除（移除二次确认）。 */
 @Composable
 private fun ConnectorManageDialog(
     connector: Connector,
     entry: McpServerEntry,
     onToggle: (Boolean) -> Unit,
     onRemove: () -> Unit,
+    onReauth: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var confirming by remember { mutableStateOf(false) }
@@ -450,17 +476,23 @@ private fun ConnectorManageDialog(
             if (confirming) {
                 Text(stringResource(R.string.connector_remove_body))
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.connector_enabled_label),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    AppSwitch(checked = entry.server.enabled, onCheckedChange = onToggle)
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.connector_enabled_label),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        AppSwitch(checked = entry.server.enabled, onCheckedChange = onToggle)
+                    }
+                    // 密钥过期 / 授权失效时的唯一出路：不用先移除再重接，点这里直接重走一次接入流程
+                    TextButton(onClick = onReauth) {
+                        Text(stringResource(connectorReauthLabel(connector.authKind)))
+                    }
                 }
             }
         },
@@ -485,6 +517,15 @@ private fun ConnectorManageDialog(
     )
 }
 
+/** 管理弹层里那个按钮该叫什么：密钥类重填、OAuth 重新授权、免鉴权就直接重接。 */
+@StringRes
+private fun connectorReauthLabel(kind: ConnectorAuthKind): Int = when (kind) {
+    ConnectorAuthKind.NONE -> R.string.connector_reauth_none
+    ConnectorAuthKind.KEY_HEADER,
+    ConnectorAuthKind.KEY_QUERY -> R.string.connector_reauth_key
+    else -> R.string.connector_reauth_oauth
+}
+
 /** 分类 id → 显示名。清单分类固定九种，未识别的一律归「其它」。 */
 @StringRes
 private fun connectorCategoryLabel(category: String): Int = when (category) {
@@ -502,3 +543,6 @@ private fun connectorCategoryLabel(category: String): Int = when (category) {
 /** 解析品牌色（#RRGGBB）；清单里个别颜色可能非法，退回中性灰避免整行渲染失败。 */
 private fun parseBrandColor(hex: String): Color =
     runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color(0xFF8A8A8A))
+
+/** 接入失败提示的存活时长：够看清一句话，又不至于一直压在列表上方。 */
+private const val INSTALL_ERROR_NOTICE_MS = 6_000L

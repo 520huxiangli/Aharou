@@ -13,7 +13,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Named
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -55,8 +57,12 @@ class TelegramBotViewModel @Inject constructor(
         }
     }
 
+    /** 凭据写入失败（系统密钥库不可用）：界面据此提示「未保存」，否则用户会以为已经存好。 */
+    private val _secretWriteFailed = MutableStateFlow(false)
+    val secretWriteFailed: StateFlow<Boolean> = _secretWriteFailed.asStateFlow()
+
     fun setBotToken(token: String) {
-        viewModelScope.launch { settings.setBotToken(token) }
+        viewModelScope.launch { _secretWriteFailed.value = !settings.setBotToken(token) }
     }
 
     fun setBaseUrl(baseUrl: String) {

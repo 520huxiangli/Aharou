@@ -8,7 +8,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -25,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +56,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -318,7 +320,8 @@ fun FloatingTabBar(
             }
 
             Row(
-                modifier = Modifier,
+                // 整组声明成单一选择组：读屏会把这一排当成一组 tab，并在切换时播报「已选中」
+                modifier = Modifier.selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
                 items.forEachIndexed { index, item ->
@@ -354,9 +357,13 @@ fun FloatingTabBar(
                                 scaleY = tabScale
                             }
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable(
+                            // 用 selectable 而不是 clickable：只有前者会把「当前在第几个 tab」
+                            // 作为选中态暴露给读屏，否则四个 tab 听起来毫无区别
+                            .selectable(
+                                selected = isSelected,
                                 interactionSource = interactionSource,
                                 indication = null,
+                                role = Role.Tab,
                                 onClick = {
                                     coroutineScope.launch {
                                         pagerState.animateScrollToPage(
@@ -621,7 +628,8 @@ fun FloatingTabBar(
             }
 
             Row(
-                modifier = Modifier,
+                // 整组声明成单一选择组：读屏会把这一排当成一组 tab，并在切换时播报「已选中」
+                modifier = Modifier.selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
             ) {
                 items.forEachIndexed { index, item ->
@@ -657,9 +665,12 @@ fun FloatingTabBar(
                                 scaleY = tabScale
                             }
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable(
+                            // 同 Pager 版：选中态必须由 selectable 带出来，clickable 不播报当前位置
+                            .selectable(
+                                selected = isSelected,
                                 interactionSource = interactionSource,
                                 indication = null,
+                                role = Role.Tab,
                                 onClick = { onSelect(index) }
                             )
                             .padding(horizontal = Spacing.md, vertical = 7.dp),

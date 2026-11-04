@@ -67,7 +67,10 @@ import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.Download
 import compose.icons.feathericons.Globe
+import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Terminal
+import compose.icons.feathericons.ToggleLeft
+import compose.icons.feathericons.ToggleRight
 import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.Upload
 import com.aharou.R
@@ -116,6 +119,8 @@ internal fun McpSection(
     ) {
         // 多选态下顶部固定入口整组换成批量操作栏，退出多选即恢复
         if (selection.selectionMode) {
+            val selectedEntries = entries.filter { mcpSelectionId(it) in selection.selectedIds }
+            val allSelectedEnabled = selectedEntries.isNotEmpty() && selectedEntries.all { it.server.enabled }
             item(key = "mcp_selection_bar", contentType = "mcp_selection_bar") {
                 SelectionActionBar(
                     selectedCount = selection.selectedCount,
@@ -124,6 +129,34 @@ internal fun McpSection(
                     onExit = { selection.exit() },
                     modifier = Modifier.padding(bottom = Spacing.sm),
                     actions = listOf(
+                        // 全部已开时按钮转为「停用」，一个按钮表达开关两态，避免工具栏塞三个图标
+                        SelectionAction(
+                            icon = if (allSelectedEnabled) FeatherIcons.ToggleLeft else FeatherIcons.ToggleRight,
+                            label = stringResource(
+                                if (allSelectedEnabled) R.string.mcp_batch_disable else R.string.mcp_batch_enable
+                            ),
+                            onClick = {
+                                val enable = !allSelectedEnabled
+                                // 先拿名单再退出多选：exit() 会清空选中集合，之后再读就空了
+                                val targets = selectedEntries
+                                selection.exit()
+                                // 配置按作用域整份读改写，跨作用域的选中必须分组分别提交
+                                targets.groupBy { it.scope }.forEach { (scope, group) ->
+                                    settingsViewModel.setMcpServersEnabled(
+                                        group.map { it.server.name },
+                                        enable,
+                                        scope
+                                    )
+                                }
+                            }
+                        ),
+                        SelectionAction(
+                            icon = FeatherIcons.RefreshCw,
+                            label = stringResource(R.string.mcp_batch_reconnect),
+                            onClick = {
+                                settingsViewModel.reloadMcpServers(selectedEntries.map { it.server.name })
+                            }
+                        ),
                         SelectionAction(
                             icon = FeatherIcons.Trash2,
                             label = stringResource(R.string.common_delete),

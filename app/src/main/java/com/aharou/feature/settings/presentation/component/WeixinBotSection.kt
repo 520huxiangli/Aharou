@@ -45,6 +45,7 @@ internal fun WeixinBotSection(
 ) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     val qrState by viewModel.qr.collectAsStateWithLifecycle()
+    val secretWriteFailed by viewModel.secretWriteFailed.collectAsStateWithLifecycle()
     val cfg = ui.config
 
     Column(
@@ -148,6 +149,16 @@ internal fun WeixinBotSection(
                 value = cfg.proxy,
                 onValueChange = viewModel::setProxy,
                 hint = stringResource(R.string.settings_weixin_bot_proxy_hint)
+            )
+        }
+
+        // 密钥库不可用时 token 实际没存进去，不提示的话用户会以为已经保存
+        if (secretWriteFailed) {
+            Text(
+                text = stringResource(R.string.im_secret_write_failed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)
             )
         }
 

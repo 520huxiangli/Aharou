@@ -1049,22 +1049,25 @@ fun ProviderEditorScreen(
 
     // 模型拉取结果弹窗
     if (showFetchDialog) {
+        // 引导演示阶段（没配 Key、拿假的 DeepSeek 模型撑场）不能落盘，否则用户的真实服务商里会多出一个不存在的模型
+        val onboardingDemo = onboardingStep == OnboardingStep.SIMULATE_FETCH_DIALOG
         key(fetchDialogKey) {
             FetchModelsDialog(
                 fetchState = fetchState,
                 providerId = providerId,
                 modelMetadata = modelMetadata,
                 existingModels = models,
-                isOnboarding = onboardingStep == OnboardingStep.SIMULATE_FETCH_DIALOG,
+                isOnboarding = onboardingDemo,
                 onFetchModels = { viewModel.fetchModels(currentConfig()) },
                 onAddModel = { m ->
-                    if (m !in models) {
+                    // 演示模型只推进引导（弹窗自己会通知），不写进配置
+                    if (!onboardingDemo && m !in models) {
                         models.add(m)
                         saveCurrent()
                     }
                 },
                 onAddModels = { list ->
-                    val toAdd = list.filter { it !in models }
+                    val toAdd = if (onboardingDemo) emptyList() else list.filter { it !in models }
                     if (toAdd.isNotEmpty()) {
                         models.addAll(toAdd)
                         saveCurrent()

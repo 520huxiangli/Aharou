@@ -1,5 +1,6 @@
 package com.aharou.feature.plugin.domain
 
+import android.os.Build
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.ProcessIdentity
 import com.aharou.feature.agent.domain.container.ContainerInstaller
@@ -45,6 +46,9 @@ class PluginManager @Inject constructor(
     /** 正在运行的插件服务句柄（内存态；App 重启后为空，靠端口探测与进程账本兜底）。 */
     private val running = ConcurrentHashMap<String, TrackedStdioProcess>()
 
+    /** 本进程内最近一次启动失败的原因（插件 id → 原因）。只用于把「失败」状态与副标题带到界面上。 */
+    private val lastFailure = ConcurrentHashMap<String, String>()
+
     private fun pluginsRoot(): File = File(containerInstaller.aharouDir, "plugins").apply { mkdirs() }
 
     /** 宿主侧插件根目录：`filesDir/aharou/plugins/<id>`。 */
@@ -74,6 +78,14 @@ class PluginManager @Inject constructor(
             }
             require(manifest.id.isNotBlank()) { "manifest 缺少 id" }
             require(manifest.name.isNotBlank()) { "manifest 缺少 name" }
+            require(manifest.schemaVersion <= SUPPORTED_SCHEMA_VERSION) {
+                "插件包清单版本 ${manifest.schemaVersion} 高于本应用支持的 $SUPPORTED_SCHEMA_VERSION，请先升级应用"
+            }
+            // 架构不符的包在容器里跑不起来，等安装脚本报错更难查，导入时就拦下
+            require(manifest.architectures.isEmpty() || manifest.architectures.any { abiSupported(it) }) {
+                "插件包不支持本机架构（需要 ${manifest.architectures.joinToString("/")}，" +
+                    "本机 ${Build.SUPPORTED_ABIS.joinToString("/")}）"
+            }
 
             val root = hostDir(manifest.id)
             // 重装：先清掉旧 payload，避免残留旧版本文件
@@ -107,15 +119,14 @@ class PluginManager @Inject constructor(
         ensureContainer()
         val dir = containerDir(id)
         manifest.installSteps.forEachIndexed { index, step ->
-            val r = engine.runCommandSync(envPrefix(dir) + step, null, INSTALL_TIMEOUT_MS)
-            if (r.isBlank()) return@forEachIndexed
-            FileLogger.d(TAG, "install step ${index + 1} 输出：${r.take(400)}")
+            // 只拿文本判不了成败：脚本非零退出（缺依赖、下载失败）会静默算作装好
+            val r = engine.runCommandSyncWithExit(envPrefix(dir) + step, null, INSTALL_TIMEOUT_MS)
+            if (r.output.isNotBlank()) FileLogger.d(TAG, "install step ${index + 1} 输出：${r.output.take(400)}")
+            errorIfFailed(r.exitCode, r.output, "安装步骤 ${index + 1}")
         }
         if (manifest.verifyCommand.isNotBlank()) {
             val result = engine.runCommandSyncWithExit(envPrefix(dir) + manifest.verifyCommand, null, INSTALL_TIMEOUT_MS)
-            if (result.exitCode != null && result.exitCode != 0) {
-                error("自检失败（退出码 ${result.exitCode}）：${result.output.take(300)}")
-            }
+            errorIfFailed(result.exitCode, result.output, "自检")
         }
         recordStore.save(
             PluginRecord(
@@ -126,10 +137,20 @@ class PluginManager @Inject constructor(
             )
         )
         FileLogger.i(TAG, "安装插件完成 ${manifest.id}")
+        // 重新装过一遍，旧的启动失败原因不再作数
+        lastFailure.remove(manifest.id)
     }
 
     /** 启动常驻服务：解析 launchCommand → 起进程 → 轮询端口就绪。非服务型插件不启动。 */
-    suspend fun launch(id: String): Result<Unit> = runCatching {
+    suspend fun launch(id: String): Result<Unit> {
+        val result = runCatchingLaunch(id)
+        // 失败原因留给 listInstalled 换算成 FAILED 状态与卡片副标题
+        result.onSuccess { lastFailure.remove(id) }
+            .onFailure { lastFailure[id] = it.message ?: it::class.java.simpleName }
+        return result
+    }
+
+    private suspend fun runCatchingLaunch(id: String): Result<Unit> = runCatching {
         val manifest = readManifest(id) ?: error("插件未导入：$id")
         require(manifest.isService) { "插件 ${manifest.name} 不是常驻服务，无需启动" }
         ensureContainer()
@@ -207,6 +228,8 @@ class PluginManager @Inject constructor(
             while (System.currentTimeMillis() < deadline && isPortReady(manifest)) delay(300)
             if (isPortReady(manifest)) error("停止失败：端口 ${manifest.servicePort} 仍被占用")
         }
+        // 主动停止成功：清掉上次的启动失败记录，否则卡片会一直挂着「失败」
+        lastFailure.remove(id)
     }
 
     /** 卸载：先停服务、跑 uninstallSteps，再删目录与记录。 */
@@ -230,18 +253,21 @@ class PluginManager @Inject constructor(
                 recordStore.remove(record.id)
                 return@mapNotNull null
             }
-            val status = if (!manifest.isService) {
-                PluginStatus.STOPPED
-            } else if (isPortReady(manifest)) {
-                PluginStatus.RUNNING
-            } else {
-                PluginStatus.STOPPED
+            // 失败原因只在本进程内有意义：重启后无从判断上次为什么没起来，回落成「已停止」
+            val failure = if (manifest.isService) lastFailure[record.id] else null
+            val status = when {
+                !manifest.isService -> PluginStatus.STOPPED
+                isPortReady(manifest) -> PluginStatus.RUNNING
+                failure != null -> PluginStatus.FAILED
+                else -> PluginStatus.STOPPED
             }
             InstalledPlugin(
                 manifest = manifest,
                 hostDir = hostDir(record.id).absolutePath,
                 installedAt = record.installedAt,
                 status = status,
+                // 只有失败态有可说的原因，其余态留空避免把内部信息洒到卡片上
+                detail = if (status == PluginStatus.FAILED) failure.orEmpty() else "",
             )
         }.sortedBy { it.manifest.name.lowercase() }
     }
@@ -250,6 +276,25 @@ class PluginManager @Inject constructor(
 
     private suspend fun ensureContainer() {
         if (!engine.isContainerInstalled()) engine.ensureInstalled()
+    }
+
+    /** 退出码非 0 表示失败；null 表示超时或容器未就绪——两种情况都不能当作成功。 */
+    private fun errorIfFailed(code: Int?, output: String, what: String) {
+        if (code == null) error("$what 未返回退出码（超时或容器未就绪）：${output.take(300)}")
+        if (code != 0) error("$what 失败（退出码 $code）：${output.take(300)}")
+    }
+
+    /** 清单里的架构名（ARM64 / amd64 等）是否被本机 ABI 覆盖；不认识的写法按原样比对。 */
+    private fun abiSupported(arch: String): Boolean {
+        val key = arch.trim().lowercase()
+        val abis = Build.SUPPORTED_ABIS.map { it.lowercase() }
+        return when (key) {
+            "arm64", "aarch64", "arm64-v8a" -> "arm64-v8a" in abis
+            "amd64", "x86_64", "x64" -> "x86_64" in abis
+            "arm", "armv7", "armv7l", "armhf", "armeabi-v7a" -> "armeabi-v7a" in abis
+            "x86", "i686" -> "x86" in abis
+            else -> key in abis
+        }
     }
 
     /** launchCommand 是绝对路径就原样用；否则优先取插件自带 bin/ 下的同名入口，再回退 PATH。 */
@@ -295,6 +340,9 @@ class PluginManager @Inject constructor(
         const val MANIFEST_FILE = "manifest.json"
         const val PAYLOAD_DIR = "payload"
         const val INSTALL_TIMEOUT_MS = 600_000L
+
+        /** 本应用能读懂的清单版本上限；更高版本的包字段语义可能变了，宁可拒装。 */
+        const val SUPPORTED_SCHEMA_VERSION = 1
         const val START_TIMEOUT_MS = 60_000L
         const val STOP_TIMEOUT_MS = 20_000L
         const val PKILL_TIMEOUT_MS = 20_000L
