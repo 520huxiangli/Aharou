@@ -211,6 +211,10 @@ class ToolCallGuard @Inject constructor(
         override val capabilities: Set<ToolCapability> get() = delegate.capabilities
         override val acceptsSecrets: Boolean get() = delegate.acceptsSecrets
         override val deferredLoading: Boolean get() = delegate.deferredLoading
+        // 必须转发：MCP 工具的 toJsonSchema 覆写为直接透传 server 的 inputSchema，而它的 parameters 恒为空。
+        // 不转发就回落到基类「从 parameters 生成」的实现，远端工具的参数全丢，只剩 tool_title
+        // （2026-11-04 实测：远端 shell / ask_ai 报缺少必填参数）。
+        override fun toJsonSchema(): Map<String, Any> = delegate.toJsonSchema()
 
         override fun effectivePermissionPolicy(mode: AgentMode): ToolPermissionPolicy =
             delegate.effectivePermissionPolicy(mode)
@@ -262,6 +266,10 @@ class ToolCallGuard @Inject constructor(
         override val capabilities: Set<ToolCapability> get() = delegate.capabilities
         override val acceptsSecrets: Boolean get() = delegate.acceptsSecrets
         override val deferredLoading: Boolean get() = delegate.deferredLoading
+        // 必须转发：MCP 工具的 toJsonSchema 覆写为直接透传 server 的 inputSchema，而它的 parameters 恒为空。
+        // 不转发就回落到基类「从 parameters 生成」的实现，远端工具的参数全丢，只剩 tool_title
+        // （2026-11-04 实测：远端 shell / ask_ai 报缺少必填参数）。
+        override fun toJsonSchema(): Map<String, Any> = delegate.toJsonSchema()
 
         override fun effectivePermissionPolicy(mode: AgentMode): ToolPermissionPolicy =
             delegate.effectivePermissionPolicy(mode)

@@ -24,10 +24,37 @@ class FileMentionRepository @Inject constructor(
         const val DEFAULT_LIMIT = 30
     }
 
+    /**
+     * 上一次过滤用的文件清单与它的小写副本。
+     *
+     * `@` 菜单是「输入即出候选」，[match] 跑在调用方线程上；仓库上限 4000 条，每敲一个键都把
+     * 4000 个路径各 `lowercase()` 一遍就是 4000 次新分配。控制器每次传的是同一个 List 实例，
+     * 按引用就能判定要不要重算。
+     */
+    private var cachedFiles: List<String>? = null
+    private var cachedLower: List<String> = emptyList()
+
     suspend fun loadFiles(projectPath: String): LoadResult {
         if (projectPath.isBlank()) return LoadResult.Unavailable
         val files = searchEngine.listWorkspaceFiles() ?: return LoadResult.Unavailable
+        // 枚举成功时顺手把小写副本备好：一次扫描换掉之后每个键的全量大小写转换。
+        primeLowerCache(files)
         return LoadResult.Success(files)
+    }
+
+    @Synchronized
+    private fun lowerOf(files: List<String>): List<String> {
+        if (cachedFiles === files) return cachedLower
+        primeLowerCache(files)
+        return cachedLower
+    }
+
+    @Synchronized
+    private fun primeLowerCache(files: List<String>) {
+        val lower = ArrayList<String>(files.size)
+        for (path in files) lower.add(path.lowercase())
+        cachedFiles = files
+        cachedLower = lower
     }
 
     /**
@@ -38,19 +65,22 @@ class FileMentionRepository @Inject constructor(
     fun match(files: List<String>, query: String, limit: Int = DEFAULT_LIMIT): List<String> {
         val q = query.trim().lowercase()
         if (q.isEmpty()) return files.take(limit)
-        return files.asSequence()
-            .mapNotNull { path -> rankOf(path, q)?.let { path to it } }
-            .sortedWith(compareBy({ it.second.rank }, { it.second.position }, { it.first.length }, { it.first }))
-            .take(limit)
-            .map { it.first }
-            .toList()
+        // 拿缓存的小写串直接排序，逐键不再重复 lowercase
+        val lower = lowerOf(files)
+        val hits = ArrayList<Pair<String, Rank>>()
+        for (i in files.indices) {
+            val rank = rankOf(lower[i], q) ?: continue
+            hits.add(files[i] to rank)
+        }
+        hits.sortWith(compareBy({ it.second.rank }, { it.second.position }, { it.first.length }, { it.first }))
+        return hits.take(limit).map { it.first }
     }
 
     /** 命中档位 + 命中起始位置；未命中返回 null。 */
     private data class Rank(val rank: Int, val position: Int)
 
-    private fun rankOf(path: String, query: String): Rank? {
-        val lower = path.lowercase()
+    /** [lower] 必须是已转小写的路径（见 [lowerOf]）。 */
+    private fun rankOf(lower: String, query: String): Rank? {
         if (lower.startsWith(query)) return Rank(0, 0)
         val name = lower.substringAfterLast('/')
         if (name.startsWith(query)) return Rank(1, lower.indexOf(query).coerceAtLeast(0))

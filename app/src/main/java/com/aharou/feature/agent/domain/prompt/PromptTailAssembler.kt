@@ -40,6 +40,8 @@ internal data class PromptTail(
     val rules: String? = null,
     /** 工作区类型。 */
     val workspaceType: String? = null,
+    /** 当前工作在远程 SSH 容器时的环境说明（本地模式下为 null）。 */
+    val remoteMode: String? = null,
     /** 项目上下文索引（仅代码仓库工作区）。 */
     val projectIndex: String? = null,
     /** 模型身份（切模型会变）。 */
@@ -85,6 +87,8 @@ internal object PromptTailAssembler {
         if (PromptVars.PROJECT_RULES_VAR !in rawText) add(tail.projectRules)
         if (PromptVars.WORKSPACE_VAR !in rawText) add(tail.workspace)
         if (PromptVars.RULES_VAR !in rawText) add(tail.rules)
+        // 远程模式说明压在 workspaceType 之前：先讲清「命令落在服务器上」，再讲工程规约，与阅读顺序一致。
+        add(tail.remoteMode)
         add(tail.workspaceType)
         add(tail.projectIndex)
         // 模型身份在会话内稳定，但切模型会变，压在变化区靠后。

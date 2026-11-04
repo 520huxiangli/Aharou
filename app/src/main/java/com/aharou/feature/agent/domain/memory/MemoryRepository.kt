@@ -639,9 +639,14 @@ class MemoryRepository @Inject constructor(
      * 没有可用的归档时返回 null。
      */
     fun restoreLatestArchive(name: String, scope: MemoryScope, projectRoot: String?): String? {
-        val prefix = MemorySource.sanitizeName(name) + "-"
+        // 归档名格式是「<名字>-<yyyyMMdd-HHmmss>[-<序号>].md」；用 startsWith 比前缀会让
+        // `foo` 命中 `foo-bar-20260101-000000.md`，把别的条目回滚成 foo。要求整名严格匹配。
+        val pattern = Regex(
+            "^" + Regex.escape(MemorySource.sanitizeName(name)) + "-\\d{8}-\\d{6}(-\\d+)?\\.md$",
+            RegexOption.IGNORE_CASE
+        )
         val latest = listArchive(scope, projectRoot)
-            .filter { it.fileName.startsWith(prefix, ignoreCase = true) }
+            .filter { pattern.matches(it.fileName) }
             .maxByOrNull { it.modifiedAt }
             ?: return null
         return if (restoreArchive(latest.fileName, scope, projectRoot)) latest.fileName else null

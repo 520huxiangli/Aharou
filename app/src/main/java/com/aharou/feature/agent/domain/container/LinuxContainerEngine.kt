@@ -99,6 +99,9 @@ class LinuxContainerEngine @Inject constructor(
     /** 当前在途的初始化 job（受 [initMutex] 保护），完成后置 null。 */
     private var initJob: Job? = null
 
+    /** 在途 job 的目标容器 id：换容器时不能复用别人的 job，否则会等错对象再误判未安装。 */
+    private var initJobProfileId: String? = null
+
     /** 本类不持有任何「当前 profile」可变状态；执行路径按自己的 projectPath 现场取局部 profile 往下传。 */
     private val defaultProfile: ContainerProfile get() = profileResolver.defaultProfile()
 
@@ -552,6 +555,15 @@ class LinuxContainerEngine @Inject constructor(
     /** 容器是否已安装就绪（按全局默认 profile；带工作区的判断走 [ContainerProfileResolver.forWorkspace]）。 */
     override fun isContainerInstalled(): Boolean = containerInstaller.isInstalledFor(defaultProfile)
 
+    /** 按指定 profile 判断 rootfs 是否已解压就绪（工作区覆盖到自定义容器时用）。 */
+    fun isInstalledFor(profile: ContainerProfile): Boolean = containerInstaller.isInstalledFor(profile)
+
+    /**
+     * 终端 PTY 该用哪个容器：与 [buildProotInvocation] 同源（工作区覆盖优先）。
+     * 供 [com.aharou.feature.terminal.domain.TerminalSessionManager] 先按它安装、再按它选 shell。
+     */
+    fun profileForTerminal(projectPath: String?): ContainerProfile = profileResolver.forWorkspace(projectPath)
+
     /**
      * 基础包是否已配置完成（按全局默认 profile 的标记）。首次进入终端时由初始化菜单
      * （assets/aharou/provision.sh）引导安装，完成后脚本写标记；未完成时不影响进入 shell。
@@ -573,7 +585,14 @@ class LinuxContainerEngine @Inject constructor(
     /** 按指定 profile 判断容器是否就绪（MCP 按运行时容器启动前检查用）。 */
     fun notReadyHintFor(profile: ContainerProfile): String? {
         if (containerInstaller.isInstalledFor(profile)) return null
-        return context.getString(R.string.container_not_ready_hint)
+        val fallback = defaultProfile
+        // 覆盖到未安装的自定义容器时必须点名：笼统的「去终端页完成初始化」会把用户引到
+        // 只装全局默认容器的路径上，照做也解决不了这个工作区的问题。
+        return if (profile.id == fallback.id) {
+            context.getString(R.string.container_not_ready_hint)
+        } else {
+            context.getString(R.string.container_not_ready_hint_profile, profile.name, fallback.name)
+        }
     }
 
     /**
@@ -582,8 +601,11 @@ class LinuxContainerEngine @Inject constructor(
      */
     override fun defaultShell(): String = defaultShellFor(defaultProfile)
 
-    /** 按指定 profile 选 shell（规则同 [defaultShell]）；执行路径传自己的局部 profile 进来。 */
-    private fun defaultShellFor(profile: ContainerProfile): String {
+    /**
+     * 按指定 profile 选 shell（规则同 [defaultShell]）；执行路径传自己的局部 profile 进来。
+     * 公开给终端会话：交互 shell 与 proot 启动必须用同一个 profile 选出的 shell。
+     */
+    fun defaultShellFor(profile: ContainerProfile): String {
         profile.shellPath?.takeIf { it.isNotBlank() }?.let { return it }
         return if (isProvisionedFor(profile)) "/bin/bash" else "/bin/sh"
     }
@@ -600,8 +622,17 @@ class LinuxContainerEngine @Inject constructor(
      * 并抛异常（不静默置 Ready），让终端页进入失败态、可重试。
      */
     override suspend fun ensureInstalled() {
-        // 无工作区参数：始终初始化全局默认容器，与终端页的 isContainerInstalled / defaultShell 门禁同口径。
-        val profile = defaultProfile
+        // 无工作区参数：始终初始化全局默认容器。
+        ensureInstalledFor(defaultProfile)
+    }
+
+    /**
+     * 按指定容器幂等初始化——工作区覆盖到自定义容器时，终端页要装的是那个容器而不是全局默认，
+     * 否则终端永远回退到默认容器（覆盖形同虚设）。
+     *
+     * 耗时的解压仍在引擎级 [initScope] 里跑，不随调用方取消而中断，语义同 [ensureInstalled]。
+     */
+    suspend fun ensureInstalledFor(profile: ContainerProfile) {
         val startedAt = System.currentTimeMillis()
         FileLogger.i(
             TAG,
@@ -617,15 +648,16 @@ class LinuxContainerEngine @Inject constructor(
             refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
             FileLogger.i(TAG, "ensureInstalled 完成（快路径，耗时 ${System.currentTimeMillis() - startedAt}ms）")
-            logContainerDiagnostics("ensureInstalled 快路径")
+            logContainerDiagnostics("ensureInstalled 快路径", profile)
             return
         }
         // 启动或复用后台初始化 job；initMutex 只保护 job 的创建/复用，真正的耗时工作在 initScope 里跑。
         val job = initMutex.withLock {
             val existing = initJob
-            if (existing == null || !existing.isActive) {
+            if (existing == null || !existing.isActive || initJobProfileId != profile.id) {
                 FileLogger.i(TAG, "创建后台初始化任务：profile=${profile.id}")
                 initJob = initScope.launch { doInit(profile) }
+                initJobProfileId = profile.id
             } else {
                 FileLogger.i(TAG, "复用进行中的后台初始化任务：profile=${profile.id}")
             }
@@ -643,54 +675,22 @@ class LinuxContainerEngine @Inject constructor(
             refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
             FileLogger.i(TAG, "ensureInstalled 完成（耗时 ${System.currentTimeMillis() - startedAt}ms）")
-            logContainerDiagnostics("ensureInstalled 完成后")
+            logContainerDiagnostics("ensureInstalled 完成后", profile)
         } else {
             val reason = "容器未安装（缺少 rootfs/proot）"
             FileLogger.e(TAG, "ensureInstalled 失败：$reason（profile=${profile.id}）")
-            logContainerDiagnostics("ensureInstalled 失败")
+            logContainerDiagnostics("ensureInstalled 失败", profile)
             _initProgress.value = ContainerInitState.Failed(reason)
             throw IllegalStateException(reason)
         }
     }
 
     /**
-     * dump 一次容器运行环境（rootfs / proot 二进制 / 初始化脚本 / 磁盘空间）到日志。
-     *
-     * 这些状态平时不打印，一旦用户报“容器起不来/终端一片空白”就只能靠猜。在初始化前后与终端
-     * 会话静默时主动各 dump 一次，日志里就有了可定位的证据。同时带上 provision.sh 自己的执行日志
-     * 尾部（由脚本写入 /root/.aicode/provision.log），用于判断初始化菜单到底有没有跑起来。
+     * dump 一次容器运行环境（rootfs / proot 二进制 / 初始化脚本 / 磁盘空间）到日志；实现见
+     * [dumpContainerDiagnostics]（独立文件，避免本类超过单文件行数门禁）。
      */
-    fun logContainerDiagnostics(reason: String) {
-        runCatching {
-            val profile = defaultProfile
-            val rootfs = containerInstaller.rootfsDirFor(profile)
-            val marker = provisionMarker(profile)
-            val provision = java.io.File(containerInstaller.aharouDir, "provision.sh")
-            fun desc(f: java.io.File?): String = when {
-                f == null -> "null"
-                !f.exists() -> "缺失(${f.absolutePath})"
-                f.isDirectory -> "目录(${f.absolutePath})"
-                else -> "${f.absolutePath}[${f.length()}B,可执行=${f.canExecute()}]"
-            }
-            val space = runCatching { rootfs.usableSpace / (1024 * 1024) }.getOrDefault(-1L)
-            val ptmx = java.io.File("/dev/ptmx")
-            FileLogger.i(
-                TAG,
-                "容器诊断($reason)：profile=${profile.id} mode=${profile.mode} rootfs=${desc(rootfs)} " +
-                    "标记=${if (marker.isFile) marker.readText().trim() else "无"} " +
-                    "proot=${desc(containerInstaller.prootBin)} loader=${desc(containerInstaller.prootLoader)} " +
-                    "loader32=${desc(containerInstaller.prootLoader32)} provision.sh=${desc(provision)} " +
-                    "nativeLibDir=${containerInstaller.prootBin.parentFile?.absolutePath} 可用空间=${space}MB " +
-                    "/dev/ptmx(可读=${ptmx.canRead()},可写=${ptmx.canWrite()})"
-            )
-            val provisionLog = java.io.File(containerInstaller.aharouDir, "provision.log")
-            if (provisionLog.isFile) {
-                val tail = runCatching { provisionLog.readLines().takeLast(20).joinToString(" | ") }.getOrDefault("")
-                FileLogger.i(TAG, "provision 日志尾部（$reason）：$tail")
-            } else {
-                FileLogger.i(TAG, "provision.log 不存在（初始化脚本从未执行）：${provisionLog.absolutePath}")
-            }
-        }.onFailure { FileLogger.w(TAG, "输出容器诊断失败", it) }
+    fun logContainerDiagnostics(reason: String, profile: ContainerProfile = defaultProfile) {
+        dumpContainerDiagnostics(containerInstaller, profile, reason)
     }
 
     /** 在 [initScope] 中真正执行一次性初始化：解压 rootfs（基础工具由进入终端时的初始化菜单引导安装）。 */

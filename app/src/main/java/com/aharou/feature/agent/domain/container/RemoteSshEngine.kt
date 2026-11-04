@@ -381,8 +381,12 @@ class RemoteSshEngine @Inject constructor(
     }
 
     /** 拼接 cd 到 projectPath 再执行 command 的完整命令；projectPath 为 null 则直接执行。
-     *  优先 cd 到 ~/workspace（符号链接），让 AI 执行 pwd 时看到 ~/workspace 而非真实路径。
-     *  ~/workspace 不存在（符号链接未建成）时 fallback 到 projectPath。
+     *  先 cd 到服务器上的真实工作区路径，再在 `~/workspace` 指向**同一个物理目录**时才切过去，
+     *  让 AI 执行 pwd 时看到 ~/workspace。
+     *
+     *  不能像从前那样先试 `cd ~/workspace`：服务器上那个路径本来就可能是用户自己的真实目录
+     *  （建链时 updateWorkspaceSymlink 会跳过真实目录），此时第一条 cd 必然成功，而文件工具走的是
+     *  base/<工作区名>——命令与读写作用在两个不同目录。
      *  注入 GIT_CONFIG_GLOBAL 指向 App 管理的 ~/.aharou/gitconfig：
      *  仅当用户开启「自动注入」时该文件存在（含 include 用户全局配置 + includeIf 限定工作区根），
      *  文件不存在时 git 静默跳过——不影响用户在服务器上手动 git。 */
@@ -398,7 +402,11 @@ class RemoteSshEngine @Inject constructor(
         val target = connection.remoteWorkspaceFor(projectPath)
         val mk = if (target != null) "mkdir -p ${shellQuote(target)} 2>/dev/null; " else ""
         val cdTarget = shellQuote(target ?: projectPath)
-        return prefix + mk + "cd ~/workspace 2>/dev/null || cd $cdTarget 2>/dev/null || exit 1; $command"
+        return prefix + mk +
+            "cd $cdTarget 2>/dev/null || exit 1; " +
+            // 两者物理路径一致时再切到 ~/workspace，只为让 pwd 好看；不一致就留在真实路径。
+            "if [ \"\$(cd ~/workspace 2>/dev/null && pwd -P)\" = \"\$(pwd -P)\" ]; then cd ~/workspace; fi; " +
+            command
     }
 
 }

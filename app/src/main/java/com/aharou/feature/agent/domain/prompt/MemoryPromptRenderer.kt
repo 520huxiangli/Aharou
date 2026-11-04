@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.memory.Memory
 import com.aharou.feature.agent.domain.memory.MemoryScope
 import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.memory.isCoreArchiveName
+import com.aharou.feature.agent.domain.memory.isLocalSideConflict
 import com.aharou.feature.agent.domain.memory.isProtectedIdentityName
 
 internal object MemoryPromptRenderer {
@@ -42,6 +43,16 @@ internal object MemoryPromptRenderer {
      * 普通摘要行后，「未经确认的说法」会被当成既定事实直接照着做。
      */
     private const val PENDING_LABEL = "（待确认：与另一条说法冲突、尚未裁决，不得当作既定事实）"
+
+    /**
+     * 跨设备冲突里本机这一份的索引标注。
+     *
+     * 它同样是 pending、同样不内联，但语义与 [PENDING_LABEL] 相反：本机版本是正在生效的那份，
+     * 远端版本只是被另存进归档。两种情形共用一句「不得当作既定事实」，等于让模型主动避开一条
+     * 仍在生效的约定（红线类尤其致命），且用户界面上看不出来——所以这一侧必须单独说明。
+     */
+    private const val LOCAL_CONFLICT_LABEL =
+        "（待确认：与另一台设备的同名记忆冲突、尚未裁决。本机这份仍在生效，裁决前按它执行；正文可用 memory(action=read) 取）"
 
     fun render(memories: List<Memory>): String {
         // 超长条目的名字集合：只用来给索引行加「正文较长未内联」提示。
@@ -178,7 +189,8 @@ internal object MemoryPromptRenderer {
      * 这里再给一次就是重复占用上下文。
      *
      * 待确认（pending）的条目一律不内联，identity 类也不例外：内联段是「已确认的既有事实」，
-     * 把未裁决的冲突说法放进去，等于直接替用户拍板。它们退到索引里并带 [PENDING_LABEL]。
+     * 把未裁决的冲突说法放进去，等于直接替用户拍板。它们退到索引里并带 [PENDING_LABEL]；
+     * 本机仍生效的那侧带 [LOCAL_CONFLICT_LABEL]——不内联，但至少不让模型把红线当成废文。
      */
     private fun shouldInline(memory: Memory): Boolean =
         memory.type == MemoryType.IDENTITY && !isCoreArchiveName(memory.name) && !memory.pending
@@ -237,7 +249,11 @@ internal object MemoryPromptRenderer {
     }
 
     /** 待确认条目的索引标注；正文不在这里给，要看内容得用 memory(action=read, ...)。 */
-    private fun pendingLabel(memory: Memory): String = if (memory.pending) PENDING_LABEL else ""
+    private fun pendingLabel(memory: Memory): String = when {
+        !memory.pending -> ""
+        isLocalSideConflict(memory) -> LOCAL_CONFLICT_LABEL
+        else -> PENDING_LABEL
+    }
 
     /** 正文长度按掩码后的文本判断，与 [render] 内联时的口径一致，避免两处长度看法不同。 */
     private fun longBodyLabel(memory: Memory, longBodies: Set<String>): String =

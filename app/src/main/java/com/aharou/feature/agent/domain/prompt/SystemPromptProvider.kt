@@ -238,9 +238,11 @@ class SystemPromptProvider @Inject constructor(
             snapshot?.takeIf { it.signature == signature }?.let { return it.content }
 
             // 全局在前、工作区在后：工作区更具体，放后面供模型就近覆盖。
+            // 全局先拿预留份额，剩下的预算全给工作区——总预算封顶而不是两层各封一份。
+            val globalText = renderRule("~/.aharou", globalMain, globalFragments, RuleBudget.LAYER_CHARS)
             val content = listOfNotNull(
-                renderRule("~/.aharou", globalMain, globalFragments),
-                renderRule("~/workspace", projectMain, projectFragments)
+                globalText,
+                renderRule("~/workspace", projectMain, projectFragments, RuleBudget.TOTAL_CHARS - (globalText?.length ?: 0))
             ).takeIf { it.isNotEmpty() }?.joinToString("\n\n")
             snapshot = ProjectRuleSnapshot(signature, content)
             return content
@@ -280,21 +282,18 @@ class SystemPromptProvider @Inject constructor(
          * 三级回退与片段目录的口径对齐简云的现成实现：`AGENTS.md` → `CLAUDE.md` → `rules.md`，
          * 片段按文件名顺序接在后面。单文件与合并结果都要封顶，避免把提示词挤爆。
          */
-        private fun renderRule(dirLabel: String, main: Pair<File, String>?, fragments: List<File>): String? {
+        private fun renderRule(dirLabel: String, main: Pair<File, String>?, fragments: List<File>, budget: Int): String? {
             val body = buildString {
-                main?.let { file -> readRuleText(file.first, file.second)?.let { append(it.trim()) } }
+                main?.let { file -> readRuleText(file.first)?.let { append(it.trim()) } }
                 fragments.forEach { file ->
-                    val text = readRuleText(file, file.name) ?: return@forEach
+                    val text = readRuleText(file) ?: return@forEach
                     if (isNotEmpty()) append("\n\n")
                     append(text.trim())
                 }
             }
             if (body.isBlank()) return null
-            val capped = if (body.length > MAX_AGENTS_CHARS) {
-                body.take(MAX_AGENTS_CHARS) + "\n…（规则过长，已截断）"
-            } else {
-                body
-            }
+            // 按行截断（见 RuleBudget）：硬切字符会把代码块和 Markdown 表格切一半。
+            val capped = RuleBudget.truncateByLines(body, budget)
             val source = when {
                 main != null && fragments.isNotEmpty() -> "$dirLabel/${main.second} + ${fragments.size} 个片段"
                 main != null -> "$dirLabel/${main.second}"
@@ -303,13 +302,9 @@ class SystemPromptProvider @Inject constructor(
             return "项目规则 (来自 $source，务必遵守):\n$capped"
         }
 
-        private fun readRuleText(file: File, label: String): String? = try {
-            val text = file.readText()
-            if (text.length > MAX_AGENTS_CHARS) {
-                text.take(MAX_AGENTS_CHARS) + "\n…（$label 过长，已截断）"
-            } else {
-                text
-            }
+        private fun readRuleText(file: File): String? = try {
+            // 这里只兜底读取上限，不做可见截断：可见截断在 renderRule 里按行做，切在这里会切在字符中间。
+            file.readText().take(RuleBudget.FILE_READ_CHARS)
         } catch (e: Exception) {
             FileLogger.w(TAG, "读取规则失败 ${file.absolutePath}: ${e.message}", e)
             null
@@ -730,6 +725,7 @@ class SystemPromptProvider @Inject constructor(
                 workspaceType = workspaceTypeContent,
                 projectIndex = projectIndex.build(agentContext.projectRoot),
                 modelIdentity = modelIdentityContent,
+                remoteMode = remoteModeSource.build(agentContext),
                 inbox = inboxContent,
                 time = timeContent,
                 workspaceChange = gate(InjectionBlock.WORKSPACE_CHANGE, offBlocks) { workspaceChangeSource.build(agentContext) }
@@ -801,6 +797,7 @@ class SystemPromptProvider @Inject constructor(
                 workspaceType = workspaceTypeContent,
                 projectIndex = projectIndex.build(ctx.projectRoot),
                 modelIdentity = modelIdentityContent,
+                remoteMode = remoteModeSource.build(ctx),
                 inbox = inboxContent,
                 time = timeContent,
                 workspaceChange = gate(InjectionBlock.WORKSPACE_CHANGE, offBlocks) { workspaceChangeSource.build(ctx) }
@@ -823,6 +820,7 @@ class SystemPromptProvider @Inject constructor(
         definition: AgentDefinition,
         agentContext: AgentContext
     ): String {
+        val offBlocks = promptFragmentCatalog.disabledBlocks()
         val raw = buildString {
             if (InjectPart.MAIN_RULES in definition.inject) {
                 append(staticRuleSource.build(agentContext))
@@ -837,22 +835,29 @@ class SystemPromptProvider @Inject constructor(
             append("专注完成本会话交给你的任务，并在最后一条回复里给出完整结论——主代理只能读到你的最后一条回复，中间过程与工具结果它看不到。\n\n")
             append(definition.prompt)
         }
-        val memories = if (isGhostSession(agentContext)) null else memoryListSource.build(agentContext)
+        val memories = gate(InjectionBlock.MEMORIES, offBlocks) {
+            if (isGhostSession(agentContext)) null else memoryListSource.build(agentContext)
+        }
+        // 与主代理同一套区块开关：设置里关掉的区块，子代理不能照样带全（并发多个时成倍消耗）。
+        val skills = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(agentContext) }
+        // 按需规则清单：子代理只在自身提示词写了 {{AICODE_RULES}} 时才看得到，同样受区块开关控制。
+        val rules = gate(InjectionBlock.RULES, offBlocks) { availableRulesSource.build(agentContext) }
         return buildString {
             append(
                 renderVariables(
                     raw,
-                    activeSkillsSource.build(agentContext),
+                    skills,
                     memories,
                     subAgentListSource.build(agentContext),
                     projectRuleSource.build(agentContext),
                     workspaceSource.build(agentContext),
-                    currentDate()
+                    currentDate(),
+                    rules
                 )
             )
 
             if (InjectPart.SKILLS in definition.inject && SKILLS_VAR !in raw) {
-                activeSkillsSource.build(agentContext)?.let {
+                skills?.let {
                     append("\n\n")
                     append(it)
                 }
@@ -957,7 +962,6 @@ class SystemPromptProvider @Inject constructor(
         const val RULES_DIR = "rules.d"
         const val SUBAGENT_BASE_FILE = "agent/subagent-base.md"
         const val MEMORY_DISCIPLINE_FILE = "agent/memory-discipline.md"
-        const val MAX_AGENTS_CHARS = 32_000
         /** 会话级缓存 key 数量上限：超过后整体清空，仅防长期累积；正常会话数远小于此。 */
         const val SOURCE_CACHE_LIMIT = 32
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")

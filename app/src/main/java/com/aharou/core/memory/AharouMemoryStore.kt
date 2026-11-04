@@ -38,6 +38,14 @@ class AharouMemoryStore @Inject constructor(
         /** 注入提示词时日志尾巴上限（字符）。 */
         private const val MAX_LOG_TAIL_CHARS = 1600
 
+        /**
+         * 核心档案 / 全局记忆单段的注入上限（字符）。
+         *
+         * 两份档案原先无上限、每轮整份进提示词，长期积累后会把系统提示挤爆、每轮白烧 token；
+         * 只截今日日志不够。头尾各留一半：CORE 的行为红线在开头，最新结论一般在结尾。
+         */
+        private const val MAX_ARCHIVE_CHARS = 6000
+
         /** 日文件保留天数：超过就并进月归档。 */
         private const val LOG_RETENTION_DAYS = 7L
 
@@ -333,9 +341,9 @@ class AharouMemoryStore @Inject constructor(
         if (!isMemoryEnabled()) return null
         ensureExists()
         val sb = StringBuilder()
-        val core = File(dir, "CORE.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)
+        val core = File(dir, "CORE.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)?.let(::capArchive)
         if (!core.isNullOrEmpty()) sb.append("### 核心档案\n").append(core).append("\n")
-        val global = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)
+        val global = File(dir, "GLOBAL.md").takeIf { it.exists() }?.readText()?.trim()?.let(::sanitizeForPrompt)?.let(::capArchive)
         if (!global.isNullOrEmpty()) sb.append("\n### 全局记忆\n").append(global).append("\n")
         val log = runCatching { dailyLog() }.getOrNull()?.trim()?.let(::sanitizeForPrompt)
         if (!log.isNullOrEmpty()) {
@@ -345,6 +353,35 @@ class AharouMemoryStore @Inject constructor(
         if (sb.isEmpty()) return null
         return "## 记忆（持久，跨会话；更新用 memory 工具或直接读写 ~/.aharou/memory/）\n" + sb
     }
+
+    /**
+     * 档案段超长时保留头尾，并明确告知被截断以及「禁止基于本内容整份覆盖」。
+     *
+     * `memory(action="core", content=…)` 是整份覆盖写：模型若拿截断后的头尾当全文改写，中间那段就
+     * 静默没了。所以说明里必须写成硬约束——先 read 取全文再改，而不是顺口提一句「可以取全文」。
+     */
+    private fun capArchive(text: String): String {
+        if (text.length <= MAX_ARCHIVE_CHARS) return text
+        val half = MAX_ARCHIVE_CHARS / 2
+        val headEnd = headCutAt(text, half)
+        val tailStart = tailCutAt(text, text.length - (MAX_ARCHIVE_CHARS - half))
+        return text.take(headEnd) +
+            "\n…（内容过长已截断：修改前必须先 memory read 取全文，禁止基于本截断内容整份覆盖）\n" +
+            text.substring(tailStart)
+    }
+
+    /**
+     * 头段切点：不把 UTF-16 代理对劈成两半。
+     *
+     * 切点处的字符是低代理位，说明它前面那个高代理位已经被 take 留下、自己却被丢掉了，
+     * 于是一个 emoji 之类会变成半个无效字符；往前收一位，两个半字都不要。
+     */
+    private fun headCutAt(text: String, index: Int): Int =
+        if (index in 1 until text.length && Character.isLowSurrogate(text[index])) index - 1 else index
+
+    /** 尾段起点：同理——起点落在低代理位就往后让一位，否则段首会多出半个字符。 */
+    private fun tailCutAt(text: String, index: Int): Int =
+        if (index in 0 until text.length && Character.isLowSurrogate(text[index])) index + 1 else index
 
     /**
      * 注入前消毒 + 掩码。

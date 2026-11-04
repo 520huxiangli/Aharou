@@ -146,7 +146,9 @@ class MemorySyncManager @Inject constructor(
             val basePaths = repoPathsUnder(repoDir, GLOBAL_DIR) + repoPathsUnder(repoDir, PROJECTS_DIR)
             val localPaths = mutableSetOf<String>()
             val locallyModified = mutableSetOf<String>()
-            val collectDetail = collect(repoDir, localPaths, locallyModified)
+            // 本轮确实扫过的本地根（仓库前缀）：只有它们底下才允许判「本机删了」。
+            val scannedRoots = mutableSetOf<String>()
+            val collectDetail = collect(repoDir, localPaths, locallyModified, scannedRoots)
             var distributeDetail = DistributeDetail()
             val collectedCount = collectDetail.copied.size
 
@@ -155,7 +157,11 @@ class MemorySyncManager @Inject constructor(
             // 仓库里那份一直留着 → addAndCommit 把它当原样提交 → distribute 又照仓库把它写回本机，
             // 表现为「删了记忆、同步一次又回来」（2026-10-18 实测 mtime 全是同一秒）。
             // basePaths 里没有的不算删除，避免首次同步或换设备时误删。
-            val deletedLocally = basePaths - localPaths
+            // 只在本轮扫过的根下判删除：外置存储未挂载、SAF 授权失效时那几个 root 根本列不出文件，
+            // 按 localPaths 求差会把整个 projects/<key>/ 当成「本机删除」，直接删掉仓库那份再推上去。
+            val deletedLocally = basePaths.filter { rel ->
+                rel !in localPaths && scannedRoots.any { rel.startsWith("$it/") }
+            }
             if (deletedLocally.isNotEmpty()) {
                 deletedLocally.forEach { rel -> runCatching { File(repoDir, rel).delete() } }
                 FileLogger.i(TAG, "本机删除同步到仓库：${deletedLocally.size} 个")
@@ -301,11 +307,18 @@ class MemorySyncManager @Inject constructor(
         repoDir: File,
         localPaths: MutableSet<String>,
         locallyModified: MutableSet<String>,
+        scannedRoots: MutableSet<String>,
     ): CollectDetail {
         val copied = mutableListOf<String>()
         var unchanged = 0
         val failed = mutableListOf<String>()
         localRoots().forEach { root ->
+            // 列不出文件（未挂载 / 无权限）时不算扫过：否则空集会被当成「这个目录本机一个文件都没有」。
+            if (!root.dir.isDirectory || root.dir.listFiles() == null) {
+                FileLogger.w(TAG, "跳过不可读的记忆目录（不参与删除判定）: ${root.dir.absolutePath}")
+                return@forEach
+            }
+            scannedRoots += root.repoPrefix
             walkFiles(root.dir) { src, relWithin ->
                 // 人格文件有自己的一套 frontmatter（name/icon/style/lang），混进记忆同步就会被
                 // 当成普通条目对待。它只存在于本机，不进仓库。
@@ -442,25 +455,28 @@ class MemorySyncManager @Inject constructor(
 
     /** 一条冲突的双方都标待确认；本机那份在仓库工作树与本机记忆目录里各标一次。 */
     private fun markConflictPending(repoDir: File, path: String, archived: String?) {
-        markPending(File(repoDir, path), "远端版本")
+        markPending(File(repoDir, path), MemoryConflictSide.LOCAL)
         // 仓库副本会被下次 collect 用本机文件覆盖，所以本机原件也得标，否则标记下一轮就丢了。
-        localFileFor(path)?.let { markPending(it, "远端版本") }
-        archived?.let { markPending(File(repoDir, it), "本机版本") }
+        localFileFor(path)?.let { markPending(it, MemoryConflictSide.LOCAL) }
+        // 归档那份要标成对侧：它不参与生效，别在清单里被当成「本机正在用的约定」。
+        archived?.let { markPending(File(repoDir, it), MemoryConflictSide.REMOTE) }
     }
 
     /**
      * 给一条记忆打待确认：frontmatter 补 `pending: true`，description 追加冲突说明。
      *
      * 已带 `pending: true` 的条目直接跳过，避免反复同步把同一件事标成多条冲突。
+     * [side] 同时决定说明文案与它代表的那一侧，文案由 [MemoryConflictSide] 统一给出，
+     * 渲染端按同一份文案把这一侧认回来。
      */
-    private fun markPending(file: File, counterpart: String) {
+    private fun markPending(file: File, side: MemoryConflictSide) {
         val text = runCatching { file.readText() }.getOrNull() ?: return
         val normalized = text.replace("\r\n", "\n")
         val headEnd = if (normalized.startsWith("---\n")) normalized.indexOf("\n---", startIndex = 4) else -1
         val head = if (headEnd >= 0) normalized.substring(4, headEnd) else ""
         if (PENDING_LINE.containsMatchIn(head)) return
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
-        val marker = "[待确认 $date，与${counterpart}冲突]"
+        val marker = side.marker(date)
         val lines = if (head.isEmpty()) mutableListOf<String>() else head.split("\n").toMutableList()
         val descIndex = lines.indexOfFirst { it.trimStart().startsWith("description:") }
         if (descIndex >= 0) lines[descIndex] = appendMarkerToLine(lines[descIndex], marker)

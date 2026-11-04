@@ -154,7 +154,9 @@ internal class ContextTrimPlanner(
             applied to measure(applied)
         }
         val older = (keys.size - keepRecent).coerceIn(0, keys.size)
-        val maxExtent = intArrayOf((keys.size - 1).coerceAtLeast(0), older, older)
+        // L1 也用 older：原来给的是「全部迭代」，于是最新 keepRecent 轮的 reasoning 也被清，
+        // 与注释、L2/L3 的保留口径不一致。
+        val maxExtent = intArrayOf(older, older, older)
         var extent = IntArray(3)
         var size = before
         val steps = ArrayList<String>()

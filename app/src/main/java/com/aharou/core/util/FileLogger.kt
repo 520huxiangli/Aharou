@@ -230,22 +230,25 @@ object FileLogger {
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val dir = logDir ?: return // 未初始化则只走 logcat，不落盘
+        // 时间戳仍在调用点取：入队顺序就是时间顺序，排队延迟不该让日志时间戳整体后移。
         val now = java.time.Instant.now()
-        // 落盘前先过媒体脱敏（防超大 base64 撑爆按天日志文件），再过一层凭据库脱敏
-        // （防 vault 真值被拼进日志）；logcat 仍打印原样（有系统截断保护）。
-        val redacted = VaultRedactor.redact(MediaRedactor.redact(message))
-        val line = buildString {
-            append(timestampFormat.format(now))
-            append(" ").append(level)
-            append(" [").append(tag).append("] ")
-            append(redacted)
-            if (throwable != null) {
-                append("\n").append(stackTraceToString(throwable))
-            }
-            append("\n")
-        }
         ioExecutor.execute {
             runCatching {
+                // 脱敏与拼行一起放在这里：调用方可能是 UI / 网络回调线程，媒体脱敏要扫整串、
+                // 凭据脱敏要查库，几十 KB 的正文留在调用方线程上就是一次可见的卡顿。
+                // 落盘前先过媒体脱敏（防超大 base64 撑爆按天日志文件），再过一层凭据库脱敏
+                // （防 vault 真值被拼进日志）；logcat 仍打印原样（有系统截断保护）。
+                val redacted = VaultRedactor.redact(MediaRedactor.redact(message))
+                val line = buildString {
+                    append(timestampFormat.format(now))
+                    append(" ").append(level)
+                    append(" [").append(tag).append("] ")
+                    append(redacted)
+                    if (throwable != null) {
+                        append("\n").append(stackTraceToString(throwable))
+                    }
+                    append("\n")
+                }
                 val date = fileNameFormat.format(now)
                 val file = File(dir, "log-$date.txt")
                 // 跨天换文件；单文件超上限则重置重开。writer 仅本线程访问。

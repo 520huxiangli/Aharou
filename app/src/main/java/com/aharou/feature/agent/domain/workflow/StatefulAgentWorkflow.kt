@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.workflow
 
 import android.os.SystemClock
 import android.util.Base64
+import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.runCancellationSafeTail
 import com.aharou.feature.agent.domain.privacy.maskIfNeeded
@@ -378,7 +379,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
-        provider.logSessionId = sessionId
+        provider.logSessionId = AILogger.loggableSessionId(sessionId, messagePersistenceUseCase::isGhost)
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         // 模型元数据的输出上限（models.dev limit.output）：不传时 Anthropic 会把输出卡在 adapter 兜底值上。
@@ -995,15 +996,12 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
 
-        // 批内去重：模型偶尔会在同一次响应里给出完全相同的调用（同名同参），
-        // 重复执行就是真跑两遍（写文件、执行命令都一样）。重复项不执行，只补一条说明，
-        // 仍按原顺序返回，保持 tool 消息条数与 assistant(toolCalls) 对齐（否则 API 报 400）
+        // 批内去重：同一次响应里的同名同参调用只执行第一次，重复项不执行、只补一条说明；
+        // 仍按原顺序返回（tool 消息条数须与 assistant(toolCalls) 对齐，否则 API 报 400）。
         val seenSignatures = HashSet<String>()
-        val duplicateSignatures = HashSet<String>()
-        toolCalls.forEach { toolCall ->
-            if (!seenSignatures.add(toolCallSignature(toolCall))) {
-                duplicateSignatures.add(toolCallSignature(toolCall))
-            }
+        val duplicateCall = BooleanArray(toolCalls.size)
+        toolCalls.forEachIndexed { index, toolCall ->
+            if (!seenSignatures.add(toolCallSignature(toolCall))) duplicateCall[index] = true
         }
 
         val pathLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>() // 同批内写同一文件的调用按 path 取锁串行化，避免并行互相干扰
@@ -1011,8 +1009,8 @@ class StatefulAgentWorkflow @Inject constructor(
             emptyList()
         } else {
             coroutineScope {
-                toolCalls.map { toolCall ->
-                    val isDuplicate = toolCallSignature(toolCall) in duplicateSignatures
+                toolCalls.mapIndexed { index, toolCall ->
+                    val isDuplicate = duplicateCall[index]
                     async {
                         if (isDuplicate) {
                             ToolRunResult(
