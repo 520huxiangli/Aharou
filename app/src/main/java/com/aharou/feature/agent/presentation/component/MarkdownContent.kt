@@ -137,6 +137,29 @@ internal const val MARKDOWN_CACHE_MAX_ITEM_WEIGHT = 100_000
  */
 internal const val MARKDOWN_GUARD_THRESHOLD_CHARS = 32_000
 
+/**
+ * 流式渲染窗口（字符）：流式气泡每 tick 重排且关掉了缓存与护栏，几十万字符的正文不截断就会
+ * 在主线程全量预处理 + 整篇重解析。窗口取在护栏 [MARKDOWN_GUARD_THRESHOLD_CHARS] 之下，
+ * 保证进解析器的流式文本永远够不到护栏；数值同时等于流式提示的阈值。
+ */
+internal const val STREAMING_RENDER_WINDOW_CHARS = MARKDOWN_GUARD_THRESHOLD_CHARS - 12_000
+
+/**
+ * 取 [text] 末尾不超过 [maxChars] 的一段，起点对齐行首。
+ *
+ * 从行中间开切会把一行、甚至一个围栏代码块劈成两半；对齐行首只能避开劈行，劈在围栏中间
+ * 仍会发生——流式期间只展示最近一段（顶端有提示），落库后的完整消息会正常渲染。
+ */
+internal fun streamingTailWindow(text: String, maxChars: Int = STREAMING_RENDER_WINDOW_CHARS): String {
+    if (text.length <= maxChars) return text
+    var start = text.length - maxChars
+    val newline = text.indexOf('\n', start)
+    if (newline in 0 until text.length - 1) start = newline + 1
+    // 不把代理对（emoji 等）劈成半个字符
+    while (start < text.length - 1 && text[start].isLowSurrogate()) start++
+    return text.substring(start)
+}
+
 /** 占位里的纯文本预览长度：约两屏正文，足以认出这段是什么；不解析 markdown，成本恒定。 */
 private const val MARKDOWN_GUARD_PREVIEW_CHARS = 4_000
 

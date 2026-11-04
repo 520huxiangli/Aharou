@@ -34,9 +34,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # 编译闸门的 CI 放行开关：一个 job 里会多次调 gradlew。
+      # gradlew 同时要求 GITHUB_ACTIONS=true，只在本地 export 不会放行。
       AHAROU_CI_BUILD: "1"
 
     steps:
+      # 手动触发没有分支约束：从功能分支手动跑一次就会把 beta-latest 覆盖成非 master 的包，
+      # 测试版通道的用户立刻收到它。只允许在 master 上手动发。
+      - name: Verify manual run is from master
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/master ]]; then
+            echo "::error::手动触发只允许 master 分支（当前 $GITHUB_REF）"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -98,11 +109,6 @@ jobs:
 
       # 构建 universal beta（arm64-v8a + x86_64，含两套容器镜像的通用包）。
       # --stacktrace：失败时输出完整调用栈，便于定位 OOM/内存类根因。
-      - name: Authorize build (CI 例外)
-        run: |
-          mkdir -p .aharou
-          printf 'authorized_by: CI\nquote: "workflow ${{ github.workflow }} run ${{ github.run_id }}"\nat: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .aharou/build-allowed
-
       - name: Build beta APK
         run: ./gradlew :app:assembleUniversalBeta --stacktrace
 

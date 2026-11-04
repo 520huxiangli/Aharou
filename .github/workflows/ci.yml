@@ -37,6 +37,7 @@ jobs:
     env:
       # 编译闸门的 CI 放行开关（gradlew 读它）：一个 job 里会多次调 gradlew，
       # 而本地授权文件是一次性消费的，不显式放行的话第二次（单测）会被误拒。
+      # gradlew 还要求 GITHUB_ACTIONS=true 同时成立，本地 export 一行绕不过去。
       AHAROU_CI_BUILD: "1"
 
     steps:
@@ -91,13 +92,13 @@ jobs:
       - name: Check architecture rules
         run: python3 scripts/check_architecture.py
 
+      # 基线只许缩：--sync-baseline 一条命令就能把棘轮抬起来，不做 diff 比对时 CI 会照常通过。
+      # 只对「数值上涨 / 新增登记」报错，收紧与删除放行。
+      - name: Verify architecture baseline only shrinks
+        run: python3 scripts/check_architecture.py --check-ratchet
+
       # 单 flavor 冒烟：只构 universal debug（CLAUDE.md 规范：AI 改完编译型代码默认跑这个），
       # 不构全量三 flavor，省三倍 Kotlin 编译。
-      - name: Authorize build (CI 例外)
-        run: |
-          mkdir -p .aharou
-          printf 'authorized_by: CI\nquote: "workflow ${{ github.workflow }} run ${{ github.run_id }}"\nat: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .aharou/build-allowed
-
       - name: Build universal debug (smoke)
         run: ./gradlew :app:assembleUniversalDebug --stacktrace
 
@@ -122,26 +123,48 @@ jobs:
 
       # 失败原因写进步骤摘要 + 错误注解：GitHub 的日志接口会截断长日志，单测挂在哪一条
       # 从日志里看不到（之前只能拿到 exit code 1），而注解能通过 API 直接读到。
+      # 注解必须直接打到 stdout：整块重定向进 $GITHUB_STEP_SUMMARY 时，::error 只是摘要里的一行
+      # 普通文字，不会变成 Actions annotation。
       - name: Summarize unit test failures
         if: always()
         run: |
+          reports=app/build/test-results/testUniversalDebugUnitTest
+          failed_files=""
+          tests_failed=0
+          if compgen -G "$reports/*.xml" > /dev/null; then
+            failed_files=$(grep -l '<failure' "$reports"/*.xml 2>/dev/null || true)
+            if [ -n "$failed_files" ]; then
+              tests_failed=1
+              for f in $failed_files; do
+                echo "::error title=单测失败::$(basename "$f")"
+              done
+            fi
+          else
+            tests_failed=1
+            echo '::error title=单测无报告::测试进程在写出报告前就崩了（OOM / 超时）'
+          fi
+          # 日志尾部只在失败时进注解：成功时也打 error 注解的话，每次跑绿都挂着一条红字。
+          if [ "$tests_failed" = 1 ]; then
+            crash=$(tail -8 /tmp/unit.log 2>/dev/null | tr '\n' '~' | cut -c1-900 || true)
+            if [ -n "$crash" ]; then
+              echo "::error title=单测日志尾::${crash}"
+            fi
+          fi
+
           {
             echo '### 单测结果'
-            if compgen -G "app/build/test-results/testUniversalDebugUnitTest/*.xml" > /dev/null; then
-              for f in $(grep -l '<failure' app/build/test-results/testUniversalDebugUnitTest/*.xml); do
-                echo "::error title=单测失败::$(basename "$f")"
+            if [ -n "$failed_files" ]; then
+              for f in $failed_files; do
                 echo "失败文件: $(basename "$f")"
               done
+            elif compgen -G "$reports/*.xml" > /dev/null; then
+              echo '全部用例通过'
             else
-              echo '::error title=单测无报告::测试进程在写出报告前就崩了（OOM / 超时）'
               echo '没有生成测试报告：测试进程可能在写出报告前就崩了（OOM / 超时）'
               echo '```'
               tail -30 /tmp/unit.log 2>/dev/null || echo '（没有 /tmp/unit.log）'
               echo '```'
             fi
-            # 日志尾部无条件进注解：注解能通过 API 读到，不受日志截断与 artifact 下载权限影响
-            CRASH=$(tail -8 /tmp/unit.log 2>/dev/null | tr '\n' '~' | cut -c1-900)
-            echo "::error title=单测日志尾::${CRASH}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test report

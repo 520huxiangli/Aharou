@@ -22,7 +22,14 @@ MSG
 }
 # CI 放行：workflow 在 job 级声明 AHAROU_CI_BUILD=1。CI 只在 push/tag 时跑、不经过 AI 会话，
 # 而授权文件是一次性消费的：一个 job 里 smoke + 单测两次调 gradlew，第二次会被误拒。
-if [ "${AHAROU_CI_BUILD:-0}" != "1" ]; then
+# 双条件：只有 env 开关不够——本地 export 一行就能跳过整段校验且不留审计。GITHUB_ACTIONS 由
+# runner 注入，本地想伪造它就是改脚本本身，那是另一回事。
+if [ "${AHAROU_CI_BUILD:-0}" = "1" ] && [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  :
+elif [ "${AHAROU_CI_BUILD:-0}" = "1" ]; then
+  echo "[拒绝] 声明了 AHAROU_CI_BUILD=1 但不在 GitHub Actions 中（GITHUB_ACTIONS != true），闸门不放行。" >&2
+  exit 1
+else
   [ -f "$_gate" ] || _deny
   grep -q 'authorized_by:' "$_gate" || _deny
   grep -q 'at:' "$_gate" || _deny

@@ -36,7 +36,7 @@
 | `core/soul/` | 人格（名字/图标/风格/正文） | `SoulStore.kt` |
 | `core/theme/` | 主题与设计 token（`Spacing` / `Radius` / `semanticColors`） | `AIEditorTheme.kt`、`AppThemePreset.kt` |
 | `core/ui/` | 全局通用组件（项目硬规则要求优先复用） | `AppTextField.kt`、`AppSwitch.kt`、`AdaptiveModalBottomSheet.kt`、`SwipeToDeleteRow.kt`、`ImageViewer.kt`、`FloatingTabBar.kt`、`WindowSize.kt` |
-| `core/util/` | 日志与工具 | `FileLogger.kt`、`AILogger.kt`、`BoundedLineReader.kt`、`LineDiff.kt`、`SafeFileWrite.kt`、`CrashRecorder.kt`、`PerformanceMonitor.kt` |
+| `core/util/` | 日志与工具 | `FileLogger.kt`、`AILogger.kt`、`BoundedLineReader.kt`、`LineDiff.kt`、`SafeFileWrite.kt`、`CrashRecorder.kt` |
 | `core/watch/` | 文件变更监听总线 | `FileChangeHub.kt` |
 | `core/datastore/` | 偏好存储损坏处理 | `PreferencesCorruption.kt` |
 

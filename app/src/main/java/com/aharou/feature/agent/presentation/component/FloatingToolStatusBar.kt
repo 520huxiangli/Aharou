@@ -140,9 +140,9 @@ internal fun FloatingToolStatusBar(
                 )
                 Text(
                     text = when {
-                        isRunning -> "执行中…"
-                        isError -> "失败"
-                        else -> "完成"
+                        isRunning -> stringResource(R.string.chat_turn_running)
+                        isError -> stringResource(R.string.chat_turn_failed)
+                        else -> stringResource(R.string.common_done)
                     },
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -201,6 +201,13 @@ internal fun FloatingToolStatusBar(
 /** 迷你终端缩略图正文的字符上限：按行截之外再兜一道，挡住「单行几万字符」的输出。 */
 private const val MINI_BODY_MAX_CHARS = 600
 
+/**
+ * 缩略图取行的扫描窗口（字符）：先把文本尾巴切到这么长再 lines()，行切分成本就与工具输出总量无关。
+ * 窗口要明显大于「12 行」的常见字符量，否则会把本来能显示的短行挤掉；真实显示上限由
+ * [MINI_BODY_MAX_CHARS] 再收一道。
+ */
+private const val MINI_BODY_SCAN_CHARS = 1600
+
 /** 迷你终端小屏幕：`$ 命令` + 输出尾部（最多 12 行，实时滚动）。 */
 @Composable
 private fun ToolMiniScreenThumbnail(
@@ -225,7 +232,10 @@ private fun ToolMiniScreenThumbnail(
         }
         // takeLast(12) 只按「行」截：工具输出常整条只有一行（压缩 JSON / 无换行长串），
         // 那样取到的就是整段几万字符，缩略图的文本排版同样会被拖垮。这里再补一层字符上限。
-        text.lines().takeLast(12).joinToString("\n").takeLast(MINI_BODY_MAX_CHARS)
+        // 顺序不能反：先切尾巴再 lines()，否则每次 live 更新都要把整段输出去行切一遍。
+        text.takeLast(MINI_BODY_SCAN_CHARS).lines().takeLast(12)
+            .joinToString("\n")
+            .takeLast(MINI_BODY_MAX_CHARS)
     }
 
     Box(
@@ -308,7 +318,8 @@ private fun BrowserMiniScreen(
     } else {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                text = if (running) "抓取页面…" else "（暂无画面）",
+                text = if (running) stringResource(R.string.mini_screen_capture_busy)
+                else stringResource(R.string.mini_screen_capture_none),
                 fontSize = 7.sp,
                 fontFamily = MiniMono,
                 color = MiniScreenGreen,
@@ -347,7 +358,8 @@ private fun VdMiniScreen(
     } else {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                text = if (running) "抓取画面…" else "影子屏未运行",
+                text = if (running) stringResource(R.string.mini_screen_vd_busy)
+                else stringResource(R.string.mini_screen_vd_idle),
                 fontSize = 7.sp,
                 fontFamily = MiniMono,
                 color = MiniScreenGreen,

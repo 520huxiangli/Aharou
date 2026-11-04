@@ -255,9 +255,9 @@ private fun ToolComputerPage(
             Spacer(Modifier.width(8.dp))
             Text(
                 text = when {
-                    running -> "执行中…"
-                    message.isError -> "失败"
-                    else -> "完成"
+                    running -> stringResource(R.string.chat_turn_running)
+                    message.isError -> stringResource(R.string.chat_turn_failed)
+                    else -> stringResource(R.string.common_done)
                 },
                 fontSize = 11.sp,
                 color = when {
@@ -313,7 +313,7 @@ private fun ToolComputerPage(
 
         if (message.toolName == "Bash" || message.toolName == "terminal" || message.toolName == "browser") {
             Text(
-                text = "右上角可在终端 / 浏览器中打开",
+                text = stringResource(R.string.computer_open_in_terminal_hint),
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -475,7 +475,8 @@ private fun BrowserLivePreview(pool: BrowserTabPool?, running: Boolean) {
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = if (running) "正在抓取页面…" else "（暂无实时画面）",
+                text = if (running) stringResource(R.string.computer_capture_pending)
+                else stringResource(R.string.computer_capture_none),
                 color = ComputerGreen,
                 fontFamily = ComputerMono,
                 fontSize = 12.sp,

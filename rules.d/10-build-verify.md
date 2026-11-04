@@ -50,8 +50,10 @@ Aharou 特有的部分是：子代理交付后只做只读核实（读文件、�
 
 ## CI 全景（`.github/workflows/`）
 
-- `ci.yml`：push 与 PR 门禁，依次跑迁移对账、技能自检、架构门禁、`:app:assembleUniversalDebug`、`:app:testUniversalDebugUnitTest`。
-- `android-release.yml`：由 push `v*` tag 触发，构建 APK / AAB 并发布 GitHub Release；构建前同样跑迁移对账、技能自检与单测，失败会拦住发版。
-- `beta.yml`：push `master` 时自动构建 `.beta` 测试包（universal、正式签名、与 release 同配置），**只传 Actions Artifacts（保留 90 天），不进 Release**；纯文档/资源改动按 `paths-ignore` 跳过。
+- `ci.yml`：push 与 PR 门禁，依次跑迁移对账、技能自检、架构门禁（含基线只许缩的比对）、`:app:assembleUniversalDebug`、`:app:testUniversalDebugUnitTest`。
+- `android-release.yml`：由 push `v*` tag 触发，先校验 tag 位于 master 历史中，再跑迁移对账、技能自检与单测，然后构建 armsolo / x86solo 两个单架构 Release APK 并发布 GitHub Release（不发 AAB）；手动触发只允许 master，且强制标 pre-release。
+- `beta.yml`：push `master` 时自动构建 `.beta` 测试包（universal、正式签名、与 release 同配置），产物既传 Actions Artifacts（保留 90 天），也发到固定 tag `beta-latest` 的 prerelease Release（每次覆盖，测试版通道靠它检测）；纯文档/资源改动按 `paths-ignore` 跳过，手动触发只允许 master。
+- `sync-container-images.yml`：每周一 cron 从上游拉容器 rootfs（两个 ABI）→ 校验和 → 传 cnb → 改写两份镜像清单，代码里手改清单会被下次同步覆盖。
+- `sync-maven-index.yml`：每周一 cron 把高频 Maven 坐标的版本元数据抓成离线索引发到 cnb，App 的依赖检查在网络仓库全部挂掉时用它兜底。
 - `docs-deploy.yml`：**只在 push `v*` tag 时部署**文档站到 GitHub Pages（https://520huxiangli.github.io/Aharou/）——改完 `docs-site/` 推 `master` 不会上线，要等下一次发版才生效。
 - `sync-models.yml`：每日 cron 同步 models.dev 模型数据到 data 分支（全量），不用手动跑；发版前另需手动跑 `scripts/update-models-dev-assets.py` 只保留内置 12 个官方 provider（见 `40-git-release.md` 的发版步骤 0）。

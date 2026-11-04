@@ -432,21 +432,20 @@ class AIEditorApp : Application(), Configuration.Provider {
         configCredentialFields.registerInto(configRegistry)
         configBackupFields.registerInto(configRegistry)
         configFtpFields.registerInto(configRegistry)
-        // 目录迁移要递归扫工作区、审计初始化要建目录：都是磁盘活，放主线程会顶在首帧前面。
-        // 两者都不影响首帧渲染，也不参与配置注册，那么挑到后台；失败各自静默。
+        // 目录迁移递归扫工作区、审计初始化建目录、SOUL.md 先释放再读回缓存：都是同步磁盘活，放主线程会
+        // 顶在首帧前面。三者都不影响首帧（cachedMetadata 是 StateFlow，晚到不影响 UI），一起挑到后台。
         appScope.launch(Dispatchers.IO) {
             runCatching {
                 com.aharou.feature.agent.domain.container.ContainerInstaller.migrateProjectDirs(this@AIEditorApp)
             }
             runCatching { com.aharou.core.config.audit.ConfigAuditLog.init(this@AIEditorApp) }
+            runCatching { com.aharou.core.soul.SoulStore.ensureExists(this@AIEditorApp) }
+            runCatching { com.aharou.core.soul.SoulStore.refreshCache(this@AIEditorApp) }
         }
-        com.aharou.core.soul.SoulStore.ensureExists(this)
         // 记忆的 AI 蒸馏：后台跑，失败静默。默认 7 天才跑一次，所以这里只是一次轻量判活。
         appScope.launch {
             runCatching { memoryDistiller.distillIfDue() }
         }
-        // 读取 SOUL.md 到缓存（聊天身份行用）；改名/改图标后由保存路径刷新。
-        com.aharou.core.soul.SoulStore.refreshCache(this)
         // 把提供商级代理注册表挂到 AppProxy（applyGlobal 已在 attachBaseContext 完成），
         // 此后按目标 host 分派 provider 专属代理；无 provider 配置时回退全局代理。
         AppProxy.registerProviderProxyRegistry(providerProxyRegistry)

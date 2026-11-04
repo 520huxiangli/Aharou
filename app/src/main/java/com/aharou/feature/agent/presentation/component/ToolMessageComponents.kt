@@ -542,6 +542,8 @@ internal fun ToolStatusIcon(running: Boolean, isError: Boolean, toolName: String
         running -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
+    // 动画值不能在组合期读：一旦在这里取值，整行会按动画帧率重组。改由 graphicsLayer 的
+    // lambda 在 draw 阶段取值，动画只失效绘制层。
     val pulseAlpha = if (running) {
         val transition = rememberInfiniteTransition(label = "tool-status-pulse")
         transition.animateFloat(
@@ -549,9 +551,9 @@ internal fun ToolStatusIcon(running: Boolean, isError: Boolean, toolName: String
             targetValue = 0.35f,
             animationSpec = infiniteRepeatable(animation = tween(650), repeatMode = RepeatMode.Reverse),
             label = "tool-status-pulse-alpha"
-        ).value
+        )
     } else {
-        1f
+        null
     }
     val statusLabel = stringResource(
         when {
@@ -568,7 +570,7 @@ internal fun ToolStatusIcon(running: Boolean, isError: Boolean, toolName: String
             modifier = Modifier
                 // 与思考行同一格宽：两行的图标中心与后续文字左边缘才对得齐
                 .size(ChatStyle.rowIconSize)
-                .graphicsLayer { alpha = pulseAlpha }
+                .graphicsLayer { alpha = pulseAlpha?.value ?: 1f }
         )
     }
 }

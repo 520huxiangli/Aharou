@@ -19,8 +19,8 @@ import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.MARKDOWN_MAX_EDGE
-import com.aharou.core.ui.decodeSampledBitmap
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.presentation.decodeSampledBitmapCached
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
@@ -73,11 +73,11 @@ internal class MarkdownImageTransformer(
         return ImageData(painter = p, modifier = modifier, contentScale = ContentScale.Fit)
     }
 
-    private fun decode(url: String): Painter? {
+    private suspend fun decode(url: String): Painter? {
         return try {
             val file = fileAccess.copyToLocal(url)
             if (!file.isFile || file.length() <= 0L) return null
-            decodeSampledBitmap(file.absolutePath, MARKDOWN_MAX_EDGE)?.let { BitmapPainter(it) }
+            decodeSampledBitmapCached(file.absolutePath, MARKDOWN_MAX_EDGE)?.let { BitmapPainter(it) }
         } catch (e: Exception) {
             FileLogger.w(TAG, "markdown 本地图片解码失败: $url", e)
             null

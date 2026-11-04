@@ -4,9 +4,9 @@
 
 ## 0. 工具集合与事实来源
 
-- 内置工具的唯一注册点是 `app/src/main/java/com/aharou/di/AgentModule.kt:449-483`，共 **35 个**：`readFile` `sendFile` `sendToChat` `viewImage` `writeFile` `editFile` `generateImage` `Bash` `Shizuku` `terminal` `list` `search` `loadSkill` `loadRule` `knowledge_search` `askUserQuestion` `manageMcp` `tool_search` `websearch` `webfetch` `planMode` `todo` `memory` `task` `messageParent` `browser` `config` `vscreen` `a11y` `open_app` `check_dependencies` `sessions` `device` `personal_context` `petAvatar`。
+- 内置工具的唯一注册点是 `app/src/main/java/com/aharou/di/AgentModule.kt:453-489`，共 **37 个**：`readFile` `sendFile` `sendToChat` `viewImage` `writeFile` `editFile` `generateImage` `Bash` `Shizuku` `terminal` `list` `search` `loadSkill` `loadRule` `knowledge_search` `askUserQuestion` `manageMcp` `tool_search` `websearch` `webfetch` `planMode` `todo` `memory` `task` `messageParent` `browser` `config` `vscreen` `a11y` `open_app` `check_dependencies` `sessions` `device` `personal_context` `petAvatar` `diagnostics` `git_blame`。
 - MCP 工具在连接时动态注册（`feature/agent/domain/mcp/McpManager.kt:266`，卸载见 `:272` / `:354`）。
-- 每轮注入：`StatefulAgentWorkflow.kt:317` 取全部工具，`:568` 只过滤 `deferredLoading`（当前只有 MCP 工具延迟）；所以**内置的 35 个工具都在第一轮索引里**，MCP 工具要靠 `tool_search` 展开（`ToolSearchTool.kt:48`）。
+- 每轮注入：`StatefulAgentWorkflow.kt:317` 取全部工具，`:568` 只过滤 `deferredLoading`（当前只有 MCP 工具延迟）；所以**内置的 37 个工具都在第一轮索引里**，MCP 工具要靠 `tool_search` 展开（`ToolSearchTool.kt:48`）。
 - `config`（`di/AgentModule.kt:475`，实现 `feature/agent/domain/tool/config/ConfigTool.kt`）是一层**通用配置接口**：agent 能改什么，取决于 `ConfigRegistry` 里注册了哪些字段，注册入口集中在 `AIEditorApp.kt:409-434`（24 个 `Config*Fields`）。下文写“config `path`”即指这条路径。
 - 权限档只影响“执行时要不要弹确认”（`ToolPermissionPolicyEngine`），**不影响工具有没有**；本表只统计有没有。
 
@@ -212,7 +212,7 @@
 
 ## 14. 方法说明
 
-- **“有工具”的判据**：`di/AgentModule.kt:449-483` 里出现注册名，且工具实现里确实有对应动作（逐个读了 `MemoryTool.kt`、`ConfigTool.kt`、`SessionTool.kt`、`ManageMcpTool.kt`、`BrowserTool.kt`、`LoadSkillTool.kt`、`LoadRuleTool.kt`、`SendImFileTool.kt`、`PlanModeTool.kt` 的 `name`/`description`/`parameters`）。
+- **“有工具”的判据**：`di/AgentModule.kt:453-489` 里出现注册名，且工具实现里确实有对应动作（逐个读了 `MemoryTool.kt`、`ConfigTool.kt`、`SessionTool.kt`、`ManageMcpTool.kt`、`BrowserTool.kt`、`LoadSkillTool.kt`、`LoadRuleTool.kt`、`SendImFileTool.kt`、`PlanModeTool.kt` 的 `name`/`description`/`parameters`）。
 - **`config` 通道算不算“有工具”**：算。它同样是 agent 可调用的工具，只是能力面由字段注册决定；因此“有 config 字段”一律记为“有”，并在差距说明里注明“无独立工具、要靠 `config list` 才能在索引里发现”。
 - **界面入口的判据**：从 `component/SettingsScreen.kt:123-178`（`SettingsSection` 枚举）与 `:963-1331`（分区到组件的映射）找到分区文件，再在该文件里定位真正触发调用的 `onClick`/`viewModel.*` 行；不按文件名猜。
 - **没读到就不写“有”**：所有“无 / 未找到”都做了全仓 `rg`（关键词含 `rename`、`revoke`、`setPort`、`runNow`、`temperature`、`archived`、`reasoning_effort`、`testConnection` 等），并检查了 `Config*Fields` 的注册清单（`AIEditorApp.kt:409-434`）。

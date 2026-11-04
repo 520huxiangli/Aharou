@@ -147,6 +147,27 @@ class RemoteActionCatalog @Inject constructor(
                 "单次有条数与字节上限，超出用 start_line 分段续读。",
             toolName = TOOL_READ_FILE,
             allowedArgs = setOf("path", "start_line", "end_line"),
+            // 显式声明参数：不依赖运行时工具表，否则表拿不到时 schema 退化成空对象，调用方无法知道要传 path
+            inlineParams = mapOf(
+                "path" to ToolParameter(
+                    name = "path",
+                    type = ParameterType.STRING,
+                    description = "要读取的文件路径；~/workspace/... 表工作区，绝对路径表容器系统文件",
+                    required = true
+                ),
+                "start_line" to ToolParameter(
+                    name = "start_line",
+                    type = ParameterType.INTEGER,
+                    description = "起始行号（从 1 计），超出上限时用它分段续读",
+                    required = false
+                ),
+                "end_line" to ToolParameter(
+                    name = "end_line",
+                    type = ParameterType.INTEGER,
+                    description = "结束行号（含）",
+                    required = false
+                )
+            ),
             idempotent = true
         ),
         RemoteAction(
@@ -157,6 +178,26 @@ class RemoteActionCatalog @Inject constructor(
                 "文件不存在时自动创建（含父目录）。每次写入都需要本机用户审批。",
             toolName = TOOL_WRITE_FILE,
             allowedArgs = setOf("path", "content", "overwrite"),
+            inlineParams = mapOf(
+                "path" to ToolParameter(
+                    name = "path",
+                    type = ParameterType.STRING,
+                    description = "要写入的文件路径；文件不存在时自动创建（含父目录）",
+                    required = true
+                ),
+                "content" to ToolParameter(
+                    name = "content",
+                    type = ParameterType.STRING,
+                    description = "完整文件内容",
+                    required = true
+                ),
+                "overwrite" to ToolParameter(
+                    name = "overwrite",
+                    type = ParameterType.BOOLEAN,
+                    description = "目标已存在时是否覆盖，默认 true",
+                    required = false
+                )
+            ),
             idempotent = false
         ),
         RemoteAction(
@@ -166,7 +207,26 @@ class RemoteActionCatalog @Inject constructor(
                 "单次建议不超过 $REMOTE_SHELL_MAX_TIMEOUT_SECONDS 秒；" +
                 "不支持后台任务与提权参数——远端调用不提供这两条路径。",
             toolName = TOOL_BASH,
-            allowedArgs = setOf("command", "timeout", "elevate", "reason", "background"),
+            // 只留命令与超时：elevate 会把灾难性命令的硬拒绝降级成一次性授权、background 能甩到后台跑，
+            // 两者都是本机用户才该决定的开关，远端带上就等于替用户拍板。
+            allowedArgs = setOf("command", "timeout"),
+            // 显式声明参数而不是靠 resolveTool 回查 Bash 的工具定义：工具表在本上下文拿不到时
+            // inputSchema 会退化成只含 tool_title 的空对象，调用方不知道要传 command，而执行侧又要求它，
+            // 这个动作就彻底用不了（2026-11-04 实测：远端调 shell 直接报「缺少必需参数: command」）。
+            inlineParams = mapOf(
+                "command" to ToolParameter(
+                    name = "command",
+                    type = ParameterType.STRING,
+                    description = "要执行的 shell 命令",
+                    required = true
+                ),
+                "timeout" to ToolParameter(
+                    name = "timeout",
+                    type = ParameterType.INTEGER,
+                    description = "命令最长执行时间（秒），超时强制终止",
+                    required = false
+                )
+            ),
             idempotent = false
         ),
         RemoteAction(
@@ -188,6 +248,20 @@ class RemoteActionCatalog @Inject constructor(
             toolName = TOOL_VSCREEN,
             allowedArgs = setOf(
                 "action", "component", "x", "y", "x2", "y2", "duration", "keycode", "text", "submit", "ocr"
+            ),
+            // 参数那么多，更不能靠运行时回查：schema 一空，调用方连 action 都不知道该填什么
+            inlineParams = mapOf(
+                "action" to ToolParameter(name = "action", type = ParameterType.STRING, description = "影子屏动作", required = true),
+                "component" to ToolParameter(name = "component", type = ParameterType.STRING, description = "launch 用：包名或 包名/Activity", required = false),
+                "x" to ToolParameter(name = "x", type = ParameterType.INTEGER, description = "tap / swipe 起点 X（像素）", required = false),
+                "y" to ToolParameter(name = "y", type = ParameterType.INTEGER, description = "tap / swipe 起点 Y（像素）", required = false),
+                "x2" to ToolParameter(name = "x2", type = ParameterType.INTEGER, description = "swipe 终点 X", required = false),
+                "y2" to ToolParameter(name = "y2", type = ParameterType.INTEGER, description = "swipe 终点 Y", required = false),
+                "duration" to ToolParameter(name = "duration", type = ParameterType.INTEGER, description = "swipe 持续毫秒数", required = false),
+                "keycode" to ToolParameter(name = "keycode", type = ParameterType.STRING, description = "key 用：如 KEYCODE_BACK", required = false),
+                "text" to ToolParameter(name = "text", type = ParameterType.STRING, description = "type 用：要输入的文字", required = false),
+                "submit" to ToolParameter(name = "submit", type = ParameterType.BOOLEAN, description = "type 后是否回车", required = false),
+                "ocr" to ToolParameter(name = "ocr", type = ParameterType.BOOLEAN, description = "shot 用：true 则只回识别文字", required = false)
             ),
             argAllowedValues = mapOf("action" to UI_ALLOWED_ACTIONS),
             idempotent = false

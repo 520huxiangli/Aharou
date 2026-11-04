@@ -14,6 +14,8 @@
 
 | 功能 | 说明 |
 | --- | --- |
+| 快速上手 | 首次启动、接供应商、发第一句话的最短路径 → [文档](/guide/quick-start) |
+| 免费供应商 | 不花钱的模型来源与接入方式 → [文档](/guide/free-providers) |
 | 聊天交互与工作区 | 标题栏、侧边栏、工具栏、消息队列、长文本粘贴折叠、工作区切换 → [文档](/guide/chat) |
 | 运行模式（三种模式） | Build / Plan / Auto 的权限控制与场景 → [文档](/guide/modes) |
 | 检查点与撤销 | AI 修改前自动快照，支持一键安全回滚 → [文档](/guide/checkpoint) |
@@ -66,6 +68,7 @@
 | 入口 | 说明 |
 | --- | --- |
 | 容器与镜像 | 本地 Linux 容器、环境体检与一键补装、自定义镜像、挂载手机目录、远程 SSH 后端 → [文档](/guide/container) |
+| 远程 SSH 模式 | 把终端与 AI 命令放到另一台服务器上跑 → [文档](/guide/remote-ssh) |
 | 网络代理 | 全局代理与供应商级代理（v1.11.0-dev 起）→ [文档](/guide/proxy) |
 | 连接与同步 | SFTP / FTP 通道、工作区同步、内置 FTP 服务端 → [文档](/guide/sync) |
 | 宿主执行后端 | 执行系统命令、读写 /sdcard：有 root 走 root（uid 0），否则走 Shizuku（adb shell，uid 2000） → [文档](/guide/shizuku) |

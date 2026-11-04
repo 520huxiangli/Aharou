@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -77,6 +79,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
@@ -1117,6 +1120,12 @@ internal fun StatusBanner(state: AgentUIState, onRetry: () -> Unit = {}) {
 private fun ErrorBubble(message: String, onRetry: () -> Unit) {
     val clipboard = LocalClipboard.current
     val copyScope = rememberCoroutineScope()
+    val copyLabel = stringResource(R.string.chat_copy)
+    fun copyMessage() {
+        copyScope.launch {
+            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("error", message)))
+        }
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -1144,15 +1153,17 @@ private fun ErrorBubble(message: String, onRetry: () -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(Radius.sm))
-                    .combinedClickable(
-                        onLongClickLabel = stringResource(R.string.chat_copy),
-                        onLongClick = {
-                            copyScope.launch {
-                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("error", message)))
-                            }
-                        },
-                        onClick = {}
-                    )
+                    // 只留长按复制：原来挂的空 onClick 只出水波纹，点一下毫无反馈却像能点。
+                    .pointerInput(message) {
+                        detectTapGestures(onLongPress = { copyMessage() })
+                    }
+                    // 手势不参与无障碍树，需单独声明长按动作，否则读屏用户拿不到「复制」
+                    .semantics {
+                        onLongClick(label = copyLabel) {
+                            copyMessage()
+                            true
+                        }
+                    }
             )
             Spacer(Modifier.width(Spacing.sm))
             // 重试：删掉失败的那一轮重新跑，不回填输入框。

@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # 编译闸门的 CI 放行开关：一个 job 里会多次调 gradlew（构建 + 单测 + 打包）。
+      # gradlew 同时要求 GITHUB_ACTIONS=true，只在本地 export 不会放行。
       AHAROU_CI_BUILD: "1"
     permissions:
       contents: write   # 创建 Release 与上传资产需要写权限
@@ -29,6 +30,22 @@ jobs:
           # versionCode 由 build.gradle.kts 的 gitCommitCount() 取 git rev-list --count HEAD，
           # 浅克隆（默认 depth=1）会得到 1，必须拉完整历史，否则 Release APK 版本号错乱。
           fetch-depth: 0
+
+      # 发布包必须来自 master：tag 打在 feat/* 上同样会触发本 workflow，而 versionCode 校验
+      # （commit count 在功能分支上只更大）拦不住这种情况。手动触发只允许 master。
+      - name: Verify release is from master
+        run: |
+          set -e
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          if [[ "$GITHUB_REF" == refs/heads/* && "$GITHUB_REF" != refs/heads/master ]]; then
+            echo "::error::手动触发只允许 master 分支（当前 $GITHUB_REF）"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::提交 $GITHUB_SHA（$GITHUB_REF）不在 master 上：tag 必须先合入 master 再打"
+            exit 1
+          fi
+          echo "✓ $GITHUB_REF 位于 master 历史中"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -133,11 +150,6 @@ jobs:
 
       # 发版质量门禁：跑单元测试，失败即中止，避免发出回归包。
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关，跑全 flavor 6 变体是重复编译。
-      - name: Authorize build (CI 例外)
-        run: |
-          mkdir -p .aharou
-          printf 'authorized_by: CI\nquote: "workflow ${{ github.workflow }} run ${{ github.run_id }}"\nat: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .aharou/build-allowed
-
       - name: Run unit tests
         run: ./gradlew :app:testUniversalDebugUnitTest
 
@@ -196,7 +208,12 @@ jobs:
         id: prerelease
         run: |
           tag="${{ steps.release.outputs.tag }}"
-          if [[ "$tag" =~ -(rc|dev|beta|alpha)([.0-9]*)?$ ]]; then
+          if [[ "$tag" == manual-* ]]; then
+            # 手动触发出来的包没有经过 tag 这一层人工确认，一律按预发布发，
+            # 免得误点几下就占掉正式版的版本序列。
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "手动触发，强制标记为 pre-release"
+          elif [[ "$tag" =~ -(rc|dev|beta|alpha)([.0-9]*)?$ ]]; then
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "检测到预发布后缀，标记为 pre-release"
           else

@@ -599,7 +599,7 @@ private fun CircleScrollButton(
 /** 消息条数超过此值后，渲染项列表改在后台线程重建。 */
 private const val ASYNC_CHAT_ITEMS_THRESHOLD = 120
 
-private class AsyncChatItems(val sessionId: String?, val items: List<ChatRenderItem>)
+private class AsyncChatItems(val sessionId: String?, val key: Any, val items: List<ChatRenderItem>)
 
 /**
  * 构建 LazyColumn 的渲染项。
@@ -634,11 +634,16 @@ internal fun rememberChatRenderItems(
     }
     val useAsync = messages.size > ASYNC_CHAT_ITEMS_THRESHOLD
     var asyncItems by remember { mutableStateOf<AsyncChatItems?>(null) }
+    val ready = asyncItems?.takeIf { useAsync && it.sessionId == sessionId }
+    // 同会话有上一版就先用它顶着（最多滞后一次后台重建）；只有跨会话的首版没有可比的一版，
+    // 才在主线程当场算——否则会把上一个会话的消息短暂显示出来。
+    val syncItems = if (ready == null) remember(key) { build() } else null
     LaunchedEffect(key, useAsync) {
         if (!useAsync) return@LaunchedEffect
-        val built = withContext(Dispatchers.Default) { build() }
-        asyncItems = AsyncChatItems(sessionId, built)
+        if (asyncItems?.key === key) return@LaunchedEffect
+        // 组合期已经算过同一份输入：直接登记，不再让后台重算一遍（长会话下那是整张表的重复遍历）
+        val built = syncItems ?: withContext(Dispatchers.Default) { build() }
+        asyncItems = AsyncChatItems(sessionId, key, built)
     }
-    val ready = asyncItems?.takeIf { useAsync && it.sessionId == sessionId }
-    return ready?.items ?: remember(key) { build() }
+    return ready?.items ?: syncItems.orEmpty()
 }

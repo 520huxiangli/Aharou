@@ -114,12 +114,14 @@ import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 
 /**
@@ -744,20 +746,21 @@ fun AIChatPanel(
     val showReasoning = displayStreamingReasoning?.hasVisibleContent() == true
 
     // 打字机渲染进度：持有在 LazyColumn 之外，尾巴 item 滚出视口被 dispose 后进度不丢。
+    // 这里不读 .text：那是一份每 24ms 变一次的快照，在面板函数体读它会把整个面板拉进 ~42Hz 重组；
+    // 真正消费它的只有尾巴气泡，读取下沉到 item 里的调用点。
     val typewriter = rememberTypewriterStreamingText(
         text = displayStreamingText ?: "",
         active = streamingText != null,
         sessionKey = currentSessionId
     )
-    val typewriterRenderText = typewriter.text
     // 思考过程同样走打字机：与回复文本共用同一速率自适应逻辑。
     // 正文开始输出（streamingText 非空）即视为思考结束：思考打字机立即收尾，
     // 避免思考还没打完、正文已开始导致两者叠着慢慢打。
-    val typewriterReasoningText = rememberTypewriterStreamingText(
+    val typewriterReasoning = rememberTypewriterStreamingText(
         text = displayStreamingReasoning ?: "",
         active = streamingReasoning != null && streamingText == null,
         sessionKey = currentSessionId
-    ).text
+    )
 
     // 自动滚动跟随
     // 两个状态都必须 saveable：窄窗打开编辑器 / 终端 / Git / 设置都是全屏路由，聊天页整棵组合
@@ -1323,7 +1326,7 @@ fun AIChatPanel(
                                     val reasoningLive = reasoningTiming != null && reasoningTiming?.second == null &&
                                         !showStreaming && preparingTool == null
                                     ReasoningBubble(
-                                        text = typewriterReasoningText,
+                                        text = typewriterReasoning.text,
                                         cache = markdownCache,
                                         showTimer = reasoningLive,
                                         durationMs = reasoningTiming?.let { (start, end) -> end?.minus(start) },
@@ -1338,7 +1341,7 @@ fun AIChatPanel(
                                 }
                                 when (tailKind) {
                                     TailKind.THINKING -> ThinkingBubble(label = thinkingLabel)
-                                    TailKind.STREAMING -> StreamingBubble(text = typewriterRenderText, cache = markdownCache)
+                                    TailKind.STREAMING -> StreamingBubble(text = typewriter.text, cache = markdownCache)
                                     TailKind.COMPACTING -> CompactionProgressBubble()
                                     TailKind.RETRYING -> {
                                         val rs = retryState
@@ -1670,7 +1673,7 @@ fun AIChatPanel(
                         } else {
                             viewModel.executeRewindOption(targetId, option) { text, attachments ->
                                 viewModel.updateInputDraft(text)
-                                viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
+                                scope.launch { viewModel.setPendingAttachments(withContext(Dispatchers.IO) { attachments.map { it.toPendingAttachment() } }) } // 附件要解码图片 + 重编码 + base64，不能压主线程
                             }
                         }
                     },
@@ -1701,7 +1704,7 @@ fun AIChatPanel(
                             if (targetId != null) {
                                 viewModel.executeRewindOption(targetId, option) { text, attachments ->
                                     viewModel.updateInputDraft(text)
-                                    viewModel.setPendingAttachments(attachments.map { it.toPendingAttachment() })
+                                    scope.launch { viewModel.setPendingAttachments(withContext(Dispatchers.IO) { attachments.map { it.toPendingAttachment() } }) }
                                 }
                             }
                         }) { Text(stringResource(R.string.checkpoint_confirm_rewind_action)) }

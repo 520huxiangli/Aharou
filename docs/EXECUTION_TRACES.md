@@ -83,17 +83,16 @@
 | # | 环节 | 关键位置 |
 | --- | --- | --- |
 | 1 | 模型返回 tool_call | [StatefulAgentWorkflow.kt:357](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:357) `LlmResponse`：有调用则入权限队列 |
-| 2 | 到达调用上限 | [StatefulAgentWorkflow.kt:382](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:382) `MAX_TOTAL_TOOL_CALLS` → 补 `TOOL_CALL_LIMIT` 并收尾 |
-| 3 | 查找工具 | [ToolRegistry.kt:19](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolRegistry.kt:19) `getTool(name)` |
-| 4 | 权限入口 | [StatefulAgentWorkflow.kt:1510](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1510) `requestPermissionIfNeeded(...)` |
-| 5 | 策略评估 | [ToolPermissionPolicyEngine.kt:132](app/src/main/java/com/aharou/feature/agent/domain/permission/ToolPermissionPolicyEngine.kt:132) `evaluate(...)`（DENY / ALLOW / ASK） |
-| 6 | 免问短路 | [StatefulAgentWorkflow.kt:1550](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1550) `AUTO_APPROVE` 直接放行 |
-| 7 | 挂起等用户 | [ToolPermissionManager.kt:30](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolPermissionManager.kt:30) `awaitApproval(...)`，界面 [:48](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolPermissionManager.kt:48) `resolve(id, choice)` 唤醒 |
-| 8 | 「始终允许」 | [StatefulAgentWorkflow.kt:1572](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1572) → [ToolPermissionPolicyEngine.kt:266](app/src/main/java/com/aharou/feature/agent/domain/permission/ToolPermissionPolicyEngine.kt:266) `remember(...)` |
-| 9 | 执行 | [AgentTool.kt:119](app/src/main/java/com/aharou/feature/agent/domain/tool/AgentTool.kt:119) `executeWithContext(...)`；流式 [AgentTool.kt:178](app/src/main/java/com/aharou/feature/agent/domain/tool/AgentTool.kt:178) |
-| 10 | 非流式 / 流式 | [StatefulAgentWorkflow.kt:1057](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1057) `runToolSync` / [:1325](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1325) `runToolStream` |
-| 11 | 结果回填 | [StatefulAgentWorkflow.kt:490](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:490) `ToolBatchFinished` → 生成 `ToolResultMessage` → 下一轮 `CallLlm` |
-| 12 | 结果落库 | [AgentTurnRunner.kt:279](app/src/main/java/com/aharou/feature/agent/domain/runner/AgentTurnRunner.kt:279) `persist(..., MessageRole.TOOL, ...)` |
+| 2 | 查找工具 | [ToolRegistry.kt:19](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolRegistry.kt:19) `getTool(name)` |
+| 3 | 权限入口 | [StatefulAgentWorkflow.kt:1510](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1510) `requestPermissionIfNeeded(...)` |
+| 4 | 策略评估 | [ToolPermissionPolicyEngine.kt:132](app/src/main/java/com/aharou/feature/agent/domain/permission/ToolPermissionPolicyEngine.kt:132) `evaluate(...)`（DENY / ALLOW / ASK） |
+| 5 | 免问短路 | [StatefulAgentWorkflow.kt:1550](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1550) `AUTO_APPROVE` 直接放行 |
+| 6 | 挂起等用户 | [ToolPermissionManager.kt:30](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolPermissionManager.kt:30) `awaitApproval(...)`，界面 [:48](app/src/main/java/com/aharou/feature/agent/domain/tool/ToolPermissionManager.kt:48) `resolve(id, choice)` 唤醒 |
+| 7 | 「始终允许」 | [StatefulAgentWorkflow.kt:1572](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1572) → [ToolPermissionPolicyEngine.kt:266](app/src/main/java/com/aharou/feature/agent/domain/permission/ToolPermissionPolicyEngine.kt:266) `remember(...)` |
+| 8 | 执行 | [AgentTool.kt:119](app/src/main/java/com/aharou/feature/agent/domain/tool/AgentTool.kt:119) `executeWithContext(...)`；流式 [AgentTool.kt:178](app/src/main/java/com/aharou/feature/agent/domain/tool/AgentTool.kt:178) |
+| 9 | 非流式 / 流式 | [StatefulAgentWorkflow.kt:1057](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1057) `runToolSync` / [:1325](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:1325) `runToolStream` |
+| 10 | 结果回填 | [StatefulAgentWorkflow.kt:490](app/src/main/java/com/aharou/feature/agent/domain/workflow/StatefulAgentWorkflow.kt:490) `ToolBatchFinished` → 生成 `ToolResultMessage` → 下一轮 `CallLlm` |
+| 11 | 结果落库 | [AgentTurnRunner.kt:279](app/src/main/java/com/aharou/feature/agent/domain/runner/AgentTurnRunner.kt:279) `persist(..., MessageRole.TOOL, ...)` |
 
 **要点**
 

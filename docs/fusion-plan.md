@@ -215,7 +215,7 @@
 ## 9 · 源码仓库与上传工作流
 
 - 仓库：`https://github.com/520huxiangli/Aharou`（私有）
-- 纪律：**每次完工 → 提交 → push**；一键脚本 `scripts/publish_aharou.sh`
+- 纪律：**每次完工 → 提交 → push**；提交走 Conventional Commits，逐项 `git add`（旧的 `scripts/publish_aharou.sh` 会 `git add -A` 直推 master，已停用）
 - 图标素材：`branding/aharou-icon.jpg`（红发狐耳小染）
 
 ---

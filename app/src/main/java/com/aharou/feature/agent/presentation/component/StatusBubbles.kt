@@ -39,7 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -475,6 +475,12 @@ private const val TYPEWRITER_RATE_WINDOW_MS = 500L
 /** 打字机渲染节流间隔（ms）：~40fps 高频平滑快照，彻底消除低速模型的顿挫感。 */
 private const val TYPEWRITER_RENDER_INTERVAL_MS = 24L
 
+/**
+ * 超长流式正文（超出 [STREAMING_RENDER_WINDOW_CHARS]）的打字机快照间隔：每个快照都要重解析
+ * 整个末尾窗口，把间隔放到 ~16fps 换得主线程一半解析量；常规长度仍走 ~40fps 的 [TYPEWRITER_RENDER_INTERVAL_MS]。
+ */
+private const val TYPEWRITER_RENDER_INTERVAL_LONG_MS = 64L
+
 /** 按码点数量截断字符串，避免把 emoji 等代理对截成孤立的半个字符。 */
 private fun truncateToCodePoints(text: String, codePoints: Int): String {
     if (codePoints <= 0) return ""
@@ -541,23 +547,70 @@ internal fun typewriterRate(lag: Float, arrivalRate: Float, drainRate: Float? = 
 internal fun typewriterDrainRate(lag: Float): Float =
     (lag / TYPEWRITER_DRAIN_SECONDS).coerceIn(TYPEWRITER_MIN_RATE, TYPEWRITER_DRAIN_MAX_RATE)
 
-/** 打字机当前渲染结果：[text] 为应渲染文本（上游全文的前缀），[settled] 表示是否已追平全文。 */
-internal data class TypewriterText(val text: String, val settled: Boolean)
+/**
+ * 打字机状态持有器：渲染文本装在自己的 State 里，**只有真正读 [text] 的那个组合作用域**
+ * （尾巴气泡的调用点）才订阅它。
+ *
+ * 以前是 `data class TypewriterText(val text: String, ...)`，创建处就把渲染快照读了出来，
+ * 于是持有它的整个 AIChatPanel 跟着打字机每 [TYPEWRITER_RENDER_INTERVAL_MS]（~42Hz）重组，
+ * 面板里几十个孩子白跑；真正用到这段文字的只有尾巴那一个气泡。
+ *
+ * [shownChars] / [shownHead] 刻意用普通字段而不是 State：它们每个快照都变，做成 State
+ * 等于在面板作用域里订阅同一份高频更新。
+ */
+internal class TypewriterStreamingState(
+    var shownChars: Int,
+    var shownHead: Int,
+) {
+    private val renderState = mutableStateOf("")
+
+    /** 首次组合（或恢复）时的渲染文本；普通字段，读它不会订阅渲染快照。 */
+    var initialRenderText: String = ""
+        private set
+
+    /** 应渲染文本（上游全文的前缀）。读它即订阅。 */
+    val text: String get() = renderState.value
+
+    /**
+     * 用 [upstream] 初始化渲染文本。
+     *
+     * 已渲染长度与前缀指纹进 saveable：切页返回后据此延续打字进度，避免已输出的正文从头重打。
+     * 校验不通过（期间换过轮或换过会话）时补全为当前全文而不是从头打字：挂载这一刻才第一次
+     * 看到的文本对用户就是历史，重打一遍只会让人以为模型在重复输出。
+     */
+    internal fun seed(upstream: String) {
+        val restored = if (isStreamContinuation(upstream, shownChars, shownHead)) {
+            upstream.substring(0, shownChars)
+        } else {
+            upstream
+        }
+        initialRenderText = restored
+        renderState.value = restored
+    }
+
+    /** 快照渲染文本，同时更新 saveable 指纹（两者必须同步，否则恢复时拿指纹去校验另一段文本）。 */
+    internal fun commit(snapshot: String) {
+        renderState.value = snapshot
+        shownChars = snapshot.length
+        shownHead = streamHeadFingerprint(snapshot)
+    }
+}
 
 /**
  * 速率自适应打字机：显示文本滞后于上游累积文本，打字速度跟随模型吐字速度。
  *
- * 此处维护到达进度（[text] 的码点数）与已展示进度。显示进度由动画帧驱动，速率见
+ * 此处维护到达进度与已展示进度。显示进度由动画帧驱动，速率见
  * [typewriterRate]：滞后被压在 [TYPEWRITER_LAG_TARGET] 附近，不会越积越多。
  *
  * 渲染文本每 [TYPEWRITER_RENDER_INTERVAL_MS] 快照一次（throttle 而非 debounce，
  * 保证打字期间渲染持续可见增长），把 md 解析频率压在 ~10fps；text 突变（换会话 /
- * 新一轮 / 重试）时补全为当前全文，之后继续跟着 delta 打字。
+ * 新一轮 / 重试）时补全为当前全文，之后继续跟着 delta 打字。超长流式正文（超出
+ * [STREAMING_RENDER_WINDOW_CHARS]）把快照间隔放到 [TYPEWRITER_RENDER_INTERVAL_LONG_MS]：
+ * 这类文本每快照都要重解析整个末尾窗口，阅读节奏本来就慢，不值得为帧率持续烧主线程。
  *
  * 上游结束（[active] 变 false）**不再一帧补全**：剩余那一小段按 [typewriterDrainRate] 匀速
- * 打完（约 0.2 秒，硬上限 [TYPEWRITER_DRAIN_HARD_MS] 兜底），期间 [TypewriterText.settled]
- * 保持 false，调用方据此把这段文字的渲染交棒给刚落库的助手消息（见 AIChatPanel），
- * 打完后再让落库消息完全接管——用户看不到「整段突然跳出」，也看不到同一段文字重复两份。
+ * 打完（约 0.2 秒，硬上限 [TYPEWRITER_DRAIN_HARD_MS] 兜底），打完后再让落库消息完全接管——
+ * 用户看不到「整段突然跳出」，也看不到同一段文字重复两份。
  */
 @Composable
 internal fun rememberTypewriterStreamingText(
@@ -569,38 +622,31 @@ internal fun rememberTypewriterStreamingText(
      * 判定当成新一轮，把那段内容当着用户的面再逐字打一遍。
      */
     sessionKey: String? = null
-): TypewriterText {
-    // 已渲染文本的长度与前缀指纹进 saveable：切页返回后据此延续打字进度，避免已输出的
-    // 正文从头重打。校验不通过（期间换过轮或换过会话）时补全为当前全文而不是从头打字：
-    // 挂载这一刻才第一次看到的文本对用户就是历史，重打一遍只会让人以为模型在重复输出。
-    var shownChars by rememberSaveable { mutableStateOf(0) }
-    var shownHead by rememberSaveable { mutableStateOf(0) }
-    val restored = remember {
-        if (isStreamContinuation(text, shownChars, shownHead)) text.substring(0, shownChars) else text
+): TypewriterStreamingState {
+    val state = rememberSaveable(
+        saver = listSaver<TypewriterStreamingState, Int>(
+            save = { listOf(it.shownChars, it.shownHead) },
+            restore = { saved -> TypewriterStreamingState(saved[0], saved[1]).apply { seed(text) } },
+        )
+    ) {
+        TypewriterStreamingState(shownChars = 0, shownHead = 0).apply { seed(text) }
     }
     var shownCodePoints by remember {
-        mutableStateOf(restored.codePointCount(0, restored.length).toFloat())
+        mutableStateOf(state.initialRenderText.codePointCount(0, state.initialRenderText.length).toFloat())
     }
-    var renderText by remember { mutableStateOf(restored) }
     // 上游到达事件窗口：(帧时间戳, 累计码点数)，用于估算吐字速率
     val arrivals = remember { ArrayDeque<Pair<Long, Int>>() }
     var lastArrivalNanos by remember { mutableStateOf(0L) }
-    var seenChars by remember { mutableStateOf(restored.length) }
-    var seenHash by remember { mutableStateOf(restored.hashCode()) }
+    var seenChars by remember { mutableStateOf(state.initialRenderText.length) }
+    var seenHash by remember { mutableStateOf(state.initialRenderText.hashCode()) }
     var lastSessionKey by remember { mutableStateOf(sessionKey) }
-    // 渲染文本与其 saveable 指纹必须同步更新，否则恢复时会拿指纹去校验另一段文本
-    val commitRender: (String) -> Unit = { snapshot ->
-        renderText = snapshot
-        shownChars = snapshot.length
-        shownHead = streamHeadFingerprint(snapshot)
-    }
 
     LaunchedEffect(text, active, sessionKey) {
         val sessionChanged = sessionKey != lastSessionKey
         lastSessionKey = sessionKey
         if (sessionChanged || shouldRefreshStreamingText(text, seenChars, seenHash)) {
             shownCodePoints = text.codePointCount(0, text.length).toFloat()
-            commitRender(text)
+            state.commit(text)
             arrivals.clear()
             lastArrivalNanos = 0L
         }
@@ -632,6 +678,11 @@ internal fun rememberTypewriterStreamingText(
         }
 
         // 帧驱动推进显示进度，追平本次文本即退出（text 再变化时本协程被取消重启）
+        val renderIntervalNanos = if (text.length > STREAMING_RENDER_WINDOW_CHARS) {
+            TYPEWRITER_RENDER_INTERVAL_LONG_MS * 1_000_000L
+        } else {
+            TYPEWRITER_RENDER_INTERVAL_MS * 1_000_000L
+        }
         var lastRenderNanos = 0L
         var lastFrameNanos = 0L
         while (shownCodePoints < codePoints) {
@@ -666,21 +717,19 @@ internal fun rememberTypewriterStreamingText(
                 }
 
                 // 渲染节流：到间隔就快照当前显示进度；追平瞬间强制渲染完整文本
-                val intervalNanos = TYPEWRITER_RENDER_INTERVAL_MS * 1_000_000L
-                if (frameNanos - lastRenderNanos >= intervalNanos || shownCodePoints >= codePoints) {
+                if (frameNanos - lastRenderNanos >= renderIntervalNanos || shownCodePoints >= codePoints) {
                     val snapshot = truncateToCodePoints(text, shownCodePoints.toInt())
-                    if (snapshot != renderText) {
+                    if (snapshot != state.text) {
                         lastRenderNanos = frameNanos
-                        commitRender(snapshot)
+                        state.commit(snapshot)
                     }
                 }
             }
         }
         // 追平后确保渲染完整文本（while 退出时 shownCodePoints 已到 available）
-        if (renderText != text) commitRender(text)
+        if (state.text != text) state.commit(text)
     }
-    // settled 直接由「渲染文本是否已等于上游全文」给出：收尾期间调用方据此决定渲染归属
-    return TypewriterText(text = renderText, settled = renderText == text)
+    return state
 }
 
 /**
@@ -690,18 +739,23 @@ internal fun rememberTypewriterStreamingText(
  * 流式阶段以打字机效果渲染（打字进度由调用方经
  * [rememberTypewriterStreamingText] 驱动，见 [AIChatPanel]），打字速度随模型吐字
  * 速度自适应，上游结束时自动补全为完整文本，与落库消息无缝接力。
+ *
+ * 只渲染末尾 [STREAMING_RENDER_WINDOW_CHARS]（[streamingTailWindow]）：本气泡关了缓存、
+ * 也不进长文护栏，不自己截断的话每个快照都会在主线程全量预处理 + 整篇重解析。
  */
 @Composable
 internal fun StreamingBubble(
     text: String,
     cache: MarkdownRenderCache? = null
 ) {
+    val truncated = text.length > STREAMING_RENDER_WINDOW_CHARS
+    val renderText = if (truncated) streamingTailWindow(text) else text
     Column(modifier = Modifier.fillMaxWidth()) {
-        if (text.length >= STREAMING_PREVIEW_CHARS) {
+        if (truncated) {
             Text(stringResource(R.string.agent_streaming_preview_notice), style = MaterialTheme.typography.bodySmall)
         }
         MarkdownContent(
-            text = text,
+            text = renderText,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.fillMaxWidth(),
             cache = cache,
@@ -779,42 +833,7 @@ internal fun ReasoningBubble(
     val toggleExpanded: (Boolean) -> Unit = { next ->
         if (onExpandedChange != null) onExpandedChange(next) else localExpanded = next
     }
-    var timerStartMillis by rememberSaveable { mutableStateOf(0L) }
-    var timerSeenChars by rememberSaveable { mutableStateOf(0) }
-    var timerSeenHead by rememberSaveable { mutableStateOf(0) }
-    var elapsedMillis by remember { mutableStateOf(0L) }
-    val latestText by rememberUpdatedState(text)
-    LaunchedEffect(showTimer, live, sessionKey, timerStartMs) {
-        if (!showTimer || !live) return@LaunchedEffect
-        if (timerStartMs != null) {
-            timerStartMillis = timerStartMs
-        } else if (!isStreamContinuation(latestText, timerSeenChars, timerSeenHead)) {
-            timerStartMillis = System.currentTimeMillis()
-        }
-        while (true) {
-            elapsedMillis = (System.currentTimeMillis() - timerStartMillis).coerceAtLeast(0L)
-            timerSeenChars = latestText.length
-            timerSeenHead = streamHeadFingerprint(latestText)
-            delay(100)
-        }
-    }
     val renderText = if (preRendered) text else rememberThrottledStreamingText(text)
-    val effectiveDurationMs = durationMs?.takeIf { it > 0 } ?: elapsedMillis.takeIf { it > 0 }
-    val formattedDuration = remember(effectiveDurationMs, live) {
-        effectiveDurationMs?.let { ms ->
-            val sec = (ms / 1000.0).coerceAtLeast(0.1)
-            String.format(java.util.Locale.US, "%.1f", sec)
-        }
-    }
-    // 折叠行文案：进行中显示实时耗时，完成后显示总耗时（拿不到耗时数据时只显示「思考完成」）。
-    val label = when {
-        live -> {
-            val secText = formattedDuration ?: "0.1"
-            stringResource(R.string.chat_thinking_running_time, secText)
-        }
-        formattedDuration != null -> stringResource(R.string.chat_thinking_done_time, formattedDuration)
-        else -> stringResource(R.string.chat_thinking_done)
-    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -825,12 +844,13 @@ internal fun ReasoningBubble(
         ) {
             ThinkingGlyph(tint = Brand.IconGray, iconSize = 16.dp)
             Spacer(Modifier.width(Spacing.sm))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            ThinkingDurationLabel(
+                text = text,
+                live = live,
+                showTimer = showTimer,
+                durationMs = durationMs,
+                timerStartMs = timerStartMs,
+                sessionKey = sessionKey
             )
             Spacer(Modifier.width(Spacing.xs))
             ExpandableChevronIcon(
