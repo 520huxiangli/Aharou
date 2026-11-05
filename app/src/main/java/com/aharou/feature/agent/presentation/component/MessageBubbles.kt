@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -67,6 +69,7 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.ContentWidth
 import com.aharou.feature.agent.presentation.AgentUIMessage
+import com.aharou.feature.agent.presentation.SIDE_QUESTION_PREFIX
 import com.aharou.feature.agent.presentation.hasVisibleContent
 import com.aharou.feature.agent.presentation.MessageRole
 import compose.icons.FeatherIcons
@@ -282,6 +285,11 @@ internal fun AgentMessageItem(
         return
     }
 
+    if (message.role == MessageRole.ASSISTANT && message.content.startsWith(SIDE_QUESTION_PREFIX)) {
+        SideQuestionCard(message)
+        return
+    }
+
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
     val hasAttachments = message.attachments.isNotEmpty()
@@ -387,7 +395,7 @@ internal fun AgentMessageItem(
                                 color = chatUserBubbleColor(),
                                 modifier = Modifier.widthIn(max = maxUserBubbleWidth)
                             ) {
-                                SelectionContainer {
+                                SelectableMessageContainer {
                                     CompositionLocalProvider(
                                         LocalTextSelectionColors provides TextSelectionColors(
                                             handleColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -416,7 +424,7 @@ internal fun AgentMessageItem(
                                 color = chatAssistantBubbleColor(),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                SelectionContainer {
+                                SelectableMessageContainer {
                                     CompositionLocalProvider(
                                         LocalTextSelectionColors provides TextSelectionColors(
                                             handleColor = MaterialTheme.colorScheme.primary,
@@ -438,7 +446,7 @@ internal fun AgentMessageItem(
                         } else {
                             // 助手正文：不套容器，直接铺在页面底色上（文档流）。分块之间只留一个段落间距，
                             // 整条消息看起来仍是连续的一段正文。
-                            SelectionContainer {
+                            SelectableMessageContainer {
                                 CompositionLocalProvider(
                                     LocalTextSelectionColors provides TextSelectionColors(
                                         handleColor = MaterialTheme.colorScheme.primary,
@@ -903,3 +911,20 @@ private fun linkifyUserText(text: String, linkColor: Color): AnnotatedString =
         }
         if (index < text.length) append(text.substring(index))
     }
+
+/**
+ * 消息正文的选择容器。
+ *
+ * Compose 在选区所在的 Selectable 被卸载时不会收起浮动菜单：菜单留在屏上，重建时选区已空，
+ * 「复制」因 enabled=false 被整项丢弃，只剩「全选」，且反复长按也刷不回来。
+ * 消息列表回收、分块重组、Markdown 兑底换真渲染都会走到这个分支，
+ * 所以容器离场时主动把工具条收掉，让用户重新选，而不是留一个死菜单。
+ */
+@Composable
+private fun SelectableMessageContainer(content: @Composable () -> Unit) {
+    val toolbar = LocalTextToolbar.current
+    DisposableEffect(Unit) {
+        onDispose { runCatching { toolbar.hide() } }
+    }
+    SelectionContainer(content = content)
+}
