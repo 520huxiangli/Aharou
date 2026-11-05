@@ -35,10 +35,15 @@ class FeishuBotService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    private val foregroundGuard by lazy { ImForegroundGuard(this, NOTIFICATION_ID, CHANNEL_ID, TAG) }
+
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
-        startForegroundWithNotification()
+        if (!foregroundGuard.promote { buildNotification(getString(R.string.im_feishu_service_running), null) }) {
+            stopSelf()
+            return
+        }
         bridge.start(serviceScope)
         serviceScope.launch {
             bridge.state.collect { state -> runCatching { updateNotification(state) } }
@@ -47,7 +52,7 @@ class FeishuBotService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopSelf()
+            foregroundGuard.stop(startId)
             return START_NOT_STICKY
         }
         return START_STICKY
@@ -73,17 +78,6 @@ class FeishuBotService : Service() {
                 )
             )
         }
-    }
-
-    private fun startForegroundWithNotification() {
-        runCatching {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                buildNotification(getString(R.string.im_feishu_service_running), null),
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        }.onFailure { FileLogger.e(TAG, "启动前台通知失败", it) }
     }
 
     private fun updateNotification(state: com.aharou.feature.im.domain.ImChannelState) {

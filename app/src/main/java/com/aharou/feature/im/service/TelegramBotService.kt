@@ -41,11 +41,16 @@ class TelegramBotService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    private val foregroundGuard by lazy { ImForegroundGuard(this, NOTIFICATION_ID, CHANNEL_ID, TAG) }
+
     override fun onCreate() {
         super.onCreate()
         FileLogger.i(TAG, "服务创建")
         ensureChannel()
-        ensureForeground()
+        if (!foregroundGuard.promote { buildNotification() }) {
+            stopSelf()
+            return
+        }
         bridge.start(serviceScope)
         serviceScope.launch {
             bridge.state.collect { ensureForeground() }
@@ -57,8 +62,7 @@ class TelegramBotService : Service() {
             ACTION_STOP -> {
                 FileLogger.i(TAG, "收到停止指令")
                 bridge.stop()
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                stopSelf(startId)
+                foregroundGuard.stop(startId)
             }
             else -> {
                 ensureForeground()
@@ -80,8 +84,7 @@ class TelegramBotService : Service() {
     override fun onTimeout(startId: Int, fgsType: Int) {
         FileLogger.w(TAG, "前台服务超时（type=$fgsType），停止")
         bridge.stop()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf(startId)
+        foregroundGuard.stop(startId)
     }
 
     private fun ensureChannel() {
@@ -97,16 +100,9 @@ class TelegramBotService : Service() {
         }
     }
 
-    /** 进入前台并刷新通知文案。后台启动可能抛 ForegroundServiceStartNotAllowedException，捕获仅记录。 */
+    /** 刷新通知文案；首次调用顺带完成前台提升（失败会换兜底通知再试一次）。 */
     private fun ensureForeground() {
-        runCatching {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                buildNotification(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        }.onFailure { FileLogger.e(TAG, "startForeground 失败", it) }
+        foregroundGuard.refresh { buildNotification() }
     }
 
     private fun buildNotification(): Notification {
