@@ -17,8 +17,6 @@
 | 「单测 / 测试」 | 只跑单元测试 | 写令牌跑 `:app:test*` / `check*` | 出不了包 |
 | 「发版」 | 走发版流程、出正式版 | 打 tag、推分支与 tag、盯 CI、发 Release | 不进 Gradle：既不能出包也不能跑单测 |
 
-- 三个口令互不顶替，也不能拿上一轮的顶这一轮。发版流程里要跑定点单测，**主人得单独说一句「单测」**。
-
 **`gradlew` 有硬闸门**（`gradlew` 开头的脚本段）：没有 `.aharou/build-allowed` 就拒绝执行任何 Gradle 任务，包括单测和 `checkMigrations`。主人明确同意后写入：
 
 ```
@@ -42,6 +40,8 @@ Aharou 特有的部分是：子代理交付后只做只读核实（读文件、�
 **经用户同意后**，改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
 
 单元测试（`:app:testUniversalDebugUnitTest` / `:app:testArmsoloDebugUnitTest`——两个 flavor 各一个任务名，**没有** `testDebugUnitTest`）在容器里可能根本跑不动：项目用 Robolectric，首次要下对应 SDK 的 `android-all-instrumented`（约 190 MB，**不走 Gradle 镜像**，流量网络下会永久 hang：worker `wchan=futex_wait`、CPU 近 0、daemon 日志停写）。**跑不动就跳过交给 CI** —— `.github/workflows/android-release.yml` 在构建前会跑同一套单测，失败会拦住发版。
+
+**SSE 断流测试基建**：`app/src/test/.../domain/provider/FakeSseStream.kt` 提供三种流——正常收尾、半截 EOF、读到一半抛 `IOException`。后两种必须分开构造：EOF 由 adapter 翻译成统一的「SSE 流被中断」文案，底层异常则要原样上抛，用 EOF 冒充异常就测不出「异常没被吞」。`interruptingBody` 逐条事件投递完再抛错，不能一次灌完——`BufferedReader` 的 `fill()` 会把异常与本次读取捆在一起，一次写完会让故障在第一次读取就发生，复现不出「已吐出半段再断」。
 
 | 用途 | 命令 |
 | --- | --- |
@@ -76,7 +76,7 @@ Aharou 特有的部分是：子代理交付后只做只读核实（读文件、�
 - `ci.yml`：push 与 PR 门禁，依次跑迁移对账、技能自检、架构门禁（含基线只许缩的比对）、`:app:assembleUniversalDebug`、`:app:testUniversalDebugUnitTest`。
 - `android-release.yml`：由 push `v*` tag 触发，先校验 tag 位于 master 历史中，再跑迁移对账、技能自检与单测，然后构建 armsolo / x86solo 两个单架构 Release APK 并发布 GitHub Release（不发 AAB）；手动触发只允许 master，且强制标 pre-release。
 - `beta.yml`：push `master` 时自动构建 `.beta` 测试包（universal、正式签名、与 release 同配置），产物既传 Actions Artifacts（保留 90 天），也发到固定 tag `beta-latest` 的 prerelease Release（每次覆盖，测试版通道靠它检测）；纯文档/资源改动按 `paths-ignore` 跳过，手动触发只允许 master。
-- `sync-container-images.yml`：每周一 cron 从上游拉容器 rootfs（两个 ABI）→ 校验和 → 传 cnb → 改写两份镜像清单，代码里手改清单会被下次同步覆盖。
+- `sync-container-images.yml`：每周一 cron 从上游拉容器 rootfs（两个 ABI）→ 校验和 → 传 cnb → 改写两份镜像清单。
 - `sync-maven-index.yml`：每周一 cron 把高频 Maven 坐标的版本元数据抓成离线索引发到 cnb，App 的依赖检查在网络仓库全部挂掉时用它兜底。
 - `docs-deploy.yml`：**只在 push `v*` tag 时部署**文档站到 GitHub Pages（https://520huxiangli.github.io/Aharou/）——改完 `docs-site/` 推 `master` 不会上线，要等下一次发版才生效。
 - `sync-models.yml`：每日 cron 同步 models.dev 模型数据到 data 分支（全量），不用手动跑；发版前另需手动跑 `scripts/update-models-dev-assets.py` 只保留内置 12 个官方 provider（见 `40-git-release.md` 的发版步骤 0）。

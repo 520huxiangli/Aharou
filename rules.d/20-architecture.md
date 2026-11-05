@@ -23,6 +23,12 @@ feature-based 分层 + DDD。入口 `AIEditorApp` 初始化 `FileLogger`、`Term
 
 `scripts/check_architecture.py` 有 1000 行上限（`architecture-policy.json` 的 `maxFileLines`），超限文件登记在 `.architecture-baseline.json` 且只许缩减。基线到了上限的文件（如 `ContextCompactor.kt`、`ScheduledTasksSection.kt`）再加任何逻辑前，先把新逻辑拆到同包新文件，**不要跑 `--sync-baseline` 抬基线**。
 
+## 扩展点（改这些地方前先看）
+
+- **新增内置斜杠命令**：三步一起做，缺一步就不进注册表——`ActionCommandHandler` 实现类、`SlashCommandContext` 补方法并在 `AIAgentViewModel` 实现、`SlashCommandModule` 加 `@Binds @IntoSet`。注册表没命中时请求会原样发给模型，表现是「模型说自己不是命令」，不是报错。
+- **工具结果的文本序列化**：一律经 `ToolResult.toTransportString()`，它会把 `images` 里的 `base64Data` 置空——图片本体只走 `ToolRunResult.images` 的多模态通道。改序列化时别把 base64 放回文本，一张截图就能把会话上下文吸干。
+- **IM 前台服务**：四个 bot 服务统一走 `ImForegroundGuard.promote/refresh/stop`。`startForeground` 失败不能只记日志（系统那笔账没清，几秒后照样抛 `RemoteServiceException`），提升成功前也不许 `stopSelf`。
+
 ## 数据库与迁移
 
 Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁移分两套，**一个版本只能二选一**：
