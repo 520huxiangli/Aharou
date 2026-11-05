@@ -94,7 +94,17 @@ sealed class AgentEvent {
     /** 上下文压缩流程已结束（成功或失败）。仅用于 UI 实时展示，不落库。 */
     object CompactionFinished : AgentEvent()
 
-    data class ContextUsage(val inputTokens: Int, val inputBudget: Int, val estimated: Boolean) : AgentEvent()
+    /**
+     * 上下文占用。
+     * [breakdown] 是同一时刻估算的分项（系统提示 / 工具定义 / 对话历史），界面用它回答
+     * 「窗口被什么吃掉了」；只有估算路径能给出分项，真实 usage 回填时沿上一次的分项。
+     */
+    data class ContextUsage(
+        val inputTokens: Int,
+        val inputBudget: Int,
+        val estimated: Boolean,
+        val breakdown: ContextBreakdown? = null
+    ) : AgentEvent()
 
     /** 上下文压缩失败（如压缩模型不可用）。携带失败原因，UI 展示为可展开的失败卡片；不落库。 */
     data class CompactionFailed(val reason: String) : AgentEvent()

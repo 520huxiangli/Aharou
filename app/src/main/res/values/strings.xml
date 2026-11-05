@@ -814,6 +814,8 @@
     <string name="chat_remove_attachment">移除附件</string>    <string name="chat_no_models_hint">暂无可用模型，请在「AI 供应商」中添加</string>
     <string name="chat_stop_long_press_hint">停止（长按强制打断）</string>
     <string name="chat_send">发送</string>
+    <string name="chat_side_question_label">旁问</string>
+    <string name="chat_side_question_hint">只回答这一次，不进入后续对话上下文</string>
     <string name="chat_perm_single_use_desc">含命令替换/管道/重定向，无法记住，仅可单次放行</string>
     <string name="chat_perm_always_tool_desc">「始终允许」将在本项目记住：该工具的全部调用</string>
     <string name="chat_perm_always_prefix">「始终允许」将在本项目记住：</string>
@@ -829,6 +831,13 @@
 
     <!-- Checkpoint & Rewind -->
     <string name="checkpoint_rewind_title">检查点与撤销</string>
+    <string name="checkpoint_rewind_diff_summary">将有 %1$d 个文件被还原（%2$d 个有实际改动）</string>
+    <string name="checkpoint_rewind_diff_conflict">%1$d 个文件被检查点之外的操作改过，回退会跳过</string>
+    <string name="checkpoint_rewind_diff_truncated">文件较多，仅列出前 %1$d 个</string>
+    <string name="checkpoint_rewind_diff_conflict_badge">跳过</string>
+    <string name="checkpoint_rewind_diff_unchanged">无改动</string>
+    <string name="checkpoint_rewind_diff_expand">展开</string>
+    <string name="checkpoint_rewind_diff_collapse">收起</string>
     <string name="checkpoint_target_prompt">目标消息：%1$s</string>
     <string name="checkpoint_restore_code_and_conversation">恢复代码与对话</string>
     <string name="checkpoint_restore_code_and_conversation_desc">将代码与对话均回滚至此检查点之前</string>
@@ -867,6 +876,13 @@
     <string name="chat_turn_cancelled">已取消</string>
 
     <string name="chat_context_usage">上下文已用 %1$d%%</string>
+    <string name="chat_context_breakdown_title">上下文构成</string>
+    <string name="chat_context_breakdown_summary">估算已用 %1$d tokens</string>
+    <string name="chat_context_breakdown_estimated">数值为估算，供应商未返回精确用量</string>
+    <string name="chat_context_breakdown_system">系统提示</string>
+    <string name="chat_context_breakdown_tools">工具定义</string>
+    <string name="chat_context_breakdown_history">对话历史</string>
+    <string name="chat_context_breakdown_tokens">%1$d tokens</string>
     <string name="chat_bg_command_done">后台命令已完成</string>
     <string name="chat_bg_commands_done">%1$d 个后台任务已完成</string>
     <string name="chat_bg_commands_partial_failed">%1$d 个后台任务结束，%2$d 个失败</string>
@@ -883,6 +899,7 @@
     <string name="slash_command_compress_desc">手动触发当前会话的上下文压缩</string>
     <string name="slash_command_init_desc">分析当前工作区代码库，生成或改进项目规则 AGENTS.md</string>
     <string name="slash_command_usage_desc">查看今日与累计的调用次数、token 用量与预估费用</string>
+    <string name="slash_command_btw_desc">旁问：就当前对话问一句，答案不进主线上下文</string>
     <string name="retry_error_rate_limit">速率限制</string>
     <string name="retry_error_server_overloaded">服务器负载过高</string>
     <string name="retry_error_server">服务端错误</string>
@@ -1436,6 +1453,9 @@
     <string name="skills_add_from_market_desc">浏览官方与社区技能源，一键安装</string>
     <string name="skills_enable">是否启用</string>
     <string name="skills_export">导出</string>
+    <string name="skills_archived_title">已归档（%1$d）</string>
+    <string name="skills_archived_hint">删掉的技能还在归档区里，点一下就能恢复</string>
+    <string name="skills_archived_row">归档于 %1$s</string>
     <string name="skills_export_desc">打包成 zip，可分享给别人或留档</string>
     <string name="skills_export_running">正在打包…</string>
     <string name="skills_export_failed">导出失败</string>
@@ -3104,6 +3124,11 @@
     <string name="prompts_block_time">当前时间</string>
     <string name="prompts_block_workspace_change">工作区切换提醒</string>
     <string name="rules_builtin_subtitle">低频规则，AI 需要时才用 loadRule 取正文</string>
+    <string name="rules_builtin_new">新建按需规则</string>
+    <string name="rules_builtin_new_hint">名字用小写字母、数字、下划线或连字符，同时作为文件名与 loadRule 的调用名</string>
+    <string name="rules_builtin_name">规则名</string>
+    <string name="rules_builtin_delete">删除</string>
+    <string name="rules_builtin_reset">重置为默认</string>
     <string name="rules_builtin_editor_hint">保存后写到 ~/.aharou/rules/ 下的同名文件，覆盖内置版本。</string>
     <string name="prompts_disable_builtin_hint">只保留你的片段；需要自己补全全部规则，谨慎开启</string>
     <!-- 检查点：冲突检测与撤销恢复 -->

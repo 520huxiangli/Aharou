@@ -107,7 +107,9 @@ import com.aharou.feature.agent.domain.command.SlashCommandRegistry
 import com.aharou.feature.agent.domain.command.SlashCommandRegistry.ResolvedCommand
 import com.aharou.feature.agent.domain.skill.Skill
 import com.aharou.feature.agent.presentation.AgentAttachment
+import com.aharou.feature.agent.domain.sidequestion.SideQuestionRunner
 import com.aharou.feature.agent.presentation.component.PendingUploadAttachment
+import com.aharou.feature.agent.presentation.component.decodeAttachmentJson
 import com.aharou.feature.agent.presentation.component.PastedText
 import com.aharou.feature.agent.presentation.component.RewindOption
 import com.aharou.feature.agent.presentation.component.SubAgentCardState
@@ -209,6 +211,8 @@ class AIAgentViewModel @Inject constructor(
     private val agentPermissionNotifier: AgentPermissionNotifier,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val agentTurnRunner: AgentTurnRunner,
+    private val ruleFileRepository: com.aharou.feature.agent.domain.rule.RuleFileRepository,
+    private val sideQuestionRunner: SideQuestionRunner,
     private val turnEndBridge: AgentTurnEndBridge,
     private val sessionPanels: SessionPanelController,
     private val scheduledTaskDao: ScheduledTaskDao,
@@ -344,7 +348,7 @@ class AIAgentViewModel @Inject constructor(
     private fun describeFailure(event: AgentEvent.Failed): String {
         val localized = when (event.reasonCode) {
             // Gemini 的 finishReason 全大写，这几种与 Anthropic 的 refusal 同义（内容策略拦截）。
-            "refusal", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII" -> context.getString(R.string.agent_stop_refusal)
+            "refusal", "content_filter", "SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII" -> context.getString(R.string.agent_stop_refusal)
             "model_context_window_exceeded" -> context.getString(R.string.agent_stop_context_exceeded)
             "input_budget_exceeded" -> context.getString(R.string.agent_input_budget_exceeded)
             "empty_response" -> context.getString(R.string.agent_stop_empty_response)
@@ -1424,7 +1428,8 @@ class AIAgentViewModel @Inject constructor(
 
         /** 续跑时发给模型的引导语：任务中途被中断后接着进度做，避免重做已完成部分。 */
         const val RESUMED_TURN_PROMPT = "上一轮任务在中途被中断。请基于当前已有的对话与文件进度继续，" +
-            "不要重做已经完成的部分，也不要重新读取或重写已经正确的文件。"
+            "不要重做已经完成的部分，也不要重新读取或重写已经正确的文件。" +
+            "如果上一条回答写到一半被打断，请从断点接着写完，不要重复已经输出的内容。"
 
         /** 通知正文里的回复摘要上限（字符）：横幅/胶囊都放不下整段回复。 */
         const val NOTIFICATION_BODY_MAX = 60
@@ -2699,7 +2704,9 @@ class AIAgentViewModel @Inject constructor(
                 targetSessionId = sid,
                 isAutoTrigger = true,
                 persistUserMessage = false
-            )
+            ).join()
+            // init 用写文件工具落的盘，不经过 RuleFileRepository，这里补一次整理。
+            workspaceOf(sid).takeIf { it.isNotBlank() }?.let { ruleFileRepository.scheduleCurate(java.io.File(it)) }
         }
     }
 
@@ -2971,9 +2978,10 @@ class AIAgentViewModel @Inject constructor(
         _rewindUndoRecords.value = checkpointManager.listUndoRecords(sessionId)
     }
 
-    fun dismissRewindMenu() {
-        _targetRewindMessageId.value = null
-    }
+    fun dismissRewindMenu() { _targetRewindMessageId.value = null }
+
+    suspend fun previewRewindDiff(messageId: String): CheckpointManager.RewindDiff? =
+        _currentSessionId.value?.let { sid -> checkpointDao.getCheckpointBySessionAndMessage(sid, messageId)?.let { runCatching { checkpointManager.previewRewindDiff(sid, it.id) }.getOrNull() } }
 
     fun executeRewindOption(
         messageId: String,
@@ -3035,18 +3043,15 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 错误横幅的一键重试。失败那一轮已有进度（非空回答或工具结果）时接着进度续跑——
-     * 删掉重跑会让模型把已完成的部分当新任务重做，反而覆盖磁盘上已经改对的代码。
-     * 只有在首个回答产出之前就失败、没有任何进度时，才删除这一轮重新跑。
-     *
-     * 注意删除从用户消息自身开始：重跑时 runner 会重新落一条同样的用户消息，只删「其后」会多出气泡。
+     * 错误横幅的一键重试：有进度（非空回答或工具结果）就接着续跑，删掉重跑会让模型把已完成的部分当新任务重做；之前完全没产出时才删除这一轮重跑。拿不到用户消息时也按续跑处理，且先收起横幅再取消旧任务。
      */
     fun retryLastFailedRequest() = viewModelScope.launch {
         val sessionId = _currentSessionId.value ?: return@launch
-        val userMessage = lastUserInputMessage(sessionId) ?: return@launch
-        cancelRunningTurn(sessionId)
+        val userMessage = lastUserInputMessage(sessionId)
         setAgentState(sessionId, AgentUIState.Idle)
-        if (turnHasProgressAfter(sessionId, userMessage.timestamp)) {
+        cancelRunningTurn(sessionId)
+        FileLogger.i(TAG, "重试：sid=$sessionId hasUserMessage=${userMessage != null}")
+        if (userMessage == null || turnHasProgressAfter(sessionId, userMessage.timestamp)) {
             executeAgentRequestStream(
                 request = RESUMED_TURN_PROMPT,
                 projectRoot = workspaceOf(sessionId),
@@ -3063,22 +3068,19 @@ class AIAgentViewModel @Inject constructor(
         executeAgentRequestStream(
             request = userMessage.content,
             projectRoot = workspaceOf(sessionId),
-            inputAttachments = decodeAttachments(userMessage.attachmentsJson),
+            inputAttachments = decodeAttachmentJson(userMessage.attachmentsJson),
             targetSessionId = sessionId
         )
     }
 
-    /** 该用户消息之后是否已有可续的进度：工具结果，或非空且非错误行的助手回答。 */
     private suspend fun turnHasProgressAfter(sessionId: String, timestamp: Long): Boolean =
         agentMessageDao.getMessagesBySessionOnce(sessionId).any {
-            it.timestamp > timestamp && !it.isError &&
-                (it.role == MessageRole.TOOL.name ||
-                    (it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank()))
+            it.timestamp > timestamp && (it.role == MessageRole.TOOL.name ||
+                (it.role == MessageRole.ASSISTANT.name && it.content.isNotBlank()))
         }
 
     /**
-     * 「重新生成」：旧回答不删，而是连同本轮的工具过程一起标记为变体组的一版（退出上下文回放），
-     * 删掉本轮的用户消息后原样重跑，把新产出标成下一版；气泡下方据此左右切换。
+     * 「重新生成」：旧回答连同本轮工具过程标成变体组的一版（退出上下文回放），重跑后新产出是下一版。
      */
     fun regenerateMessage(messageId: String) = viewModelScope.launch {
         val sessionId = _currentSessionId.value ?: return@launch
@@ -3121,7 +3123,7 @@ class AIAgentViewModel @Inject constructor(
         executeAgentRequestStream(
             request = userMessage.content,
             projectRoot = workspaceOf(sessionId),
-            inputAttachments = decodeAttachments(userMessage.attachmentsJson),
+            inputAttachments = decodeAttachmentJson(userMessage.attachmentsJson),
             targetSessionId = sessionId
         ).join()
 
@@ -3138,7 +3140,6 @@ class AIAgentViewModel @Inject constructor(
         _variantSelections.value = _variantSelections.value + (groupId to nextIndex)
     }
 
-    /** 切换变体组展示的版本（[position] 为组内排序后的下标）：被选中的参与上下文回放，其余退出。 */
     fun selectMessageVariant(groupId: String, position: Int) {
         viewModelScope.launch {
             val sessionId = _currentSessionId.value ?: return@launch
@@ -3157,7 +3158,6 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
-    /** 删掉变体组的一个版本（只剩一个版本时不动，UI 也不给入口）；选不中已删的下标时回退到前一个。 */
     fun deleteMessageVariant(groupId: String, position: Int) {
         viewModelScope.launch {
             val sessionId = _currentSessionId.value ?: return@launch
@@ -3188,9 +3188,9 @@ class AIAgentViewModel @Inject constructor(
                 !it.content.startsWith(BACKGROUND_NOTIFICATION_PREFIX)
         }
 
-    private fun decodeAttachments(raw: String?): List<AgentAttachment> {
-        if (raw.isNullOrBlank()) return emptyList()
-        return runCatching { json.decodeFromString<List<AgentAttachment>>(raw) }.getOrDefault(emptyList())
+    override fun askSideQuestion(question: String) {
+        val sid = _currentSessionId.value ?: return
+        viewModelScope.launch { if (question.isNotBlank()) sideQuestionRunner.ask(sid, question) }
     }
 
     /** 中断当前轮并清掉运行态（重试 / 重新生成前调用），与回退流程同款收尾。 */

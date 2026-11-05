@@ -14,6 +14,8 @@ import java.io.File
 import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 
 internal data class UploadedWorkspaceFile(
     val fileName: String,
@@ -316,3 +318,14 @@ internal fun formatBytes(bytes: Long): String {
         else -> "$bytes B"
     }
 }
+
+/**
+ * 附件 JSON 解不开按无附件处理：老记录或手改过的数据不该让整轮对话失败。
+ * 配置与 ViewModel 里那份保持 ignoreUnknownKeys 一致，否则新增字段会把旧记录读炸。
+ */
+internal fun decodeAttachmentJson(raw: String?): List<AgentAttachment> {
+    if (raw.isNullOrBlank()) return emptyList()
+    return runCatching { ATTACHMENT_JSON.decodeFromString<List<AgentAttachment>>(raw) }.getOrDefault(emptyList())
+}
+
+private val ATTACHMENT_JSON = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }

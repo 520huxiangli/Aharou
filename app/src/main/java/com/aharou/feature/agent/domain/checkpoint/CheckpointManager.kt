@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.checkpoint
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.LineDiff
 import com.aharou.feature.agent.data.local.dao.CheckpointDao
 import com.aharou.feature.agent.data.local.entity.CheckpointEntity
 import com.aharou.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
@@ -28,6 +29,49 @@ class CheckpointManager @Inject constructor(
     data class RestoreResult(val restoredCount: Int, val conflicts: List<String>) {
         val hasConflict: Boolean get() = conflicts.isNotEmpty()
     }
+
+    /** 回退预览里单个文件的去向，三态与 [restoreCodeToCheckpoint] 的实际行为一一对应。 */
+    enum class RewindFileState {
+        /** 会被还原，且内容与磁盘当前不同（[RewindFileDiff.lines] 有内容）。 */
+        RESTORED_WITH_CHANGES,
+
+        /** 会被还原，但快照与当前内容一致，落盘动作不改任何一行。 */
+        RESTORED_UNCHANGED,
+
+        /** 被检查点之外的操作改过，回退会跳过它（不覆盖别人的改动）。 */
+        CONFLICT
+    }
+
+    /**
+     * 单个文件的回退预览。
+     *
+     * [lines] 是「磁盘当前内容 → 回退后内容」的行级差异；超过 [MAX_PREVIEW_DIFF_LINES] 截断，
+     * 由 [truncated] 标记。新增/删除行数是完整差异的计数，不受截断影响（否则界面上的 +N 会少报）。
+     */
+    data class RewindFileDiff(
+        val filePath: String,
+        val changeType: String,
+        val state: RewindFileState,
+        val addedLines: Int,
+        val removedLines: Int,
+        val lines: List<LineDiff.DiffLine>,
+        val truncated: Boolean
+    )
+
+    /**
+     * 一次回退预览：会被还原的文件（有改动的排在前面，其次是无改动的）、冲突文件排在最后，
+     * 冲突不该夹在「能还原」的文件中间，界面要成组提示这些文件回退不会动。
+     *
+     * [files] 最多 [MAX_PREVIEW_FILE_COUNT] 条，被截断时 [restoreFileCount] 等计数也只覆盖
+     * 已扫描的那批——超上限时不再逐文件读内容推演，否则大工作区会同时打爆内存与 IO。
+     */
+    data class RewindDiff(
+        val files: List<RewindFileDiff>,
+        val restoreFileCount: Int,
+        val changedFileCount: Int,
+        val conflictCount: Int,
+        val truncated: Boolean
+    )
 
     /** 撤销恢复所需的现场记录：单个文件在那一刻的样子。 */
     @Serializable
@@ -227,6 +271,164 @@ class CheckpointManager @Inject constructor(
                 .sumOf { checkpointDao.getFileSnapshotsForCheckpoint(it.id).size }
         }
 
+    /**
+     * 预览回退到 [targetCheckpointId] 会发生什么：哪些文件会被还原、哪些本来就没变、哪些会被跳过。
+     *
+     * 只读：不写文件、不改摘要。范围与判定口径都跟 [restoreCodeToCheckpoint] 同源——同样从目标检查点
+     * 往后（含目标）逐份倒着走，同样按写入摘要判断冲突。两者一旦分叉，预览说「能还原」而真正回退时被跳过，
+     * 用户会以为回退失败。
+     */
+    suspend fun previewRewindDiff(
+        sessionId: String,
+        targetCheckpointId: String
+    ): RewindDiff = withContext(Dispatchers.IO) {
+        val allCheckpoints = checkpointDao.getCheckpointsForSession(sessionId)
+        val targetIndex = allCheckpoints.indexOfFirst { it.id == targetCheckpointId }
+        if (targetIndex == -1) return@withContext RewindDiff(emptyList(), 0, 0, 0, false)
+
+        val entries = LinkedHashMap<String, PreviewEntry>()
+        var truncated = false
+
+        // 倒序（新→旧）与 restore 一致：同一个文件在多个检查点各有快照时，回退是逐份往回写的，
+        // 冲突判定必须跟着这条链走，只拿最早那份去比会把能干净回退的文件误报成冲突。
+        for (cp in allCheckpoints.subList(targetIndex, allCheckpoints.size).reversed()) {
+            for (snapshot in checkpointDao.getFileSnapshotsForCheckpoint(cp.id)) {
+                val entry = entries[snapshot.filePath]
+                if (entry == null) {
+                    if (entries.size >= MAX_PREVIEW_FILE_COUNT) {
+                        truncated = true
+                        continue
+                    }
+                    entries[snapshot.filePath] = PreviewEntry(snapshot.filePath)
+                        .also { applyPreviewSnapshot(it, snapshot) }
+                } else {
+                    applyPreviewSnapshot(entry, snapshot)
+                }
+            }
+        }
+
+        val changed = ArrayList<RewindFileDiff>()
+        val unchanged = ArrayList<RewindFileDiff>()
+        val conflicts = ArrayList<RewindFileDiff>()
+        var restoreCount = 0
+        for (entry in entries.values) {
+            if (entry.lastOutcomeConflict) {
+                conflicts.add(
+                    RewindFileDiff(entry.filePath, entry.changeType, RewindFileState.CONFLICT, 0, 0, emptyList(), false)
+                )
+                continue
+            }
+            if (!entry.restored) continue
+            restoreCount++
+            val before = entry.diskContent ?: ""
+            val after = entry.virtualContent ?: ""
+            if (before == after) {
+                unchanged.add(
+                    RewindFileDiff(
+                        entry.filePath,
+                        entry.changeType,
+                        RewindFileState.RESTORED_UNCHANGED,
+                        0,
+                        0,
+                        emptyList(),
+                        false
+                    )
+                )
+                continue
+            }
+            val rawDiff = LineDiff.diff(before, after)
+            // 空文件在 split("\n") 后被当成「一个空行」，空串那一侧会多冒一条假的新增/删除；
+            // 只在整份内容为空的那一侧过滤，行数统计才与界面上看到的行一致。
+            val diff = rawDiff.filterNot { line ->
+                (before.isEmpty() && line.type == LineDiff.LineType.REMOVE && line.text.isEmpty()) ||
+                    (after.isEmpty() && line.type == LineDiff.LineType.ADD && line.text.isEmpty())
+            }
+            val diffTruncated = diff.size > MAX_PREVIEW_DIFF_LINES
+            changed.add(
+                RewindFileDiff(
+                    filePath = entry.filePath,
+                    changeType = entry.changeType,
+                    state = RewindFileState.RESTORED_WITH_CHANGES,
+                    addedLines = diff.count { it.type == LineDiff.LineType.ADD },
+                    removedLines = diff.count { it.type == LineDiff.LineType.REMOVE },
+                    lines = if (diffTruncated) diff.take(MAX_PREVIEW_DIFF_LINES) else diff,
+                    truncated = diffTruncated
+                )
+            )
+        }
+
+        RewindDiff(
+            files = changed + unchanged + conflicts,
+            restoreFileCount = restoreCount,
+            changedFileCount = changed.size,
+            conflictCount = conflicts.size,
+            truncated = truncated
+        )
+    }
+
+    /**
+     * 把一份快照「施加」到内存里的模拟状态上：还原会真的写盘，这里只记账。
+     *
+     * 冲突判定条件逐字对齐 [restoreCodeToCheckpoint]，不另造规则；快照文件丢失时与还原一样直接跳过。
+     */
+    private fun applyPreviewSnapshot(entry: PreviewEntry, snapshot: CheckpointFileSnapshotEntity) {
+        // 首次触碰才读磁盘，之后拿模拟出来的内容继续比——等价于还原时「边写边比」。
+        val current = if (entry.virtualLoaded) {
+            entry.virtualContent
+        } else {
+            val text = runCatching { fileAccess.readFile(snapshot.filePath) }.getOrNull()
+            entry.diskContent = text
+            entry.virtualContent = text
+            entry.virtualLoaded = true
+            text
+        }
+        when (snapshot.changeType) {
+            "MODIFY" -> {
+                val snapshotFile = File(baseCheckpointDir, snapshot.snapshotRelativePath)
+                if (!snapshotFile.exists()) return
+                val original = runCatching { snapshotFile.readText() }.getOrNull() ?: return
+                entry.changeType = "MODIFY"
+                val externallyModified = current != null && current != original &&
+                    (snapshot.writtenHash == null || sha256(current) != snapshot.writtenHash)
+                if (externallyModified) {
+                    entry.lastOutcomeConflict = true
+                } else {
+                    entry.virtualContent = original
+                    entry.restored = true
+                    entry.lastOutcomeConflict = false
+                }
+            }
+
+            // 新建的文件回退即删除；文件已经不在了，还原什么也不做，不能算进「会被还原」。
+            "CREATE" -> {
+                entry.changeType = "CREATE"
+                if (current != null) {
+                    entry.virtualContent = null
+                    entry.restored = true
+                    entry.lastOutcomeConflict = false
+                }
+            }
+        }
+    }
+
+    /** 预览时单个文件的模拟状态。 */
+    private class PreviewEntry(val filePath: String) {
+        var changeType: String = "MODIFY"
+
+        /** 磁盘上此刻的真实内容，首次触碰时读一次；null 表示文件不存在。 */
+        var diskContent: String? = null
+
+        /** 推演到当前位置时的内容：每还原一份快照它就变成那份快照的原文，null 表示将被删除。 */
+        var virtualContent: String? = null
+        var virtualLoaded = false
+
+        /** 至少发生过一次还原。 */
+        var restored = false
+
+        /** 最后一笔是冲突跳过——还原里冲突的 continue 会让文件停在这一刻，net 效果由它决定。 */
+        var lastOutcomeConflict = false
+    }
+
     /** 列出现场时间线，新的在前；界面据此让用户挑一个时间节点撤销。 */
     fun listUndoRecords(sessionId: String): List<UndoRecordInfo> =
         undoRecords(sessionId).mapNotNull { file ->
@@ -350,6 +552,12 @@ class CheckpointManager @Inject constructor(
 
         /** 最多保留多少份可回滚现场：每份装着整批文件的原文，放开会吃磁盘。 */
         const val MAX_UNDO_RECORDS = 20
+
+        /** 回退预览最多推演多少个文件：每个都要读一次当前内容，大工作区放开会把内存和 IO 一起打爆。 */
+        const val MAX_PREVIEW_FILE_COUNT = 200
+
+        /** 单个文件最多带回多少行差异，超出截断并标记，避免一次展开把整段对话卡住。 */
+        const val MAX_PREVIEW_DIFF_LINES = 200
 
         /** 现场来源：一次回退留下的。 */
         const val KIND_RESTORE = "restore"

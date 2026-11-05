@@ -625,9 +625,10 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         // 压缩真的改写过消息时内容变了，投影得按新的那份重算；源没变就沿用上面那份（同一个对象）。
         if (compactedMessages !== initialState.messages) sendProjection = keepNewestImages(sanitizeImagesForModel(compactedMessages, supportsVision)).trimToRecentRounds(trimRounds)
-        val requestEstimate = withContext(Dispatchers.Default) { ContextTokenEstimator.estimate(systemPrompt, sendProjection, promptTools) }
+        val requestBreakdown = withContext(Dispatchers.Default) { ContextTokenEstimator.breakdown(systemPrompt, sendProjection, promptTools) }
+        val requestEstimate = requestBreakdown.total
         val predictedInput = ContextTokenEstimator.calibrated(requestEstimate, budget.baselineEstimate, budget.baselineUsage)
-        emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true))
+        emit(AgentEvent.ContextUsage(predictedInput, inputBudget, true, requestBreakdown))
         if (predictedInput >= inputBudget) {
             actionQueue.addLast(AgentAction.LlmError("", "input_budget_exceeded"))
             return state
@@ -793,7 +794,8 @@ class StatefulAgentWorkflow @Inject constructor(
             budget.baselineEstimate = requestEstimate
             budget.baselineUsage = aiResponse.inputTokens
             emit(AgentEvent.ContextUsage(
-                if (budget.baselineUsage > 0) budget.baselineUsage else requestEstimate, inputBudget, budget.baselineUsage <= 0
+                if (budget.baselineUsage > 0) budget.baselineUsage else requestEstimate, inputBudget, budget.baselineUsage <= 0,
+                requestBreakdown
             ))
             val responseWithReasoning = aiResponse.copy(reasoning = snapshot.reasoning)
 

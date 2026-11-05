@@ -815,6 +815,8 @@
     <string name="chat_remove_attachment">Remove attachment</string>    <string name="chat_no_models_hint">No models available, add one in "AI Vendors"</string>
     <string name="chat_stop_long_press_hint">Stop (long press to force interrupt)</string>
     <string name="chat_send">Send</string>
+    <string name="chat_side_question_label">Side question</string>
+    <string name="chat_side_question_hint">Answered once, not added to later conversation context</string>
     <string name="chat_perm_single_use_desc">Contains command substitution/pipes/redirects, cannot be remembered, single-use only</string>
     <string name="chat_perm_always_tool_desc">"Always allow" will remember all calls of this tool for this project</string>
     <string name="chat_perm_always_prefix">"Always allow" will remember for this project:</string>
@@ -830,6 +832,13 @@
 
     <!-- Checkpoint & Rewind -->
     <string name="checkpoint_rewind_title">Checkpoint &amp; Rewind</string>
+    <string name="checkpoint_rewind_diff_summary">%1$d files will be restored (%2$d with real changes)</string>
+    <string name="checkpoint_rewind_diff_conflict">%1$d files changed outside the checkpoint and will be skipped</string>
+    <string name="checkpoint_rewind_diff_truncated">Too many files; showing the first %1$d only</string>
+    <string name="checkpoint_rewind_diff_conflict_badge">Skipped</string>
+    <string name="checkpoint_rewind_diff_unchanged">No changes</string>
+    <string name="checkpoint_rewind_diff_expand">Expand</string>
+    <string name="checkpoint_rewind_diff_collapse">Collapse</string>
     <string name="checkpoint_target_prompt">Target message: %1$s</string>
     <string name="checkpoint_restore_code_and_conversation">Restore code and conversation</string>
     <string name="checkpoint_restore_code_and_conversation_desc">Revert both code and conversation before this checkpoint</string>
@@ -868,6 +877,13 @@
     <string name="chat_turn_cancelled">Cancelled</string>
 
     <string name="chat_context_usage">Context %1$d%% used</string>
+    <string name="chat_context_breakdown_title">Context breakdown</string>
+    <string name="chat_context_breakdown_summary">Estimated %1$d tokens used</string>
+    <string name="chat_context_breakdown_estimated">Estimated values: the provider did not report exact counts</string>
+    <string name="chat_context_breakdown_system">System prompt</string>
+    <string name="chat_context_breakdown_tools">Tool definitions</string>
+    <string name="chat_context_breakdown_history">Conversation</string>
+    <string name="chat_context_breakdown_tokens">%1$d tokens</string>
     <string name="chat_bg_command_done">Background command completed</string>
     <string name="chat_bg_commands_done">%1$d background tasks completed</string>
     <string name="chat_bg_commands_partial_failed">%1$d background tasks finished, %2$d failed</string>
@@ -884,6 +900,7 @@
     <string name="slash_command_compress_desc">Manually compact this session context</string>
     <string name="slash_command_init_desc">Analyze the workspace codebase and generate or improve the AGENTS.md project rules</string>
     <string name="slash_command_usage_desc">View today and all-time call count, token usage and estimated cost</string>
+    <string name="slash_command_btw_desc">Side question: ask about this chat without pulling it into the main context</string>
     <string name="retry_error_rate_limit">Rate limit</string>
     <string name="retry_error_server_overloaded">Server overloaded</string>
     <string name="retry_error_server">Server error</string>
@@ -1437,6 +1454,9 @@
     <string name="skills_add_from_market_desc">Browse official and community skill sources</string>
     <string name="skills_enable">Enable</string>
     <string name="skills_export">Export</string>
+    <string name="skills_archived_title">Archived (%1$d)</string>
+    <string name="skills_archived_hint">Deleted skills stay in the archive; tap one to restore it</string>
+    <string name="skills_archived_row">Archived %1$s</string>
     <string name="skills_export_desc">Packed as a zip — share it or keep a copy</string>
     <string name="skills_export_running">Packing…</string>
     <string name="skills_export_failed">Export failed</string>
@@ -3106,6 +3126,11 @@
     <string name="prompts_block_time">Current time</string>
     <string name="prompts_block_workspace_change">Workspace switch notice</string>
     <string name="rules_builtin_subtitle">Low-frequency rules; the AI loads the body with loadRule when needed</string>
+    <string name="rules_builtin_new">New on-demand rule</string>
+    <string name="rules_builtin_new_hint">Lowercase letters, digits, underscores or hyphens; used as both the file name and the loadRule name</string>
+    <string name="rules_builtin_name">Rule name</string>
+    <string name="rules_builtin_delete">Delete</string>
+    <string name="rules_builtin_reset">Reset to default</string>
     <string name="rules_builtin_editor_hint">Saving writes a same-named file under ~/.aharou/rules/, overriding the built-in copy.</string>
     <string name="prompts_disable_builtin_hint">Keep only your own fragments; you must supply every rule yourself</string>
     <!-- Checkpoint: conflict detection and undo -->

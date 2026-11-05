@@ -68,11 +68,12 @@ data class AIResponse(
 
         /**
          * 需要向用户解释而非静默完成的 stop_reason。
-         * 前两个是 Anthropic；大写那组是 Gemini generateContent 的 finishReason（安全拦截 /
-         * 禁止内容 / 黑名单 / 敏感信息）；最后两个是 Gemini Interactions 的 status。
+         * 前三个是 Anthropic 的 refusal 与 OpenAI 两套接口的 content_filter（内容策略拦截）；大写那组是
+         * Gemini generateContent 的 finishReason（安全拦截 / 禁止内容 / 黑名单 / 敏感信息）；最后两个是 Gemini Interactions 的 status。
          */
         val ABORT_STOP_REASONS = setOf(
             "refusal",
+            "content_filter",
             "model_context_window_exceeded",
             "SAFETY",
             "PROHIBITED_CONTENT",

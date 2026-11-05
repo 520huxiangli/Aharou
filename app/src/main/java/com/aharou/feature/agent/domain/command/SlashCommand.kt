@@ -70,6 +70,9 @@ interface SlashCommandContext {
     /** /init —— 触发一次 agent 回合，分析代码库并生成/改进项目规则文件；[prompt] 为指令正文。 */
     fun initProject(prompt: String)
 
+    /** /btw —— 旁问：就当前对话问一句，答案不进主线上下文，也不打断正在跑的一轮。 */
+    fun askSideQuestion(question: String)
+
     /** 技能触发：把 [skill] 正文作为本轮指令执行，[args] 为附加参数。 */
     fun runSkill(skill: Skill, args: String)
 }

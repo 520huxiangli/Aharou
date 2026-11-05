@@ -15,6 +15,11 @@ import com.aharou.core.ui.AdaptiveModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -23,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
 import com.aharou.core.theme.Spacing
+import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.MessageSquare
@@ -42,11 +48,16 @@ enum class RewindOption {
 fun RewindOptionsBottomSheet(
     promptSnippet: String,
     undoRecordCount: Int,
+    checkpointId: String? = null,
+    loadDiff: suspend (String) -> CheckpointManager.RewindDiff? = { null },
     onShowTimeline: () -> Unit,
     onOptionSelected: (RewindOption) -> Unit,
     onDismissRequest: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 预览在面板打开时算一次：回退是不可逆的，先让用户看到到底改哪些文件。
+    var rewindDiff by remember(checkpointId) { mutableStateOf<CheckpointManager.RewindDiff?>(null) }
+    LaunchedEffect(checkpointId) { rewindDiff = checkpointId?.let { loadDiff(it) } }
 
     AdaptiveModalBottomSheet(
         onDismissRequest = onDismissRequest,
@@ -75,6 +86,24 @@ fun RewindOptionsBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(Spacing.md))
+
+            rewindDiff?.let { diff ->
+                if (diff.files.isNotEmpty()) {
+                    RewindDiffPreview(
+                        diff = diff,
+                        texts = RewindDiffPreviewTexts(
+                            summary = stringResource(R.string.checkpoint_rewind_diff_summary, diff.restoreFileCount, diff.changedFileCount),
+                            conflictNotice = stringResource(R.string.checkpoint_rewind_diff_conflict, diff.conflictCount),
+                            truncatedNotice = stringResource(R.string.checkpoint_rewind_diff_truncated, diff.files.size),
+                            conflictBadge = stringResource(R.string.checkpoint_rewind_diff_conflict_badge),
+                            unchanged = stringResource(R.string.checkpoint_rewind_diff_unchanged),
+                            expand = stringResource(R.string.checkpoint_rewind_diff_expand),
+                            collapse = stringResource(R.string.checkpoint_rewind_diff_collapse)
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(Spacing.md))
+                }
+            }
 
             OptionRow(
                 icon = FeatherIcons.RotateCcw,

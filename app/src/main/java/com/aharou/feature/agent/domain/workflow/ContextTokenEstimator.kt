@@ -20,6 +20,20 @@ object ContextTokenEstimator {
         return total.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
+    /**
+     * 一次估算拆成三份：系统提示、工具定义、对话历史。
+     * 界面要回答的是「窗口到底被什么吃掉了」，只给一个总数看不出原因；
+     * 口径与 [estimate] 完全一致，只是不相加，两者同时用也不会漂。
+     */
+    fun breakdown(systemPrompt: String, messages: List<AgentMessage>, tools: List<AgentTool>): ContextBreakdown {
+        val system = ModelContextPolicy.estimateTextTokens(systemPrompt)
+        val toolTokens = tools.sumOf { tool ->
+            ModelContextPolicy.estimateTextTokens(tool.name + tool.description + gson.toJson(tool.toJsonSchema())) + 16
+        }
+        val historyTokens = messages.sumOf { estimate(it) }
+        return ContextBreakdown(systemPrompt = system, tools = toolTokens, history = historyTokens)
+    }
+
     fun estimate(message: AgentMessage): Int {
         val text: String
         val images: Int
@@ -71,4 +85,13 @@ object ContextTokenEstimator {
             (estimated.toLong() * UNCALIBRATED_SAFETY_PERCENT / 100)
                 .coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         }
+}
+
+/** 上下文占用的分项：用户看窗口被什么吃掉时靠它，合计与 [ContextTokenEstimator.estimate] 同口径。 */
+data class ContextBreakdown(
+    val systemPrompt: Int = 0,
+    val tools: Int = 0,
+    val history: Int = 0,
+) {
+    val total: Int get() = systemPrompt + tools + history
 }

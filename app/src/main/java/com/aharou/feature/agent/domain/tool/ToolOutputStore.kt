@@ -120,14 +120,7 @@ class ToolOutputStore @Inject constructor(
         }
     }
 
-    private fun textTransportString(result: ToolResult): String {
-        val textResult = if (result is ToolResult.Success && result.images.isNotEmpty()) {
-            result.copy(images = result.images.map { it.copy(base64Data = "") })
-        } else {
-            result
-        }
-        return textResult.toTransportString()
-    }
+    private fun textTransportString(result: ToolResult): String = result.toTransportString()
 
     private fun fitResult(candidate: (Int) -> ToolResult): ToolResult? {
         var best = candidate(0)

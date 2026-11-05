@@ -45,7 +45,13 @@ private val ToolResultTransportJson = Json {
 }
 
 fun ToolResult.toTransportString(): String {
-    return ToolResultTransportJson.encodeToString(this)
+    // 图片本体由调用方单独取走送多模态（StatefulAgentWorkflow 的 ToolRunResult.images），
+    // 文本通道只需要「有这张图」的语义。base64 留在文本里模型既解不出图像，
+    // 又会随历史回放反复灌进上下文，一张截图就能把会话预算吃光。
+    val textSafe = if (this is ToolResult.Success && images.isNotEmpty()) {
+        copy(images = images.map { if (it.base64Data.isEmpty()) it else it.copy(base64Data = "") })
+    } else this
+    return ToolResultTransportJson.encodeToString(textSafe)
 }
 
 /**

@@ -992,14 +992,15 @@ fun AIChatPanel(
     val sendMessage: (String) -> Unit = { rawText ->
         // 粘贴标记在这里还原成原文：模型与落库历史看到的都是完整内容，输入框只显示标记。
         val text = viewModel.expandPastes(rawText).trim()
-        if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
+        if (text == "/btw" || text.startsWith("/btw ")) {
+            viewModel.askSideQuestion(text.removePrefix("/btw").trim()); viewModel.clearInputDraft()
+        } else if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
             val attachments = pendingAttachments
             val modelSupportsVision = activeModelMetadata?.supportsVision == true
             val promptAttachments = if (modelSupportsVision) attachments.filterNot { it.isImage } else attachments
             val modelRequest = appendAttachmentsToRequest(context, text, promptAttachments)
             val images = if (modelSupportsVision) attachments.toAgentImages() else emptyList()
             // 统一走队列：AI 忙时入队（等本轮结束后自动发送下一条），空闲时直接发送。
-            // 斜杠命令在 ViewModel 内（agent workflow 之前）分流执行，无需在此区分。
             viewModel.enqueueAgentRequest(
                 request = text,
                 modelRequest = modelRequest,
@@ -1009,8 +1010,7 @@ fun AIChatPanel(
                 inputImages = images,
                 inputAttachments = attachments.toAgentAttachments()
             )
-            viewModel.clearInputDraft()
-            viewModel.setPendingAttachments(emptyList())
+            viewModel.clearInputDraft(); viewModel.setPendingAttachments(emptyList())
             followBottom = true
             scope.launch {
                 kotlinx.coroutines.delay(0)
@@ -1556,7 +1556,7 @@ fun AIChatPanel(
                             settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
                         }
                     },
-                    tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
+                    tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null), contextBreakdown = contextUsages[currentSessionId]?.breakdown,
                     tokenProgress = run {
                         val contextLimit = activeModelMetadata?.let {
                             com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)
@@ -1665,7 +1665,7 @@ fun AIChatPanel(
                 val targetMsg = messages.find { it.id == targetId }
                 RewindOptionsBottomSheet(
                     promptSnippet = targetMsg?.content ?: "",
-                    undoRecordCount = rewindUndoRecords.size,
+                    undoRecordCount = rewindUndoRecords.size, checkpointId = targetId, loadDiff = { viewModel.previewRewindDiff(it) },
                     onShowTimeline = { showUndoTimeline = true },
                     onOptionSelected = { option ->
                         if (option == RewindOption.RESTORE_CODE || option == RewindOption.RESTORE_CODE_AND_CONVERSATION) {

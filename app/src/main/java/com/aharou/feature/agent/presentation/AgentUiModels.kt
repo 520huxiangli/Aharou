@@ -214,6 +214,12 @@ enum class MessageRole {
 const val BACKGROUND_NOTIFICATION_PREFIX = "[系统通知 - 非用户输入]"
 
 /**
+ * 旁问（/btw）答案的固定前缀。旁问的回答落库时同时被标成不参与上下文回放，
+ * 这个前缀只用于 UI 把它认出来渲染成旁问卡片，不参与模型提示。
+ */
+const val SIDE_QUESTION_PREFIX = "[旁问] "
+
+/**
  * 上下文压缩失败记录的 TOOL 消息 toolName。既是落库时的标记，也是 UI 识别失败卡片的依据；
  * 该消息无配对 toolCallId，[MessagePersistenceUseCase.buildHistory] 回放时会自动丢弃，不进入模型上下文。
  */
