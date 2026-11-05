@@ -21,9 +21,13 @@ internal fun isCoreArchiveName(name: String): Boolean {
  * 2026-11-01 就这么丢过一次：`memory save name=SOUL` 把它重写成了一条普通记忆，
  * icon 换成 description、style 换成 type，升级后同步把错的版本拉了回来。
  */
-internal fun isSoulFile(name: String): Boolean =
-    name.substringBeforeLast('.').equals("SOUL", ignoreCase = true) &&
-        (name.endsWith(".md", ignoreCase = true) || !name.contains('.'))
+internal fun isSoulFile(name: String): Boolean {
+    // 同步扫描传进来的是相对路径（如 `global/SOUL.md`），先取文件名再比：
+    // 拿整串去比会把带目录的那份漏掉，人格文件就会被当成普通记忆推上仓库再写回来。
+    val base = name.substringAfterLast('/')
+    return base.substringBeforeLast('.').equals("SOUL", ignoreCase = true) &&
+        (base.endsWith(".md", ignoreCase = true) || !base.contains('.'))
+}
 
 /**
  * 行为红线与关系锚点：自动降级永不碰，注入时优先占常驻位。

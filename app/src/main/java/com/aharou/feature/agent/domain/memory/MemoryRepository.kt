@@ -559,6 +559,11 @@ class MemoryRepository @Inject constructor(
         projectRoot: String?,
         expectedVersion: String? = null
     ): MemoryEditResult {
+        // 人格文件的 frontmatter 是 name/icon/style/lang 另一套 schema，用记忆格式写回会
+        // 把头像与风格抹成 description/type。save/write/delete 早就拦了，这里一直是通的。
+        if (isSoulFile(name)) {
+            return MemoryEditResult.Error("SOUL_PROTECTED", "人格文件不能用记忆格式编辑，请到设置的人格分区修改")
+        }
         return when (scope) {
             MemoryScope.GLOBAL -> globalMemorySource.editMemory(name, edits, expectedVersion)
             MemoryScope.PROJECT -> {
