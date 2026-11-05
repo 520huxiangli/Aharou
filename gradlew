@@ -44,13 +44,45 @@ else
   # 关键词门槛：quote 必须是明确指向编译的话术。挡的是「把主人对别的事说的『可以』当授权」
   # （实际发生过：把「a，b，c」当成编译许可就起了构建）。
   _quote=$(sed -n 's/^quote: *//p' "$_gate" | head -1)
+  # 三个独立口令，各管一摊（2026-11-04 主人定：编译是编译，单测是单测，发版是发版）：
+  #   编 —— assemble / bundle / install 等出包类任务
+  #   单测 —— test / check 类任务
+  #   发版 —— 不进 Gradle，只走 git tag + 推 CI；发版流程里的单测要另外一句「单测」
+  # 一句话里同时出现多个词，就同时放行对应类别（例如「编，也跑单测」）。
+  _allow_build=0; _allow_test=0; _allow_release=0
   case "$_quote" in
-    *编*|*build*|*BUILD*|*Build*|*打包*|*APK*|*apk*|*出包*) ;;
-    *)
-      echo "[拒绝] 授权话术里没有编译意图（quote: $_quote）。请让主人明说「编译 / 打包 / 出包」后再写令牌。" >&2
-      exit 1
-      ;;
+    *编*|*build*|*BUILD*|*Build*|*打包*|*APK*|*apk*|*出包*) _allow_build=1 ;;
   esac
+  case "$_quote" in
+    *单测*|*测试*|*test*|*TEST*|*Test*) _allow_test=1 ;;
+  esac
+  case "$_quote" in
+    *发版*|*release*|*Release*|*RELEASE*) _allow_release=1 ;;
+  esac
+  _scope=""
+  [ "$_allow_build" = 1 ] && _scope="build"
+  [ "$_allow_test" = 1 ] && _scope="${_scope:+$_scope,}test"
+  [ "$_allow_release" = 1 ] && _scope="${_scope:+$_scope,}release"
+  if [ -z "$_scope" ]; then
+    echo "[拒绝] 授权话术里没有可识别的意图（quote: $_quote）。请让主人明说「编 / 编译 / 打包」或「单测」或「发版」。" >&2
+    exit 1
+  fi
+  # 任务分类：出包类只认 build，测试类只认 test，互不顶替。
+  _is_build=0; _is_test=0
+  case " $* " in
+    *:assemble*|*:bundle*|*:install*|*:package*|*:connectedCheck*) _is_build=1 ;;
+  esac
+  case " $* " in
+    *:test*|*:check*|*checkMigrations*|*checkArchitecture*|*checkSkills*|*checkProotAssets*) _is_test=1 ;;
+  esac
+  if [ "$_is_build" = 1 ] && [ "$_allow_build" != 1 ]; then
+    echo "[拒绝] 这是出包类任务，需要主人的「编 / 编译 / 打包」授权（当前 quote: $_quote）。「单测」「发版」都不能用来出包。" >&2
+    exit 1
+  fi
+  if [ "$_is_test" = 1 ] && [ "$_allow_test" != 1 ]; then
+    echo "[拒绝] 这是测试类任务，需要主人的「单测」授权（当前 quote: $_quote）。发版不等于单测，单测要单独说。" >&2
+    exit 1
+  fi
   # commit 绑定：授权时记的 HEAD 与当前不一致就拒（批完又改了代码，旧授权自动失效）。
   if grep -q '^commit:' "$_gate"; then
     _want=$(sed -n 's/^commit: *//p' "$_gate" | head -1)
@@ -61,7 +93,7 @@ else
     fi
   fi
   # 审计留痕：谁批的、什么授权原话、跑了什么任务。伪造授权会在这里留下无出处的记录。
-  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] task=$* | $(tr '\n' ' ' < "$_gate")"; } >> "$_repo_dir/.aharou/build-audit.log" 2>/dev/null
+  { echo "[$(date '+%Y-%m-%d %H:%M:%S')] scope=$_scope task=$* | $(tr '\n' ' ' < "$_gate")"; } >> "$_repo_dir/.aharou/build-audit.log" 2>/dev/null
   # 一次性令牌：消费后立即删除。旧授权留着不删，同一枚「可以」就会被之后几次构建反复借用，
   # 闸门也就形同虚设（2026-10-24 实测：18:13 的授权被用到 22:52）。
   rm -f "$_gate"
