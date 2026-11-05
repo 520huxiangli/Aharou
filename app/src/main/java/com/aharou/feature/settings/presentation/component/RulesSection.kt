@@ -79,6 +79,9 @@ internal fun RulesSection(
     var scopeTab by rememberSaveable { mutableStateOf(0) }
     // 正在编辑正文的按需规则块（底栏里改）
     var editingBuiltin by remember { mutableStateOf<RuleRepository.RuleEntry?>(null) }
+    // 新建按需规则：先问名字再建空文件，建完在列表里点进去写正文。
+    var creatingBuiltin by remember { mutableStateOf(false) }
+    var newBuiltinName by remember { mutableStateOf("") }
     val scope = if (scopeTab == 0) RuleScope.GLOBAL else RuleScope.PROJECT
     val document = if (scopeTab == 0) state.global else state.project
     val enabled = if (scopeTab == 0) !state.loading else !state.loading && state.hasWorkspace
@@ -120,7 +123,47 @@ internal fun RulesSection(
         BuiltinRuleGroup(
             rules = state.builtin,
             onToggle = viewModel::setBuiltinEnabled,
-            onOpen = { entry -> editingBuiltin = entry }
+            onOpen = { entry -> editingBuiltin = entry },
+            onNew = {
+                newBuiltinName = ""
+                creatingBuiltin = true
+            }
+        )
+    }
+
+    if (creatingBuiltin) {
+        AlertDialog(
+            onDismissRequest = { creatingBuiltin = false },
+            title = { Text(stringResource(R.string.rules_builtin_new)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Text(
+                        text = stringResource(R.string.rules_builtin_new_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    AppTextField(
+                        value = newBuiltinName,
+                        onValueChange = { newBuiltinName = it },
+                        singleLine = true,
+                        label = stringResource(R.string.rules_builtin_name)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = newBuiltinName.isNotBlank(),
+                    onClick = {
+                        viewModel.createBuiltinRule(newBuiltinName, "")
+                        creatingBuiltin = false
+                    }
+                ) { Text(stringResource(R.string.common_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { creatingBuiltin = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
         )
     }
 
@@ -134,6 +177,17 @@ internal fun RulesSection(
             onSave = { content ->
                 viewModel.saveBuiltinOverride(entry.name, content)
                 editingBuiltin = null
+            },
+            onDelete = if (entry.overridden || entry.userDefined) {
+                {
+                    viewModel.deleteBuiltinRule(entry.name)
+                    editingBuiltin = null
+                }
+            } else null,
+            deleteLabel = if (entry.overridden) {
+                stringResource(R.string.rules_builtin_reset)
+            } else {
+                stringResource(R.string.rules_builtin_delete)
             }
         )
     }
@@ -144,7 +198,8 @@ internal fun RulesSection(
 private fun BuiltinRuleGroup(
     rules: List<RuleRepository.RuleEntry>,
     onToggle: (String, Boolean) -> Unit,
-    onOpen: (RuleRepository.RuleEntry) -> Unit
+    onOpen: (RuleRepository.RuleEntry) -> Unit,
+    onNew: () -> Unit
 ) {
     if (rules.isEmpty()) return
     Spacer(Modifier.height(Spacing.lg))
@@ -162,6 +217,13 @@ private fun BuiltinRuleGroup(
                 }
             )
         }
+        SettingsDivider()
+        SettingsRow(
+            icon = FeatherIcons.Plus,
+            title = stringResource(R.string.rules_builtin_new),
+            subtitle = stringResource(R.string.rules_builtin_new_hint),
+            onClick = onNew
+        )
     }
 }
 

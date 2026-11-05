@@ -39,6 +39,7 @@ import com.aharou.feature.agent.domain.ocr.TessdataStatus
 import com.aharou.feature.agent.domain.permission.PermissionRule
 import com.aharou.feature.agent.domain.permission.PermissionRulesRepository
 import com.aharou.feature.agent.domain.skill.SkillForm
+import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.SkillMoveResult
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.agent.domain.skill.market.MarketSkill
@@ -699,6 +700,8 @@ class SettingsViewModel @Inject constructor(
     val skillSaveState: StateFlow<SkillSaveState> get() = skillController.saveState
     val skillImportState: StateFlow<SkillImportState> get() = skillController.importState
     val skillDeleting: StateFlow<String?> get() = skillController.deleting
+    val skillArchived: StateFlow<List<SkillRepository.ArchivedSkill>> get() = skillController.archived
+    fun restoreArchivedSkill(skill: SkillRepository.ArchivedSkill) = skillController.restoreArchived(skill)
     val skillMoving: StateFlow<String?> get() = skillController.moving
     val skillMoveResult: StateFlow<SkillMoveResult?> get() = skillController.moveResult
     val skillExportState: StateFlow<SkillExportState> get() = skillController.exportState

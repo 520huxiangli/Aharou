@@ -1093,10 +1093,9 @@ fun SettingsScreen(
                         viewModel.moveSkill(name, from, to)
                     },
                     onExport = { viewModel.exportSkill(it) },
-                    onOpenDetail = {
-                        selectedSkill = it
-                        section = SettingsSection.SkillDetail
-                    }
+                    onOpenDetail = { selectedSkill = it; section = SettingsSection.SkillDetail },
+                    archived = viewModel.skillArchived.collectAsStateWithLifecycle().value,
+                    onRestoreArchived = viewModel::restoreArchivedSkill
                 )
                 SettingsSection.SkillMarket -> {
                     val marketSources by viewModel.marketSources.collectAsStateWithLifecycle()

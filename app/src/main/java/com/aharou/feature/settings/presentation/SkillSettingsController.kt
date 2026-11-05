@@ -71,6 +71,10 @@ class SkillSettingsController @Inject constructor(
     private val _deleting = MutableStateFlow<String?>(null)
     val deleting: StateFlow<String?> = _deleting.asStateFlow()
 
+    /** 已归档技能：删除只是移入归档区，在列表里不再出现，但能单向搬回。 */
+    private val _archived = MutableStateFlow<List<SkillRepository.ArchivedSkill>>(emptyList())
+    val archived: StateFlow<List<SkillRepository.ArchivedSkill>> = _archived.asStateFlow()
+
     /** 正搬动的技能名（防重复点）；结果经 [moveResult] 交给界面提示一次。 */
     private val _moving = MutableStateFlow<String?>(null)
     val moving: StateFlow<String?> = _moving.asStateFlow()
@@ -136,6 +140,7 @@ class SkillSettingsController @Inject constructor(
         if (started) return
         started = true
         refreshSkills()
+        refreshArchived()
     }
 
     // ── 本地技能 ──
@@ -201,8 +206,31 @@ class SkillSettingsController @Inject constructor(
                     }
                 }
                 refreshSkills()
+                refreshArchived()
             } finally {
                 _deleting.value = null
+            }
+        }
+    }
+
+    /** 刷新已归档列表（全局 + 项目合并，按归档时间倒序）。 */
+    fun refreshArchived() {
+        scope.launch {
+            _archived.value = withContext(Dispatchers.IO) {
+                SkillScope.entries.filter { it != SkillScope.BUILTIN }
+                    .flatMap { skillRepository.listArchivedSkills(it) }
+                    .sortedByDescending { it.archivedAt }
+            }
+        }
+    }
+
+    /** 把归档的技能搬回原作用域；同名已存在时保持归档不动。 */
+    fun restoreArchived(skill: SkillRepository.ArchivedSkill) {
+        scope.launch {
+            val restored = withContext(Dispatchers.IO) { skillRepository.restoreArchivedSkill(skill) }
+            if (restored) {
+                refreshSkills()
+                refreshArchived()
             }
         }
     }

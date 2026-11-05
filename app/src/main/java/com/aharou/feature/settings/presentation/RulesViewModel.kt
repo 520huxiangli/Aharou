@@ -120,6 +120,22 @@ class RulesViewModel @Inject constructor(
         }
     }
 
+    /** 新建一条用户自己的按需规则；名字不合法时不写盘，由界面提示重输。 */
+    fun createBuiltinRule(name: String, content: String) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { ruleRepository.createRule(name, content) }
+            if (ok) refresh()
+        }
+    }
+
+    /** 删除用户侧的规则文件：用户新增的整体消失，覆盖内置的恢复内置版本。 */
+    fun deleteBuiltinRule(name: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { ruleRepository.deleteUserRule(name) }
+            refresh()
+        }
+    }
+
     fun openFragment(scope: RuleScope, name: String) {
         viewModelScope.launch {
             val dir = dirOf(scope)

@@ -27,8 +27,10 @@ class RuleRepository @Inject constructor(
         val content: String,
         /** 关掉的规则不进注入清单，`loadRule` 也取不到正文；设置页里仍可见并重新打开。 */
         val enabled: Boolean = true,
-        /** 是否已被 `~/.aharou/rules/<同名>.md` 覆盖。 */
-        val overridden: Boolean = false
+        /** 同名覆盖了某个内置规则；只有用户文件与内置同名时才算。 */
+        val overridden: Boolean = false,
+        /** 只存在于 `~/.aharou/rules`、内置没有同名，用户可以整个删掉。 */
+        val userDefined: Boolean = false
     )
 
     private val globalDir: File get() = File(containerInstaller.aharouDir, RULES_DIR)
@@ -60,13 +62,35 @@ class RuleRepository @Inject constructor(
         false
     }
 
+    /**
+     * 新建一条用户自己的按需规则。名字只允许小写字母、数字、下划线与连字符：
+     * 它同时是文件名与 `loadRule` 的调用名，带路径分隔符会越出目录。
+     * 与内置同名时按「覆盖」处理，不允许用这种方式冒出一份同名二义。
+     */
+    fun createRule(name: String, content: String): Boolean {
+        val safe = name.trim().lowercase()
+        if (!NAME_REGEX.matches(safe)) return false
+        return saveOverride(safe, content)
+    }
+
+    /** 删掉用户侧的规则文件：用户新增的整体消失，覆盖内置的则恢复内置版本。 */
+    fun deleteUserRule(name: String): Boolean = runCatching {
+        File(globalDir, "$name$EXT").delete()
+    }.onFailure { FileLogger.e(TAG, "删规则失败: $name", it) }.getOrDefault(false)
+
     private fun merged(): Map<String, RuleEntry> {
         val byName = LinkedHashMap<String, RuleEntry>()
-        builtinRules().forEach { byName[it.name.lowercase()] = it }
-        globalRules().forEach { byName[it.name.lowercase()] = it.copy(overridden = true) }
-        val disabled = PromptFragmentResolver.disabledFileNames(globalDir)
+        val builtin = builtinRules()
+        builtin.forEach { byName[it.name.lowercase()] = it }
+        val builtinNames = builtin.map { it.name.lowercase() }.toSet()
+        globalRules().forEach {
+            val key = it.name.lowercase()
+            byName[key] = it.copy(overridden = key in builtinNames, userDefined = key !in builtinNames)
+        }
+        val disabled = PromptFragmentResolver.disabledFileNames(globalDir).map { it.lowercase() }.toSet()
         return byName.mapValues { (_, entry) ->
-            entry.copy(enabled = "${entry.name}$EXT" !in disabled)
+            // 标记文件名不带扩展名（见 setNamedDisabled），这里再拼 .md 就永远比不上了。
+            entry.copy(enabled = entry.name.lowercase() !in disabled)
         }
     }
 
@@ -101,5 +125,8 @@ class RuleRepository @Inject constructor(
         const val EXT = ".md"
         val DESCRIPTION = Regex("(?s)^\\s*<!--\\s*(.*?)\\s*-->")
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
+
+        /** 规则名同时是文件名与 `loadRule` 的调用名，不能带路径分隔符与空白。 */
+        val NAME_REGEX = Regex("[a-z0-9_-]{1,64}")
     }
 }

@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation.component
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -36,7 +37,11 @@ internal fun TextContentEditorSheet(
     hint: String,
     initialContent: String,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (String) -> Unit,
+    /** 用户自己写过这份文件时提供删除：内置自带的不能删，只能改回覆盖。 */
+    onDelete: (() -> Unit)? = null,
+    /** 删除按钮的文案：覆盖内置的是「重置为默认」，自己新增的是「删除」。 */
+    deleteLabel: String? = null
 ) {
     var content by remember(key) { mutableStateOf(initialContent) }
 
@@ -71,6 +76,15 @@ internal fun TextContentEditorSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End
             ) {
+                onDelete?.let { delete ->
+                    TextButton(onClick = delete) {
+                        Text(
+                            text = deleteLabel ?: stringResource(R.string.rules_builtin_delete),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
                 TextButton(onClick = onDismiss) {
                     Text(stringResource(R.string.common_cancel))
                 }

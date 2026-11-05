@@ -50,6 +50,7 @@ import com.aharou.core.ui.rememberListSelectionState
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.AdaptiveModalBottomSheet
+import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.SkillScope
 import com.aharou.feature.settings.presentation.SkillUiEntry
 import compose.icons.FeatherIcons
@@ -74,8 +75,11 @@ internal fun SkillsSection(
     onDelete: (SkillUiEntry) -> Unit,
     onMove: (String, SkillScope, SkillScope) -> Unit,
     onExport: (SkillUiEntry) -> Unit,
-    onOpenDetail: (SkillUiEntry) -> Unit
+    onOpenDetail: (SkillUiEntry) -> Unit,
+    archived: List<SkillRepository.ArchivedSkill> = emptyList(),
+    onRestoreArchived: (SkillRepository.ArchivedSkill) -> Unit = {}
 ) {
+    ArchivedSkillsRow(archived = archived, onRestore = onRestoreArchived)
     // 已禁用的沉到组末尾：禁用项一多，混在中间会把启用的冲散。
     val builtinSkills = entries.filter { it.builtin }.sortedBy { it.disabled }
     val projectSkills = entries.filter { it.scope == SkillScope.PROJECT }.sortedBy { it.disabled }

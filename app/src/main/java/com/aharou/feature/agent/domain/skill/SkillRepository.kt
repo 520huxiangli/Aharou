@@ -174,7 +174,60 @@ class SkillRepository @Inject constructor(
         if (scope == SkillScope.BUILTIN) return false
         val dirPath = entriesIn(scope).firstOrNull { it.name.equals(name, ignoreCase = true) }
             ?.dirPath ?: return false
-        return safeDeleteSkillDir(fileAccess, dirPath)
+        val dirName = dirPath.trimEnd('/').substringAfterLast('/')
+        val target = "${archiveRoot(scope)}/${System.currentTimeMillis()}-$dirName"
+        return runCatching {
+            fileAccess.mkdirs(archiveRoot(scope))
+            fileAccess.move(dirPath, target, overwrite = false)
+            FileLogger.i(TAG, "技能已归档：$name ($scope) -> $target")
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "归档技能失败：$name ($scope)", it)
+            false
+        }
+    }
+
+    /**
+     * 归档区放在 skills 的同级，不放进 skillsRoot：技能扫描会把 skillsRoot 下的每个子目录
+     * 当成一个技能，归档目录放在里面得额外过滤，放外面天然不会被读到。
+     */
+    fun archiveRoot(scope: SkillScope): String =
+        skillsRoot(scope).trimEnd('/').substringBeforeLast('/') + "/skills-archive"
+
+    /** 归档里的一项：目录名形如 `<归档毫秒>-<原目录名>`。 */
+    data class ArchivedSkill(
+        val name: String,
+        val dirName: String,
+        val scope: SkillScope,
+        val archivedAt: Long,
+        val dirPath: String
+    )
+
+    fun listArchivedSkills(scope: SkillScope): List<ArchivedSkill> {
+        if (scope == SkillScope.BUILTIN) return emptyList()
+        val root = archiveRoot(scope)
+        if (!fileAccess.isDirectory(root)) return emptyList()
+        return runCatching {
+            fileAccess.listFiles(root).filter { it.isDirectory }.mapNotNull { entry ->
+                val archivedAt = entry.name.substringBefore('-').toLongOrNull() ?: return@mapNotNull null
+                val dirName = entry.name.substringAfter('-')
+                ArchivedSkill(dirName, dirName, scope, archivedAt, "$root/${entry.name}")
+            }.sortedByDescending { it.archivedAt }
+        }.getOrElse { emptyList() }
+    }
+
+    /** 把归档的技能搬回原作用域；目标已有同名目录时不覆盖，直接失败。 */
+    fun restoreArchivedSkill(archived: ArchivedSkill): Boolean {
+        val target = "${skillsRoot(archived.scope).trimEnd('/')}/${archived.dirName}"
+        if (fileAccess.exists(target)) return false
+        return runCatching {
+            fileAccess.move(archived.dirPath, target, overwrite = false)
+            FileLogger.i(TAG, "技能已恢复：${archived.dirName} -> $target")
+            true
+        }.getOrElse {
+            FileLogger.w(TAG, "恢复技能失败：${archived.dirName}", it)
+            false
+        }
     }
 
     /**
@@ -243,15 +296,5 @@ class SkillRepository @Inject constructor(
         /** 过滤禁用技能（禁用名单已归一化为小写）。 */
         internal fun filterDisabled(entries: List<SkillEntry>, disabled: Set<String>): List<SkillEntry> =
             entries.filterNot { it.skill.name.lowercase() in disabled }
-
-        /** 仅当目录存在且含 SKILL.md/CLAUDE.md 指令文件时才删除，避免误删非技能目录。 */
-        internal fun safeDeleteSkillDir(provider: FileAccessProvider, dirPath: String): Boolean {
-            if (!provider.isDirectory(dirPath)) return false
-            val hasInstruction = runCatching { provider.listFiles(dirPath) }.getOrNull()?.any {
-                !it.isDirectory && (it.name.equals("SKILL.md", ignoreCase = true) || it.name.equals("CLAUDE.md", ignoreCase = true))
-            } ?: false
-            if (!hasInstruction) return false
-            return runCatching { provider.deleteRecursively(dirPath); true }.getOrDefault(false)
-        }
     }
 }

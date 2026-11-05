@@ -5,8 +5,10 @@ import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import javax.inject.Inject
 
 /**
- * /init —— 触发一次 agent 回合，分析当前工作区代码库并生成/改进项目规则文件
- * （`AGENTS.md`，仅有 `CLAUDE.md` 时改进它）。
+ * /init —— 触发一次 agent 回合，分析当前工作区代码库并生成/改进项目规则。
+ *
+ * 落点跟仓库既有结构走：有 `rules.d/` 就按主题拆成片段、根文件只留索引；
+ * 没有拆分则写进根文件（已有 `CLAUDE.md` 时继续用它，不新建 `AGENTS.md` 抢优先级）。
  *
  * 指令正文存放在 `prompts/agent/init.md`，可被 `~/.aharou/prompts.custom/agent/init.md` 覆盖。
  */

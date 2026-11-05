@@ -1,9 +1,17 @@
 package com.aharou.feature.agent.domain.rule
 
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 规则文件（AGENTS.md）的读写。
@@ -16,8 +24,14 @@ import javax.inject.Singleton
  */
 @Singleton
 class RuleFileRepository @Inject constructor(
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val ruleCurator: RuleCurator,
 ) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 按目录合并待整理任务：连写多次文件只跑一次整理，避免每保存一下就调一次模型。 */
+    private val curateJobs = ConcurrentHashMap<String, Job>()
 
     /**
      * [fileName] 是当前生效那一份的文件名（可能是回退的 CLAUDE.md / rules.md），[exists] 为 false 时内容为空；
@@ -57,6 +71,7 @@ class RuleFileRepository @Inject constructor(
         val target = File(File(dir, RULES_DIR), name)
         target.parentFile?.mkdirs()
         target.writeText(content)
+        scheduleCurate(dir)
     }
 
     fun deleteFragment(dir: File, name: String): Boolean =
@@ -73,6 +88,7 @@ class RuleFileRepository @Inject constructor(
         val target = activeFile(dir) ?: File(dir, AGENTS_FILE)
         target.parentFile?.mkdirs()
         target.writeText(content)
+        scheduleCurate(dir)
         return RuleDocument(
             path = target.absolutePath,
             fileName = target.name,
@@ -81,6 +97,22 @@ class RuleFileRepository @Inject constructor(
             fragments = fragmentNames(dir),
             displayPath = "$label/${target.name}"
         )
+    }
+
+    /**
+     * 启动一次去抖后的规则整理：写入后 [DEBOUNCE_MS] 内没有新的写入才真正开跑。
+     * 整理失败不影响已写入的规则，只记日志。
+     */
+    fun scheduleCurate(dir: File) {
+        val key = dir.absolutePath
+        curateJobs.remove(key)?.cancel()
+        val job = scope.launch {
+            delay(DEBOUNCE_MS)
+            runCatching { ruleCurator.curate(File(key)) }
+                .onFailure { FileLogger.w(TAG, "规则整理失败：$key", it) }
+            curateJobs.remove(key)
+        }
+        curateJobs[key] = job
     }
 
     private fun read(dir: File, label: String): RuleDocument {
@@ -115,6 +147,11 @@ class RuleFileRepository @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "RuleFileRepository"
+
+        /** 写入后等这么久再整理：连续改几处不必要每次保存都调一遍模型。 */
+        const val DEBOUNCE_MS = 30_000L
+
         const val AGENTS_FILE = "AGENTS.md"
         const val CLAUDE_FILE = "CLAUDE.md"
         const val RULES_FILE = "rules.md"
