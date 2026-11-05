@@ -442,17 +442,8 @@ class OpenAIAdapterTest {
 
     // ── Chat Completions 流式 ─────────────────────────────────────────
 
-    private fun sseCall(vararg lines: String): Call<ResponseBody> {
-        val body = (lines.joinToString("\n") + "\n").toResponseBody(null)
-        val call = mockk<Call<ResponseBody>>()
-        var canceled = false
-        every { call.enqueue(any()) } answers {
-            firstArg<Callback<ResponseBody>>().onResponse(call, Response.success(body))
-        }
-        every { call.cancel() } answers { canceled = true }
-        every { call.isCanceled } answers { canceled }
-        return call
-    }
+    private fun sseCall(vararg lines: String): Call<ResponseBody> =
+        FakeStreamCall { FakeSseStream.rawBody(*lines) }
 
     @Test
     fun streamChat_collectsTextAndFinal() = runTest {
