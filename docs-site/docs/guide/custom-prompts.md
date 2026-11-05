@@ -172,7 +172,8 @@ Aharou 的系统提示词可以自己改。默认提示词随 App 内置、升�
 | `agent/compact-summary.md` | 长对话上下文压缩的提示词 |
 | `agent/title-generator.md` | 会话标题生成的提示词 |
 | `agent/commit-generator.md` | Git 页「AI 生成」提交信息用的提示词 |
-| `agent/init.md` | `/init` 命令的指令正文（分析代码库并生成/改进 `AGENTS.md`），可在对话输入框用 `/init` 触发 |
+| `agent/init.md` | `/init` 命令的指令正文（分析代码库并生成/改进项目规则：有 `rules.d/` 就按主题拆片段，否则写根文件），可在对话输入框用 `/init` 触发 |
+| `agent/rule-curator.md` | 规则整理器的提示词：写入规则或跑完 `/init` 后，用它合并重复、删除过时说法 |
 | `agent/workspace-android.md` | Android 工程规约（工作区识别为 Gradle 工程时自动注入） |
 | `agent/workspace-flutter.md` | Flutter 工程规约（识别到 `pubspec.yaml` 时注入） |
 | `agent/workspace-node.md` | Node / 前端工程规约（识别到 `package.json` 时注入） |

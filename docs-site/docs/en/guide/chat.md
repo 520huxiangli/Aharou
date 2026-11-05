@@ -105,7 +105,7 @@ Typing `/` in the input box opens the command menu, with **built-in commands fir
 Built-in commands:
 
 - `/compress`: manually trigger context compression for the current session.
-- `/init`: ask the AI to analyze the current workspace's codebase and generate or improve the project rules file `AGENTS.md` (if the project root has a `CLAUDE.md` but no `AGENTS.md`, it improves `CLAUDE.md`). You can pass arguments to name a focus, e.g. `/init focus on tests and release flow`.
+- `/init`: ask the AI to analyze the current workspace's codebase and generate or improve the project rules. If the repo has a `rules.d/` directory, rules land there as topic fragments and the root file only keeps the index and cross-cutting terms; otherwise they go into `AGENTS.md` (or into `CLAUDE.md` when that is the only root file present). You can pass arguments to name a focus, e.g. `/init focus on tests and release flow`.
 - `/usage`: see today's and cumulative call counts, token usage and estimated cost (global stats, across sessions).
 
 Skills:
