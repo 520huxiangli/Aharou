@@ -31,8 +31,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -583,61 +581,6 @@ internal fun AgentUIMessage.isToolRunning(liveOutput: String?): Boolean =
     liveOutput != null ||
         content.startsWith(SessionUseCase.PENDING_TOOL_MARKER) ||
         content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER)
-
-/**
- * 「N 次工具调用」分组头：DSH 把一轮任务里连续的工具调用折成一行，**默认收起**，
- * 点一下手动展开/收起（运行中也不自动弹开）。
- * 布局对齐思考行：左侧工具图标（锤子/施工） + 中间调用计数 + 折叠箭头。
- *
- * [running] 为真时给「N 次工具调用」这行文案本身走涟漪高光，表示这批调用还在跑。
- * 不再另挂三个跳动的点，也不在这里重复场景文案（「正在编辑文件」这类说的是**具体哪个工具**，
- * 展开后由每条工具行的运行状态给出，见 [ToolMessageBody]）。
- */
-@Composable
-internal fun ToolCallGroupHeader(
-    count: Int,
-    running: Boolean,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = ChatStyle.toolRowMinHeight)
-            .clip(RoundedCornerShape(ChatStyle.panelCorner))
-            .clickable(
-                // 无障碍：点这一行会展开还是收起，读屏能念出来（展开状态本身由 count 文本表达）
-                onClickLabel = stringResource(
-                    if (expanded) R.string.common_collapse_action else R.string.common_expand
-                ),
-                onClick = onToggle
-            ),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Construction,
-            contentDescription = null,
-            tint = Brand.IconGray,
-            modifier = Modifier.size(ChatStyle.rowIconSize)
-        )
-        Spacer(Modifier.width(Spacing.sm))
-        // 权重挂在外层占位，涟漪画在文字自身的尺寸上：光带只扫「N 次工具调用」这几个字，
-        // 不会在整行空白里慢慢爬（见 Modifier.rippleHighlight）。
-        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            RippleText(
-                text = stringResource(R.string.chat_tool_calls_count, count),
-                highlight = if (running) Color.White else null
-            )
-        }
-        Icon(
-            imageVector = if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
-            contentDescription = if (expanded) stringResource(R.string.common_collapse_action) else stringResource(R.string.common_expand),
-            tint = Brand.IconGray,
-            modifier = Modifier.size(18.dp)
-        )
-    }
-}
 
 /** 展开区的一段带小标题的内容块（如「指令」「结果」）：弱底等宽小面板，超出限高后在窗口内滚动。 */
 @Composable

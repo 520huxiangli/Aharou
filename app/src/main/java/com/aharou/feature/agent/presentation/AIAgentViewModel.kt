@@ -85,6 +85,7 @@ import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
 import com.aharou.feature.workspace.domain.isValidFileEntryName
 import com.aharou.feature.agent.domain.workflow.AgentEvent
+import com.aharou.feature.agent.domain.workflow.ToolArgsProgress
 import com.aharou.feature.agent.domain.tool.PendingToolPermission
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
@@ -1209,29 +1210,23 @@ class AIAgentViewModel @Inject constructor(
         )
     }
 
-    private val _preparingTools = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val preparingToolState = PreparingToolState(_currentSessionId, viewModelScope)
 
     /**
      * 模型正在流式产出、还没开始执行的工具名（如 `editFile`）。
      *
      * 长参数工具（写整份文件、长命令）的参数流式可能持续好几秒，期间没有正文也没有思考增量，
      * UI 只能显示笼统的「正在思考」。上游在工具名一出现就上报（[AgentEvent.ToolCallPreparing]），
-     * UI 据此把状态换成具体场景（「正在编辑文件」）。工具真正开始执行后由 [runningTool] 接管。
+     * UI 据此把状态换成具体场景（「正在编辑文件」）；工具真正开始执行后由 [runningTool] 接管。
+     * 状态本身与进度放在 [PreparingToolState] 里，两者同生共死。
      */
-    val preparingTool: StateFlow<String?> = _currentSessionId
-        .flatMapLatest { id ->
-            if (id == null) flowOf(null)
-            else _preparingTools.map { it[id] }
-        }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val preparingTool: StateFlow<String?> = preparingToolState.toolName
 
-    private fun setPreparingTool(sessionId: String, toolName: String?) {
-        val current = _preparingTools.value
-        if (toolName == null) {
-            if (current.containsKey(sessionId)) _preparingTools.value = current - sessionId
-        } else if (current[sessionId] != toolName) {
-            _preparingTools.value = current + (sessionId to toolName)
-        }
+    /** 工具参数流式进度；null 时 UI 用 [preparingTool] 对应的通用场景文案。 */
+    val preparingToolProgress: StateFlow<ToolArgsProgress?> = preparingToolState.argsProgress
+
+    private fun setPreparingTool(sessionId: String, toolName: String?, argsProgress: ToolArgsProgress? = null) {
+        preparingToolState.update(sessionId, toolName, argsProgress)
     }
 
     private val _compactingSessions = MutableStateFlow<Map<String, Boolean>>(emptyMap())
@@ -2161,7 +2156,8 @@ class AIAgentViewModel @Inject constructor(
                         finishReasoning()
                         // 工具名先于参数到达：让 UI 把「正在思考」换成具体场景（「正在编辑文件」）。
                         // 参数流完、工具真正开始执行后由 ToolCallStarted 清掉，改由工具行表达。
-                        setPreparingTool(sessionId, event.toolName)
+                        // event.progress 为 null 时与加进度之前完全一致。
+                        setPreparingTool(sessionId, event.toolName, event.progress)
                     }
                     is AgentEvent.Retrying -> {
                         currentReasoningStart = null

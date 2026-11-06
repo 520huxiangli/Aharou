@@ -12,6 +12,14 @@ import kotlinx.serialization.json.JsonObject
 import java.security.MessageDigest
 
 /**
+ * 参数流式进度：已累积的字符数与行数。
+ *
+ * 由各 adapter 按同一门限节流后上报（见 provider 包里的 ToolArgProgressThrottle），
+ * 只用于让 UI 把「正在编辑文件」说得更具体（「正在写入 342 行」），不参与任何执行判定。
+ */
+data class ToolArgsProgress(val chars: Int, val lines: Int)
+
+/**
  * Agent 执行过程中向 UI 推送的分步事件。
  * 每个事件对应聊天里的一条（或对一条的更新），由 ViewModel 落库并渲染。
  */
@@ -59,7 +67,11 @@ sealed class AgentEvent {
      * 长参数工具（写整份文件、长命令）的参数流式可能持续好几秒，期间既没有正文也没有思考增量，
      * UI 只能显示笼统的「正在思考」。这条事件让 UI 提前把状态说具体，不落库、不参与执行判定。
      */
-    data class ToolCallPreparing(val toolName: String) : AgentEvent()
+    data class ToolCallPreparing(
+        val toolName: String,
+        /** 参数流式进度；null 表示只有工具名、还没有可展示的进度（与加这个字段之前的行为一致）。 */
+        val progress: ToolArgsProgress? = null
+    ) : AgentEvent()
 
     /** 工具执行过程中的实时累积输出（仅流式工具产生，用于 UI 实时渲染，不落库）。 */
     data class ToolCallProgress(val id: String, val toolName: String, val accumulated: String) : AgentEvent()

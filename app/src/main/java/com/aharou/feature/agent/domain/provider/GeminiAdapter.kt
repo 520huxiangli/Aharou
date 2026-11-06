@@ -1,6 +1,8 @@
 package com.aharou.feature.agent.domain.provider
 
 import com.aharou.core.util.AILogger
+import com.aharou.feature.agent.data.remote.gemini.InteractionDelta
+import com.aharou.feature.agent.data.remote.gemini.InteractionEvent
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
@@ -315,6 +317,9 @@ class GeminiAdapter @Inject constructor(
                                             if (name.isNotEmpty()) send(AIStreamChunk.ToolCallDeclared(name))
                                             val callId = fnCall.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
                                             val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
+                                            // 本协议参数据整块到达、没有增量可节流：用一次性节流器只按体积门限判断，
+                                            // 大文件写入才值得把「正在编辑文件」说得更具体。
+                                            ToolArgProgressThrottle().sample(name, argsStr)?.let { send(it) }
                                             val argsJson = parseToolArguments(argsStr)
                                             toolCalls.add(ToolCall(id = callId, name = name, arguments = argsJson))
                                         }
@@ -483,6 +488,7 @@ class GeminiAdapter @Inject constructor(
                 attemptOnce = { onContent ->
                     withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
                     val acc = GeminiInteractionsStreamAccumulator()
+                    val argProgress = ToolArgProgressSampler()
 
                     val body = firstContent.awaitBody(api.streamInteraction(
                         url = url,
@@ -510,6 +516,8 @@ class GeminiAdapter @Inject constructor(
                                 sseLog.append(line)
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                                // 参数进度：累加器只管聚合，进度在这里旁路数长度。
+                                sampleInteractionsArgProgress(obj, argProgress)?.let { send(it) }
                                 // 单个事件的字段类型异常不应废掉整条流，只跳过该事件；
                                 // 但 StreamApiException（error 事件）与取消信号必须放行。
                                 val delta = try {
@@ -568,6 +576,41 @@ class GeminiAdapter @Inject constructor(
             throw enriched
         } finally {
             sseLog.finish()
+        }
+    }
+
+    /**
+     * Interactions 流的参数进度：step.start 里拿工具名，arguments 增量里数长度。
+     * 与累加器同用 `index` 作 key，保证同一 step 的不同事件落在同一条累计里。
+     */
+    private fun sampleInteractionsArgProgress(
+        event: com.google.gson.JsonObject,
+        sampler: ToolArgProgressSampler
+    ): AIStreamChunk.ToolCallArgumentProgress? {
+        val key = event.get("index")?.takeIf { it.isJsonPrimitive }?.asString ?: "0"
+        val type = event.get("event_type")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: event.get("type")?.takeIf { it.isJsonPrimitive }?.asString
+        return when (type) {
+            InteractionEvent.STEP_START -> {
+                event.get("step")?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.get("name")?.takeIf { !it.isJsonNull }?.asString
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { sampler.declare(key, it) }
+                null
+            }
+
+            InteractionEvent.STEP_DELTA -> {
+                val delta = event.get("delta")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+                val deltaType = delta.get("type")?.takeIf { it.isJsonPrimitive }?.asString
+                if (deltaType != InteractionDelta.ARGUMENTS && deltaType != InteractionDelta.ARGUMENTS_LEGACY) {
+                    return null
+                }
+                val piece = delta.get("arguments")?.takeIf { !it.isJsonNull }?.asString
+                    ?: delta.get("partial_arguments")?.takeIf { !it.isJsonNull }?.asString
+                if (piece.isNullOrEmpty()) null else sampler.append(key, piece)
+            }
+
+            else -> null
         }
     }
 

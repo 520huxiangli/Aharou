@@ -327,7 +327,13 @@ class AnthropicAdapter @Inject constructor(
                                             val index = obj.get("index")?.asInt
                                             val partial = delta.get("partial_json")?.asString ?: ""
                                             budget.add(partial)
-                                            if (index != null) toolBlocks[index]?.args?.append(partial)
+                                            // 参数增量：按块累积的同时抽样进度，门限见 ToolArgProgressThrottle。
+                                            index?.let { idx ->
+                                                toolBlocks[idx]?.let { block ->
+                                                    block.args.append(partial)
+                                                    block.progress.sample(block.name, block.args)?.let { send(it) }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -396,6 +402,7 @@ class AnthropicAdapter @Inject constructor(
     /** 流式过程中按 content block index 累积的 tool_use 状态。 */
     private class ToolBlockAcc(val id: String, val name: String) {
         val args = StringBuilder()
+        val progress = ToolArgProgressThrottle()
     }
 
     /** 流式过程中按 content block index 累积的 thinking / redacted_thinking 状态。 */

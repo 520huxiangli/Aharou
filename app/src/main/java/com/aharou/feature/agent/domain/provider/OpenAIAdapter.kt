@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.serialization.json.JsonObject
+import com.aharou.feature.agent.data.remote.openai.ResponsesEvent
+import com.aharou.feature.agent.data.remote.openai.ResponsesItem
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aharou.feature.agent.data.remote.openai.OpenAIToolDefinition
 import com.aharou.feature.agent.data.remote.openai.OpenAIFunctionDefinition
@@ -554,7 +556,11 @@ class OpenAIAdapter @Inject constructor(
                                         if (acc.name.isEmpty()) send(AIStreamChunk.ToolCallDeclared(name))
                                         acc.name = name
                                     }
-                                    fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let { budget.add(it); acc.args.append(it) }
+                                    fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let { piece ->
+                                        budget.add(piece)
+                                        acc.args.append(piece)
+                                        acc.progress.sample(acc.name, acc.args)?.let { send(it) }
+                                    }
                                 }
                             }
                             // 生图扩展：图片整块到达、无增量，累积待 Final 交工作流落盘。
@@ -633,6 +639,7 @@ class OpenAIAdapter @Inject constructor(
                 attemptOnce = { onContent ->
                     withFirstContentTimeout(firstByteTimeoutMs) { firstContent ->
                     val acc = ResponsesStreamAccumulator()
+                    val argProgress = ToolArgProgressSampler()
 
                     val body = firstContent.awaitBody(api.streamResponses(
                         url = url,
@@ -661,6 +668,8 @@ class OpenAIAdapter @Inject constructor(
                                 // 官方 Responses 不发 [DONE]，但部分兼容服务会补发，收到即视为流结束。
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                                // 参数进度：累加器只管聚合，进度在这里旁路数长度。
+                                sampleResponsesArgProgress(obj, argProgress)?.let { send(it) }
                                 obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
                                     val code = errObj.get("code")?.takeIf { !it.isJsonNull }?.asString
                                     val msg = errObj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
@@ -732,7 +741,43 @@ class OpenAIAdapter @Inject constructor(
         var id = ""
         var name = ""
         val args = StringBuilder()
+        val progress = ToolArgProgressThrottle()
     }
+
+    /**
+     * Responses 流的参数进度：delta 事件只带片段，工具名在 output_item 事件里，
+     * 所以先按同一个 call key 记下名字，再按片段累积长度。
+     */
+    private fun sampleResponsesArgProgress(
+        event: com.google.gson.JsonObject,
+        sampler: ToolArgProgressSampler
+    ): AIStreamChunk.ToolCallArgumentProgress? {
+        val key = event.responsesCallKey()
+        return when (event.get("type")?.takeIf { it.isJsonPrimitive }?.asString) {
+            ResponsesEvent.OUTPUT_ITEM_ADDED, ResponsesEvent.OUTPUT_ITEM_DONE -> {
+                val item = event.get("item")?.takeIf { it.isJsonObject }?.asJsonObject
+                if (item?.get("type")?.takeIf { it.isJsonPrimitive }?.asString == ResponsesItem.FUNCTION_CALL) {
+                    item.get("name")?.takeIf { !it.isJsonNull }?.asString
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { sampler.declare(key, it) }
+                }
+                null
+            }
+
+            ResponsesEvent.FUNCTION_CALL_ARGS_DELTA -> {
+                val piece = event.get("delta")?.takeIf { !it.isJsonNull }?.asString
+                if (piece.isNullOrEmpty()) null else sampler.append(key, piece)
+            }
+
+            else -> null
+        }
+    }
+
+    /** 与累加器的 callKey 同口径：同一调用的不同事件必须落在同一个 key 上。 */
+    private fun com.google.gson.JsonObject.responsesCallKey(): String =
+        get("output_index")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: get("item_id")?.takeIf { it.isJsonPrimitive }?.asString
+            ?: "0"
 
     private fun convertToOpenAIMessages(messages: List<AgentMessage>): MutableList<OpenAIChatMessage> {
         val raw = messages.map { message ->

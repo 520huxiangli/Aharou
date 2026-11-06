@@ -44,6 +44,8 @@ import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.PendingPermissionBatch
 import com.aharou.feature.agent.domain.tool.StreamingAgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
+import com.aharou.feature.agent.domain.tool.TOOL_CALL_ARGUMENT_MISMATCH_CODE
+import com.aharou.feature.agent.domain.tool.ToolCallIdempotencyStore
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalChoice
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
@@ -143,7 +145,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val receiptRepository: ToolCallReceiptRepository,
     private val ocrEngine: TesseractOcrEngine,
     private val vault: VaultRepository, private val reminderEngine: com.aharou.feature.agent.domain.reminder.ReminderEngine,
-    private val memoryCompactor: Lazy<MemoryCompactor> // Lazy 断环：MemoryCompactor 自己依赖 AgentWorkflow
+    private val memoryCompactor: Lazy<MemoryCompactor>, // Lazy 断环：MemoryCompactor 自己依赖 AgentWorkflow
+    private val idempotencyStore: ToolCallIdempotencyStore
 ) : AgentWorkflow {
 
     /** 卡死提示文案：从 prompts 文件读一次并缓存，用户可编辑该文件定制。 */
@@ -225,14 +228,6 @@ class StatefulAgentWorkflow @Inject constructor(
         data class ToolBatchFinished(val results: List<ToolBatchResult>) : AgentAction
         data class ToolBatchRejected(val results: List<ToolBatchResult>, val finish: Boolean) : AgentAction
     }
-
-    private data class ToolRunResult(
-        val raw: String,
-        val isError: Boolean,
-        /** 仅 sendFile 等展示型工具：随结果附带的文件卡片元数据，供 UI 渲染，不回放进模型上下文。 */
-        val attachments: List<AgentAttachment> = emptyList(),
-        val images: List<AgentImage> = emptyList()
-    )
 
     /** 批量工具执行结果：携带 toolCall 元信息，供最后按原始顺序组装 ToolResultMessage。 */
     data class ToolBatchResult(
@@ -769,6 +764,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         emit(AgentEvent.ToolCallPreparing(chunk.name))
                     }
+                    is AIStreamChunk.ToolCallArgumentProgress -> emit(toolCallProgressEvent(chunk))
                 }
             }
             // 节流窗口内可能还压着最新累积文本：补发，保证 UI 尾巴拿到完整文本再交接落库。
@@ -1027,7 +1023,10 @@ class StatefulAgentWorkflow @Inject constructor(
                                 else -> runToolSync(tool, toolCall, currentContext)
                             } }
                             val lock = (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull?.let { pathLocks.computeIfAbsent(it) { Mutex() } }
-                            if (lock == null) execute() else lock.withLock { execute() }
+                            runIdempotentToolCall(idempotencyStore, currentContext.sessionId, toolCall,
+                                computeSignature = { toolCallSignature(toolCall) },
+                                conflict = { ToolRunResult(toolError(toolCall, "同一工具调用 id 的参数与上次不同，已拒绝重跑。", TOOL_CALL_ARGUMENT_MISMATCH_CODE), true) }
+                            ) { if (lock == null) execute() else lock.withLock { execute() } }
                         }
                     }
                 }.awaitAll()

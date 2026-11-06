@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.provider
 
+import android.os.SystemClock
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -114,11 +115,130 @@ sealed class AIStreamChunk {
      * 状态换成具体场景（「正在编辑文件」）。不参与任何执行判定，纯粹是 UI 提示。
      */
     data class ToolCallDeclared(val name: String) : AIStreamChunk()
+    /**
+     * 工具参数仍在流式传输时的进度：已累积的字符数与行数。
+     *
+     * 长参数工具（写整份文件）光有「正在编辑文件」还不够，UI 说不出「写到多少了」。
+     * 上报按 [ToolArgProgressThrottle] 的门限节流，同样不参与任何执行判定，纯粹是 UI 提示。
+     */
+    data class ToolCallArgumentProgress(
+        val name: String,
+        val argsSoFarChars: Int,
+        val argsSoFarLines: Int
+    ) : AIStreamChunk()
     data class Final(val response: AIResponse) : AIStreamChunk()
     /** 网络请求正在重试。仅用于 UI 实时展示，不进入上下文回放。[error] 为触发重试的错误摘要，供 UI 展示具体原因。 */
     data class Retrying(val attempt: Int, val maxRetries: Int, val error: RetryErrorInfo) : AIStreamChunk()
     /** 当前 Key 不可用，已自动切到第 [newIndex]/[total] 个 Key 并重发本次请求。仅用于 UI 提示。 */
     data class KeySwitched(val newIndex: Int, val total: Int) : AIStreamChunk()
+}
+
+/**
+ * 工具参数流式进度的节流器：每次工具调用一份，跟着该调用所在的流式解析循环走。
+ *
+ * 门限取 Chatbox 的实测值——距上次上报已过 800ms、新增 ≥10 行、或新增 ≥1KB 才发一次，
+ * 且累计值相比上次必须真的变了。
+ * - 只按时间发，参数停顿时会反复报同一个数字，UI 白刷新；
+ * - 只按体积发，写大文件时好几秒没有任何反馈，用户以为卡死；
+ * - 任一条件满足就发，兼顾「停顿可见」与「写入可见」。
+ *
+ * 累进值按字符数计算（UTF-8 下 ASCII 参数一字符即一字节，中文参数会让 1KB 略微提前到达，无副作用）。
+ * 行数按参数文本里的真实换行**与** JSON 转义后的字面量 `\n` 一起数：工具入参是 JSON 文本，
+ * 写文件时的换行几乎都以 `\n` 两个字符出现，只数真实换行会永远得到 0 行。
+ */
+internal class ToolArgProgressThrottle {
+
+    private var startedAtElapsed = -1L
+    private var lastEmitElapsed = 0L
+    private var lastChars = 0
+    private var lastLines = 0
+
+    /** 已扫描到的字符位置与对应行数，增量累计，避免每次上报都从头数一遍整段参数。 */
+    private var scannedChars = 0
+    private var lines = 0
+
+    /**
+     * 采样一次；本次不满足门限时返回 null。
+     *
+     * [nowElapsed] 允许调用方传入，是为了同一循环里的多个工具调用共用一次时钟读取。
+     */
+    fun sample(
+        name: String,
+        accumulated: CharSequence,
+        nowElapsed: Long = SystemClock.elapsedRealtime()
+    ): AIStreamChunk.ToolCallArgumentProgress? {
+        if (startedAtElapsed < 0) {
+            startedAtElapsed = nowElapsed
+            lastEmitElapsed = nowElapsed
+        }
+        val chars = accumulated.length
+        if (chars > scannedChars) {
+            lines += countLines(accumulated, scannedChars, chars)
+            scannedChars = chars
+        }
+        if (chars <= lastChars) return null
+        val grewChars = chars - lastChars
+        val grewLines = lines - lastLines
+        val due = grewChars >= MIN_CHARS ||
+            grewLines >= MIN_LINES ||
+            nowElapsed - lastEmitElapsed >= MIN_INTERVAL_MS
+        if (!due) return null
+        lastChars = chars
+        lastLines = lines
+        lastEmitElapsed = nowElapsed
+        return AIStreamChunk.ToolCallArgumentProgress(name, chars, lines)
+    }
+
+    private fun countLines(chars: CharSequence, from: Int, to: Int): Int {
+        var count = 0
+        var index = from
+        while (index < to) {
+            val c = chars[index]
+            if (c == '\n') {
+                count++
+            } else if (c == '\\' && index + 1 < to && chars[index + 1] == 'n') {
+                count++
+                index++
+            }
+            index++
+        }
+        return count
+    }
+
+    private companion object {
+        const val MIN_INTERVAL_MS = 800L
+        const val MIN_LINES = 10
+        const val MIN_CHARS = 1024
+    }
+}
+
+/**
+ * 按调用 key 累积参数长度的采样器（每条流一份）。
+ *
+ * Responses / Interactions 两条流的参数是各自累加器内部累积的，这里镜像一份只用来数长度：
+ * 累加器的 `accept()` 返回值被单测直接断言，为一个 UI 提示去改它的返回契约不划算。
+ */
+internal class ToolArgProgressSampler {
+
+    private class Slot {
+        val args = StringBuilder()
+        val throttle = ToolArgProgressThrottle()
+    }
+
+    private val slots = HashMap<String, Slot>()
+    private val names = HashMap<String, String>()
+
+    fun declare(key: String, toolName: String) {
+        names[key] = toolName
+    }
+
+    fun append(key: String, piece: String): AIStreamChunk.ToolCallArgumentProgress? {
+        val slot = slots.getOrPut(key) { Slot() }
+        slot.args.append(piece)
+        // 工具名还没到就暂不上报：拿着空名字发上去，UI 只会把状态打回「正在调用工具」。
+        val toolName = names[key]?.takeIf { it.isNotEmpty() } ?: return null
+        return slot.throttle.sample(toolName, slot.args)
+    }
 }
 
 interface AIProvider {

@@ -855,6 +855,8 @@
     <string name="chat_status_generating">Generating</string>
     <string name="chat_status_thinking">Thinking</string>
     <string name="chat_status_calling_tool">Calling tool</string>
+    <string name="chat_status_writing_lines">Writing %1$d lines</string>
+    <string name="chat_status_writing_kb">Writing %1$d KB</string>
     <string name="chat_status_running_command">Running command</string>
     <string name="chat_status_editing_file">Editing file</string>
     <string name="chat_status_reading_file">Reading file</string>
@@ -870,6 +872,15 @@
     <string name="chat_tool_succeeded">Tool succeeded</string>
     <string name="chat_tool_failed">Tool failed</string>
     <string name="chat_tool_calls_count">%1$d tool calls</string>
+    <string name="chat_tool_group_read_files">read %1$d files</string>
+    <string name="chat_tool_group_write_files">wrote %1$d files</string>
+    <string name="chat_tool_group_run_commands">ran %1$d commands</string>
+    <string name="chat_tool_group_search">searched %1$d times</string>
+    <string name="chat_tool_group_browse">browsed %1$d pages</string>
+    <string name="chat_tool_group_subagents">started %1$d subagents</string>
+    <string name="chat_tool_group_other">called tools %1$d times</string>
+    <string name="chat_tool_group_more_kinds">and %1$d more kinds</string>
+    <string name="chat_tool_group_join">", "</string>
     <string name="chat_turn_running">Running</string>
     <string name="chat_turn_completed">Completed in %1$s</string>
     <string name="chat_turn_completed_plain">Completed</string>
@@ -2540,6 +2551,8 @@
 <string name="filepreview_loading">Loading…</string>
 <string name="filepreview_error_read">Failed to read file</string>
 <string name="filepreview_loading_archive">Reading archive…</string>
+<string name="filepreview_html_incomplete">Some resources could not be inlined; the preview may be incomplete</string>
+<string name="filepreview_html_skipped_external">%1$d external resources skipped; only self-contained content renders</string>
 <string name="filepreview_loading_pdf">Loading PDF…</string>
 <string name="filepreview_office_subtitle">Office documents preview in an external viewer.</string>
 <string name="filepreview_open_externally">Open externally</string>

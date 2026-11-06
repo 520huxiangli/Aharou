@@ -1,8 +1,11 @@
 package com.aharou.feature.agent.presentation.component
 
 import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import com.aharou.R
+import com.aharou.feature.agent.domain.workflow.ToolArgsProgress
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.Cpu
@@ -64,3 +67,39 @@ internal fun toolRunningLabelRes(toolName: String?): Int = when (toolName?.lower
     "git_blame" -> R.string.chat_status_querying_blame
     else -> R.string.chat_status_calling_tool
 }
+
+/** 参数流式进度的一句话文案：资源 id + 单个整型参数，`stringResource` 与 `getString` 都能直接排。 */
+internal data class ToolProgressLabel(@StringRes val resId: Int, val arg: Int)
+
+/**
+ * 把工具参数流式进度渲染成「正在写入 342 行」这类一句话。
+ *
+ * 只对写文件的工具有意义：`Bash` 这类长命令的参数同样会流式传输，但「正在写入 N 行」
+ * 描述的是文件内容，套在命令上会让人误以为在写盘。进度为空或不是写文件工具时返回 null，
+ * 调用方沿用 [toolRunningLabelRes] 的通用场景文案，与加进度之前的行为一致。
+ */
+internal fun toolProgressLabel(toolName: String?, progress: ToolArgsProgress?): ToolProgressLabel? {
+    if (progress == null || progress.chars <= 0) return null
+    val writingFile = toolName?.lowercase() == "editfile" || toolName?.lowercase() == "writefile"
+    if (!writingFile) return null
+    return if (progress.lines >= MIN_LINES_FOR_LINE_COUNT) {
+        ToolProgressLabel(R.string.chat_status_writing_lines, progress.lines)
+    } else {
+        ToolProgressLabel(R.string.chat_status_writing_kb, (progress.chars + 1023) / 1024)
+    }
+}
+
+/** 行数太少时报「1 行」没有意义（短文件、单行 JSON），按体积说更自然。 */
+private const val MIN_LINES_FOR_LINE_COUNT = 5
+
+/**
+ * 等待期间那一行状态文案：进度 > 工具场景 > 兜底的「正在思考」。
+ *
+ * 三级回落写在一处，免得调用点自己串条件时把顺序弄反——进度比场景更具体，
+ * 有进度还报「正在编辑文件」等于把信息退回去了。
+ */
+@Composable
+internal fun toolStatusLabel(toolName: String?, progress: ToolArgsProgress?): String =
+    toolProgressLabel(toolName, progress)?.let { stringResource(it.resId, it.arg) }
+        ?: toolName?.let { stringResource(toolRunningLabelRes(it)) }
+        ?: stringResource(R.string.chat_status_thinking)

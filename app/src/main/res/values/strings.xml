@@ -854,6 +854,8 @@
     <string name="chat_status_generating">正在生成</string>
     <string name="chat_status_thinking">正在思考</string>
     <string name="chat_status_calling_tool">正在调用工具</string>
+    <string name="chat_status_writing_lines">正在写入 %1$d 行</string>
+    <string name="chat_status_writing_kb">正在写入 %1$d KB</string>
     <string name="chat_status_running_command">正在执行命令</string>
     <string name="chat_status_editing_file">正在编辑文件</string>
     <string name="chat_status_reading_file">正在读取文件</string>
@@ -869,6 +871,15 @@
     <string name="chat_tool_succeeded">工具执行成功</string>
     <string name="chat_tool_failed">工具执行失败</string>
     <string name="chat_tool_calls_count">%1$d 次工具调用</string>
+    <string name="chat_tool_group_read_files">读取了 %1$d 个文件</string>
+    <string name="chat_tool_group_write_files">写入 %1$d 个文件</string>
+    <string name="chat_tool_group_run_commands">运行 %1$d 条命令</string>
+    <string name="chat_tool_group_search">搜索 %1$d 次</string>
+    <string name="chat_tool_group_browse">浏览网页 %1$d 次</string>
+    <string name="chat_tool_group_subagents">启动 %1$d 个子任务</string>
+    <string name="chat_tool_group_other">调用工具 %1$d 次</string>
+    <string name="chat_tool_group_more_kinds">以及另外 %1$d 类</string>
+    <string name="chat_tool_group_join">、</string>
     <string name="chat_turn_running">执行中</string>
     <string name="chat_turn_completed">已完成 %1$s</string>
     <string name="chat_turn_completed_plain">已完成</string>
@@ -2539,6 +2550,8 @@
 <string name="filepreview_loading">正在加载…</string>
 <string name="filepreview_error_read">读取文件失败</string>
 <string name="filepreview_loading_archive">正在读取压缩包…</string>
+<string name="filepreview_html_incomplete">部分资源未能内联，预览可能不完整</string>
+<string name="filepreview_html_skipped_external">已跳过 %1$d 个外部资源，预览只渲染自包含内容</string>
 <string name="filepreview_loading_pdf">正在加载 PDF…</string>
 <string name="filepreview_office_subtitle">Office 文档需要使用外部应用预览。</string>
 <string name="filepreview_open_externally">使用外部应用打开</string>

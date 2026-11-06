@@ -372,6 +372,26 @@ private fun buildTurnProcessItems(
     soulHeaderId: String?,
 ): List<ChatRenderItem> {
     val out = ArrayList<ChatRenderItem>(messages.size)
+    // 已出结果的那一段工具调用才折成组；仍在跑的工具自己当顶层项，见下方分段逻辑。
+    // 入参是 subList 视图，落进 ChatRenderItem 前必须复制：渲染项会跨重组存活，
+    // 留着视图等于把它绑在调用方那个列表上。
+    fun emitToolRun(run: List<AgentUIMessage>) {
+        if (run.isEmpty()) return
+        if (run.size == 1) {
+            out += messageRenderItems(run.first())
+            return
+        }
+        // 只有一条工具时不折成「1 次工具调用」，直接当普通工具行显示。
+        val members = run.toList()
+        val key = toolGroupKey(members.first())
+        out += ChatRenderItem(
+            message = members.first(),
+            key = key,
+            contentType = TOOL_GROUP_CONTENT_TYPE,
+            toolGroup = members,
+            groupExpanded = groupOverrides[key] == true,
+        )
+    }
     var i = 0
     while (i < messages.size) {
         val message = messages[i]
@@ -379,19 +399,17 @@ private fun buildTurnProcessItems(
             var j = i
             while (j < messages.size && messages[j].isGroupableTool()) j++
             val members = messages.subList(i, j).toList()
-            // 只有一条工具时不折成「1 次工具调用」，直接当普通工具行显示。
-            if (members.size == 1) {
-                out += messageRenderItems(members.first())
-            } else {
-                val key = toolGroupKey(members.first())
-                out += ChatRenderItem(
-                    message = members.first(),
-                    key = key,
-                    contentType = TOOL_GROUP_CONTENT_TYPE,
-                    toolGroup = members,
-                    groupExpanded = groupOverrides[key] == true,
-                )
+            // 仍在跑（含等用户决策）的工具不折进组：长任务里用户得能一直看到「当前那一步
+            // 在干什么」，折起来就只剩折叠行的脉冲。它自己成项，组只装已经出结果的部分。
+            var runStart = 0
+            members.forEachIndexed { index, member ->
+                if (member.isToolRunning(null)) {
+                    emitToolRun(members.subList(runStart, index))
+                    out += messageRenderItems(member)
+                    runStart = index + 1
+                }
             }
+            emitToolRun(members.subList(runStart, members.size))
             i = j
             continue
         }

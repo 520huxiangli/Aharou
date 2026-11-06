@@ -11,6 +11,7 @@ import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.presentation.component.PendingUploadAttachment
+import com.aharou.feature.agent.presentation.component.toolProgressLabel
 import com.aharou.feature.agent.presentation.component.toAgentAttachments
 import com.aharou.feature.settings.data.repository.AssistantOverlaySettingsRepository
 import com.aharou.feature.voice.assistant.AssistantContextHolder
@@ -159,7 +160,12 @@ class AssistantOverlayViewModel @Inject constructor(
             is AgentEvent.AssistantDelta -> updateAssistant(event.accumulated)
             is AgentEvent.AssistantText -> if (event.content.isNotBlank()) updateAssistant(event.content)
             is AgentEvent.ToolCallStarted -> _state.update { it.copy(status = event.toolName) }
-            is AgentEvent.ToolCallPreparing -> _state.update { it.copy(status = event.toolName) }
+            is AgentEvent.ToolCallPreparing -> _state.update { current ->
+                // 有参数进度时说「正在写入 342 行」；没有进度保持原来的工具名，行为不变。
+                val label = toolProgressLabel(event.toolName, event.progress)
+                    ?.let { context.getString(it.resId, it.arg) }
+                current.copy(status = label ?: event.toolName)
+            }
             is AgentEvent.ToolCallFinished -> _state.update { it.copy(status = null) }
             is AgentEvent.CompactionStarted -> _state.update {
                 it.copy(status = context.getString(R.string.assistant_overlay_compacting))
