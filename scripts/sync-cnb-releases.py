@@ -58,6 +58,7 @@ CNB_TOKEN = os.environ.get("CNB_TOKEN", "")
 RELEASE_FILTER = os.environ.get("RELEASE_FILTER", "")
 ASSET_FILTER = os.environ.get("ASSET_FILTER", "")
 KEEP_STABLE = int(os.environ.get("KEEP_STABLE", "3"))
+VOICE_MODEL_LOCAL_DIR = os.environ.get("VOICE_MODEL_LOCAL_DIR", "")
 MAX_ATTACH = 2 * 1024 * 1024 * 1024  # 2GB 兜底（GitHub 单附件上限）
 
 GH_API = f"https://api.github.com/repos/{GH_REPO}"
@@ -77,6 +78,11 @@ VOICE_MODELS = [
      "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2"),
     (f"{VOICE_MODEL_BASE}/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
      "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"),
+    # 声音克隆：模型归档与它的声码器分别在两个 release 里，App 侧按两个源各自下载。
+    (f"{VOICE_MODEL_BASE}/tts-models/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2",
+     "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2"),
+    (f"{VOICE_MODEL_BASE}/vocoder-models/vocos_24khz.onnx",
+     "vocos_24khz.onnx"),
 ]
 
 
@@ -273,12 +279,12 @@ def fetch_to(url: str, dest: str) -> bool:
 
 
 def sync_voice_models() -> int:
-    """把三份离线语音模型包传到固定 tag 的 Release（已存在同名附件则跳过）。"""
+    """把离线语音模型包传到固定 tag 的 Release（已存在同名附件则跳过）。"""
     print(f"语音模型同步：k2-fsa/sherpa-onnx -> cnb {CNB_OWNER}/{CNB_REPO}（tag={VOICE_MODEL_TAG}）")
     rel = ensure_release(
         VOICE_MODEL_TAG,
         "离线语音模型",
-        "App 运行时下载的离线语音模型包（唤醒 / 流式识别 / 整段识别）。",
+        "App 运行时下载的离线语音模型包（唤醒 / 流式识别 / 整段识别 / 声音克隆）。",
     )
     if not rel:
         print("错误：无法创建/获取 voice-models Release")
@@ -295,11 +301,18 @@ def sync_voice_models() -> int:
                 skipped += 1
                 continue
             dest = os.path.join(tmpdir, name)
-            print(f"  下载 {name} ...")
-            if not fetch_to(url, dest):
-                print(f"  [失败] {name} 下载失败")
-                failed += 1
-                continue
+            # 本地已有同名文件就先用它：GitHub 直连在国内经常卡在半截，
+            # 让用户自己下好再放进来，比反复重试可靠得多。
+            local = os.path.join(VOICE_MODEL_LOCAL_DIR, name) if VOICE_MODEL_LOCAL_DIR else ""
+            if local and os.path.isfile(local):
+                print(f"  使用本地文件 {name}")
+                shutil.copy2(local, dest)
+            else:
+                print(f"  下载 {name} ...")
+                if not fetch_to(url, dest):
+                    print(f"  [失败] {name} 下载失败")
+                    failed += 1
+                    continue
             size = os.path.getsize(dest)
             print(f"  上传 {name}（{size / 1048576:.1f}MB）...")
             if upload(release_id, dest):
