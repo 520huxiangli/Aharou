@@ -63,6 +63,7 @@ import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.tool.ToolCallGuard
+import com.aharou.feature.agent.domain.tool.ToolCallIdempotencyStore
 import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.agent.domain.tool.ToolSearchTool
 import com.aharou.feature.agent.domain.tool.ToolOutputStore
@@ -529,7 +530,8 @@ object AgentModule {
         receiptRepository: ToolCallReceiptRepository,
         ocrEngine: TesseractOcrEngine,
         vault: VaultRepository,
-        reminderEngine: com.aharou.feature.agent.domain.reminder.ReminderEngine
+        reminderEngine: com.aharou.feature.agent.domain.reminder.ReminderEngine,
+        idempotencyStore: ToolCallIdempotencyStore
     ): AgentWorkflow {
         return StatefulAgentWorkflow(
             toolRegistry,
@@ -564,7 +566,8 @@ object AgentModule {
             ocrEngine,
             vault,
             reminderEngine,
-            memoryCompactor
+            memoryCompactor,
+            idempotencyStore
         )
     }
 }
