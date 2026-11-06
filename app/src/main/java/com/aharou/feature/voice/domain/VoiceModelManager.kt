@@ -37,9 +37,14 @@ sealed interface VoiceModelState {
     data class Failed(val message: String) : VoiceModelState
 }
 
-/** 单个必需文件的状态。[actual] 为 null 表示文件不存在。 */
+/**
+ * 单个必需条目（文件或目录）的状态。[actual] 为 null 表示不存在；目录条目记的是内部文件数。
+ *
+ * [expected] <= 0 表示只要求存在且非空——上游重新导出的 onnx 字节数会变，
+ * 写死大小反而会让「明明能用」的模型永远判不就绪。
+ */
 data class VoiceModelFileStatus(val name: String, val expected: Long, val actual: Long?) {
-    val ok: Boolean get() = actual != null && actual == expected
+    val ok: Boolean get() = actual != null && if (expected <= 0L) actual > 0 else actual == expected
 }
 
 /** 模型当前状态：哪个文件缺了、哪个字节数不对——设置页照这个显示，不用靠猜。 */
@@ -79,20 +84,38 @@ class VoiceModelManager @Inject constructor(
     /** 模型是否已就绪（运行所需文件齐全**且字节数对得上**）。 */
     fun isReady(spec: VoiceModelSpec): Boolean = status(spec).ready
 
-    /** 当前模型状态：逐个文件核「在不在 + 字节数对不对」。 */
+    /** 当前模型状态：逐个条目核「在不在 + 字节数对不对」。 */
     fun status(spec: VoiceModelSpec): VoiceModelStatus {
         val dir = modelDir(spec)
-        return VoiceModelStatus(
-            spec.requiredFiles.map { name ->
-                val file = File(dir, name)
-                VoiceModelFileStatus(
-                    name = name,
-                    expected = spec.fileSizes[name] ?: 0L,
-                    actual = file.takeIf { it.isFile }?.length(),
-                )
-            }
-        )
+        val files = spec.requiredFiles.map { name ->
+            val file = File(dir, name)
+            VoiceModelFileStatus(
+                name = name,
+                expected = spec.fileSizes[name] ?: 0L,
+                actual = file.takeIf { it.isFile }?.length(),
+            )
+        }
+        val dirs = spec.requiredDirs.map { name ->
+            val child = File(dir, name)
+            VoiceModelFileStatus(
+                name = "$name/",
+                expected = 0L,
+                actual = if (child.isDirectory) countFiles(child) else null,
+            )
+        }
+        val extras = spec.extraFiles.map { extra ->
+            val file = File(dir, extra.fileName)
+            VoiceModelFileStatus(
+                name = extra.fileName,
+                expected = extra.size,
+                actual = file.takeIf { it.isFile }?.length(),
+            )
+        }
+        return VoiceModelStatus(files + dirs + extras)
     }
+
+    private fun countFiles(dir: File): Long =
+        dir.walkTopDown().count { it.isFile }.toLong()
 
     /**
      * 强制重新下载（设置页那个「下载」按钮点第二次时走它）：
@@ -150,10 +173,17 @@ class VoiceModelManager @Inject constructor(
                 staging.mkdirs()
                 onState(VoiceModelState.Downloading(0f))
                 downloadArchive(spec, archive) { progress ->
-                    onState(VoiceModelState.Downloading(progress))
+                    onState(VoiceModelState.Downloading(progress * ARCHIVE_PROGRESS))
                 }
                 onState(VoiceModelState.Extracting)
                 extractArchive(spec, archive, staging)
+                downloadExtraFiles(spec, staging) { progress ->
+                    onState(
+                        VoiceModelState.Downloading(
+                            ARCHIVE_PROGRESS + progress * (1f - ARCHIVE_PROGRESS)
+                        )
+                    )
+                }
                 dir.deleteRecursively()
                 if (!staging.renameTo(dir)) {
                     throw IOException("模型目录改名失败")
@@ -262,27 +292,97 @@ class VoiceModelManager @Inject constructor(
      * 压缩包里可能出现的路径穿越（`../`）。
      */
     private fun extractArchive(spec: VoiceModelSpec, archive: File, destDir: File) {
-        val wanted = spec.requiredFiles.toSet()
-        val found = mutableSetOf<String>()
+        val wantedFiles = spec.requiredFiles.toSet()
+        val wantedDirs = spec.requiredDirs.toSet()
+        val foundFiles = mutableSetOf<String>()
+        val foundDirs = mutableSetOf<String>()
         BZip2CompressorInputStream(BufferedInputStream(archive.inputStream())).use { bz ->
             TarArchiveInputStream(bz).use { tar ->
                 var entry = tar.nextEntry
                 while (entry != null) {
-                    val name = entry.name.substringAfterLast('/')
-                    if (entry.isFile && name in wanted && found.add(name)) {
-                        File(destDir, name).outputStream().use { out -> tar.copyTo(out) }
+                    val path = entry.name
+                    if (entry.isFile) {
+                        val base = path.substringAfterLast('/')
+                        if (base in wantedFiles && foundFiles.add(base)) {
+                            File(destDir, base).outputStream().use { out -> tar.copyTo(out) }
+                        } else {
+                            // 目录提取：按归档里的相对路径原样铺开，仍只取 basename 挡住了路径穿越。
+                            val dir = wantedDirs.firstOrNull { relativeUnder(path, it) != null }
+                            val rel = dir?.let { relativeUnder(path, it) }
+                            if (dir != null && rel != null) {
+                                val out = File(destDir, "$dir/$rel")
+                                out.parentFile?.mkdirs()
+                                out.outputStream().use { o -> tar.copyTo(o) }
+                                foundDirs.add(dir)
+                            }
+                        }
                     }
                     entry = tar.nextEntry
                 }
             }
         }
-        val missing = wanted - found
-        if (missing.isNotEmpty()) {
-            throw IOException("模型包里找不到文件：" + missing.joinToString("、"))
+        val missingFiles = wantedFiles - foundFiles
+        if (missingFiles.isNotEmpty()) {
+            throw IOException("模型包里找不到文件：" + missingFiles.joinToString("、"))
+        }
+        val missingDirs = wantedDirs - foundDirs
+        if (missingDirs.isNotEmpty()) {
+            throw IOException("模型包里找不到目录：" + missingDirs.joinToString("、"))
+        }
+    }
+
+    /** 归档内路径相对 [dir] 的部分；不在该目录下或带父目录跳转时返回 null。 */
+    private fun relativeUnder(path: String, dir: String): String? {
+        val parts = path.split('/')
+        val index = parts.indexOf(dir)
+        if (index < 0 || index == parts.lastIndex) return null
+        val rel = parts.subList(index + 1, parts.size)
+        if (rel.any { it == ".." || it.isEmpty() }) return null
+        return rel.joinToString("/")
+    }
+
+    /**
+     * 下载归档之外的单文件（如 ZipVoice 的声码器）。
+     *
+     * 已存在且字节数对得上就跳过，不重复拉几十 MB。
+     */
+    private suspend fun downloadExtraFiles(
+        spec: VoiceModelSpec,
+        dest: File,
+        onProgress: (Float) -> Unit,
+    ) {
+        val extras = spec.extraFiles
+        if (extras.isEmpty()) return
+        for ((index, extra) in extras.withIndex()) {
+            val file = File(dest, extra.fileName)
+            if (file.isFile && extra.size > 0L && file.length() == extra.size) {
+                onProgress((index + 1f) / extras.size)
+                continue
+            }
+            var lastError: Exception? = null
+            for (url in extra.urls) {
+                try {
+                    fetchArchive(url, file) { progress -> onProgress((index + progress) / extras.size) }
+                    lastError = null
+                    break
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    file.delete()
+                    FileLogger.w(TAG, "附件下载失败，换下一个源：$url", e)
+                    lastError = e
+                }
+            }
+            if (lastError != null) {
+                throw IOException("${extra.fileName} 下载失败：${lastError.message}")
+            }
         }
     }
 
     private companion object {
         const val TAG = "VoiceModelManager"
+
+        /** 归档占的进度份额，剩下的留给声码器等单独文件。 */
+        const val ARCHIVE_PROGRESS = 0.85f
     }
 }

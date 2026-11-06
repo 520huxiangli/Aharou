@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.aharou.core.ui.AdaptiveModalBottomSheet
@@ -362,6 +363,8 @@ internal fun DefaultModelsSection(
                 }
             )
             SettingsDivider()
+            VoiceProfileRow()
+            SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Mic,
                 title = stringResource(R.string.voice_wake_title),
@@ -556,6 +559,9 @@ internal data class VoiceFieldState(
     val placeholder: String
 )
 
+/** OpenAI 兼容合成接口的常见音色名，给成快捷选项；其他供应商需自行填自己的音色标识。 */
+private val TtsVoicePresets = listOf("alloy", "echo", "fable", "onyx", "nova", "shimmer")
+
 /**
  * 场景绑定失效时的行内提示：让用户看到「已绑定但实际会回退」，而不是被行尾的
  * 「跟随聊天模型」误导。未绑定（NOT_CONFIGURED）不提示——行尾文案已经说清了。
@@ -583,7 +589,7 @@ private sealed interface ModelTestRowState {
  * 模型选择弹窗：风格与拉取模型弹窗保持一致（iOS 胶囊搜索框、提供商分组卡片、能力 Tag）。
  * 识图模型、压缩模型与主页聊天模型共用此组件，仅文案不同；右上角「重置」清除专用模型配置（回退跟随聊天模型），主页场景传 null 不显示。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun ModelSelectionSheet(
     title: String,
@@ -677,24 +683,51 @@ internal fun ModelSelectionSheet(
             )
 
             voiceField?.let { field ->
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = Spacing.lg),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                 ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_voice_tts_voice),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.width(64.dp)
+                        )
+                        AppTextField(
+                            value = field.value,
+                            onValueChange = field.onValueChange,
+                            placeholder = field.placeholder,
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    // 只列 OpenAI 兼容接口的音色名：点一下填进上面的输入框。
+                    // 国内供应商（CosyVoice 等）音色标识完全不同，仍以手填为准，故不做成枚举下拉。
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 64.dp),
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+                    ) {
+                        TtsVoicePresets.forEach { name ->
+                            FilterChip(
+                                selected = field.value.trim().equals(name, ignoreCase = true),
+                                onClick = { field.onValueChange(name) },
+                                label = { Text(name, style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
                     Text(
-                        text = stringResource(R.string.settings_voice_tts_voice),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.width(64.dp)
-                    )
-                    AppTextField(
-                        value = field.value,
-                        onValueChange = field.onValueChange,
-                        placeholder = field.placeholder,
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        text = stringResource(R.string.settings_voice_tts_voice_presets_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 64.dp)
                     )
                 }
             }

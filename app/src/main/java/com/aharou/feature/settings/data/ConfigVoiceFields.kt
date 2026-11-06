@@ -72,7 +72,7 @@ class ConfigVoiceFields @Inject constructor(
             DataStoreStrField(
                 path = "voice.tts_voice",
                 displayName = "语音合成音色",
-                description = "音色名，留空用服务端默认音色。",
+                description = "音色名，留空用服务端默认音色；填 local:<id> 则用本机克隆的音色（id 见设置里「我的音色」）。",
                 flow = ttsSettings.voiceFlow,
                 setter = { ttsSettings.setVoice(it) },
             ),

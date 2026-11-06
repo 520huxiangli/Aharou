@@ -918,6 +918,7 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
+
             // 每个 flow 必须各起一个协程：collectLatest 挂起后永不返回，
             // 串在同一个 launch 里的话，后面的根本不会执行——
             // 表现就是开关值回不到界面，界面显示的永远是初始值（与真实状态相反）。

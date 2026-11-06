@@ -7,6 +7,10 @@ import com.aharou.feature.voice.data.CloudSpeechClient
 import com.aharou.feature.voice.data.SystemTtsPlayer
 import com.aharou.feature.voice.data.TtsCache
 import com.aharou.feature.voice.data.TtsPlayer
+import com.aharou.feature.voice.tts.VoiceProfileStore
+import com.aharou.feature.voice.tts.ZipVoiceTtsEngine
+import com.aharou.feature.voice.tts.localVoiceIdOrNull
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,6 +45,8 @@ internal class SpeechQueue @Inject constructor(
     private val ttsCache: TtsCache,
     private val ttsSettings: VoiceTtsSettingsRepository,
     private val providerRepository: AIProviderRepository,
+    private val profileStore: VoiceProfileStore,
+    private val localTts: ZipVoiceTtsEngine,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -174,13 +180,63 @@ internal class SpeechQueue @Inject constructor(
     }
 
     private suspend fun synthesize(text: String): ByteArray? {
+        val voice = ttsSettings.getVoice()
+        // 本地克隆音色优先：合成在本机完成，不联网也不占云端额度。
+        localVoiceIdOrNull(voice)?.let { id ->
+            val loaded = profileStore.load(id)
+            if (loaded != null) {
+                // 同步过云端的音色优先用云端，失败再落回本机合成。
+                val cloudUri = loaded.profile.cloudVoiceUri
+                if (cloudUri.isNotBlank()) {
+                    val pid = ttsSettings.getTtsProviderId()
+                    val cloudModel = ttsSettings.getTtsModel()
+                    if (pid.isNotBlank() && cloudModel.isNotBlank()) {
+                        val provider = runCatching { providerRepository.getProviderById(pid) }.getOrNull()
+                        val apiKey = provider?.firstUsableApiKey.orEmpty()
+                        if (provider != null && apiKey.isNotBlank()) {
+                            val cloudKey = TtsCache.key(text, cloudUri, cloudModel, provider.baseUrl)
+                            ttsCache.get(cloudKey)?.let { file ->
+                                runCatching { file.readBytes() }.getOrNull()
+                                    ?.takeIf { it.isNotEmpty() }
+                                    ?.let { return it }
+                            }
+                            val cloudBytes = runCatching {
+                                cloudSpeech.synthesize(provider.baseUrl, apiKey, cloudModel, text, cloudUri)
+                            }.onFailure { e ->
+                                if (e is CancellationException) throw e
+                                FileLogger.w(TAG, "云端克隆合成失败：$text", e)
+                            }.getOrNull()
+                            if (cloudBytes != null) {
+                                ttsCache.put(cloudKey, cloudBytes)
+                                return cloudBytes
+                            }
+                        }
+                    }
+                }
+                val localKey = TtsCache.key(text, voice, LOCAL_TTS_MODEL, LOCAL_TTS_SOURCE)
+                ttsCache.get(localKey)?.let { file ->
+                    runCatching { file.readBytes() }.getOrNull()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { return it }
+                }
+                val bytes = runCatching { localTts.synthesize(text, loaded) }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        FileLogger.w(TAG, "本地克隆合成失败：$text", e)
+                    }
+                    .getOrNull()
+                if (bytes != null) {
+                    ttsCache.put(localKey, bytes)
+                    return bytes
+                }
+            }
+        }
         val providerId = ttsSettings.getTtsProviderId()
         val model = ttsSettings.getTtsModel()
         if (providerId.isBlank() || model.isBlank()) return null
         val provider = runCatching { providerRepository.getProviderById(providerId) }.getOrNull() ?: return null
         val key = provider.firstUsableApiKey
         if (key.isBlank()) return null
-        val voice = ttsSettings.getVoice()
         val cacheKey = TtsCache.key(text, voice, model, provider.baseUrl)
         // 命中缓存就直接复用本地音频，省一次云端往返
         ttsCache.get(cacheKey)?.let { file ->
@@ -207,6 +263,11 @@ internal class SpeechQueue @Inject constructor(
 
         /** 云端 TTS 单次长度上限普遍在 200 字左右，这里取四分之一留足余量。 */
         const val MAX_SEGMENT_LENGTH = 50
+
+        /** 本地合成的缓存标识：没有 provider/model 可填，用固定串与云端结果区分开。 */
+        const val LOCAL_TTS_MODEL = "zipvoice-local"
+        const val LOCAL_TTS_SOURCE = "local"
+
 
         val SENTENCE_ENDINGS: Set<Char> = setOf('。', '！', '？', '；', '…', '\n', '!', '?', ';', ':')
 

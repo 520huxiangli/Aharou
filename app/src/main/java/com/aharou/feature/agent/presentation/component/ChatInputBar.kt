@@ -74,6 +74,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalView
@@ -105,6 +106,9 @@ import com.aharou.feature.agent.domain.workflow.ContextBreakdown
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.call.VoiceCallService
+import com.aharou.feature.voice.input.VoiceInputPanel
+import com.aharou.feature.voice.input.VoiceInputState
+import com.aharou.feature.voice.input.rememberVoiceInputHost
 import com.aharou.feature.voice.presentation.VoiceMicButton
 import com.aharou.feature.agent.domain.command.SlashCommand
 import com.aharou.feature.agent.domain.command.SlashCommandKind
@@ -214,6 +218,7 @@ internal fun ChatInputBar(
     onModelSheetDismiss: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val voiceInput = rememberVoiceInputHost(value, onValueChange)
     val hasContent = value.isNotBlank() || pendingAttachments.isNotEmpty()
     val canSend = hasContent
     var showAttachmentSheet by remember { mutableStateOf(false) }
@@ -419,6 +424,11 @@ internal fun ChatInputBar(
                 )
             }
 
+            VoiceInputPanel(
+                state = voiceInput.state,
+                modifier = Modifier.padding(bottom = Spacing.xs)
+            )
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -615,10 +625,18 @@ internal fun ChatInputBar(
                     val callContext = LocalContext.current
                     val callRunning by VoiceCallService.running.collectAsState()
                     val wakeRunning by VoiceCallService.wakeModeRunning.collectAsState()
+                    val keyboardController = LocalSoftwareKeyboardController.current
                     VoiceMicButton(
                         enabled = !isBusy,
                         callRunning = callRunning,
                         wakeRunning = wakeRunning,
+                        voiceInputActive = voiceInput.state !is VoiceInputState.Idle,
+                        onVoiceInputStart = {
+                            // 长按录音时留着键盘只会把输入框顶高，先收掉再说。
+                            keyboardController?.hide()
+                            voiceInput.start()
+                        },
+                        onVoiceInputEnd = voiceInput::finish,
                         onToggleCall = {
                             when {
                                 !VoiceCallService.isRunning() -> VoiceCallService.start(callContext)

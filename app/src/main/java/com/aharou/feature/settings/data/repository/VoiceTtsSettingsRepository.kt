@@ -39,6 +39,7 @@ class VoiceTtsSettingsRepository @Inject constructor(
     private val voiceKey = stringPreferencesKey("voice_tts_voice")
     private val autoReadKey = booleanPreferencesKey("voice_tts_auto_read")
 
+
     /** 当前持久化的音色名流；未设置时为空字符串（=用服务端默认音色）。 */
     val voiceFlow: Flow<String> = dataStore.data.map { it[voiceKey] ?: "" }
 

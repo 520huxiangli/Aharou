@@ -12,6 +12,9 @@ import com.aharou.feature.voice.data.CloudSpeechClient
 import com.aharou.feature.voice.data.SystemTtsPlayer
 import com.aharou.feature.voice.data.TtsCache
 import com.aharou.feature.voice.data.TtsPlayer
+import com.aharou.feature.voice.tts.VoiceProfileStore
+import com.aharou.feature.voice.tts.ZipVoiceTtsEngine
+import com.aharou.feature.voice.tts.localVoiceIdOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,8 @@ internal class ReadAloudViewModel @Inject constructor(
     private val systemTts: SystemTtsPlayer,
     private val speechQueue: SpeechQueue,
     private val ttsCache: TtsCache,
+    private val profileStore: VoiceProfileStore,
+    private val localTts: ZipVoiceTtsEngine,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<ReadAloudState>(ReadAloudState.Idle)
@@ -111,6 +116,49 @@ internal class ReadAloudViewModel @Inject constructor(
             _currentText.value = text
             _state.value = ReadAloudState.Synthesizing
             try {
+                val voice = ttsSettings.getVoice()
+                // 选了本地克隆音色就走本机合成，不碰网络；音色档案丢了则继续往下回落到云端/系统引擎。
+                val localId = localVoiceIdOrNull(voice)
+                if (localId != null) {
+                    val loaded = profileStore.load(localId)
+                    if (loaded != null) {
+                        // 同步过云端的音色优先用云端：又快又清楚，本地那句要十几秒而且偏糊。
+                        val cloudUri = loaded.profile.cloudVoiceUri
+                        if (cloudUri.isNotBlank()) {
+                            val cloudAudio = synthesizeInCloud(cloudUri, text)
+                            if (cloudAudio != null) {
+                                _state.value = ReadAloudState.Playing
+                                player.play(cloudAudio) {
+                                    viewModelScope.launch {
+                                        _currentText.value = null
+                                        _state.value = ReadAloudState.Idle
+                                    }
+                                }
+                                return@launch
+                            }
+                        }
+                        val localKey = TtsCache.key(text, voice, LOCAL_TTS_MODEL, LOCAL_TTS_SOURCE)
+                        val audio = ttsCache.get(localKey)?.let { cached ->
+                            withContext(Dispatchers.IO) { runCatching { cached.readBytes() }.getOrNull() }
+                        } ?: runCatching { localTts.synthesize(text, loaded) }
+                            .onFailure { e ->
+                                // 用户又点了别处导致的取消不是「合成失败」，不能当失败写下日志再回落到云端。
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                FileLogger.w(TAG, "本地克隆合成失败，回落到云端", e)
+                            }
+                            .getOrNull()?.also { ttsCache.put(localKey, it) }
+                        if (audio != null) {
+                            _state.value = ReadAloudState.Playing
+                            player.play(audio) {
+                                viewModelScope.launch {
+                                    _currentText.value = null
+                                    _state.value = ReadAloudState.Idle
+                                }
+                            }
+                            return@launch
+                        }
+                    }
+                }
                 val providerId = ttsSettings.getTtsProviderId()
                 val model = ttsSettings.getTtsModel()
                 val provider = if (providerId.isNotBlank()) {
@@ -130,7 +178,6 @@ internal class ReadAloudViewModel @Inject constructor(
                     }
                     return@launch
                 }
-                val voice = ttsSettings.getVoice()
                 val cacheKey = TtsCache.key(text, voice, model, provider.baseUrl)
                 // 命中缓存直接读本地音频，省一次云端往返
                 val cached = ttsCache.get(cacheKey)
@@ -162,6 +209,26 @@ internal class ReadAloudViewModel @Inject constructor(
         }
     }
 
+    /** 用「语音合成模型」里配的 provider 合成；没配或失败返回 null，由调用方回落本地。 */
+    private suspend fun synthesizeInCloud(voiceUri: String, text: String): ByteArray? {
+        val providerId = ttsSettings.getTtsProviderId()
+        val model = ttsSettings.getTtsModel()
+        if (providerId.isBlank() || model.isBlank()) return null
+        val provider = runCatching { providerRepository.getProviderById(providerId) }.getOrNull() ?: return null
+        val apiKey = provider.firstUsableApiKey
+        if (apiKey.isBlank()) return null
+        val cacheKey = TtsCache.key(text, voiceUri, model, provider.baseUrl)
+        ttsCache.get(cacheKey)?.let { cached ->
+            withContext(Dispatchers.IO) { runCatching { cached.readBytes() }.getOrNull() }?.let { return it }
+        }
+        return runCatching {
+            cloudSpeech.synthesize(provider.baseUrl, apiKey, model, text, voiceUri)
+        }.onFailure { e ->
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            FileLogger.w(TAG, "云端克隆合成失败，回落到本地", e)
+        }.getOrNull()?.also { ttsCache.put(cacheKey, it) }
+    }
+
     /** 停止朗读。 */
     fun stop() {
         job?.cancel()
@@ -184,5 +251,10 @@ internal class ReadAloudViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "ReadAloudViewModel"
+
+        /** 本地合成的缓存标识：没有 provider/model 可填，用固定串把本地结果与云端结果区分开。 */
+        const val LOCAL_TTS_MODEL = "zipvoice-local"
+        const val LOCAL_TTS_SOURCE = "local"
+
     }
 }

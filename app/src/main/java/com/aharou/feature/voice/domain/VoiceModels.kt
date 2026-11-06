@@ -24,6 +24,25 @@ data class VoiceModelSpec(
     val requiredFiles: List<String>,
     /** 各必需文件的字节数。 */
     val fileSizes: Map<String, Long> = emptyMap(),
+    /** 归档里需要整目录提取的相对路径（如 ZipVoice 的 espeak-ng-data）；只校验目录非空。 */
+    val requiredDirs: List<String> = emptyList(),
+    /** 归档之外还要单独下载的文件（ZipVoice 的声码器不在模型归档里）。 */
+    val extraFiles: List<VoiceModelExtraFile> = emptyList(),
+)
+
+/**
+ * 模型目录之外的一个独立文件。
+ *
+ * ZipVoice 的声码器 `vocos_24khz.onnx` 是单独的 release 资产，不在模型 tar.bz2 里，
+ * 所以不能靠一次解压凑齐整个目录。
+ */
+data class VoiceModelExtraFile(
+    /** 落到模型目录根下的文件名。 */
+    val fileName: String,
+    /** 下载地址候选，按优先级排列；前一个失败才试下一个。 */
+    val urls: List<String>,
+    /** 应有字节数；对不上就重下，防断点留下半成品。 */
+    val size: Long = 0L,
 )
 
 object VoiceModels {
@@ -117,8 +136,41 @@ object VoiceModels {
     )
 
     /**
-     * 全部模型。下载、状态统计都按这份清单走：少算一个，就会出现「看着已就绪、
-     * 唤醒却在用户机上报模型不完整」这种半截状态。
+     * 声音克隆合成：sherpa-onnx ZipVoice 蒸馏 int8（中英双语，零样本克隆）。
+     *
+     * 它需要两样东西：模型归档（encoder/decoder/tokens/lexicon/espeak-ng-data），
+     * 以及归档之外单独发布的 vocos 声码器。合成时还要一段参考音频及其逐字文本——
+     * 文本对不上音色会明显走样，所以录音后必须让用户确认转写结果。
+     */
+    val TTS_CLONE = VoiceModelSpec(
+        dirName = "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia",
+        displayName = "声音克隆合成（ZipVoice）",
+        urls = listOf(
+            "$CNB_VOICE_BASE/sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2",
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/" +
+                "sherpa-onnx-zipvoice-distill-int8-zh-en-emilia.tar.bz2",
+        ),
+        // onnx 的字节数随上游重新导出会变，这里不钉死大小，存在即算就绪；
+        // 解压是流式的，中断会在改名之前抛错并清掉 staging，不会留下半成品冒充就绪。
+        requiredFiles = listOf("encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt", "lexicon.txt"),
+        requiredDirs = listOf("espeak-ng-data"),
+        extraFiles = listOf(
+            VoiceModelExtraFile(
+                fileName = "vocos_24khz.onnx",
+                urls = listOf(
+                    "$CNB_VOICE_BASE/vocos_24khz.onnx",
+                    "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos_24khz.onnx",
+                ),
+                size = 54_157_409L,
+            ),
+        ),
+    )
+
+    /**
+     * 设置页「下载全部」与状态统计的范围。
+     *
+     * 有意不含 [TTS_CLONE]：它 156MB，只服务于声音克隆，不用克隆的人不该被拖着多下这份。
+     * 克隆模型的下载与状态在「我的音色」弹层里单独管。
      * 必须声明在各 spec 之后——object 属性按声明顺序初始化，提前引用只会拿到 null。
      */
     val ALL = listOf(KWS_ZH, ASR_ZH, ASR_ZH_OFFLINE)
