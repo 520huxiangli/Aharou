@@ -41,6 +41,25 @@ class SkillRepository @Inject constructor(
             ?: builtinSkillSource.loadInstructions(name)
     }
 
+    /**
+     * 列出指定技能的附属文件（路径相对技能目录，见 [SkillFileListing]）。
+     *
+     * 技能不存在、已被禁用、或它是没有磁盘目录的内置技能时返回 [SkillFileListing.root] 为 null 的空清单；
+     * 列目录失败也返回空清单而不抛异常——附属清单只是帮模型少探一轮目录，拿不到不能把 loadSkill 拖挂。
+     */
+    fun listSkillFiles(name: String): SkillFileListing {
+        if (isSkillDisabled(name)) return SkillFileListing(root = null)
+        val dirPath = listAllSkills()
+            .firstOrNull { it.skill.name.equals(name, ignoreCase = true) }
+            ?.skill?.dirPath
+            ?: return SkillFileListing(root = null)
+        return runCatching { SkillFileLister.list(fileAccess, dirPath) }
+            .getOrElse { e ->
+                FileLogger.w(TAG, "列出技能附属文件失败: $name ($dirPath)", e)
+                SkillFileListing(root = dirPath)
+            }
+    }
+
     /** 技能是否在任一作用域中被禁用。 */
     fun isSkillDisabled(name: String): Boolean =
         name.lowercase() in skillConfigRepository.disabledNames()

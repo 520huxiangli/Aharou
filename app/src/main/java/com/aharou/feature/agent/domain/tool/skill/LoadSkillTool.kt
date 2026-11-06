@@ -1,6 +1,7 @@
 package com.aharou.feature.agent.domain.tool.skill
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.skill.SkillFileListing
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
@@ -57,7 +58,32 @@ class LoadSkillTool @Inject constructor(
             )
         }
 
-        FileLogger.d(TAG, "load_skill 加载成功: $skillName (${instructions.length} 字符)")
-        return ToolResult.Success(JsonPrimitive(instructions))
+        val files = skillRepository.listSkillFiles(skillName)
+        FileLogger.d(
+            TAG,
+            "load_skill 加载成功: $skillName (${instructions.length} 字符, ${files.files.size} 个附属文件)"
+        )
+        return ToolResult.Success(JsonPrimitive(withSkillFiles(instructions, files)))
+    }
+
+    /**
+     * 正文原样保留（模型靠它干活，一个字都不能截），只在末尾补上技能根目录与附属文件清单。
+     *
+     * 技能正文常按 `~/.aharou/skills/<name>/x.py` 引用同目录脚本；直接给出根目录和清单，
+     * 模型就不必先自己 `list` 探一轮，也不会把 node_modules 这类目录整片列进上下文。
+     */
+    private fun withSkillFiles(instructions: String, files: SkillFileListing): String {
+        val root = files.root ?: return instructions
+        val text = StringBuilder(instructions)
+        text.append("\n\nSkill root: ").append(root)
+        text.append("\n清单里是相对路径，用的时候拼在 Skill root 后面。")
+        if (files.files.isNotEmpty()) {
+            text.append("\nAvailable skill files:")
+            files.files.forEach { text.append("\n- ").append(it) }
+        }
+        if (files.truncated) {
+            text.append("\n（文件过多，以上只列出前 ${files.files.size} 个；其余文件用 list 工具查看 Skill root）")
+        }
+        return text.toString()
     }
 }
