@@ -7,8 +7,9 @@ import org.junit.Test
 /**
  * VoiceModelFileStatus / VoiceModelStatus：模型就绪判定的纯数据逻辑。
  *
- * 就绪 = 每个必需文件都存在**且字节数相等**。只看「在不在」会把上次下载残留的坏文件当成好文件
- * （见 VoiceModelSpec.fileSizes 的注释），所以断言的重点是「缺文件」和「字节数不符」两条路径都不能算就绪。
+ * 就绪 = 每个必需文件都存在，且字节数符合声明：声明了大小就必须相等，没声明（expected <= 0）则只要求非空。
+ * 只看「在不在」会把上次下载残留的坏文件当成好文件（见 VoiceModelSpec.fileSizes 的注释），
+ * 而把没声明大小的文件一律判不就绪，又会让字节数随上游重导出变化的模型（ZipVoice 的 onnx）永远无法就绪。
  */
 class VoiceModelStatusTest {
 
@@ -25,14 +26,15 @@ class VoiceModelStatusTest {
     }
 
     @Test
-    fun fileStatusWithUndeclaredSizeIsNeverOkWhenFileExists() {
-        // expected=0 但文件存在：这是 requiredFiles 与 fileSizes 不同步的信号，绝不能算就绪
-        assertFalse(VoiceModelFileStatus("encoder.onnx", 0L, 100L).ok)
+    fun fileStatusWithUndeclaredSizeIsOkWhenFileIsNotEmpty() {
+        // expected=0 表示上游没给稳定字节数：存在且非空就当作就绪
+        assertTrue(VoiceModelFileStatus("encoder.onnx", 0L, 100L).ok)
     }
 
     @Test
-    fun fileStatusWithZeroExpectedAndZeroActualIsOk() {
-        assertTrue(VoiceModelFileStatus("empty.txt", 0L, 0L).ok)
+    fun fileStatusWithUndeclaredSizeIsNotOkWhenFileIsEmpty() {
+        // 空文件既不能用，也不该被当成下载好了
+        assertFalse(VoiceModelFileStatus("empty.txt", 0L, 0L).ok)
     }
 
     @Test
