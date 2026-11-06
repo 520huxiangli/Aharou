@@ -81,7 +81,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.core.graphics.drawable.toBitmap
 import com.aharou.core.util.FileLogger
@@ -455,29 +454,8 @@ private fun MarkdownPreview(item: FileItem) {
 
 @Composable
 private fun HtmlPreview(item: FileItem) {
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { ctx ->
-            WebView(ctx).apply {
-                settings.javaScriptEnabled = false
-                settings.allowFileAccess = true
-                // T-webview-popup-d3c6e10f: mirror ffc85ad's WebPreviewBottomSheet
-                // fix. Pages using `height: 100vh` + `overflow: hidden` were
-                // collapsing to a 0-height clipped box (white screen) on first
-                // compose because Blink resolved CSS viewport units against a
-                // 0×0 measured container. useWideViewPort + loadWithOverviewMode
-                // decouple the CSS viewport from initial measured size, and
-                // deferring loadUrl via `post {}` guarantees the WebView has
-                // been laid out (positive width/height) before Blink resolves
-                // viewport units.
-                settings.useWideViewPort = true
-                settings.loadWithOverviewMode = true
-                webViewClient = WebViewClient()
-                val targetUrl = "file://${item.file.absolutePath}"
-                post { loadUrl(targetUrl) }
-            }
-        },
-    )
+    // 内联与 CSP 都在 [BundledHtmlView] 里，聊天里的附件预览走同一个组件，避免安全开关两处漂移。
+    BundledHtmlView(file = item.file, modifier = Modifier.fillMaxSize())
 }
 
 // ==================== Audio Preview ====================

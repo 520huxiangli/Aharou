@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -50,7 +51,10 @@ import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Image
 import java.io.File
+import com.aharou.feature.sandbox.HtmlArtifactPreviewDialog
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 附件缩略图边长：一行一个文件时左侧的小图，够看清是截图还是照片即可。 */
@@ -281,7 +285,7 @@ internal suspend fun openSentAttachment(
 }
 
 /** 卡片记录的宿主路径失效（远程临时副本被清、文件被删或移动）时，退回容器路径重取。 */
-private suspend fun resolveLocalFile(attachment: AgentAttachment, fileAccess: FileAccessProvider): File? {
+internal suspend fun resolveLocalFile(attachment: AgentAttachment, fileAccess: FileAccessProvider): File? {
     attachment.localPath.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }?.let { return it }
     val containerPath = attachment.containerPath
     if (containerPath.isBlank()) return null
@@ -310,4 +314,41 @@ private fun isApk(attachment: AgentAttachment): Boolean {
     if (attachment.mimeType.equals("application/vnd.android.package-archive", ignoreCase = true)) return true
     val name = attachment.fileName.lowercase()
     return name.endsWith(".apk") || name.endsWith(".apks") || name.endsWith(".xapk")
+}
+
+/**
+ * 附件点击行为：普通文件交给系统 app，HTML 走应用内预览。
+ *
+ * HTML 单独处理是因为 FileProvider 给的是单文件 `content://`，页面里的相对样式与图片
+ * 在外部浏览器里全断，而这正是产物的常态。预览弹层跟着这个构造器一起管，
+ * 调用方只需拿一个 [AttachmentOpener]，不必自己维护弹层状态。
+ */
+@Composable
+internal fun rememberAttachmentOpener(
+    context: Context,
+    fileAccess: FileAccessProvider,
+    scope: CoroutineScope,
+): AttachmentOpener {
+    val htmlPreviewFile = remember { mutableStateOf<File?>(null) }
+    val opener = remember(fileAccess, context) {
+        AttachmentOpener { attachment ->
+            val isHtml = attachment.mimeType.contains("html", ignoreCase = true) ||
+                attachment.fileName.endsWith(".html", ignoreCase = true) ||
+                attachment.fileName.endsWith(".htm", ignoreCase = true)
+            scope.launch {
+                if (isHtml) {
+                    val local = resolveLocalFile(attachment, fileAccess)
+                    if (local != null) {
+                        htmlPreviewFile.value = local
+                        return@launch
+                    }
+                }
+                openSentAttachment(context, attachment, fileAccess)
+            }
+        }
+    }
+    htmlPreviewFile.value?.let { file ->
+        HtmlArtifactPreviewDialog(file = file, onDismiss = { htmlPreviewFile.value = null })
+    }
+    return opener
 }
