@@ -42,38 +42,10 @@ data class PluginManifest(
     val commandLinks: List<String> = emptyList(),
     /** 启动时注入容器的环境变量。 */
     val environment: Map<String, String> = emptyMap(),
-    /** 安装完成后自动启动常驻服务；默认 false，保持「装完自己点启动」的行为。 */
-    val autoStart: Boolean = false,
-    /** 声明后，服务启动成功会顺带建一个指向它的供应商。 */
-    val provider: PluginProviderSpec? = null,
 ) {
     /** 是否常驻服务（有服务端口）。 */
     val isService: Boolean get() = servicePort in 1..65535
 }
-
-/**
- * 插件作为 OpenAI 兼容供应商对外暴露时的描述。
- *
- * 本地网关的 Key 往往是服务首次启动才生成，所以支持从插件数据目录里的 JSON 文件取，
- * 由宿主在启动成功之后读一次。
- */
-@Serializable
-data class PluginProviderSpec(
-    /** 供应商显示名；留空用插件名。 */
-    val name: String = "",
-    /** 支持 `{port}` 占位；留空按 `http://127.0.0.1:{port}/v1`。 */
-    val baseUrl: String = "",
-    /** 建供应商时默认选中的模型；留空则不预设。 */
-    val defaultModel: String = "",
-    /** 直接写死的 Key；本地网关一般留空，改用 [apiKeyFile]。 */
-    val apiKey: String = "",
-    /** 相对插件根目录的 JSON 文件路径，如 `data/settings.json`。 */
-    val apiKeyFile: String = "",
-    /** JSON 文件里放 Key 的字段名。 */
-    val apiKeyField: String = "",
-    /** OPENAI / ANTHROPIC / GEMINI，默认 OPENAI。 */
-    val type: String = "OPENAI",
-)
 
 /** 插件运行状态（内存态，不落盘）。 */
 enum class PluginStatus {

@@ -1,15 +1,3 @@
 {
-  "plugins": [
-    {
-      "id": "ofm",
-      "name": "Our Free Model",
-      "description": "本地免费模型网关，聚合 OpenCode Zen 与 Kilo 免费池。装好自动启动并建好供应商。",
-      "version": "2.7.1",
-      "author": "Ebony-Vinyl",
-      "category": "ai",
-      "downloadUrl": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/plugin-ofm-2.7.1/ofm-2.7.1.txplugin",
-      "repo": "520huxiangli/Aharou",
-      "tags": ["free-models", "gateway", "openai-compatible"]
-    }
-  ]
+  "plugins": []
 }
