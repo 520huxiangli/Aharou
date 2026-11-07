@@ -6,21 +6,16 @@ name: CI
 on:
   push:
     branches: [ master ]
-    # 纯文档/资源改动不影响构建产物，跳过 CI 省时间（public 仓库虽不扣额度，但省 11 分钟等待）。
-    # 注意：只要本次 push 含任一非忽略路径的改动，CI 仍会触发。
+    # 提示词、技能及用户手册会进入 APK，不能按扩展名忽略 Markdown。
     paths-ignore:
-      - '**.md'
       - 'docs/**'
-      - 'docs-site/**'
       - 'data/**'
       - 'LICENSE'
       - '.gitignore'
   pull_request:
     branches: [ master ]
     paths-ignore:
-      - '**.md'
       - 'docs/**'
-      - 'docs-site/**'
       - 'data/**'
       - 'LICENSE'
       - '.gitignore'
@@ -176,6 +171,9 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Fail when unit tests failed
+      - name: Verify unit test execution and reports
         if: always()
-        run: test ! -f /tmp/unit-tests-failed
+        run: |
+          set -e
+          test ! -f /tmp/unit-tests-failed
+          python3 scripts/check_unit_test_results.py app/build/test-results/testUniversalDebugUnitTest

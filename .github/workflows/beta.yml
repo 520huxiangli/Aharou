@@ -8,11 +8,9 @@ name: Beta Build
 on:
   push:
     branches: [ master ]
-    # 纯文档/资源改动不影响 APK，跳过省时间（与 ci.yml 保持一致）。
+    # 提示词、技能及用户手册属于 APK 运行时资产，不按 Markdown 扩展名跳过。
     paths-ignore:
-      - '**.md'
       - 'docs/**'
-      - 'docs-site/**'
       - 'data/**'
       - 'LICENSE'
       - '.gitignore'
@@ -106,6 +104,30 @@ jobs:
 
       - name: Check architecture rules
         run: python3 scripts/check_architecture.py
+
+      - name: Cache Robolectric runtime
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
+      - name: Test the checked-out commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:testUniversalDebugUnitTest --console=plain --stacktrace
+          python3 scripts/check_unit_test_results.py app/build/test-results/testUniversalDebugUnitTest
+
+      - name: Upload beta unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: beta-unit-tests-${{ github.sha }}
+          path: app/build/test-results/testUniversalDebugUnitTest/**
+          retention-days: 7
+          if-no-files-found: warn
 
       # 构建 universal beta（arm64-v8a + x86_64，含两套容器镜像的通用包）。
       # --stacktrace：失败时输出完整调用栈，便于定位 OOM/内存类根因。
