@@ -38,14 +38,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.ConscryptMode
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
-@ConscryptMode(ConscryptMode.Mode.OFF)
 @Config(application = Application::class, sdk = [28])
 class BackupManagerRestoreTest {
     private lateinit var context: Context

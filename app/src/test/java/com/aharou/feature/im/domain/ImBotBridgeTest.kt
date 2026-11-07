@@ -20,8 +20,8 @@ import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import java.io.File
-import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,10 +41,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.ConscryptMode
 
 @RunWith(RobolectricTestRunner::class)
-@ConscryptMode(ConscryptMode.Mode.OFF)
 @Config(application = Application::class, sdk = [28])
 class ImBotBridgeTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -62,10 +60,10 @@ class ImBotBridgeTest {
 
     private class Client(override val id: String, override val supportsButtons: Boolean) : ImChannel {
         val incoming = Channel<List<ImUpdate>>(Channel.UNLIMITED)
-        val sent = Collections.synchronizedList(mutableListOf<Pair<ImChannelConfig, String>>())
-        val polls = Collections.synchronizedList(mutableListOf<Long>())
-        val connected = Collections.synchronizedList(mutableListOf<ImChannelConfig>())
-        val cards = Collections.synchronizedList(mutableListOf<String>())
+        val sent = CopyOnWriteArrayList<Pair<ImChannelConfig, String>>()
+        val polls = CopyOnWriteArrayList<Long>()
+        val connected = CopyOnWriteArrayList<ImChannelConfig>()
+        val cards = CopyOnWriteArrayList<String>()
         val accountId = UUID.randomUUID().mostSignificantBits.and(Long.MAX_VALUE)
         var downloader: suspend (ImAttachment) -> File? = { null }
         var failNotices = false
@@ -109,7 +107,7 @@ class ImBotBridgeTest {
         val runner = mockk<AgentTurnRunner>()
         val sessions = mockk<SessionUseCase>()
         val owners = mockk<ImOwnerStore>()
-        val calls = Collections.synchronizedList(mutableListOf<AgentTurnRequest>())
+        val calls = CopyOnWriteArrayList<AgentTurnRequest>()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val bridge = ImBotBridge(id, client, settings, runner, sessions, permissions, context, owners)
         var turn: suspend (AgentTurnRequest) -> Unit = { }
