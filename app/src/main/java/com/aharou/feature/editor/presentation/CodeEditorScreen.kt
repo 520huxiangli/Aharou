@@ -44,6 +44,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -104,25 +105,31 @@ import kotlinx.coroutines.launch
 @Composable
 fun CodeEditorScreen(
     path: String,
+    workspaceRoot: String,
+    workspaceIdentity: String,
     onBack: () -> Unit,
     initialLine: Int = 0,
     embedded: Boolean = false,
     onAddSelectionToInput: (String) -> Unit,
     leaveGuard: EditorLeaveGuard? = null,
     viewModel: CodeEditorViewModel = hiltViewModel()
-) {
-    // 标签页会话：外部每次带新 path 进编辑器都开（或激活）一个标签页，
-    // 之前打开过的文件留在标签栏里，切文件不再丢未保存的改动。
-    val tabs by EditorSessionManager.tabs.collectAsStateWithLifecycle()
-    val sessionActivePath by EditorSessionManager.activePath.collectAsStateWithLifecycle()
-    val snapshots by EditorSessionManager.snapshots.collectAsStateWithLifecycle()
-    LaunchedEffect(path) { EditorSessionManager.open(path) }
+) = key(workspaceIdentity) {
+    val session = remember(workspaceIdentity) { EditorSessionManager.forWorkspace(workspaceIdentity) }
+    val tabs by session.tabs.collectAsStateWithLifecycle()
+    val sessionActivePath by session.activePath.collectAsStateWithLifecycle()
+    val snapshots by session.snapshots.collectAsStateWithLifecycle()
+    LaunchedEffect(path) { session.open(path) }
     val activePath = sessionActivePath.ifBlank { path }
     // 定义跳转用「工作区内为 ~/workspace/…」的统一写法，当前路径也归一化后比对，
     // 免得同一个文件因为写法不同被当成两个路径、在标签栏里开出两份。
     val normalizedActivePath = viewModel.displayPath(activePath)
-    LaunchedEffect(activePath) { viewModel.load(activePath) }
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    DisposableEffect(viewModel, workspaceIdentity) {
+        val generation = viewModel.bindWorkspace(workspaceRoot, workspaceIdentity)
+        onDispose { viewModel.unbindWorkspace(generation) }
+    }
+    LaunchedEffect(workspaceIdentity, activePath) { viewModel.load(activePath) }
+    val loadedState by viewModel.uiState.collectAsStateWithLifecycle()
+    val state = if (viewModel.isShowing(workspaceRoot, workspaceIdentity, activePath)) loadedState else EditorUiState.Loading
     // 文档版本：只在装载出新文档时变，用于让编辑器按文档重建（见下面 key(documentVersion)）。
     val documentVersion by viewModel.documentVersion.collectAsStateWithLifecycle()
 
@@ -133,14 +140,18 @@ fun CodeEditorScreen(
     val dirtyState = remember { mutableStateOf(false) }
     var dirty by dirtyState
     // 已保存（或刚加载）的内容。脏标记按与它的差异判定，撤销回原样时才能自行复位。
-    val baselineText = remember { mutableStateOf("") }
-    var pendingSaveText by remember { mutableStateOf("") }
+    val baselineText = remember(documentVersion) {
+        mutableStateOf(snapshots[activePath]?.baselineContent ?: (state as? EditorUiState.Success)?.content.orEmpty())
+    }
+    val saveState = remember { EditorSaveState() }
+    LaunchedEffect(documentVersion) {
+        if (state is EditorUiState.Success) dirty = snapshots[activePath]?.dirty == true
+    }
     // 待确认的离开动作（关页面 / 大屏右栏换文件），保存成功后执行。
     var pendingLeave by remember { mutableStateOf<PendingLeave?>(null) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     var showCloseTabDialog by remember { mutableStateOf(false) }
     var pendingCloseTab by remember { mutableStateOf<String?>(null) }
-    var saveConflictDiskContent by remember { mutableStateOf<String?>(null) } // 非空时弹保存冲突对话框
     var showSettings by remember { mutableStateOf(false) }
     val editorFind = remember { EditorFindState() }
     // 语言服务器挂载状态：只有挂上之后才提供「跳转到定义」（没装服务器 / 非收录语言的入口不该露出来）。
@@ -163,6 +174,7 @@ fun CodeEditorScreen(
         canRedo = false
         dirty = snapshots[activePath]?.dirty == true
         pendingLeave = null
+        saveState.clearLeave()
         cursorLine = snapshots[activePath]?.cursorLine ?: 1
         cursorColumn = snapshots[activePath]?.cursorColumn ?: 1
         editorFind.close()
@@ -196,31 +208,30 @@ fun CodeEditorScreen(
     val savedText = stringResource(R.string.editor_save_success)
     val saveFailedText = stringResource(R.string.editor_save_failed)
     val noDefinitionText = stringResource(R.string.editor_goto_definition_not_found)
-    LaunchedEffect(Unit) {
+    val latestActivePath by rememberUpdatedState(activePath)
+    val latestBaselineText by rememberUpdatedState(baselineText)
+    val latestDocumentVersion by rememberUpdatedState(documentVersion)
+    LaunchedEffect(viewModel, workspaceIdentity) {
         viewModel.saveEvents.collect { result ->
+            val request = result.request
+            if (request.workspaceIdentity != workspaceIdentity || !viewModel.accepts(request)) return@collect
             when (result) {
                 is SaveResult.Success -> {
-                    // 写盘完成后对应的未保存快照作废（内容已经落到磁盘上）。
-                    EditorSessionManager.forget(result.path)
-                    if (result.path == activePath) {
-                        baselineText.value = pendingSaveText
-                        dirty = false
+                    val text = editorRef.value?.text?.toString()
+                    if (request.path == latestActivePath) {
+                        latestBaselineText.value = request.content
+                        dirty = text != request.content
                     }
                     Toast.makeText(context, savedText, Toast.LENGTH_SHORT).show()
-                    // 待确认的离开动作只跟着「当前标签」走：保存的是别的标签时不能顺手把页面换掉。
-                    pendingLeave?.let { leave ->
-                        pendingLeave = null
-                        if (result.path == activePath) leave.action()
-                    }
+                    saveState.complete(request, latestActivePath, text)?.invoke()
                 }
-                is SaveResult.Conflict -> { pendingLeave = null; saveConflictDiskContent = result.diskContent }
+                is SaveResult.Conflict -> {
+                    saveState.failed(request)
+                    saveState.conflict = result
+                }
                 is SaveResult.Error -> {
-                    pendingLeave = null
-                    Toast.makeText(
-                        context,
-                        result.detail ?: saveFailedText,
-                        Toast.LENGTH_LONG
-                    ).show()
+                    saveState.failed(request)
+                    Toast.makeText(context, result.detail ?: saveFailedText, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -228,8 +239,10 @@ fun CodeEditorScreen(
 
     fun requestSave() {
         val editor = editorRef.value ?: return
-        pendingSaveText = editor.text.toString()
-        viewModel.save(activePath, pendingSaveText)
+        val request = viewModel.createSaveRequest(activePath, editor.text.toString()) ?: return
+        saveState.track(request, pendingLeave)
+        pendingLeave = null
+        viewModel.save(request)
     }
 
     fun handleBack() {
@@ -246,14 +259,15 @@ fun CodeEditorScreen(
     /** 把当前编辑器的内容/光标/滚动存进会话，供切走后再切回来恢复。 */
     fun persistCurrentTab() {
         val editor = editorRef.value ?: return
-        EditorSessionManager.saveSnapshot(
+        session.saveSnapshot(
             activePath,
             EditorSessionManager.Snapshot(
                 content = editor.text.toString(),
                 dirty = dirty,
                 cursorLine = cursorLine,
                 cursorColumn = cursorColumn,
-                scrollY = editor.scrollY
+                scrollY = editor.scrollY,
+                baselineContent = baselineText.value
             )
         )
     }
@@ -262,17 +276,17 @@ fun CodeEditorScreen(
         if (target == activePath) return
         persistCurrentTab()
         editorFind.close()
-        EditorSessionManager.activate(target)
+        session.activate(target)
     }
 
     fun performCloseTab(target: String) {
-        EditorSessionManager.close(target)
-        if (EditorSessionManager.tabs.value.isEmpty()) onBack()
+        session.close(target)
+        if (session.tabs.value.isEmpty()) onBack()
     }
 
     fun closeTab(target: String) {
         if (target == activePath) persistCurrentTab()
-        if (EditorSessionManager.snapshot(target)?.dirty == true) {
+        if (session.snapshot(target)?.dirty == true) {
             pendingCloseTab = target
             showCloseTabDialog = true
         } else {
@@ -296,7 +310,8 @@ fun CodeEditorScreen(
                 return@launch
             }
             if (target.path != normalizedActivePath) {
-                EditorSessionManager.open(target.path)
+                persistCurrentTab()
+                session.open(target.path)
             }
             jumpTarget = target.path to (target.line + 1)
         }
@@ -461,14 +476,22 @@ fun CodeEditorScreen(
                     initialLine = jumpTarget?.takeIf { it.first == normalizedActivePath }?.second ?: initialLine,
                     onAddSelectionToInput = onAddSelectionToInput,
                     onBackgroundResolved = { editorBackground = it },
+                    onSnapshot = { editor ->
+                        val baseline = viewModel.savedContent(workspaceIdentity, activePath) ?: baselineText.value
+                        if (activePath in session.tabs.value && saveState.retainSnapshot(activePath)) session.saveSnapshot(activePath,
+                            EditorSessionManager.Snapshot(editor.text.toString(), editor.text.toString() != baseline,
+                                editor.cursor.leftLine + 1, editor.cursor.leftColumn + 1, editor.scrollY, baseline))
+                    },
                     onCursorChanged = { l, c ->
                         cursorLine = l
                         cursorColumn = c
                     },
                     onContentChanged = { undo, redo, changed ->
-                        canUndo = undo
-                        canRedo = redo
-                        dirty = changed
+                        if (latestActivePath == activePath && latestDocumentVersion == documentVersion) {
+                            canUndo = undo
+                            canRedo = redo
+                            dirty = changed
+                        }
                     },
                     editorFind = editorFind
                 )
@@ -544,18 +567,18 @@ fun CodeEditorScreen(
         )
     }
 
-    saveConflictDiskContent?.let { disk ->
+    saveState.conflict?.let { conflict ->
         EditorSaveConflictDialog(
-            diskContent = disk,
-            localContent = pendingSaveText,
-            onOverwrite = { saveConflictDiskContent = null; viewModel.saveForce(activePath, pendingSaveText) },
+            diskContent = conflict.diskContent,
+            localContent = conflict.request.content,
+            onOverwrite = { saveState.conflict = null; viewModel.saveForce(conflict.request) },
             onUseDisk = {
-                saveConflictDiskContent = null
-                dirty = false
-                EditorSessionManager.forget(activePath)
-                viewModel.reloadFromDisk(activePath)
+                saveState.conflict = null
+                session.forget(conflict.request.path)
+                if (conflict.request.path == activePath) saveState.discardSnapshot(activePath)
+                viewModel.reloadFromDisk(conflict.request.path)
             },
-            onDismiss = { saveConflictDiskContent = null }
+            onDismiss = { saveState.conflict = null }
         )
     }
 
@@ -568,6 +591,8 @@ fun CodeEditorScreen(
             },
             onDiscard = {
                 showUnsavedDialog = false
+                session.forget(activePath)
+                saveState.discardSnapshot(activePath)
                 pendingLeave?.let { leave ->
                     pendingLeave = null
                     leave.action()
@@ -660,6 +685,7 @@ private fun EditorSurface(
     editorRef: MutableState<CodeEditor?>,
     settings: EditorSettings,
     baselineText: MutableState<String>,
+    onSnapshot: (CodeEditor) -> Unit,
     initialLine: Int = 0,
     onAddSelectionToInput: (String) -> Unit,
     onBackgroundResolved: (Color) -> Unit,
@@ -754,13 +780,13 @@ private fun EditorSurface(
             }
         },
         onRelease = {
+            onSnapshot(it)
             editorFind.release(it)
-            editorRef.value = null
+            if (editorRef.value === it) editorRef.value = null
             it.release()
         }
     )
 
-    LaunchedEffect(state.content) { baselineText.value = state.content }
 
     // 深浅主题切换时重设配色，而非重建编辑器——保住未保存内容与撤销栈。
     val editor = editorRef.value

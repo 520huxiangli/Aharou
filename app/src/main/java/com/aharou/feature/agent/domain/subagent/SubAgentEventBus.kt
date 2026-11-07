@@ -6,15 +6,16 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 子代理事件类型。前五种为生命周期事件；后两种为收发消息事件，只投递内容，不影响活跃集合。
+ * 子代理生命周期与收发消息事件，消息本身不改变活跃集合。
  */
 enum class SubAgentEventType {
-    SPAWNED, COMPLETED, FAILED, STOPPED,
+    SPAWNED, RUN_STARTED, COMPLETED, FAILED, STOPPED,
 
     /**
      * 子代理会话已被 task(action="del") 删除（含全部消息）。与 STOPPED 的区别：
@@ -56,12 +57,13 @@ data class SubAgentEvent(
      * false 时发送方向是「子代理→父会话」（`messageParent`），两者回复方式不同：
      * 队友间回信用 tell，向上回信用 send。
      */
-    val fromSibling: Boolean = false
+    val fromSibling: Boolean = false,
+    val runId: String? = null,
 )
 
 /**
- * 子代理事件总线：TaskTool 发出 SPAWNED（子代理已创建），ViewModel 收集后自动
- * 在子会话上启动 AI 工作流；子会话工作流结束时 ViewModel 再发 COMPLETED/FAILED，
+ * 子代理事件总线：TaskTool 发出 SPAWNED 占位，Runner 真正开始后提交 RUN_STARTED，
+ * 本轮结束时由统一生命周期提交 COMPLETED/FAILED，
  * 父会话据此注入后台通知（类比 terminal 的 notify=true 异步回调）。
  *
  * 同时维护活跃子代理会话 id 集合，供 TaskTool 查询并发上限（默认最多 5 个运行中，可在设置里调整）。
@@ -70,11 +72,14 @@ data class SubAgentEvent(
 class SubAgentEventBus @Inject constructor(
     private val maxRunningSource: MaxRunningSource,
     private val communicationSource: CommunicationEnabledSource,
+    private val writeLease: SubAgentWriteLease = SubAgentWriteLease(),
 ) {
     /** 子代理之间的对等通信（team / tell）是否开启；工具层与手册层都据此决定说不说、做不做。 */
     fun communicationEnabled(): Boolean = communicationSource.communicationEnabled()
     private val _events = MutableSharedFlow<SubAgentEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SubAgentEvent> = _events.asSharedFlow()
+    private val _lifecycleChanges = MutableStateFlow(0L)
+    val lifecycleChanges: StateFlow<Long> = _lifecycleChanges.asStateFlow()
 
     /** 当前活跃（运行中）的子代理会话 id 集合。 */
     private val _activeSubSessionIds = MutableStateFlow<Set<String>>(emptySet())
@@ -113,38 +118,140 @@ class SubAgentEventBus @Inject constructor(
      * 返回值同时用于区分「用户手动终止」与「TaskTool 已处理过」（后者返回 false），
      * 避免向父代理重复投递通知。
      */
-    fun release(subSessionId: String): Boolean = unmarkActive(subSessionId)
-
-    /** 把 [subSessionId] 加入活跃集合；与 [unmarkActive] 共用 [activeLock]。 */
-    private fun markActive(subSessionId: String) {
-        synchronized(activeLock) {
-            _activeSubSessionIds.value = _activeSubSessionIds.value + subSessionId
-        }
+    fun release(subSessionId: String): Boolean = synchronized(activeLock) {
+        if (runs.containsKey(subSessionId)) return@synchronized false
+        val active = subSessionId in _activeSubSessionIds.value
+        reservations.remove(subSessionId)
+        _activeSubSessionIds.value = _activeSubSessionIds.value - subSessionId
+        _lifecycleChanges.value++
+        active
     }
 
-    /** 把 [subSessionId] 移出活跃集合，返回它此前是否在集合里。 */
-    private fun unmarkActive(subSessionId: String): Boolean = synchronized(activeLock) {
-        val current = _activeSubSessionIds.value
-        if (subSessionId !in current) return@synchronized false
-        _activeSubSessionIds.value = current - subSessionId
+    fun releaseReserved(run: SubAgentRun): Boolean = synchronized(activeLock) {
+        if (reservations[run.sessionId]?.runId != run.runId) return@synchronized false
+        reservations.remove(run.sessionId)
+        _activeSubSessionIds.value = _activeSubSessionIds.value - run.sessionId
+        _lifecycleChanges.value++
         true
     }
 
-    fun emit(event: SubAgentEvent) {
-        // 同步维护活跃集合
+    private val runs = mutableMapOf<String, SubAgentRun>()
+    private val reservations = mutableMapOf<String, SubAgentRun>()
+    private val deletedSessions = mutableSetOf<String>()
+    private val instructions = mutableMapOf<String, String>()
+
+    fun instruction(subSessionId: String): String = synchronized(activeLock) { instructions[subSessionId].orEmpty() }
+
+    fun currentRun(subSessionId: String): SubAgentRun? = synchronized(activeLock) {
+        runs[subSessionId] ?: reservations[subSessionId]
+    }
+
+    fun isCurrentRun(run: SubAgentRun): Boolean = synchronized(activeLock) { runs[run.sessionId] == run }
+
+    fun isCurrentEvent(event: SubAgentEvent): Boolean = synchronized(activeLock) {
+        when (event.type) {
+            SubAgentEventType.RUN_STARTED -> runs[event.subSessionId]?.runId == event.runId
+            SubAgentEventType.COMPLETED, SubAgentEventType.FAILED, SubAgentEventType.STOPPED ->
+                event.subSessionId !in _activeSubSessionIds.value && terminalCache[event.subSessionId] == event
+            SubAgentEventType.DELETED -> event.subSessionId in deletedSessions
+            else -> true
+        }
+    }
+
+    fun beginRun(subSessionId: String, parentSessionId: String, version: Long, expectedRunId: String? = null): SubAgentRun? = synchronized(activeLock) {
+        if (expectedRunId != null && reservations[subSessionId]?.runId != expectedRunId) return@synchronized null
+        if (subSessionId in deletedSessions || runs.containsKey(subSessionId)) return@synchronized null
+        if (subSessionId !in _activeSubSessionIds.value && isFull) throw SubAgentRunRejectedException(
+            "子代理已达上限（最多 $maxRunning 个同时运行），请先等待其中某个完成或用 stop 停止后再创建",
+            "MAX_SUBAGENTS_REACHED",
+        )
+        val paths = writeLease.pathsFor(subSessionId)
+        val conflict = paths?.let { writeLease.conflictFor(subSessionId, it, _activeSubSessionIds.value) }
+        if (conflict != null) throw SubAgentRunRejectedException(
+            WriteLease.conflictMessage(conflict, null, paths, writeLease.pathsFor(conflict)),
+            "WRITE_LEASE_CONFLICT",
+        )
+        val run = SubAgentRun(subSessionId, parentSessionId, reservations.remove(subSessionId)?.runId ?: UUID.randomUUID().toString(), version)
+        runs[subSessionId] = run
+        parentOfSub[subSessionId] = parentSessionId
+        terminalCache.remove(subSessionId)
+        _activeSubSessionIds.value = _activeSubSessionIds.value + subSessionId
+        _lifecycleChanges.value++
+        run
+    }
+
+    fun runStarted(run: SubAgentRun): Boolean = synchronized(activeLock) {
+        if (runs[run.sessionId] != run) return@synchronized false
+        _events.tryEmit(SubAgentEvent(run.sessionId, run.parentSessionId, SubAgentEventType.RUN_STARTED, runId = run.runId))
+        true
+    }
+
+    fun releaseRun(run: SubAgentRun): Boolean = synchronized(activeLock) {
+        if (runs[run.sessionId] != run) return@synchronized false
+        runs.remove(run.sessionId)
+        _activeSubSessionIds.value = _activeSubSessionIds.value - run.sessionId
+        _lifecycleChanges.value++
+        true
+    }
+
+    fun finishRun(run: SubAgentRun, event: SubAgentEvent, broadcast: Boolean = true): Boolean = synchronized(activeLock) {
+        if (runs[run.sessionId] != run || event.runId != run.runId) return@synchronized false
+        runs.remove(run.sessionId)
+        publishTerminal(event, broadcast)
+        true
+    }
+
+    fun stopReserved(event: SubAgentEvent, broadcast: Boolean = true): Boolean = synchronized(activeLock) {
+        if (runs.containsKey(event.subSessionId)) return@synchronized false
+        if (event.runId != null && reservations[event.subSessionId]?.runId != event.runId) return@synchronized false
+        val active = event.subSessionId in _activeSubSessionIds.value
+        if (event.type == SubAgentEventType.DELETED) deletedSessions.add(event.subSessionId)
+        if (!active && event.type != SubAgentEventType.DELETED) return@synchronized false
+        publishTerminal(event, broadcast)
+        active
+    }
+
+    private fun publishTerminal(event: SubAgentEvent, broadcast: Boolean) {
+        reservations.remove(event.subSessionId)
+        _activeSubSessionIds.value = _activeSubSessionIds.value - event.subSessionId
+        if (event.type == SubAgentEventType.DELETED) {
+            deletedSessions.add(event.subSessionId)
+            terminalCache.remove(event.subSessionId)
+            instructions.remove(event.subSessionId)
+            parentOfSub.remove(event.subSessionId)
+        } else if (event.type.isTerminal()) {
+            terminalCache[event.subSessionId] = event
+        }
+        _lifecycleChanges.value++
+        if (broadcast) _events.tryEmit(event)
+    }
+
+    fun emit(event: SubAgentEvent) = synchronized(activeLock) {
         when (event.type) {
             SubAgentEventType.SPAWNED -> {
-                markActive(event.subSessionId)
+                if (event.subSessionId in deletedSessions || event.subSessionId in _activeSubSessionIds.value ||
+                    terminalCache.containsKey(event.subSessionId)
+                ) return@synchronized
+                _activeSubSessionIds.value = _activeSubSessionIds.value + event.subSessionId
                 parentOfSub[event.subSessionId] = event.parentSessionId
+                instructions[event.subSessionId] = event.detail
+                val reservation = SubAgentRun(event.subSessionId, event.parentSessionId, UUID.randomUUID().toString(), 0)
+                reservations[event.subSessionId] = reservation
+                _events.tryEmit(event.copy(runId = reservation.runId))
+                return@synchronized
             }
+            SubAgentEventType.RUN_STARTED -> return@synchronized
             SubAgentEventType.COMPLETED, SubAgentEventType.FAILED,
             SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> {
-                unmarkActive(event.subSessionId)
-                if (event.type.isTerminal()) terminalCache[event.subSessionId] = event
+                val run = runs[event.subSessionId]
+                if (run != null) {
+                    if (event.runId != run.runId) return@synchronized
+                    runs.remove(event.subSessionId)
+                } else if (event.runId != null || event.subSessionId !in _activeSubSessionIds.value) return@synchronized
+                publishTerminal(event, broadcast = true)
+                return@synchronized
             }
-            SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> {
-                // 收发消息不改变运行状态，活跃集合保持不变。
-            }
+            SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> Unit
         }
         _events.tryEmit(event)
     }
@@ -160,7 +267,7 @@ class SubAgentEventBus @Inject constructor(
      * 一整层子代理派发完毕才开始等待终态，期间秒完成的子代理事件早已过去，单靠 `first{}` 会一路等到
      * 30 分钟超时。这里留一份最近终态的短期缓存，让晚到的等待方能补上。
      */
-    fun terminalEvent(subSessionId: String): SubAgentEvent? = terminalCache[subSessionId]
+    fun terminalEvent(subSessionId: String): SubAgentEvent? = synchronized(activeLock) { terminalCache[subSessionId] }
 
     companion object {
         /** 同时运行的子代理上限的默认值。实际值由 [SubAgentSettings] 给，工具层只读实例值。 */

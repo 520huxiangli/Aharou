@@ -14,7 +14,7 @@ description: "需要读写 Aharou 自身设置时使用（主题、模型、网�
 - 集合子项在路径里带 id：`providers.1790610996623.api_key`。
 - **不要凭记忆猜路径**，猜错了拿不到东西；拿不准就先 `list` 一次。
 
-## 七个 action
+## 八个 action
 
 | action | 用途 | 关键点 |
 | --- | --- | --- |
@@ -24,7 +24,10 @@ description: "需要读写 Aharou 自身设置时使用（主题、模型、网�
 | `set` | 写一个字段 | `value` 是 **JSON 编码** |
 | `add` | 集合下新增一项 | `path` 传集合名，`value` 传新项 |
 | `remove` | 按 id 删集合里的一项 | 删前先用 `get` 确认 id |
+| `test_model` | 测试已配置模型 | 提供 `provider_id`、`model`；会发送极短请求，可能计费，不修改配置、不返回凭据 |
 | `logs` | 读应用日志（只读） | `date`=yyyy-MM-dd（缺省今天，只留最近 7 天）、`query`=关键词过滤、`limit`=行数（默认 200、上限 2000，从尾部取） |
+
+IM 的 `enabled` 只代表设置，实际运行情况用 `get im.<渠道>.state` / `get im.<渠道>.error` 查询。
 
 ### 排障先看 `logs`
 

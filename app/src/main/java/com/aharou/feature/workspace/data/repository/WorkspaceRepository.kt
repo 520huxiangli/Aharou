@@ -447,6 +447,21 @@ class WorkspaceRepository @Inject constructor(
         return createWorkspace(uniqueName(sanitize(rawName), taken))
     }
 
+    internal fun planLocalBackupWorkspace(rawName: String, reserved: Set<String>): Workspace {
+        val name = sanitize(rawName)
+        require(name.isNotEmpty() && name != "." && name != ".." && !name.startsWith("."))
+        val existing = File(projectsRoot, name)
+        val root = projectsRoot.canonicalFile
+        require(existing.canonicalFile.parentFile == root)
+        val occupied = projectsRoot.list()?.toSet().orEmpty() + reserved
+        val resolved = if (existing.isDirectory && name !in reserved) name else uniqueName(name, occupied)
+        return Workspace(resolved, File(projectsRoot, resolved).absolutePath, WorkspaceType.INTERNAL)
+    }
+
+    internal suspend fun refreshAfterBackupRestore() {
+        if (isLocal()) refreshWorkspaces()
+    }
+
     /**
      * 注册用户所选设备目录为外部本地工作区（双向直读该目录，不复制）。
      * 校验：能解析为真实路径、是目录、可写。与现有工作区同名时自动加后缀。

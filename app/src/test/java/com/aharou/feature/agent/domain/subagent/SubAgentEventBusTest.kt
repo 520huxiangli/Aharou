@@ -2,6 +2,8 @@ package com.aharou.feature.agent.domain.subagent
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,6 +57,95 @@ class SubAgentEventBusTest {
 
         bus.emit(SubAgentEvent(subSessionId = "sub-0", parentSessionId = "parent", type = SubAgentEventType.COMPLETED))
         assertFalse("腾出一个后应能再派发", bus.isFull)
+    }
+
+    @Test
+    fun completedThenBegin_clearsTerminalCacheAndRegistersActiveAgain() {
+        val bus = busWith()
+        spawn(bus, "sub")
+        bus.emit(SubAgentEvent("sub", "parent", SubAgentEventType.COMPLETED))
+        assertNotNull(bus.terminalEvent("sub"))
+        val run = requireNotNull(bus.beginRun("sub", "parent", 12))
+        assertTrue(bus.runStarted(run))
+        assertNull(bus.terminalEvent("sub"))
+        assertEquals(setOf("sub"), bus.activeSubSessionIds.value)
+        assertNull(bus.beginRun("sub", "parent", 13))
+    }
+
+    @Test
+    fun previousRunCannotFinishOrReleaseReawakenedRun() {
+        val bus = busWith()
+        val old = requireNotNull(bus.beginRun("sub", "parent", 1))
+        val oldEvent = SubAgentEvent("sub", "parent", SubAgentEventType.COMPLETED, runId = old.runId)
+        assertTrue(bus.finishRun(old, oldEvent))
+        val next = requireNotNull(bus.beginRun("sub", "parent", 2))
+        assertFalse(bus.finishRun(old, oldEvent))
+        assertFalse(bus.releaseRun(old))
+        assertFalse(bus.isCurrentEvent(oldEvent))
+        bus.emit(oldEvent)
+        assertEquals(next, bus.currentRun("sub"))
+        assertNull(bus.terminalEvent("sub"))
+    }
+
+    @Test
+    fun stoppedReservationCannotStartFromDelayedSpawn() {
+        val bus = busWith()
+        spawn(bus, "sub")
+        val reserved = requireNotNull(bus.currentRun("sub"))
+        assertTrue(bus.stopReserved(SubAgentEvent("sub", "parent", SubAgentEventType.STOPPED)))
+        assertNull(bus.beginRun("sub", "parent", 1, reserved.runId))
+        assertEquals(0, bus.activeCount)
+        assertEquals(SubAgentEventType.STOPPED, bus.terminalEvent("sub")?.type)
+    }
+
+    @Test
+    fun anonymousTerminalCannotClearAnActualRun() {
+        val bus = busWith()
+        val run = requireNotNull(bus.beginRun("sub", "parent", 1))
+        bus.emit(SubAgentEvent("sub", "parent", SubAgentEventType.STOPPED))
+        assertEquals(run, bus.currentRun("sub"))
+        assertTrue(bus.activeSubSessionIds.value.contains("sub"))
+    }
+
+    @Test
+    fun delayedRunStartedEventCannotOverwriteTerminalCard() {
+        val bus = busWith()
+        val run = requireNotNull(bus.beginRun("sub", "parent", 1))
+        val started = SubAgentEvent("sub", "parent", SubAgentEventType.RUN_STARTED, runId = run.runId)
+        assertTrue(bus.isCurrentEvent(started))
+        val terminal = SubAgentEvent("sub", "parent", SubAgentEventType.FAILED, runId = run.runId)
+        assertTrue(bus.finishRun(run, terminal))
+        assertFalse(bus.isCurrentEvent(started))
+        assertTrue(bus.isCurrentEvent(terminal))
+    }
+
+    @Test
+    fun messagesDoNotStartRunsAndDeletedSessionCannotRestart() {
+        val bus = busWith()
+        bus.emit(SubAgentEvent("sub", "parent", SubAgentEventType.MESSAGE_FROM_PARENT, "message"))
+        assertEquals(0, bus.activeCount)
+        assertNull(bus.currentRun("sub"))
+        val run = requireNotNull(bus.beginRun("sub", "parent", 1))
+        assertTrue(bus.finishRun(run, SubAgentEvent("sub", "parent", SubAgentEventType.DELETED, runId = run.runId)))
+        assertNull(bus.beginRun("sub", "parent", 2))
+        assertNull(bus.terminalEvent("sub"))
+    }
+
+    @Test
+    fun reawakenedRunHonorsConcurrentLimitAndWriteConflict() {
+        val lease = SubAgentWriteLease()
+        lease.register("one", setOf("app"))
+        lease.register("two", setOf("app/src"))
+        val bus = SubAgentEventBus(MaxRunningSource { 2 }, CommunicationEnabledSource { true }, lease)
+        val first = requireNotNull(bus.beginRun("one", "parent", 1))
+        val conflict = runCatching { bus.beginRun("two", "parent", 1) }.exceptionOrNull()
+        assertEquals("WRITE_LEASE_CONFLICT", (conflict as? SubAgentRunRejectedException)?.reasonCode)
+        assertTrue(bus.finishRun(first, SubAgentEvent("one", "parent", SubAgentEventType.COMPLETED, runId = first.runId)))
+        assertNotNull(bus.beginRun("two", "parent", 1))
+        val limited = busWith(limit = 1)
+        assertNotNull(limited.beginRun("one", "parent", 1))
+        val full = runCatching { limited.beginRun("two", "parent", 1) }.exceptionOrNull()
+        assertEquals("MAX_SUBAGENTS_REACHED", (full as? SubAgentRunRejectedException)?.reasonCode)
     }
 
     /** 上限读用户配置，不是写死的 5：配到 2 时第二个就不该再接受。 */

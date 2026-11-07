@@ -12,4 +12,5 @@ data class ScheduledRunRequest(
     val prompt: String,
     val targetSessionId: String?,
     val workspacePath: String?,
+    val claimedAt: Long? = null,
 )

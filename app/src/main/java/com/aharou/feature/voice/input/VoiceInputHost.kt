@@ -54,21 +54,24 @@ internal fun rememberVoiceInputHost(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            viewModel.start(latestInput.value)
-        } else {
-            Toast.makeText(context, R.string.voice_input_no_permission, Toast.LENGTH_SHORT).show()
+        VoiceInputPermission.grantedResult(granted) { allowed ->
+            Toast.makeText(context, if (allowed) R.string.voice_input_permission_granted_retry else R.string.voice_input_no_permission,
+                Toast.LENGTH_SHORT).show()
         }
     }
     return VoiceInputHost(
         state = state,
         startAction = {
-            ownsSession = true
             val granted = ContextCompat.checkSelfPermission(
                 context, Manifest.permission.RECORD_AUDIO,
             ) == PackageManager.PERMISSION_GRANTED
-            if (granted) viewModel.start(latestInput.value)
-            else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            VoiceInputPermission.requestStart(granted, start = {
+                ownsSession = true
+                viewModel.start(latestInput.value)
+            }, request = {
+                ownsSession = false
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            })
         },
         finishAction = { viewModel.finish() },
     )

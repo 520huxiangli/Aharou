@@ -15,6 +15,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentProfileMatcher
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
+import com.aharou.feature.agent.domain.subagent.SubAgentRunLifecycle
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AbstractContextualTool
@@ -71,7 +72,8 @@ class TaskTool @Inject constructor(
     private val teamTasks: TeamTasks,
     private val workflowRunner: WorkflowRunner,
     private val aiProviderRepository: AIProviderRepository,
-    private val subAgentWriteLease: SubAgentWriteLease
+    private val subAgentWriteLease: SubAgentWriteLease,
+    private val subAgentRunLifecycle: SubAgentRunLifecycle,
 ) : AbstractContextualTool() {
 
     /**
@@ -334,17 +336,32 @@ class TaskTool @Inject constructor(
             for (id in ids) eventBus.terminalEvent(id)?.let { done[id] = it }
             val remaining = ids.filterNot { it in done }.toMutableSet()
             while (remaining.isNotEmpty()) {
+                remaining.toList().forEach { id ->
+                    eventBus.terminalEvent(id)?.let { event ->
+                        if (eventBus.isCurrentEvent(event)) {
+                            remaining.remove(id)
+                            done[id] = event
+                        }
+                    }
+                }
+                if (remaining.isEmpty()) break
                 // 既不在活跃集合、又没回捞到事件：它在本函数订阅前就结束了，再等也等不到，交给 read 取结论
                 if (remaining.none { it in eventBus.activeSubSessionIds.value }) break
-                val event = eventBus.events.first { it.subSessionId in remaining && it.type.isTerminal() }
-                remaining.remove(event.subSessionId)
-                done[event.subSessionId] = event
+                eventBus.lifecycleChanges.first {
+                    remaining.any { id -> eventBus.terminalEvent(id) != null } ||
+                        remaining.none { id -> id in eventBus.activeSubSessionIds.value }
+                }
+                remaining.toList().forEach { id ->
+                    eventBus.terminalEvent(id)?.let { event ->
+                        if (eventBus.isCurrentEvent(event)) {
+                            remaining.remove(id)
+                            done[id] = event
+                        }
+                    }
+                }
             }
             done
         } ?: emptyMap()
-
-    private fun SubAgentEventType.isTerminal(): Boolean =
-        this == SubAgentEventType.COMPLETED || this == SubAgentEventType.FAILED || this == SubAgentEventType.STOPPED
 
     /** 读子代理最后输出；复用 read 路径，保证与手动 read 拿到的是同一份结论。 */
     private suspend fun readSubagentOutput(subSessionId: String, context: AgentContext): String {
@@ -683,14 +700,8 @@ class TaskTool @Inject constructor(
             return ToolResult.Error("只能关闭当前会话派生的子代理", "NOT_YOUR_SUBAGENT")
         }
 
-        eventBus.emit(
-            SubAgentEvent(
-                subSessionId = subSessionId,
-                parentSessionId = context.sessionId!!,
-                type = SubAgentEventType.STOPPED
-            )
-        )
-        subAgentWriteLease.release(subSessionId)
+        val run = eventBus.currentRun(subSessionId)
+        subAgentRunLifecycle.stopRun(subSessionId, sub.parentId!!, expectedRun = run)
         return ToolResult.Success(
             buildJsonObject {
                 put("id", subSessionId)
@@ -711,15 +722,8 @@ class TaskTool @Inject constructor(
         if (sub.parentId != context.sessionId) {
             return ToolResult.Error("只能删除当前会话派生的子代理", "NOT_YOUR_SUBAGENT")
         }
-        if (eventBus.activeSubSessionIds.value.contains(subSessionId)) {
-            eventBus.emit(
-                SubAgentEvent(
-                    subSessionId = subSessionId,
-                    parentSessionId = context.sessionId!!,
-                    type = SubAgentEventType.DELETED
-                )
-            )
-        }
+        val run = eventBus.currentRun(subSessionId)
+        subAgentRunLifecycle.stopRun(subSessionId, sub.parentId!!, deleted = true, expectedRun = run)
         subAgentWriteLease.release(subSessionId)
         sessionUseCase.deleteSession(subSessionId)
         FileLogger.i(TAG, "子代理已删除: session=$subSessionId parent=${context.sessionId}")

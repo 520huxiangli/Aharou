@@ -16,14 +16,16 @@ class ScheduledPendingRunner(
 ) {
     suspend fun drain() {
         dao.pendingRuns().forEach { task ->
-            dao.clearPendingRun(task.id, System.currentTimeMillis())
+            val prompt = task.pendingRunPrompt?.takeIf { it.isNotEmpty() } ?: return@forEach
+            if (dao.clearPendingRun(task.id, prompt, task.lastRunAt, System.currentTimeMillis()) == 0) return@forEach
             runScheduledTask(
                 ScheduledRunRequest(
                     taskId = task.id,
                     taskName = task.name,
-                    prompt = task.pendingRunPrompt.orEmpty(),
+                    prompt = prompt,
                     targetSessionId = task.targetSessionId,
                     workspacePath = task.workspacePath,
+                    claimedAt = task.lastRunAt,
                 )
             )
         }

@@ -4,6 +4,8 @@ import com.aharou.feature.agent.domain.permission.PermissionChoice
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,7 +47,7 @@ class ToolPermissionManager @Inject constructor() {
 
     /** 挂起等待用户在弹窗中的选择（拒绝/本次/始终）。不同会话可并行挂起，互不阻塞。 */
     suspend fun awaitApproval(request: PendingToolPermission): PermissionChoice {
-        val decision = CompletableDeferred<PermissionChoice>()
+        val decision = CompletableDeferred<PermissionChoice>(currentCoroutineContext()[Job])
         synchronized(lock) {
             pending[request.id] = Entry(request, decision)
             publish()
@@ -54,7 +56,7 @@ class ToolPermissionManager @Inject constructor() {
             return decision.await()
         } finally {
             synchronized(lock) {
-                pending.remove(request.id)
+                if (pending[request.id]?.decision === decision) pending.remove(request.id)
                 publish()
             }
         }
@@ -62,7 +64,11 @@ class ToolPermissionManager @Inject constructor() {
 
     /** UI 回传用户选择，唤醒对应 id 的挂起请求。 */
     fun resolve(id: String, choice: PermissionChoice) {
-        val entry = synchronized(lock) { pending[id] } ?: return
+        synchronized(lock) { pending[id]?.decision?.complete(choice) }
+    }
+
+    fun tryResolve(id: String, sessionId: String, choice: PermissionChoice): Boolean = synchronized(lock) {
+        val entry = pending[id]?.takeIf { it.request.sessionId == sessionId } ?: return@synchronized false
         entry.decision.complete(choice)
     }
 
@@ -71,7 +77,7 @@ class ToolPermissionManager @Inject constructor() {
      * 不同会话的批量请求可并行挂起，互不阻塞。
      */
     suspend fun awaitBatchApproval(batch: PendingPermissionBatch): Map<String, PermissionChoice> {
-        val decision = CompletableDeferred<Map<String, PermissionChoice>>()
+        val decision = CompletableDeferred<Map<String, PermissionChoice>>(currentCoroutineContext()[Job])
         synchronized(lock) {
             pendingBatches[batch.id] = BatchEntry(batch, decision)
             publish()
@@ -80,7 +86,7 @@ class ToolPermissionManager @Inject constructor() {
             return decision.await()
         } finally {
             synchronized(lock) {
-                pendingBatches.remove(batch.id)
+                if (pendingBatches[batch.id]?.decision === decision) pendingBatches.remove(batch.id)
                 publish()
             }
         }
@@ -88,16 +94,25 @@ class ToolPermissionManager @Inject constructor() {
 
     /** UI 回传批量选择：整批同判。 */
     fun resolveBatch(id: String, choice: PermissionChoice) {
-        val entry = synchronized(lock) { pendingBatches[id] } ?: return
+        synchronized(lock) {
+            val entry = pendingBatches[id] ?: return
+            entry.decision.complete(entry.batch.items.associate { it.id to choice })
+        }
+    }
+
+    fun tryResolveBatch(id: String, sessionId: String, choice: PermissionChoice): Boolean = synchronized(lock) {
+        val entry = pendingBatches[id]?.takeIf { it.batch.sessionId == sessionId } ?: return@synchronized false
         entry.decision.complete(entry.batch.items.associate { it.id to choice })
     }
 
     /** UI 回传批量选择：逐项判定，缺项按拒绝处理。 */
     fun resolveBatch(id: String, decisions: Map<String, PermissionChoice>) {
-        val entry = synchronized(lock) { pendingBatches[id] } ?: return
-        entry.decision.complete(
-            entry.batch.items.associate { it.id to (decisions[it.id] ?: PermissionChoice.REJECT) }
-        )
+        synchronized(lock) {
+            val entry = pendingBatches[id] ?: return
+            entry.decision.complete(
+                entry.batch.items.associate { it.id to (decisions[it.id] ?: PermissionChoice.REJECT) }
+            )
+        }
     }
 
     /** 取某会话当前的待决请求（stopAgent 停止单个会话时用，避免误取其它会话的弹窗）。 */

@@ -11,61 +11,195 @@ import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
+import com.aharou.feature.agent.domain.subagent.SubAgentRun
+import com.aharou.feature.agent.domain.subagent.SubAgentRunLifecycle
+import com.aharou.feature.agent.domain.subagent.SubAgentRunRejectedException
 import com.aharou.feature.agent.presentation.BACKGROUND_NOTIFICATION_PREFIX
 import com.aharou.feature.agent.presentation.MessageRole
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * 子代理任务状态机：把只存在于内存的子代理生命周期事件落成持久化任务记录，
- * 并在启动时收尾上次进程被杀留下的 running 任务。
- *
- * 全部靠订阅 [SubAgentEventBus.events] 实现，不侵入 TaskTool / AgentTurnRunner / ViewModel
- * 的派发与停止路径。
- */
+/** 子代理轮次必须等待恢复与状态落库，不能把生命周期提交寄托在有界事件广播上。 */
 @Singleton
 class SubAgentTaskTracker @Inject constructor(
     private val agentTaskDao: AgentTaskDao,
     private val agentMessageDao: AgentMessageDao,
     private val eventBus: SubAgentEventBus,
     private val chatSessionDao: ChatSessionDao
-) {
+) : SubAgentRunLifecycle {
     companion object {
         private const val TAG = "SubAgentTaskTracker"
-
-        /** 中断通知里回引指令片段的长度上限。 */
         private const val INSTRUCTION_SNIPPET_MAX = 120
-
         private const val INTERRUPTED_RESULT = "应用进程被关闭，任务未完成"
-
-        /** 会话被删除时的结束原因（DELETED 事件详情为空，不写这条就看不出是怎么终止的）。 */
         private const val DELETED_RESULT = "子代理会话已被删除"
     }
 
-    /**
-     * 启动常驻订阅：先收尾上次进程遗留的 running 任务，再逐条消费事件写状态。
-     * 恢复必须排在订阅之前——事件只在内存总线上投递，先订阅会把「恢复期间到达的事件」
-     * 和「恢复前就已留下的旧状态」混在一起。调用方需传入 IO 作用域，不阻塞主线程。
-     */
+    private val ready = CompletableDeferred<Unit>()
+    private val started = AtomicBoolean()
+    private val sessionLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun lock(sessionId: String): Mutex = sessionLocks.getOrPut(sessionId) { Mutex() }
+
     fun start(scope: CoroutineScope) {
+        if (!started.compareAndSet(false, true)) return
         scope.launch {
-            runCatching { recoverInterruptedTasks() }
-                .onFailure { FileLogger.e(TAG, "断点恢复失败", it) }
-            eventBus.events.collect { event ->
-                runCatching { handleEvent(event) }
-                    .onFailure { FileLogger.w(TAG, "处理子代理事件失败：${event.type}", it) }
+            try {
+                recoverInterruptedTasks()
+                ready.complete(Unit)
+            } catch (error: Throwable) {
+                ready.completeExceptionally(error)
+                FileLogger.e(TAG, "断点恢复失败", error)
             }
         }
     }
 
-    /**
-     * 断点恢复：上次进程被杀时仍在 running 的任务不可能还在跑，逐条以
-     * compare-and-set 标为 interrupted（输给并发迁移的任务跳过），并给父会话插一条
-     * 系统通知，提示主代理先读现状或重新派发。
-     */
+    override suspend fun beginRun(sessionId: String, parentSessionId: String, expectedRunId: String?): SubAgentRun? {
+        ready.await()
+        return lock(sessionId).withLock {
+            val session = chatSessionDao.getById(sessionId) ?: return@withLock null
+            if (session.parentId != parentSessionId) return@withLock null
+            val ghost = GhostModeStore.isGhost(chatSessionDao, parentSessionId)
+            val old = if (ghost) null else agentTaskDao.getById(sessionId)
+            val version = nextVersion(old?.updatedAt)
+            val reserved = eventBus.currentRun(sessionId)?.takeIf { it.version == 0L }
+            val run = try {
+                eventBus.beginRun(sessionId, parentSessionId, version, expectedRunId)
+            } catch (rejected: SubAgentRunRejectedException) {
+                if (reserved != null) {
+                    try {
+                        if (!ghost && old == null) agentTaskDao.insertIfAbsent(AgentTaskEntity(
+                            id = sessionId, parentSessionId = parentSessionId,
+                            instruction = eventBus.instruction(sessionId), status = AgentTaskStatus.FAILED.name,
+                            result = rejected.message, createdAt = version, updatedAt = version, finishedAt = version,
+                        ))
+                        eventBus.stopReserved(SubAgentEvent(sessionId, parentSessionId, SubAgentEventType.FAILED,
+                            rejected.message.orEmpty(), accepted = false, runId = reserved.runId))
+                    } finally {
+                        eventBus.releaseReserved(reserved)
+                    }
+                }
+                throw rejected
+            } ?: return@withLock null
+            try {
+                if (!ghost) {
+                    if (old == null) {
+                        check(agentTaskDao.insertIfAbsent(AgentTaskEntity(
+                            id = sessionId,
+                            parentSessionId = parentSessionId,
+                            instruction = eventBus.instruction(sessionId),
+                            status = AgentTaskStatus.RUNNING.name,
+                            createdAt = version,
+                            updatedAt = version,
+                        )) >= 0)
+                    } else {
+                        check(agentTaskDao.beginRun(sessionId, old.updatedAt, version) > 0)
+                    }
+                }
+                check(eventBus.runStarted(run))
+                run
+            } catch (error: Throwable) {
+                withContext(NonCancellable) {
+                    try {
+                        commitTerminal(run, SubAgentEventType.FAILED, error.message.orEmpty(), false, true)
+                    } finally {
+                        eventBus.releaseRun(run)
+                    }
+                }
+                throw error
+            }
+        }
+    }
+
+    override suspend fun finishRun(run: SubAgentRun, type: SubAgentEventType, detail: String, accepted: Boolean?): Boolean {
+        ready.await()
+        return lock(run.sessionId).withLock {
+            try {
+                commitTerminal(run, type, detail, accepted, true)
+            } finally {
+                eventBus.releaseRun(run)
+            }
+        }
+    }
+
+    override suspend fun stopRun(
+        sessionId: String,
+        parentSessionId: String,
+        deleted: Boolean,
+        broadcast: Boolean,
+        expectedRun: SubAgentRun?,
+    ): Boolean {
+        ready.await()
+        return lock(sessionId).withLock {
+            val current = eventBus.currentRun(sessionId)
+            if (current?.runId != expectedRun?.runId) return@withLock false
+            val type = if (deleted) SubAgentEventType.DELETED else SubAgentEventType.STOPPED
+            if (current != null && eventBus.isCurrentRun(current)) {
+                return@withLock try {
+                    commitTerminal(current, type, if (deleted) DELETED_RESULT else "", false, broadcast)
+                } finally {
+                    eventBus.releaseRun(current)
+                }
+            }
+            val event = SubAgentEvent(sessionId, parentSessionId, type, runId = current?.runId)
+            val old = agentTaskDao.getById(sessionId)
+            if (old == null && current != null && !GhostModeStore.isGhost(chatSessionDao, parentSessionId)) {
+                val now = nextVersion(null)
+                agentTaskDao.insertIfAbsent(AgentTaskEntity(
+                    id = sessionId, parentSessionId = parentSessionId, instruction = eventBus.instruction(sessionId),
+                    status = AgentTaskStatus.CANCELLED.name, result = if (deleted) DELETED_RESULT else null,
+                    createdAt = now, updatedAt = now, finishedAt = now,
+                ))
+            }
+            if (old?.status == AgentTaskStatus.RUNNING.name) {
+                val now = nextVersion(old.updatedAt)
+                agentTaskDao.compareAndSetStatus(sessionId, old.status, AgentTaskStatus.CANCELLED.name,
+                    if (deleted) DELETED_RESULT else null, now, now, old.updatedAt)
+            }
+            eventBus.stopReserved(event, broadcast)
+        }
+    }
+
+    private suspend fun commitTerminal(
+        run: SubAgentRun,
+        type: SubAgentEventType,
+        detail: String,
+        accepted: Boolean?,
+        broadcast: Boolean,
+    ): Boolean {
+        require(type == SubAgentEventType.COMPLETED || type == SubAgentEventType.FAILED ||
+            type == SubAgentEventType.STOPPED || type == SubAgentEventType.DELETED)
+        if (!eventBus.isCurrentRun(run)) return false
+        val ghost = GhostModeStore.isGhost(chatSessionDao, run.parentSessionId)
+        if (!ghost) {
+            val status = when (type) {
+                SubAgentEventType.COMPLETED -> AgentTaskStatus.COMPLETED
+                SubAgentEventType.FAILED -> AgentTaskStatus.FAILED
+                else -> AgentTaskStatus.CANCELLED
+            }
+            val now = nextVersion(run.version)
+            if (agentTaskDao.compareAndSetStatus(
+                run.sessionId, AgentTaskStatus.RUNNING.name, status.name,
+                if (type == SubAgentEventType.COMPLETED) null else detail.ifBlank { null },
+                now, now, run.version,
+            ) == 0) return false
+        }
+        return eventBus.finishRun(run, SubAgentEvent(run.sessionId, run.parentSessionId, type,
+            detail, accepted, runId = run.runId), broadcast)
+    }
+
+    internal fun nextVersion(previous: Long?, now: Long = System.currentTimeMillis()): Long =
+        maxOf(now, previous?.plus(1) ?: now)
+
     suspend fun recoverInterruptedTasks() {
         val stale = agentTaskDao.getByStatus(AgentTaskStatus.RUNNING.name)
         if (stale.isEmpty()) return
@@ -77,8 +211,9 @@ class SubAgentTaskTracker @Inject constructor(
                 fromStatus = AgentTaskStatus.RUNNING.name,
                 toStatus = AgentTaskStatus.INTERRUPTED.name,
                 result = INTERRUPTED_RESULT,
-                updatedAt = now,
-                finishedAt = now
+                updatedAt = nextVersion(task.updatedAt, now),
+                finishedAt = now,
+                expectedUpdatedAt = task.updatedAt,
             )
             if (updated == 0) return@forEach
             interrupted++
@@ -87,69 +222,6 @@ class SubAgentTaskTracker @Inject constructor(
         if (interrupted > 0) FileLogger.i(TAG, "断点恢复：$interrupted 个子代理任务标记为中断")
     }
 
-    private suspend fun handleEvent(event: SubAgentEvent) {
-        // 隐身会话派生的子代理任务不登记：instruction 是任务指令，落库会把隐身内容漏出去。
-        if (GhostModeStore.isGhost(chatSessionDao, event.parentSessionId)) return
-        when (event.type) {
-            SubAgentEventType.SPAWNED -> onCreate(event)
-            SubAgentEventType.COMPLETED -> onTerminal(event, AgentTaskStatus.COMPLETED, null)
-            SubAgentEventType.FAILED -> onTerminal(event, AgentTaskStatus.FAILED, event.detail.ifBlank { null })
-            SubAgentEventType.STOPPED -> onTerminal(event, AgentTaskStatus.CANCELLED, event.detail.ifBlank { null })
-            // 会话已被删除，与主动停止同归 CANCELLED；归到 COMPLETED 会让父代理以为拿到了交付物。
-            SubAgentEventType.DELETED -> onTerminal(event, AgentTaskStatus.CANCELLED, DELETED_RESULT)
-            // 收发消息不改变任务状态。
-            SubAgentEventType.MESSAGE_FROM_PARENT, SubAgentEventType.MESSAGE_FROM_SUB -> Unit
-        }
-    }
-
-    private suspend fun onCreate(event: SubAgentEvent) {
-        val now = System.currentTimeMillis()
-        val inserted = agentTaskDao.insertIfAbsent(
-            AgentTaskEntity(
-                id = event.subSessionId,
-                parentSessionId = event.parentSessionId,
-                instruction = event.detail,
-                status = AgentTaskStatus.RUNNING.name,
-                createdAt = now,
-                updatedAt = now
-            )
-        )
-        // 已存在说明该子会话此前已登记过（重复派发 / 事件重放），保留首条，不覆盖既有状态。
-        if (inserted < 0) return
-        FileLogger.i(TAG, "任务登记：sub=${event.subSessionId} parent=${event.parentSessionId}")
-    }
-
-    private suspend fun onTerminal(event: SubAgentEvent, toStatus: AgentTaskStatus, result: String?) {
-        val now = System.currentTimeMillis()
-        val updated = agentTaskDao.compareAndSetStatus(
-            taskId = event.subSessionId,
-            fromStatus = AgentTaskStatus.RUNNING.name,
-            toStatus = toStatus.name,
-            result = result,
-            updatedAt = now,
-            finishedAt = now
-        )
-        if (updated > 0 || agentTaskDao.getById(event.subSessionId) != null) return
-        // 事件经有界 SharedFlow 的 tryEmit 投递，SPAWNED 可能被丢弃；此时补一条终态记录，
-        // 免得「任务跑完但库里没这条」，日后被当成没派发过。仅补缺，不覆盖已有状态。
-        agentTaskDao.insertIfAbsent(
-            AgentTaskEntity(
-                id = event.subSessionId,
-                parentSessionId = event.parentSessionId,
-                instruction = "",
-                status = toStatus.name,
-                result = result,
-                createdAt = now,
-                updatedAt = now,
-                finishedAt = now
-            )
-        )
-    }
-
-    /**
-     * 中断通知：以系统通知前缀 + USER 角色落库，UI 会渲染成轻量提示条，
-     * 主代理回放上下文时能读到「任务被中断、需重新派发或先读现状」。
-     */
     private fun interruptedNotification(task: AgentTaskEntity, now: Long): AgentMessageEntity =
         AgentMessageEntity(
             id = UUID.randomUUID().toString(),

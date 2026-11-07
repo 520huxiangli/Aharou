@@ -16,15 +16,23 @@ import com.aharou.MainActivity
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
+import com.aharou.feature.agent.domain.runner.AgentTurnCompletion
+import com.aharou.feature.agent.domain.runner.AgentTurnResult
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
+import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.workflow.AgentEvent
 import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -46,7 +54,13 @@ class ScheduledTaskExecutionService : Service() {
     @Inject
     lateinit var scheduledTaskDao: ScheduledTaskDao
 
+    @Inject
+    lateinit var sessionUseCase: SessionUseCase
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val executions = ScheduledTaskExecutions()
+    private var promoted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -54,25 +68,42 @@ class ScheduledTaskExecutionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        executions.onStart(startId)
+        val taskId = intent?.getStringExtra(EXTRA_TASK_ID)
+        val taskName = intent?.getStringExtra(EXTRA_TASK_NAME) ?: taskId.orEmpty()
+        val claimedAt = intent?.takeIf { it.hasExtra(EXTRA_CLAIMED_AT) }?.getLongExtra(EXTRA_CLAIMED_AT, 0L)
+        if (!startForegroundWithNotification(taskName)) {
+            if (taskId != null) serviceScope.launch {
+                recordOutcome(taskId, taskName, claimedAt, ScheduledTaskOutcome.FAILED)
+            }
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_STOP) {
-            stopSelf()
+            executions.cancelAll()
+            stopIfIdle()
             return START_NOT_STICKY
         }
-        val taskId = intent?.getStringExtra(EXTRA_TASK_ID) ?: run {
-            FileLogger.w(TAG, "自动化任务服务缺少 taskId，直接停止")
-            stopSelf()
+        if (taskId.isNullOrBlank() || intent == null || !intent.hasExtra(EXTRA_PROMPT)) {
+            FileLogger.w(TAG, "自动化任务服务缺少参数，跳过本次请求")
+            stopIfIdle()
             return START_NOT_STICKY
         }
-        val taskName = intent.getStringExtra(EXTRA_TASK_NAME) ?: taskId
         val prompt = intent.getStringExtra(EXTRA_PROMPT).orEmpty()
         val workspacePath = intent.getStringExtra(EXTRA_WORKSPACE_PATH)
         val targetSessionId = intent.getStringExtra(EXTRA_TARGET_SESSION_ID)
-
-        startForegroundWithNotification(taskName)
-        serviceScope.launch {
-            runTask(taskId, taskName, prompt, workspacePath, targetSessionId)
+        val job = serviceScope.launch(start = CoroutineStart.LAZY) {
+            runTask(taskId, taskName, prompt, workspacePath, targetSessionId, claimedAt)
         }
+        executions.register(startId, job)
+        job.invokeOnCompletion {
+            executions.finish(startId)?.let { stopSelfResult(it) }
+        }
+        job.start()
         return START_NOT_STICKY
+    }
+
+    private fun stopIfIdle() {
+        if (promoted) executions.idleStartId()?.let { stopSelfResult(it) }
     }
 
     private suspend fun runTask(
@@ -81,40 +112,62 @@ class ScheduledTaskExecutionService : Service() {
         prompt: String,
         workspacePath: String?,
         targetSessionId: String?,
+        claimedAt: Long?,
     ) {
-        val succeeded = try {
-            val sessionId = targetSessionId?.takeIf { it.isNotBlank() }
-                ?: agentTurnRunner.ensureSession(workspacePath.orEmpty())
-            // 定时任务在既有会话里跑时，以会话自己的工作区为准（与主界面同一口径）。
-            val effectiveRoot = workspacePath.orEmpty()
-            agentTurnRunner.run(
-                AgentTurnRequest(
-                    sessionId = sessionId,
-                    text = prompt,
-                    projectRoot = effectiveRoot,
-                    isAutoTrigger = true,
-                    trigger = AgentTurnTrigger.SCHEDULED_TASK,
-                    skipTitleUpdate = true,
-                )
-            ).collect { event ->
-                when (event) {
-                    is AgentEvent.Failed -> FileLogger.w(TAG, "自动化任务执行失败: $taskName - ${event.error}")
-                    else -> Unit
+        var outcome = ScheduledTaskOutcome.FAILED
+        try {
+            val existing = targetSessionId?.takeIf { it.isNotBlank() }?.let { sessionUseCase.getSessionById(it) }
+            val effectiveRoot = existing?.workspacePath ?: workspacePath?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Scheduled task has no session or workspace")
+            val sessionId = existing?.id ?: agentTurnRunner.ensureSession(effectiveRoot)
+            val completion = AgentTurnCompletion()
+            val result = coroutineScope {
+                val execution = launch {
+                    try {
+                        agentTurnRunner.run(
+                            AgentTurnRequest(
+                                sessionId = sessionId,
+                                text = prompt,
+                                projectRoot = effectiveRoot,
+                                isAutoTrigger = true,
+                                trigger = AgentTurnTrigger.SCHEDULED_TASK,
+                                skipTitleUpdate = true,
+                            )
+                        ).collect { event ->
+                            completion.observe(event)
+                            if (event is AgentEvent.Failed) {
+                                FileLogger.w(TAG, "自动化任务执行失败: $taskName - ${event.error}")
+                            }
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        completion.fail(e)
+                        FileLogger.e(TAG, "自动化任务服务执行异常: $taskName", e)
+                    }
                 }
+                completion.bind(execution)
+                completion.await()
             }
-            true
+            outcome = when (result) {
+                AgentTurnResult.COMPLETED -> ScheduledTaskOutcome.COMPLETED
+                AgentTurnResult.FAILED -> ScheduledTaskOutcome.FAILED
+                AgentTurnResult.CANCELLED -> ScheduledTaskOutcome.FAILED
+            }
+        } catch (e: CancellationException) {
+            outcome = ScheduledTaskOutcome.FAILED
+            FileLogger.i(TAG, "自动化任务已取消: $taskName")
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "自动化任务服务执行异常: $taskName", e)
-            false
+        } finally {
+            withContext(NonCancellable) { recordOutcome(taskId, taskName, claimedAt, outcome) }
         }
-        runCatching {
-            scheduledTaskDao.recordOutcome(
-                taskId,
-                if (succeeded) ScheduledTaskOutcome.COMPLETED else ScheduledTaskOutcome.FAILED,
-                System.currentTimeMillis(),
-            )
-        }.onFailure { FileLogger.w(TAG, "回写自动化任务结果失败: $taskName", it) }
-        stopSelf()
+    }
+
+    private suspend fun recordOutcome(taskId: String, taskName: String, claimedAt: Long?, outcome: String) {
+        runCatching { scheduledTaskDao.recordOutcomeForRun(taskId, claimedAt, outcome, System.currentTimeMillis()) }
+            .onFailure { FileLogger.w(TAG, "回写自动化任务结果失败: $taskName", it) }
     }
 
     override fun onDestroy() {
@@ -134,15 +187,29 @@ class ScheduledTaskExecutionService : Service() {
         }
     }
 
-    private fun startForegroundWithNotification(taskName: String) {
-        runCatching {
+    private fun startForegroundWithNotification(taskName: String): Boolean {
+        if (promoted) return true
+        fun promote(notification: Notification) {
             ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                buildNotification(taskName),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
             )
-        }.onFailure { FileLogger.e(TAG, "启动自动化任务前台通知失败", it) }
+        }
+        val primary = runCatching { promote(buildNotification(taskName)) }
+        if (primary.isSuccess) {
+            promoted = true
+            return true
+        }
+        FileLogger.e(TAG, "启动自动化任务前台通知失败", primary.exceptionOrNull())
+        val fallback = runCatching {
+            promote(NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_info_details)
+                .setContentTitle(TAG)
+                .setOngoing(true)
+                .build())
+        }
+        promoted = fallback.isSuccess
+        if (!promoted) FileLogger.e(TAG, "兜底自动化任务前台通知失败", fallback.exceptionOrNull())
+        return promoted
     }
 
     private fun buildNotification(taskName: String): Notification {
@@ -180,15 +247,17 @@ class ScheduledTaskExecutionService : Service() {
         const val EXTRA_PROMPT = "prompt"
         const val EXTRA_WORKSPACE_PATH = "workspace_path"
         const val EXTRA_TARGET_SESSION_ID = "target_session_id"
+        const val EXTRA_CLAIMED_AT = "claimed_at"
 
         /** Worker 投递失败时启动本服务；Android 8+ 必须走 startForegroundService。 */
-        fun start(context: Context, taskId: String, taskName: String, prompt: String, workspacePath: String?, targetSessionId: String?) {
+        fun start(context: Context, taskId: String, taskName: String, prompt: String, workspacePath: String?, targetSessionId: String?, claimedAt: Long? = null) {
             val intent = Intent(context, ScheduledTaskExecutionService::class.java).apply {
                 putExtra(EXTRA_TASK_ID, taskId)
                 putExtra(EXTRA_TASK_NAME, taskName)
                 putExtra(EXTRA_PROMPT, prompt)
                 putExtra(EXTRA_WORKSPACE_PATH, workspacePath)
                 putExtra(EXTRA_TARGET_SESSION_ID, targetSessionId)
+                if (claimedAt != null) putExtra(EXTRA_CLAIMED_AT, claimedAt)
             }
             ContextCompat.startForegroundService(context, intent)
         }

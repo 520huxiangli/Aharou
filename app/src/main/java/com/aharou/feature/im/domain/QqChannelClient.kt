@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,6 +69,7 @@ class QqChannelClient @Inject constructor(
 
     private val inbox = Channel<ImUpdate>(Channel.UNLIMITED)
 
+    @Volatile private var socketGeneration = Any()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var socketKey: String? = null
     @Volatile private var seq = 0L
@@ -91,6 +93,22 @@ class QqChannelClient @Inject constructor(
      * 同一条入站消息最多回 5 次、5 分钟内有效，所以带 TTL 与次数上限。
      */
     @Volatile private var lastInbound: InboundRef? = null
+
+    override fun disconnect() {
+        socketGeneration = Any()
+        val previous = socket
+        socket = null
+        socketKey = null
+        previous?.cancel()
+        stopHeartbeat()
+        accessToken = null
+        tokenKey = null
+        tokenExpireAt = 0L
+        reconnectAt = 0L
+        reconnectDelayMs = RECONNECT_MIN_MS
+        lastInbound = null
+        while (inbox.tryReceive().isSuccess) { }
+    }
 
     override suspend fun identity(cfg: ImChannelConfig): ImBotIdentity {
         val c = cfg.requireQq()
@@ -205,9 +223,10 @@ class QqChannelClient @Inject constructor(
     // ── WebSocket ──────────────────────────────────────────
 
     private suspend fun connect(cfg: QqConfig) {
-        val key = "${cfg.appId}|${cfg.baseUrl}|${cfg.proxy}"
+        val key = "${cfg.appId}|${cfg.appSecret}|${cfg.baseUrl}|${cfg.proxy}"
         if (socket != null && socketKey == key) return
-        socket?.close(1000, null)
+        val generation = Any().also { socketGeneration = it }
+        socket?.cancel()
         socket = null
         stopHeartbeat()
 
@@ -221,6 +240,7 @@ class QqChannelClient @Inject constructor(
         val client = wsClientFor(cfg)
         socket = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (socketGeneration !== generation) { webSocket.cancel(); return }
                 FileLogger.i(TAG, "网关已连接：HTTP ${response.code} protocol=${response.protocol}")
                 // Identify：op=2；intents 取公域消息 + 群/C2C 事件所需的那几位
                 val identify = buildJsonObject {
@@ -238,6 +258,7 @@ class QqChannelClient @Inject constructor(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (socketGeneration !== generation) return
                 // 异常不能漏给 OkHttp 的读线程：会直接杀掉读循环，连接变成「看似在线、不再收帧」
                 runCatching { handleFrame(webSocket, text) }
                     .onFailure { e ->
@@ -443,7 +464,10 @@ class QqChannelClient @Inject constructor(
                     target.outputStream().use { out -> body.byteStream().copyTo(out) }
                     target
                 }
-            }.getOrNull()
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                null
+            }
         }
     }
 
@@ -655,7 +679,7 @@ class QqChannelClient @Inject constructor(
     // ── HTTP ───────────────────────────────────────────────
 
     private suspend fun accessToken(cfg: QqConfig): String {
-        val key = "${cfg.appId}|${cfg.appSecret}"
+        val key = "${cfg.appId}|${cfg.appSecret}|${cfg.baseUrl}|${cfg.proxy}"
         val now = System.currentTimeMillis()
         accessToken?.let { if (tokenKey == key && now < tokenExpireAt) return it }
         val root = request(

@@ -8,6 +8,7 @@ import java.io.FilterOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import kotlinx.coroutines.ensureActive
 
 /**
  * 包装输出流使 close() 只 flush 不关闭底层流：写 tar.gz 时会层层 use{}，直接关会把调用方传入的
@@ -66,8 +67,20 @@ internal class BackupImportStaging(private val cacheDir: File) {
  */
 internal class TarSource(
     val tar: TarArchiveInputStream,
-    private val temp: File?
+    private val temp: File?,
+    private val decompressed: InputStream
 ) : AutoCloseable {
+    suspend fun copyDecompressedTo(file: File) {
+        FileOutputStream(file).buffered().use { output ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val count = decompressed.read(buffer)
+                if (count < 0) break
+                output.write(buffer, 0, count)
+            }
+        }
+    }
     override fun close() {
         runCatching { tar.close() }
         temp?.delete()

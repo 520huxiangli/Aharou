@@ -144,6 +144,13 @@ private fun ActivityReceiptRow(receipt: ToolCallReceiptEntity) {
             modifier = Modifier.padding(top = Spacing.xs)
         ) {
             CategoryBadge(category)
+            val statusLabel = when (receipt.status) {
+                ReceiptStatus.RUNNING.name -> R.string.chat_turn_running
+                ReceiptStatus.INTERRUPTED.name -> R.string.subagent_card_status_interrupted
+                ReceiptStatus.UNKNOWN.name -> R.string.activity_receipt_result_unknown
+                else -> null
+            }
+            statusLabel?.let { Text(stringResource(it), style = MaterialTheme.typography.labelSmall) }
             if (receipt.resultPreview.isNotBlank()) {
                 Spacer(Modifier.width(Spacing.sm))
                 Text(
@@ -205,6 +212,8 @@ private fun statusColor(category: ReceiptCategory, status: String): androidx.com
         ReceiptStatus.SUCCESS -> MaterialTheme.semanticColors.success
         ReceiptStatus.PARTIAL -> MaterialTheme.semanticColors.warning
         ReceiptStatus.ERROR -> MaterialTheme.colorScheme.error
+        ReceiptStatus.RUNNING -> MaterialTheme.semanticColors.info
+        ReceiptStatus.INTERRUPTED, ReceiptStatus.UNKNOWN -> MaterialTheme.semanticColors.warning
         null -> MaterialTheme.semanticColors.subtleText
     }
 }

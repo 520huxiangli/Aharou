@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.memory.MemoryType
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
@@ -143,6 +144,13 @@ class ToolCallGuard @Inject constructor(
         )
     }
 
+    private suspend fun beginReceipt(name: String, args: Map<String, JsonElement>, context: AgentContext?): Long? =
+        receiptRepository.beginExecution(context?.sessionId, name, args)
+
+    private suspend fun finishReceipt(id: Long?, name: String, args: Map<String, JsonElement>, context: AgentContext?,
+        result: ToolResult?, startedAt: Long, interrupted: Boolean = false) =
+        receiptRepository.finishExecution(id, name, args, result, System.currentTimeMillis() - startedAt, context?.projectRoot, interrupted)
+
     private fun persistAndBuild(toolName: String, reason: String, context: AgentContext?): String {
         runCatching { persistLesson(toolName, context) }
         return buildString {
@@ -248,10 +256,17 @@ class ToolCallGuard @Inject constructor(
                 return ToolResult.Error(blocked, GUARDED_CODE)
             }
             val startedAt = System.currentTimeMillis()
-            val result = run()
-            guard.record(name, args, context, result is ToolResult.Error, result.toString())
-            guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
-            return result
+            val receipt = guard.beginReceipt(name, args, context)
+            try {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val result = run()
+                guard.record(name, args, context, result is ToolResult.Error, result.toString())
+                guard.finishReceipt(receipt, name, args, context, result, startedAt)
+                return result
+            } catch (failure: Throwable) {
+                guard.finishReceipt(receipt, name, args, context, null, startedAt, failure is kotlinx.coroutines.CancellationException)
+                throw failure
+            }
         }
     }
 
@@ -304,13 +319,18 @@ class ToolCallGuard @Inject constructor(
             }
             var finalResult: ToolResult? = null
             val startedAt = System.currentTimeMillis()
-            (delegate as StreamingAgentTool).executeStream(args, context).collect { event ->
-                if (event is ToolStreamEvent.Completed) finalResult = event.result
-                emit(event)
-            }
-            finalResult?.let { result ->
-                guard.record(name, args, context, result is ToolResult.Error, result.toString())
-                guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
+            val receipt = guard.beginReceipt(name, args, context)
+            try {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                (delegate as StreamingAgentTool).executeStream(args, context).collect { event ->
+                    if (event is ToolStreamEvent.Completed) finalResult = event.result
+                    emit(event)
+                }
+                finalResult?.let { result -> guard.record(name, args, context, result is ToolResult.Error, result.toString()) }
+                guard.finishReceipt(receipt, name, args, context, finalResult, startedAt)
+            } catch (failure: Throwable) {
+                guard.finishReceipt(receipt, name, args, context, null, startedAt, failure is kotlinx.coroutines.CancellationException)
+                throw failure
             }
         }
 
@@ -323,10 +343,17 @@ class ToolCallGuard @Inject constructor(
                 return ToolResult.Error(blocked, GUARDED_CODE)
             }
             val startedAt = System.currentTimeMillis()
-            val result = run()
-            guard.record(name, args, context, result is ToolResult.Error, result.toString())
-            guard.recordReceipt(name, args, context, result, System.currentTimeMillis() - startedAt)
-            return result
+            val receipt = guard.beginReceipt(name, args, context)
+            try {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val result = run()
+                guard.record(name, args, context, result is ToolResult.Error, result.toString())
+                guard.finishReceipt(receipt, name, args, context, result, startedAt)
+                return result
+            } catch (failure: Throwable) {
+                guard.finishReceipt(receipt, name, args, context, null, startedAt, failure is kotlinx.coroutines.CancellationException)
+                throw failure
+            }
         }
     }
 }

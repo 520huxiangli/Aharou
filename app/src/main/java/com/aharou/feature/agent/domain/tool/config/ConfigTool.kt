@@ -47,6 +47,7 @@ import javax.inject.Inject
  */
 class ConfigTool @Inject constructor(
     @param:ApplicationContext private val context: Context,
+    private val modelTest: ConfigModelTestAction,
 ) : AgentTool() {
 
     private companion object {
@@ -78,6 +79,7 @@ class ConfigTool @Inject constructor(
             "action=reveal 读取字段明文（path）：敏感字段（如 API Key）平时只回打码值，读真值必须弹确认面板、用户同意后才返回，并写审计；非敏感字段与 get 相同；" +
             "action=set 修改字段（path + value，value 为 JSON 编码，如 \"🦊\"、\"zh\"、true）；" +
             "action=add 在集合下新增一项（path=集合名、value=新项 JSON）；action=remove 删除集合下的一项（path=集合名、id）。" +
+            "action=test_model 测试已配置模型（provider_id、model），会发送极短请求、可能计费，不修改配置、不返回凭据；" +
             "action=logs 读应用日志（只读）；date=yyyy-MM-dd（缺省今天，只保留最近 7 天）、query=关键词过滤、limit=最多返回行数（默认 $DEFAULT_LOG_LINES）均可选。" +
             "set/add/remove 与 reveal 都要确认：AUTO 模式下非敏感字段的修改直接生效（不弹窗，审计里标 auto-approved），" +
             "敏感字段（密钥 / 密码 / 凭据）与集合的增删、以及 reveal 读明文一律照旧弹确认面板；用户同意后才生效，并写审计、可回滚。"
@@ -86,9 +88,11 @@ class ConfigTool @Inject constructor(
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
-            "action", ParameterType.STRING, "操作类型：list / get / reveal / set / add / remove / logs", true,
-            enum = listOf("list", "get", "reveal", "set", "add", "remove", "logs"),
+            "action", ParameterType.STRING, "操作类型：list / get / reveal / set / add / remove / logs / test_model", true,
+            enum = listOf("list", "get", "reveal", "set", "add", "remove", "logs", "test_model"),
         ),
+        "provider_id" to ToolParameter("provider_id", ParameterType.STRING, "test_model：已配置的供应商ID", false),
+        "model" to ToolParameter("model", ParameterType.STRING, "test_model：待测试的模型名", false),
         "path" to ToolParameter("path", ParameterType.STRING, "字段路径，如 soul.name；add/remove 时为集合名，如 providers", false),
         "value" to ToolParameter("value", ParameterType.STRING, "set 的目标值 / add 的新项（JSON 编码）", false),
         "id" to ToolParameter("id", ParameterType.STRING, "remove 时集合内要删除的子项 id", false),
@@ -111,6 +115,7 @@ class ConfigTool @Inject constructor(
         return try {
             val registry = ConfigRegistry.get()
             when (action) {
+                "test_model" -> modelTest.execute(args)
                 "list" -> listFields(registry)
                 "get" -> getField(registry, path)
                 "reveal" -> revealField(registry, path)
@@ -135,6 +140,8 @@ class ConfigTool @Inject constructor(
                 )
                 else -> ToolResult.Error("不支持的 action：$action", "INVALID_ACTION")
             }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             FileLogger.e(TAG, "config tool failed: ${e.message}", e)
             ToolResult.Error("配置操作失败：${e.message}")

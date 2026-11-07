@@ -19,6 +19,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -75,6 +76,11 @@ class WeixinIlinkClient @Inject constructor(
     @Volatile private var cachedClient: OkHttpClient? = null
     @Volatile private var cachedProxyKey: String? = null
 
+    override fun disconnect() {
+        contextTokens.clear()
+        updateBuf = ""
+    }
+
     override suspend fun identity(cfg: ImChannelConfig): ImBotIdentity {
         val c = cfg.requireWeixin()
         val params = buildJsonObject { put("base_info", baseInfo()) }
@@ -85,6 +91,7 @@ class WeixinIlinkClient @Inject constructor(
 
     /** 服务端下发的游标（get_updates_buf）。首次为空串，之后每次用上一次响应里的值。 */
     @Volatile private var updateBuf: String = ""
+    private var localUpdateId = 0L
 
     override suspend fun poll(cfg: ImChannelConfig, cursor: Long, timeoutSeconds: Int): List<ImUpdate> {
         val c = cfg.requireWeixin()
@@ -103,10 +110,10 @@ class WeixinIlinkClient @Inject constructor(
                 ?: JsonArray(emptyList())
             else -> JsonArray(emptyList())
         }
-        var seq = cursor
+        localUpdateId = maxOf(localUpdateId, cursor)
         return arr.mapNotNull { el ->
             val obj = el as? JsonObject ?: return@mapNotNull null
-            parseMessage(++seq, obj)?.let(ImUpdate::Message)
+            parseMessage(++localUpdateId, obj)?.let(ImUpdate::Message)
         }
     }
 
@@ -490,7 +497,10 @@ class WeixinIlinkClient @Inject constructor(
                     target.outputStream().use { out -> body.byteStream().copyTo(out) }
                     target
                 }
-            }.getOrNull()
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                null
+            }
         }
     }
 

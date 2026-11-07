@@ -1,7 +1,7 @@
 package com.aharou.feature.agent.presentation
 
 import com.aharou.feature.agent.data.local.dao.TodoItemDao
-import com.aharou.feature.agent.data.local.dao.ToolCallReceiptDao
+import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
 import com.aharou.feature.agent.data.local.entity.ToolCallReceiptEntity
 import com.aharou.feature.agent.domain.model.TodoItem
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +26,7 @@ import javax.inject.Singleton
 @Singleton
 class SessionPanelController @Inject constructor(
     private val todoItemDao: TodoItemDao,
-    private val toolCallReceiptDao: ToolCallReceiptDao
+    private val toolCallReceiptRepository: ToolCallReceiptRepository
 ) {
     private companion object {
         /** 活动面板一次最多展示的回执条数：够翻到当前任务的开头，又不必拉整段历史。 */
@@ -45,7 +45,7 @@ class SessionPanelController @Inject constructor(
         sessionIds
             .flatMapLatest { id ->
                 if (id.isNullOrBlank()) flowOf(emptyList())
-                else toolCallReceiptDao.observeSession(id, RECEIPT_PAGE_SIZE)
+                else toolCallReceiptRepository.observeSession(id, RECEIPT_PAGE_SIZE)
             }
             .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }

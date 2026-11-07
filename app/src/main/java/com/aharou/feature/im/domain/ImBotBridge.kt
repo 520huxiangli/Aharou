@@ -17,14 +17,20 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -60,19 +66,16 @@ class ImBotBridge (
     private val _state = MutableStateFlow<ImChannelState>(ImChannelState.Stopped)
     val state: StateFlow<ImChannelState> = _state.asStateFlow()
 
-    @Volatile private var bridgeScope: CoroutineScope? = null
     @Volatile private var bridgeJob: Job? = null
+    @Volatile private var activeConfig: ImChannelConfig? = null
     @Volatile private var identity = ""
     @Volatile private var cursor = 0L
     @Volatile private var primed = false
 
-    /** 待处理队列：轮询只负责拉取，处理在独立协程里串行做，处理成功后才推进游标。 */
-    private var inbox = Channel<Pair<ImChannelConfig, ImUpdate>>(Channel.UNLIMITED)
-
-    /** 最近处理过的 updateId：防「处理成功但游标没写成」导致重拉后重复投递。 */
-    private val seenUpdateIds = ConcurrentHashMap.newKeySet<Long>()
-
-    private var consumerJob: Job? = null
+    private var telegramInbox: TelegramInbox? = null
+    private val deliveryLock = Mutex()
+    private val pendingUpdates = LinkedHashMap<Long, Boolean>()
+    private val seenUpdateIds = LinkedHashSet<Long>()
 
     /** 同一聊天串行处理，避免两条消息并发跑 agent 把会话搅乱。 */
     private val chatLocks = ConcurrentHashMap<String, Mutex>()
@@ -81,63 +84,95 @@ class ImBotBridge (
     private val askedApprovals = ConcurrentHashMap.newKeySet<String>()
 
     /** 审批 id → 发起这次审批的 chatId：按钮回调必须来自同一个聊天，别的聊天点不到。 */
-    private val chatOfApproval = ConcurrentHashMap<String, String>()
+    private val chatOfApproval = ConcurrentHashMap<String, ApprovalOrigin>()
 
     /** 无按钮平台（微信/QQ）的待批审批：chatId → 请求，用户回「允许/拒绝」时消化。 */
     private val pendingApprovals = ConcurrentHashMap<String, PendingApproval>()
 
-    private data class PendingApproval(val id: String, val single: Boolean)
+    private data class PendingApproval(val id: String, val single: Boolean, val sessionId: String)
+    private data class ApprovalOrigin(val chatId: String, val pending: PendingApproval)
+    private data class SessionOrigin(val chatId: String, val cfg: ImChannelConfig)
 
     /** 这个聊天已经映射到的会话 id（审批要知道发给谁）。 */
-    private val chatOfSession = ConcurrentHashMap<String, String>()
+    private val chatOfSession = ConcurrentHashMap<String, SessionOrigin>()
 
     /** 最近一次有消息进来的聊天：工具调用时拿不到 chatId，靠它定位回哪个聊天。 */
     @Volatile private var lastActiveChat: String? = null
 
+    @Synchronized
     fun start(parent: CoroutineScope) {
         if (bridgeJob?.isActive == true) return
-        bridgeScope = parent
-        // 工具审批：有按钮就发卡片，没按钮就发文本并记住待批，等用户回一个字
-        parent.launch {
-            toolPermissionManager.pendingRequest.collect { request ->
-                request?.let {
-                    askForApproval(it.id, it.sessionId, single = true, title = it.title, summary = it.summary)
-                }
-            }
-        }
-        parent.launch {
-            toolPermissionManager.pendingBatch.collect { batch ->
-                batch?.let {
-                    val title = it.items.firstOrNull()?.title.orEmpty()
-                    val summary = it.items.joinToString("\n") { item -> item.summary }.take(1500)
-                    askForApproval(it.id, it.sessionId, single = false, title = title, summary = summary)
-                }
-            }
-        }
-        consumerJob = parent.launch { consumeLoop() }
+        val previous = bridgeJob
         bridgeJob = parent.launch {
+            previous?.join()
             try {
-                pollLoop()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                FileLogger.e(TAG, "[$channelId] 轮询异常退出", e)
-                _state.value = ImChannelState.Error(channel.redact(e.message.orEmpty(), settings.currentConfig()))
+                settings.configFlow.distinctUntilChanged().collectLatest { cfg ->
+                    channel.disconnect()
+                    identity = ""
+                    activeConfig = null
+                    lastActiveChat = null
+                    chatOfSession.clear()
+                    chatOfApproval.clear()
+                    pendingApprovals.clear()
+                    askedApprovals.clear()
+                    pendingUpdates.clear()
+                    seenUpdateIds.clear()
+                    if (!cfg.enabled || !cfg.ready) {
+                        _state.value = ImChannelState.Stopped
+                        return@collectLatest
+                    }
+                    try {
+                        runConnection(cfg)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        FileLogger.e(TAG, "[$channelId] 连接异常退出", e)
+                        _state.value = ImChannelState.Error(channel.redact(e.message.orEmpty(), cfg))
+                    } finally {
+                        channel.disconnect()
+                    }
+                }
             } finally {
+                channel.disconnect()
                 _state.value = ImChannelState.Stopped
             }
         }
     }
 
+    private suspend fun runConnection(cfg: ImChannelConfig) = coroutineScope {
+        telegramInbox = null
+        activeConfig = cfg
+        val inbox = Channel<ImUpdate>(Channel.UNLIMITED)
+        val controls = Channel<ImUpdate>(Channel.UNLIMITED)
+        try {
+            launch {
+                toolPermissionManager.pendingRequest.collect { request ->
+                    request?.let { askForApproval(it.id, it.sessionId, true, it.title, it.summary) }
+                }
+            }
+            launch {
+                toolPermissionManager.pendingBatch.collect { batch ->
+                    batch?.let {
+                        askForApproval(it.id, it.sessionId, false, it.items.firstOrNull()?.title.orEmpty(),
+                            it.items.joinToString("\n") { item -> item.summary }.take(1500))
+                    }
+                }
+            }
+            launch { consumeLoop(cfg, inbox) }
+            launch { consumeLoop(cfg, controls) }
+            pollLoop(cfg, inbox, controls)
+        } finally {
+            inbox.close()
+            controls.close()
+            activeConfig = null
+        }
+    }
+
+    @Synchronized
     fun stop() {
-        consumerJob?.cancel()
-        consumerJob = null
-        // 队列通道只能用一次：停后重建，下次 start 才入得了队
-        inbox.close()
-        inbox = Channel(Channel.UNLIMITED)
         bridgeJob?.cancel()
-        bridgeJob = null
-        bridgeScope = null
+        activeConfig = null
+        channel.disconnect()
         _state.value = ImChannelState.Stopped
     }
 
@@ -194,40 +229,51 @@ class ImBotBridge (
     ): Boolean {
         val chatId = lastActiveChat ?: return false
         if (!file.exists() || !file.isFile) return false
-        val cfg = settings.currentConfig()
-        if (!cfg.enabled || !cfg.ready) return false
-        return runCatching { channel.sendMedia(cfg, chatId, file, kind, caption) }.getOrNull()?.isNotBlank() == true
+        val cfg = activeConfig ?: return false
+        currentCoroutineContext().ensureActive()
+        if (!cfg.enabled || !cfg.ready || settings.currentConfig() != cfg) return false
+        return try {
+            channel.sendMedia(cfg, chatId, file, kind, caption)?.isNotBlank() == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false
+        }
     }
 
-    private suspend fun pollLoop() {
+    private suspend fun pollLoop(cfg: ImChannelConfig, inbox: Channel<ImUpdate>, controls: Channel<ImUpdate>) {
         cursor = settings.lastCursor().toLongOrNull() ?: 0L
         primed = cursor > 0L
         var delayMs = RETRY_MIN_MS
         while (currentCoroutineContext().isActive) {
-            val cfg = settings.currentConfig()
-            if (!cfg.enabled || !cfg.ready) {
-                _state.value = ImChannelState.Stopped
-                return
-            }
             try {
                 if (identity.isBlank()) {
                     val me = channel.identity(cfg)
-                    identity = me.username
-                    // 首次运行丢弃积压：刚配好的机器人不该回答几天前堆下的消息
-                    channel.prepare(cfg, dropHistory = !primed)
+                    if (channelId == "telegram") {
+                        telegramInbox = withContext(Dispatchers.IO) {
+                            TelegramInbox(File(context.filesDir, "aharou/telegram_inbox"), me.id)
+                        }
+                    }
+                    val recovered = telegramInbox?.pending().orEmpty()
+                    channel.prepare(cfg, dropHistory = !primed && recovered.isEmpty())
+                    recovered.forEach { enqueue(it, inbox, controls, recovered = true) }
+                    identity = me.username.ifBlank { me.id.toString() }
                     primed = true
                 }
                 if (_state.value !is ImChannelState.Connected) {
                     _state.value = ImChannelState.Connected(identity)
                 }
                 val timeout = if (channelId == "weixin") WEIXIN_POLL_TIMEOUT_S else TELEGRAM_POLL_TIMEOUT_S
-                val updates = channel.poll(cfg, cursor, timeout)
+                val fetchOffset = telegramInbox?.nextOffset?.coerceAtLeast(cursor) ?: cursor
+                val updates = channel.poll(cfg, fetchOffset, timeout)
+                currentCoroutineContext().ensureActive()
+                deliveryLock.withLock {
+                    telegramInbox?.let { durable -> withContext(Dispatchers.IO) { durable.append(updates) } }
+                }
                 delayMs = RETRY_MIN_MS
                 if (updates.isNotEmpty()) {
                     FileLogger.d(TAG, "[$channelId] 收到 ${updates.size} 条更新")
-                    // 只入队、不在这里推进游标：处理成功后才由消费协程确认。
-                    // 否则进程被杀或处理失败时，消息已经算「已读」，永久丢了。
-                    updates.forEach { inbox.send(cfg to it) }
+                    updates.sortedBy { it.updateId }.forEach { enqueue(it, inbox, controls) }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -241,6 +287,16 @@ class ImBotBridge (
         }
     }
 
+    private suspend fun enqueue(update: ImUpdate, inbox: Channel<ImUpdate>, controls: Channel<ImUpdate>, recovered: Boolean = false) {
+        val fresh = deliveryLock.withLock {
+            flushCursor()
+            if ((!recovered && channelId == "telegram" && update.updateId < cursor) || update.updateId in seenUpdateIds ||
+                pendingUpdates.containsKey(update.updateId)) false
+            else { pendingUpdates[update.updateId] = false; true }
+        }
+        if (fresh) (if (isApprovalControl(update)) controls else inbox).send(update)
+    }
+
     private suspend fun handleUpdate(cfg: ImChannelConfig, update: ImUpdate): Boolean =
         when (update) {
             is ImUpdate.Message -> handleMessage(cfg, update.msg)
@@ -250,17 +306,12 @@ class ImBotBridge (
     /**
      * 串行消费队列：一条处理成功才推进并落盘游标；失败按次数重试，重试耗尽才放行到下一条。
      *
-     * 游标后推进是「不丢消息」的关键：进程被杀时游标还停在未处理那条之前，重启后会重新拉取。
+     * Telegram 先持久入队再拉下一页；完成游标只越过已完成的连续前缀。
+     * 执行副作用与本地确认并非事务，崩溃重放仍可能重复执行。
      */
-    private suspend fun consumeLoop() {
-        for ((cfg, update) in inbox) {
+    private suspend fun consumeLoop(cfg: ImChannelConfig, inbox: Channel<ImUpdate>) {
+        for (update in inbox) {
             val updateId = update.updateId
-            // 处理成功但游标没写成时重拉会拿到同一条，靠这里去重。
-            if (!seenUpdateIds.add(updateId)) {
-                advanceCursor(updateId + 1)
-                continue
-            }
-            if (seenUpdateIds.size > SEEN_UPDATE_LIMIT) seenUpdateIds.clear()
 
             var attempt = 0
             var delivered = false
@@ -278,16 +329,49 @@ class ImBotBridge (
             if (!delivered) {
                 FileLogger.e(TAG, "[$channelId] 消息 $updateId 重试 $MAX_DELIVERY_ATTEMPTS 次仍失败，跳过并推进游标")
             }
-            advanceCursor(updateId + 1)
+            deliveryLock.withLock {
+                pendingUpdates[updateId] = true
+                seenUpdateIds.add(updateId)
+                if (seenUpdateIds.size > SEEN_UPDATE_LIMIT) seenUpdateIds.remove(seenUpdateIds.first())
+                flushCursor()
+            }
         }
     }
 
-    /** 推进游标并落盘；乱序到达的旧 id 不会把游标往回调。 */
-    private suspend fun advanceCursor(target: Long) {
-        if (target <= cursor) return
-        cursor = target
-        runCatching { settings.saveCursor(cursor.toString()) }
-            .onFailure { FileLogger.w(TAG, "[$channelId] 保存游标失败", it) }
+    private suspend fun flushCursor() {
+        val completed = pendingUpdates.entries.takeWhile { it.value }.map { it.key }
+        val target = completed.maxOrNull()?.plus(1) ?: return
+        try {
+            settings.saveCursor(maxOf(cursor, target).toString())
+            telegramInbox?.let { durable -> withContext(Dispatchers.IO) { durable.remove(completed) } }
+            cursor = maxOf(cursor, target)
+            completed.forEach { pendingUpdates.remove(it) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            FileLogger.w(TAG, "[$channelId] 保存游标失败", e)
+        }
+    }
+
+    private fun callbackParts(data: String): List<String>? = data.split(":", limit = 3).takeIf {
+        it.size == 3 && it[0] in setOf("a", "b") && it[1] in setOf("y", "n") && it[2].isNotBlank()
+    }
+
+    private fun approvalChoice(text: String): PermissionChoice? = when (text.trim().lowercase()) {
+        "允许", "同意", "批准", "y", "yes", "ok", "好" -> PermissionChoice.ONCE
+        "拒绝", "不允许", "no", "n", "不行" -> PermissionChoice.REJECT
+        else -> null
+    }
+
+    private fun isApprovalControl(update: ImUpdate): Boolean = when (update) {
+        is ImUpdate.Callback -> callbackParts(update.callback.data)?.let { parts ->
+            chatOfApproval[parts[2]]?.let { origin ->
+                origin.chatId == update.callback.chatId && origin.pending.single == (parts[0] == "a")
+            }
+        } == true
+        is ImUpdate.Message -> pendingApprovals.containsKey(update.msg.chatId) &&
+            approvalChoice(stripMention(update.msg.text)) != null &&
+            update.msg.attachments.isEmpty() && (!update.msg.isGroup || mentioned(update.msg))
     }
 
     private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage): Boolean {
@@ -307,7 +391,7 @@ class ImBotBridge (
                 FileLogger.d(TAG, "[$channelId] 消息正文为空且无附件，忽略")
                 return@runCatching
             }
-            val prompt = if (attachmentOnly) imText("im_attachment_only_hint") else text
+            val prompt = text
             FileLogger.d(
                 TAG,
                 "[$channelId] 处理消息 chat=${msg.chatId} 长度=${prompt.length} 附件=${msg.attachments.size}"
@@ -315,7 +399,8 @@ class ImBotBridge (
             // 记下最近活跃聊天，sendFile 这类无 chatId 的调用要靠它
             lastActiveChat = msg.chatId
             // 无按钮平台的审批回复：先当审批处理，不是审批词再走正常对话
-            if (!attachmentOnly && consumeApprovalReply(msg.chatId, text)) return@runCatching
+            if (!attachmentOnly && msg.attachments.isEmpty() && consumeApprovalReply(cfg, msg.chatId, text)) return@runCatching
+            pendingApprovals.remove(msg.chatId)
             runTurn(cfg, msg.chatId, prompt, msg.attachments)
         }
         return result.onFailure { e ->
@@ -330,20 +415,34 @@ class ImBotBridge (
      * Telegram 点按钮直接走 callback；微信/QQ 没有内联按钮，只能让用户回一个字。
      * 只在该聊天确实有待批请求、且文本命中肯定/否定词时才消化，否则交回正常对话。
      */
-    private suspend fun consumeApprovalReply(chatId: String, text: String): Boolean {
+    private suspend fun consumeApprovalReply(cfg: ImChannelConfig, chatId: String, text: String): Boolean {
         val pending = pendingApprovals[chatId] ?: return false
-        val choice = when (text.trim().lowercase()) {
-            "允许", "同意", "批准", "y", "yes", "ok", "好" -> PermissionChoice.ONCE
-            "拒绝", "不允许", "no", "n", "不行" -> PermissionChoice.REJECT
-            else -> return false
-        }
-        pendingApprovals.remove(chatId)
-        if (pending.single) {
-            toolPermissionManager.resolve(pending.id, choice)
-        } else {
-            toolPermissionManager.resolveBatch(pending.id, choice)
-        }
+        val choice = approvalChoice(text) ?: return false
+        val origin = chatOfApproval[pending.id] ?: return false
+        if (origin.chatId != chatId || pending.sessionId != sessionIdFor(chatId)) return false
+        val resolved = resolveApproval(pending, choice)
+        notifyApproval(cfg, chatId, choice, resolved)
         return true
+    }
+
+    private fun resolveApproval(pending: PendingApproval, choice: PermissionChoice): Boolean =
+        if (pending.single) toolPermissionManager.tryResolve(pending.id, pending.sessionId, choice)
+        else toolPermissionManager.tryResolveBatch(pending.id, pending.sessionId, choice)
+
+    private suspend fun notifyApproval(cfg: ImChannelConfig, chatId: String, choice: PermissionChoice, resolved: Boolean) {
+        sendNotice(cfg, chatId, if (!resolved) imText("im_approval_expired")
+            else if (choice == PermissionChoice.ONCE) approvalAllowed() else approvalDenied())
+    }
+
+    private suspend fun sendNotice(cfg: ImChannelConfig, chatId: String, text: String) {
+        try {
+            currentCoroutineContext().ensureActive()
+            channel.send(cfg, chatId, text)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            FileLogger.w(TAG, "[$channelId] 发送提示失败：${channel.redact(e.message.orEmpty(), cfg)}")
+        }
     }
 
     /** 推送一次审批请求：能按钮就按钮，不能就文本 + 记下待批。 */
@@ -355,11 +454,12 @@ class ImBotBridge (
         summary: String
     ) {
         if (id.isBlank() || sessionId.isBlank()) return
-        val chatId = chatOfSession[sessionId] ?: return
+        val session = chatOfSession[sessionId] ?: return
+        val chatId = session.chatId
+        val cfg = session.cfg
         if (!askedApprovals.add(id)) return
-        // 记下这次的发起聊天，回调回来时据此判断是不是本人点的
-        chatOfApproval[id] = chatId
-        val cfg = settings.currentConfig()
+        val pending = PendingApproval(id, single, sessionId)
+        chatOfApproval[id] = ApprovalOrigin(chatId, pending)
         if (!cfg.enabled || !cfg.ready) return
         val body = buildString {
             if (title.isNotBlank()) append(title)
@@ -369,45 +469,51 @@ class ImBotBridge (
             }
         }.take(1500).ifBlank { imText("im_telegram_approval_default_title") }
         val prompt = imText("im_telegram_approval_prompt", body)
-        if (channel.supportsButtons) {
-            val allow = imText("im_telegram_approval_allow")
-            val deny = imText("im_telegram_approval_deny")
-            val prefix = if (single) "a" else "b"
-            channel.sendWithButtons(
-                cfg,
-                chatId,
-                prompt,
-                listOf(listOf(allow to "$prefix:y:$id", deny to "$prefix:n:$id"))
-            )
-        } else {
-            // 没有按钮：记住待批，用户回「允许/拒绝」即可；同时告诉他怎么回
-            pendingApprovals[chatId] = PendingApproval(id, single)
-            channel.send(cfg, chatId, prompt + "\n\n" + imText("im_approval_reply_hint"))
+        try {
+            if (channel.supportsButtons) {
+                val allow = imText("im_telegram_approval_allow")
+                val deny = imText("im_telegram_approval_deny")
+                val prefix = if (single) "a" else "b"
+                channel.sendWithButtons(
+                    cfg,
+                    chatId,
+                    prompt,
+                    listOf(listOf(allow to "$prefix:y:$id", deny to "$prefix:n:$id"))
+                )
+            } else {
+                pendingApprovals[chatId] = pending
+                channel.send(cfg, chatId, prompt + "\n\n" + imText("im_approval_reply_hint"))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            FileLogger.w(TAG, "[$channelId] 发送审批失败：${channel.redact(e.message.orEmpty(), cfg)}")
         }
     }
 
     private suspend fun handleCallback(cfg: ImChannelConfig, cb: ImCallbackQuery): Boolean = runCatching {
         // 回调与消息同一条门禁：非所有者聊天里根本不会有审批卡片
         if (!acceptChatId(cb.chatId, directed = true)) return@runCatching
-        channel.acknowledgeCallback(cfg, cb.id)
-        if (cb.messageId.isNotBlank()) channel.clearMarkup(cfg, cb.chatId, cb.messageId)
-        val parts = cb.data.split(":", limit = 3)
-        if (parts.size < 3 || parts[2].isBlank()) return@runCatching
+        val parts = callbackParts(cb.data) ?: return@runCatching
         // 只认发起这次审批的聊天：同一渠道可能有多个绑定聊天，A 聊天里的按钮不该能批 B 聊天发起的工具调用。
         // 查不到发起记录（进程重启后内存映射已空）一并丢弃，宁可让审批超时也不接受来源不明的放行。
         val origin = chatOfApproval[parts[2]]
-        if (origin == null || origin != cb.chatId) {
+        if (origin == null || origin.chatId != cb.chatId || origin.pending.single != (parts[0] == "a") ||
+            origin.pending.sessionId != sessionIdFor(cb.chatId)) {
             FileLogger.d(TAG, "[$channelId] 丢弃来源不符的审批回调 chat=${cb.chatId} 发起=$origin")
             return@runCatching
         }
-        chatOfApproval.remove(parts[2])
         val choice = if (parts[1] == "y") PermissionChoice.ONCE else PermissionChoice.REJECT
-        when (parts[0]) {
-            "a" -> toolPermissionManager.resolve(parts[2], choice)
-            "b" -> toolPermissionManager.resolveBatch(parts[2], choice)
-            else -> return@runCatching
+        val resolved = resolveApproval(origin.pending, choice)
+        notifyApproval(cfg, cb.chatId, choice, resolved)
+        try {
+            channel.acknowledgeCallback(cfg, cb.id)
+            if (cb.messageId.isNotBlank()) channel.clearMarkup(cfg, cb.chatId, cb.messageId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            FileLogger.w(TAG, "[$channelId] 清理审批按钮失败：${channel.redact(e.message.orEmpty(), cfg)}")
         }
-        channel.send(cfg, cb.chatId, if (choice == PermissionChoice.ONCE) approvalAllowed() else approvalDenied())
     }.onFailure { e ->
         if (e is CancellationException) throw e
         FileLogger.w(TAG, "[$channelId] 处理回调失败：${channel.redact(e.message.orEmpty(), cfg)}")
@@ -423,29 +529,34 @@ class ImBotBridge (
         lock.withLock {
             val sessionId = ensureSession(chatId) ?: return
             // 记下会话→聊天的映射，审批请求只有 sessionId 没有 chatId
-            chatOfSession[sessionId] = chatId
+            chatOfSession[sessionId] = SessionOrigin(chatId, cfg)
             streamTurn(cfg, chatId, sessionId, text, attachments)
         }
     }
 
-    /**
-     * 把对方发来的附件落到本地目录，再包成 agent 认识的 [AgentAttachment]。
-     *
-     * 下载失败不阻断对话：拿到几份算几份，一份都拿不到就只发文字。
-     */
+    private data class ReceivedAttachments(val inputs: List<AgentAttachment>, val failedNames: List<String>)
     private suspend fun materializeAttachments(
         cfg: ImChannelConfig,
         attachments: List<ImAttachment>
-    ): List<AgentAttachment> {
-        if (attachments.isEmpty()) return emptyList()
+    ): ReceivedAttachments {
+        val inputs = mutableListOf<AgentAttachment>()
+        val failed = mutableListOf<String>()
         val dir = File(context.filesDir, "aharou/im_files").apply { mkdirs() }
-        return attachments.mapNotNull { att ->
-            val file = runCatching { channel.downloadAttachment(cfg, att) }.getOrNull()
-            if (file == null) {
-                FileLogger.w(TAG, "[$channelId] 附件下载失败：${att.fileName.ifBlank { att.mimeType }}")
-                return@mapNotNull null
+        attachments.forEachIndexed { index, att ->
+            val file = try {
+                channel.downloadAttachment(cfg, att).also { currentCoroutineContext().ensureActive() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null
             }
-            val name = att.fileName.ifBlank { file.name }
+            val name = channel.redact(att.fileName, cfg).takeUnless { it.contains("://") }
+                ?.substringBefore('?')?.substringAfterLast('/')?.substringAfterLast('\\')
+                ?.replace(Regex("[\\p{Cntrl}]"), "_")?.take(160)?.ifBlank { null } ?: "#${index + 1}"
+            if (file == null || !file.isFile) {
+                failed.add(name)
+                return@forEachIndexed
+            }
             val target = File(dir, "${System.currentTimeMillis()}-$name")
             val moved = runCatching {
                 if (file.absolutePath != target.absolutePath) {
@@ -454,7 +565,7 @@ class ImBotBridge (
                 }
                 target
             }.getOrElse { file }
-            AgentAttachment(
+            inputs.add(AgentAttachment(
                 fileName = name,
                 containerPath = moved.absolutePath,
                 localPath = moved.absolutePath,
@@ -462,8 +573,9 @@ class ImBotBridge (
                 sizeBytes = if (att.sizeBytes > 0) att.sizeBytes else moved.length(),
                 isImage = att.kind == ImAttachment.Kind.IMAGE ||
                     att.mimeType.startsWith("image/")
-            )
+            ))
         }
+        return ReceivedAttachments(inputs, failed)
     }
 
     private suspend fun ensureSession(chatId: String): String? {
@@ -489,14 +601,24 @@ class ImBotBridge (
         text: String,
         attachments: List<ImAttachment> = emptyList()
     ) {
-        val inputs = materializeAttachments(cfg, attachments)
+        val received = materializeAttachments(cfg, attachments)
+        val failureNotice = received.failedNames.takeIf { it.isNotEmpty() }?.let { names ->
+            val data = kotlinx.serialization.json.JsonArray(names.map { kotlinx.serialization.json.JsonPrimitive(it) })
+            imText("im_attachment_download_failed", data.toString().replace("<", "\\u003c").replace(">", "\\u003e"))
+        }
+        if (failureNotice != null) sendNotice(cfg, chatId, failureNotice)
+        if (text.isBlank() && received.inputs.isEmpty()) return
+        val prompt = text.ifBlank { imText("im_attachment_only_hint") }
         var live: LiveMessage? = null
         var latest = ""
         agentTurnRunner.run(
             AgentTurnRequest(
                 sessionId = sessionId,
-                text = text,
-                inputAttachments = inputs,
+                text = prompt,
+                modelRequest = listOfNotNull(prompt, failureNotice?.let {
+                    "<attachment_download_failures type=\"data\">$it</attachment_download_failures>"
+                }).joinToString("\n\n"),
+                inputAttachments = received.inputs,
                 skipTitleUpdate = true
             )
         ).collect { event ->
@@ -509,7 +631,7 @@ class ImBotBridge (
                 AgentEvent.Completed -> live?.finish(latest) ?: Unit
                 is AgentEvent.Failed -> {
                     val shown = channel.redact(event.error, cfg)
-                    live?.finish(errorText(shown)) ?: channel.send(cfg, chatId, errorText(shown))
+                    live?.finish(errorText(shown)) ?: sendNotice(cfg, chatId, errorText(shown))
                 }
                 else -> Unit
             }
@@ -559,11 +681,17 @@ class ImBotBridge (
             if (!channel.supportsEdit) return
             val now = System.currentTimeMillis()
             val id = messageId
-            if (id == null) {
-                messageId = channel.send(cfg, chatId, accumulated.trim())
-                lastEditAt = now
-            } else if (now - lastEditAt >= EDIT_INTERVAL_MS) {
-                if (channel.edit(cfg, chatId, id, accumulated.trim())) lastEditAt = now
+            try {
+                if (id == null) {
+                    messageId = channel.send(cfg, chatId, accumulated.trim())
+                    lastEditAt = now
+                } else if (now - lastEditAt >= EDIT_INTERVAL_MS) {
+                    if (channel.edit(cfg, chatId, id, accumulated.trim())) lastEditAt = now
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                FileLogger.w(TAG, "[$channelId] 流式回写失败：${channel.redact(e.message.orEmpty(), cfg)}")
             }
         }
 
@@ -572,9 +700,14 @@ class ImBotBridge (
             val shown = buffer.trim()
             if (shown.isEmpty()) return
             val id = messageId
-            if (id != null && channel.supportsEdit && channel.edit(cfg, chatId, id, shown)) return
-            // 没发过任何中间态，或平台不支持编辑：只发这一次
-            channel.send(cfg, chatId, shown)
+            try {
+                if (id != null && channel.supportsEdit && channel.edit(cfg, chatId, id, shown)) return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                FileLogger.w(TAG, "[$channelId] 最终编辑失败：${channel.redact(e.message.orEmpty(), cfg)}")
+            }
+            sendNotice(cfg, chatId, shown)
         }
     }
 

@@ -44,6 +44,9 @@ class AgentSoundSettingsRepository @Inject constructor(
     /** 备份快照：当前提示音开关是否开启。 */
     suspend fun snapshot(): Boolean = enabledFlow.first()
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.agentSoundDataStore.restoreBackupValues(values, recovery)
+
     /** 从备份还原提示音开关。 */
     suspend fun restore(enabled: Boolean) = setEnabled(enabled)
 }

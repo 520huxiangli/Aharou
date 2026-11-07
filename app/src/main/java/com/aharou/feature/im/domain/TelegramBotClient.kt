@@ -18,6 +18,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -240,7 +241,10 @@ class TelegramBotClient @Inject constructor(
         val fileId = attachment.fileId.takeIf { it.isNotBlank() } ?: return null
         val meta = runCatching {
             call(c, "getFile", buildJsonObject { put("file_id", fileId) })
-        }.getOrNull() ?: return null
+        }.getOrElse {
+            if (it is CancellationException) throw it
+            null
+        } ?: return null
         val path = ((meta as? JsonObject)?.get("result") as? JsonObject)
             ?.get("file_path")?.jsonPrimitive?.contentOrNull
             ?.takeIf { it.isNotBlank() } ?: return null
@@ -255,7 +259,10 @@ class TelegramBotClient @Inject constructor(
                     target.outputStream().use { out -> body.byteStream().copyTo(out) }
                     target
                 }
-            }.getOrNull()
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                null
+            }
         }
     }
 

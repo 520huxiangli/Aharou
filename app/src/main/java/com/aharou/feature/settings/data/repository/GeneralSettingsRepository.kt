@@ -149,6 +149,9 @@ class GeneralSettingsRepository @Inject constructor(
     /** 备份快照：当前自动对齐开关。 */
     suspend fun autoRemoveStaleModelsSnapshot(): Boolean = autoRemoveStaleModelsFlow.first()
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.generalDataStore.restoreBackupValues(values, recovery)
+
     /** 备份快照：当前启动时会话偏好名。 */
     suspend fun startupSessionModeSnapshot(): String = startupSessionModeFlow.first().name
 

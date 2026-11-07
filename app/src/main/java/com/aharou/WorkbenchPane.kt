@@ -38,6 +38,9 @@ internal fun WorkbenchPaneContent(
     kind: WorkbenchPaneKind,
     editorPath: String,
     editorLine: Int,
+    editorRoot: String,
+    editorIdentity: String,
+    currentEditorIdentity: String,
     onClose: () -> Unit,
     onAddSelectionToInput: (String) -> Unit,
     onSendToChat: (String) -> Unit,
@@ -50,8 +53,10 @@ internal fun WorkbenchPaneContent(
         when (kind) {
             WorkbenchPaneKind.NONE -> Unit
 
-            WorkbenchPaneKind.EDITOR -> CodeEditorScreen(
+            WorkbenchPaneKind.EDITOR -> if (editorIdentity == currentEditorIdentity && editorRoot.isNotBlank()) CodeEditorScreen(
                 path = editorPath,
+                workspaceRoot = editorRoot,
+                workspaceIdentity = editorIdentity,
                 initialLine = editorLine,
                 onBack = onClose,
                 embedded = true,

@@ -1,6 +1,12 @@
 package com.aharou.feature.backup.data
 
 import android.content.Context
+import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.aharou.R
 import com.aharou.core.security.KeystoreCipher
 import com.aharou.core.util.FileLogger
@@ -95,7 +101,9 @@ class BackupManagerImpl @Inject constructor(
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val syncSettingsRepository: SyncSettingsRepository,
-    private val workspaceRepository: WorkspaceRepository
+    private val workspaceRepository: WorkspaceRepository,
+    private val database: AgentDatabase,
+    private val restoreSettings: BackupRestoreSettings
 ) : BackupManager {
 
     private val json = Json {
@@ -105,12 +113,17 @@ class BackupManagerImpl @Inject constructor(
     }
 
     private val importStaging = BackupImportStaging(context.cacheDir)
+    private val importMutex = Mutex()
+    private lateinit var restoreChanges: BackupRestoreChanges
+    private lateinit var restoreArchiveStore: MessageArchiveStore
 
     /** 记忆段（全局记忆 + 项目级记忆）的打包与还原，路径与覆盖留底规则见 [MemoryBackupSection]。 */
     private val memorySection = MemoryBackupSection(
         context = context,
         internalWorkspaces = { backupLocalWorkspaces().filter { it.type == WorkspaceType.INTERNAL } },
-        resolveWorkspace = { name, mapping -> resolveWorkspaceForRestore(name, mapping) }
+        resolveWorkspace = { name, mapping -> resolveWorkspaceForRestore(name, mapping) },
+        writeRestoreFile = { target, bytes -> bytes.inputStream().use { restoreChanges.write(target, it) } },
+        checkRestoreTarget = { restoreChanges.checkTarget(it) }
     )
 
     private fun currentSchemaVersion(): Int = AgentDatabase.SCHEMA_VERSION
@@ -208,14 +221,50 @@ class BackupManagerImpl @Inject constructor(
         return withContext(Dispatchers.IO) {
             FileLogger.i(TAG, "导入备份开始（${if (pw != null) "加密" else "明文"}${if (selectedWorkspaces != null) "，勾选工作区=${selectedWorkspaces.size}个" else "，全量"}，供应商冲突处置=$providerConflict）")
             runCatching {
-                unreadableSecrets.set(0)
-                openTar(input, pw).use { source ->
-                    restoreFromTar(source.tar, selectedWorkspaces, providerConflict)
+                importMutex.withLock {
+                    val directory = restoreDirectory()
+                    val changes = BackupRestoreChanges(directory)
+                    var committed = false
+                    try {
+                        unreadableSecrets.set(0)
+                        val plan = openTar(input, pw).use { source ->
+                            BackupRestorePlan.prepare(source, directory, json, ::checkVersion)
+                        }
+                        restoreChanges = changes
+                        restoreArchiveStore = MessageArchiveStore(File(directory, "message-archive"))
+                        val importContext = currentCoroutineContext()
+                        val stats = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            database.withTransaction {
+                                withContext(requireNotNull(importContext[kotlinx.coroutines.Job])) {
+                                    val result = TarArchiveInputStream(plan.tarFile.inputStream().buffered()).use { tar ->
+                                        restoreFromTar(tar, selectedWorkspaces, providerConflict)
+                                    }
+                                    publishRestoredArchives()
+                                    restoreSettings.apply(plan.metadata, changes)
+                                    importContext.ensureActive()
+                                    result.copy(secretsUnavailable = unreadableSecrets.getAndSet(0))
+                                }
+                            }.also { committed = true }
+                        }
+                        runCatching { workspaceRepository.refreshAfterBackupRestore() }
+                            .onFailure { FileLogger.w(TAG, "导入已提交，刷新工作区失败", it) }
+                        if (plan.metadata.mcpServers.isNotEmpty()) runCatching { mcpManager.reload() }
+                            .onFailure { FileLogger.w(TAG, "导入已提交，重载 MCP 失败", it) }
+                        stats
+                    } catch (failure: Throwable) {
+                        if (!committed) changes.rollback(failure)
+                        if (changes.rollbackFailed) FileLogger.e(TAG, "恢复补偿未完成，底稿保留：${directory.path}", failure)
+                        throw failure
+                    } finally {
+                        if (!changes.rollbackFailed) directory.deleteRecursively()
+                    }
                 }
             }
-            .map { it.copy(secretsUnavailable = unreadableSecrets.getAndSet(0)) }
             .onSuccess { FileLogger.i(TAG, "导入备份完成：$it") }
-            .onFailure { FileLogger.e(TAG, "导入备份失败", it) }
+            .onFailure {
+                FileLogger.e(TAG, "导入备份失败", it)
+                if (it is CancellationException) throw it
+            }
             .recoverCatching { e -> mapImportError(e, pw, sourceAlreadyDecrypted) }
         }
     }
@@ -226,31 +275,21 @@ class BackupManagerImpl @Inject constructor(
             FileLogger.i(TAG, "导入预览开始（${if (pw != null) "加密" else "明文"}）")
             runCatching {
                 openTar(input, pw).use { source ->
-                    val tar = source.tar
-                    var workspaces: List<WorkspaceBackupMeta> = emptyList()
-                    var providers: List<ProviderDto> = emptyList()
-                    var entry = tar.nextEntry
-                    while (entry != null) {
-                        if (entry.name == FILE_METADATA) {
-                            val plain = tar.readBytes()
-                            val metadata = json.decodeFromString(BackupMetadata.serializer(), String(plain, Charsets.UTF_8))
-                            checkVersion(metadata.schemaVersion)
-                            workspaces = metadata.workspaces
-                            providers = metadata.providers
-                            // 导出时 metadata.json 为首个条目，读到即可停，避免遍历大段 jsonl
-                            break
-                        }
-                        entry = tar.nextEntry
-                    }
-                    val existingIds = aiProviderDao.getAllProvidersOnce().map { it.id }.toSet()
-                    val conflicts = providers
-                        .filter { it.id in existingIds }
-                        .map { ProviderConflict(it.id, it.name) }
-                    ImportPreview(workspaces, conflicts)
+                    val directory = restoreDirectory()
+                    try {
+                        val metadata = BackupRestorePlan.prepare(source, directory, json, ::checkVersion).metadata
+                        val existingIds = aiProviderDao.getAllProvidersOnce().map { it.id }.toSet()
+                        val conflicts = metadata.providers.filter { it.id in existingIds }
+                            .map { ProviderConflict(it.id, it.name) }
+                        ImportPreview(metadata.workspaces, conflicts)
+                    } finally { directory.deleteRecursively() }
                 }
             }
             .onSuccess { FileLogger.i(TAG, "导入预览完成：${it.workspaces.size} 个工作区，${it.providerConflicts.size} 个供应商冲突") }
-            .onFailure { FileLogger.e(TAG, "导入预览失败", it) }
+            .onFailure {
+                FileLogger.e(TAG, "导入预览失败", it)
+                if (it is CancellationException) throw it
+            }
             .recoverCatching { e -> mapImportError(e, pw, sourceAlreadyDecrypted) }
         }
     }
@@ -258,6 +297,7 @@ class BackupManagerImpl @Inject constructor(
     /** 把导入异常映射为用户可读的 IllegalArgumentException（解密异常原样抛出）。 */
     private fun mapImportError(e: Throwable, pw: CharArray?, sourceAlreadyDecrypted: Boolean): Nothing {
         when (e) {
+            is CancellationException -> throw e
             is BackupDecryptionException -> throw e
             is IllegalStateException -> throw e
             else -> throw IllegalArgumentException(
@@ -277,8 +317,8 @@ class BackupManagerImpl @Inject constructor(
         if (pw == null) {
             FileLogger.i(TAG, "明文备份：直接解压 tar.gz")
             val p = BufferedInputStream(input)
-            val gz = GzipCompressorInputStream(p)
-            return TarSource(TarArchiveInputStream(gz), null)
+            val gz = GzipCompressorInputStream(p, true)
+            return TarSource(TarArchiveInputStream(gz), null, gz)
         }
         FileLogger.i(TAG, "加密备份：先解密到临时文件")
         val temp = createTempFile()
@@ -287,8 +327,8 @@ class BackupManagerImpl @Inject constructor(
                 FileOutputStream(temp).buffered().use { dst -> BackupCrypto.decryptStream(src, dst, pw) }
             }
             val p = FileInputStream(temp).buffered()
-            val gz = GzipCompressorInputStream(p)
-            return TarSource(TarArchiveInputStream(gz), temp)
+            val gz = GzipCompressorInputStream(p, true)
+            return TarSource(TarArchiveInputStream(gz), temp, gz)
         } catch (e: Throwable) {
             temp.delete()
             throw e
@@ -508,7 +548,7 @@ class BackupManagerImpl @Inject constructor(
                     val plain = tar.readBytes()
                     val snapshot = json.decodeFromString(BackupSnapshot.serializer(), String(plain, Charsets.UTF_8))
                     checkVersion(snapshot.schemaVersion)
-                    return restoreLegacy(snapshot)
+                    return restoreLegacy(snapshot, providerConflict)
                 }
                 FILE_METADATA -> {
                     val plain = tar.readBytes()
@@ -530,7 +570,7 @@ class BackupManagerImpl @Inject constructor(
                 }
                 FILE_MESSAGES -> {
                     val count = restoreJsonl(tar, AgentMessageDto.serializer()) { dtos ->
-                        agentMessageDao.insertAll(dtos.map { messageArchiveStore.prepareForStorage(it.toEntity()) })
+                        agentMessageDao.insertAll(dtos.map { prepareRestoredMessage(it.toEntity()) })
                     }
                     FileLogger.i(TAG, "恢复消息 $count 条")
                     stats += RestoreStats(agentMessages = count)
@@ -564,43 +604,7 @@ class BackupManagerImpl @Inject constructor(
 
     /** 逐行解析 jsonl 条目，每 [PAGE_SIZE] 条回调一次批量插入；返回该文件的总条数。 */
     private suspend fun <T> restoreJsonl(tar: TarArchiveInputStream, serializer: KSerializer<T>, insert: suspend (List<T>) -> Unit): Int {
-        val buffer = ByteArray(64 * 1024)
-        val line = ByteArrayOutputStream(16 * 1024)
-        val batch = ArrayList<T>(PAGE_SIZE)
-        var count = 0
-        while (true) {
-            val n = tar.read(buffer)
-            if (n < 0) break
-            var start = 0
-            for (i in 0 until n) {
-                if (buffer[i] == '\n'.code.toByte()) {
-                    line.write(buffer, start, i - start)
-                    start = i + 1
-                    if (line.size() > 0) {
-                        // 注意：ByteArrayOutputStream.toString(Charset) 是 API 33 才有的方法，
-                        // 在 Android 13 以下会抛 NoSuchMethodError，必须用 String(byte[], Charset) 构造器。
-                        batch.add(json.decodeFromString(serializer, String(line.toByteArray(), Charsets.UTF_8)))
-                        line.reset()
-                        if (batch.size >= PAGE_SIZE) {
-                            count += batch.size
-                            insert(batch.toList())
-                            batch.clear()
-                        }
-                    } else {
-                        line.reset()
-                    }
-                }
-            }
-            line.write(buffer, start, n - start)
-        }
-        if (line.size() > 0) {
-            batch.add(json.decodeFromString(serializer, String(line.toByteArray(), Charsets.UTF_8)))
-        }
-        if (batch.isNotEmpty()) {
-            count += batch.size
-            insert(batch.toList())
-        }
-        return count
+        return readBackupJsonl(tar, json, serializer, insert)
     }
 
     private fun checkVersion(schemaVersion: Int) {
@@ -610,8 +614,8 @@ class BackupManagerImpl @Inject constructor(
     }
 
     /** 旧格式（单文件 snapshot.json 完整快照）还原。 */
-    private suspend fun restoreLegacy(snapshot: BackupSnapshot): RestoreStats {
-        var stats = restoreMeta(snapshot.toMetadata())
+    private suspend fun restoreLegacy(snapshot: BackupSnapshot, providerConflict: ProviderConflictStrategy): RestoreStats {
+        val stats = restoreMeta(snapshot.toMetadata(), providerConflict)
         if (snapshot.chatSessions.isNotEmpty()) {
             // 按备份中的工作区路径逐个解析到目标工作区（不存在则自动创建空工作区），不再全部塞进当前工作区。
             val restoreMapping = mutableMapOf<String, Workspace>()
@@ -622,7 +626,7 @@ class BackupManagerImpl @Inject constructor(
             )
         }
         if (snapshot.agentMessages.isNotEmpty()) {
-            agentMessageDao.insertAll(snapshot.agentMessages.map { messageArchiveStore.prepareForStorage(it.toEntity()) })
+            agentMessageDao.insertAll(snapshot.agentMessages.map { prepareRestoredMessage(it.toEntity()) })
         }
         if (snapshot.todoItems.isNotEmpty()) {
             todoItemDao.upsertAll(snapshot.todoItems.map { it.toEntity() })
@@ -687,38 +691,6 @@ class BackupManagerImpl @Inject constructor(
                 meta.remoteMounts.map { it.toEntity() }.filter { it.connectionId in connectionIds }
             )
         }
-        if (meta.mcpServers.isNotEmpty()) {
-            mcpConfigRepository.setGlobalServers(meta.mcpServers)
-            mcpManager.reload()
-        }
-        if (meta.globalPermissionRules.isNotEmpty()) {
-            permissionRulesRepository.setGlobalRules(meta.globalPermissionRules)
-        }
-        if (meta.includesAppSettings) {
-            meta.themeMode?.let { themeSettingsRepository.restore(it) }
-            themeSettingsRepository.restoreColors(meta.themePresetId, meta.dynamicColorEnabled)
-            keepaliveSettingsRepository.restore(meta.keepaliveEnabled)
-            screenOnSettingsRepository.restore(meta.screenOnEnabled)
-            agentSoundSettingsRepository.restore(meta.agentSoundEnabled)
-            generalSettingsRepository.restoreAutoRemoveStaleModels(meta.autoRemoveStaleModels)
-            generalSettingsRepository.restoreStartupSessionMode(meta.startupSessionMode)
-            generalSettingsRepository.restoreFirstByteTimeoutSec(meta.firstByteTimeoutSec)
-            generalSettingsRepository.restoreStreamIdleTimeoutSec(meta.streamIdleTimeoutSec)
-            generalSettingsRepository.restoreMaxNetworkRetries(meta.maxNetworkRetries)
-            generalSettingsRepository.restoreEnterToSend(meta.enterToSend)
-            generalSettingsRepository.restoreCompactionThresholdPercent(meta.compactionThresholdPercent)
-            generalSettingsRepository.restoreSoftCompactionThresholdPercent(meta.softCompactionThresholdPercent)
-            generalSettingsRepository.restoreSendFileMaxSizeMb(meta.sendFileMaxSizeMb)
-            generalSettingsRepository.restoreDeleteExternalWorkspaceSessions(meta.deleteExternalWorkspaceSessions)
-            logSettingsRepository.restore(meta.logLevel)
-            if (meta.visionProviderId.isNotBlank() || meta.visionModel.isNotBlank()) {
-                visionModelSettingsRepository.setVisionModel(meta.visionProviderId, meta.visionModel)
-            }
-            if (meta.compactionProviderId.isNotBlank() || meta.compactionModel.isNotBlank()) {
-                compactionModelSettingsRepository.setCompactionModel(meta.compactionProviderId, meta.compactionModel)
-            }
-            meta.syncSettings?.let { syncSettingsRepository.restore(it) }
-        }
 
         return RestoreStats(
             providers = meta.providers.size,
@@ -751,8 +723,7 @@ class BackupManagerImpl @Inject constructor(
         val wsDir = File(ws.path)
         if (!isPathInsideWorkspace(wsDir, segments[2])) return RestoreStats()
         val target = File(wsDir, segments[2])
-        target.parentFile?.mkdirs()
-        FileOutputStream(target).use { out -> tar.copyTo(out) }
+        restoreChanges.write(target, tar)
         FileLogger.i(TAG, "恢复工作区文件：${ws.name}/${segments[2]}")
         return RestoreStats(workspaceFiles = 1)
     }
@@ -773,8 +744,11 @@ class BackupManagerImpl @Inject constructor(
         val resolved = existing ?: run {
             val occupied = workspaceRepository.workspaces.value.map { it.name }.toSet() + reservedNames
             val targetName = WorkspaceRepository.uniqueName(wsName, occupied)
-            workspaceRepository.createWorkspace(targetName) ?: return null
+            workspaceRepository.planLocalBackupWorkspace(targetName, reservedNames).also {
+                restoreChanges.ensureDirectory(File(it.path))
+            }
         }
+        restoreChanges.ensureDirectory(File(resolved.path))
         restoreMapping[wsName] = resolved
         FileLogger.i(TAG, "导入会话目标工作区：${resolved.name} -> ${resolved.path}")
         return resolved
@@ -790,13 +764,8 @@ class BackupManagerImpl @Inject constructor(
         backupWorkspacePath: String,
         restoreMapping: MutableMap<String, Workspace>
     ): String {
-        if (backupWorkspacePath.isBlank()) return workspaceRepository.currentPath()
-        workspaceRepository.workspaces.value
-            .firstOrNull { it.path == backupWorkspacePath && it.name !in restoreMapping.keys }
-            ?.let { return it.path }
-        val name = backupWorkspacePath.trimEnd('/').substringAfterLast('/')
-        if (name.isEmpty()) return workspaceRepository.currentPath()
-        return resolveWorkspaceForRestore(name, restoreMapping)?.path ?: workspaceRepository.currentPath()
+        val name = backupWorkspacePath.trimEnd('/').substringAfterLast('/').ifBlank { "default" }
+        return requireNotNull(resolveWorkspaceForRestore(name, restoreMapping)).path
     }
 
     /** 防路径穿越：工作区必须是本地目录，且相对路径规范化后仍位于其内。 */
@@ -808,6 +777,21 @@ class BackupManagerImpl @Inject constructor(
     }
 
     private fun createTempFile(): File = File.createTempFile("backup", ".tmp", context.cacheDir)
+
+    private fun restoreDirectory(): File = File(context.filesDir, ".backup-restore-${UUID.randomUUID()}").apply {
+        check(mkdir()) { "Cannot create restore staging" }
+    }
+
+    private suspend fun prepareRestoredMessage(entity: AgentMessageEntity): AgentMessageEntity {
+        return restoreArchiveStore.prepareForStorage(entity)
+    }
+
+    private suspend fun publishRestoredArchives() {
+        val root = File(restoreChanges.directory, "message-archive")
+        if (root.isDirectory) root.walkTopDown().filter { it.isFile }.forEach { file ->
+            restoreChanges.write(File(File(context.filesDir, "message-archive"), file.relativeTo(root).path), file)
+        }
+    }
 
     /**
      * 导入时的凭据字段处理。

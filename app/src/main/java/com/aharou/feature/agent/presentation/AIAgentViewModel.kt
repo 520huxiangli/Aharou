@@ -73,7 +73,7 @@ import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentResultInspector
 import com.aharou.feature.agent.domain.schedule.ScheduledPendingRunner
 import com.aharou.feature.agent.domain.schedule.ScheduledRunRequest
-import com.aharou.feature.agent.domain.schedule.ScheduledTaskOutcome
+import com.aharou.feature.agent.domain.runner.AgentTurnCompletion
 import com.aharou.feature.agent.domain.workflow.AgentWorkflow
 import com.aharou.feature.terminal.domain.TabFinishedEvent
 import com.aharou.feature.terminal.domain.TerminalKeepaliveService
@@ -205,6 +205,7 @@ class AIAgentViewModel @Inject constructor(
     private val generalSettingsRepository: GeneralSettingsRepository,
     private val keepaliveSettings: KeepaliveSettingsRepository,
     private val subAgentEventBus: SubAgentEventBus,
+    private val subAgentRunLifecycle: com.aharou.feature.agent.domain.subagent.SubAgentRunLifecycle,
     private val agentNotificationCenter: AgentNotificationCenter,
     private val sharedInbox: SharedInbox,
     private val sharedInboxDelivery: SharedInboxDelivery,
@@ -229,6 +230,7 @@ class AIAgentViewModel @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) : ViewModel(), SlashCommandContext {
 
+    private val suppressedSubAgentStops = mutableSetOf<String>()
     private val sessionJobs = mutableMapOf<String, Job>()
     private val stoppingSessions = mutableMapOf<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
 
@@ -723,6 +725,8 @@ class AIAgentViewModel @Inject constructor(
      * 事实源是持久化的任务行：进程重启后内存里什么也不剩，卡片照样能从库里读到真实终态。
      * 事件总线只负责「比落库快一步」地把状态翻过去，详见 [noteSubAgentCardEvent]。
      */
+    private val subAgentCardLock = Any()
+    private val subAgentCardVersions = mutableMapOf<String, Long>()
     private val _subAgentCards = MutableStateFlow<Map<String, SubAgentCardState>>(emptyMap())
     internal val subAgentCards: StateFlow<Map<String, SubAgentCardState>> = _subAgentCards.asStateFlow()
 
@@ -747,6 +751,7 @@ class AIAgentViewModel @Inject constructor(
     }
 
     private suspend fun loadSubAgentCard(subSessionId: String) {
+        val revision = synchronized(subAgentCardLock) { subAgentCardVersions[subSessionId] ?: 0L }
         val task = agentTaskDao.getById(subSessionId) ?: return
         // 结论摘要与改动文件不另造一套：走与收尾通知、task(read) 同一个检查器。
         val inspection = runCatching {
@@ -757,32 +762,37 @@ class AIAgentViewModel @Inject constructor(
             summary = inspection?.conclusion?.takeIf { it.isNotBlank() } ?: task.result,
             changedFiles = inspection?.changedFiles.orEmpty(),
         )
+        if (agentTaskDao.getById(subSessionId)?.updatedAt != task.updatedAt) return
+        synchronized(subAgentCardLock) {
+        if ((subAgentCardVersions[subSessionId] ?: 0L) != revision) return
         _subAgentCards.update { cards ->
             val prev = cards[subSessionId]
             // 事件比落库快：终态事件已经先到、任务行还写着 RUNNING 时，别把卡片退回「运行中」。
-            val status = if (prev != null && prev.status != SubAgentCardStatus.RUNNING &&
-                persisted.status == SubAgentCardStatus.RUNNING
-            ) {
-                prev.status
-            } else {
-                persisted.status
+            val status = when {
+                subSessionId in subAgentEventBus.activeSubSessionIds.value -> SubAgentCardStatus.RUNNING
+                prev != null && prev.status != SubAgentCardStatus.RUNNING && persisted.status == SubAgentCardStatus.RUNNING -> prev.status
+                else -> persisted.status
             }
             cards + (subSessionId to persisted.copy(status = status))
+        }
         }
     }
 
     /** 子代理事件即时翻卡片状态：落库慢一步，但「跑完了」要让卡片当场变。 */
     private fun noteSubAgentCardEvent(event: SubAgentEvent) {
         val status = when (event.type) {
-            SubAgentEventType.SPAWNED -> SubAgentCardStatus.RUNNING
+            SubAgentEventType.SPAWNED, SubAgentEventType.RUN_STARTED -> SubAgentCardStatus.RUNNING
             SubAgentEventType.COMPLETED -> SubAgentCardStatus.COMPLETED
             SubAgentEventType.FAILED -> SubAgentCardStatus.FAILED
             SubAgentEventType.STOPPED, SubAgentEventType.DELETED -> SubAgentCardStatus.CANCELLED
             else -> return
         }
+        synchronized(subAgentCardLock) {
+        subAgentCardVersions[event.subSessionId] = (subAgentCardVersions[event.subSessionId] ?: 0L) + 1
         _subAgentCards.update { cards ->
             val prev = cards[event.subSessionId]
             cards + (event.subSessionId to (prev ?: SubAgentCardState()).copy(status = status))
+        }
         }
         // 终态还要一次读库：结果摘要与改动文件只有子会话消息里有。
         if (status != SubAgentCardStatus.RUNNING) refreshSubAgentCard(event.subSessionId)
@@ -1580,14 +1590,23 @@ class AIAgentViewModel @Inject constructor(
         // - DELETED：task(action="del") 已删库，只清运行时状态，不做任何停止收尾。
         viewModelScope.launch {
             subAgentEventBus.events.collect { event ->
+                if (!subAgentEventBus.isCurrentEvent(event)) return@collect
                 // 卡片状态先按事件即时翻过去（落库慢一步），终态再补一次读库拿摘要与改动文件。
                 noteSubAgentCardEvent(event)
                 when (event.type) {
                     SubAgentEventType.SPAWNED -> spawnSubAgentWorkflow(event)
-                    SubAgentEventType.STOPPED -> stopAgentSession(event.subSessionId)
+                    SubAgentEventType.RUN_STARTED -> Unit
+                    SubAgentEventType.STOPPED -> {
+                        stopAgentSession(event.subSessionId)
+                        if (event.runId?.let { suppressedSubAgentStops.remove(it) } != true) viewModelScope.launch {
+                            val sub = sessionUseCase.getSessionById(event.subSessionId) ?: return@launch
+                            notifyParentSubAgentFinished(event.parentSessionId, sub.id, sub.title,
+                                NotificationOutcome.STOPPED, event.detail.takeIf { it.isNotBlank() })
+                        }
+                    }
                     SubAgentEventType.DELETED -> clearDeletedSessionState(event.subSessionId)
                     SubAgentEventType.COMPLETED, SubAgentEventType.FAILED -> {
-                        enqueueSubAgentNotification(event)
+                        if (event.runId?.let { suppressedSubAgentStops.remove(it) } != true) enqueueSubAgentNotification(event)
                     }
                     SubAgentEventType.MESSAGE_FROM_PARENT -> deliverMessageToSubAgent(event)
                     SubAgentEventType.MESSAGE_FROM_SUB -> deliverMessageToParent(event)
@@ -1611,42 +1630,10 @@ class AIAgentViewModel @Inject constructor(
      * 标题用任务名，并跳过首条消息的标题推导，免得被指令内容覆盖。
      */
     private suspend fun runScheduledTask(request: ScheduledRunRequest) {
-        val existing = request.targetSessionId?.let { sessionUseCase.getSessionById(it) }
-        val sessionId = existing?.id ?: run {
-            val root = request.workspacePath?.takeIf { it.isNotBlank() }
-            if (root == null) {
-                FileLogger.w(TAG, "定时任务缺少工作区且无目标会话，跳过: ${request.taskName}")
-                return
-            }
-            val created = sessionUseCase.newSessionEntity(workspacePath = root).copy(title = request.taskName)
-            sessionUseCase.upsertSession(created)
-            created.id
+        com.aharou.feature.agent.presentation.runScheduledTask(request, sessionUseCase, scheduledTaskDao) { sessionId, root, completion ->
+            executeAgentRequestStream(request = request.prompt, projectRoot = root, targetSessionId = sessionId,
+                isAutoTrigger = true, skipTitleUpdate = true, skipCommandDispatch = true, completion = completion)
         }
-        val workspacePath = sessionUseCase.getSessionById(sessionId)?.workspacePath.orEmpty()
-        FileLogger.i(TAG, "定时任务开始运行: ${request.taskName} -> session=$sessionId")
-        val succeeded = try {
-            executeAgentRequestStream(
-                request = request.prompt,
-                projectRoot = workspacePath,
-                targetSessionId = sessionId,
-                isAutoTrigger = true,
-                skipTitleUpdate = true
-            )
-            true
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            FileLogger.w(TAG, "定时任务执行失败: ${request.taskName}", e)
-            false
-        }
-        // 把真实执行结果回写到任务行：Worker 只记「已投递」，跑没跑成只有这里知道。
-        runCatching {
-            scheduledTaskDao.recordOutcome(
-                request.taskId,
-                if (succeeded) ScheduledTaskOutcome.COMPLETED else ScheduledTaskOutcome.FAILED,
-                System.currentTimeMillis()
-            )
-        }.onFailure { FileLogger.w(TAG, "回写定时任务结果失败: ${request.taskName}", it) }
     }
 
     /**
@@ -1671,12 +1658,13 @@ class AIAgentViewModel @Inject constructor(
         // 子代理运行中不允许重复启动（同一会话已有活跃 job）。这里不能 release：
         // 活跃名额属于正在跑的那一轮，释放会让它在完成后少计一个，并发上限就被绕过了。
         if (sessionJobs[event.subSessionId]?.isActive == true) return
+        if (subAgentEventBus.currentRun(event.subSessionId)?.runId != event.runId) return
 
         executeAgentRequestStream(
             request = event.detail,
             projectRoot = parentSession.workspacePath,
             targetSessionId = event.subSessionId,
-            skipTitleUpdate = true
+            skipTitleUpdate = true, expectedSubAgentRunId = event.runId
         )
     }
 
@@ -2062,7 +2050,9 @@ class AIAgentViewModel @Inject constructor(
         /** 技能等场景：request 以 `/` 开头但已由调用方处理，跳过斜杠命令再派发，避免重入死循环。 */
         skipCommandDispatch: Boolean = false,
         /** /init 等场景：调用方已先落过命令文本，这轮不再落用户消息，避免落出两条。 */
-        persistUserMessage: Boolean = true
+        persistUserMessage: Boolean = true,
+        completion: AgentTurnCompletion? = null,
+        expectedSubAgentRunId: String? = null
     ): Job = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
         val sessionId = targetSessionId ?: ensureSession()
         if (sessionId.isBlank()) {
@@ -2128,9 +2118,11 @@ class AIAgentViewModel @Inject constructor(
                     inputAttachments = inputAttachments,
                     isAutoTrigger = isAutoTrigger,
                     skipTitleUpdate = skipTitleUpdate,
-                    persistUserMessage = persistUserMessage
+                    persistUserMessage = persistUserMessage,
+                    expectedSubAgentRunId = expectedSubAgentRunId
                 )
             ).collect { event ->
+                completion?.observe(event)
                 if (sessionJobs[sessionId] !== currentJob) return@collect
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
@@ -2308,6 +2300,7 @@ class AIAgentViewModel @Inject constructor(
             }
             throw e
         } catch (e: Exception) {
+             completion?.fail(e)
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
              if (sessionJobs[sessionId] === currentJob) {
                  val failureMessage = e.toUserMessage(context)
@@ -2319,9 +2312,6 @@ class AIAgentViewModel @Inject constructor(
             val isOwnJob = sessionJobs[sessionId] == coroutineContext[Job]
             FileLogger.d(TAG, "stream finally: sid=$sessionId isOwnJob=$isOwnJob state=${_agentStates.value[sessionId]}")
             if (isOwnJob) {
-                // 本轮结束即不再占用子代理名额：正常收尾时 AgentTurnRunner 已发 COMPLETED/FAILED 释放过（这里返回 false），
-                // 只有被取消/抛异常而没走到发终态事件那一步才靠这里兜底。父会话不在集合里，release 直接返回 false。
-                subAgentEventBus.release(sessionId)
                 _runningTools.value = _runningTools.value - sessionId
                 setStreamingText(sessionId, null)
                 setStreamingReasoning(sessionId, null)
@@ -2335,7 +2325,7 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
         }
-    }
+    }.also { completion?.bind(it) }
 
     fun resolveToolPermission(id: String, choice: PermissionChoice) = toolPermissionManager.resolve(id, choice)
 
@@ -2362,11 +2352,19 @@ class AIAgentViewModel @Inject constructor(
         // 后清就会在「已停止」之后再冒出一轮 AI。
         agentNotificationCenter.clearAll()
         _queuedRequests.value = emptyMap()
-        // cancel 只抛 CancellationException，不会发 COMPLETED/FAILED/STOPPED，活跃集合里的子代理名额
-        // 就再也回不来了（之后 task(create) 永久报「已达上限」），故取消前逐个归还。
-        subAgentEventBus.activeSubSessionIds.value.toList()
-            .forEach { subAgentEventBus.release(it) }
-        jobs.forEach { it.cancel() }
+        val stoppedRuns = subAgentEventBus.activeSubSessionIds.value.mapNotNull { subAgentEventBus.currentRun(it) }
+        stoppedRuns.forEach { suppressedSubAgentStops.add(it.runId) }
+        viewModelScope.launch {
+            try {
+                stoppedRuns.forEach { run ->
+                    if (subAgentRunLifecycle.stopRun(run.sessionId, run.parentSessionId, broadcast = false, expectedRun = run)) {
+                        suppressedSubAgentStops.remove(run.runId)
+                    }
+                }
+            } finally {
+                jobs.forEach { it.cancel() }
+            }
+        }
         sessionJobs.clear()
         _activeAgentSessions.value = emptySet()
         _runningCommandSessions.value = emptySet()
@@ -2550,7 +2548,11 @@ class AIAgentViewModel @Inject constructor(
      */
     private fun clearDeletedSessionState(sessionId: String) {
         clearSessionRuntimeState(sessionId)
-        subAgentEventBus.release(sessionId)
+        val deletedRun = subAgentEventBus.currentRun(sessionId)
+        if (deletedRun != null) viewModelScope.launch {
+            subAgentRunLifecycle.stopRun(sessionId, deletedRun.parentSessionId, deleted = true,
+                broadcast = false, expectedRun = deletedRun)
+        }
         // 先清队列再 cancel：cancel 可能在调用栈内同步跑 finally → flushPendingNotifications，
         // 队列已空才会直接返回，不为已删会话再起一轮。
         agentNotificationCenter.clear(sessionId)
@@ -2570,21 +2572,9 @@ class AIAgentViewModel @Inject constructor(
 
     /** 停止运行中的子代理：交回并发槽位并告知父代理，否则槽位泄漏到进程重启。 */
     private fun releaseStoppedSubAgent(sessionId: String) {
-        // TaskTool 的 stop 已在 emit(STOPPED) 时释放过、del 走 DELETED 分支（不经过这里），
-        // 那些路径下 release 返回 false，不会重复通知。
-        if (!subAgentEventBus.release(sessionId)) return
+        val run = subAgentEventBus.currentRun(sessionId) ?: return
         viewModelScope.launch {
-            val sub = sessionUseCase.getSessionById(sessionId)
-            val parentId = sub?.parentId
-            if (parentId != null) {
-                notifyParentSubAgentFinished(
-                    parentSessionId = parentId,
-                    subSessionId = sessionId,
-                    title = sub.title,
-                    outcome = NotificationOutcome.STOPPED,
-                    detail = "用户在界面上手动停止了这个子代理，任务未完成。"
-                )
-            }
+            subAgentRunLifecycle.stopRun(sessionId, run.parentSessionId, expectedRun = run)
         }
     }
 
@@ -2863,7 +2853,8 @@ class AIAgentViewModel @Inject constructor(
         ids.forEach { id ->
             val deletedSession = sessionUseCase.getSessionById(id)
             if (deletedSession?.parentId != null) {
-                subAgentEventBus.release(id)
+                val run = subAgentEventBus.currentRun(id)
+                subAgentRunLifecycle.stopRun(id, deletedSession.parentId, deleted = true, broadcast = false, expectedRun = run)
             }
             checkpointManager.clearSessionCheckpoints(id)
             val deleted = sessionUseCase.deleteSession(id)
@@ -2893,7 +2884,10 @@ class AIAgentViewModel @Inject constructor(
         // 删掉运行中的子代理时先取它的父会话与标题（删库后就取不到了），稍后告知父代理。
         // 删的是父会话时无需通知（父会话本身也没了），但级联删掉的子会话仍要交回并发槽位。
         val deletedSession = sessionUseCase.getSessionById(id)
-        val stoppedSubAgent = deletedSession?.takeIf { it.parentId != null && subAgentEventBus.release(id) }
+        val deletedRun = subAgentEventBus.currentRun(id)
+        val stoppedSubAgent = if (deletedSession?.parentId != null &&
+            subAgentRunLifecycle.stopRun(id, deletedSession.parentId, deleted = true, broadcast = false, expectedRun = deletedRun)
+        ) deletedSession else null
 
         checkpointManager.clearSessionCheckpoints(id)
         val deletedIds = sessionUseCase.deleteSession(id)

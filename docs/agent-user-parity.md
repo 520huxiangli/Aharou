@@ -68,7 +68,7 @@
 | 设全局角色模型（默认/标题/压缩/视觉/生图） | `component/DefaultModelsSection.kt:93`、挂载 `SettingsScreen.kt:1024` | 有 | `config` `model.roles.default` / `.default_effort` / `.title` / `.compaction` / `.vision` / `.image_gen`（`feature/settings/data/ConfigModelRoleFields.kt:41`、`:51`、`:82`、`:92`、`:102`、`:112`） | 无 |
 | 改采样温度 | 未找到（用户界面也没有） | 无 | 未找到 | 双方都没有：温度由固定表决定（`feature/agent/domain/provider/AIProvider.kt:251` `fixedTemperature`），不是可配置项 |
 | 改思考强度（reasoning effort） | `ChatModelSheet.kt:107`（`ReasoningEffortSelector`）→ `AIChatPanel.kt:1511` | 无 | 未找到（无 `reasoning_effort` 配置字段） | **缺口**：会话级设置，agent 无法改 |
-| 测试模型/供应商连通性 | `component/ProviderModelComponents.kt:323`（`onClick = onTest`）、`:330`；`DefaultModelsSection.kt:841` | 无 | 未找到专用工具；只能 `Bash` `curl` 或 `webfetch` 自己发请求 | **缺口**：App 内有现成的测试链路（`feature/settings/data/remote/ModelApiService.kt:290`），但没暴露成工具 |
+| 测试模型/供应商连通性 | `component/ProviderModelComponents.kt`、`DefaultModelsSection.kt` | 有 | `config action=test_model provider_id=<id> model=<model>`，复用 `ModelApiService` | 极短真实请求，可能计费；不改配置、不返回凭据 |
 
 ## 5. 技能
 
@@ -120,7 +120,7 @@
 |---|---|---|---|---|
 | 启用/停用渠道（微信/飞书/QQ/Telegram） | 挂载 `SettingsScreen.kt:1266-1269`；`component/TelegramBotSection.kt:86`（以 Telegram 为例） | 有 | `config` `im.telegram.enabled` / `im.weixin.enabled` / `im.feishu.enabled` / `im.qq.enabled`（`feature/im/data/ConfigImFields.kt:35`、`:84`、`:134`、`:184`） | 无 |
 | 填 token / app_id / app_secret / base_url / 代理 | `TelegramBotSection.kt:121-140`（token 输入） | 有 | `config` `im.<渠道>.bot_token` / `.app_id` / `.app_secret` / `.base_url` / `.proxy`（`ConfigImFields.kt:45-221`） | 凭证是 SENSITIVE，写入需弹确认 |
-| 看连接状态 | `TelegramBotSection.kt:100`（状态行） | 无 | 未找到（`ConfigImFields` 无状态字段） | **缺口**：通道到底连上没有，agent 看不到 |
+| 看连接状态 | 各平台机器人设置页状态行 | 有 | `config get im.<渠道>.state` / `.error`，`ConfigImFields` 读取四个桥接实例的运行状态 | 只读，错误脱敏，不返回身份或凭据 |
 | 向当前 IM 会话发文件/图片 | 用户在 IM 客户端聊天（无 App 内入口） | 有 | `sendToChat`（`AgentModule.kt:451`；`SendImFileTool.kt:32`） | 无（仅 IM 会话内可用） |
 
 ## 10. 会话
@@ -174,12 +174,12 @@
 9. 工作区：添加外部目录（`WorkspacePicker.kt:151`）
 10. 模型：选当前会话的模型（`ChatModelSheet.kt:89`）
 11. 模型：改思考强度（`ChatModelSheet.kt:107`）
-12. 供应商：测试连通性（`ProviderModelComponents.kt:323`）
+12. 供应商：测试连通性已由 `config action=test_model` 补齐
 13. 技能：从市场搜索/安装（`SettingsScreen.kt:1121`）
 14. 技能：导出（`SkillDetailSection.kt:121`）
 15. MCP：重连接/刷新（`SettingsScreen.kt:755`）
 16. 远程设备：接受协助（`RemoteDeviceSection.kt:139`）
-17. IM：看连接状态（`TelegramBotSection.kt:100`）
+17. IM：运行状态查询已由 `config im.<渠道>.state/error` 补齐
 18. 会话：新建（`ChatHeaderComponents.kt:115`）
 19. 会话：切换（`MainActivity.kt:838`）
 20. 会话：重命名（`ChatDrawer.kt:508`）

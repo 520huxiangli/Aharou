@@ -98,32 +98,35 @@ class ScheduledTaskDispatcher @Inject constructor(
             return false
         }
         if (claimed == 0) return false
-        if (once) dao.setEnabled(task.id, false, now)
 
         if (now - task.nextRunAt > graceMillis(task)) {
-            dao.recordOutcome(task.id, OUTCOME_SKIPPED_MISSED, now)
+            if (once) dao.disableClaimedOnce(task.id, now)
+            dao.recordOutcomeForRun(task.id, now, OUTCOME_SKIPPED_MISSED, now)
             FileLogger.w(TAG, "自动化任务错过太久，未补跑: ${task.name}")
             return false
         }
         val condition = ConditionEvaluator.evaluate(task, conditions)
         if (condition is ConditionResult.Unsatisfied) {
-            dao.recordOutcome(task.id, outcomeOf(condition.failure), now)
+            if (once) dao.disableClaimedOnce(task.id, now)
+            dao.recordOutcomeForRun(task.id, now, outcomeOf(condition.failure), now)
             FileLogger.w(TAG, "自动化任务条件不满足(${condition.failure})，跳过: ${task.name}")
             return false
         }
         if (withinDebounce(task, now)) {
-            dao.recordOutcome(task.id, OUTCOME_SKIPPED_DEBOUNCE, now)
+            if (once) dao.disableClaimedOnce(task.id, now)
+            dao.recordOutcomeForRun(task.id, now, OUTCOME_SKIPPED_DEBOUNCE, now)
             FileLogger.w(TAG, "自动化任务在防抖窗口内，跳过: ${task.name}")
             return false
         }
         if (stillRunning(task, now)) {
-            dao.recordOutcome(task.id, OUTCOME_SKIPPED_RUNNING, now)
+            if (once) dao.disableClaimedOnce(task.id, now)
+            dao.recordOutcomeForRun(task.id, now, OUTCOME_SKIPPED_RUNNING, now)
             FileLogger.w(TAG, "自动化任务上一次还在跑，跳过: ${task.name}")
             return false
         }
 
         val rendered = renderPrompt(task.prompt, eventPayload(task, now, snapshot))
-        return runCatching {
+        val started = runCatching {
             ScheduledTaskExecutionService.start(
                 context,
                 task.id,
@@ -131,15 +134,19 @@ class ScheduledTaskDispatcher @Inject constructor(
                 rendered,
                 task.workspacePath,
                 task.targetSessionId,
+                claimedAt = now,
             )
-            dao.recordOutcome(task.id, OUTCOME_DISPATCHED, now)
             true
         }.getOrElse { e ->
             // 前台服务被系统拦（极少数）时落库，App 下次到前台捡跑，不丢任务。
             FileLogger.w(TAG, "自动化任务执行服务启动失败，落库待捡跑: ${task.name} - ${e.message}")
-            dao.markPendingRun(task.id, rendered, now)
+            dao.markPendingRun(task.id, rendered, now, disableOnce = once)
             false
         }
+        if (started) {
+            if (once) dao.disableClaimedOnce(task.id, now)
+        }
+        return started
     }
 
     /**

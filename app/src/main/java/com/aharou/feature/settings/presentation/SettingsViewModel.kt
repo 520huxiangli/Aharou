@@ -184,11 +184,11 @@ sealed interface UpdateDownloadUiState {
     ) : UpdateDownloadUiState
 
     /** 下载完成，等交给系统安装器。 */
-    data class Ready(val apkPath: String, val versionTag: String) : UpdateDownloadUiState
+    data class Ready(val apkPath: String, val versionTag: String, val requestId: String) : UpdateDownloadUiState
+    data class Installing(val request: Ready, val silent: Boolean) : UpdateDownloadUiState
 
     data class Failed(val message: String? = null) : UpdateDownloadUiState
 }
-
 
 /** 子代理列表页的 UI 状态：定义内容 + 来源作用域 + 启停状态。 */
 data class SubAgentUiEntry(
@@ -611,6 +611,7 @@ class SettingsViewModel @Inject constructor(
     val updateDownloadState: StateFlow<UpdateDownloadUiState> = _updateDownloadState.asStateFlow()
     private var updateDownloadJob: Job? = null
     private var shizukuInstallJob: Job? = null
+    private val updateInstall = UpdateInstallHelper(_updateDownloadState)
 
     private val _updateCheckEnabled = MutableStateFlow(updateCheckSettingsRepository.autoCheckEnabled)
     val updateCheckEnabled: StateFlow<Boolean> = _updateCheckEnabled.asStateFlow()
@@ -1498,7 +1499,6 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 关闭更新弹窗（连同已下未装的进度一起收起）。 */
     fun dismissUpdateCheck() {
         _updateCheckState.value = UpdateCheckUiState.Idle
         cancelDownload()
@@ -1509,6 +1509,7 @@ class SettingsViewModel @Inject constructor(
      * 进度与当前来源写入 [updateDownloadState] 供弹窗展示。
      */
     fun downloadUpdate() {
+        if (_updateDownloadState.value is UpdateDownloadUiState.Installing) return
         val state = _updateCheckState.value as? UpdateCheckUiState.NewVersion ?: return
         if (updateDownloadJob?.isActive == true) return
         updateDownloadJob = viewModelScope.launch {
@@ -1565,7 +1566,6 @@ class SettingsViewModel @Inject constructor(
                 updateCheckSettingsRepository.downloadedPath = file.absolutePath
                 updateCheckSettingsRepository.writeDownloadRecord(effective.latestTag, usedSource, file.absolutePath)
                 FileLogger.i("UpdateDownload", "已下载 $effective.latestTag，来源=$usedSource")
-                _updateDownloadState.value = UpdateDownloadUiState.Ready(file.absolutePath, effective.latestTag)
                 maybeAutoInstall(file.absolutePath, effective.latestTag)
             } catch (e: CancellationException) {
                 _updateDownloadState.value = UpdateDownloadUiState.Idle
@@ -1579,14 +1579,12 @@ class SettingsViewModel @Inject constructor(
 
     /** 取消进行中的下载（半成品由下载器删除）。 */
     fun cancelDownload() {
+        if (_updateDownloadState.value is UpdateDownloadUiState.Installing) return
         updateDownloadJob?.cancel()
         updateDownloadJob = null
         _updateDownloadState.value = UpdateDownloadUiState.Idle
     }
 
-    /**
-     * 检测到新版本就提前把包装好（开关默认开）。已下好同一版本则直接进入可安装状态，不重复下载。
-     */
     private fun autoDownloadIfNeeded(tag: String, expectedSha256: String?) {
         val savedPath = updateCheckSettingsRepository.downloadedPath
         // 复用上次下好的包同样要校验：它接着就被送去安装，不能因为「上次下过」而免检。
@@ -1595,35 +1593,36 @@ class SettingsViewModel @Inject constructor(
             runCatching { updateApkDownloader.matchesDigest(File(savedPath), expectedSha256) }
                 .getOrDefault(false)
         ) {
-            _updateDownloadState.value = UpdateDownloadUiState.Ready(savedPath, tag)
             maybeAutoInstall(savedPath, tag)
             return
         }
         downloadUpdate()
     }
 
-    /** 开关开启时交给 Shizuku 静默安装；未开启/未授权则什么都不做，等用户点「立即安装」。 */
     private fun maybeAutoInstall(path: String, tag: String) {
-        if (!updateCheckSettingsRepository.autoInstallEnabled) return
-        installUpdateWithShizuku(path, tag)
+        val request = updateInstall.prepare(path, tag, updateCheckSettingsRepository.autoInstallEnabled) ?: return
+        installPreparedUpdate(request)
     }
 
-    /**
-     * 用宿主通道（有 root 走 root，否则 adb shell）静默安装已下载的更新包。
-     * 失败不弹错误窗：UI 上的「立即安装」按钮仍在，可回落到系统安装器。
-     */
+    fun claimUpdateSystemInstall(request: UpdateDownloadUiState.Ready): String? = updateInstall.claim(request)
+
+    fun reportUpdateSystemInstallFailed(request: UpdateDownloadUiState.Ready) = updateInstall.failed(request)
+
+    fun onUpdateSystemInstallerReturned() = updateInstall.returned()
+
     fun installUpdateWithShizuku(path: String, tag: String) {
-        if (shizukuInstallJob?.isActive == true) return
+        val request = updateInstall.prepare(path, tag, true) ?: return
+        installPreparedUpdate(request)
+    }
+
+    private fun installPreparedUpdate(request: UpdateDownloadUiState.Ready) {
         shizukuInstallJob = viewModelScope.launch {
-            val result = runCatching {
-                hostShell.run("pm install -r \"$path\"", SHIZUKU_INSTALL_TIMEOUT_MS)
-            }.getOrNull()
-            val ok = result != null && result.exitCode == 0 && !result.output.contains("Failure")
-            FileLogger.i(
-                "UpdateInstall",
-                "静默安装 tag=$tag exit=${result?.exitCode} ok=$ok"
-            )
-            // 成功时 App 马上被替换重启，不必再改状态；失败就保持 Ready，让用户点按钮走系统安装器
+            updateInstall.install(request) {
+                val result = hostShell.run("pm install -r \"${request.apkPath}\"", SHIZUKU_INSTALL_TIMEOUT_MS)
+                val ok = result.exitCode == 0 && !result.output.contains("Failure")
+                FileLogger.i("UpdateInstall", "静默安装 tag=${request.versionTag} exit=${result.exitCode} ok=$ok")
+                ok
+            }
         }
     }
 

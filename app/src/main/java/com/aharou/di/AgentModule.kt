@@ -137,6 +137,11 @@ import com.aharou.feature.vault.VaultRepository
 object AgentModule {
 
     @Provides
+    fun provideSubAgentRunLifecycle(
+        tracker: com.aharou.feature.agent.data.local.task.SubAgentTaskTracker,
+    ): com.aharou.feature.agent.domain.subagent.SubAgentRunLifecycle = tracker
+
+    @Provides
     @Singleton
     fun provideAgentDatabase(@ApplicationContext context: Context): AgentDatabase {
         return Room.databaseBuilder(

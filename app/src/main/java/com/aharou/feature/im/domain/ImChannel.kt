@@ -98,6 +98,8 @@ interface ImChannel {
      */
     suspend fun prepare(cfg: ImChannelConfig, dropHistory: Boolean) {}
 
+    fun disconnect() {}
+
     /** 工具审批按钮的载荷；不支持按钮的平台返回 false，编排层改发纯文本说明。 */
     val supportsButtons: Boolean get() = false
 

@@ -6,9 +6,7 @@ import java.io.InputStream
 import java.nio.charset.Charset
 
 /**
- * [Aharou] 远程文件访问防崩壳（只包远程腿）。任何操作失败——连接失败、SSH 主机密钥待确认、
- * SFTP 中断等——都会被记录并返回安全默认值，避免异常抛进未捕获的协程（如聊天页后台任务）导致闪退。
- * 写操作失败同样记录日志（界面按空/失败态展示，不做静默假成功）。
+ * 远程读取失败时保留默认值，避免后台读取失败导致闪退；写入失败必须向调用方报告。
  */
 class SafeFileAccessProvider(
     private val delegate: FileAccessProvider,
@@ -21,13 +19,23 @@ class SafeFileAccessProvider(
         fallback
     }
 
+    private fun <T> writeGuard(op: String, block: () -> T): T = try {
+        block()
+    } catch (t: Throwable) {
+        FileLogger.w("SafeFileAccess", "远程文件操作失败 [$op]: ${t.message}")
+        throw t
+    }
+
+    override fun forWorkspace(workspacePath: String): FileAccessProvider =
+        if (workspacePath.isBlank()) this else SafeFileAccessProvider(delegate.forWorkspace(workspacePath))
+
     override fun readFile(path: String): String = guard("readFile", "") { delegate.readFile(path) }
 
     override fun readLines(path: String): Sequence<String> =
         guard("readLines", emptySequence()) { delegate.readLines(path) }
 
     override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) {
-        guard("writeFile", Unit) { delegate.writeFile(path, content, overwrite, encoding) }
+        writeGuard("writeFile") { delegate.writeFile(path, content, overwrite, encoding) }
     }
 
     override fun exists(path: String): Boolean = guard("exists", false) { delegate.exists(path) }
@@ -51,36 +59,36 @@ class SafeFileAccessProvider(
     override fun readBytes(path: String): ByteArray = guard("readBytes", ByteArray(0)) { delegate.readBytes(path) }
 
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
-        guard("writeBytes", Unit) { delegate.writeBytes(path, bytes, overwrite) }
+        writeGuard("writeBytes") { delegate.writeBytes(path, bytes, overwrite) }
     }
 
     override fun writeStream(path: String, input: InputStream, overwrite: Boolean): Long =
-        guard("writeStream", 0L) { delegate.writeStream(path, input, overwrite) }
+        writeGuard("writeStream") { delegate.writeStream(path, input, overwrite) }
 
     override fun copyToLocal(path: String): File = guard("copyToLocal", File("")) { delegate.copyToLocal(path) }
 
     override fun delete(path: String) {
-        guard("delete", Unit) { delegate.delete(path) }
+        writeGuard("delete") { delegate.delete(path) }
     }
 
     override fun deleteRecursively(path: String) {
-        guard("deleteRecursively", Unit) { delegate.deleteRecursively(path) }
+        writeGuard("deleteRecursively") { delegate.deleteRecursively(path) }
     }
 
     override fun rename(path: String, newPath: String) {
-        guard("rename", Unit) { delegate.rename(path, newPath) }
+        writeGuard("rename") { delegate.rename(path, newPath) }
     }
 
     override fun copy(path: String, newPath: String, overwrite: Boolean) {
-        guard("copy", Unit) { delegate.copy(path, newPath, overwrite) }
+        writeGuard("copy") { delegate.copy(path, newPath, overwrite) }
     }
 
     override fun move(path: String, newPath: String, overwrite: Boolean) {
-        guard("move", Unit) { delegate.move(path, newPath, overwrite) }
+        writeGuard("move") { delegate.move(path, newPath, overwrite) }
     }
 
     override fun mkdirs(path: String) {
-        guard("mkdirs", Unit) { delegate.mkdirs(path) }
+        writeGuard("mkdirs") { delegate.mkdirs(path) }
     }
 
     override fun parentPath(path: String): String? = guard("parentPath", null) { delegate.parentPath(path) }

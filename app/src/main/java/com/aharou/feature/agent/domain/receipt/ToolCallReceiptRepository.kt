@@ -6,7 +6,14 @@ import com.aharou.feature.agent.data.local.entity.ReceiptStatus
 import com.aharou.feature.agent.data.local.entity.ToolCallReceiptEntity
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.vault.VaultRedactor
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -80,8 +87,53 @@ class ToolCallReceiptRepository @Inject constructor(
     @Volatile
     private var lastPruneAt = 0L
 
-    fun observeSession(sessionId: String, limit: Int = 300): Flow<List<ToolCallReceiptEntity>> =
-        dao.observeSession(sessionId, limit)
+    private val recoveryMutex = Mutex()
+    private val recoveryCutoff = System.currentTimeMillis()
+    private var recoveryAttempted = false
+
+    private suspend fun recoverOnce() = recoveryMutex.withLock {
+        if (!recoveryAttempted) {
+            dao.recoverRunning(recoveryCutoff)
+            recoveryAttempted = true
+        }
+    }
+
+    private suspend fun <T> sideChannel(block: suspend () -> T): T? = withContext(NonCancellable) {
+        try { withTimeoutOrNull(2_000) { block() } } catch (_: Exception) { null }
+    }
+
+    fun observeSession(sessionId: String, limit: Int = 300): Flow<List<ToolCallReceiptEntity>> = flow {
+        sideChannel { recoverOnce() }
+        emitAll(dao.observeSession(sessionId, limit))
+    }
+
+    suspend fun beginExecution(sessionId: String?, toolName: String, args: Map<String, JsonElement>): Long? {
+        if (sessionId.isNullOrBlank()) return null
+        return sideChannel {
+            recoverOnce()
+            dao.insert(ToolCallReceiptEntity(sessionId = sessionId, toolName = toolName,
+                category = classify(toolName, args).name, argsPreview = truncate(ReceiptPrivacy.arguments(toolName, args)),
+                status = ReceiptStatus.RUNNING.name, createdAt = maxOf(System.currentTimeMillis(), recoveryCutoff + 1)))
+        }
+    }
+
+    suspend fun finishExecution(id: Long?, toolName: String, args: Map<String, JsonElement>, result: ToolResult?,
+        durationMs: Long, projectRoot: String?, interrupted: Boolean = false) {
+        if (id == null) return
+        sideChannel {
+            val category = classify(toolName, args)
+            val status = when {
+                interrupted -> ReceiptStatus.INTERRUPTED
+                result == null -> ReceiptStatus.UNKNOWN
+                else -> statusOf(result)
+            }
+            val summary = if (result == null || ReceiptPrivacy.omitResult(toolName, args)) "" else ReceiptPrivacy.structuredText(summarize(result))
+            dao.finishRunning(id, status.name, (result as? ToolResult.Error)?.code,
+                truncate(summary), OUTPUT_PATH_REGEX.find(summary)?.groupValues?.get(1)?.let(ReceiptPrivacy::text),
+                durationMs.coerceAtLeast(0), if (category == ReceiptCategory.BUILD) readBuildAuth(projectRoot)?.let(ReceiptPrivacy::text) else null)
+            pruneIfDue()
+        }
+    }
 
     /**
      * 记一条工具执行回执。
@@ -98,22 +150,26 @@ class ToolCallReceiptRepository @Inject constructor(
         projectRoot: String?
     ) {
         if (sessionId.isNullOrBlank()) return
-        val summary = summarize(result)
+        sideChannel {
+        val summary = if (ReceiptPrivacy.omitResult(toolName, args)) "" else ReceiptPrivacy.structuredText(summarize(result))
         val category = classify(toolName, args)
         val entity = ToolCallReceiptEntity(
             sessionId = sessionId,
             category = category.name,
             toolName = toolName,
-            argsPreview = truncate(args.toString()),
+            argsPreview = truncate(ReceiptPrivacy.arguments(toolName, args)),
             status = statusOf(result).name,
             errorCode = (result as? ToolResult.Error)?.code,
             resultPreview = truncate(summary),
             outputPath = OUTPUT_PATH_REGEX.find(summary)?.groupValues?.get(1),
             durationMs = durationMs,
-            buildAuthJson = if (category == ReceiptCategory.BUILD) readBuildAuth(projectRoot) else null,
+            buildAuthJson = if (category == ReceiptCategory.BUILD) readBuildAuth(projectRoot)?.let(ReceiptPrivacy::text) else null,
             createdAt = System.currentTimeMillis()
         )
-        persist(entity)
+        recoverOnce()
+        dao.insert(entity)
+        pruneIfDue()
+        }
     }
 
     /** 记一条「审批被拒」回执。被拒的调用根本没执行，只能从审批侧补进来。 */
@@ -123,25 +179,26 @@ class ToolCallReceiptRepository @Inject constructor(
         argsPreview: String?
     ) {
         if (sessionId.isNullOrBlank()) return
+        sideChannel {
         persist(
             ToolCallReceiptEntity(
                 sessionId = sessionId,
                 category = ReceiptCategory.DENIED.name,
                 toolName = toolName,
-                argsPreview = truncate(argsPreview.orEmpty()),
+                argsPreview = truncate(ReceiptPrivacy.structuredText(argsPreview.orEmpty())),
                 // DENIED 本身就是终态，再分成败没有意义，status 留空由面板按类别渲染。
                 status = "",
                 createdAt = System.currentTimeMillis()
             )
         )
+        }
     }
 
     private suspend fun persist(entity: ToolCallReceiptEntity) {
-        try {
+        sideChannel {
+            recoverOnce()
             dao.insert(entity)
             pruneIfDue()
-        } catch (_: Exception) {
-            // 回执写不进去不影响工具结果，这里刻意吞掉：抛出会把旁路故障变成执行失败。
         }
     }
 

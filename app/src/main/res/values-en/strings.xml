@@ -3273,6 +3273,8 @@
     <string name="account_avatar_error_too_large">Image is too large, try a smaller one</string>
     <string name="settings_telegram_bot">Telegram bot</string>
     <string name="im_attachment_only_hint">(The user sent an attachment without any text.)</string>
+    <string name="im_attachment_download_failed">Could not receive these attachments: %1$s. Please resend them.</string>
+    <string name="im_approval_expired">This approval has ended or expired. Check the actual task result.</string>
     <string name="im_pairing_prompt">This chat is not paired with Aharou yet. Pairing code: %1$s\nApprove it in the app under Settings → %2$s. The code is good for 10 minutes.</string>
     <string name="im_telegram_tool_running">Using %1$s…</string>
     <string name="im_telegram_error">Error: %1$s</string>
@@ -3669,4 +3671,9 @@
     <string name="vault_reset_confirm">Clear</string>
     <string name="im_secret_write_failed">Save failed: the system keystore is unavailable right now. Try again later</string>
     <string name="backup_secrets_unavailable">%1$d credentials could not be decrypted on this device and must be re-entered</string>
+    <string name="voice_input_permission_granted_retry">Permission granted. Press and hold again.</string>
+    <string name="update_installing">Installing silently</string>
+    <string name="provider_test_response_invalid">Response does not match the selected protocol</string>
+    <string name="provider_test_response_error">Server returned an API error</string>
+    <string name="activity_receipt_result_unknown">Result unknown; the operation may have taken effect</string>
 </resources>

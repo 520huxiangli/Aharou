@@ -55,6 +55,9 @@ class LogSettingsRepository @Inject constructor(
     /** 备份快照：当前日志等级名。 */
     suspend fun snapshot(): String = levelFlow.first().name
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.logDataStore.restoreBackupValues(values, recovery)
+
     /** 从备份还原日志等级；解析失败时忽略。 */
     suspend fun restore(value: String?) {
         val level = value?.let { runCatching { LogLevel.valueOf(it) }.getOrNull() } ?: return

@@ -22,8 +22,8 @@ class DelegatingFileAccess private constructor(
     private val profileResolver: ContainerProfileResolver,
     private val localLeg: FileAccessProvider,
     private val remoteLeg: FileAccessProvider,
-    /** 绑定到某个工作区后就用它解析出的容器；null 表示按全局默认容器/模式。 */
-    private val boundWorkspace: String? = null,
+    /** 绑定副本固定本地或远程后端，避免配置变化让同一次编辑悄悄换腿。 */
+    private val boundMode: ExecutionMode? = null,
 ) : FileAccessProvider {
 
     @Inject
@@ -36,34 +36,22 @@ class DelegatingFileAccess private constructor(
         modeHolder,
         profileResolver,
         localFileAccess,
-        // 远程腿包一层防崩壳：远程失败（连接失败/主机密钥待确认/SFTP 错误）绝不把异常抛进上层协程（防闪退）。
+        // 远程读取保留默认值，写入失败由调用方处理。
         SafeFileAccessProvider(remoteSftpFileAccess),
     )
 
-    /**
-     * 选腿依据：绑定过工作区就按该工作区解析出的容器，否则看全局默认容器的模式。
-     *
-     * 只看全局 mode 会让「工作区 → SSH 容器」的覆盖形同虚设：那个工作区的技能、文件工具、
-     * 记忆全都会继续读写本地，而命令却跑到了服务器上，两边看到的根本不是同一套文件。
-     */
-    private fun delegate(): FileAccessProvider {
-        val remote = if (boundWorkspace != null) {
-            profileResolver.forWorkspace(boundWorkspace).mode == ExecutionMode.REMOTE_SSH
-        } else {
-            modeHolder.currentMode() == ExecutionMode.REMOTE_SSH
-        }
-        return if (remote) remoteLeg else localLeg
-    }
+    private fun delegate(): FileAccessProvider =
+        if ((boundMode ?: modeHolder.currentMode()) == ExecutionMode.REMOTE_SSH) remoteLeg else localLeg
 
-    /** 绑定会话工作区的副本：本地腿指向该工作区，远程腿不变。 */
+    /** 绑定会话工作区的副本，两条访问腿使用相同的工作区根。 */
     override fun forWorkspace(workspacePath: String): FileAccessProvider {
         if (workspacePath.isBlank()) return this
         return DelegatingFileAccess(
             modeHolder,
             profileResolver,
             localLeg.forWorkspace(workspacePath),
-            remoteLeg,
-            workspacePath,
+            remoteLeg.forWorkspace(workspacePath),
+            profileResolver.forWorkspace(workspacePath).mode,
         )
     }
 

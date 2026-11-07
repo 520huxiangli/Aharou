@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -23,10 +24,29 @@ interface ScheduledTaskDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(task: ScheduledTaskEntity)
 
+    @Transaction
+    suspend fun upsertPreservingPending(task: ScheduledTaskEntity, preserveNextRunAt: Boolean = true) {
+        val current = getById(task.id)
+        val sameSchedule = current != null && current.triggerType == task.triggerType &&
+            current.scheduleType == task.scheduleType && current.intervalMinutes == task.intervalMinutes &&
+            current.dailyMinuteOfDay == task.dailyMinuteOfDay && current.onceAtMillis == task.onceAtMillis
+        upsert(task.copy(
+            pendingRunPrompt = if (task.enabled) current?.pendingRunPrompt else null,
+            lastRunAt = current?.lastRunAt,
+            lastOutcome = current?.lastOutcome,
+            runCount = current?.runCount ?: 0,
+            nextRunAt = if (preserveNextRunAt && sameSchedule) current!!.nextRunAt else task.nextRunAt,
+        ))
+    }
+
     @Query("DELETE FROM scheduled_tasks WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @Query("UPDATE scheduled_tasks SET enabled = :enabled, updatedAt = :updatedAt WHERE id = :id")
+    @Query(
+        "UPDATE scheduled_tasks SET enabled = :enabled, " +
+            "pendingRunPrompt = CASE WHEN :enabled = 0 THEN NULL ELSE pendingRunPrompt END, " +
+            "updatedAt = :updatedAt WHERE id = :id"
+    )
     suspend fun setEnabled(id: String, enabled: Boolean, updatedAt: Long)
 
     /** 到点、未停用、且未超运行上限的任务。 */
@@ -57,8 +77,10 @@ interface ScheduledTaskDao {
      * 返回受影响行数；0 表示已被别的路径认领，本次放弃——避免同一个到点时刻跑两遍。
      */
     @Query(
-        "UPDATE scheduled_tasks SET nextRunAt = :nextRunAt, lastRunAt = :now, runCount = runCount + 1, " +
-            "updatedAt = :now WHERE id = :id AND nextRunAt = :expectedNextRunAt"
+        "UPDATE scheduled_tasks SET nextRunAt = :nextRunAt, lastRunAt = :now, lastOutcome = 'dispatched', " +
+            "runCount = runCount + 1, " +
+            "updatedAt = :now WHERE id = :id AND nextRunAt = :expectedNextRunAt AND enabled = 1 " +
+            "AND (maxRuns = 0 OR runCount < maxRuns)"
     )
     suspend fun claim(id: String, expectedNextRunAt: Long, nextRunAt: Long, now: Long): Int
 
@@ -66,25 +88,38 @@ interface ScheduledTaskDao {
     @Query("UPDATE scheduled_tasks SET lastOutcome = :outcome, updatedAt = :now WHERE id = :id")
     suspend fun recordOutcome(id: String, outcome: String, now: Long)
 
-    /** 总线投递失败时把渲染好的 prompt 落库，等会话层就绪后捡跑。 */
     @Query(
-        "UPDATE scheduled_tasks SET pendingRunPrompt = :prompt, lastOutcome = 'dispatched', updatedAt = :now " +
-            "WHERE id = :id"
+        "UPDATE scheduled_tasks SET lastOutcome = :outcome, updatedAt = :now " +
+            "WHERE id = :id AND lastRunAt IS :claimedAt"
     )
-    suspend fun markPendingRun(id: String, prompt: String, now: Long): Int
+    suspend fun recordOutcomeForRun(id: String, claimedAt: Long?, outcome: String, now: Long): Int
+
+    @Query("UPDATE scheduled_tasks SET enabled = 0, updatedAt = :now WHERE id = :id AND lastRunAt = :now")
+    suspend fun disableClaimedOnce(id: String, now: Long): Int
+
+    /** 服务投递失败时原子落库并停用单次任务；用户已停用时不再挂起。 */
+    @Query(
+        "UPDATE scheduled_tasks SET pendingRunPrompt = :prompt, lastOutcome = 'dispatched', " +
+            "enabled = CASE WHEN :disableOnce THEN 0 ELSE enabled END, updatedAt = :now " +
+            "WHERE id = :id AND enabled = 1 AND lastRunAt = :now"
+    )
+    suspend fun markPendingRun(id: String, prompt: String, now: Long, disableOnce: Boolean = false): Int
 
     /** 已挂起、还没被捡走的任务（会话层启动时扫一遍）。 */
     @Query(
         "SELECT * FROM scheduled_tasks WHERE pendingRunPrompt IS NOT NULL AND pendingRunPrompt != '' " +
-            "AND enabled = 1 ORDER BY updatedAt ASC"
+            "ORDER BY updatedAt ASC"
     )
     suspend fun pendingRuns(): List<ScheduledTaskEntity>
 
     /** 捡走：清掉挂起标记，避免下次启动再跑一遍。 */
-    @Query("UPDATE scheduled_tasks SET pendingRunPrompt = NULL, updatedAt = :now WHERE id = :id")
-    suspend fun clearPendingRun(id: String, now: Long): Int
+    @Query(
+        "UPDATE scheduled_tasks SET pendingRunPrompt = NULL, updatedAt = :now " +
+            "WHERE id = :id AND pendingRunPrompt = :expectedPrompt AND lastRunAt IS :claimedAt"
+    )
+    suspend fun clearPendingRun(id: String, expectedPrompt: String, claimedAt: Long?, now: Long): Int
 
     /** 还有多少挂起任务（日志观测用）。 */
-    @Query("SELECT COUNT(*) FROM scheduled_tasks WHERE pendingRunPrompt IS NOT NULL AND pendingRunPrompt != '' AND enabled = 1")
+    @Query("SELECT COUNT(*) FROM scheduled_tasks WHERE pendingRunPrompt IS NOT NULL AND pendingRunPrompt != ''")
     suspend fun pendingRunsCount(): Int
 }

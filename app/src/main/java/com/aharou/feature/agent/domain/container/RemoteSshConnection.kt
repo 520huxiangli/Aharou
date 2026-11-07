@@ -65,6 +65,18 @@ class RemoteSshConnection @Inject constructor(
 
     private val mutex = Mutex()
     private val sftpLock = Mutex()
+    private val sftpOperationMutex = Mutex()
+
+    // 切连接与文件操作共用此锁，避免身份校验后取到另一台服务器的通道。
+    suspend fun <T> withSftpOperation(
+        expectedConfig: RemoteConnectionConfig? = null,
+        block: suspend () -> T
+    ): T = sftpOperationMutex.withLock {
+        if (expectedConfig != null && config != expectedConfig) {
+            throw java.io.IOException("SSH connection changed; rebind the workspace before accessing files")
+        }
+        block()
+    }
 
     /**
      * 凭据同步互斥：切「自动注入」开关与增删凭据分别在独立协程里跑，注入与撤销并发时会一边写
@@ -117,6 +129,10 @@ class RemoteSshConnection @Inject constructor(
     var config: RemoteConnectionConfig? = null
         private set
 
+    @Volatile
+    internal var fileAccessSnapshot: SftpConnectionSnapshot? = null
+        private set
+
     /** 是否认证类失败（密码错、账号被拒、密钥不被接受）：重试再快也没用，只会撞防爆破。 */
     private fun isAuthError(e: Throwable): Boolean {
         // 冷却期内的拦截异常不是新的一次认证失败，否则每拦一次都会把冷却起点往后推。
@@ -136,6 +152,10 @@ class RemoteSshConnection @Inject constructor(
     }
 
     suspend fun connect(config: RemoteConnectionConfig) = mutex.withLock {
+        sftpOperationMutex.withLock { connectInternal(config) }
+    }
+
+    private suspend fun connectInternal(config: RemoteConnectionConfig) {
         // 凭据为空时直接报根因：否则 sshj 只会抛出
         // 「Exhausted available authentication methods」，与「密码错」「服务器拒绝」分不开，
         // 而且会白跑一轮认证（服务器侧可能计入防爆破失败次数）。
@@ -154,9 +174,11 @@ class RemoteSshConnection @Inject constructor(
                 "SSH 认证失败：距上次失败不足 5 分钟，已暂停连接（还需 ${(cooldownLeftMs + 59_999) / 60_000} 分钟）"
             )
         }
-        if (isConnected() && this.config == config) return@withLock
+        if (isConnected() && this.config == config) return
         disconnectInternal()
         this.config = config
+        remoteHome = null
+        fileAccessSnapshot = SftpConnectionSnapshot(config, null)
         _connectionState.value = ConnectionState.CONNECTING
         try {
             withContext(Dispatchers.IO) {
@@ -170,6 +192,7 @@ class RemoteSshConnection @Inject constructor(
                         .readText().trim().ifEmpty { null }
                     s.close()
                 }
+                fileAccessSnapshot = SftpConnectionSnapshot(config, remoteHome)
                 // 注册 transport 断开监听：连接断开时即时推状态，不等 supervisor 轮询
                 client.transport.setDisconnectListener { reason, info ->
                     FileLogger.w(TAG, "SSH 连接断开: $reason, $info")
@@ -211,7 +234,7 @@ class RemoteSshConnection @Inject constructor(
             runCatching { onBeforeDisconnect?.invoke(this) }
                 .onFailure { FileLogger.w(TAG, "断开前回拉失败", it) }
         }
-        disconnectInternal()
+        sftpOperationMutex.withLock { disconnectInternal() }
     }
 
     /** 断开前的回调（由上层注册，用于回拉共享区等收尾动作）。 */
@@ -338,8 +361,9 @@ class RemoteSshConnection @Inject constructor(
      * 没做三方合并，但不静默丢远端内容。
      */
     suspend fun pullSharedFiles(localRoot: java.io.File) {
+        val snapshot = fileAccessSnapshot ?: return
         val client = sshClient ?: return
-        val home = remoteHome ?: return
+        val home = snapshot.home ?: return
         val remoteRoot = "${home.trimEnd('/')}/shared"
         withContext(Dispatchers.IO) {
             runCatching {
@@ -354,39 +378,41 @@ class RemoteSshConnection @Inject constructor(
                 )
                 val listing = cmd.inputStream.bufferedReader().readText()
                 cmd.join(); s.close()
-                val sftp = sftp()
-                var pulled = 0
-                listing.lineSequence().forEach { line ->
-                    val parts = line.split('\t', limit = 2)
-                    if (parts.size != 2) return@forEach
-                    val remoteEpoch = parts[0].toDoubleOrNull()?.times(1000)?.toLong() ?: return@forEach
-                    val rel = parts[1].removePrefix("./").trim()
-                    if (rel.isEmpty() || rel.startsWith("..") || rel.contains("/../")) return@forEach
-                    val dest = java.io.File(localRoot, rel)
-                    // 本地更新就不覆盖：用户的本地编辑不该被远端旧版本冲掉。
-                    if (dest.isFile && dest.lastModified() >= remoteEpoch) return@forEach
-                    runCatching {
-                        dest.parentFile?.mkdirs()
-                        // RemoteFile 不是 InputStream，读法只能是 read(offset, buf, off, len)，
-                        // 而这里只回拉 <=1MB 的小文件，直接整块读完再写盘。
-                        val bytes = sftp.open(remoteRoot + "/" + rel).use { rf ->
-                            val buf = ByteArray(64 * 1024)
-                            val out = java.io.ByteArrayOutputStream()
-                            var offset = 0L
-                            while (true) {
-                                val n = rf.read(offset, buf, 0, buf.size)
-                                if (n <= 0) break
-                                out.write(buf, 0, n)
-                                offset += n
+                withSftpOperation(snapshot.config) {
+                    val sftp = sftp()
+                    var pulled = 0
+                    listing.lineSequence().forEach { line ->
+                        val parts = line.split('\t', limit = 2)
+                        if (parts.size != 2) return@forEach
+                        val remoteEpoch = parts[0].toDoubleOrNull()?.times(1000)?.toLong() ?: return@forEach
+                        val rel = parts[1].removePrefix("./").trim()
+                        if (rel.isEmpty() || rel.startsWith("..") || rel.contains("/../")) return@forEach
+                        val dest = java.io.File(localRoot, rel)
+                        // 本地更新就不覆盖：用户的本地编辑不该被远端旧版本冲掉。
+                        if (dest.isFile && dest.lastModified() >= remoteEpoch) return@forEach
+                        runCatching {
+                            dest.parentFile?.mkdirs()
+                            // RemoteFile 不是 InputStream，读法只能是 read(offset, buf, off, len)，
+                            // 而这里只回拉 <=1MB 的小文件，直接整块读完再写盘。
+                            val bytes = sftp.open(remoteRoot + "/" + rel).use { rf ->
+                                val buf = ByteArray(64 * 1024)
+                                val out = java.io.ByteArrayOutputStream()
+                                var offset = 0L
+                                while (true) {
+                                    val n = rf.read(offset, buf, 0, buf.size)
+                                    if (n <= 0) break
+                                    out.write(buf, 0, n)
+                                    offset += n
+                                }
+                                out.toByteArray()
                             }
-                            out.toByteArray()
-                        }
-                        dest.writeBytes(bytes)
-                        dest.setLastModified(remoteEpoch)
-                        pulled++
-                    }.onFailure { FileLogger.w(TAG, "回拉共享区文件失败: $rel", it) }
+                            dest.writeBytes(bytes)
+                            dest.setLastModified(remoteEpoch)
+                            pulled++
+                        }.onFailure { FileLogger.w(TAG, "回拉共享区文件失败: $rel", it) }
+                    }
+                    if (pulled > 0) FileLogger.i(TAG, "已从远端回拉 $pulled 个共享区文件")
                 }
-                if (pulled > 0) FileLogger.i(TAG, "已从远端回拉 $pulled 个共享区文件")
             }.onFailure { FileLogger.w(TAG, "回拉远端共享区失败", it) }
         }
     }
@@ -745,6 +771,8 @@ class RemoteSshConnection @Inject constructor(
     private fun encodeCreds(plain: String): String =
         android.util.Base64.encodeToString(plain.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP).reversed()
 }
+
+internal data class SftpConnectionSnapshot(val config: RemoteConnectionConfig, val home: String?)
 
 /** 远程 SSH 连接状态，供 UI 指示器与工作区初始化时序判断。 */
 enum class ConnectionState {

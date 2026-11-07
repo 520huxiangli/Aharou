@@ -44,6 +44,9 @@ class ScreenOnSettingsRepository @Inject constructor(
     /** 备份快照：当前屏幕常亮开关是否开启。 */
     suspend fun snapshot(): Boolean = enabledFlow.first()
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.screenOnDataStore.restoreBackupValues(values, recovery)
+
     /** 从备份还原屏幕常亮开关。 */
     suspend fun restore(enabled: Boolean) = setEnabled(enabled)
 }

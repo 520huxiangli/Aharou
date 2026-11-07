@@ -23,7 +23,10 @@ enum class ReceiptCategory {
 enum class ReceiptStatus {
     SUCCESS,
     ERROR,
-    PARTIAL
+    PARTIAL,
+    RUNNING,
+    INTERRUPTED,
+    UNKNOWN
 }
 
 /**

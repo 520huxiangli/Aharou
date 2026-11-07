@@ -47,6 +47,9 @@ class KeepaliveSettingsRepository @Inject constructor(
     /** 备份快照：当前保活开关是否开启。 */
     suspend fun snapshot(): Boolean = enabledFlow.first()
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.keepaliveDataStore.restoreBackupValues(values, recovery)
+
     /** 从备份还原保活开关。 */
     suspend fun restore(enabled: Boolean) = setEnabled(enabled)
 }

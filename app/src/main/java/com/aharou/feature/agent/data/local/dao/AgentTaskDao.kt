@@ -19,7 +19,7 @@ interface AgentTaskDao {
      */
     @Query(
         "UPDATE agent_tasks SET status = :toStatus, result = :result, updatedAt = :updatedAt, finishedAt = :finishedAt " +
-            "WHERE id = :taskId AND status = :fromStatus"
+            "WHERE id = :taskId AND status = :fromStatus AND updatedAt = :expectedUpdatedAt"
     )
     suspend fun compareAndSetStatus(
         taskId: String,
@@ -27,8 +27,15 @@ interface AgentTaskDao {
         toStatus: String,
         result: String?,
         updatedAt: Long,
-        finishedAt: Long?
+        finishedAt: Long?,
+        expectedUpdatedAt: Long
     ): Int
+
+    @Query(
+        "UPDATE agent_tasks SET status = 'RUNNING', result = NULL, finishedAt = NULL, updatedAt = :updatedAt " +
+            "WHERE id = :taskId AND updatedAt = :expectedUpdatedAt"
+    )
+    suspend fun beginRun(taskId: String, expectedUpdatedAt: Long, updatedAt: Long): Int
 
     @Query("SELECT * FROM agent_tasks WHERE id = :taskId LIMIT 1")
     suspend fun getById(taskId: String): AgentTaskEntity?

@@ -49,7 +49,9 @@ internal class MemoryBackupSection(
     /** 参与备份的内部本地工作区；外部本地目录不属于 App 私有数据，远程工区的记忆由私有 projects 目录单独采集。 */
     private val internalWorkspaces: () -> List<Workspace>,
     /** 按工作区名解析还原目标：优先复用本轮导入已解析的映射，缺席时建同名内部工作区。 */
-    private val resolveWorkspace: suspend (String, MutableMap<String, Workspace>) -> Workspace?
+    private val resolveWorkspace: suspend (String, MutableMap<String, Workspace>) -> Workspace?,
+    private val writeRestoreFile: suspend (File, ByteArray) -> Unit,
+    private val checkRestoreTarget: (File) -> Unit
 ) {
 
     // ── 路径 ──────────────────────────────────────────────────
@@ -122,7 +124,7 @@ internal class MemoryBackupSection(
     // ── 还原 ──────────────────────────────────────────────────
 
     /** 还原一条全局记忆条目：顶层 `memory/<名>` 或归档 `memory/archive/<名>`。 */
-    fun restoreGlobalMemoryEntry(tar: TarArchiveInputStream, entry: TarArchiveEntry): RestoreStats {
+    suspend fun restoreGlobalMemoryEntry(tar: TarArchiveInputStream, entry: TarArchiveEntry): RestoreStats {
         val rel = entry.name.removePrefix(GLOBAL_MEMORY_PREFIX)
         val isArchive = rel.startsWith("$MEMORY_ARCHIVE_DIR/")
         val fileName = if (isArchive) rel.removePrefix("$MEMORY_ARCHIVE_DIR/") else rel
@@ -130,18 +132,11 @@ internal class MemoryBackupSection(
         if (fileName.isEmpty() || fileName.contains('/') || fileName.contains("..")) return RestoreStats()
         if (entry.size > MAX_MEMORY_FILE_BYTES) return RestoreStats()
         val bytes = tar.readBytes()
-        return runCatching {
-            val root = globalMemoryDir()
-            val dir = if (isArchive) File(root, MEMORY_ARCHIVE_DIR) else root
-            dir.mkdirs()
-            // 归档目录里的旧版本本身就是底稿，再覆盖它没有意义；只有顶层同名条目才先留底。
-            if (!isArchive) archiveBeforeOverwrite(root, fileName)
-            File(dir, fileName).writeBytes(bytes)
-            RestoreStats(memoryFiles = 1)
-        }.getOrElse { e ->
-            FileLogger.w(TAG, "恢复记忆文件失败 ${entry.name}: ${e.message}")
-            RestoreStats()
-        }
+        val root = globalMemoryDir()
+        val dir = if (isArchive) File(root, MEMORY_ARCHIVE_DIR) else root
+        if (!isArchive) archiveBeforeOverwrite(root, fileName)
+        writeRestoreFile(File(dir, fileName), bytes)
+        return RestoreStats(memoryFiles = 1)
     }
 
     /** 还原一条项目记忆条目：本地 `<工作区名>/memory/<相对路径>` 或远程 `remote/<key>/<相对路径>`。 */
@@ -176,15 +171,9 @@ internal class MemoryBackupSection(
 
         val target = resolveInside(root, relPath) ?: return RestoreStats()
         val bytes = tar.readBytes()
-        return runCatching {
-            target.parentFile?.mkdirs()
-            archiveBeforeOverwrite(root, relPath)
-            target.writeBytes(bytes)
-            RestoreStats(projectMemoryFiles = 1)
-        }.getOrElse { e ->
-            FileLogger.w(TAG, "恢复项目记忆失败 ${entry.name}: ${e.message}")
-            RestoreStats()
-        }
+        archiveBeforeOverwrite(root, relPath)
+        writeRestoreFile(target, bytes)
+        return RestoreStats(projectMemoryFiles = 1)
     }
 
     // ── 辅助 ──────────────────────────────────────────────────
@@ -198,12 +187,12 @@ internal class MemoryBackupSection(
     }
 
     /** 覆盖写之前把 [root] 顶层同名文件原样留一份到 `archive/`；同秒重复归档追加序号，绝不覆盖已有归档。 */
-    private fun archiveBeforeOverwrite(root: File, relPath: String) {
+    private suspend fun archiveBeforeOverwrite(root: File, relPath: String) {
         if (relPath.contains('/')) return  // 只有顶层条目会被覆盖，归档子目录内的版本无需再留底
         val existing = File(root, relPath)
+        checkRestoreTarget(existing)
         if (!existing.isFile) return
         val archiveDir = File(root, MEMORY_ARCHIVE_DIR)
-        if (!archiveDir.exists() && !archiveDir.mkdirs()) return
         val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
         var target = File(archiveDir, "$relPath-$stamp.md")
         var seq = 1
@@ -211,8 +200,7 @@ internal class MemoryBackupSection(
             target = File(archiveDir, "$relPath-$stamp-$seq.md")
             seq++
         }
-        runCatching { existing.copyTo(target, overwrite = false) }
-            .onFailure { FileLogger.w(TAG, "归档旧版记忆失败：$relPath", it) }
+        writeRestoreFile(target, existing.readBytes())
     }
 
     private companion object {

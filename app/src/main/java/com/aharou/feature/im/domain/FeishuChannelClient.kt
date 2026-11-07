@@ -18,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -75,6 +76,7 @@ class FeishuChannelClient @Inject constructor(
     /** WebSocket 推下来的待消费消息；[poll] 从这里取。 */
     private val inbox = Channel<ImUpdate>(Channel.UNLIMITED)
 
+    @Volatile private var socketGeneration = Any()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var socketKey: String? = null
     @Volatile private var seq = 0L
@@ -100,6 +102,24 @@ class FeishuChannelClient @Inject constructor(
     private val recentMessageIds = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>) =
             size > DEDUP_CAPACITY
+    }
+
+    override fun disconnect() {
+        socketGeneration = Any()
+        val previous = socket
+        socket = null
+        socketKey = null
+        previous?.cancel()
+        pingJob?.cancel()
+        pingJob = null
+        tenantToken = null
+        tokenKey = null
+        tokenExpireAt = 0L
+        reconnectAt = 0L
+        reconnectDelayMs = RECONNECT_MIN_MS
+        fragments.clear()
+        synchronized(recentMessageIds) { recentMessageIds.clear() }
+        while (inbox.tryReceive().isSuccess) { }
     }
 
     override suspend fun identity(cfg: ImChannelConfig): ImBotIdentity {
@@ -185,9 +205,10 @@ class FeishuChannelClient @Inject constructor(
 
     /** 建立长连接。同一份凭证只连一次，凭证变了才重连。 */
     private suspend fun connect(cfg: FeishuConfig) {
-        val key = "${cfg.appId}|${cfg.baseUrl}|${cfg.proxy}"
+        val key = "${cfg.appId}|${cfg.appSecret}|${cfg.baseUrl}|${cfg.proxy}"
         if (socket != null && socketKey == key) return
-        socket?.close(1000, null)
+        val generation = Any().also { socketGeneration = it }
+        socket?.cancel()
         socket = null
         pingJob?.cancel()
         pingJob = null
@@ -222,6 +243,7 @@ class FeishuChannelClient @Inject constructor(
         val request = Request.Builder().url(url).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (socketGeneration !== generation) { webSocket.cancel(); return }
                 FileLogger.i(
                     TAG,
                     "长连接已建立：host=${host.ifBlank { "?" }} HTTP ${response.code} " +
@@ -240,6 +262,7 @@ class FeishuChannelClient @Inject constructor(
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (socketGeneration !== generation) return
                 // 不能把异常漏给 OkHttp 的读线程：非 IOException 会直接杀掉读循环，
                 // 连接变成“看似在线、永远不再收帧”的僵死状态（而且不会回调 onFailure）。
                 runCatching { handleBinaryFrame(webSocket, bytes, serviceId) }
@@ -594,7 +617,10 @@ class FeishuChannelClient @Inject constructor(
         if (parts.size != 2 || parts[0].isBlank() || parts[1].isBlank()) return null
         val (messageId, fileKey) = parts
         val type = if (attachment.kind == ImAttachment.Kind.IMAGE) "image" else "file"
-        val token = runCatching { tenantAccessToken(c) }.getOrNull() ?: return null
+        val token = runCatching { tenantAccessToken(c) }.getOrElse {
+            if (it is CancellationException) throw it
+            null
+        } ?: return null
         val path = "/open-apis/im/v1/messages/$messageId/resources/$fileKey?type=$type"
         val request = Request.Builder()
             .url(urlFor(c, path))
@@ -613,7 +639,10 @@ class FeishuChannelClient @Inject constructor(
                     target.outputStream().use { out -> body.byteStream().copyTo(out) }
                     target
                 }
-            }.getOrNull()
+            }.getOrElse {
+                if (it is CancellationException) throw it
+                null
+            }
         }
     }
 
@@ -678,7 +707,7 @@ class FeishuChannelClient @Inject constructor(
     // ── HTTP ───────────────────────────────────────────────
 
     private suspend fun tenantAccessToken(cfg: FeishuConfig): String {
-        val key = "${cfg.appId}|${cfg.appSecret}"
+        val key = "${cfg.appId}|${cfg.appSecret}|${cfg.baseUrl}|${cfg.proxy}"
         val now = System.currentTimeMillis()
         tenantToken?.let { if (tokenKey == key && now < tokenExpireAt) return it }
         val body = buildJsonObject {

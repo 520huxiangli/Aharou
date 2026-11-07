@@ -3271,6 +3271,8 @@
     <string name="account_avatar_error_too_large">图片太大了，换张小一点的</string>
     <string name="settings_telegram_bot">Telegram 机器人</string>
     <string name="im_attachment_only_hint">（对方发来附件，没有文字说明）</string>
+    <string name="im_attachment_download_failed">以下附件未能接收：%1$s。请重新发送。</string>
+    <string name="im_approval_expired">此审批已结束或过期，请以任务实际结果为准。</string>
     <string name="im_pairing_prompt">这个聊天还没有和 Aharou 配对。配对码：%1$s\n在 App 的「设置 → %2$s」里通过。10 分钟内有效。</string>
     <string name="im_telegram_tool_running">正在使用 %1$s…</string>
     <string name="im_telegram_error">出错了：%1$s</string>
@@ -3667,4 +3669,9 @@
     <string name="vault_reset_confirm">清空</string>
     <string name="im_secret_write_failed">保存失败：系统密钥库暂不可用，请稍后再试</string>
     <string name="backup_secrets_unavailable">其中 %1$d 项凭据无法在本机解出，需要重新填写</string>
+    <string name="voice_input_permission_granted_retry">已授权，请重新长按</string>
+    <string name="update_installing">正在静默安装</string>
+    <string name="provider_test_response_invalid">响应格式不符合所选协议</string>
+    <string name="provider_test_response_error">服务端返回业务错误</string>
+    <string name="activity_receipt_result_unknown">结果未知，操作可能已发生</string>
 </resources>

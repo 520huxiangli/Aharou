@@ -113,6 +113,9 @@ class ThemeSettingsRepository @Inject constructor(
     /** 备份快照：返回当前持久化的主题模式名（未设置时为 null，导入时回退默认）。 */
     suspend fun snapshot(): String? = themeModeFlow.first().name
 
+    internal suspend fun restoreBackupState(values: Map<String, Any?>, recovery: java.io.File): suspend () -> Unit =
+        context.themeDataStore.restoreBackupValues(values, recovery)
+
     /** 从备份还原主题模式；null 时清除键回退默认。 */
     suspend fun restore(value: String?) {
         context.themeDataStore.edit {

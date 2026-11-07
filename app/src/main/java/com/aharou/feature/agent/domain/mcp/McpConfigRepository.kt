@@ -265,6 +265,27 @@ class McpConfigRepository @Inject constructor(
         }
     }
 
+    internal suspend fun refreshGlobalAfterBackupRollback() = mutex.withLock {
+        globalState.value = load(globalFile)
+        selfChanges.tryEmit(Unit)
+    }
+
+    internal suspend fun restoreGlobalForBackup(
+        servers: List<McpServerConfig>,
+        write: suspend (File, String) -> Unit
+    ): suspend () -> Unit = mutex.withLock {
+        val before = withContext(Dispatchers.IO) { load(globalFile) }
+        val next = withContext(Dispatchers.IO) { serialize(servers) }
+        write(globalFile, next)
+        globalState.value = next
+        val rollback: suspend () -> Unit = {
+            mutex.withLock {
+                if (globalState.value == next) globalState.value = before
+            }
+        }
+        rollback
+    }
+
     /** @return 是否真的落盘成功。写失败时只记日志、保留原状态，调用方必须据此报错——
      *  否则工具会回「添加成功」而磁盘上什么都没变。 */
     suspend fun setGlobalServers(servers: List<McpServerConfig>): Boolean {

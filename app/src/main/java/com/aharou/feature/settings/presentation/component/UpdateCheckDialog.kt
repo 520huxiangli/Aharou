@@ -2,6 +2,10 @@ package com.aharou.feature.settings.presentation.component
 
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import com.aharou.feature.settings.presentation.SettingsViewModel
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -16,7 +20,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -41,7 +44,7 @@ internal fun UpdateCheckDialog(
     onDismiss: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
-    onInstall: (apkPath: String) -> Unit,
+    onInstall: (request: UpdateDownloadUiState.Ready) -> Unit,
     onOpenRelease: (tag: String) -> Unit
 ) {
     when (state) {
@@ -83,14 +86,9 @@ private fun NewVersionDialog(
     onDismiss: () -> Unit,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
-    onInstall: (apkPath: String) -> Unit,
+    onInstall: (request: UpdateDownloadUiState.Ready) -> Unit,
     onOpenRelease: (tag: String) -> Unit
 ) {
-    // 下载完成即拉起系统安装器；key 用产物路径，保证同一份包只自动弹一次。
-    val ready = downloadState as? UpdateDownloadUiState.Ready
-    LaunchedEffect(ready?.apkPath) {
-        ready?.let { onInstall(it.apkPath) }
-    }
     val busy = downloadState is UpdateDownloadUiState.Resolving ||
         downloadState is UpdateDownloadUiState.Downloading
 
@@ -151,7 +149,7 @@ private fun NewVersionDialog(
                     is UpdateDownloadUiState.Ready -> {
                         Spacer(Modifier.height(12.dp))
                         Text(
-                            text = stringResource(R.string.about_download_installing),
+                            text = stringResource(R.string.about_download_install_now),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -161,6 +159,10 @@ private fun NewVersionDialog(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                    is UpdateDownloadUiState.Installing -> {
+                        Spacer(Modifier.height(12.dp))
+                        Text(stringResource(if (downloadState.silent) R.string.update_installing else R.string.about_download_installing))
                     }
                     is UpdateDownloadUiState.Failed -> {
                         Spacer(Modifier.height(12.dp))
@@ -180,8 +182,9 @@ private fun NewVersionDialog(
                 busy -> TextButton(onClick = onCancelDownload) {
                     Text(stringResource(R.string.about_download_cancel))
                 }
+                downloadState is UpdateDownloadUiState.Installing -> Unit
                 downloadState is UpdateDownloadUiState.Ready -> TextButton(
-                    onClick = { onInstall(downloadState.apkPath) }
+                    onClick = { onInstall(downloadState) }
                 ) { Text(stringResource(R.string.about_download_install_now)) }
                 else -> TextButton(onClick = onDownload) {
                     Text(stringResource(R.string.about_download_and_install))
@@ -222,7 +225,20 @@ internal fun openUrl(context: android.content.Context, url: String) {
  * 必须走 FileProvider 授权 URI：targetSdk 28+ 直接用 file:// 会抛 FileUriExposedException。
  * 未开启「安装未知应用」时由系统安装器自行引导，这里不预判。
  */
-internal fun installDownloadedApk(context: Context, apkPath: String) {
+@Composable
+internal fun rememberUpdateInstaller(viewModel: SettingsViewModel): (UpdateDownloadUiState.Ready) -> Unit {
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        viewModel.onUpdateSystemInstallerReturned()
+    }
+    return { request ->
+        viewModel.claimUpdateSystemInstall(request)?.let { path ->
+            if (!installDownloadedApk(context, path) { launcher.launch(it) }) viewModel.reportUpdateSystemInstallFailed(request)
+        }
+    }
+}
+
+internal fun installDownloadedApk(context: Context, apkPath: String, launch: (Intent) -> Unit = { context.startActivity(it) }): Boolean =
     runCatching {
         val file = File(apkPath)
         if (!file.exists()) error("安装包不存在")
@@ -230,11 +246,10 @@ internal fun installDownloadedApk(context: Context, apkPath: String) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_RETURN_RESULT, true)
         }
-        context.startActivity(intent)
-    }.onFailure { FileLogger.w("UpdateInstall", "install failed: ${it.message}") }
-}
+        launch(intent)
+    }.onFailure { FileLogger.w("UpdateInstall", "install failed: ${it.message}") }.isSuccess
 
 /**
  * 指定版本 tag 的 GitHub Release 页面地址；tag 为空时回退到最新正式版页面。

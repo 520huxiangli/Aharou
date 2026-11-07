@@ -671,7 +671,6 @@ class ProviderDashboardRunner @Inject constructor(
      */
     fun listAvailableScripts(): List<String> {
         val scriptsDir = "${pathHomeResolver.aharouRoot()}/scripts"
-        fileAccess.mkdirs(scriptsDir)
         return fileAccess.listFiles(scriptsDir)
             .filter { !it.isDirectory && !it.name.startsWith(".") }
             .map { it.name }

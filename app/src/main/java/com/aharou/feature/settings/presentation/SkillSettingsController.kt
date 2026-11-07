@@ -3,6 +3,8 @@ package com.aharou.feature.settings.presentation
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.widget.Toast
+import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.skill.SkillConfigRepository
 import com.aharou.feature.agent.domain.skill.SkillForm
@@ -23,6 +25,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -167,10 +170,7 @@ class SkillSettingsController @Inject constructor(
 
     /** 切换技能的启用/禁用状态（写入对应作用域的 skills.json）。 */
     fun setSkillEnabled(name: String, enabled: Boolean, scope: SkillScope) {
-        this.scope.launch {
-            withContext(Dispatchers.IO) { skillRepository.setSkillDisabled(name, !enabled, scope) }
-            refreshSkills()
-        }
+        setSkillsEnabled(listOf(name), enabled, scope)
     }
 
     /** 批量切换技能启用状态：逐条写回各自的 skills.json，全部写完只刷一次列表。 */
@@ -178,10 +178,20 @@ class SkillSettingsController @Inject constructor(
         val targets = names.filter { it.isNotBlank() }.distinct()
         if (targets.isEmpty()) return
         this.scope.launch {
-            withContext(Dispatchers.IO) {
-                targets.forEach { skillRepository.setSkillDisabled(it, !enabled, scope) }
+            try {
+                withContext(Dispatchers.IO) {
+                    targets.forEach { skillRepository.setSkillDisabled(it, !enabled, scope) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "更新技能启停状态失败", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, R.string.skills_editor_error_io, Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                refreshSkills()
             }
-            refreshSkills()
         }
     }
 

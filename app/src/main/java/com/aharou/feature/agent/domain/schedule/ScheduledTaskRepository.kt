@@ -26,7 +26,7 @@ class ScheduledTaskRepository @Inject constructor(
 
     suspend fun get(id: String): ScheduledTaskEntity? = dao.getById(id)
 
-    suspend fun upsert(task: ScheduledTaskEntity) = dao.upsert(task)
+    suspend fun upsert(task: ScheduledTaskEntity) = dao.upsertPreservingPending(task)
 
     suspend fun delete(id: String) = dao.deleteById(id)
 
@@ -116,9 +116,9 @@ class ScheduledTaskRepository @Inject constructor(
             createdAt = existing?.createdAt ?: now,
             updatedAt = now,
             // 编辑任务不打断已经派发、还没跑的指令：挂起的照旧捡起。
-            pendingRunPrompt = existing?.pendingRunPrompt,
+            pendingRunPrompt = if (enabled) existing?.pendingRunPrompt else null,
         )
-        dao.upsert(task)
+        dao.upsertPreservingPending(task)
         return task
     }
 
@@ -129,12 +129,13 @@ class ScheduledTaskRepository @Inject constructor(
     suspend fun setEnabled(id: String, enabled: Boolean, now: Long = System.currentTimeMillis()) {
         val task = dao.getById(id) ?: return
         if (enabled && TriggerType.isTimeTrigger(task) && task.nextRunAt <= now) {
-            dao.upsert(
+            dao.upsertPreservingPending(
                 task.copy(
                     enabled = true,
                     nextRunAt = ScheduledTaskScheduler.nextRunAfter(now, task.intervalMinutes),
                     updatedAt = now
-                )
+                ),
+                preserveNextRunAt = false,
             )
         } else {
             dao.setEnabled(id, enabled, now)

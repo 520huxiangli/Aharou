@@ -29,6 +29,9 @@ abstract class ModelSelectionSettingsRepository(
     /** 当前持久化的专用 model 流；未设置时为空字符串。 */
     val modelFlow: Flow<String> = dataStore.data.map { it[modelKey] ?: "" }
 
+    internal suspend fun restoreBackupSelection(providerId: String, model: String, recovery: java.io.File): suspend () -> Unit =
+        dataStore.restoreBackupValues(mapOf(providerIdKey.name to providerId, modelKey.name to model), recovery)
+
     /** 写入专用模型（设空字符串即等同 [clearSelection]）。 */
     protected suspend fun setSelection(providerId: String, model: String) {
         dataStore.edit {

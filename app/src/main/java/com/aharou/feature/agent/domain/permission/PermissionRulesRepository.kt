@@ -207,6 +207,26 @@ class PermissionRulesRepository @Inject constructor(
         return globalState.value ?: emptyList()
     }
 
+    internal suspend fun refreshGlobalAfterBackupRollback() = mutex.withLock {
+        globalState.value = loadFromFile(globalFile)
+    }
+
+    internal suspend fun restoreGlobalForBackup(
+        rules: List<PermissionRule>,
+        write: suspend (File, String) -> Unit
+    ): suspend () -> Unit = mutex.withLock {
+        val before = loadFromFile(globalFile)
+        val content = JSON.encodeToString(PermissionFile.serializer(), rules.toPermissionFile())
+        write(globalFile, content)
+        globalState.value = rules
+        val rollback: suspend () -> Unit = {
+            mutex.withLock {
+                if (globalState.value == rules) globalState.value = before
+            }
+        }
+        rollback
+    }
+
     /** 全量替换全局规则（备份导入用），原子写文件并更新缓存。 */
     suspend fun setGlobalRules(rules: List<PermissionRule>) {
         mutex.withLock {

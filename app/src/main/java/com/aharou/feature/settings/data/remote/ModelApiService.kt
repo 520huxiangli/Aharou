@@ -220,16 +220,17 @@ class ModelApiService @Inject constructor(
         customHeaders: Map<String, String>
     ): TestAttempt {
         // 空 Key 也放行（免鉴权供应商）；真正需要 Key 的平台会由上游返回鉴权错误。
-        val (url, payload) = when (type) {
-            ProviderType.ANTHROPIC -> {
+        val protocol = ModelTestResponseValidator.protocol(type, useResponseApi, model, if (useFullUrl) baseUrl else "")
+        val (url, payload) = when (protocol) {
+            ModelTestProtocol.ANTHROPIC -> {
                 val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1/messages")
                 u to """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
             }
-            ProviderType.GEMINI -> {
+            ModelTestProtocol.GEMINI, ModelTestProtocol.INTERACTIONS -> {
                 // Interactions 的请求体是 `input`（step 序列或纯字符串），必须同时切到
                 // v1beta/interactions 端点；仍打到 generateContent 会被以缺 `contents` 拒绝。
                 // 图像模型（Nano Banana 系）只支持 Interactions，无论开关是否开启都强制切。
-                if (useResponseApi || model.endsWith("-image", ignoreCase = true)) {
+                if (protocol == ModelTestProtocol.INTERACTIONS) {
                     val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1beta/interactions")
                     u to """{"model":${model.jsonStr()},"input":"hi","store":false}"""
                 } else {
@@ -249,9 +250,9 @@ class ModelApiService @Inject constructor(
             else -> {
                 // Responses API 的请求体是 `input` 格式，必须同时切到 v1/responses 端点；
                 // 仍打到 chat/completions 会被服务端以「missing field `messages`」拒绝。
-                val path = if (useResponseApi) "v1/responses" else "v1/chat/completions"
+                val path = if (protocol == ModelTestProtocol.RESPONSES) "v1/responses" else "v1/chat/completions"
                 val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, path)
-                if (useResponseApi) {
+                if (protocol == ModelTestProtocol.RESPONSES) {
                     u to """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
                 } else {
                     u to """{"model":${model.jsonStr()},"max_completion_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
@@ -282,14 +283,19 @@ class ModelApiService @Inject constructor(
                 val latency = elapsedMs(start)
                 val body = response.body?.string().orEmpty()
                 val respHeadersMap = response.headers.names().associateWith { response.header(it).orEmpty() }
+                val validation = if (response.isSuccessful) ModelTestResponseValidator.validate(
+                    protocol, body
+                ) else null
+                val success = response.isSuccessful && validation == null
                 TestAttempt(
                     ModelTestResult(
-                        success = response.isSuccessful,
+                        success = success,
                         latencyMs = latency,
-                        message = if (response.isSuccessful) {
-                            context.getString(R.string.provider_test_success, latency)
-                        } else {
-                            "HTTP ${response.code}: ${body.take(160)}"
+                        message = when {
+                            success -> context.getString(R.string.provider_test_success, latency)
+                            validation == "error" -> context.getString(R.string.provider_test_response_error)
+                            validation != null -> context.getString(R.string.provider_test_response_invalid)
+                            else -> "HTTP ${response.code}: ${body.take(160)}"
                         },
                         requestUrl = requestUrl,
                         requestHeaders = requestHeaders,
@@ -297,7 +303,7 @@ class ModelApiService @Inject constructor(
                         responseCode = response.code,
                         responseHeaders = respHeadersMap,
                         responseBody = body,
-                        errorDetail = if (response.isSuccessful) "" else body
+                        errorDetail = if (success) "" else body
                     )
                 )
             }

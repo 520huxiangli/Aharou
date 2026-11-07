@@ -1,6 +1,13 @@
 package com.aharou.feature.im.data
 
 import com.aharou.core.config.ConfigRegistry
+import com.aharou.core.config.ConfigSchema
+import com.aharou.core.config.ConfigValue
+import com.aharou.core.config.fields.ReadOnlyField
+import com.aharou.feature.im.domain.ImBotBridge
+import com.aharou.feature.im.domain.ImChannelState
+import com.aharou.core.util.SecretMasker
+import javax.inject.Named
 import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreStrField
@@ -27,9 +34,26 @@ class ConfigImFields @Inject constructor(
     private val weixin: WeixinSettingsRepository,
     private val feishu: FeishuSettingsRepository,
     private val qq: QqSettingsRepository,
+    @Named("telegram") private val telegramBridge: ImBotBridge,
+    @Named("weixin") private val weixinBridge: ImBotBridge,
+    @Named("feishu") private val feishuBridge: ImBotBridge,
+    @Named("qq") private val qqBridge: ImBotBridge,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
+        mapOf("telegram" to telegramBridge, "weixin" to weixinBridge, "feishu" to feishuBridge, "qq" to qqBridge).forEach { (id, bridge) ->
+            registry.register(ReadOnlyField("im.$id.state", "实际连接状态（$id）", "运行时状态，不等同于启用开关。", ConfigSchema.Str()) {
+                ConfigValue.Str(when (bridge.state.value) {
+                    ImChannelState.Stopped -> "stopped"
+                    ImChannelState.Connecting -> "connecting"
+                    is ImChannelState.Connected -> "connected"
+                    is ImChannelState.Error -> "error"
+                })
+            })
+            registry.register(ReadOnlyField("im.$id.error", "连接错误（$id）", "脱敏后的运行时错误，非错误状态为空。", ConfigSchema.Str()) {
+                ConfigValue.Str(SecretMasker.mask((bridge.state.value as? ImChannelState.Error)?.message.orEmpty()))
+            })
+        }
         registry.register(
             DataStoreBoolField(
                 path = "im.telegram.enabled",

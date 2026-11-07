@@ -15,7 +15,9 @@ import com.aharou.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
-import com.aharou.feature.agent.domain.subagent.SubAgentEvent
+import com.aharou.feature.agent.domain.subagent.SubAgentRun
+import com.aharou.feature.agent.domain.subagent.SubAgentRunLifecycle
+import com.aharou.feature.agent.domain.subagent.SubAgentRunRejectedException
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
@@ -38,6 +40,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -70,6 +74,7 @@ data class AgentTurnRequest(
      * 置 false 用于「调用方已先落过一条可见命令文本（如 /init）」的场景，避免同一轮落出两条用户消息。
      */
     val persistUserMessage: Boolean = true,
+    val expectedSubAgentRunId: String? = null,
 )
 
 /**
@@ -97,6 +102,7 @@ class AgentTurnRunner @Inject constructor(
     private val checkpointManager: CheckpointManager,
     private val agentDefinitionRepository: AgentDefinitionRepository,
     private val subAgentEventBus: SubAgentEventBus,
+    private val subAgentRunLifecycle: SubAgentRunLifecycle,
     private val subAgentWriteLease: SubAgentWriteLease,
     private val workspaceRepository: WorkspaceRepository,
     private val pendingQuestionStore: PendingUserQuestionStore,
@@ -186,6 +192,31 @@ class AgentTurnRunner @Inject constructor(
      */
     fun run(turn: AgentTurnRequest): Flow<AgentEvent> = flow {
         val sessionId = turn.sessionId
+        val initialSession = sessionUseCase.getSessionById(sessionId) ?: return@flow
+        val parentId = initialSession.parentId
+        val reservedRun = subAgentEventBus.currentRun(sessionId)?.takeIf { it.version == 0L }
+        val run = try {
+            parentId?.let { subAgentRunLifecycle.beginRun(sessionId, it, turn.expectedSubAgentRunId) }
+        } catch (rejected: SubAgentRunRejectedException) {
+            emit(AgentEvent.Failed(rejected.message.orEmpty(), rejected.reasonCode))
+            return@flow
+        } catch (error: Throwable) {
+            if (reservedRun != null) withContext(NonCancellable) {
+                try {
+                    subAgentRunLifecycle.stopRun(sessionId, reservedRun.parentSessionId, expectedRun = reservedRun)
+                } finally {
+                    subAgentEventBus.releaseReserved(reservedRun)
+                }
+            }
+            throw error
+        }
+        if (parentId != null && run == null) {
+            emit(AgentEvent.Failed(context.getString(R.string.subagent_card_status_failed), "SUBAGENT_RUN_UNAVAILABLE"))
+            return@flow
+        }
+        var terminalType = SubAgentEventType.FAILED
+        var terminalError: String? = null
+        try {
 
         // 兼容历史会话：尚未绑定 provider/model 的会话，发消息时固化下来，
         // 免得之后默认模型变动把已有会话带偏。
@@ -410,12 +441,13 @@ class AgentTurnRunner @Inject constructor(
 
                 is AgentEvent.Failed -> if (isSub && !terminalEmitted) {
                     terminalEmitted = true
-                    emitSubAgentFinished(sessionId, SubAgentEventType.FAILED, event.error)
+                    terminalType = SubAgentEventType.FAILED
+                    terminalError = event.error
                 }
 
                 AgentEvent.Completed -> if (isSub && !terminalEmitted) {
                     terminalEmitted = true
-                    emitSubAgentFinished(sessionId, SubAgentEventType.COMPLETED, null)
+                    terminalType = SubAgentEventType.COMPLETED
                 }
 
                 else -> Unit
@@ -423,6 +455,22 @@ class AgentTurnRunner @Inject constructor(
         }
 
         sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
+        } catch (cancelled: CancellationException) {
+            terminalType = SubAgentEventType.STOPPED
+            throw cancelled
+        } catch (error: Throwable) {
+            terminalType = SubAgentEventType.FAILED
+            terminalError = error.message
+            throw error
+        } finally {
+            if (run != null) withContext(NonCancellable) {
+                try {
+                    emitSubAgentFinished(run, terminalType, terminalError)
+                } finally {
+                    subAgentEventBus.releaseRun(run)
+                }
+            }
+        }
     }
 
     /**
@@ -430,8 +478,9 @@ class AgentTurnRunner @Inject constructor(
      * 随事件发给父代理——免得父代理不主动 `task(read)` 就看不到「说完成、实则没落盘」。
      * 失败路径把错误信息并在终态文本前面。
      */
-    private suspend fun emitSubAgentFinished(sessionId: String, type: SubAgentEventType, error: String?) {
-        val parentId = sessionUseCase.getSessionById(sessionId)?.parentId ?: return
+    private suspend fun emitSubAgentFinished(run: SubAgentRun, type: SubAgentEventType, error: String?) {
+        if (!subAgentEventBus.isCurrentRun(run)) return
+        val sessionId = run.sessionId
         val result = runCatching {
             SubAgentResultInspector.inspect(sessionId, messagePersistenceUseCase.getMessagesOnce(sessionId))
         }.getOrNull()
@@ -443,14 +492,11 @@ class AgentTurnRunner @Inject constructor(
             if (runFailed) append("终止状态：RUN_FAILED（本轮运行未正常结束，产出不完整）\n")
             append(result?.renderDetail().orEmpty())
         }
-        subAgentEventBus.emit(
-            SubAgentEvent(
-                subSessionId = sessionId,
-                parentSessionId = parentId,
-                type = type,
-                detail = detail,
-                accepted = if (runFailed) false else result?.verdict?.accepted,
-            )
+        subAgentRunLifecycle.finishRun(
+            run = run,
+            type = type,
+            detail = detail,
+            accepted = if (runFailed || type == SubAgentEventType.STOPPED) false else result?.verdict?.accepted,
         )
     }
 
