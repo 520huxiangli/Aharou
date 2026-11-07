@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.extension.domain.ExtensionEntry
 import com.aharou.feature.extension.domain.ExtensionKind
 import com.aharou.feature.extension.domain.ExtensionState
@@ -10,9 +11,16 @@ import com.aharou.feature.extension.domain.InstalledExtensionAggregator
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.domain.market.PluginMarketEntry
 import com.aharou.feature.plugin.domain.market.PluginMarketRepository
+import com.aharou.feature.plugin.domain.model.PluginManifest
+import com.aharou.feature.plugin.domain.model.PluginProviderSpec
 import com.aharou.feature.plugin.presentation.PluginEvent
+import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.settings.domain.model.ProviderType
+import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.util.UUID
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,9 +28,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * 「扩展」统一入口页的状态与动作。
@@ -36,6 +49,7 @@ class ExtensionsViewModel @Inject constructor(
     private val aggregator: InstalledExtensionAggregator,
     private val market: PluginMarketRepository,
     private val pluginManager: PluginManager,
+    private val providerRepository: AIProviderRepository,
     @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -146,7 +160,12 @@ class ExtensionsViewModel @Inject constructor(
         if (_busyId.value != null) return
         viewModelScope.launch {
             _busyId.value = MARKET_BUSY_PREFIX + entry.id
-            val result = withContext(Dispatchers.IO) { market.install(entry) }
+            val result = withContext(Dispatchers.IO) {
+                market.install(entry).onSuccess { manifest ->
+                    // 装完直接拉起来并接上供应商，省掉手动点启动、手填 baseUrl 那两步
+                    if (manifest.autoStart) provision(manifest)
+                }
+            }
             _busyId.value = null
             _event.value = result.fold(
                 onSuccess = { PluginEvent.Installed(it.name, it.version) },
@@ -154,6 +173,48 @@ class ExtensionsViewModel @Inject constructor(
             )
             refresh()
         }
+    }
+
+    /** 按清单声明的自动启动与供应商接入。失败只记日志，不影响「安装成功」这条结果。 */
+    private suspend fun provision(manifest: PluginManifest) {
+        if (!manifest.isService || pluginManager.launch(manifest.id).isFailure) return
+        val spec = manifest.provider ?: return
+        runCatching { ensureProvider(manifest, spec) }
+            .onFailure { FileLogger.w(TAG, "插件 ${manifest.id} 自动建供应商失败", it) }
+    }
+
+    /** 同一 baseUrl 只建一次；重装插件不会堆出一串同地址的供应商。 */
+    private suspend fun ensureProvider(manifest: PluginManifest, spec: PluginProviderSpec) {
+        val baseUrl = spec.baseUrl.ifBlank { "http://127.0.0.1:{port}/v1" }
+            .replace("{port}", manifest.servicePort.toString())
+        val existing = providerRepository.getAllProviders().first()
+        if (existing.any { it.baseUrl.trimEnd('/').equals(baseUrl.trimEnd('/'), ignoreCase = true) }) return
+        val type = ProviderType.entries.firstOrNull { it.name == spec.type.uppercase() } ?: ProviderType.OPENAI
+        val apiKey = spec.apiKey.ifBlank { readProviderKey(manifest, spec).orEmpty() }
+        providerRepository.saveProvider(
+            AIProviderConfig(
+                id = UUID.randomUUID().toString(),
+                name = spec.name.ifBlank { manifest.name },
+                type = type,
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                defaultModel = spec.defaultModel,
+                models = listOfNotNull(spec.defaultModel.takeIf { it.isNotBlank() }),
+                selectedModel = spec.defaultModel,
+                isEnabled = true,
+            )
+        )
+    }
+
+    /** 本地网关的 Key 是服务首次启动才生成到 settings.json 的，装完直接读一次。 */
+    private fun readProviderKey(manifest: PluginManifest, spec: PluginProviderSpec): String? {
+        if (spec.apiKeyFile.isBlank() || spec.apiKeyField.isBlank()) return null
+        val file = File(pluginManager.hostDir(manifest.id), spec.apiKeyFile)
+        if (!file.isFile) return null
+        return runCatching {
+            Json.parseToJsonElement(file.readText())
+                .jsonObject[spec.apiKeyField]?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
     }
 
     /** 插件启停：运行中 → 停止，其余（已停止 / 启动失败）→ 启动。 */
@@ -204,5 +265,7 @@ class ExtensionsViewModel @Inject constructor(
 
         /** 聚合器给插件条目加的前缀。 */
         const val PLUGIN_ID_PREFIX = "plugin:"
+
+        private const val TAG = "ExtensionsViewModel"
     }
 }
