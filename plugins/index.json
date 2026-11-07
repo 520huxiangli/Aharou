@@ -7,7 +7,7 @@
       "version": "2.7.1",
       "author": "Ebony-Vinyl",
       "category": "ai",
-      "downloadUrl": "https://raw.githubusercontent.com/520huxiangli/Aharou/master/plugins/ofm-2.7.1.txplugin",
+      "downloadUrl": "https://cdn.jsdelivr.net/gh/520huxiangli/Aharou@master/plugins/ofm-2.7.1.txplugin",
       "repo": "520huxiangli/Aharou",
       "tags": ["free-models", "gateway", "openai-compatible"]
     }
