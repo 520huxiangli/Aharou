@@ -59,12 +59,12 @@
     {
       "id": "alpine-3.21",
       "name": "Alpine Linux",
-      "version": "3.21.9",
+      "version": "3.21.10",
       "description": "极简 Linux 发行版，rootfs 仅数 MB",
       "eol": "2026-11-01",
-      "sizeBytes": 3830409,
+      "sizeBytes": 3831092,
       "distro": "alpine",
-      "path": "alpine/v3.21/releases/{abi}/alpine-minirootfs-3.21.9-{abi}.tar.gz",
+      "path": "alpine/v3.21/releases/{abi}/alpine-minirootfs-3.21.10-{abi}.tar.gz",
       "paths": {
         "aharou": "alpine-3.21-{abi}.tar.gz"
       },
@@ -73,19 +73,19 @@
         "x86_64": "x86_64"
       },
       "sha256ByAbi": {
-        "arm64": "a389940ee42579ead202fb91607fb25698a58a3a5b55c15b4603e5d39cfa4492",
-        "x86_64": "3d5912d47e004ac77746d63ab848abd9e37164465cf1c866eb574bc526135012"
+        "arm64": "fc957a820e80660eec7c1dde2b619385f153f1c04d0eb537449eb6b6c24ba107",
+        "x86_64": "d225c786541b5ae5ba006ef541701d9ecc7e732bd16317c08adfb93212345efa"
       }
     },
     {
       "id": "alpine-3.22",
       "name": "Alpine Linux",
-      "version": "3.22.7",
+      "version": "3.22.8",
       "description": "极简 Linux 发行版，rootfs 仅数 MB，解压快、占用小",
       "eol": "2027-05-01",
-      "sizeBytes": 3971679,
+      "sizeBytes": 3971704,
       "distro": "alpine",
-      "path": "alpine/v3.22/releases/{abi}/alpine-minirootfs-3.22.7-{abi}.tar.gz",
+      "path": "alpine/v3.22/releases/{abi}/alpine-minirootfs-3.22.8-{abi}.tar.gz",
       "paths": {
         "aharou": "alpine-3.22-{abi}.tar.gz"
       },
@@ -94,19 +94,19 @@
         "x86_64": "x86_64"
       },
       "sha256ByAbi": {
-        "arm64": "7e9b34ff3304381909e566e2c93de450664ccc724191261423974fc121c11623",
-        "x86_64": "57e364a241bab0699cd8a760c0fd7b270e9cbcbd3cee822cb2b07ca6d925c16c"
+        "arm64": "36091efacd083c1cf5a8c837272530bff4fc72db1fbfdef559f52de0d890bca4",
+        "x86_64": "2d7f46af9b7e86ad64ebeba3fe9b75b62dd5b259e708afb2ab21268f627696e5"
       }
     },
     {
       "id": "alpine-3.23",
       "name": "Alpine Linux",
-      "version": "3.23.7",
+      "version": "3.23.8",
       "description": "极简 Linux 发行版，rootfs 仅数 MB，解压快、占用小",
       "eol": "2027-11-01",
-      "sizeBytes": 4028109,
+      "sizeBytes": 4027855,
       "distro": "alpine",
-      "path": "alpine/v3.23/releases/{abi}/alpine-minirootfs-3.23.7-{abi}.tar.gz",
+      "path": "alpine/v3.23/releases/{abi}/alpine-minirootfs-3.23.8-{abi}.tar.gz",
       "paths": {
         "aharou": "alpine-3.23-{abi}.tar.gz"
       },
@@ -115,19 +115,19 @@
         "x86_64": "x86_64"
       },
       "sha256ByAbi": {
-        "arm64": "7dcc7420bcc426a615c0512cc85b4a52e9f89df9c600b93ce78d22e0e9234891",
-        "x86_64": "7f483b63722c9da91206a648175fdbbbf1cf0f5dc1868364a66007204618c961"
+        "arm64": "3f1bd6811370264cc363bb991ff15ac67621b239ea6e25ff2eb22af3d0641473",
+        "x86_64": "56e2810205c17a5dff78cdd7b2c2af4ccdef16f18d765d5bb0f527438b136676"
       }
     },
     {
       "id": "alpine-3.24",
       "name": "Alpine Linux",
-      "version": "3.24.3",
+      "version": "3.24.4",
       "description": "极简 Linux 发行版，rootfs 仅数 MB；当前最新稳定版",
       "eol": "2028-06-01",
-      "sizeBytes": 4029999,
+      "sizeBytes": 4029843,
       "distro": "alpine",
-      "path": "alpine/v3.24/releases/{abi}/alpine-minirootfs-3.24.3-{abi}.tar.gz",
+      "path": "alpine/v3.24/releases/{abi}/alpine-minirootfs-3.24.4-{abi}.tar.gz",
       "paths": {
         "aharou": "alpine-3.24-{abi}.tar.gz"
       },
@@ -136,8 +136,29 @@
         "x86_64": "x86_64"
       },
       "sha256ByAbi": {
-        "arm64": "4d3f80afaebd447c5591a63a73bde380a149fe8b2d85488cafabb2ff97551f50",
-        "x86_64": "f8e1cafba9b1b283b5d30d06f9885c8d2bc161ffe9083ade8e2e157813a53407"
+        "arm64": "4b14c18f7e90a063b61462ea1462a5732c154bf6adad594974fe6487cd98a8de",
+        "x86_64": "cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012"
+      },
+      "preinstalledPaths": {
+        "aharou": "alpine-3.24-3.24.4-general-r1-b42c0175a1d5301cfcd98c33ac7aa1e50cee40b38f26bddef30133fa072a32bd-{abi}.tar.gz"
+      },
+      "sourceSha256ByAbi": {
+        "aharou": {
+          "arm64": "b3626663249e0e78c21528addac5fd7fd8ff37c17062b1e4f02152ed9481b2cc",
+          "x86_64": "fc06f741b65237af8e9bebcf0ecc18ad800a79b7aff011d01547a23ef9328c7b"
+        }
+      },
+      "sourceSizeBytesByAbi": {
+        "aharou": {
+          "arm64": 68079867,
+          "x86_64": 68566619
+        }
+      },
+      "preinstalledSources": {
+        "aharou": {
+          "profile": "general",
+          "recipeRevision": "1"
+        }
       }
     },
     {
