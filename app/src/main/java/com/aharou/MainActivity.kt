@@ -58,6 +58,7 @@ import android.net.Uri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.aharou.core.util.FileLogger
+import com.aharou.core.util.openDocumentOutput
 import com.aharou.core.util.PanelScriptImporter
 import com.aharou.feature.agent.presentation.SharedIntakeHolder
 import com.aharou.feature.agent.presentation.SharedIntakeEntryPoint
@@ -633,9 +634,10 @@ fun AppNavigation(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         val sessionId = pendingExportSessionId
+        pendingExportSessionId = null
         if (uri != null && sessionId != null) {
             scope.launch {
-                val os = withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri) }
+                val os = context.contentResolver.openDocumentOutput(uri)
                 if (os != null) {
                     agentViewModel.exportSession(sessionId, os) { success ->
                         Toast.makeText(
@@ -647,10 +649,7 @@ fun AppNavigation(
                 } else {
                     Toast.makeText(context, context.getString(R.string.chat_export_session_failed), Toast.LENGTH_LONG).show()
                 }
-                pendingExportSessionId = null
             }
-        } else {
-            pendingExportSessionId = null
         }
     }
 

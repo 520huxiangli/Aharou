@@ -583,6 +583,8 @@
     <string name="chat_select_workspace_first">请先选择工作区</string>
     <string name="chat_read_file_failed">无法读取所选文件</string>
     <string name="chat_camera_file_failed">无法创建拍照临时文件</string>
+    <string name="chat_camera_permission_denied">拍照需要相机权限，请在系统应用设置中允许相机访问。</string>
+    <string name="chat_camera_launch_failed">无法打开相机，请确认系统相机可用后重试。</string>
     <string name="chat_upload_failed">上传失败</string>
     <string name="chat_unsupported_image_type">无法识别图片类型，仅支持 jpg/png/gif/webp</string>
     <string name="chat_open_sidebar">打开侧边栏</string>

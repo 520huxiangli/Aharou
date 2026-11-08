@@ -8,7 +8,10 @@ import androidx.core.content.res.ResourcesCompat
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 
 /** 一个可用的终端字体：文件绝对路径 + 展示名（文件名去扩展名）。 */
 data class TerminalFont(
@@ -42,23 +45,30 @@ object TerminalFontManager {
 
     /** 复制字体文件到私有目录并校验可解析；失败返回 null。 */
     fun importFont(context: Context, uri: Uri): TerminalFont? {
-        val fileName = queryDisplayName(context, uri) ?: return null
-        if (File(fileName).extension.lowercase() !in SUPPORTED_EXTENSIONS) return null
-
-        val target = File(fontsDir(context), fileName)
+        var temporary: File? = null
         return try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
+            val fileName = queryDisplayName(context, uri) ?: return null
+            if (File(fileName).extension.lowercase() !in SUPPORTED_EXTENSIONS) return null
+            val target = File(fontsDir(context), fileName)
+            val staged = context.contentResolver.openInputStream(uri)?.use { input ->
+                // 读写或字体校验失败都不能破坏已有的同名字体。
+                val file = File.createTempFile(".font-", ".tmp", target.parentFile)
+                temporary = file
+                file.outputStream().use { output -> input.copyTo(output) }
+                file
             } ?: return null
 
-            // 无效字体文件会在此抛异常，避免把坏文件留在目录里
-            Typeface.createFromFile(target)
+            Typeface.createFromFile(staged)
+            Files.move(staged.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             typefaceCache.remove(target.absolutePath)
             TerminalFont(path = target.absolutePath, displayName = target.nameWithoutExtension)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            FileLogger.e("TerminalFont", "导入字体失败: $fileName", e)
-            target.delete()
+            FileLogger.e("TerminalFont", "导入字体失败", e)
             null
+        } finally {
+            temporary?.delete()
         }
     }
 

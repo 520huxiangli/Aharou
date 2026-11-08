@@ -20,7 +20,9 @@ class GlobalMemorySource @Inject constructor(
 
     override fun listMemories(): List<Memory> {
         if (!memoryRoot.exists()) return emptyList()
-        val files = memoryRoot.listFiles { file -> file.isFile && file.extension == "md" } ?: return emptyList()
+        val files = memoryRoot.listFiles { file ->
+            file.isFile && file.extension == "md" && !isSoulFile(file)
+        } ?: return emptyList()
         
         return files.mapNotNull { file -> MemoryParser.parse(file, MemoryScope.GLOBAL) }
             .sortedBy { it.name.lowercase() }
@@ -56,7 +58,7 @@ class GlobalMemorySource @Inject constructor(
 
     override fun deleteMemory(name: String): Boolean = synchronized(MemoryFileStorage.lock) {
         val file = MemorySource.resolveMemoryFile(memoryRoot, name)
-        if (!file.isFile) return@synchronized false
+        if (!file.isFile || isSoulFile(file)) return@synchronized false
         // 删除是全链路唯一没有回滚路径的写操作：先留一份归档，误删还能用 memory(action=undo) 拉回。
         MemorySource.archiveExistingFile(memoryRoot, name)
         file.delete()

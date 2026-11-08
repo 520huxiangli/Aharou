@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aharou.core.theme.Spacing
+import com.aharou.core.util.openDocumentOutput
 import com.aharou.feature.backup.domain.BackupOptions
 import com.aharou.feature.backup.domain.ProviderConflict
 import com.aharou.feature.backup.domain.ProviderConflictStrategy
@@ -98,7 +99,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
             val pw = pendingExportPassword
             val opts = pendingExportOptions
             scope.launch {
-                val os = withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri) }
+                val os = context.contentResolver.openDocumentOutput(uri)
                 if (os != null) {
                     viewModel.export(pw, opts, os)
                 } else {

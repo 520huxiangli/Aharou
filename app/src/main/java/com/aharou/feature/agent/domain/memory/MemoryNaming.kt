@@ -1,5 +1,7 @@
 package com.aharou.feature.agent.domain.memory
 
+import java.io.File
+
 /**
  * 核心档案：按文件名直接读、不写 frontmatter 的那几份，如 CORE / GLOBAL / SOUL / OPS /
  * PROFILE / SECRETS / LIFE / L0_AGENT / L1_MAP。它们的共同特征是**基名全大写**。
@@ -28,6 +30,10 @@ internal fun isSoulFile(name: String): Boolean {
     return base.substringBeforeLast('.').equals("SOUL", ignoreCase = true) &&
         (base.endsWith(".md", ignoreCase = true) || !base.contains('.'))
 }
+
+// frontmatter 的 name 是人格昵称，不能用它判定文件归属；链接别名也必须检查实际目标。
+internal fun isSoulFile(file: File): Boolean =
+    isSoulFile(file.name) || isSoulFile(file.canonicalFile.name)
 
 /**
  * 行为红线与关系锚点：自动降级永不碰，注入时优先占常驻位。

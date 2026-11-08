@@ -583,6 +583,8 @@
     <string name="chat_select_workspace_first">Please select a workspace first</string>
     <string name="chat_read_file_failed">Cannot read the selected file</string>
     <string name="chat_camera_file_failed">Cannot create camera file</string>
+    <string name="chat_camera_permission_denied">Taking photos requires camera permission. Allow camera access in the system app settings.</string>
+    <string name="chat_camera_launch_failed">Cannot open the camera. Check that the system camera is available and try again.</string>
     <string name="chat_upload_failed">Upload failed</string>
     <string name="chat_unsupported_image_type">Unrecognized image type, only jpg/png/gif/webp supported</string>
     <string name="chat_open_sidebar">Open sidebar</string>

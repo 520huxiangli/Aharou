@@ -126,6 +126,9 @@ interface MemorySource {
         val memory = listMemories().firstOrNull { it.name.equals(name, ignoreCase = true) }
             ?: return MemoryEditResult.NotFound(name)
         val file = memory.file ?: return MemoryEditResult.NotFound(name)
+        if (isSoulFile(file)) {
+            return MemoryEditResult.Error("SOUL_PROTECTED", "人格文件不能用记忆格式编辑，请到设置的人格分区修改")
+        }
         if (expectedVersion != null && expectedVersion != memory.version) {
             return MemoryEditResult.VersionConflict(memory.name, memory.version, memory.content)
         }
@@ -218,6 +221,7 @@ interface MemorySource {
         val name = frontmatter["name"]?.toString()?.takeIf { it.isNotBlank() }
             ?: fileName.removeSuffix(".md").replace(Regex("-\\d{8}-\\d{6}(?:-\\d+)?$"), "")
         val target = resolveMemoryFile(directory, name)
+        if (isSoulFile(file) || isSoulFile(target)) return false
         if (target.exists() && archiveExistingFile(directory, name) == null) return false
         if (!MemoryFileStorage.write(target, text)) return false
         return file.delete()

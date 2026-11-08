@@ -64,6 +64,7 @@ internal object MemoryFileStorage {
      * 归档、恢复归档这类「内容原样搬运」的写入不传版本，走无条件分支。
      */
     fun write(file: File, content: String, expectedVersion: String? = null): Boolean = synchronized(lock) {
+        if (isSoulFile(file)) return@synchronized false
         if (expectedVersion != null) {
             val current = runCatching { if (file.isFile) file.readText() else null }.getOrNull()
             if (conflictOf(file.nameWithoutExtension, expectedVersion, current) != null) {
@@ -104,10 +105,12 @@ internal object MemoryFileStorage {
         }
         val root = first.file?.parentFile ?: return@synchronized false
         val files = group.map { it.file!! }
+        if (files.any { isSoulFile(it) }) return@synchronized false
         if (files.any { it.parentFile != root } || files.distinct().size != files.size) return@synchronized false
         // 组员在读取后是否被改过：重新解析（含版本）与调用方手里的比对，不一致就整簇放弃。
         if (group.any { MemoryParser.parse(it.file!!, it.scope) != it }) return@synchronized false
         val target = MemorySource.resolveMemoryFile(root, name)
+        if (isSoulFile(target)) return@synchronized false
         val outsideGroup = root.listFiles()?.any {
             it !in files && (it.name.equals(target.name, ignoreCase = true) ||
                 (it.isFile && it.extension == "md" &&
@@ -161,6 +164,12 @@ internal object MemoryFileStorage {
     ): MemoryWriteResult = synchronized(lock) {
         try {
             val file = MemorySource.resolveMemoryFile(root, name)
+            if (isSoulFile(file)) {
+                return@synchronized MemoryWriteResult.Failure(
+                    "PROTECTED_FILE",
+                    "SOUL.md 是人格文件，frontmatter 用 icon/style/lang；用记忆格式写会抹掉头像与风格。改人格请直接写文件或在设置里改"
+                )
+            }
             val currentText = if (file.isFile) file.readText() else null
             conflictOf(name, expectedVersion, currentText)?.let { return@synchronized it }
             val existing = if (currentText != null) {

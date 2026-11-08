@@ -660,30 +660,8 @@ fun AIChatPanel(
         handlePickedAttachments(uris, images = true)
     }
 
-    // 拍照：输出到 cache 临时文件（FileProvider 授权 uri），拍完按图片附件处理。
-    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        val uri = cameraPhotoUri
-        cameraPhotoUri = null
-        if (success && uri != null) {
-            handlePickedAttachments(listOf(uri), images = true)
-        }
-    }
-    fun takePhoto() {
-        val photoFile = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
-        val uri = runCatching {
-            androidx.core.content.FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                photoFile
-            )
-        }.getOrNull()
-        if (uri == null) {
-            Toast.makeText(context, context.getString(R.string.chat_camera_file_failed), Toast.LENGTH_SHORT).show()
-            return
-        }
-        cameraPhotoUri = uri
-        takePictureLauncher.launch(uri)
+    val takePhoto = rememberChatCameraCapture { uri ->
+        handlePickedAttachments(listOf(uri), images = true)
     }
 
     // 缓冲流式文本与思考过程：流式期间跟随 streamingText / streamingReasoning；流式刚结束而数据库尚未完成派发期间（messages 末尾仍是 USER/TOOL 消息），
@@ -1525,7 +1503,7 @@ fun AIChatPanel(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
-                    onTakePhoto = ::takePhoto,
+                    onTakePhoto = takePhoto,
                     slashCommands = slashCommands,
                     queuedRequests = queuedRequests,
                     onRemoveQueued = { viewModel.removeQueuedRequest(it) },
