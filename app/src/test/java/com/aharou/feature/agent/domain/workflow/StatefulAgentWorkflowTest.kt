@@ -134,7 +134,9 @@ class StatefulAgentWorkflowTest {
         // 记忆整理入口：这些用例不会走到自动整理，Lazy 里放个 relaxed mock 即可（注入形式是 dagger.Lazy 为了断环）。
         memoryCompactor = Lazy { mockk<MemoryCompactor>(relaxed = true) },
         // 幂等表无依赖、纯内存，直接给真实例：这些用例不覆盖重复调用回放。
-        idempotencyStore = ToolCallIdempotencyStore()
+        idempotencyStore = ToolCallIdempotencyStore(),
+        // 服务档位：这些用例不覆盖档位注入，relaxed mock 下 apiValueFor 返回 null（等价不发送）。
+        modelServiceTierRepository = mockk(relaxed = true)
     ), recordPrivateCalls = true)
 
     init {
