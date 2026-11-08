@@ -46,7 +46,8 @@ internal object NapCatRootfs {
                                     prefix = if (name.substringBefore('/') in setOf("bin", "etc", "usr", "root", "dev", "proc", "sys", "tmp", "var", "lib", "lib64", "sbin", "home", "opt", "run", "mnt", "media", "srv", "boot")) "" else name.substringBefore('/') + "/"
                                 }
                                 val root = prefix.orEmpty()
-                                if (name.isNotEmpty() && name != root.removeSuffix("/")) {
+                                // 外包目录自身的条目要跳过：否则名字被剥成空串，写出一个 "/" 条目。
+                                if (name.isNotEmpty() && name != root && name != root.removeSuffix("/")) {
                                     check(root.isEmpty() || name.startsWith(root)) { "Unexpected rootfs archive layout" }
                                     current.name = name.removePrefix(root)
                                     if (current.isLink) current.linkName = current.linkName.removePrefix("./").removePrefix(root)
