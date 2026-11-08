@@ -101,7 +101,8 @@ class ConfigNapCatFields @Inject constructor(
         ))
         register(ReadOnlyField("$PREFIX.runtime", "运行环境", "安装运行阶段与进度，不含登录凭据。", ConfigSchema.Json) {
             val s = runtime.get().state.value
-            ConfigValue.Obj(mapOf("phase" to ConfigValue.Str(s.phase.toString()), "progress" to ConfigValue.Double(s.progress.toDouble())))
+            ConfigValue.Obj(mapOf("phase" to ConfigValue.Str(s.phase.toString()),
+                "progress" to ConfigValue.Double(s.progress.toDouble()), "stage" to ConfigValue.Str(s.stage)))
         })
         register(ReadOnlyField("$PREFIX.login", "登录状态", "只返回登录状态与账号，不返回二维码。", ConfigSchema.Json) {
             val s = runtime.get().login.value

@@ -122,12 +122,14 @@
 | 填 token / app_id / app_secret / base_url / 代理 | `TelegramBotSection.kt:121-140`（token 输入） | 有 | `config` `im.<渠道>.bot_token` / `.app_id` / `.app_secret` / `.base_url` / `.proxy`（`ConfigImFields.kt:45-221`） | 凭证是 SENSITIVE，写入需弹确认 |
 | 看连接状态 | 各平台机器人设置页状态行 | 有 | `config get im.<渠道>.state` / `.error`，`ConfigImFields` 读取四个桥接实例的运行状态 | 只读，错误脱敏，不返回身份或凭据 |
 | 向当前 IM 会话发文件/图片 | 用户在 IM 客户端聊天（无 App 内入口） | 有 | `sendToChat`（`SendImFileTool.kt`） | 按调用会话映射到来源聊天，不回退到最近活跃聊天；支持个人 QQ |
-| 安装、更新个人 QQ 运行环境 | `NapCatBotSection.kt` 安装与更新 | 有 | `napcat action=install/update`（`feature/im/NapCatTool.kt`） | 按需下载独立 Debian、Linux QQ 和 NapCat，不更改默认开发容器 |
+| 安装、更新和取消个人 QQ 运行环境安装 | `NapCatBotSection.kt` 安装、更新与取消 | 有 | `napcat action=install/update/cancel_install`（`feature/im/NapCatTool.kt`） | 独立安装前台服务与单一安装任务；页面退出不取消，不更改默认开发容器 |
 | 启动、停止个人 QQ | `NapCatBotSection.kt` 运行管理 | 有 | `napcat action=start/stop`；`config im.qq_napcat.enabled` | UI 与配置调用同一前台服务 |
 | 个人 QQ 登录、账号状态与退出 | `NapCatBotSection.kt` 登录区域、`NapCatWebUiSheet.kt` | 有 | `napcat action=login/refresh_qr/logout/status` | 扫码、账密与验证码需用户在登录界面完成；工具不返回密码和登录二维码 |
 | 个人 QQ 私聊、群聊响应与允许列表 | `NapCatBotSection.kt` 消息响应 | 有 | `config im.qq_napcat.respond_private/respond_groups/require_mention/respond_self`；`allowed_users/allowed_groups` 集合 add/remove | 自消息过滤保留防循环；绑定记录按登录账号隔离 |
 | 个人 QQ 新会话工作区与模型 | `NapCatBotSection.kt` 工作区、模型选择 | 有 | `config im.qq_napcat.session_defaults` 对象 | 使用已有会话字段；未指定且没有当前工作区时自动创建机器人工作区，不切换当前项目 |
-| 个人 QQ 日志与高级管理 | `NapCatBotSection.kt` 日志和 WebUI | 有 | `napcat action=logs/webui/status`；`config im.qq_napcat.runtime/login/state/version/error` | 工具提供脱敏日志与不含令牌的本机入口，完整交互在内嵌 WebUI |
+| 个人 QQ 日志与高级管理 | `NapCatBotSection.kt` 日志和 WebUI | 有 | `napcat action=logs/webui/status`；`config im.qq_napcat.runtime/login/state/version/error` | 安装阶段由 status.stage 与 runtime.stage 提供；实时脱敏命令日志可查，完整交互在内嵌 WebUI |
+| 查看个人 QQ 的群、群成员与好友 | NapCat WebUI 内自行查看 | 有 | `napcat action=groups/group_members/friends`（`NapCatTool.kt`） | 只返回群号群名人数、成员昵称群名片角色、好友昵称备注；手机号与邮箱等联系方式不提供给模型 |
+| 修改个人 QQ 环境的配置与插件 | 无独立界面，仅高级 WebUI | 有 | `napcat action=exec`（带 `command`） | 在机器人自己的 Debian 环境执行命令，输出脱敏并限 12k 字符；需 EXECUTE_COMMANDS 能力，PLAN 模式不可用 |
 
 ## 10. 会话
 

@@ -63,7 +63,14 @@ class NapCatPackageInstaller @Inject constructor(
         )
     }
 
-    suspend fun install(update: Boolean = false, onProgress: (Float) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun install(
+        update: Boolean = false,
+        onStage: (String) -> Unit = {},
+        onLog: (String) -> Unit = {},
+        onProgress: (Float) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        suspend fun command(program: String, args: List<String>) = runCommand(program, args, onLog)
+        onStage("preparing")
         val architecture = when (Build.SUPPORTED_ABIS.firstOrNull()) {
             "arm64-v8a" -> "aarch64"
             "x86_64" -> "x86_64"
@@ -80,39 +87,54 @@ class NapCatPackageInstaller @Inject constructor(
         File(base, "data/config").mkdirs()
         File(base, "data/plugins").mkdirs()
         if (!container.isInstalledFor(profile())) {
+            onStage("rootfs_download")
             val rootfs = download(NapCatRootfs.url(architecture), "napcat-debian-$architecture.tar.xz", NapCatRootfs.sha256(architecture)) {
                 onProgress(it * 0.2f)
             }
+            onStage("rootfs_unpack")
             NapCatRootfs.normalize(rootfs, archive)
             container.installRootfsIfNeed(profile())
         }
+        writeAtomic(File(base, NapCatAptSource.SOURCE_FILE), NapCatAptSource.sources)
+        val lists = File(base, "${NapCatAptSource.LISTS_DIRECTORY}/partial")
+        check(lists.isDirectory || lists.mkdirs()) { "Cannot prepare NapCat apt index directory" }
+        onLog("APT source: mirrors.huaweicloud.com (Debian trixie)")
         onProgress(0.25f)
-        runCommand("/usr/bin/apt-get", listOf("update"))
-        runCommand("/usr/bin/apt-get", listOf("install", "-y", "--no-install-recommends",
+        onStage("dependency_index")
+        command("/usr/bin/apt-get", NapCatAptSource.arguments("update"))
+        onProgress(0.3f)
+        onStage("dependencies")
+        command("/usr/bin/apt-get", NapCatAptSource.arguments("install", listOf(
             "ca-certificates", "xvfb", "xauth", "dpkg", "unzip", "libnss3", "libatk1.0-0t64",
             "libatk-bridge2.0-0t64", "libcups2t64", "libdrm2", "libxkbcommon0", "libxcomposite1",
             "libxdamage1", "libxfixes3", "libxrandr2", "libgbm1", "libasound2t64", "libgtk-3-0t64", "libgssapi-krb5-2",
-            "libnotify4", "libsecret-1-0", "libxss1", "libxtst6", "libatomic1", "fonts-noto-cjk"))
+            "libnotify4", "libsecret-1-0", "libxss1", "libxtst6", "libatomic1", "fonts-noto-cjk")))
         onProgress(0.4f)
+        onStage("qq_download")
         val qq = download(selected.qqUrl, "linuxqq-${selected.qqVersion}-$debArchitecture.deb") { onProgress(0.4f + it * 0.2f) }
+        onStage("napcat_download")
         val napcat = download(selected.napcatUrl, "NapCat-${selected.version}.Shell.zip") { onProgress(0.6f + it * 0.2f) }
+        onStage("extract")
         val release = "release-${System.currentTimeMillis()}"
         val guest = "/napcat/releases/$release"
         File(base, "releases/$release").mkdirs()
         // PRoot 下 dpkg-deb 内部调用 tar 恢复目录权限会报 ENOENT，显式管道保留权限及两端退出检查。
-        runCommand("/bin/bash", listOf("-c", "set -euo pipefail; mkdir -p -- \"\$2\"; /usr/bin/dpkg-deb --fsys-tarfile \"\$1\" | /usr/bin/tar --extract --preserve-permissions --file=- --directory=\"\$2\"", "napcat-extract", guestPath(qq), "$guest/qq"))
+        command("/bin/bash", listOf("-c", "set -euo pipefail; mkdir -p -- \"\$2\"; /usr/bin/dpkg-deb --fsys-tarfile \"\$1\" | /usr/bin/tar --extract --preserve-permissions --file=- --directory=\"\$2\"", "napcat-extract", guestPath(qq), "$guest/qq"))
         val napcatDir = "$guest/qq/opt/QQ/resources/app/app_launcher/napcat"
-        runCommand("/usr/bin/unzip", listOf("-q", guestPath(napcat), "-d", napcatDir))
+        command("/usr/bin/unzip", listOf("-q", guestPath(napcat), "-d", napcatDir))
         val app = File(base, "releases/$release/qq/opt/QQ/resources/app")
         val packageFile = File(app, "package.json")
         check(packageFile.isFile) { "QQ package layout is incompatible" }
         check(JSONObject(packageFile.readText()).optString("version") == selected.qqVersion) { "QQ package version does not match the official installer" }
-        check(File(base, "releases/$release/qq/opt/QQ/resources/app/app_launcher/napcat/napcat.mjs").isFile) { "NapCat package layout is incompatible" }
+        // NapCat 4.18.15 起部分版本改用 napcat.cjs 入口，写死 .mjs 会在升级后起不来。
+        val entry = listOf("napcat.mjs", "napcat.cjs").map { File(base, "releases/$release/qq/opt/QQ/resources/app/app_launcher/napcat/$it") }
+            .firstOrNull { it.isFile } ?: error("NapCat package layout is incompatible")
         app.resolve("loadNapCat.js").writeText(
-            "const {pathToFileURL}=require('node:url'); import(pathToFileURL('$napcatDir/napcat.mjs').href);\n"
+            "const {pathToFileURL}=require('node:url'); import(pathToFileURL('$napcatDir/${entry.name}').href);\n"
         )
         packageFile.writeText(JSONObject(packageFile.readText()).put("main", "./loadNapCat.js").toString())
-        runCommand("/bin/bash", listOf("-c", "set -e; for name in config plugins; do target=\"\$1/napcat/\$name\"; if [ -d \"\$target\" ] && [ ! -L \"\$target\" ]; then if [ \"\$name\" = plugins ]; then cp -an \"\$target/.\" \"/napcat/data/\$name/\"; fi; mv \"\$target\" \"\$target.bundled\"; fi; ln -s \"/napcat/data/\$name\" \"\$target\"; done", "napcat-install", "$guest/qq/opt/QQ/resources/app/app_launcher"))
+        command("/bin/bash", listOf("-c", "set -e; for name in config plugins; do target=\"\$1/napcat/\$name\"; if [ -d \"\$target\" ] && [ ! -L \"\$target\" ]; then if [ \"\$name\" = plugins ]; then cp -an \"\$target/.\" \"/napcat/data/\$name/\"; fi; mv \"\$target\" \"\$target.bundled\"; fi; ln -s \"/napcat/data/\$name\" \"\$target\"; done", "napcat-install", "$guest/qq/opt/QQ/resources/app/app_launcher"))
+        onStage("configure")
         val metadata = JSONObject().put("version", selected.version).put("qqVersion", selected.qqVersion).put("release", release)
         configure(release)
         val output = manifest.startWrite()
@@ -139,14 +161,20 @@ class NapCatPackageInstaller @Inject constructor(
         if (config.accountId.matches(Regex("[0-9]{5,20}"))) ensureOneBotAccount(config.accountId)
         val release = releaseOverride ?: installed()?.getString("release") ?: error("NapCat is not installed")
         require(release.matches(Regex("release-[0-9]+")))
-        writeAtomic(File(base, "launch.sh"), "#!/bin/bash\nset -e\ncd '/napcat/releases/$release/qq/opt/QQ/resources/app/app_launcher/napcat'\nexec /usr/bin/xvfb-run -a '/napcat/releases/$release/qq/opt/QQ/qq' --no-sandbox --disable-dev-shm-usage\n")
+        // 屏幕参数显式给定：xvfb-run 各发行版默认值不一，1x1x8 这类会卡住 QQ 初始化。
+        writeAtomic(File(base, "launch.sh"), "#!/bin/bash\nset -e\ncd '/napcat/releases/$release/qq/opt/QQ/resources/app/app_launcher/napcat'\nexec /usr/bin/xvfb-run -a -s '-screen 0 1280x1024x24' '/napcat/releases/$release/qq/opt/QQ/qq' --no-sandbox --disable-dev-shm-usage\n")
     }
 
     suspend fun ensureOneBotAccount(account: String) = withContext(Dispatchers.IO) {
         require(account.matches(Regex("[0-9]{5,20}")))
         val dir = File(base, "data/config")
         val file = NapCatLocalConfig.accountFile(dir, account)
-        if (!file.isFile) writeAtomic(file, File(dir, "onebot11.json").readText())
+        // 登录后 NapCat 会自己生成一份空 network 的账号配置，而账号级文件优先于模板；
+        // 只判“文件不存在”会让先登录再配置的账号永远开不了 HTTP/WebSocket。
+        val template = File(dir, "onebot11.json")
+        if (!template.isFile) return@withContext
+        val usable = runCatching { NapCatLocalConfig.hasEnabledServer(JSONObject(file.readText())) }.getOrDefault(false)
+        if (!usable) writeAtomic(file, template.readText())
     }
 
     suspend fun syncConnection(account: String? = null) = withContext(Dispatchers.IO) {
@@ -287,7 +315,7 @@ class NapCatPackageInstaller @Inject constructor(
 
     private fun guestPath(file: File): String = "/napcat/" + file.relativeTo(base).invariantSeparatorsPath
 
-    private suspend fun runCommand(program: String, args: List<String>) = withTimeout(30 * 60 * 1000L) {
+    private suspend fun runCommand(program: String, args: List<String>, onLog: (String) -> Unit) = withTimeout(30 * 60 * 1000L) {
         withContext(Dispatchers.IO) {
             val tracked = engine.startTrackedStdioProcess(program, args, null, "napcat:install",
                 extraEnv = mapOf("DEBIAN_FRONTEND" to "noninteractive"), profile = profile(), inheritUserConfig = false)
@@ -298,10 +326,12 @@ class NapCatPackageInstaller @Inject constructor(
                 else tracked.process.destroyForcibly()
             }
             try {
+                tracked.process.outputStream.close()
+                onLog("Command started: $program")
                 coroutineScope {
-                    val tail = CommandTail()
-                    val stdout = async { tracked.process.inputStream.bufferedReader().useLines { it.forEach(tail::append) } }
-                    val stderr = async { tracked.process.errorStream.bufferedReader().useLines { it.forEach(tail::append) } }
+                    val tail = NapCatInstallOutput(onLog)
+                    val stdout = async { readNapCatCommandOutput(tracked.process.inputStream, { tracked.process.isAlive }, tail::append) }
+                    val stderr = async { readNapCatCommandOutput(tracked.process.errorStream, { tracked.process.isAlive }, tail::append) }
                     val finished = try {
                         runInterruptible { tracked.process.waitFor(29, TimeUnit.MINUTES) }
                     } finally {
@@ -310,10 +340,17 @@ class NapCatPackageInstaller @Inject constructor(
                     check(finished) { "NapCat installation command timed out" }
                     stdout.await(); stderr.await()
                     check(tracked.process.exitValue() == 0) { "NapCat installation command failed: $program (${tracked.process.exitValue()}): ${tail.text()}" }
+                    onLog("Command completed: $program")
                 }
             } finally {
-                terminate()
-                if (tracked.process.waitFor(5, TimeUnit.SECONDS)) tracked.clearLedger()
+                try {
+                    terminate()
+                    if (tracked.process.waitFor(5, TimeUnit.SECONDS)) tracked.clearLedger()
+                } finally {
+                    runCatching { tracked.process.inputStream.close() }
+                    runCatching { tracked.process.errorStream.close() }
+                    runCatching { tracked.process.outputStream.close() }
+                }
             }
         }
     }
@@ -329,14 +366,5 @@ class NapCatPackageInstaller @Inject constructor(
     private fun newToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }
         .joinToString("") { "%02x".format(it) }
 
-    private class CommandTail {
-        private val lines = ArrayDeque<String>()
-        @Synchronized fun append(line: String) {
-            if (Regex("token|password|credential", RegexOption.IGNORE_CASE).containsMatchIn(line)) return
-            lines.addLast(line.replace(Regex("https?://[^\\s]+"), "[url]").take(600))
-            while (lines.size > 20) lines.removeFirst()
-        }
-        @Synchronized fun text(): String = lines.joinToString("; ").takeLast(1600)
-    }
 
 }

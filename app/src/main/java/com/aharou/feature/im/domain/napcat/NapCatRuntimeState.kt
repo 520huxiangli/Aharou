@@ -4,7 +4,8 @@ data class NapCatRuntimeState(
     val phase: String = "not_installed",
     val progress: Float = 0f,
     val version: String = "",
-    val error: String = ""
+    val error: String = "",
+    val stage: String = ""
 )
 
 data class NapCatLoginState(

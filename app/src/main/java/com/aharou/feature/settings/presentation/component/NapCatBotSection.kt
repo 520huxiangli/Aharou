@@ -36,6 +36,7 @@ import com.aharou.core.ui.AppSwitch
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.im.domain.ImChannelState
 import com.aharou.feature.settings.presentation.NapCatViewModel
+import com.aharou.feature.im.domain.napcat.NapCatInstallStage
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,10 +89,22 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
                 "stopped" -> R.string.napcat_phase_stopped
                 else -> R.string.napcat_phase_error
             }))
-            if (working) LinearProgressIndicator(
-                progress = { state.progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg)
-            )
+            if (state.phase == "installing") {
+                NapHint(NapCatInstallStage.label(state.stage))
+                logs.lastOrNull()?.let { line ->
+                    Text(viewModel.redact(line), style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = Spacing.lg))
+                }
+            }
+            if (working) {
+                if (state.phase == "installing" && NapCatInstallStage.isDownload(state.stage)) {
+                    LinearProgressIndicator(progress = { state.progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg))
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg))
+                }
+            }
+            if (state.phase == "installing") NapAction(R.string.common_cancel, true, viewModel::cancelInstallation)
             NapAction(R.string.napcat_install, !working && (state.phase == "not_installed" ||
                 (state.phase == "error" && state.version.isBlank())), viewModel::install)
             NapAction(R.string.napcat_update, !working && !running && state.version.isNotBlank(), viewModel::update)

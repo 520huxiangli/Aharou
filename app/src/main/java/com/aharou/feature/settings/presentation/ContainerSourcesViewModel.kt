@@ -62,10 +62,10 @@ sealed interface ContainerSourcesBusy {
  * 而容器里还是官方源。持久化的一份仅用于容器重建后重放。
  */
 data class ContainerSourcesUiState(
-    val mirror: ContainerMirrorMode = ContainerMirrorMode.OFFICIAL,
+    val mirror: ContainerMirrorMode = ContainerMirrorMode.CHINA,
     /** 上次实际选中的镜像站主机名，仅用于副标题展示（为空说明还没换过或已切回官方）。 */
     val mirrorHost: String = "",
-    val dns: ContainerDnsMode = ContainerDnsMode.SYSTEM,
+    val dns: ContainerDnsMode = ContainerDnsMode.ALI_DNSPOD,
     val busy: ContainerSourcesBusy? = null,
     val message: String? = null,
     val messageIsError: Boolean = false,
@@ -74,9 +74,9 @@ data class ContainerSourcesUiState(
 
 /** 持久化的选择。容器重建后按这份重放。 */
 data class ContainerSourcesSettings(
-    val mirror: ContainerMirrorMode = ContainerMirrorMode.OFFICIAL,
+    val mirror: ContainerMirrorMode = ContainerMirrorMode.CHINA,
     val mirrorHost: String = "",
-    val dns: ContainerDnsMode = ContainerDnsMode.SYSTEM
+    val dns: ContainerDnsMode = ContainerDnsMode.ALI_DNSPOD
 )
 
 private val Context.containerSourcesDataStore by preferencesDataStore(
@@ -125,10 +125,10 @@ class ContainerSourcesRepository @Inject constructor(
     }
 
     private fun String?.toMirrorMode(): ContainerMirrorMode =
-        ContainerMirrorMode.entries.firstOrNull { it.name == this } ?: ContainerMirrorMode.OFFICIAL
+        ContainerMirrorMode.entries.firstOrNull { it.name == this } ?: ContainerMirrorMode.CHINA
 
     private fun String?.toDnsMode(): ContainerDnsMode =
-        ContainerDnsMode.entries.firstOrNull { it.name == this } ?: ContainerDnsMode.SYSTEM
+        ContainerDnsMode.entries.firstOrNull { it.name == this } ?: ContainerDnsMode.ALI_DNSPOD
 }
 
 /** 一次容器内改写的结局。 */

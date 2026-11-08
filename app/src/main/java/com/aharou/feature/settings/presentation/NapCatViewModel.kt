@@ -65,6 +65,7 @@ class NapCatViewModel @Inject constructor(
 
     fun install() = operate { runtime.install() }
     fun update() = operate { runtime.update() }
+    fun cancelInstallation() { viewModelScope.launch { runtime.cancelInstallation() } }
     fun setEnabled(enabled: Boolean) = operate {
         settings.setEnabled(enabled)
         if (enabled) NapCatBotService.start(context) else NapCatBotService.stop(context)

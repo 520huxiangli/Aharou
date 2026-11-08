@@ -34,6 +34,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -134,8 +139,9 @@ class ImBotBridgeTest {
     }
 
     private fun message(id: Long, text: String = "question", chat: String = "chat",
-        attachments: List<ImAttachment> = emptyList(), group: Boolean = false, mentioned: Boolean = false) =
-        ImUpdate.Message(ImInboundMessage(id, chat, "sender", "name", "title", text, group,
+        attachments: List<ImAttachment> = emptyList(), group: Boolean = false, mentioned: Boolean = false,
+        sender: String = "sender", senderName: String = "name", chatTitle: String = "title") =
+        ImUpdate.Message(ImInboundMessage(id, chat, sender, senderName, chatTitle, text, group,
             id.toString(), null, mentioned, attachments))
     private fun callback(id: Long, data: String = "a:y:approval", chat: String = "chat") =
         ImUpdate.Callback(ImCallbackQuery(id, "callback-$id", chat, "sender", "card", data))
@@ -143,12 +149,60 @@ class ImBotBridgeTest {
         while (!condition()) delay(5)
     }
     private fun attachment(name: String) = ImAttachment(ImAttachment.Kind.FILE, fileId = name, fileName = name)
+    private fun messageContext(text: String): JsonObject = Json.parseToJsonElement(
+        text.substringAfter("<im_message type=\"data\">\n").substringBefore("\n</im_message>")
+    ).jsonObject
+    private fun AgentTurnRequest.bodyText(): String = messageContext(text).getValue("text").jsonPrimitive.content
+
+    @Test fun `普通入站消息逐条携带身份到落库文本和模型且保持聊天隔离`() = runBlocking {
+        val f = Fixture(id = "qq_napcat")
+        try {
+            f.start()
+            f.push(
+                message(1, "first", group = true, mentioned = true, sender = "123", senderName = "甲", chatTitle = "测试群"),
+                message(2, "second", group = true, mentioned = true, sender = "456", senderName = "乙", chatTitle = "测试群"),
+                message(3, "private", chat = "other", sender = "789", senderName = "丙", chatTitle = "私聊")
+            )
+            until { f.settings.saved == "4" }
+            assertEquals(3, f.calls.size)
+            val expectedSenders = listOf("123", "456", "789")
+            val expectedNames = listOf("甲", "乙", "丙")
+            f.calls.forEachIndexed { index, request ->
+                assertEquals(request.text, request.modelRequest)
+                val data = messageContext(request.text)
+                assertEquals("qq_napcat", data.getValue("channelId").jsonPrimitive.content)
+                assertEquals(if (index < 2) "chat" else "other", data.getValue("chatId").jsonPrimitive.content)
+                assertEquals(expectedSenders[index], data.getValue("senderId").jsonPrimitive.content)
+                assertEquals(expectedNames[index], data.getValue("senderName").jsonPrimitive.content)
+                assertEquals(if (index < 2) "测试群" else "私聊", data.getValue("chatTitle").jsonPrimitive.content)
+                assertEquals(index < 2, data.getValue("isGroup").jsonPrimitive.boolean)
+                assertEquals(if (index < 2) "im-qq_napcat-chat" else "im-qq_napcat-other", request.sessionId)
+            }
+            assertEquals(listOf("first", "second", "private"), f.calls.map { it.bodyText() })
+        } finally { f.stop() }
+    }
+
+    @Test fun `纯附件成功后占位正文和发送者同时进入模型而空消息仍跳过`() = runBlocking {
+        val f = Fixture()
+        val good = File.createTempFile("im-context", ".bin", context.cacheDir).apply { writeText("ok") }
+        f.client.downloader = { good }
+        try {
+            f.start()
+            f.push(message(1, ""), message(2, "", attachments = listOf(attachment("good.bin"))))
+            until { f.settings.saved == "3" }
+            val request = f.calls.single()
+            assertEquals(context.getString(R.string.im_attachment_only_hint), request.bodyText())
+            assertEquals("sender", messageContext(request.text).getValue("senderId").jsonPrimitive.content)
+            assertEquals(request.text, request.modelRequest)
+            assertEquals(1, request.inputAttachments.size)
+        } finally { f.stop() }
+    }
 
     @Test fun buttonApprovalUnblocksTurnAndKeepsOrdinaryMessagesSerial() = runBlocking {
         val f = Fixture()
         val approved = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
-        f.turn = { request -> if (request.text == "first") {
+        f.turn = { request -> if (request.bodyText() == "first") {
             assertEquals(PermissionChoice.ONCE, f.permissions.awaitApproval(f.approval(request)))
             approved.complete(Unit)
             finish.await()
@@ -159,11 +213,11 @@ class ImBotBridgeTest {
             until { f.client.cards.isNotEmpty() }
             f.push(message(2, "second"), callback(3), callback(3))
             withTimeout(5_000) { approved.await() }
-            assertEquals(listOf("first"), f.calls.map { it.text })
+            assertEquals(listOf("first"), f.calls.map { it.bodyText() })
             assertEquals("1", f.settings.saved)
             finish.complete(Unit)
             until { f.settings.saved == "4" }
-            assertEquals(listOf("first", "second"), f.calls.map { it.text })
+            assertEquals(listOf("first", "second"), f.calls.map { it.bodyText() })
         } finally { f.stop() }
     }
 
@@ -300,7 +354,7 @@ class ImBotBridgeTest {
         try {
             f.start(); f.push(message(1, "body", attachments = listOf(attachment("bad.bin"))))
             until { f.settings.saved == "2" }
-            assertEquals("body", f.calls.single().text)
+            assertEquals("body", f.calls.single().bodyText())
             assertTrue(f.calls.single().modelRequest.contains("bad.bin"))
         } finally { f.stop() }
     }
@@ -324,7 +378,7 @@ class ImBotBridgeTest {
         val f = Fixture(id = "telegram")
         val approved = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
-        f.turn = { request -> if (request.text == "first") {
+        f.turn = { request -> if (request.bodyText() == "first") {
             f.permissions.awaitApproval(f.approval(request))
             approved.complete(Unit)
             finish.await()
@@ -384,7 +438,7 @@ class ImBotBridgeTest {
     @Test fun duplicateInflightOrdinaryMessageIsQueuedOnlyOnce() = runBlocking {
         val f = Fixture()
         val finish = CompletableDeferred<Unit>()
-        f.turn = { if (it.text == "first") finish.await() }
+        f.turn = { if (it.bodyText() == "first") finish.await() }
         try {
             f.start(); f.push(message(1, "first"))
             until { f.calls.size == 1 }
@@ -393,7 +447,7 @@ class ImBotBridgeTest {
             assertEquals(1, f.calls.size)
             finish.complete(Unit)
             until { f.settings.saved == "3" }
-            assertEquals(listOf("first", "second"), f.calls.map { it.text })
+            assertEquals(listOf("first", "second"), f.calls.map { it.bodyText() })
         } finally { f.stop() }
     }
 

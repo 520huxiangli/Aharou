@@ -10,6 +10,15 @@
     <string name="napcat_status">Status</string>
     <string name="napcat_phase_not_installed">Not installed</string>
     <string name="napcat_phase_installing">Installing</string>
+    <string name="napcat_stage_preparing">Preparing installation</string>
+    <string name="napcat_stage_rootfs_download">Downloading Debian environment</string>
+    <string name="napcat_stage_rootfs_unpack">Extracting Debian environment</string>
+    <string name="napcat_stage_dependency_index">Updating dependency index</string>
+    <string name="napcat_stage_dependencies">Installing runtime dependencies</string>
+    <string name="napcat_stage_qq_download">Downloading Linux QQ</string>
+    <string name="napcat_stage_napcat_download">Downloading NapCat</string>
+    <string name="napcat_stage_extract">Extracting application packages</string>
+    <string name="napcat_stage_configure">Saving installation configuration</string>
     <string name="napcat_phase_installed">Installed</string>
     <string name="napcat_phase_starting">Starting</string>
     <string name="napcat_phase_running">Running</string>

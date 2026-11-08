@@ -565,6 +565,9 @@ class ContainerInstaller @Inject constructor(
             is RootfsSource.RemoteSsh -> { /* 无本地 rootfs，上面已提前 return */ }
         }
         configureResolvConf(dest)
+        // 自定义镜像（Debian/Ubuntu 等）首次初始化同样要把设置里的源与 DNS 写进去，
+        // 否则首次装基础工具会回到官方源，在国内网络下卡到超时。
+        applySourcePreferences(dest)
         prootTmpDirFor(profile).mkdirs()
         repairRootfsCompatibility(dest)
         verifyRootfsReady(dest, profile)
@@ -589,21 +592,10 @@ class ContainerInstaller @Inject constructor(
         writeResolvConf(rootfs, dnsServersFor(settings.dns), settings.dns)
     }
 
-    /** 把 apk 源改成国内镜像；分支沿用 rootfs 自带的（导入的其它 Alpine 版本也能对上）。 */
+    /** 按镜像自带的包管理器换成国内源（apk / apt）。 */
     private fun writeChinaMirror(rootfs: File, preferredHost: String) {
-        val repositories = File(rootfs, "etc/apk/repositories")
-        val branch = runCatching {
-            if (repositories.isFile) {
-                Regex("alpine/([^/]+)/").find(repositories.readText())?.groupValues?.get(1)
-            } else null
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "v3.24"
         val host = preferredHost.ifBlank { DEFAULT_CHINA_MIRROR }
-        runCatching {
-            repositories.writeText(
-                "http://$host/alpine/$branch/main\nhttp://$host/alpine/$branch/community\n"
-            )
-            FileLogger.i(TAG, "首次安装已按设置换成国内源：$host（$branch）")
-        }.onFailure { FileLogger.w(TAG, "写容器 apk 源失败：${it.message}") }
+        ContainerSourceFiles.writeChinaMirror(rootfs, host) { FileLogger.i(TAG, it) }
     }
 
     /** 按设置写 resolv.conf（覆盖 [configureResolvConf] 的公共 DNS 默认值）。 */

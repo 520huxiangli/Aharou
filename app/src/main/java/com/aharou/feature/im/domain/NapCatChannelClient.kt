@@ -312,6 +312,12 @@ class NapCatChannelClient @Inject constructor(
     }
 
     private suspend fun api(c: NapCatConfig, action: String, params: JsonObject = buildJsonObject {}): JsonObject {
+        val data = apiElement(c, action, params)
+        return data as? JsonObject ?: buildJsonObject {}
+    }
+
+    /** 同 [api]，但允许返回 JSON 数组（群列表、成员列表这类）。 */
+    private suspend fun apiElement(c: NapCatConfig, action: String, params: JsonObject = buildJsonObject {}): JsonElement {
         require(URI(c.baseUrl).scheme in setOf("http", "https")) { "Invalid OneBot base URL" }
         val httpRequest = Request.Builder().url("${c.baseUrl.trimEnd('/')}/$action")
             .header("Authorization", "Bearer ${c.token}")
@@ -322,8 +328,16 @@ class NapCatChannelClient @Inject constructor(
             check(root["retcode"]?.jsonPrimitive?.intOrNull == 0 && root.string("status") == "ok") {
                 "OneBot action $action failed (${root["retcode"]?.jsonPrimitive?.intOrNull ?: -1})"
             }
-            root["data"] as? JsonObject ?: buildJsonObject {}
+            root["data"] ?: JsonNull
         }
+    }
+
+    /** 只读查询：群列表 / 群信息 / 群成员 / 好友。字段裁剪由调用方负责。 */
+    suspend fun query(cfg: NapCatConfig, action: String, params: JsonObject = buildJsonObject {}): JsonElement {
+        require(action in setOf("get_group_list", "get_group_info", "get_group_member_list", "get_friend_list")) {
+            "Unsupported OneBot read action"
+        }
+        return apiElement(cfg, action, params)
     }
 
     private suspend fun <T> request(call: Call, decode: (Response) -> T): T = suspendCancellableCoroutine { continuation ->

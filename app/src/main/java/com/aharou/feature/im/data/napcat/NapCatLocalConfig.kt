@@ -25,6 +25,19 @@ internal object NapCatLocalConfig {
         return File(configDir, "onebot11_$account.json")
     }
 
+    /** OneBot 配置的 network 下是否已有启用的 HTTP 或 WebSocket 服务端。 */
+    fun hasEnabledServer(oneBot: JSONObject): Boolean {
+        val network = oneBot.optJSONObject("network") ?: return false
+        for (key in listOf("httpServers", "websocketServers")) {
+            val array = network.optJSONArray(key) ?: continue
+            for (index in 0 until array.length()) {
+                val server = array.optJSONObject(index) ?: continue
+                if (server.optBoolean("enable", true)) return true
+            }
+        }
+        return false
+    }
+
     fun update(field: String, value: String, web: JSONObject, oneBot: JSONObject) {
         val network = oneBot.getJSONObject("network")
         when (field) {

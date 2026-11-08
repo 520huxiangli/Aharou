@@ -10,6 +10,15 @@
     <string name="napcat_status">状态</string>
     <string name="napcat_phase_not_installed">未安装</string>
     <string name="napcat_phase_installing">安装中</string>
+    <string name="napcat_stage_preparing">准备安装</string>
+    <string name="napcat_stage_rootfs_download">下载 Debian 环境</string>
+    <string name="napcat_stage_rootfs_unpack">解压 Debian 环境</string>
+    <string name="napcat_stage_dependency_index">更新依赖索引</string>
+    <string name="napcat_stage_dependencies">安装运行依赖</string>
+    <string name="napcat_stage_qq_download">下载 Linux QQ</string>
+    <string name="napcat_stage_napcat_download">下载 NapCat</string>
+    <string name="napcat_stage_extract">解包程序</string>
+    <string name="napcat_stage_configure">保存安装配置</string>
     <string name="napcat_phase_installed">已安装</string>
     <string name="napcat_phase_starting">启动中</string>
     <string name="napcat_phase_running">运行中</string>

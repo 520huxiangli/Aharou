@@ -438,17 +438,16 @@ class ImBotBridge (
                 FileLogger.d(TAG, "[$channelId] 消息正文为空且无附件，忽略")
                 return@runCatching
             }
-            val prompt = text
             FileLogger.d(
                 TAG,
-                "[$channelId] 处理消息 chat=${msg.chatId} 长度=${prompt.length} 附件=${msg.attachments.size}"
+                "[$channelId] 处理消息 chat=${msg.chatId} 长度=${text.length} 附件=${msg.attachments.size}"
             )
             // 记下最近活跃聊天，sendFile 这类无 chatId 的调用要靠它
             lastActiveChat = msg.chatId
             // 无按钮平台的审批回复：先当审批处理，不是审批词再走正常对话
             if (!attachmentOnly && msg.attachments.isEmpty() && consumeApprovalReply(cfg, msg.chatId, text)) return@runCatching
             pendingApprovals.remove(msg.chatId)
-            runTurn(cfg, msg.chatId, prompt, msg.attachments)
+            runTurn(cfg, msg, text)
         }
         return result.onFailure { e ->
             if (e is CancellationException) throw e
@@ -568,16 +567,16 @@ class ImBotBridge (
 
     private suspend fun runTurn(
         cfg: ImChannelConfig,
-        chatId: String,
-        text: String,
-        attachments: List<ImAttachment> = emptyList()
+        message: ImInboundMessage,
+        text: String
     ) {
+        val chatId = message.chatId
         val lock = chatLocks.getOrPut(chatId) { Mutex() }
         lock.withLock {
             val sessionId = ensureSession(cfg, chatId) ?: return
             // 记下会话→聊天的映射，审批请求只有 sessionId 没有 chatId
             chatOfSession[sessionId] = SessionOrigin(chatId, cfg)
-            streamTurn(cfg, chatId, sessionId, text, attachments)
+            streamTurn(cfg, message, sessionId, text)
         }
     }
 
@@ -649,19 +648,20 @@ class ImBotBridge (
 
     private suspend fun streamTurn(
         cfg: ImChannelConfig,
-        chatId: String,
+        message: ImInboundMessage,
         sessionId: String,
-        text: String,
-        attachments: List<ImAttachment> = emptyList()
+        text: String
     ) {
-        val received = materializeAttachments(cfg, attachments)
+        val chatId = message.chatId
+        val received = materializeAttachments(cfg, message.attachments)
         val failureNotice = received.failedNames.takeIf { it.isNotEmpty() }?.let { names ->
             val data = kotlinx.serialization.json.JsonArray(names.map { kotlinx.serialization.json.JsonPrimitive(it) })
             imText("im_attachment_download_failed", data.toString().replace("<", "\\u003c").replace(">", "\\u003e"))
         }
         if (failureNotice != null) sendNotice(cfg, chatId, failureNotice)
         if (text.isBlank() && received.inputs.isEmpty()) return
-        val prompt = text.ifBlank { imText("im_attachment_only_hint") }
+        // text 才会落入用户历史；只补 modelRequest 会让下一轮再次丢失发送者。
+        val prompt = formatImMessageContext(channelId, message, text.ifBlank { imText("im_attachment_only_hint") })
         var live: LiveMessage? = null
         var latest = ""
         agentTurnRunner.run(

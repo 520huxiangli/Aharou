@@ -66,6 +66,16 @@ internal fun NapCatWebUiSheet(
                 }
 
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    val scheme = request.url.scheme
+                    // 登录验证要跳到手机 QQ（jsbridge/mqq 等自定义 scheme），这不是网页加载，
+                    // 交给系统分发；否则密码登录永远卡在“请使用手机 QQ 验证”。
+                    if (!NapCatWebUiNavigation.isWebScheme(scheme)) {
+                        if (!sameOrigin(request.url)) {
+                            com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler
+                                .handle(context, request.url, com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler.Origin.USER_INITIATED)
+                        }
+                        return true
+                    }
                     if (!allowed(request.url)) return true
                     if (!sameOrigin(request.url) && request.isForMainFrame) {
                         // 新顶层导航不继承本地页 Referer，避免查询参数中的令牌跟随验证跳转。
@@ -76,6 +86,7 @@ internal fun NapCatWebUiSheet(
                 }
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    if (request.url.scheme?.lowercase() !in setOf("http", "https")) return null
                     val sensitiveHeader = !sameOrigin(request.url) && request.requestHeaders.values.any { header ->
                         tokens.filter { it.isNotBlank() }.any { Uri.decode(header).contains(it) }
                     }

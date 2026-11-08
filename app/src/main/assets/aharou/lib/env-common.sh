@@ -103,7 +103,7 @@ pkg_add() {
                     echo 'Acquire::https::Timeout "60";'
                 } > "$apt_conf" 2>/dev/null || true
             fi
-            apt-get update -y
+            apt_update || return 1
             apt-get install -y "$@"
             ;;
         dnf) dnf install -y "$@" ;;
@@ -262,11 +262,61 @@ apk_update() {
     return 1
 }
 
+# ── apt 锁：安装被中断会留下 /var/lib/apt/lists/lock 与 dpkg 锁，之后 apt 一律
+# "Could not get lock ... is held by process N"。N 可能早已退出（陈旧锁），也可能真的还在跑。
+# 和 apk 一样：只清没有活进程持有的锁，且只认同一 rootfs 的进程。
+apt_process_running() {
+    _self_root=$(readlink /proc/$$/root 2>/dev/null)
+    for p in /proc/[0-9]*; do
+        [ -r "$p/comm" ] || continue
+        case "$(cat "$p/comm" 2>/dev/null)" in
+            apt|apt-get|dpkg) ;;
+            *) continue ;;
+        esac
+        if [ -n "$_self_root" ]; then
+            [ "$(readlink "$p/root" 2>/dev/null)" = "$_self_root" ] && return 0
+        else
+            return 0
+        fi
+    done
+    return 1
+}
+
+apt_clear_stale_lock() {
+    _locks="/var/lib/apt/lists/lock /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend"
+    _found=0
+    for f in $_locks; do [ -e "$f" ] && _found=1; done
+    [ "$_found" = 1 ] || return 1
+    apt_process_running && return 1
+    for f in $_locks; do rm -f "$f" 2>/dev/null; done
+    echo "  ${C_YELLOW}检测到陈旧的 apt 锁（上次安装被中断留下），已清理。${C_RESET}"
+    return 0
+}
+
+# apt update 的封装：先清陈旧锁；失败时若发现锁可由自己清理就重试一次。
+# 有 apt 真在跑时明确提示，不要把它误报成网络问题——用户等它结束再装即可。
+APT_TIMEOUT="${APT_TIMEOUT:-900}"
+apt_update() {
+    apt_clear_stale_lock
+    if apt_process_running; then
+        echo "  ${C_YELLOW}另一个 apt 正在这个容器里运行，请等它结束后重试。${C_RESET}"
+        return 1
+    fi
+    if timeout "$APT_TIMEOUT" apt-get update -y; then
+        return 0
+    fi
+    if apt_clear_stale_lock; then
+        timeout "$APT_TIMEOUT" apt-get update -y
+        return $?
+    fi
+    return 1
+}
+
 # ── 更新软件包索引（版本探测与安装的前置步骤）──
 pkg_update() {
     case "$PMGR" in
         apk) apk_update ;;
-        apt) apt-get update -y ;;
+        apt) apt_update ;;
         dnf) dnf makecache -y ;;
         yum) yum makecache -y ;;
         pacman) pacman -Sy --noconfirm ;;
@@ -706,7 +756,13 @@ setup_apt_mirror() {
         } > /etc/apt/sources.list.d/aicode-mirror-security.sources
     fi
     # 验证：update 失败输出原因并恢复原配置
-    if ! apt-get update -y; then
+    if ! apt_update; then
+        # 锁被别的 apt 占着时验证不了，但这不是新源的问题，不能因此回滚。
+        if apt_process_running; then
+            echo "另一个 apt 正在运行，暂未能验证新源，已保留新源配置，稍后可重试" >&2
+            rm -rf "$backup_dir"
+            return 0
+        fi
         echo "换源后 apt update 失败，已恢复原源配置" >&2
         rm -rf /etc/apt/sources.list.d
         [ -f "$backup_dir/sources.list" ] && cp "$backup_dir/sources.list" /etc/apt/sources.list

@@ -244,6 +244,15 @@
         </service>
 
         <service
+            android:name=".feature.im.service.NapCatInstallService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="执行用户发起的个人 QQ 独立运行环境安装，展示安装阶段并支持取消" />
+        </service>
+
+        <service
             android:name=".feature.im.service.NapCatBotService"
             android:enabled="true"
             android:exported="false"

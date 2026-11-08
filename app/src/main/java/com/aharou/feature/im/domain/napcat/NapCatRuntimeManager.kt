@@ -1,6 +1,10 @@
 package com.aharou.feature.im.domain.napcat
 
+import android.content.Context
+import com.aharou.core.util.FileLogger
 import com.aharou.core.util.ProcessIdentity
+import dagger.hilt.android.qualifiers.ApplicationContext
+import com.aharou.feature.im.service.NapCatInstallService
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
 import com.aharou.feature.agent.domain.container.TrackedStdioProcess
 import com.aharou.feature.im.data.napcat.NapCatPackageInstaller
@@ -16,7 +20,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
+import com.aharou.feature.im.data.napcat.readNapCatCommandOutput
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,10 +42,16 @@ class NapCatRuntimeManager @Inject constructor(
     private val installer: NapCatPackageInstaller,
     private val engine: LinuxContainerEngine,
     private val settings: NapCatSettingsRepository,
-    private val web: NapCatWebUiClient
+    private val web: NapCatWebUiClient,
+    @param:ApplicationContext private val context: Context
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private companion object {
+        /** 单次 exec 最多带回的输出字节：配置或日志很长时不让上下文被一次性吸干。 */
+        const val MAX_EXEC_OUTPUT = 64 * 1024
+    }
     private val mutex = Mutex()
+    private val installation = NapCatInstallationTask(scope)
     private val _state = MutableStateFlow(NapCatRuntimeState(
         phase = if (installer.installedVersion().isEmpty()) "not_installed" else "installed",
         version = installer.installedVersion()
@@ -51,8 +67,45 @@ class NapCatRuntimeManager @Inject constructor(
     private var recoveryAttempted = false
     private var recoveryNotice = ""
 
-    suspend fun install() = deploy(false)
-    suspend fun update() = deploy(true)
+    suspend fun install() = installation.run(false) { deploy(false) }
+    suspend fun update() = installation.run(true) { deploy(true) }
+    suspend fun cancelInstallation() = installation.cancel()
+
+    /**
+     * 在个人 QQ 的独立 Debian 环境里执行一条命令，用于改 NapCat 配置、装插件、看现场。
+     *
+     * 走与安装同一套 profile 与进程账本；只捕获输出，不把命令写进运行时日志里的凭据。
+     */
+    suspend fun exec(command: String, timeoutMs: Long = 120_000L): String = withContext(Dispatchers.IO) {
+        require(command.isNotBlank()) { "Command must not be blank" }
+        check(installer.installedVersion().isNotEmpty()) { "Install NapCat first" }
+        val tracked = engine.startTrackedStdioProcess(
+            "/bin/bash", listOf("-c", command), null, "napcat:exec",
+            profile = installer.profile(), inheritUserConfig = false
+        )
+        val output = java.io.ByteArrayOutputStream()
+        val lock = Any()
+        fun collect(line: String) = synchronized(lock) {
+            if (output.size() < MAX_EXEC_OUTPUT) output.write((line + "\n").toByteArray())
+        }
+        try {
+            coroutineScope {
+                tracked.process.outputStream.close()
+                val stdout = async { readNapCatCommandOutput(tracked.process.inputStream, { tracked.process.isAlive }, ::collect) }
+                val stderr = async { readNapCatCommandOutput(tracked.process.errorStream, { tracked.process.isAlive }, ::collect) }
+                val finished = withTimeoutOrNull(timeoutMs) { runInterruptible { tracked.process.waitFor() } }
+                if (finished == null) tracked.process.destroyForcibly()
+                stdout.await()
+                stderr.await()
+                if (finished == null) collect("[命令超时，已终止]")
+                else if (tracked.process.exitValue() != 0) collect("[退出码 ${tracked.process.exitValue()}]")
+            }
+            output.toString(Charsets.UTF_8.name())
+        } finally {
+            tracked.process.destroyForcibly()
+            tracked.clearLedger()
+        }
+    }
 
     private suspend fun deploy(update: Boolean) = withContext(Dispatchers.IO) { mutex.withLock {
         val restart = handle?.process?.isAlive == true
@@ -60,8 +113,13 @@ class NapCatRuntimeManager @Inject constructor(
             if (!update && installer.installedVersion().isNotEmpty()) return@guarded
             if (update) check(installer.installedVersion().isNotEmpty()) { "NapCat is not installed" }
             stopLocked()
-            _state.value = _state.value.copy(phase = "installing", progress = 0f, error = "")
-            installer.install(update) { progress -> _state.value = _state.value.copy(progress = progress) }
+            _state.value = _state.value.copy(phase = "installing", progress = 0f, error = "", stage = "preparing")
+            appendLog("NapCat installation started")
+            NapCatInstallService.start(context)
+            installer.install(update, onStage = { stage ->
+                _state.value = _state.value.copy(stage = stage)
+                appendLog("NapCat installation stage: $stage")
+            }, onLog = ::appendLog) { progress -> _state.value = _state.value.copy(progress = progress) }
             _state.value = NapCatRuntimeState("installed", 1f, installer.installedVersion())
             appendLog("NapCat package installed")
             if (restart) startLocked()
@@ -265,7 +323,14 @@ class NapCatRuntimeManager @Inject constructor(
 
     private suspend fun guarded(block: suspend () -> Unit) {
         try { block() }
+        catch (e: TimeoutCancellationException) {
+            val message = "NapCat operation timed out (${_state.value.stage})"
+            appendLog(message)
+            _state.value = _state.value.copy(phase = "error", error = message)
+            throw IllegalStateException(message, e)
+        }
         catch (e: CancellationException) {
+            if (_state.value.phase == "installing") appendLog("NapCat installation cancelled")
             withContext(NonCancellable + Dispatchers.IO) {
                 try {
                     stopLocked()
@@ -282,8 +347,8 @@ class NapCatRuntimeManager @Inject constructor(
         }
         catch (e: Exception) {
             val message = safeError(e)
-            _state.value = _state.value.copy(phase = "error", error = message)
             appendLog(message)
+            _state.value = _state.value.copy(phase = "error", error = message)
             throw IllegalStateException(message)
         }
     }
@@ -307,5 +372,6 @@ class NapCatRuntimeManager @Inject constructor(
         val clean = line.replace(Regex("\\u001B\\[[0-9;]*[A-Za-z]"), "").take(2000)
         if (Regex("token|password|credential|qrcode|二维码|密码|https?://", RegexOption.IGNORE_CASE).containsMatchIn(clean)) return
         _logs.value = (_logs.value + clean).takeLast(300)
+        if (_state.value.phase == "installing") FileLogger.i("NapCatInstall", clean)
     }
 }
