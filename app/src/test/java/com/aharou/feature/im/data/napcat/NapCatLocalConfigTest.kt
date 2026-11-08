@@ -1,10 +1,17 @@
 package com.aharou.feature.im.data.napcat
 
+import android.app.Application
 import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+// org.json 在纯 JVM 单测里是桩实现（optJSONObject 恒为 null），必须跑在 Robolectric 下。
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [28])
 class NapCatLocalConfigTest {
     @Test
     fun `登录后自动生成的空配置判定为不可用`() {
