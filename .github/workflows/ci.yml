@@ -92,6 +92,14 @@ jobs:
       - name: Verify architecture baseline only shrinks
         run: python3 scripts/check_architecture.py --check-ratchet
 
+      - name: Test preinstalled image scripts without network or Docker
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_preinstalled*.py'
+          python3 -m unittest discover -s scripts/tests -p 'test_stage_preinstalled_assets.py'
+
+      - name: Stage published preinstalled Alpine assets
+        run: python3 scripts/stage_preinstalled_assets.py --apply
+
       # 单 flavor 冒烟：只构 universal debug（CLAUDE.md 规范：AI 改完编译型代码默认跑这个），
       # 不构全量三 flavor，省三倍 Kotlin 编译。
       - name: Build universal debug (smoke)

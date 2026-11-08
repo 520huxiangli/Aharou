@@ -78,7 +78,8 @@ class NapCatRuntimeManager @Inject constructor(
      */
     suspend fun exec(command: String, timeoutMs: Long = 120_000L): String = withContext(Dispatchers.IO) {
         require(command.isNotBlank()) { "Command must not be blank" }
-        check(installer.installedVersion().isNotEmpty()) { "Install NapCat first" }
+        // 依赖安装失败时也要能诊断，不能把完整程序的安装清单当作 Debian 就绪标记。
+        check(installer.isEnvironmentReady()) { "NapCat Debian environment is not ready" }
         val tracked = engine.startTrackedStdioProcess(
             "/bin/bash", listOf("-c", command), null, "napcat:exec",
             profile = installer.profile(), inheritUserConfig = false

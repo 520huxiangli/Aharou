@@ -53,6 +53,8 @@ class NapCatPackageInstaller @Inject constructor(
 
     fun installedVersion(): String = installed()?.optString("version").orEmpty()
 
+    fun isEnvironmentReady(): Boolean = container.isInstalledFor(profile())
+
     fun profile(): ContainerProfile {
         val home = File(base, "data/home").apply { mkdirs() }
         return ContainerProfile(
@@ -88,27 +90,29 @@ class NapCatPackageInstaller @Inject constructor(
         File(base, "data/plugins").mkdirs()
         if (!container.isInstalledFor(profile())) {
             onStage("rootfs_download")
-            val rootfs = download(NapCatRootfs.url(architecture), "napcat-debian-$architecture.tar.xz", NapCatRootfs.sha256(architecture)) {
+            val (rootfs, candidate) = downloadCandidates(catalog.rootfsCandidates(architecture), "napcat-debian-$architecture.archive") {
                 onProgress(it * 0.2f)
             }
             onStage("rootfs_unpack")
-            NapCatRootfs.normalize(rootfs, archive)
+            NapCatRootfs.normalize(rootfs, archive, preinstalled = candidate.preinstalledRootfs)
             container.installRootfsIfNeed(profile())
         }
-        writeAtomic(File(base, NapCatAptSource.SOURCE_FILE), NapCatAptSource.sources)
-        val lists = File(base, "${NapCatAptSource.LISTS_DIRECTORY}/partial")
-        check(lists.isDirectory || lists.mkdirs()) { "Cannot prepare NapCat apt index directory" }
-        onLog("APT source: mirrors.huaweicloud.com (Debian trixie)")
         onProgress(0.25f)
-        onStage("dependency_index")
-        command("/usr/bin/apt-get", NapCatAptSource.arguments("update"))
-        onProgress(0.3f)
         onStage("dependencies")
-        command("/usr/bin/apt-get", NapCatAptSource.arguments("install", listOf(
-            "ca-certificates", "xvfb", "xauth", "dpkg", "unzip", "libnss3", "libatk1.0-0t64",
-            "libatk-bridge2.0-0t64", "libcups2t64", "libdrm2", "libxkbcommon0", "libxcomposite1",
-            "libxdamage1", "libxfixes3", "libxrandr2", "libgbm1", "libasound2t64", "libgtk-3-0t64", "libgssapi-krb5-2",
-            "libnotify4", "libsecret-1-0", "libxss1", "libxtst6", "libatomic1", "fonts-noto-cjk")))
+        if (NapCatDependencies.isReady { program, args -> command(program, args) }) {
+            onLog("NapCat dependencies verified; skipping apt")
+        } else {
+            onLog("NapCat dependency probe incomplete; continuing apt installation")
+            writeAtomic(File(base, NapCatAptSource.SOURCE_FILE), NapCatAptSource.sources)
+            val lists = File(base, "${NapCatAptSource.LISTS_DIRECTORY}/partial")
+            check(lists.isDirectory || lists.mkdirs()) { "Cannot prepare NapCat apt index directory" }
+            onLog("APT source: mirrors.huaweicloud.com (Debian trixie)")
+            onStage("dependency_index")
+            command("/usr/bin/apt-get", NapCatAptSource.arguments("update"))
+            onProgress(0.3f)
+            onStage("dependencies")
+            command("/usr/bin/apt-get", NapCatAptSource.arguments("install", NapCatDependencies.packages))
+        }
         onProgress(0.4f)
         onStage("qq_download")
         val qq = download(selected.qqUrl, "linuxqq-${selected.qqVersion}-$debArchitecture.deb") { onProgress(0.4f + it * 0.2f) }
@@ -266,9 +270,16 @@ class NapCatPackageInstaller @Inject constructor(
         .put("httpClients", JSONArray()).put("websocketClients", JSONArray()))
         .put("musicSignUrl", "").put("enableLocalFile2Url", false).put("parseMultMsg", false)
 
-    private suspend fun download(url: String, name: String, sha256: String? = null, progress: (Float) -> Unit): File {
+    private suspend fun download(url: String, name: String, sha256: String? = null, progress: (Float) -> Unit): File =
+        downloadCandidates(catalog.candidates(url, sha256), name, progress).first
+
+    private suspend fun downloadCandidates(
+        candidates: List<NapCatDownloadCandidate>,
+        name: String,
+        progress: (Float) -> Unit
+    ): Pair<File, NapCatDownloadCandidate> {
         val failures = mutableListOf<String>()
-        for (candidate in catalog.candidates(url, sha256)) {
+        for (candidate in candidates) {
             currentCoroutineContext().ensureActive()
             val host = URI(candidate.url).host ?: "unknown-host"
             var stage = "download/verification"
@@ -298,7 +309,7 @@ class NapCatPackageInstaller @Inject constructor(
                 currentCoroutineContext().ensureActive()
                 val target = File(base, "downloads/$name")
                 if (!temporary.renameTo(target)) throw IOException("Cannot commit NapCat download")
-                return target
+                return target to candidate
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {

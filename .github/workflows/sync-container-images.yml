@@ -30,17 +30,34 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 先跑一次 dry-run 把差异打进日志：真出问题时能一眼看出「本该同步什么」。
-      - name: Detect upstream updates (dry run)
-        run: python3 scripts/sync-container-images.py
+      - name: Set up emulation for arm64 rootfs builds
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-      # 有新版本才真的下载与上传；无变化时这一步几乎不耗时。
-      - name: Download, verify and upload to cnb
+      - name: Verify preinstalled build and publish contracts
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_preinstalled*.py'
+          python3 -m unittest discover -s scripts/tests -p 'test_stage_preinstalled_assets.py'
+
+      - name: Check preinstalled image plan (offline)
+        run: python3 scripts/sync-container-images.py --preinstall
+
+      - name: Synchronize verified upstream base images
+        id: base_sync
         env:
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
         run: python3 scripts/sync-container-images.py --apply
 
+      # 在隔离 Docker 环境预装并校验，两个架构都发布成功才更新条目。
+      - name: Build, verify and publish preinstalled images
+        id: preinstalled_sync
+        env:
+          CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+        run: python3 scripts/sync-container-images.py --preinstall --apply --image alpine-3.24
+
       - name: Commit manifest if changed
+        if: ${{ !cancelled() && (steps.base_sync.outcome == 'success' || steps.base_sync.outcome == 'failure' || steps.preinstalled_sync.outcome == 'success' || steps.preinstalled_sync.outcome == 'failure') }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

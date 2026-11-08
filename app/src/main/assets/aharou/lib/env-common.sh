@@ -85,7 +85,7 @@ detect_pmgr() {
 pkg_add() {
     case "$PMGR" in
         apk)
-            apk_update
+            # --no-cache 的 add 自行获取索引，不在此重复执行一次 update。
             timeout "$APK_TIMEOUT" apk add --no-cache "$@"
             ;;
         apt)
@@ -391,7 +391,20 @@ ensure_runtime() {
     command -v "$er_bin" >/dev/null 2>&1 && return 0
     [ -z "$PMGR" ] && return 1
     echo "  · 未检测到 $er_bin，正在补装（$(runtime_install "$er_runtime")）..."
-    pkg_add "$(runtime_install "$er_runtime")" >/dev/null 2>&1
+    # 内部生成的是多个包名，必须分词；加引号会把 python3 py3-pip 当成一个包。
+    pkg_add $(runtime_install "$er_runtime") >/dev/null 2>&1
+}
+
+preinstalled_general_ready() {
+    [ -f /etc/aharou/preinstalled.json ] || return 1
+    for tool in bash curl wget jq rsync git rg file less netstat nc nslookup node npm python3; do
+        command -v "$tool" >/dev/null 2>&1 || return 1
+    done
+    jq -e '.schemaVersion == 1 and .profile == "general" and .recipeRevision == "1"' \
+        /etc/aharou/preinstalled.json >/dev/null 2>&1 || return 1
+    timeout 10 node --version >/dev/null 2>&1 || return 1
+    timeout 10 npm --version >/dev/null 2>&1 || return 1
+    timeout 10 python3 -c 'import ssl, venv, pip' >/dev/null 2>&1 || return 1
 }
 
 # ── 安装清单一行：名称 → 包列表（v版本，探测得到时；显示去掉 apk 的 -rN 后缀）──
@@ -612,7 +625,46 @@ install_lua_ls_release() {
     fi
 }
 
-# ── 探测单个 URL 的 http 状态码（curl 优先，wget 兑底，无法探测返回 000）──
+# ── 按容器自身发行版和架构生成真实索引地址；不能用固定 x86_64 ──
+mirror_probe_url() {
+    _mp_host=$1
+    _mp_ver=$VERSION_ID _mp_codename=$VERSION_CODENAME _mp_id=$ID
+    [ -r /etc/os-release ] && . /etc/os-release && _mp_ver=$VERSION_ID _mp_codename=$VERSION_CODENAME _mp_id=$ID
+    case "$PMGR" in
+        apk)
+            _mp_ver=$VERSION_ID
+            [ -n "$_mp_ver" ] && echo "http://$_mp_host/alpine/v$_mp_ver/main/$(uname -m)/APKINDEX.tar.gz"
+            ;;
+        apt)
+            case "$_mp_id" in
+                ubuntu) [ -n "$_mp_codename" ] && echo "http://$_mp_host/ubuntu-ports/dists/$_mp_codename/Release" ;;
+                debian) [ -n "$_mp_codename" ] && echo "http://$_mp_host/debian/dists/$_mp_codename/Release" ;;
+            esac
+            ;;
+        dnf|yum|pacman) echo "http://$_mp_host/archlinux/core/os/$(uname -m)/core.db" ;;
+    esac
+}
+
+# ── 实测镜像自己索引的响应耗时（秒），不装包、最多取 16KiB ──
+mirror_probe_seconds() {
+    _ms_url=$(mirror_probe_url "$1")
+    [ -n "$_ms_url" ] || return 1
+    if command -v curl >/dev/null 2>&1; then
+        _ms=$(curl -s -o /dev/null --max-time 4 --range 0-16383 -w '%{http_code}:%{time_total}' "$_ms_url" 2>/dev/null)
+        _ms_code=${_ms%%:*}; _ms_time=${_ms#*:}
+        case "$_ms_code" in
+            2[0-9][0-9]|3[0-9][0-9]) [ -n "$_ms_time" ] && [ "$_ms_time" != "$_ms_code" ] && \
+                awk -v t="$_ms_time" 'BEGIN { printf "%d\n", t * 1000 }' ;;
+        esac
+    elif command -v wget >/dev/null 2>&1; then
+        _ms_start=$(date +%s%N 2>/dev/null) || return 1
+        wget -q -T 4 -O /dev/null "$_ms_url" 2>/dev/null || return 1
+        _ms_end=$(date +%s%N 2>/dev/null) || return 1
+        echo "$(( (_ms_end - _ms_start) / 1000000 ))"
+    fi
+}
+
+# ── 从候选里选当前可用镜像（全部不可用则兑底第一个）──
 http_code() {
     if command -v curl >/dev/null 2>&1; then
         curl -s -o /dev/null --max-time 8 -w '%{http_code}' "$1" 2>/dev/null || echo "000"
@@ -652,13 +704,18 @@ probe_mirror() {
 
 # ── 从候选里选当前可用镜像（全部不可用则兑底第一个）──
 pick_mirror() {
+    _pm_best= _pm_best_ms=
     for m in $MIRRORS; do
-        if probe_mirror "$m"; then
-            MIRROR="$m"
-            return 0
+        _pm_ms=$(mirror_probe_seconds "$m") || continue
+        echo "  · $m ${_pm_ms}ms" >&2
+        if [ -z "$_pm_best_ms" ] || [ "$_pm_ms" -lt "$_pm_best_ms" ]; then
+            _pm_best=$m; _pm_best_ms=$_pm_ms
         fi
     done
+    if [ -n "$_pm_best" ]; then MIRROR=$_pm_best; return 0; fi
+    echo "  ${C_YELLOW}所有国内镜像均探测失败，暂时保留第一个候选；可重试或检查网络${C_RESET}" >&2
     MIRROR=$(echo "$MIRRORS" | awk '{print $1}')
+    return 1
 }
 
 # ── 镜像源：按包管理器换国内镜像源（多候选自动探测），失败自动恢复原配置（不阻塞后续安装）──

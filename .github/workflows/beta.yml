@@ -113,6 +113,9 @@ jobs:
           restore-keys: |
             robolectric-${{ runner.os }}-
 
+      - name: Stage published preinstalled Alpine assets
+        run: python3 scripts/stage_preinstalled_assets.py --apply
+
       - name: Test the checked-out commit
         shell: bash
         run: |

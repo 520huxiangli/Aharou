@@ -10,6 +10,14 @@ import java.io.File
  */
 internal object ContainerSourceFiles {
 
+    /** 读 rootfs 的 `/etc/os-release` 字段；缺失或读失败返回空串。 */
+    fun osReleaseField(rootfs: File, key: String): String =
+        runCatching { File(rootfs, "etc/os-release").readLines() }
+            .getOrNull()
+            ?.firstOrNull { it.startsWith("$key=") }
+            ?.substringAfter('=')?.trim()?.trim('"')
+            .orEmpty()
+
     /** 从动态链接器判断 guest 架构：Ubuntu 的 arm64 包只发布在 ports 仓。 */
     fun detectAptArch(rootfs: File): String = when {
         File(rootfs, "lib/ld-linux-aarch64.so.1").exists() -> "arm64"

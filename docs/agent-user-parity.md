@@ -129,7 +129,7 @@
 | 个人 QQ 新会话工作区与模型 | `NapCatBotSection.kt` 工作区、模型选择 | 有 | `config im.qq_napcat.session_defaults` 对象 | 使用已有会话字段；未指定且没有当前工作区时自动创建机器人工作区，不切换当前项目 |
 | 个人 QQ 日志与高级管理 | `NapCatBotSection.kt` 日志和 WebUI | 有 | `napcat action=logs/webui/status`；`config im.qq_napcat.runtime/login/state/version/error` | 安装阶段由 status.stage 与 runtime.stage 提供；实时脱敏命令日志可查，完整交互在内嵌 WebUI |
 | 查看个人 QQ 的群、群成员与好友 | NapCat WebUI 内自行查看 | 有 | `napcat action=groups/group_members/friends`（`NapCatTool.kt`） | 只返回群号群名人数、成员昵称群名片角色、好友昵称备注；手机号与邮箱等联系方式不提供给模型 |
-| 修改个人 QQ 环境的配置与插件 | 无独立界面，仅高级 WebUI | 有 | `napcat action=exec`（带 `command`） | 在机器人自己的 Debian 环境执行命令，输出脱敏并限 12k 字符；需 EXECUTE_COMMANDS 能力，PLAN 模式不可用 |
+| 修改个人 QQ 环境的配置与插件 | 无独立界面，仅高级 WebUI | 有 | `napcat action=exec`（带 `command`） | 专用 Debian 已就绪即可执行，包括后续安装失败时的诊断；不自动安装或回退开发容器，输出脱敏并限 12k 字符；需 EXECUTE_COMMANDS 和 MODIFY_CONTAINER_ENV 能力，PLAN 模式不可用 |
 
 ## 10. 会话
 

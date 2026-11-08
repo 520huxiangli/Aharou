@@ -20,7 +20,9 @@ internal object NapCatAptSource {
             "-o", "Dir::Etc::sourceparts=-",
             "-o", "Dir::State::lists=/napcat/$LISTS_DIRECTORY/",
             "-o", "Dir::Cache::pkgcache=",
-            "-o", "Dir::Cache::srcpkgcache="
+            "-o", "Dir::Cache::srcpkgcache=",
+            // PRoot 下默认双栈解析可能失败，而同环境 IPv4 解析及下载可用。
+            "-o", "Acquire::ForceIPv4=true"
         )
         return options + if (command == "update") {
             listOf("update", "--error-on=any")

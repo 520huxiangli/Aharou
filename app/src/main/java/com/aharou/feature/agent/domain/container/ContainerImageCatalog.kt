@@ -41,7 +41,11 @@ data class ContainerImageEntry(
      * 标准架构键（arm64/x86_64）→ 官方公布的 SHA-256，下载完据此校验完整性。
      * 缺该 ABI 的键表示上游不提供校验和（如 Debian 的 Jenkins artifact），此时跳过校验。
      */
-    val sha256ByAbi: Map<String, String> = emptyMap()
+    val sha256ByAbi: Map<String, String> = emptyMap(),
+    val preinstalledPaths: Map<String, String> = emptyMap(),
+    val sourceSha256ByAbi: Map<String, Map<String, String>> = emptyMap(),
+    val sourceSizeBytesByAbi: Map<String, Map<String, Long>> = emptyMap(),
+    val preinstalledSources: Map<String, ContainerImagePreinstalledSource> = emptyMap()
 ) {
     /**
      * 名称 + 版本的统一展示串（UI 各处曾各自裸拼 `"$name $version"`）。
@@ -59,11 +63,37 @@ data class ContainerImageEntry(
     fun eolStatus(now: LocalDate = LocalDate.now()): ContainerImageEolStatus = eolStatusOf(this, now)
 }
 
-/**
- * 该条目在 [abi] 下的官方 SHA-256；未提供或为空白返回 null，调用方据此跳过校验而不是当成失败。
- */
-fun ContainerImageEntry.sha256For(abi: String): String? =
-    sha256ByAbi[abi]?.takeIf { it.isNotBlank() }
+@Serializable
+data class ContainerImagePreinstalledSource(val profile: String, val recipeRevision: String)
+
+fun ContainerImageEntry.sha256For(abi: String, sourceId: String = "official"): String? {
+    // 旧客户端只认 paths；专属摘要必须跟随预装路径，不能用于校验旧路径的原包。
+    if (sourceId != "official" && sourceId in preinstalledPaths) {
+        val metadata = preinstalledSources[sourceId]
+        require(metadata != null && metadata.profile == "general" && metadata.recipeRevision == "1") {
+            "Missing or unsupported container image recipe: $id/$sourceId"
+        }
+        val digest = sourceSha256ByAbi[sourceId]?.get(abi)
+        require(digest != null && digest.matches(Regex("[a-fA-F0-9]{64}"))) {
+            "Missing or invalid container image checksum: $id/$sourceId/$abi"
+        }
+        return digest
+    }
+    return sha256ByAbi[abi]?.takeIf { it.isNotBlank() }
+}
+
+fun ContainerImageEntry.sizeBytesFor(abi: String, sourceId: String = "official"): Long {
+    if (sourceId == "official" || sourceId !in preinstalledPaths) return sizeBytes
+    return sourceSizeBytesByAbi[sourceId]?.get(abi) ?: 0L
+}
+
+internal fun ContainerImageEntry.pathFor(abi: String, sourceId: String): String {
+    if (sourceId == "official" || sourceId !in preinstalledPaths) return paths[sourceId] ?: path
+    val preinstalled = preinstalledPaths.getValue(sourceId)
+    require(preinstalled.isNotBlank()) { "Empty preinstalled container image path: $id/$sourceId" }
+    sha256For(abi, sourceId)
+    return preinstalled
+}
 
 /** 常规支持结束前 [EOL_SOON_DAYS] 天以内算「即将停止支持」（含结束当天）。 */
 internal const val EOL_SOON_DAYS = 30L
@@ -256,7 +286,7 @@ class ContainerImageCatalog @Inject constructor(
         val prefix = data.sources[sourceId]?.distros?.get(entry.distro)
             ?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return null
         val abiName = entry.abiNames[abi] ?: return null
-        val path = entry.paths[sourceId] ?: entry.path
+        val path = entry.pathFor(abi, sourceId)
         return "$prefix/$path".replace("{abi}", abiName)
     }
 

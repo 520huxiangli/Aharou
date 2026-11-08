@@ -4,7 +4,9 @@
 用法：
   python3 scripts/sync-container-images.py                  # dry-run：只打印差异（默认）
   python3 scripts/sync-container-images.py --distro alpine   # 只检查某一类（alpine|ubuntu|debian）
-  CNB_TOKEN=<token> python3 scripts/sync-container-images.py --apply   # 真下载 + 校验 + 上传 + 改清单
+  CNB_TOKEN=<token> python3 scripts/sync-container-images.py --apply   # 同步原始镜像
+  python3 scripts/sync-container-images.py --preinstall     # 离线预装计划
+  CNB_TOKEN=<token> python3 scripts/sync-container-images.py --preinstall --apply  # 构建并发布预装镜像
 
 环境变量：
   CNB_TOKEN   cnb 访问令牌；--apply 必填。dry-run 可省，省略时跳过「cnb 是否已有同名资产」查重
@@ -12,16 +14,8 @@
   CNB_REPO    cnb 发布仓，默认 aharou-releases
   CNB_TAG     资产所在 Release 的 tag，默认 container-images
 
-上游发现路径（2026-10-18 逐个实测可用）：
-  alpine  {base}/alpine/v<series>/releases/<abi>/        取最大 alpine-minirootfs-<ver>-<abi>.tar.gz（排除 _rcN）
-  ubuntu  {base}/ubuntu-base/releases/<series>/release/  取最大 ubuntu-base-<ver>-base-<abi>.tar.gz
-  debian  {base}/job/tianon/job/debuerreotype/job/<abi>/lastSuccessfulBuild/
-          artifact/<suite>/rootfs.debian_version 给出版本号，rootfs.tar.xz 是产物
-  base 官方在前、国内镜像兜底；三类发行版在官方与镜像上的相对路径一致（实测过）。
-
-EOL 标注：版本之外还同步每个分支的支持周期（endoflife.date 的结构化 API），写入条目的
-  `eol`（常规支持结束）与 `supportEnds`（延伸支持结束，仅有两段式支持周期的发行版才有）。
-  拿不到 EOL 数据时**保留清单现值**、不影响版本同步，也不让整趟跑挂。
+预装发布始终保留官方 path/sha256ByAbi；自建源摘要与体积独立记录。
+普通同步升级原包成功后移除该源旧预装指向，再用 --preinstall 发布新基线预装包。
 
 清单约定（动手改之前先读）：
   - `sizeBytes` 取 **arm64** 那份产物的字节数（现有 12 条的实测值全部等于 arm64 产物），不是两份之和
@@ -40,13 +34,13 @@ import os
 import re
 import shutil
 import sys
-import tarfile
 import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from preinstalled_publish import clear_preinstalled_source, run_general, slim_rootfs as build_slim_rootfs
 
 UA = "aharou-container-sync"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -593,14 +587,14 @@ def put_stream(url: str, path: str, timeout: int = 3600):
         conn.close()
 
 
-def upload(release_id: str, path: str) -> bool:
+def upload(release_id: str, path: str, overwrite: bool = True) -> bool:
     """取预签名地址 → 流式 PUT → 回调确认。三步缺一不可，少确认那步附件不进列表。"""
     name = os.path.basename(path)
     size = os.path.getsize(path)
     for attempt in range(5):
         try:
             slot = cnb_post(f"/-/releases/{release_id}/asset-upload-url",
-                            {"asset_name": name, "size": size, "ttl": 0, "overwrite": True})
+                            {"asset_name": name, "size": size, "ttl": 0, "overwrite": overwrite})
             if not isinstance(slot, dict) or not slot.get("upload_url"):
                 print(f"    获取上传地址失败：{slot}")
                 time.sleep(min(30, 3 * (attempt + 1)))
@@ -695,7 +689,11 @@ def parse_args():
     )
     p.add_argument("--apply", action="store_true",
                    help="真下载 + 校验 + 上传 cnb + 改写清单（需要 CNB_TOKEN）")
+    p.add_argument("--preinstall", action="store_true",
+                   help="构建 general 双架构预装镜像；必须同时 --apply 才执行，缺省离线展示计划")
     p.add_argument("--distro", choices=DISTROS, help="只处理某一类发行版；缺省三类都查")
+    p.add_argument("--image", action="append",
+                   help="只处理指定镜像 id（可重复）；预装发布应限定范围，避免一次构建全部条目")
     return p.parse_args()
 
 
@@ -706,6 +704,10 @@ def main() -> int:
         return 1
     images = data.get("images") or []
     targets = [e for e in images if not args.distro or e.get("distro") == args.distro]
+    if args.image:
+        targets = [e for e in targets if e.get("id") in args.image]
+    if args.preinstall:
+        return run_general(sys.modules[__name__], args, data, targets)
     mode = "apply" if args.apply else "dry-run"
     print(f"模式：{mode}｜清单 {len(images)} 条，本次检查 {len(targets)} 条"
           + (f"（仅 {args.distro}）" if args.distro else ""))
@@ -848,45 +850,7 @@ def main() -> int:
 
 
 def slim_rootfs(src_tar: str, dest_tar: str, distro: str = "") -> None:
-    """把官方完整 rootfs 精简成容器可用 base：删固件/内核/文档/多语言，重打包。
-
-    Arch/Manjaro 官方包面向物理 ARM 板子，塞了固件、内核模块、设备树、文档与多语言，
-    容器里全用不上（proot 借宿主内核，无头无桌面）。解压后删掉这些再重打包，
-    体积从 800MB/200MB 级降到 160MB 级，下载与存储都友好。
-    """
-    work = tempfile.mkdtemp(prefix="slim-rootfs-")
-    try:
-        # 3.11 兼容：extractall 不传 filter（3.12+ 才有）；循环符号链接（.l2s）在解压后统一清掉。
-        with tarfile.open(src_tar, "r:gz") as tf:
-            tf.extractall(work)
-        for rel in (
-            "boot",
-            "usr/lib/firmware",
-            "usr/lib/modules",
-            "usr/share/locale",
-            "usr/share/man",
-            "usr/share/doc",
-            "usr/share/info",
-            "usr/share/i18n",
-        ):
-            shutil.rmtree(os.path.join(work, rel), ignore_errors=True)
-        # Manjaro 官方 mirrorlist 全是国外源，国内 pacman -Sy 直接解析失败；换成国内镜像。
-        if distro == "manjaro":
-            mirrorlist = os.path.join(work, "etc/pacman.d/mirrorlist")
-            os.makedirs(os.path.dirname(mirrorlist), exist_ok=True)
-            with open(mirrorlist, "w", encoding="utf-8") as f:
-                f.write(MANJARO_MIRRORLIST)
-        # 解压过程把硬链接转成了 .l2s 符号链接环（Android 无硬链接，proot 的 link2symlink），
-        # 打包时排除，避免 tar 卡在符号链接循环上。
-        for root, dirs, files in os.walk(work):
-            for fn in files:
-                if ".l2s." in fn:
-                    os.unlink(os.path.join(root, fn))
-        with tarfile.open(dest_tar, "w:gz") as tf:
-            for name in sorted(os.listdir(work)):
-                tf.add(os.path.join(work, name), arcname=name, recursive=True)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    build_slim_rootfs(src_tar, dest_tar, distro, MANJARO_MIRRORLIST)
 
 
 def apply_changes(changes: list) -> tuple:
@@ -1010,6 +974,7 @@ def apply_changes(changes: list) -> tuple:
 
     for c in applied:  # 清单只对「产物到位」的条目改动
         e, info = c["entry"], c["info"]
+        old_version = e["version"]
         e["version"] = info["version"]
         e["path"] = path_for(e, info["version"])
         if e.get("distro") in ("arch", "manjaro"):
@@ -1025,6 +990,8 @@ def apply_changes(changes: list) -> tuple:
             hashes = info.get("hashes") or {}
             if hashes:  # 取不到就保留现值：没哈希时 App 侧只是跳过校验
                 e["sha256ByAbi"] = {abi: hashes[abi] for abi in ABIS if abi in hashes}
+        if e["version"] != old_version:
+            clear_preinstalled_source(e, "aharou")
     return applied, failed
 
 

@@ -29,11 +29,24 @@ class NapCatAptSourceTest {
             "-o", "Dir::Etc::sourceparts=-",
             "-o", "Dir::State::lists=/napcat/${NapCatAptSource.LISTS_DIRECTORY}/",
             "-o", "Dir::Cache::pkgcache=",
-            "-o", "Dir::Cache::srcpkgcache="
+            "-o", "Dir::Cache::srcpkgcache=",
+            "-o", "Acquire::ForceIPv4=true"
         )
         assertEquals(options, update.take(options.size))
         assertEquals(options, install.take(options.size))
         assertEquals(listOf("install", "-y", "--no-install-recommends", "xvfb", "ca-certificates"), install.drop(options.size))
+    }
+
+    @Test
+    fun `更新和安装均明确使用IPv4且不禁用解析或签名验证`() {
+        for (command in listOf("update", "install")) {
+            val arguments = NapCatAptSource.arguments(command)
+            val index = arguments.indexOf("Acquire::ForceIPv4=true")
+            assertTrue(index > 0)
+            assertEquals("-o", arguments[index - 1])
+            assertEquals(1, arguments.count { it == "Acquire::ForceIPv4=true" })
+            assertFalse(arguments.any { it.startsWith("Acquire::ForceIPv6=") })
+        }
     }
 
     @Test

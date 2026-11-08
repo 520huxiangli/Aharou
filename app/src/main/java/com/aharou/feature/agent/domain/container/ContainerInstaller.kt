@@ -1,7 +1,6 @@
 package com.aharou.feature.agent.domain.container
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.system.Os
 import com.aharou.R
 import com.aharou.core.util.FileLogger
@@ -48,20 +47,17 @@ class ContainerInstaller @Inject constructor(
      *
      * 默认 null 只为让单测能直接构造（生产路径由 Hilt 注入）。
      */
-    private val sourcesRepository: ContainerSourcesRepository? = null
+    private val sourcesRepository: ContainerSourcesRepository? = null,
+    /** 首次解压时无法进容器，由它按实测耗时选国内镜像；默认 null 方便单测构造。 */
+    private val mirrorSpeedProbe: MirrorSpeedProbe? = null
 ) {
     companion object {
         private const val TAG = "ContainerInstaller"
 
-        /** 用户没手动指定镜像站时的默认值（与设置页候选列表第一个一致）。 */
-        private const val DEFAULT_CHINA_MIRROR = "mirrors.huaweicloud.com"
-
-        private val ALI_DNSPOD_DNS = listOf("223.5.5.5", "223.6.6.6", "119.29.29.29")
-        private val CLOUDFLARE_GOOGLE_DNS = listOf("1.1.1.1", "1.0.0.1", "8.8.8.8")
-        private val IPV4 = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
-
-        /** resolv.conf 只认前 3 个 nameserver，多写的不会用。 */
-        private const val MAX_DNS_SERVERS = 3
+        private val CHINA_MIRROR_HOSTS = listOf(
+            "mirrors.huaweicloud.com", "mirrors.tuna.tsinghua.edu.cn", "mirrors.ustc.edu.cn",
+            "mirrors.cloud.tencent.com", "mirrors.aliyun.com"
+        )
 
         /**
          * 跨工作区共享区宿主目录（容器内 `/root/shared`）。静态入口给 Composable 等拿不到
@@ -587,63 +583,48 @@ class ContainerInstaller @Inject constructor(
     private suspend fun applySourcePreferences(rootfs: File) {
         val settings = runCatching { sourcesRepository?.read() }.getOrNull() ?: return
         if (settings.mirror == ContainerMirrorMode.CHINA) {
-            writeChinaMirror(rootfs, settings.mirrorHost)
+            // 首次解压动不了容器，只能由 App 侧按镜像实际发行版与架构测速；
+            // 显式指定过镜像站的用户继续用其选择。
+            val host = settings.mirrorHost.ifBlank {
+                mirrorSpeedProbe?.fastest(
+                    candidates = CHINA_MIRROR_HOSTS,
+                    distro = distroIdOf(rootfs),
+                    arch = ContainerSourceFiles.detectAptArch(rootfs).ifBlank { "arm64" },
+                    codename = codenameOf(rootfs)
+                ).orEmpty()
+            }
+            if (host.isNotEmpty()) {
+                writeChinaMirror(rootfs, host)
+            } else {
+                FileLogger.w(TAG, "国内镜像测速无可用结果，首次安装保留镜像自带源")
+            }
         }
         writeResolvConf(rootfs, dnsServersFor(settings.dns), settings.dns)
     }
 
     /** 按镜像自带的包管理器换成国内源（apk / apt）。 */
-    private fun writeChinaMirror(rootfs: File, preferredHost: String) {
-        val host = preferredHost.ifBlank { DEFAULT_CHINA_MIRROR }
+    private fun distroIdOf(rootfs: File): String =
+        ContainerSourceFiles.osReleaseField(rootfs, "ID").lowercase()
+
+    private fun codenameOf(rootfs: File): String =
+        ContainerSourceFiles.osReleaseField(rootfs, "VERSION_CODENAME")
+
+    private fun writeChinaMirror(rootfs: File, host: String) {
         ContainerSourceFiles.writeChinaMirror(rootfs, host) { FileLogger.i(TAG, it) }
     }
 
     /** 按设置写 resolv.conf（覆盖 [configureResolvConf] 的公共 DNS 默认值）。 */
-    private fun writeResolvConf(rootfs: File, servers: List<String>, mode: ContainerDnsMode) {
-        if (servers.isEmpty()) return
-        writeResolvFile(File(rootfs, "etc/resolv.conf"), servers, mode)
-    }
+    private fun writeResolvConf(rootfs: File, servers: List<String>, mode: ContainerDnsMode) =
+        ContainerDnsFiles.write(rootfs, servers, mode)
 
     /**
      * 「跟随系统」模式下把容器 DNS 刷成当前网络的 DNS（换 WiFi / 挂代理后宿主 DNS 会变）。
      * 只在文件里有 `aharou-dns-mode: SYSTEM` 标记时动，否则会冲掉用户选的固定 DNS。
      */
-    fun refreshSystemDns(rootfs: File) {
-        val conf = File(rootfs, "etc/resolv.conf")
-        val text = runCatching { if (conf.isFile) conf.readText() else null }.getOrNull() ?: return
-        if (!text.contains("aharou-dns-mode: ${ContainerDnsMode.SYSTEM.name}")) return
-        val servers = systemDnsServers().ifEmpty { return }
-        val current = text.lineSequence().map { it.trim() }.filter { it.startsWith("nameserver ") }.toList()
-        if (current == servers.map { "nameserver $it" }) return
-        writeResolvFile(conf, servers, ContainerDnsMode.SYSTEM)
-    }
+    fun refreshSystemDns(rootfs: File) = ContainerDnsFiles.refreshSystem(rootfs, context)
 
-    private fun writeResolvFile(conf: File, servers: List<String>, mode: ContainerDnsMode) {
-        runCatching {
-            conf.parentFile?.mkdirs()
-            // 容器里常见指向 systemd-resolved 的坏链，先删再写。
-            conf.delete()
-            conf.writeText(servers.joinToString("") { "nameserver $it\n" } + "# aharou-dns-mode: ${mode.name}\n")
-            FileLogger.i(TAG, "容器 DNS 已写入：${servers.joinToString()}（$mode）")
-        }.onFailure { FileLogger.w(TAG, "写容器 DNS 失败：${it.message}") }
-    }
-
-    private fun dnsServersFor(mode: ContainerDnsMode): List<String> = when (mode) {
-        ContainerDnsMode.ALI_DNSPOD -> ALI_DNSPOD_DNS
-        ContainerDnsMode.CLOUDFLARE_GOOGLE -> CLOUDFLARE_GOOGLE_DNS
-        ContainerDnsMode.SYSTEM -> systemDnsServers().ifEmpty { ALI_DNSPOD_DNS }
-    }
-
-    /** 宿主当前网络的 IPv4 DNS。只取 IPv4：蜂窝/VPN 常「能配 v6 但出不去」，写进去会先等超时。 */
-    private fun systemDnsServers(): List<String> = runCatching {
-        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
-        manager.getLinkProperties(manager.activeNetwork)?.dnsServers
-            ?.mapNotNull { it.hostAddress }
-            ?.filter { IPV4.matches(it) }
-            ?.distinct()
-            ?.take(MAX_DNS_SERVERS)
-            .orEmpty()
-    }.getOrElse { emptyList() }
+    private fun dnsServersFor(mode: ContainerDnsMode): List<String> =
+        ContainerDnsFiles.serversFor(mode, context)
 
     /**
      * 写就绪标记前的最后一道关：布局完整 + 真能起一条命令。

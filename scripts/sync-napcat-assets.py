@@ -15,10 +15,13 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 from types import SimpleNamespace
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from preinstalled_publish import PublishError, checked_build, content_key, recipe_revision, safe_name
 
 ROOT = Path(__file__).resolve().parent.parent
 TAG = "napcat-runtime-v4.18.42-qq-53644-pd-4.29.0"
@@ -174,7 +177,7 @@ def download(item, cache):
 def safe_error(error):
     if isinstance(error, urllib.error.HTTPError):
         return f"HTTP {error.code}"
-    if isinstance(error, SyncError):
+    if isinstance(error, (SyncError, PublishError)):
         return str(error)
     return type(error).__name__
 
@@ -225,8 +228,8 @@ def load_sync():
     return module
 
 
-def release_assets(sync, release):
-    current = sync.get_cnb_release(TAG)
+def release_assets(sync, release, tag=TAG):
+    current = sync.get_cnb_release(tag)
     if current is None:
         raise SyncError("ReleaseNotFound")
     if str(current["id"]) != str(release["id"]):
@@ -241,9 +244,9 @@ def release_assets(sync, release):
     return found
 
 
-def public_url(sync, name):
+def public_url(sync, name, tag=TAG):
     return (f"https://cnb.cool/{sync.CNB_OWNER}/{sync.CNB_REPO}/-/releases/download/"
-            f"{TAG}/{urllib.parse.quote(name, safe='')}")
+            f"{urllib.parse.quote(tag, safe='')}/{urllib.parse.quote(name, safe='')}")
 
 
 def remote_digest(url, expected_size):
@@ -262,10 +265,10 @@ def remote_digest(url, expected_size):
     return digest.hexdigest()
 
 
-def publish(sync, release, path, digest, size):
+def publish(sync, release, path, digest, size, tag=TAG):
     name = path.name
-    url = public_url(sync, name)
-    existing = release_assets(sync, release)
+    url = public_url(sync, name, tag)
+    existing = release_assets(sync, release, tag)
     if name in existing:
         if probe(url)[0] != size or remote_digest(url, size) != digest:
             raise SyncError("ExistingAssetContentMismatch")
@@ -276,7 +279,7 @@ def publish(sync, release, path, digest, size):
             success = sync.upload(str(release["id"]), str(path))
         if not success:
             raise SyncError("UploadFailed")
-        if name not in release_assets(sync, release):
+        if name not in release_assets(sync, release, tag):
             raise SyncError("UploadedAssetNotListed")
         if probe(url)[0] != size or remote_digest(url, size) != digest:
             raise SyncError("UploadedAssetVerificationFailed")
@@ -303,15 +306,55 @@ def check_rootfs_constants():
         raise SyncError("RootfsSourceChecksumChanged")
 
 
+def publish_preinstalled_rootfs(sync, downloaded, cache):
+    revision = recipe_revision()
+    built = {}
+    with tempfile.TemporaryDirectory(prefix="preinstalled-", dir=cache) as temporary:
+        work = Path(temporary)
+        for architecture in ROOTFS_SHA:
+            candidates = [(item, path, digest) for item, path, digest, size in downloaded
+                          if item.get("expected") == ROOTFS_SHA[architecture]]
+            if len(candidates) != 1:
+                raise SyncError("PreinstalledBaseMissing")
+            item, source, digest = candidates[0]
+            if digest != ROOTFS_SHA[architecture]:
+                raise SyncError("OfficialChecksumMismatch")
+            destination = work / f"debian-napcat-{architecture}.tar.gz"
+            abi = "arm64" if architecture == "aarch64" else "x86_64"
+            metadata = checked_build(source, destination, "debian", abi, "napcat")
+            built[architecture] = {**metadata, "source": item["source"]}
+        identity = content_key({"rootfs": built, "assets": [
+            {"name": item["name"], "sha256": digest, "sizeBytes": size}
+            for item, path, digest, size in downloaded]})
+        tag = f"{TAG}-preinstalled-r{safe_name(revision)}-{identity}"
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            release = sync.get_cnb_release(tag) or sync.ensure_release(
+                tag, f"NapCat Debian 预装依赖 r{revision}",
+                "双架构 Debian 预装运行依赖，不包含 QQ 或 NapCat 程序；来源与独立摘要见清单。")
+        if not release or not release.get("id"):
+            raise SyncError("ReleaseUnavailable")
+        records = []
+        for architecture, metadata in built.items():
+            path = work / f"debian-napcat-{architecture}.tar.gz"
+            url = publish(sync, release, path, metadata["sha256"], metadata["sizeBytes"], tag)
+            records.append({"architecture": architecture, "profile": "napcat",
+                            "recipeRevision": revision, "source": metadata["source"],
+                            "url": url, "sha256": metadata["sha256"], "sizeBytes": metadata["sizeBytes"]})
+    return records, release, tag
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="下载、校验并发布；默认只展示计划")
+    parser.add_argument("--preinstall", action="store_true", help="另构建双架构 Debian 依赖镜像，需同时 --apply")
     parser.add_argument("--cache-dir", type=Path, default=Path.home() / ".aharou/napcat-assets-cache")
     parser.add_argument("--output", type=Path, default=ROOT / "app/src/main/assets/napcat-downloads.json")
     args = parser.parse_args()
     check_rootfs_constants()
     plan = assets()
-    print(f"固定发布 tag：{TAG}")
+    print(f"官方字节资产固定发布 tag：{TAG}")
+    if args.preinstall:
+        print("预装计划：Debian 双架构、napcat 配方；独立摘要与内容命名 tag，不包含 QQ 程序。")
     print("许可提醒：执行发布前须核实各来源及归档内组件的再分发条款。")
     for item in plan:
         print(f"{item['name']}\n  {item['source']}")
@@ -346,12 +389,22 @@ def main():
                         "sha256": digest, "sizeBytes": size})
     manifest = {"schemaVersion": 1, "napcatVersion": "v4.18.42", "qqVersion": "3.2.34-53644",
                 "rootfsVersion": "v4.29.0", "assets": records}
-    # 五个资源全部可匿名读取后才生成清单；先验证发布副本再更新项目文件。
+    manifest_release, manifest_tag = release, TAG
+    if args.preinstall:
+        preinstalled, manifest_release, manifest_tag = publish_preinstalled_rootfs(sync, downloaded, args.cache_dir)
+        manifest["preinstalledRootfs"] = preinstalled
+    # 预装清单只发新 tag，旧 tag 的清单与原始资产保持原字节。
     staged = args.cache_dir / MANIFEST_NAME
     write_json(staged, manifest)
-    publish(sync, release, staged, sha256(staged), staged.stat().st_size)
+    publish(sync, manifest_release, staged, sha256(staged), staged.stat().st_size, manifest_tag)
+    if not args.preinstall:
+        existing = load_json(args.output.expanduser())
+        if isinstance(existing, dict) and existing.get("preinstalledRootfs"):
+            if existing.get("rootfsVersion") != manifest["rootfsVersion"]:
+                raise SyncError("PreinstalledRootfsVersionChanged")
+            manifest["preinstalledRootfs"] = existing["preinstalledRootfs"]
     write_json(args.output.expanduser(), manifest)
-    print(f"完成：5 个资产及下载清单已核对；本地清单：{args.output}")
+    print(f"完成：本次发布资产及下载清单已核对；本地清单：{args.output}")
     return 0
 
 

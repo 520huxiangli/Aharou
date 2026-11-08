@@ -159,6 +159,14 @@ if [ -f "$MARKER" ]; then
     if [ "$state" = "$PROVISION_SKIPPED" ]; then plog "用户曾选择手动安装，跳过菜单"; exit 0; fi
 fi
 
+# 预装声明不能替代可用性检查，工具齐全才标记完成；缺项继续原初始化流程。
+if preinstalled_general_ready; then
+    git_config
+    echo "$PROVISION_VERSION" > "$MARKER"
+    plog "预装工具已验证，跳过首次安装菜单"
+    exit 0
+fi
+
 plog "显示初始化菜单：PMGR=${PMGR:-未识别}"
 
 while :; do

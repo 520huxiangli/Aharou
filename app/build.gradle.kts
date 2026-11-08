@@ -160,11 +160,20 @@ android {
     // 允许 execve 的位置（SELinux 标签 apk_data_file）。rootfs 仍在 assets→filesDir——
     // 客户机二进制不由内核 execve，而是 proot 的 loader 用 mmap(PROT_EXEC) 映射进内存，
     // 不受 W^X 约束。故命名必须是 lib*.so（libproot-loader32.so 实为 32 位 ELF，同样有效）。
+    val preinstalledAssets = providers.environmentVariable("AHAROU_PREINSTALLED_ASSETS").orNull
+        ?.takeIf { it.isNotBlank() }?.let { rootProject.file(it) }
+    if (preinstalledAssets != null) {
+        require(listOf("arm", "x86").all {
+            preinstalledAssets.resolve("$it/container/$it/alpine-rootfs.bin").isFile
+        }) { "Preinstalled rootfs assets are incomplete; run scripts/stage_preinstalled_assets.py --apply" }
+    }
+    val armAssets = preinstalledAssets?.resolve("arm") ?: file("src/_armAssets")
+    val x86Assets = preinstalledAssets?.resolve("x86") ?: file("src/_x86Assets")
     sourceSets {
-        getByName("universal") { assets.srcDir("src/_armAssets") }
-        getByName("universal") { assets.srcDir("src/_x86Assets") }
-        getByName("armsolo") { assets.srcDir("src/_armAssets") }
-        getByName("x86solo") { assets.srcDir("src/_x86Assets") }
+        getByName("universal") { assets.srcDir(armAssets) }
+        getByName("universal") { assets.srcDir(x86Assets) }
+        getByName("armsolo") { assets.srcDir(armAssets) }
+        getByName("x86solo") { assets.srcDir(x86Assets) }
         getByName("universal") { jniLibs.srcDirs("src/_armJniLibs", "src/_x86JniLibs") }
         getByName("armsolo") { jniLibs.srcDir("src/_armJniLibs") }
         getByName("x86solo") { jniLibs.srcDir("src/_x86JniLibs") }

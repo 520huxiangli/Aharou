@@ -1241,7 +1241,7 @@ fun SettingsScreen(
                 )
                 SettingsSection.ContainerSources -> ContainerSourcesSection()
                 SettingsSection.ContainerDownloads -> ContainerImageDownloadSection(
-                    catalog = imageCatalog,
+                    catalog = imageCatalog, selectedSourceId = selectedImageSource,
                     state = imageDownload,
                     downloadedImages = downloadedImages,
                     sourceUnavailableIds = sourceUnavailableIds,

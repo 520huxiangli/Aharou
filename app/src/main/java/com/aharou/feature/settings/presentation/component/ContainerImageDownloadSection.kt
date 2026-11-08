@@ -60,6 +60,8 @@ import com.aharou.core.ui.SelectionAction
 import com.aharou.core.ui.SelectionActionBar
 import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.core.ui.rememberListSelectionState
+import com.aharou.feature.agent.domain.container.ContainerImageCatalog
+import com.aharou.feature.agent.domain.container.sizeBytesFor
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerImageEolStatus
 import com.aharou.feature.agent.domain.container.hasNewerVersion
@@ -140,6 +142,7 @@ internal fun ContainerImageDownloadSection(
     downloadedImages: Map<String, DownloadedImageRecord>,
     sourceUnavailableIds: Set<String>,
     selectedSourceName: String,
+    selectedSourceId: String,
     onDownload: (ContainerImageEntry) -> Unit,
     onCancel: () -> Unit,
     onImport: (String, String) -> Unit,
@@ -270,6 +273,7 @@ internal fun ContainerImageDownloadSection(
             hasNewerVersion = hasNewerVersion(downloadedImages[entry.id]?.version, entry.version),
             sourceUnavailable = entry.id in sourceUnavailableIds,
             sourceName = selectedSourceName,
+            sourceId = selectedSourceId,
             onDownload = { onDownload(entry) },
             onCancel = onCancel,
             onImport = { fileUri ->
@@ -463,6 +467,7 @@ private fun ImageDetailSheet(
     hasNewerVersion: Boolean,
     sourceUnavailable: Boolean,
     sourceName: String,
+    sourceId: String,
     onDownload: () -> Unit,
     onCancel: () -> Unit,
     onImport: (String) -> Unit,
@@ -556,9 +561,10 @@ private fun ImageDetailSheet(
             }
 
             Column(modifier = Modifier.padding(top = Spacing.md), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
-                if (entry.sizeBytes > 0) {
+                val imageSize = entry.sizeBytesFor(ContainerImageCatalog.CURRENT_ABI, sourceId)
+                if (imageSize > 0) {
                     Text(
-                        text = stringResource(R.string.container_download_size, formatBytes(entry.sizeBytes)),
+                        text = stringResource(R.string.container_download_size, formatBytes(imageSize)),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

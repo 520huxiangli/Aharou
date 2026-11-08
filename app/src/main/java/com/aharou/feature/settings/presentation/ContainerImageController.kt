@@ -9,8 +9,6 @@ import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.RootfsSource
 import com.aharou.feature.agent.domain.container.sha256For
-import com.aharou.feature.agent.domain.container.sha256For
-import com.aharou.feature.agent.domain.container.sha256For
 import com.aharou.feature.settings.data.remote.ContainerImageDownloader
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.DownloadedImageRecord
@@ -105,8 +103,14 @@ class ContainerImageController @Inject constructor(
         // 当前源下不可用的镜像集合（源切换后自动更新）
         scope.launch {
             combine(_imageCatalog, _selectedSource) { entries, sourceId ->
-                entries.filter { catalog.urlFor(it, sourceId, ContainerImageCatalog.CURRENT_ABI) == null }
-                    .map { it.id }.toSet()
+                entries.filter {
+                    try {
+                        catalog.urlFor(it, sourceId, ContainerImageCatalog.CURRENT_ABI) == null
+                    } catch (e: IllegalArgumentException) {
+                        // 元数据校验错误在发起下载时明确展示，不冒充该源不提供镜像。
+                        false
+                    }
+                }.map { it.id }.toSet()
             }.collect { _unavailableIds.value = it }
         }
         sweepOrphanDownloads()
@@ -181,7 +185,14 @@ class ContainerImageController @Inject constructor(
     /** 开始下载镜像：按当前架构与全局源拼 URL，进度实时写入 [download]。 */
     fun startDownload(entry: ContainerImageEntry, sourceId: String) {
         if (_download.value is ContainerImageDownloadUiState.Downloading) return
-        val url = catalog.urlFor(entry, sourceId, ContainerImageCatalog.CURRENT_ABI) ?: return
+        val url = try {
+            catalog.urlFor(entry, sourceId, ContainerImageCatalog.CURRENT_ABI) ?: return
+        } catch (e: IllegalArgumentException) {
+            _download.value = ContainerImageDownloadUiState.Error(
+                entry.id, e.message ?: context.getString(R.string.container_download_failed, "")
+            )
+            return
+        }
         val suffix = when {
             url.endsWith(".tar.gz") -> "tar.gz"
             url.endsWith(".tar.xz") || url.endsWith(".txz") -> "tar.xz"
@@ -189,13 +200,12 @@ class ContainerImageController @Inject constructor(
             else -> "tar.gz"
         }
         val fileName = "download_${entry.id}_${entry.version}_${System.currentTimeMillis()}.$suffix"
-        // 官方/自建源拿清单里的哈希强制校验；第三方源与无哈希的条目（Debian）传 null 跳过
-        val expectedSha256 = entry.sha256For(ContainerImageCatalog.CURRENT_ABI)
-            .takeIf { sourceId in CHECKSUM_SOURCES }
         downloadJob = scope.launch {
             _download.value =
                 ContainerImageDownloadUiState.Downloading(entry.id, entry.name, entry.version, sourceId, 0, 0)
             try {
+                val expectedSha256 = entry.sha256For(ContainerImageCatalog.CURRENT_ABI, sourceId)
+                    .takeIf { sourceId in CHECKSUM_SOURCES || sourceId in entry.preinstalledPaths }
                 val uri = downloader.download(url, fileName, expectedSha256) { read, total ->
                     _download.value = ContainerImageDownloadUiState.Downloading(
                         entry.id, entry.name, entry.version, sourceId, read, total
@@ -318,7 +328,7 @@ class ContainerImageController @Inject constructor(
     private companion object {
         const val TAG = "ContainerImageController"
 
-        /** 目录清单里带哈希的源：只有这两个源会强制校验下载文件。 */
+        /** 旧清单只在官方与自建源校验；新清单的来源专属摘要不受此限制。 */
         val CHECKSUM_SOURCES = setOf("official", "aharou")
     }
 }
