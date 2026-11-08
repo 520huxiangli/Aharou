@@ -1486,7 +1486,7 @@ fun AIChatPanel(
                 onInputChange = { id, text -> dashboardInputs = dashboardInputs + (id to text) }
             ) {
                 ChatInputBar(
-                    value = inputText,
+                    value = inputText, serviceTier = viewModel.currentServiceTierNow(), onServiceTierChange = viewModel::setServiceTier,
                     onValueChange = viewModel::updateInputDraft,
                     onSend = { text -> sendMessage(text) },
                     enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,

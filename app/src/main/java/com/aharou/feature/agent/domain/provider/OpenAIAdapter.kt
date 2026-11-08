@@ -72,6 +72,7 @@ class OpenAIAdapter @Inject constructor(
 
     // null 时请求体不带 temperature（Gson 跳过 null 字段），交由服务端默认。
     override var temperature: Float? = null
+    override var serviceTier: String? = null
 
     private fun extraHeaders(): Map<String, String> {
         val base = resolveCustomHeaders(customHeaders, logSessionId, apiKey)
@@ -133,7 +134,8 @@ class OpenAIAdapter @Inject constructor(
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = false,
-            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
+            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null,
+            service_tier = serviceTier
         ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
@@ -281,6 +283,8 @@ class OpenAIAdapter @Inject constructor(
         // OpenAI 官方 Responses 原生支持 prompt_cache_key（同会话路由到同一缓存 shard）；
         // 自动管理缓存的服务（如 DeepSeek）会静默忽略该字段，不会报错。
         logSessionId?.let { request["prompt_cache_key"] = it }
+        // 服务档位：只有用户在该模型下显式选了标准/Fast/Ultrafast 才带，默认不带以保持请求体不变。
+        serviceTier?.let { request["service_tier"] = it }
         codexClientMetadata()?.let { request["client_metadata"] = it }
         return request
     }
@@ -423,7 +427,8 @@ class OpenAIAdapter @Inject constructor(
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = true,
             stream_options = StreamOptions(include_usage = true),
-            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
+            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null,
+            service_tier = serviceTier
         ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。

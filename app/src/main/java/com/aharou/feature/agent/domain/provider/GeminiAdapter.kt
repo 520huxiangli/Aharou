@@ -47,6 +47,7 @@ class GeminiAdapter @Inject constructor(
 
     // 原生 generateContent 不发 generationConfig.temperature：Gemini 2.0 起服务端默认就是 1.0，与推荐值一致。
     override var temperature: Float? = null
+    override var serviceTier: String? = null
 
     private fun extraHeaders(): Map<String, String> =
         resolveCustomHeaders(customHeaders, logSessionId, apiKey)

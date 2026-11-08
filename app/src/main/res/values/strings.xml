@@ -597,6 +597,12 @@
     <string name="chat_reasoning_effort_xhigh">极高</string>
     <string name="chat_reasoning_effort_max">最高</string>
     <string name="model_reasoning_effort_unverified">该模型未必支持此档位，实际可能被服务端降级或忽略</string>
+    <string name="service_tier_title">服务档位</string>
+    <string name="service_tier_follow">跟随上游</string>
+    <string name="service_tier_standard">标准</string>
+    <string name="service_tier_fast">Fast</string>
+    <string name="service_tier_ultrafast">Ultrafast</string>
+    <string name="service_tier_hint">选中档位只代表请求里带了这个参数，不代表实际生效；Fast 与 Ultrafast 可能增加费用，倍率以渠道为准</string>
     <string name="model_reasoning_toggle_only">该模型只支持思考开/关，没有中间档位</string>
     <string name="model_reasoning_budget_tokens">该模型按思考预算（token 数）控制深度，所选档位会换算为预算</string>
     <string name="chat_open_file_missing">文件不存在或已被移动</string>

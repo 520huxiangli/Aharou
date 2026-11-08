@@ -10,9 +10,11 @@ import com.aharou.feature.settings.data.repository.CompactionModelSettingsReposi
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
 import com.aharou.feature.settings.data.repository.ImageGenModelSettingsRepository
 import com.aharou.feature.settings.data.repository.ModelReasoningEffortRepository
+import com.aharou.feature.settings.data.repository.ModelServiceTierRepository
 import com.aharou.feature.settings.data.repository.TitleModelSettingsRepository
 import com.aharou.feature.settings.data.repository.VisionModelSettingsRepository
 import com.aharou.feature.agent.domain.model.ReasoningEffort
+import com.aharou.feature.settings.domain.model.ServiceTier
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
@@ -33,6 +35,7 @@ class ConfigModelRoleFields @Inject constructor(
     private val visionModel: VisionModelSettingsRepository,
     private val imageGenModel: ImageGenModelSettingsRepository,
     private val reasoningEffort: ModelReasoningEffortRepository,
+    private val serviceTier: ModelServiceTierRepository,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -74,6 +77,30 @@ class ConfigModelRoleFields @Inject constructor(
                             ?: throw ConfigError.InvalidValue("无效的思考强度：$s，可选值：${ReasoningEffort.entries.mapNotNull { it.apiValue }.joinToString("/")}")
                         reasoningEffort.set(pid, model, effort.name)
                     }
+                },
+            ),
+        )
+        registry.register(
+            ClosureField(
+                path = "model.roles.default_service_tier",
+                displayName = "默认模型服务档位",
+                description = "默认模型的加速档位：standard(default)、fast、ultrafast，空为不发送该参数。仅 OpenAI 协议生效；Fast 与 Ultrafast 可能增加费用，倍率以渠道为准。",
+                valueSchema = ConfigSchema.Str(),
+                revertable = true,
+                reader = {
+                    val pid = runBlocking { defaultModel.providerIdFlow.first() }
+                    val model = runBlocking { defaultModel.modelFlow.first() }
+                    val tier = if (pid.isBlank() || model.isBlank()) null else serviceTier.get(pid, model)
+                    ConfigValue.Str(ServiceTier.fromName(tier)?.apiValue.orEmpty())
+                },
+                writer = { v ->
+                    val s = (v as? ConfigValue.Str)?.value ?: throw ConfigError.TypeMismatch("string")
+                    val pid = runBlocking { defaultModel.providerIdFlow.first() }
+                    val model = runBlocking { defaultModel.modelFlow.first() }
+                    if (pid.isBlank() || model.isBlank()) throw ConfigError.InvalidValue("请先设置默认模型再调服务档位")
+                    val tier = if (s.isBlank()) ServiceTier.FOLLOW else ServiceTier.entries.firstOrNull { it.apiValue == s || it.name.equals(s, true) }
+                        ?: throw ConfigError.InvalidValue("无效的服务档位：$s，可选值：standard/fast/ultrafast，空为不发送")
+                    serviceTier.set(pid, model, tier.name)
                 },
             ),
         )

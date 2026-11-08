@@ -126,6 +126,7 @@ import com.aharou.feature.agent.domain.workflow.StatefulAgentWorkflow
 import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
 import com.aharou.feature.settings.data.repository.CompactionModelSettingsRepository
 import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepository
+import com.aharou.feature.settings.data.repository.ModelServiceTierRepository
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.ProviderKeyRotator
 import com.aharou.feature.settings.data.repository.TitleModelSettingsRepository
@@ -519,6 +520,7 @@ object AgentModule {
         planApprovalManager: PlanApprovalManager,
         toolOutputStore: ToolOutputStore,
         modelMetadataService: ModelMetadataService,
+        modelServiceTierRepository: ModelServiceTierRepository,
         compactionModelSettingsRepository: CompactionModelSettingsRepository,
         titleModelSettingsRepository: TitleModelSettingsRepository,
         defaultModelSettingsRepository: DefaultModelSettingsRepository,
@@ -555,6 +557,7 @@ object AgentModule {
             planApprovalManager,
             toolOutputStore,
             modelMetadataService,
+            modelServiceTierRepository,
             compactionModelSettingsRepository,
             titleModelSettingsRepository,
             defaultModelSettingsRepository,

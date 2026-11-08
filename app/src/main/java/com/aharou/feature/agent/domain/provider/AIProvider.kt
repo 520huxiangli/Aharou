@@ -294,6 +294,13 @@ interface AIProvider {
     var temperature: Float?
 
     /**
+     * 本次请求的服务档位（OpenAI Responses / Chat 的 `service_tier`）。
+     * null 表示请求里不带该字段——默认就是不带，只有用户在模型级显式选了标准/Fast/Ultrafast 才有值。
+     * 只在 OpenAI 适配器上生效，Anthropic / Gemini 不读它。
+     */
+    var serviceTier: String?
+
+    /**
      * 流式请求等待首个内容块的上限（毫秒），调用前由工作流按「偏好设置 → 网络」写入。
      * 默认 5 分钟；0 表示不限制，此时仅靠连接超时与手动取消兜底。
      */

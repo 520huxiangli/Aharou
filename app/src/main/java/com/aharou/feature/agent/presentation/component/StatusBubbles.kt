@@ -862,8 +862,10 @@ internal fun ReasoningBubble(
         }
         AnimatedVisibility(
             visible = expanded,
-            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
-            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+            // 不做高度动画：展开瞬间内容高度要到几百 dp，逐帧改高度会让内层懒列表每帧重新测量，
+            // 思考一长（十几秒的内容）就卡住。淡入即可，点击反馈依旧即时。
+            enter = fadeIn(),
+            exit = fadeOut(),
         ) {
             Column {
                 Spacer(Modifier.height(Spacing.sm))

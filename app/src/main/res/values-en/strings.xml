@@ -597,6 +597,12 @@
     <string name="chat_reasoning_effort_xhigh">Extra high</string>
     <string name="chat_reasoning_effort_max">Max</string>
     <string name="model_reasoning_effort_unverified">This model may not support this level; the server may downgrade or ignore it.</string>
+    <string name="service_tier_title">Service tier</string>
+    <string name="service_tier_follow">Follow upstream</string>
+    <string name="service_tier_standard">Standard</string>
+    <string name="service_tier_fast">Fast</string>
+    <string name="service_tier_ultrafast">Ultrafast</string>
+    <string name="service_tier_hint">Selecting a tier only means the parameter is sent; it does not prove it took effect. Fast and Ultrafast may cost more; multipliers depend on the provider.</string>
     <string name="model_reasoning_toggle_only">This model only supports thinking on/off, with no intermediate levels.</string>
     <string name="model_reasoning_budget_tokens">This model controls thinking depth by a token budget; the selected level is converted to a budget.</string>
 

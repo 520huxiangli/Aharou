@@ -39,6 +39,8 @@ import com.aharou.feature.settings.data.repository.DefaultModelSettingsRepositor
 import com.aharou.feature.settings.data.repository.GeneralSettingsRepository
 import com.aharou.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aharou.feature.settings.data.repository.ModelReasoningEffortRepository
+import com.aharou.feature.settings.data.repository.ModelServiceTierRepository
+import com.aharou.feature.settings.domain.model.ServiceTier
 import com.aharou.feature.settings.data.repository.StartupSessionMode
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.AgentImage
@@ -131,6 +133,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
@@ -185,6 +188,7 @@ class AIAgentViewModel @Inject constructor(
     private val aiProviderRepository: AIProviderRepository,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
     private val modelReasoningEffortRepository: ModelReasoningEffortRepository,
+    private val modelServiceTierRepository: ModelServiceTierRepository,
     private val toolPermissionManager: ToolPermissionManager,
     private val askUserQuestionManager: AskUserQuestionManager,
     private val containerEngine: LinuxContainerEngine,
@@ -385,21 +389,19 @@ class AIAgentViewModel @Inject constructor(
     val inputDraft: StateFlow<String> = _currentSessionId
         .flatMapLatest { id -> _inputDrafts.map { it[id ?: PENDING_DRAFT_KEY].orEmpty() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    private var draftSaveJob: Job? = null
 
     fun updateInputDraft(text: String) {
         val id = _currentSessionId.value ?: PENDING_DRAFT_KEY
-        val editor = draftPrefs.edit()
-        if (text.isEmpty()) {
-            _inputDrafts.value = _inputDrafts.value - id
-            editor.remove(id)
-        } else {
-            _inputDrafts.value = _inputDrafts.value + (id to text)
-            editor.putString(id, text)
+        _inputDrafts.value = if (text.isEmpty()) _inputDrafts.value - id else _inputDrafts.value + (id to text)
+        // 每敲一个字就落一次盘会把主线程拖住，输入事件排队后表现为吞字与 1~2 秒延迟：
+        // 内存态保证输入跟手，磁盘写只在停下来后做一次。
+        draftSaveJob?.cancel()
+        draftSaveJob = viewModelScope.launch {
+            delay(400)
+            draftPrefs.edit().apply { if (text.isEmpty()) remove(id) else putString(id, text) }.apply()
         }
-        editor.apply()
-    }
-
-    fun clearInputDraft() {
+    }    fun clearInputDraft() {
         val id = _currentSessionId.value ?: PENDING_DRAFT_KEY
         // 哨兵键一并清：发送后再有会话落定，不能把刚发出去的正文又当未归属草稿迁回来。
         _inputDrafts.value = _inputDrafts.value - id - PENDING_DRAFT_KEY
@@ -2658,6 +2660,15 @@ class AIAgentViewModel @Inject constructor(
                 modelReasoningEffortRepository.set(pid, model, effort.name)
             }
         }
+    }
+
+    /** 当前会话模型记忆的服务档位；没有记忆就是「跟随上游」。 */
+    fun currentServiceTierNow(): ServiceTier =
+        currentSessionState.value?.let { s -> ServiceTier.fromName(modelServiceTierRepository.get(s.providerId.orEmpty(), s.model.orEmpty())) } ?: ServiceTier.FOLLOW
+
+    /** 记忆当前会话模型的服务档位；请求装配时按同一份记忆现读，不依赖 UI 刷新。 */
+    fun setServiceTier(tier: ServiceTier) {
+        currentSessionState.value?.let { modelServiceTierRepository.set(it.providerId.orEmpty(), it.model.orEmpty(), tier.name) }
     }
 
     fun setSessionProviderModel(providerId: String, model: String) {

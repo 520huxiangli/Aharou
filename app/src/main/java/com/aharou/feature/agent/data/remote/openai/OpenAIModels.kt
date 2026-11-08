@@ -18,7 +18,9 @@ data class ChatCompletionRequest(
     val stream: Boolean = false,
     val stream_options: StreamOptions? = null,
     /** 缓存 shard 路由键（同会话请求路由到同一缓存分片）。仅第三方兼容服务支持，OpenAI 官方不接受该字段。 */
-    val prompt_cache_key: String? = null
+    val prompt_cache_key: String? = null,
+    /** 服务档位（standard/fast/ultrafast 等）。null 时 Gson 跳过，保持老请求体不变。 */
+    val service_tier: String? = null
 )
 
 data class OpenAIChatMessage(

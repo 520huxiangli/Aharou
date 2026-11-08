@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
 import org.apache.commons.net.ftp.FTPReply
+import org.apache.commons.net.ftp.FTPSClient
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -31,7 +32,7 @@ class FtpSyncClient : RemoteSyncClient {
         private const val CONTROL_KEEPALIVE_REPLY_SECONDS = 10L
     }
 
-    private val ftpClient = FTPClient()
+    private var ftpClient: FTPClient = FTPClient()
 
     /** FTPClient 非线程安全：同一实例上的并发命令会让控制连接回复串台，故所有操作串行化。 */
     private val mutex = Mutex()
@@ -56,32 +57,51 @@ class FtpSyncClient : RemoteSyncClient {
             throw IllegalArgumentException("FTP only supports Password authentication")
         }
 
+        // 先试明文；FileZilla Server 1.x 等默认强制 TLS 的服务器会拒掉明文登录，
+        // 再改用 explicit TLS 重连一次，用户不必自己分辨服务器要不要加密。
+        val plainError = runCatching {
+            ftpClient = openClient(tls = false, host = host, port = port, username = username, password = auth.password)
+        }.exceptionOrNull() ?: return
+        runCatching {
+            ftpClient = openClient(tls = true, host = host, port = port, username = username, password = auth.password)
+        }.onFailure { tlsError ->
+            throw IllegalStateException("${plainError.message}; TLS retry failed: ${tlsError.message}")
+        }
+    }
+
+    private fun openClient(tls: Boolean, host: String, port: Int, username: String, password: String): FTPClient {
+        val client: FTPClient = if (tls) FTPSClient("TLS", false) else FTPClient()
         // 编码须在 connect 前设置：影响控制命令与路径的编解码（非 ASCII 路径）。
-        ftpClient.setControlEncoding(StandardCharsets.UTF_8.name())
-        ftpClient.setAutodetectUTF8(true)
-        ftpClient.setConnectTimeout(CONNECT_TIMEOUT_MS)
-        ftpClient.setDefaultTimeout(CONTROL_READ_TIMEOUT_MS)
-        ftpClient.setDataTimeout(DATA_TIMEOUT_MS)
+        client.setControlEncoding(StandardCharsets.UTF_8.name())
+        client.setAutodetectUTF8(true)
+        client.setConnectTimeout(CONNECT_TIMEOUT_MS)
+        client.setDefaultTimeout(CONTROL_READ_TIMEOUT_MS)
+        client.setDataTimeout(DATA_TIMEOUT_MS)
         // 传输期间数据连接忙、控制连接空闲，靠 NOOP 保活，避免被服务器/路由器按 idle 断开。
-        ftpClient.setControlKeepAliveTimeout(Duration.ofSeconds(CONTROL_KEEPALIVE_SECONDS))
-        ftpClient.setControlKeepAliveReplyTimeout(Duration.ofSeconds(CONTROL_KEEPALIVE_REPLY_SECONDS))
-
-        ftpClient.connect(host, port)
-        val reply = ftpClient.replyCode
-        if (!FTPReply.isPositiveCompletion(reply)) {
-            ftpClient.disconnect()
-            throw IllegalStateException("FTP server refused connection.")
+        client.setControlKeepAliveTimeout(Duration.ofSeconds(CONTROL_KEEPALIVE_SECONDS))
+        client.setControlKeepAliveReplyTimeout(Duration.ofSeconds(CONTROL_KEEPALIVE_REPLY_SECONDS))
+        try {
+            client.connect(host, port)
+            if (!FTPReply.isPositiveCompletion(client.replyCode)) {
+                throw IllegalStateException("FTP server refused connection.")
+            }
+            // explicit TLS 由 FTPSClient 在 connect 时就自动发出 AUTH TLS，这里不用（也无法）手动执行。
+            if (!client.login(username, password)) {
+                throw IllegalStateException(if (client is FTPSClient) "FTP login failed (TLS)" else "FTP login failed")
+            }
+            if (client is FTPSClient) {
+                client.execPBSZ(0)
+                client.execPROT("P")
+            }
+            client.enterLocalPassiveMode()
+            client.setFileType(FTP.BINARY_FILE_TYPE)
+            FileLogger.i(TAG, "FTP 控制通道建立 tls=$tls 编码=${client.controlEncoding}, UTF8 特性=${client.hasFeature("UTF8")}")
+            isConnected = true
+            return client
+        } catch (e: Exception) {
+            runCatching { client.disconnect() }
+            throw e
         }
-
-        if (!ftpClient.login(username, auth.password)) {
-            ftpClient.disconnect()
-            throw IllegalStateException("FTP login failed")
-        }
-
-        ftpClient.enterLocalPassiveMode()
-        ftpClient.setFileType(FTP.BINARY_FILE_TYPE)
-        FileLogger.i(TAG, "FTP 控制通道编码=${ftpClient.controlEncoding}, UTF8 特性=${ftpClient.hasFeature("UTF8")}")
-        isConnected = true
     }
 
     private fun doDisconnect() {

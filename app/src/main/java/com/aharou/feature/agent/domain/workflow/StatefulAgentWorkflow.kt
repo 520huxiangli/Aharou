@@ -127,6 +127,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private val planApprovalManager: PlanApprovalManager,
     private val toolOutputStore: ToolOutputStore,
     private val modelMetadataService: ModelMetadataService,
+    private val modelServiceTierRepository: com.aharou.feature.settings.data.repository.ModelServiceTierRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
@@ -381,6 +382,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.maxOutputTokens = metadata.outputTokens
         // 元数据说不接受自定义温度就不发该字段（kimi-k3、gpt-5 系带了直接 400）；允许的只发官方固定值。
         provider.temperature = if (metadata.supportsCustomTemperature) fixedTemperature(config.effectiveModel) else null
+        provider.serviceTier = modelServiceTierRepository.apiValueFor(config.id, config.effectiveModel) // 模型级服务档位；null 表示请求里不带该字段
         applyProviderParamOverrides(config.requestMiddleware, config.id, config.type.name, provider.model, provider)
         provider.firstByteTimeoutMs = generalSettingsRepository.firstByteTimeoutMs()
         provider.streamIdleTimeoutMs = generalSettingsRepository.streamIdleTimeoutMs()

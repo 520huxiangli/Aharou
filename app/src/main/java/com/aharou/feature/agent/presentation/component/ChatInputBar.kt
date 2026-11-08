@@ -123,6 +123,7 @@ import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
+import com.aharou.feature.settings.domain.model.ServiceTier
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import com.aharou.feature.workspace.presentation.component.WorkspaceIconButton
@@ -199,6 +200,8 @@ internal fun ChatInputBar(
     onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
     tokenEstimated: Boolean = false,
+    serviceTier: ServiceTier = ServiceTier.FOLLOW,
+    onServiceTierChange: ((ServiceTier) -> Unit)? = null,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: (String, String?) -> Unit = { _, _ -> },
@@ -224,9 +227,12 @@ internal fun ChatInputBar(
     // TextField 的 String 重载在整串替换时会保留旧 selection 下标（点快捷命令补全时光标会停在中间），
     // 这里自持 TextFieldValue：外部改值时把光标移到末尾。
     var inputFieldValue by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    // 记录输入框自己推给外部的文本：它回流时不能再回写，否则打字快的时候旧值会把刚敲的字盖掉。
+    var lastPushedText by remember { mutableStateOf(value) }
     LaunchedEffect(value) {
-        if (inputFieldValue.text != value) {
+        if (value != lastPushedText && inputFieldValue.text != value) {
             inputFieldValue = TextFieldValue(value, TextRange(value.length))
+            lastPushedText = value
         }
     }
     val showSlashMenu = !isBusy && slashCommands.isNotEmpty() &&
@@ -487,6 +493,7 @@ internal fun ChatInputBar(
                             // 大段粘贴折成 [Pasted#N] 标记，普通输入原样通过。
                             val folded = foldLongPasteIfNeeded(inputFieldValue, new, onStashPaste)
                             inputFieldValue = folded
+                            lastPushedText = folded.text
                             onValueChange(folded.text)
                             // 用户可能直接删掉 [Pasted#N] 字面量，对应的缓冲块要跟着回收，
                             // 否则 chip 会赖在输入框上方，点开还是一段早已不在文本里的内容。
@@ -617,7 +624,10 @@ internal fun ChatInputBar(
                             availableEfforts = ReasoningEffort.entries,
                             onChange = onReasoningEffortChange,
                             enabled = !isBusy,
-                            modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] }
+                            modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] },
+                            serviceTier = serviceTier,
+                            onServiceTierChange = onServiceTierChange,
+                            showServiceTier = activeProvider?.type == com.aharou.feature.settings.domain.model.ProviderType.OPENAI
                         )
                     }
                     val callContext = LocalContext.current
