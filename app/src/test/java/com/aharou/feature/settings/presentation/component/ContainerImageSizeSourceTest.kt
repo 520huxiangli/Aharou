@@ -3,6 +3,7 @@ package com.aharou.feature.settings.presentation.component
 import com.aharou.feature.agent.domain.container.ContainerImageCatalog
 import com.aharou.feature.agent.domain.container.ContainerImageEntry
 import com.aharou.feature.agent.domain.container.ContainerImagePreinstalledSource
+import com.aharou.feature.agent.domain.container.sizeBytesFor
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
