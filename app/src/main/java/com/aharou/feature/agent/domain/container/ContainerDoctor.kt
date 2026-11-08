@@ -270,12 +270,12 @@ class ContainerDoctor @Inject constructor(
      * 把「装好了」的判定从「标记写了」改成「真能跑」——否则烂 rootfs 会被当成已装好，用户看到的是
      * 之后每条命令都莫名其妙失败。
      */
-    suspend fun verifyRootfs(rootfs: File, timeoutMs: Long = BOOT_PROBE_TIMEOUT_MS): RootfsVerdict =
+    suspend fun verifyRootfs(rootfs: File, profile: ContainerProfile, timeoutMs: Long = BOOT_PROBE_TIMEOUT_MS): RootfsVerdict =
         withContext(Dispatchers.IO) {
             val missing = REQUIRED_ROOTFS_ENTRIES.filterNot { hasEntry(rootfs, it) }
             if (missing.isNotEmpty()) return@withContext RootfsVerdict.LayoutMissing(missing)
 
-            val process = runCatching { engine.startProotProcess(BOOT_PROBE_COMMAND, null) }
+            val process = runCatching { engine.startProotProcess(BOOT_PROBE_COMMAND, null, profile) }
                 .getOrElse { error ->
                     FileLogger.w(TAG, "启动容器探针失败：${rootfs.absolutePath}", error)
                     return@withContext RootfsVerdict.BootFailed(

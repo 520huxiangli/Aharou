@@ -1556,7 +1556,7 @@ fun AIChatPanel(
                             settingsViewModel?.refreshProviderDashboard(it, context = context, force = true)
                         }
                     },
-                    tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null), contextBreakdown = contextUsages[currentSessionId]?.breakdown,
+                    tokenEstimated = contextUsages[currentSessionId]?.estimated ?: (sessionLastInputTokens <= 0 && currentSessionId != null),
                     tokenProgress = run {
                         val contextLimit = activeModelMetadata?.let {
                             com.aharou.feature.settings.domain.model.ModelContextPolicy.effectiveInputBudget(it)

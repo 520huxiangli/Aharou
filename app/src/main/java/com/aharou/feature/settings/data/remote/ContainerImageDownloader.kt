@@ -7,9 +7,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -20,11 +25,8 @@ import okhttp3.Response
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * 把镜像 rootfs 下载到 App 私有目录 filesDir/rootfs_images/（与手动导入镜像的副本同目录），
- * 返回 file:// uri，后续由 [com.aharou.feature.agent.domain.container.ContainerInstaller] 解压。
- * 协程取消时同步 cancel 底层 call，半成品文件一并清理。
- */
+class ContainerImageChecksumException(message: String) : IOException(message)
+
 @Singleton
 class ContainerImageDownloader @Inject constructor(
     @param:ApplicationContext private val context: Context
@@ -38,62 +40,82 @@ class ContainerImageDownloader @Inject constructor(
     suspend fun download(
         url: String,
         fileName: String,
-        /**
-         * 官方公布的 SHA-256；为空表示不校验（上游没给校验和，或当前镜像源不可信其字节一致）。
-         * 不符会删掉半成品并抛 [IOException]，避免把被截断/篡改的 rootfs 交给安装器解压。
-         */
         expectedSha256: String? = null,
+        connectTimeoutSeconds: Long = 10,
+        readTimeoutSeconds: Long = 10,
+        writeTimeoutSeconds: Long = 10,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit
     ): String = withContext(Dispatchers.IO) {
         val dir = File(context.filesDir, "rootfs_images").apply { mkdirs() }
         val dest = File(dir, fileName)
-        val call = client.newCall(Request.Builder().url(url).build())
-        suspendCancellableCoroutine { cont ->
-            cont.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    // 失败/取消时把已写出的半成品删掉：残留文件不在已下载记录里，界面上看不到也删不掉。
-                    // （进程被系统直接杀掉时这里跑不到，靠 Controller 启动时的目录兜底扫描清理。）
-                    dest.delete()
-                    if (cont.isCancelled) return
-                    cont.resumeWithException(e)
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    try {
-                        if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-                        val body = response.body ?: throw IOException("响应体为空")
-                        val total = body.contentLength()
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var read = 0L
-                        // 边写盘边算摘要，不回头再读一遍文件
-                        val digest = MessageDigest.getInstance("SHA-256")
-                        body.byteStream().use { input ->
-                            dest.outputStream().use { output ->
-                                while (true) {
-                                    val n = input.read(buffer)
-                                    if (n < 0) break
-                                    output.write(buffer, 0, n)
-                                    digest.update(buffer, 0, n)
-                                    read += n
-                                    onProgress(read, total)
-                                }
-                            }
+        val temporary = File(dir, ".${fileName}.${UUID.randomUUID()}.part")
+        val downloadClient = client.newBuilder()
+            .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
+            .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+            .writeTimeout(writeTimeoutSeconds, TimeUnit.SECONDS)
+            .build()
+        val call = downloadClient.newCall(Request.Builder().url(url).build())
+        val finished = CompletableDeferred<Unit>()
+        try {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        try {
+                            temporary.delete()
+                            if (cont.isActive) cont.resumeWithException(e)
+                        } finally {
+                            finished.complete(Unit)
                         }
-                        if (!expectedSha256.isNullOrBlank()) {
-                            val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                            if (!actual.equals(expectedSha256, ignoreCase = true)) {
-                                throw IOException(context.getString(R.string.container_download_checksum_failed))
-                            }
-                        }
-                        cont.resume(Uri.fromFile(dest).toString())
-                    } catch (e: Exception) {
-                        dest.delete()
-                        if (cont.isCancelled) return
-                        cont.resumeWithException(e)
                     }
-                }
-            })
+
+                    override fun onResponse(call: Call, response: Response) {
+                        try {
+                            response.use {
+                                if (!cont.isActive) return
+                                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                                val body = response.body ?: throw IOException("Empty response body")
+                                val total = body.contentLength()
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                var read = 0L
+                                val digest = MessageDigest.getInstance("SHA-256")
+                                body.byteStream().use { input ->
+                                    temporary.outputStream().use { output ->
+                                        while (true) {
+                                            if (!cont.isActive) return
+                                            val n = input.read(buffer)
+                                            if (n < 0) break
+                                            if (!cont.isActive) return
+                                            output.write(buffer, 0, n)
+                                            digest.update(buffer, 0, n)
+                                            read += n
+                                            onProgress(read, total)
+                                        }
+                                    }
+                                }
+                                if (!cont.isActive) return
+                                if (!expectedSha256.isNullOrBlank()) {
+                                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                                    if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                                        throw ContainerImageChecksumException(context.getString(R.string.container_download_checksum_failed))
+                                    }
+                                }
+                                if (!temporary.renameTo(dest)) throw IOException("Cannot commit downloaded file")
+                                cont.resume(Uri.fromFile(dest).toString(), onCancellation = { _, _, _ -> dest.delete() })
+                            }
+                        } catch (e: Exception) {
+                            if (cont.isActive) cont.resumeWithException(e)
+                        } finally {
+                            temporary.delete()
+                            finished.complete(Unit)
+                        }
+                    }
+                })
+            }
+        } catch (e: CancellationException) {
+            // 等回调关闭文件流后再交还调用方，防止换源时上一次写入仍未结束。
+            withContext(NonCancellable) { finished.await() }
+            throw e
         }
     }
 }

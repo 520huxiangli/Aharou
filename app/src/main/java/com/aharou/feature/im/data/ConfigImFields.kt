@@ -34,6 +34,7 @@ class ConfigImFields @Inject constructor(
     private val weixin: WeixinSettingsRepository,
     private val feishu: FeishuSettingsRepository,
     private val qq: QqSettingsRepository,
+    private val napCat: ConfigNapCatFields,
     @Named("telegram") private val telegramBridge: ImBotBridge,
     @Named("weixin") private val weixinBridge: ImBotBridge,
     @Named("feishu") private val feishuBridge: ImBotBridge,
@@ -99,6 +100,7 @@ class ConfigImFields @Inject constructor(
         registerWeixin(registry)
         registerFeishu(registry)
         registerQq(registry)
+        napCat.registerInto(registry)
     }
 
     /** 微信 iLink：扫码绑定后凭证会自动填入，也可以手填。 */

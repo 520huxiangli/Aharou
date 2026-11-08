@@ -1,7 +1,10 @@
 package com.aharou.feature.agent.presentation.component
 
+import android.content.ClipData
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -9,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -17,12 +21,19 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.mikepenz.markdown.model.ImageData
 import com.mikepenz.markdown.model.ImageTransformer
@@ -31,6 +42,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import ru.noties.jlatexmath.JLatexMathDrawable
 
 /**
@@ -156,6 +168,11 @@ internal class MathImageTransformer(
 
         val density = LocalDensity.current
         val colorArgb = LocalContentColor.current.toArgb()
+        val clipboard = LocalClipboard.current
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
+        val copySuccess = stringResource(R.string.common_copy_success)
+        val formulaLabel = stringResource(R.string.common_latex_formula)
         // 块级公式与正文使用同一字号，避免块级公式无必要地放大。
         val textSizePx = with(density) { baseTextSizeSp.sp.toPx() }
         // 首次组合时同步取得真实尺寸，避免用字符长度估算造成公式忽大忽小、宽度过大时
@@ -184,9 +201,21 @@ internal class MathImageTransformer(
         } else {
             Modifier
         }
+        // 位图既不能选中也不能被读屏朗读：补上替代文本，并让点击把原始公式源码取回剪贴板。
+        val interactive = Modifier
+            .clickable {
+                scope.launch {
+                    runCatching {
+                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("latex", latex)))
+                    }.onSuccess {
+                        Toast.makeText(context, copySuccess, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            .semantics { contentDescription = "$formulaLabel: ${latex.take(120)}" }
         return ImageData(
             painter = painter,
-            modifier = base.then(Modifier.size(widthDp, heightDp)),
+            modifier = base.then(Modifier.size(widthDp, heightDp)).then(interactive),
             contentScale = ContentScale.Fit,
         )
     }
@@ -202,7 +231,8 @@ internal class MathImageTransformer(
                 drawable.intrinsicHeight.coerceAtLeast(1)
             )
         } catch (e: Exception) {
-            android.util.Size(textSizePx.roundToInt().coerceAtLeast(1), textSizePx.roundToInt().coerceAtLeast(1))
+            val fallback = renderFallbackText(latex, textSizePx, android.graphics.Color.BLACK)
+            android.util.Size(fallback.width, fallback.height)
         }
     }
     private class FixedLatexPainter(
@@ -275,8 +305,27 @@ internal class MathImageTransformer(
                 bitmap
             } catch (e: Exception) {
                 FileLogger.w(TAG, "LaTeX 渲染失败: $latex", e)
-                null
+                renderFallbackText(latex, textSizePx, colorArgb)
             }
+        }
+
+        /**
+         * 渲染失败时的降级：把公式原文画成等宽位图。
+         * 之前失败返回 null，气泡里只剩一片空白，看不出是公式坏了还是内容本来就空。
+         */
+        private fun renderFallbackText(latex: String, textSizePx: Float, colorArgb: Int): Bitmap {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = textSizePx
+                color = colorArgb
+                typeface = android.graphics.Typeface.MONOSPACE
+            }
+            val text = latex.replace('\n', ' ').take(120)
+            val width = paint.measureText(text).toInt().coerceIn(1, 4000)
+            val metrics = paint.fontMetrics
+            val height = (metrics.descent - metrics.ascent).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(width + 8, height + 4, Bitmap.Config.ARGB_8888)
+            Canvas(bitmap).drawText(text, 4f, 4f - metrics.ascent, paint)
+            return bitmap
         }
     }
 }

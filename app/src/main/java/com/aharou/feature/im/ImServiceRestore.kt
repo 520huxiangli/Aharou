@@ -27,6 +27,8 @@ class ImServiceRestore @Inject constructor(
     private val weixin: WeixinSettingsRepository,
     private val feishu: FeishuSettingsRepository,
     private val qq: QqSettingsRepository,
+    private val napcat: com.aharou.feature.im.data.repository.NapCatSettingsRepository,
+    private val napcatRuntime: com.aharou.feature.im.domain.napcat.NapCatRuntimeManager,
 ) {
 
     fun restore(context: Context, scope: CoroutineScope) {
@@ -43,6 +45,24 @@ class ImServiceRestore @Inject constructor(
             runCatching {
                 if (qq.current().enabled) QqBotService.start(context)
             }.onFailure { FileLogger.w(TAG, "恢复 QQ 机器人失败", it) }
+            runCatching {
+                if (napcat.current().enabled) com.aharou.feature.im.service.NapCatBotService.start(context)
+            }.onFailure { FileLogger.w(TAG, "恢复个人 QQ 失败", it) }
+        }
+    }
+
+    fun restoreNapCatIfEnabled(context: Context, scope: CoroutineScope) {
+        scope.launch {
+            try {
+                if (napcat.current().enabled && napcatRuntime.state.value.version.isNotBlank() &&
+                    !com.aharou.feature.im.service.NapCatBotService.isRunning()) {
+                    com.aharou.feature.im.service.NapCatBotService.start(context)
+                }
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                FileLogger.w(TAG, "前台恢复个人 QQ 失败", error)
+            }
         }
     }
 

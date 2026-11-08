@@ -15,6 +15,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.aharou.core.ui.SegmentedTabs
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -38,6 +42,27 @@ import com.aharou.feature.settings.presentation.QqBotViewModel
 internal fun QqBotSection(
     viewModel: QqBotViewModel = hiltViewModel()
 ) {
+    var selected by rememberSaveable { mutableStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        SegmentedTabs(
+            selected = selected,
+            labels = listOf(stringResource(R.string.napcat_mode_official), stringResource(R.string.napcat_mode_personal)),
+            onSelect = { selected = it },
+            modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)
+        )
+        if (selected == 0) {
+            OfficialQqBotSection(viewModel)
+        } else {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).imePadding()
+                .padding(horizontal = Spacing.lg).padding(bottom = Spacing.xl)) {
+                NapCatBotSection()
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfficialQqBotSection(viewModel: QqBotViewModel) {
     val ui by viewModel.uiState.collectAsStateWithLifecycle()
     val secretWriteFailed by viewModel.secretWriteFailed.collectAsStateWithLifecycle()
     val cfg = ui.config

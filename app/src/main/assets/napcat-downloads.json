@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "napcatVersion": "v4.18.42",
+  "qqVersion": "3.2.34-53644",
+  "rootfsVersion": "v4.29.0",
+  "assets": [
+    {
+      "name": "debian-trixie-aarch64-pd-v4.29.0.tar.xz",
+      "source": "https://github.com/termux/proot-distro/releases/download/v4.29.0/debian-trixie-aarch64-pd-v4.29.0.tar.xz",
+      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/debian-trixie-aarch64-pd-v4.29.0.tar.xz",
+      "sha256": "3834a11cbc6496935760bdc20cca7e2c25724d0cd8f5e4926da8fd5ca1857918",
+      "sizeBytes": 35409704
+    },
+    {
+      "name": "debian-trixie-x86_64-pd-v4.29.0.tar.xz",
+      "source": "https://github.com/termux/proot-distro/releases/download/v4.29.0/debian-trixie-x86_64-pd-v4.29.0.tar.xz",
+      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/debian-trixie-x86_64-pd-v4.29.0.tar.xz",
+      "sha256": "4b8f33b80a10d734ff935e5934588572f860c0c38a68bf91db59af0580370716",
+      "sizeBytes": 36728936
+    },
+    {
+      "name": "NapCat-v4.18.42.Shell.zip",
+      "source": "https://github.com/NapNeko/NapCatQQ/releases/download/v4.18.42/NapCat.Shell.zip",
+      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/NapCat-v4.18.42.Shell.zip",
+      "sha256": "02e5ff0f79916c1e04c81c1b4590056406fb4293f1f1300c955e71fd08b2829d",
+      "sizeBytes": 35967555
+    },
+    {
+      "name": "linuxqq_3.2.34-53644_arm64.deb",
+      "source": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/9ee04bef/linuxqq_3.2.34-53644_arm64.deb",
+      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/linuxqq_3.2.34-53644_arm64.deb",
+      "sha256": "181b895cb573548e396e54bb0548cca92ffdc1b1a4b018fa4551bb062385fdca",
+      "sizeBytes": 207538924
+    },
+    {
+      "name": "linuxqq_3.2.34-53644_amd64.deb",
+      "source": "https://qqdl.gtimg.cn/qqfile/QQNT/9.9.36/beta/9ee04bef/linuxqq_3.2.34-53644_amd64.deb",
+      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/linuxqq_3.2.34-53644_amd64.deb",
+      "sha256": "436c65e1dd28422e128a21cbddb5fe4e2e6c079d7f27fec2541e014d38cc336e",
+      "sizeBytes": 187185496
+    }
+  ]
+}

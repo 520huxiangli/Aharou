@@ -734,8 +734,8 @@ class LinuxContainerEngine @Inject constructor(
      * 以长驻进程方式在容器内执行命令（如 `sshd -D`）。调用前需保证容器已安装。
      * 与 [runCommandStream] 不同，这里不读取/消费输出流，由调用方决定如何处理（通常丢弃）。
      */
-    fun startProotProcess(command: String, projectPath: String?): Process {
-        val pb = buildProcessBuilder(buildProotInvocation(command, projectPath))
+    fun startProotProcess(command: String, projectPath: String?, profile: ContainerProfile? = null): Process {
+        val pb = buildProcessBuilder(if (profile == null) buildProotInvocation(command, projectPath) else buildProotInvocation(command, projectPath, profile))
         pb.redirectErrorStream(true)
         pb.redirectInput(STDIN_FROM_DEV_NULL)
         return pb.start()
@@ -757,9 +757,10 @@ class LinuxContainerEngine @Inject constructor(
         programArgs: List<String>,
         projectPath: String?,
         extraEnv: Map<String, String> = emptyMap(),
-        profile: ContainerProfile? = null
+        profile: ContainerProfile? = null,
+        inheritUserConfig: Boolean = true
     ): Process {
-        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile ?: profileResolver.forWorkspace(projectPath))
+        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile ?: profileResolver.forWorkspace(projectPath), inheritUserConfig)
         val pb = buildProcessBuilder(invocation)
         // 刻意不 redirectErrorStream：stdout 留给 JSON-RPC，stderr 由调用方单独消费。
         // 同样刻意不重定向 stdin：这里的 stdin 就是 JSON-RPC 的请求通道，接 /dev/null 会让 server 立刻收到 EOF 退出。
@@ -774,11 +775,12 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         tag: String,
         extraEnv: Map<String, String> = emptyMap(),
-        profile: ContainerProfile? = null
+        profile: ContainerProfile? = null,
+        inheritUserConfig: Boolean = true
     ): TrackedStdioProcess {
         val effectiveProfile = profile ?: profileResolver.forWorkspace(projectPath)
         val childrenBefore = ProcessIdentity.childPids()
-        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, effectiveProfile)
+        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, effectiveProfile, inheritUserConfig)
         val identity = ProcessIdentity.capture(process)
             ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
         identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, tag) }
@@ -794,15 +796,16 @@ class LinuxContainerEngine @Inject constructor(
         programArgs: List<String>,
         projectPath: String?,
         extraEnv: Map<String, String>,
-        profile: ContainerProfile
+        profile: ContainerProfile,
+        inheritUserConfig: Boolean
     ): ProotInvocation {
-        val argv = buildBaseProotArgv(projectPath, profile)
+        val argv = buildBaseProotArgv(projectPath, profile, inheritUserConfig)
         argv.add("/bin/sh")
         argv.add("-c")
         argv.add("exec \"\$0\" \"\$@\"")
         argv.add(program)
         argv.addAll(programArgs)
-        return ProotInvocation(argv, buildContainerEnv(profile) + profile.env + extraEnv)
+        return ProotInvocation(argv, buildContainerEnv(profile, inheritUserConfig) + profile.env + extraEnv)
     }
 
     /**
@@ -829,7 +832,7 @@ class LinuxContainerEngine @Inject constructor(
      * 构造 PRoot 调用的公共前缀 argv：proot 二进制 + rootfs + 标准绑定 + 伪 root + 工作区绑定，
      * 但**不含**最终的客户机命令（由各调用方自行追加 `/bin/sh -c …` 或 `exec` 形式）。
      */
-    private fun buildBaseProotArgv(projectPath: String?, profile: ContainerProfile): MutableList<String> {
+    private fun buildBaseProotArgv(projectPath: String?, profile: ContainerProfile, inheritUserConfig: Boolean = true): MutableList<String> {
         val rootfs = containerInstaller.rootfsDirFor(profile).absolutePath
         val prootBin = containerInstaller.prootBin.absolutePath
         if (!containerInstaller.prootBin.exists()) {
@@ -855,28 +858,7 @@ class LinuxContainerEngine @Inject constructor(
             argv.add("/root/workspace")
         }
 
-        // 把 AI 配置目录绑定到容器内 /root/.aicode（读写）：内含 skills/（load_skill 读到的指令常引用
-        // skill 目录里的脚本，AI 用 execute_command 执行 `python /root/.aicode/skills/<name>/x.py` 等）与
-        // mcp.json（MCP 配置）。宿主物理目录独立于 rootfs，容器升级重装不丢用户数据。
-        // 基础解释器 python3(3.12) 与 git 由进入终端时的初始化菜单（provision.sh）安装；
-        // node 等其他运行时仍由 skill / 用户自行保证。proot 的 -b 要求源路径存在，故先确保目录已建。
-        val aharouDir = containerInstaller.aharouDir.apply { mkdirs() }
-        // [Aharou 改名] 主路径 /root/.aharou；旧路径 /root/.aicode 以同一目录二次绑定，旧脚本照常可用。
-        argv.add("-b")
-        argv.add("${aharouDir.absolutePath}:/root/.aharou")
-        argv.add("-b")
-        argv.add("${aharouDir.absolutePath}:/root/.aicode")
-
-        // 记忆目录（SOUL.md / 核心档案 / 日志）单独挂到 /root/.aharou/memory（子挂载在父挂载之后生效）。
-        val aharouMemoryDir = java.io.File(context.filesDir, "aharou-global/memory").apply { mkdirs() }
-        argv.add("-b")
-        argv.add("${aharouMemoryDir.absolutePath}:/root/.aharou/memory")
-
-        // 跨工作区共享区（宿主 filesDir/shared）：所有工作区、所有 profile 共用同一份，切工作区不重置。
-        // 有意置于 profile.extraBindings 之前，用户自定义挂载仍可覆盖该路径。
-        val sharedDir = containerInstaller.sharedDir
-        argv.add("-b")
-        argv.add("${sharedDir.absolutePath}:/root/shared")
+        if (inheritUserConfig) argv.addAll(containerUserBindings(context, containerInstaller))
 
         // profile 的额外绑定与参数：内置与导入容器默认也在此注入（见 ContainerProfile.DEFAULT_PROOT_ARGS），
         // 与用户手动添加同一条路径，保证参数落在 argv 末尾。
@@ -897,7 +879,7 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /** 容器内进程的标准环境变量（proot loader / 动态库 / PATH / HOME 等）。 */
-    private fun buildContainerEnv(profile: ContainerProfile): Map<String, String> {
+    private fun buildContainerEnv(profile: ContainerProfile, inheritUserConfig: Boolean = true): Map<String, String> {
         // 每个容器用自己 rootfs 下的 /tmp：镜像自带该目录，但重置/删除别的容器不该影响本容器，
         // 且 proot 要求 PROOT_TMP_DIR 已存在，故启动前确保建好（同 -b 源路径的处理）。
         val tmpDir = containerInstaller.prootTmpDirFor(profile).apply { mkdirs() }
@@ -945,7 +927,7 @@ class LinuxContainerEngine @Inject constructor(
             "TZ" to containerTimeZone(profile)
             // 全局 HTTP 代理：开启时注入 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY，
             // 容器内 curl/git/npm/pip 等一律走代理；关闭或配置不完整时为空 map 不影响直连。
-        ) + com.aharou.core.net.AppProxy.proxyEnv(context) + envVarRepository.asMap() // asMap 只含已启用的变量：停用的保留在设置里但不注入
+        ) + com.aharou.core.net.AppProxy.proxyEnv(context) + if (inheritUserConfig) envVarRepository.asMap() else emptyMap()
     }
 
     /**

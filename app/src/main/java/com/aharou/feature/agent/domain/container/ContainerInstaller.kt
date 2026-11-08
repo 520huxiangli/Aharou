@@ -466,7 +466,7 @@ class ContainerInstaller @Inject constructor(
             configureResolvConf()
             applySourcePreferences(rootfsDir)
             prootTmpDir.mkdirs()
-            verifyRootfsReady(rootfsDir)
+            verifyRootfsReady(rootfsDir, ContainerProfile.BUILTIN_ALPINE)
             installedMarker.writeText(INSTALL_VERSION)
             FileLogger.i(
                 TAG,
@@ -567,7 +567,7 @@ class ContainerInstaller @Inject constructor(
         configureResolvConf(dest)
         prootTmpDirFor(profile).mkdirs()
         repairRootfsCompatibility(dest)
-        verifyRootfsReady(dest)
+        verifyRootfsReady(dest, profile)
         customInstalledMarker(profile).writeText("custom")
         FileLogger.i(TAG, "自定义容器 rootfs 安装完成：${profile.id}")
     }
@@ -662,9 +662,9 @@ class ContainerInstaller @Inject constructor(
      *
      * 失败时抛的文案走资源，由 UI 层展示。
      */
-    private suspend fun verifyRootfsReady(rootfs: File) {
+    private suspend fun verifyRootfsReady(rootfs: File, profile: ContainerProfile) {
         val doctor = containerDoctor?.get() ?: return
-        when (val verdict = doctor.verifyRootfs(rootfs)) {
+        when (val verdict = doctor.verifyRootfs(rootfs, profile)) {
             RootfsVerdict.Ready -> return
             is RootfsVerdict.LayoutMissing -> throw IllegalStateException(
                 context.getString(

@@ -102,7 +102,6 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.util.FileLogger
 import com.aharou.core.ui.rememberImeBottomInset
-import com.aharou.feature.agent.domain.workflow.ContextBreakdown
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.call.VoiceCallService
@@ -200,7 +199,6 @@ internal fun ChatInputBar(
     onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
     tokenEstimated: Boolean = false,
-    contextBreakdown: ContextBreakdown? = null,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: (String, String?) -> Unit = { _, _ -> },
@@ -653,7 +651,7 @@ internal fun ChatInputBar(
                         contentDescription = stringResource(R.string.chat_add_attachment),
                         onClick = { showAttachmentSheet = true }
                     )
-                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, canForceStop = canForceStop, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, contextBreakdown = contextBreakdown, onSend = { onSend(inputFieldValue.text) }, onStop = onStop, onForceStop = onForceStop)
+                    SendButton(canSend = canSend, hasContent = hasContent, isBusy = isBusy, canForceStop = canForceStop, tokenProgress = tokenProgress, tokenEstimated = tokenEstimated, onSend = { onSend(inputFieldValue.text) }, onStop = onStop, onForceStop = onForceStop)
                 }
             }
         }
@@ -815,13 +813,11 @@ internal fun SendButton(
     canForceStop: Boolean,
     tokenProgress: Float,
     tokenEstimated: Boolean,
-    contextBreakdown: ContextBreakdown? = null,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onForceStop: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
-    var showBreakdown by remember { mutableStateOf(false) }
     // AI 工作中：输入框为空显示停止按钮；有内容显示橙色发送（消息排队发送）；空闲时按常规发送按钮
     val showStop = isBusy && !hasContent
     // 强打断入口：AI 正在跑，或软打断之后协程仍在后台跑当前这一步。
@@ -857,8 +853,6 @@ internal fun SendButton(
                     .size(44.dp)
                     // 上下文用量只靠这圈弧表达，给读屏补上百分比。
                     .semantics { contentDescription = usageLabel }
-                    // 点这圈弧看构成：只有拿到分项时才可点，避免弹出一个空面板。
-                    .clickable(enabled = contextBreakdown != null) { showBreakdown = true }
             ) {
                 val stroke = 3.dp.toPx()
                 val arcSize = size.minDimension - stroke
@@ -913,13 +907,6 @@ internal fun SendButton(
                 )
             }
         }
-    }
-    if (showBreakdown && contextBreakdown != null) {
-        ContextBreakdownSheet(
-            breakdown = contextBreakdown,
-            estimated = tokenEstimated,
-            onDismiss = { showBreakdown = false }
-        )
     }
 }
 

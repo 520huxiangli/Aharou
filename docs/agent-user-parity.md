@@ -121,7 +121,13 @@
 | 启用/停用渠道（微信/飞书/QQ/Telegram） | 挂载 `SettingsScreen.kt:1266-1269`；`component/TelegramBotSection.kt:86`（以 Telegram 为例） | 有 | `config` `im.telegram.enabled` / `im.weixin.enabled` / `im.feishu.enabled` / `im.qq.enabled`（`feature/im/data/ConfigImFields.kt:35`、`:84`、`:134`、`:184`） | 无 |
 | 填 token / app_id / app_secret / base_url / 代理 | `TelegramBotSection.kt:121-140`（token 输入） | 有 | `config` `im.<渠道>.bot_token` / `.app_id` / `.app_secret` / `.base_url` / `.proxy`（`ConfigImFields.kt:45-221`） | 凭证是 SENSITIVE，写入需弹确认 |
 | 看连接状态 | 各平台机器人设置页状态行 | 有 | `config get im.<渠道>.state` / `.error`，`ConfigImFields` 读取四个桥接实例的运行状态 | 只读，错误脱敏，不返回身份或凭据 |
-| 向当前 IM 会话发文件/图片 | 用户在 IM 客户端聊天（无 App 内入口） | 有 | `sendToChat`（`AgentModule.kt:451`；`SendImFileTool.kt:32`） | 无（仅 IM 会话内可用） |
+| 向当前 IM 会话发文件/图片 | 用户在 IM 客户端聊天（无 App 内入口） | 有 | `sendToChat`（`SendImFileTool.kt`） | 按调用会话映射到来源聊天，不回退到最近活跃聊天；支持个人 QQ |
+| 安装、更新个人 QQ 运行环境 | `NapCatBotSection.kt` 安装与更新 | 有 | `napcat action=install/update`（`feature/im/NapCatTool.kt`） | 按需下载独立 Debian、Linux QQ 和 NapCat，不更改默认开发容器 |
+| 启动、停止个人 QQ | `NapCatBotSection.kt` 运行管理 | 有 | `napcat action=start/stop`；`config im.qq_napcat.enabled` | UI 与配置调用同一前台服务 |
+| 个人 QQ 登录、账号状态与退出 | `NapCatBotSection.kt` 登录区域、`NapCatWebUiSheet.kt` | 有 | `napcat action=login/refresh_qr/logout/status` | 扫码、账密与验证码需用户在登录界面完成；工具不返回密码和登录二维码 |
+| 个人 QQ 私聊、群聊响应与允许列表 | `NapCatBotSection.kt` 消息响应 | 有 | `config im.qq_napcat.respond_private/respond_groups/require_mention/respond_self`；`allowed_users/allowed_groups` 集合 add/remove | 自消息过滤保留防循环；绑定记录按登录账号隔离 |
+| 个人 QQ 新会话工作区与模型 | `NapCatBotSection.kt` 工作区、模型选择 | 有 | `config im.qq_napcat.session_defaults` 对象 | 使用已有会话字段；未指定且没有当前工作区时自动创建机器人工作区，不切换当前项目 |
+| 个人 QQ 日志与高级管理 | `NapCatBotSection.kt` 日志和 WebUI | 有 | `napcat action=logs/webui/status`；`config im.qq_napcat.runtime/login/state/version/error` | 工具提供脱敏日志与不含令牌的本机入口，完整交互在内嵌 WebUI |
 
 ## 10. 会话
 
@@ -159,7 +165,7 @@
 
 ## 13. 缺口汇总
 
-统计（86 条能力）：**有对应工具 49 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 1 条反向缺口（远程设备端口，属有意不做界面）。
+统计（92 条能力）：**有对应工具 55 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 1 条反向缺口（远程设备端口，属有意不做界面）。
 
 ### A. 用户能做、agent 完全没有工具（26 条）
 

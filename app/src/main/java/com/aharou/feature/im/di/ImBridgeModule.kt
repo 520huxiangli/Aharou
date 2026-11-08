@@ -5,11 +5,16 @@ import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
 import com.aharou.feature.im.data.repository.FeishuSettingsRepository
+import com.aharou.feature.im.data.repository.NapCatSettingsRepository
+import com.aharou.feature.im.domain.NapCatChannelClient
+import com.aharou.feature.im.domain.NapCatMessagePolicy
+import com.aharou.feature.im.domain.ImOwnerStore
 import com.aharou.feature.im.data.repository.QqSettingsRepository
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
 import com.aharou.feature.im.domain.FeishuChannelClient
 import com.aharou.feature.im.domain.ImBotBridge
+import com.aharou.feature.im.domain.ImWorkspaceResolver
 import com.aharou.feature.im.domain.QqChannelClient
 import com.aharou.feature.im.domain.TelegramBotClient
 import com.aharou.feature.im.domain.WeixinIlinkClient
@@ -40,9 +45,11 @@ object ImBridgeModule {
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("telegram", channel, settings, runner, sessionUseCase, permissions, context)
+        ImBotBridge("telegram", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
 
     @Provides
     @Singleton
@@ -53,9 +60,11 @@ object ImBridgeModule {
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("weixin", channel, settings, runner, sessionUseCase, permissions, context)
+        ImBotBridge("weixin", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
 
     @Provides
     @Singleton
@@ -66,9 +75,29 @@ object ImBridgeModule {
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("feishu", channel, settings, runner, sessionUseCase, permissions, context)
+        ImBotBridge("feishu", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
+
+    @Provides
+    @Singleton
+    @Named("qq_napcat")
+    fun provideNapCatBridge(
+        channel: NapCatChannelClient,
+        settings: NapCatSettingsRepository,
+        runner: AgentTurnRunner,
+        sessionUseCase: SessionUseCase,
+        permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
+        owners: ImOwnerStore,
+        @ApplicationContext context: Context
+    ): ImBotBridge = ImBotBridge(
+        "qq_napcat", channel, settings, runner, sessionUseCase, permissions, context,
+        owners = owners, policy = NapCatMessagePolicy(),
+        fallbackWorkspacePath = { workspaceResolver.fallbackPath() }
+    )
 
     @Provides
     @Singleton
@@ -79,7 +108,9 @@ object ImBridgeModule {
         runner: AgentTurnRunner,
         sessionUseCase: SessionUseCase,
         permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
         @ApplicationContext context: Context
     ): ImBotBridge =
-        ImBotBridge("qq", channel, settings, runner, sessionUseCase, permissions, context)
+        ImBotBridge("qq", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
 }

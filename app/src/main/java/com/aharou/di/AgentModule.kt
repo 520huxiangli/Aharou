@@ -117,6 +117,7 @@ import com.aharou.feature.agent.domain.tool.search.WebFetchTool
 import com.aharou.feature.agent.domain.tool.search.WebSearchTool
 import com.aharou.feature.agent.domain.tool.session.SessionTool
 import com.aharou.feature.browser.BrowserTool
+import com.aharou.feature.im.NapCatTool
 import com.aharou.feature.agent.domain.workflow.ContextCompactor
 import com.aharou.feature.agent.domain.workflow.GeneratedImagePersister
 import com.aharou.feature.agent.domain.ocr.TesseractOcrEngine
@@ -442,6 +443,7 @@ object AgentModule {
         taskTool: TaskTool,
         messageParentTool: MessageParentTool,
         browserTool: BrowserTool,
+        napCatTool: NapCatTool,
         configTool: ConfigTool,
         vdTool: VdTool,
         a11yTool: A11yTool,
@@ -482,6 +484,7 @@ object AgentModule {
             register("task", taskTool)
             register("messageParent", messageParentTool)
             register("browser", browserTool)
+            register("napcat", napCatTool)
             register("config", configTool)
             register("vscreen", vdTool)
             register("a11y", a11yTool)

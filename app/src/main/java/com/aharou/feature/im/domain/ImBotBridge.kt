@@ -58,7 +58,9 @@ class ImBotBridge (
     @param:ApplicationContext private val context: Context,
     // 所有者绑定用 Hilt 的 @Singleton 实例；给默认值是为了不动 di/ImBridgeModule 的四个构造点，
     // 显式传入时以传入的为准（DataStore 由文件级委托统一持有，多实例不会各开一份）
-    private val owners: ImOwnerStore = ImOwnerStore(context)
+    private val owners: ImOwnerStore = ImOwnerStore(context),
+    private val policy: ImBridgePolicy = ImBridgePolicy.Default,
+    private val fallbackWorkspacePath: suspend () -> String = { "" }
 ) {
     /** 设置界面的 ViewModel 拿它读写本渠道的配对记录。 */
     val id: String get() = channelId
@@ -107,6 +109,7 @@ class ImBotBridge (
             previous?.join()
             try {
                 settings.configFlow.distinctUntilChanged().collectLatest { cfg ->
+                    if (policy.cancelApprovalsOnReset) cancelMappedApprovals()
                     channel.disconnect()
                     identity = ""
                     activeConfig = null
@@ -170,6 +173,7 @@ class ImBotBridge (
 
     @Synchronized
     fun stop() {
+        if (policy.cancelApprovalsOnReset) cancelMappedApprovals()
         bridgeJob?.cancel()
         activeConfig = null
         channel.disconnect()
@@ -186,7 +190,8 @@ class ImBotBridge (
      * 给设置界面留的入口，换人接手时不必清应用数据。
      */
     suspend fun clearOwners() {
-        owners.clearOwners(channelId)
+        val cfg = activeConfig ?: settings.currentConfig()
+        owners.clearOwners(policy.ownerNamespace(channelId, cfg))
         lastActiveChat = null
     }
 
@@ -202,19 +207,21 @@ class ImBotBridge (
      */
     private suspend fun acceptChatId(chatId: String, directed: Boolean): Boolean {
         if (chatId.isBlank()) return false
-        val current = owners.owners(channelId)
+        val cfg = activeConfig ?: return false
+        val namespace = policy.ownerNamespace(channelId, cfg)
+        val current = owners.owners(namespace)
         if (chatId in current) return true
         if (current.isNotEmpty()) {
             FileLogger.d(TAG, "[$channelId] 丢弃非所有者聊天 $chatId（已绑定 ${current.size} 个）")
             return false
         }
         if (!directed) return true
-        if (owners.bindIfEmpty(channelId, chatId)) {
+        if (owners.bindIfEmpty(namespace, chatId)) {
             FileLogger.i(TAG, "[$channelId] 首次使用，已把 chat=$chatId 绑定为所有者")
             return true
         }
         // 并发下别的聊天抢先绑上了：以落盘结果为准再判一次
-        return owners.isOwner(channelId, chatId)
+        return owners.isOwner(namespace, chatId)
     }
 
     /**
@@ -239,6 +246,42 @@ class ImBotBridge (
         } catch (_: Throwable) {
             false
         }
+    }
+
+    fun chatOfSession(sessionId: String): String? = chatOfSession[sessionId]?.takeIf {
+        it.cfg == activeConfig && isRunning()
+    }?.chatId
+
+    suspend fun sendFileForSession(
+        sessionId: String,
+        file: File,
+        kind: ImAttachment.Kind = ImAttachment.Kind.FILE,
+        caption: String = ""
+    ): Boolean {
+        val origin = chatOfSession[sessionId] ?: return false
+        val cfg = activeConfig ?: return false
+        if (origin.cfg != cfg || !cfg.enabled || !cfg.ready || !isRunning() ||
+            settings.currentConfig() != cfg || !file.isFile) return false
+        return try {
+            currentCoroutineContext().ensureActive()
+            channel.sendMedia(cfg, origin.chatId, file, kind, caption)?.isNotBlank() == true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun cancelMappedApprovals() {
+        chatOfSession.keys.forEach { sessionId ->
+            toolPermissionManager.pendingForSession(sessionId)?.let {
+                toolPermissionManager.tryResolve(it.id, sessionId, PermissionChoice.REJECT)
+            }
+            toolPermissionManager.pendingBatchForSession(sessionId)?.let {
+                toolPermissionManager.tryResolveBatch(it.id, sessionId, PermissionChoice.REJECT)
+            }
+        }
+        chatOfApproval.values.forEach { resolveApproval(it.pending, PermissionChoice.REJECT) }
     }
 
     private suspend fun pollLoop(cfg: ImChannelConfig, inbox: Channel<ImUpdate>, controls: Channel<ImUpdate>) {
@@ -371,15 +414,19 @@ class ImBotBridge (
         } == true
         is ImUpdate.Message -> pendingApprovals.containsKey(update.msg.chatId) &&
             approvalChoice(stripMention(update.msg.text)) != null &&
-            update.msg.attachments.isEmpty() && (!update.msg.isGroup || mentioned(update.msg))
+            update.msg.attachments.isEmpty() && activeConfig?.let {
+                policy.accepts(it, update.msg) && policy.directed(it, update.msg)
+            } == true
     }
 
     private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage): Boolean {
         val result = runCatching {
             // 所有者校验摆在最前面：没有绑定时这里会把当前聊天认成所有者，已有绑定时陌生聊天直接丢弃，
             // 不再往下走到 @ 判定与 runTurn（否则任何能给 bot 发消息的人都能驱动本机的 agent）
-            if (!acceptChatId(msg.chatId, directed = !msg.isGroup || mentioned(msg))) return@runCatching
-            if (msg.isGroup && !mentioned(msg)) {
+            if (!policy.accepts(cfg, msg)) return@runCatching
+            val directed = policy.directed(cfg, msg)
+            if (!policy.explicitlyAuthorized(cfg, msg) && !acceptChatId(msg.chatId, directed = directed)) return@runCatching
+            if (msg.isGroup && !directed) {
                 FileLogger.d(TAG, "[$channelId] 群里没有 @机器人，忽略 chat=${msg.chatId}")
                 return@runCatching
             }
@@ -527,7 +574,7 @@ class ImBotBridge (
     ) {
         val lock = chatLocks.getOrPut(chatId) { Mutex() }
         lock.withLock {
-            val sessionId = ensureSession(chatId) ?: return
+            val sessionId = ensureSession(cfg, chatId) ?: return
             // 记下会话→聊天的映射，审批请求只有 sessionId 没有 chatId
             chatOfSession[sessionId] = SessionOrigin(chatId, cfg)
             streamTurn(cfg, chatId, sessionId, text, attachments)
@@ -578,17 +625,23 @@ class ImBotBridge (
         return ReceivedAttachments(inputs, failed)
     }
 
-    private suspend fun ensureSession(chatId: String): String? {
+    private suspend fun ensureSession(cfg: ImChannelConfig, chatId: String): String? {
         val sessionId = sessionIdFor(chatId)
         if (sessionUseCase.getSessionById(sessionId) != null) return sessionId
-        val workspace = agentTurnRunner.currentWorkspacePath()
+        val defaults = policy.sessionDefaults(cfg)
+        val workspace = defaults.workspacePath.ifBlank {
+            agentTurnRunner.currentWorkspacePath().ifBlank { fallbackWorkspacePath() }
+        }
         if (workspace.isBlank()) {
             FileLogger.w(TAG, "[$channelId] 工作区未就绪，跳过会话 $sessionId")
             return null
         }
-        val entity = agentTurnRunner.createSessionEntity(workspace).copy(
+        val base = agentTurnRunner.createSessionEntity(workspace)
+        val entity = base.copy(
             id = sessionId,
-            title = "$channelLabel · $chatId"
+            title = "$channelLabel · $chatId",
+            providerId = defaults.providerId.ifBlank { base.providerId.orEmpty() }.ifBlank { null },
+            model = defaults.model.ifBlank { base.model.orEmpty() }.ifBlank { null }
         )
         sessionUseCase.upsertSession(entity)
         return sessionId
@@ -638,9 +691,6 @@ class ImBotBridge (
         }
     }
 
-    private fun mentioned(msg: ImInboundMessage): Boolean =
-        msg.mentionsBot || msg.text.contains("@") || msg.replyToSenderId != null
-
     private fun stripMention(text: String): String = text.trim()
 
     // 文案走 Context：编排层在多平台复用，语言跟随 App 当前设置
@@ -659,7 +709,7 @@ class ImBotBridge (
             when (channelId) {
                 "weixin" -> "im_weixin_service_title"
                 "feishu" -> "im_feishu_service_title"
-                "qq" -> "im_qq_service_title"
+                "qq", "qq_napcat" -> "im_qq_service_title"
                 else -> "im_telegram_service_title"
             }
         )

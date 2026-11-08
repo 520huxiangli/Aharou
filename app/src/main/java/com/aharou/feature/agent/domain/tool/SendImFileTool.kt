@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.tool
 
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.im.domain.model.ImAttachment
 import com.aharou.feature.im.domain.ImBotBridge
 import java.io.File
@@ -15,8 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * 把本地文件发回聊天里（微信 / 飞书 / QQ / Telegram）。
  *
- * 发给「最近说过话的那个聊天」：四个平台各有一个桥，挑当前在跑、且真的有活跃会话的那个发。
- * 一个都没在跑就报错，不猜平台。
+ * 只使用调用会话已有的桥接映射，避免同时运行多个渠道时串发文件。
  *
  * 桥用 [Provider] 延迟取：桥自己要注入 [AgentTurnRunner]，而 agent 又要注入本工具，
  * 直接注入会形成 Dagger 依赖环。
@@ -26,7 +26,8 @@ class SendImFileTool @Inject constructor(
     @param:Named("telegram") private val telegram: Provider<ImBotBridge>,
     @param:Named("weixin") private val weixin: Provider<ImBotBridge>,
     @param:Named("feishu") private val feishu: Provider<ImBotBridge>,
-    @param:Named("qq") private val qq: Provider<ImBotBridge>
+    @param:Named("qq") private val qq: Provider<ImBotBridge>,
+    @param:Named("qq_napcat") private val napCat: Provider<ImBotBridge>
 ) : AgentTool() {
 
     override val name: String = "sendToChat"
@@ -50,7 +51,12 @@ class SendImFileTool @Inject constructor(
         )
     )
 
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
+    override suspend fun execute(args: Map<String, JsonElement>): ToolResult =
+        ToolResult.Error("文件回传需要当前 IM 会话上下文", "NO_SESSION")
+
+    override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+        val sessionId = context.sessionId?.takeIf { it.isNotBlank() }
+            ?: return ToolResult.Error("缺少当前会话", "NO_SESSION")
         val path = args["path"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (path.isBlank()) return ToolResult.Error("缺少 path 参数", "INVALID_ARGS")
         val file = File(path)
@@ -64,16 +70,15 @@ class SendImFileTool @Inject constructor(
             else -> ImAttachment.Kind.FILE
         }
 
-        val running = listOf(telegram, weixin, feishu, qq).map { it.get() }.filter { it.isRunning() }
+        val running = listOf(telegram, weixin, feishu, qq, napCat).map { it.get() }.filter { it.isRunning() }
         if (running.isEmpty()) {
             return ToolResult.Error("当前没有正在运行的 IM 渠道，发不出去", "NO_CHANNEL")
         }
-        for (bridge in running) {
-            if (bridge.activeChatId() == null) continue
-            if (bridge.sendFile(file, kind, caption)) {
-                return ToolResult.Success(JsonPrimitive("已发送：${file.name}（${file.length()} 字节）"))
-            }
+        val matches = running.filter { it.chatOfSession(sessionId) != null }
+        if (matches.size != 1) return ToolResult.Error("当前会话没有唯一的 IM 聊天映射", "NO_SESSION")
+        if (matches.single().sendFileForSession(sessionId, file, kind, caption)) {
+            return ToolResult.Success(JsonPrimitive("已发送：${file.name}（${file.length()} 字节）"))
         }
-        return ToolResult.Error("没有可用的活跃会话，或平台拒绝了这个文件", "SEND_FAILED")
+        return ToolResult.Error("当前会话不可用，或平台拒绝了这个文件", "SEND_FAILED")
     }
 }
