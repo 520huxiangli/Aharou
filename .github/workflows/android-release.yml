@@ -297,4 +297,6 @@ jobs:
           # 只同步当次发版的 tag：脚本默认的「最新 3 个正式版」策略不适合发版流水线——
           # 已发布但用户不想放上 cnb 的版本（如待重发的），下次发版会被这个策略又搬过去。
           RELEASE_FILTER: ^${{ github.ref_name }}$
+          # 包是上一步刚构建的，直接用本地文件传到 cnb，不再绕反代回 GitHub 下载。
+          LOCAL_ASSETS_DIR: dist
         run: python3 scripts/sync-cnb-releases.py
