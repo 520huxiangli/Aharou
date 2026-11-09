@@ -218,14 +218,15 @@ class AnthropicAdapter @Inject constructor(
                 }
                 try {
                     val reader = rb.charStream().buffered()
-                    // 收到服务端 message_stop 事件即 break 正常结束；readLine() 返回 null 则视为
-                    // 流被异常截断（网络中断/TCP 重置/readTimeout），必须抛异常让重试/日志接管——
-                    // 否则原本会用截断数据「正常完成」，表现为 AI 突然中断且无任何错误日志。
-                    // （收到 message_stop 即 break，故走到 readLine()==null 时必然未收到过结束标记。）
+                    // 收到 message_stop 即 break；个别中转发完 stop_reason 后直接关流，内容已完整，
+                    // 按正常结束收尾。两者都没有才算真断流，抛异常交给重试与日志。
                     while (true) {
                         coroutineContext.ensureActive()
                         val line = reader.readLine()
-                            ?: throw IOException("SSE 流被中断：未收到 message_stop 结束标记（疑似网络断开）")
+                        if (line == null) {
+                            if (stopReason != null) break
+                            throw IOException("SSE 流被中断：未收到 message_stop 结束标记（疑似网络断开）")
+                        }
                         idleWatchdog.touch()
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()

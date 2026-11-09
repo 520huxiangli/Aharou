@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.io.IOException
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
@@ -466,6 +467,61 @@ class OpenAIAdapterTest {
         assertEquals(12, final.response.inputTokens)
         assertEquals(6, final.response.outputTokens)
         assertEquals(4, final.response.cachedInputTokens)
+    }
+
+    @Test
+    fun streamChat_finishReasonWithoutDone_completesWithoutError() = runTest {
+        val api = api()
+        every { api.streamChatCompletion(any(), any(), any(), any()) } returns sseCall(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"你\"},\"finish_reason\":null}]}",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}"
+        )
+
+        // 部分兼容服务（第三方中转最常见）生成完直接关流、不发 [DONE]；
+        // finish_reason 已到即内容完整，不许判成断流再整轮重试。
+        val chunks = adapter(api).apply { maxNetworkRetries = 0 }
+            .completeStream("", emptyList()).toList()
+
+        val final = chunks.filterIsInstance<AIStreamChunk.Final>().single()
+        assertEquals("你", final.response.content)
+        assertEquals("stop", final.response.stopReason)
+    }
+
+    @Test
+    fun streamChat_finishReasonWithoutDeltaField_stillCompletes() = runTest {
+        val api = api()
+        every { api.streamChatCompletion(any(), any(), any(), any()) } returns sseCall(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":null}]}",
+            "data: {\"choices\":[{\"finish_reason\":\"stop\"}]}",
+            "data: [DONE]"
+        )
+
+        // 末帧可能只带 finish_reason、没有 delta 字段：结束标记不能被 delta 缺失挡掉。
+        val chunks = adapter(api).apply { maxNetworkRetries = 0 }
+            .completeStream("", emptyList()).toList()
+
+        val final = chunks.filterIsInstance<AIStreamChunk.Final>().single()
+        assertEquals("好", final.response.content)
+        assertEquals("stop", final.response.stopReason)
+    }
+
+    @Test
+    fun streamChat_truncatedWithoutAnyTerminalSignal_isReportedAsInterrupted() = runTest {
+        val api = api()
+        every { api.streamChatCompletion(any(), any(), any(), any()) } returns sseCall(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"半截\"},\"finish_reason\":null}]}"
+        )
+
+        val error = runCatching {
+            adapter(api).apply { maxNetworkRetries = 0 }
+                .completeStream("", emptyList()).toList()
+        }.exceptionOrNull()
+
+        assertTrue("既无 [DONE] 也无 finish_reason 必须仍判断流，实际：$error", error is IOException)
+        assertTrue(
+            "断流文案应由 adapter 统一给出，实际：${error?.message}",
+            error!!.message.orEmpty().startsWith(FakeSseStream.INTERRUPTED_PREFIX)
+        )
     }
 
     @Test

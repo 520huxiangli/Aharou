@@ -475,14 +475,16 @@ class OpenAIAdapter @Inject constructor(
                 }
                 try {
                     val reader = rb.charStream().buffered()
-                    // 收到服务端 [DONE] 标记即 break 正常结束；readLine() 返回 null 则视为
-                    // 流被异常截断（网络中断/TCP 重置/readTimeout），必须抛异常让重试/日志接管——
-                    // 否则原本会用截断数据「正常完成」，表现为 AI 突然中断且无任何错误日志。
-                    // （收到 [DONE] 即 break，故走到 readLine()==null 时必然未收到过结束标记。）
+                    // 收到 [DONE] 即 break；部分兼容服务（第三方中转最常见）发完 finish_reason 就关流，
+                    // 这种内容已完整、按正常结束收尾。既无终止事件又无 finish_reason 才算真断流，
+                    // 抛异常交给重试，否则会用截断数据「正常完成」且不留错误日志。
                     while (true) {
                         coroutineContext.ensureActive()
                         val line = reader.readLine()
-                            ?: throw IOException("SSE 流被中断：未收到 [DONE] 结束标记（疑似网络断开）")
+                        if (line == null) {
+                            if (finishReason != null) break
+                            throw IOException("SSE 流被中断：未收到 [DONE] 结束标记（疑似网络断开）")
+                        }
                         idleWatchdog.touch()
                         if (!line.startsWith("data:")) continue
                         val data = line.removePrefix("data:").trim()
@@ -508,11 +510,11 @@ class OpenAIAdapter @Inject constructor(
                                 streamCacheCreationTokens = u.getAsJsonObject("prompt_tokens_details")?.get("cache_write_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamCacheCreationTokens
                             }
                             val choice = obj.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject ?: continue
-                            val delta = choice.getAsJsonObject("delta") ?: continue
-
+                            // 结束标记必须先读：部分兼容服务末帧只带 finish_reason、没有 delta 字段。
                             choice.get("finish_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
                                 finishReason = it
                             }
+                            val delta = choice.getAsJsonObject("delta") ?: continue
 
                             // 文字增量
                             delta.get("content")?.takeIf { !it.isJsonNull }?.asString?.let { c ->

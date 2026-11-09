@@ -100,9 +100,10 @@ class AnthropicStreamInterruptionTest {
     @Test
     fun missing_message_stop_is_reported_as_interrupted() = runTest {
         val chunks = mutableListOf<AIStreamChunk>()
-        // 故意去掉 message_stop：连接正常关闭但终止事件没到，等价于线上「AI 说到一半突然没了」。
+        // 故意去掉 message_stop 与 message_delta：连接正常关闭但没有任何终止信号，
+        // 等价于线上「AI 说到一半突然没了」。
         val error = collectInto(chunks) {
-            sse(messageStart, blockStart, textDelta("你"), textDelta("好"), blockStop, messageDelta)
+            sse(messageStart, blockStart, textDelta("你"), textDelta("好"), blockStop)
         }
 
         assertTrue("缺终止事件必须抛 IOException，实际：$error", error is IOException)
@@ -117,6 +118,20 @@ class AnthropicStreamInterruptionTest {
             "断流的流不许产出 Final，否则上层会把残缺内容当完整回复",
             chunks.filterIsInstance<AIStreamChunk.Final>().isEmpty()
         )
+    }
+
+    @Test
+    fun stop_reason_without_message_stop_completes() = runTest {
+        val chunks = mutableListOf<AIStreamChunk>()
+        // 个别中转在 message_delta 给出 stop_reason 后直接关流。此时本轮生成已完整，
+        // 按正常结束收尾，不能判成断流去整轮重试。
+        val error = collectInto(chunks) {
+            sse(messageStart, blockStart, textDelta("你"), textDelta("好"), blockStop, messageDelta)
+        }
+
+        assertNull("stop_reason 已到的流不该报错，实际：$error", error)
+        assertEquals("你好", textOf(chunks))
+        assertEquals("end_turn", chunks.singleFinal().response.stopReason)
     }
 
     @Test
