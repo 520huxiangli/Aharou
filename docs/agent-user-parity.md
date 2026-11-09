@@ -165,6 +165,16 @@
 | 改标签空闲回收时长 | `BrowserSettingsSheet.kt:323` | 有 | `config` `browser.idle_timeout_minutes`（`ConfigBrowserFields.kt:108`） | 无 |
 | 页内开发者工具开关 | `presentation/BrowserMenuSheet.kt:58-67`（Eruda） | 有 | `config` `browser.devtools_enabled`（`ConfigBrowserFields.kt:134`） | 无 |
 
+## 12b. 插件
+
+| 用户能做什么 | 界面入口（file:line） | Agent 有对应工具吗 | 工具名与入口（file:line） | 差距说明 |
+|---|---|---|---|---|
+| 用插件提供的 AI 工具 | 无界面，装完即可用 | 有 | `mcp__plugin-<id>__<工具名>`（`feature/agent/domain/mcp/McpPluginServers.kt` 从清单 `mcpEntry` 派生，并入 `McpConfigRepository.getEffectiveServersFor`） | 2026-11-09 新增；清单未声明 `mcpEntry` 的插件仍然只给用户手动用 |
+| 打开插件管理页 | 插件卡片「打开管理页」（`PluginSettingsSection.kt`） | 部分 | `browser` 工具可直接访问 `http://127.0.0.1:<端口><路径>` | 能达成同样效果，但不是专用工具；端口与路径要先从插件清单里读到 |
+| 导入本地 `.txplugin` 包 | `PluginSettingsSection.kt:59`（`OpenDocument` 启动器） | 无 | — | 需要系统文件选择器，agent 无法替用户挑本地文件；能先把包写进工作区，但仍需用户点一下导入 |
+| 启动 / 停止 / 卸载插件 | 插件卡片操作行（`PluginSettingsSection.kt:250` 附近） | 无 | — | 真实缺口：`PluginManager` 的方法没有包成工具，也没接入 config 通道 |
+| 看插件运行状态 / 失败原因 | 卡片右上状态词与副标题 | 无 | — | 同上；agent 只能靠 `browser` 探端口间接判断 |
+
 ## 13. 缺口汇总
 
 统计（92 条能力）：**有对应工具 55 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 1 条反向缺口（远程设备端口，属有意不做界面）。

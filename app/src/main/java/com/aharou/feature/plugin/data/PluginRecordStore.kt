@@ -16,6 +16,13 @@ data class PluginRecord(
     val name: String = "",
     val version: String = "",
     val installedAt: Long = 0L,
+    /**
+     * 用户是否希望这个插件的常驻服务保持运行。
+     *
+     * 与「实际是否在跑」分开存：端口探测只看得到当下，重启后无从得知上次是用户主动停的还是崩掉的，
+     * 没有这股意愿就只能一律回落「已停止」，健康巡检也无从判断该不该拉起。
+     */
+    val enabled: Boolean = false,
 )
 
 @Serializable

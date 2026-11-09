@@ -38,6 +38,60 @@
 
 想装自己的插件包（本地 `.txplugin` 文件），到插件原页用「导入插件包」，扩展页的「管理」可以跳过去。
 
+## 自己做插件包
+
+`.txplugin` 就是一个 zip，里面只有两样东西：根目录的 `manifest.json` 和 `payload/` 目录。`payload/` 里的文件会被原样解到容器的插件目录下，安装、启动都按清单里的命令来。
+
+```
+my-tool.txplugin
+├── manifest.json
+└── payload/
+    ├── bin/
+    │   └── mcp-server
+    └── data/
+```
+
+一份能跑的最小清单：
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "my-tool",
+  "name": "我的工具",
+  "version": "1.0.0",
+  "description": "本地小工具",
+  "publisher": "我",
+  "launchType": "service",
+  "servicePort": 8765,
+  "servicePath": "/health",
+  "installSteps": ["chmod +x payload/bin/mcp-server"],
+  "launchCommand": "/root/.aharou/plugins/my-tool/payload/bin/mcp-server",
+  "verifyCommand": "test -x payload/bin/mcp-server",
+  "mcpEntry": "payload/bin/mcp-server",
+  "mcpArgs": ["--mcp"]
+}
+```
+
+常用字段：
+
+| 字段 | 作用 |
+| --- | --- |
+| `id` | 目录名，只能用字母、数字、点、下划线和连字符，**不能带 `../`** |
+| `servicePort` / `servicePath` | 填了就是常驻服务，App 会等你这个端口能访问才算启动成功；不填就是纯工具型插件 |
+| `installSteps` | 安装时逐条执行的命令，任一条非零退出就判安装失败 |
+| `launchCommand` | 启动命令。**相对名只在插件目录的 `bin/` 下找**，放在 `payload/bin/` 里的要写绝对路径（如上例），或者在 `installSteps` 里软链到 PATH 后只写命令名 |
+| `verifyCommand` | 安装后自检，随便跑一条能证明装好的命令 |
+| `mcpEntry` / `mcpArgs` | 填了之后这个插件会作为 MCP 服务器暴露给 AI，插件里的工具直接变成 AI 可调用的能力 |
+| `integrity` | 形如 `{"bin/mcp-server": "<sha256>"}`，只在装了之后对不上时提示，不会阻止安装 |
+
+几个容易踩的点：
+
+- **`payload/` 是唯一会被解出来的目录**，包里的其它文件一律忽略。
+- 安装脚本里可以用 `$TAIXU_PLUGIN_PAYLOAD`（指向 `payload/`）和 `$TAIXU_TOOL_DIR`（指向插件根目录）。
+- 重启 App 后，**上次处于「运行中」的插件会被自动拉起**；启动失败连续几次后按指数退避重试，不会每半分钟撞一次。
+- 插件处于「运行中」时，卡片上会多一个**「打开管理页」**，用系统浏览器打开 `http://127.0.0.1:<端口><路径>`。
+
+
 ## 想找原页
 
 | 类型 | 原页入口 |

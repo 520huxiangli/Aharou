@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.domain.model.InstalledPlugin
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -19,8 +20,12 @@ import kotlinx.coroutines.withContext
 
 /** 一次插件操作的结果事件，供 UI 提示；文案由 UI 侧本地化。 */
 sealed interface PluginEvent {
-    /** 导入并安装成功。 */
-    data class Installed(val name: String, val version: String) : PluginEvent
+    /** 导入并安装成功。[integrityMismatch] 是清单声明了摘要但对不上的文件，不阻挠安装。 */
+    data class Installed(
+        val name: String,
+        val version: String,
+        val integrityMismatch: List<String> = emptyList(),
+    ) : PluginEvent
 
     /** 启动 / 停止 / 卸载成功。 */
     data object Completed : PluginEvent
@@ -36,6 +41,7 @@ sealed interface PluginEvent {
 @HiltViewModel
 class PluginViewModel @Inject constructor(
     private val pluginManager: PluginManager,
+    private val mcpManager: McpManager,
     @param:ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -50,6 +56,8 @@ class PluginViewModel @Inject constructor(
     val event: StateFlow<PluginEvent?> = _event.asStateFlow()
 
     init {
+        // 进程重启后没人调 install，巡检得靠这里接上；幂等，重复进入页面不会多开一份
+        pluginManager.startHealthSupervisor()
         refresh()
     }
 
@@ -72,12 +80,14 @@ class PluginViewModel @Inject constructor(
                     } ?: error("openInputStream returned null")
                     val manifest = pluginManager.importPackage(tmp).getOrThrow()
                     pluginManager.install(manifest.id).getOrThrow()
+                    // 插件可能声明了 MCP 入口，重载后它的工具才进得了 Agent
+                    mcpManager.reload()
                     manifest
                 }
             }
             _busyId.value = null
             _event.value = result.fold(
-                onSuccess = { PluginEvent.Installed(it.name, it.version) },
+                onSuccess = { PluginEvent.Installed(it.name, it.version, pluginManager.takeImportWarnings(it.id)) },
                 onFailure = { PluginEvent.Failed(it.message ?: it::class.java.simpleName) },
             )
             refresh()
@@ -88,7 +98,11 @@ class PluginViewModel @Inject constructor(
 
     fun stop(id: String) = operate(id) { pluginManager.stop(it) }
 
-    fun uninstall(id: String) = operate(id) { pluginManager.uninstall(it) }
+    fun uninstall(id: String) = operate(id) {
+        val result = pluginManager.uninstall(it)
+        if (result.isSuccess) mcpManager.reload()
+        result
+    }
 
     fun consumeEvent() {
         _event.value = null

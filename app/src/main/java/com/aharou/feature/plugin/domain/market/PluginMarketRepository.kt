@@ -3,6 +3,7 @@ package com.aharou.feature.plugin.domain.market
 import android.content.Context
 import com.aharou.core.net.AppProxy
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.mcp.McpManager
 import com.aharou.feature.agent.domain.skill.market.SkillRepoAccess
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.domain.model.PluginManifest
@@ -31,6 +32,7 @@ import okhttp3.Request
 class PluginMarketRepository @Inject constructor(
     private val catalog: PluginMarketCatalog,
     private val pluginManager: PluginManager,
+    private val mcpManager: McpManager,
     @param:ApplicationContext private val context: Context,
 ) {
 
@@ -78,6 +80,8 @@ class PluginMarketRepository @Inject constructor(
             try {
                 val manifest = pluginManager.importPackage(tmp).getOrThrow()
                 pluginManager.install(manifest.id).getOrThrow()
+                // 插件可能声明了 MCP 入口，重载后它的工具才进得了 Agent
+                mcpManager.reload()
                 manifest
             } finally {
                 tmp.delete()

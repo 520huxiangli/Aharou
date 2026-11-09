@@ -15,12 +15,19 @@ import com.aharou.feature.plugin.domain.model.PluginStatus
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.min
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
@@ -48,6 +55,19 @@ class PluginManager @Inject constructor(
 
     /** 本进程内最近一次启动失败的原因（插件 id → 原因）。只用于把「失败」状态与副标题带到界面上。 */
     private val lastFailure = ConcurrentHashMap<String, String>()
+
+    /** 导入时发现的非致命问题（插件 id → 提示）。不阻挠安装，只让用户在卡片上看到。 */
+    private val importWarnings = ConcurrentHashMap<String, List<String>>()
+
+    /** 连续未就绪次数（插件 id → 次数）。健康巡检用；就绪一次即清零。 */
+    private val healthFailures = ConcurrentHashMap<String, Int>()
+
+    /** 下次允许自动重启的时间点（插件 id → 毫秒）。退避期内不再重试。 */
+    private val nextRestartAt = ConcurrentHashMap<String, Long>()
+
+    /** 巡检跑在进程级 scope：与任何页面生命周期无关，页面关了也照样盯。 */
+    private val healthScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var healthJob: Job? = null
 
     private fun pluginsRoot(): File = File(containerInstaller.aharouDir, "plugins").apply { mkdirs() }
 
@@ -77,6 +97,11 @@ class PluginManager @Inject constructor(
                 text to json.decodeFromString<PluginManifest>(text)
             }
             require(manifest.id.isNotBlank()) { "manifest 缺少 id" }
+            // id 会拼进插件目录路径，必须拦住 `../` 这类写法，否则 payload 能落到插件根之外；
+            // 「至少含一个字母或数字」是专门堵 `.` / `..` / `___` 的，单靠字符集挡不住。
+            require(ID_PATTERN.matches(manifest.id) && manifest.id.any { it.isLetterOrDigit() }) {
+                "manifest 的 id 只能包含字母、数字、点、下划线与连字符，且至少含一个字母或数字（最长 $ID_MAX_LENGTH）"
+            }
             require(manifest.name.isNotBlank()) { "manifest 缺少 name" }
             require(manifest.schemaVersion <= SUPPORTED_SCHEMA_VERSION) {
                 "插件包清单版本 ${manifest.schemaVersion} 高于本应用支持的 $SUPPORTED_SCHEMA_VERSION，请先升级应用"
@@ -92,22 +117,9 @@ class PluginManager @Inject constructor(
             File(root, PAYLOAD_DIR).deleteRecursively()
             root.mkdirs()
 
-            ZipFile(zipFile).use { zip ->
-                val entries = zip.entries()
-                while (entries.hasMoreElements()) {
-                    val e = entries.nextElement()
-                    if (e.isDirectory) continue
-                    if (!e.name.startsWith("$PAYLOAD_DIR/")) continue
-                    val out = File(root, e.name)
-                    // 防 zip-slip：解出的路径必须仍在插件目录内
-                    require(out.canonicalPath.startsWith(root.canonicalPath + File.separator)) {
-                        "包内路径越界：${e.name}"
-                    }
-                    out.parentFile?.mkdirs()
-                    zip.getInputStream(e).use { input -> out.outputStream().use { input.copyTo(it) } }
-                }
-            }
+            val warnings = unpackPayload(zipFile, root, manifest)
             File(root, MANIFEST_FILE).writeText(manifestText, Charsets.UTF_8)
+            if (warnings.isEmpty()) importWarnings.remove(manifest.id) else importWarnings[manifest.id] = warnings
             FileLogger.i(TAG, "导入插件 ${manifest.id} v${manifest.version}")
             manifest
         }
@@ -139,14 +151,18 @@ class PluginManager @Inject constructor(
         FileLogger.i(TAG, "安装插件完成 ${manifest.id}")
         // 重新装过一遍，旧的启动失败原因不再作数
         lastFailure.remove(manifest.id)
+        // 装了插件就该开始盯它的服务；无需用户进插件页碰一下才启动巡检
+        startHealthSupervisor()
     }
 
     /** 启动常驻服务：解析 launchCommand → 起进程 → 轮询端口就绪。非服务型插件不启动。 */
     suspend fun launch(id: String): Result<Unit> {
         val result = runCatchingLaunch(id)
         // 失败原因留给 listInstalled 换算成 FAILED 状态与卡片副标题
-        result.onSuccess { lastFailure.remove(id) }
-            .onFailure { lastFailure[id] = it.message ?: it::class.java.simpleName }
+        result.onSuccess {
+            lastFailure.remove(id)
+            markEnabled(id, true)
+        }.onFailure { lastFailure[id] = it.message ?: it::class.java.simpleName }
         return result
     }
 
@@ -230,6 +246,7 @@ class PluginManager @Inject constructor(
         }
         // 主动停止成功：清掉上次的启动失败记录，否则卡片会一直挂着「失败」
         lastFailure.remove(id)
+        markEnabled(id, false)
     }
 
     /** 卸载：先停服务、跑 uninstallSteps，再删目录与记录。 */
@@ -242,6 +259,9 @@ class PluginManager @Inject constructor(
         }
         hostDir(id).deleteRecursively()
         recordStore.remove(id)
+        healthFailures.remove(id)
+        nextRestartAt.remove(id)
+        importWarnings.remove(id)
         FileLogger.i(TAG, "卸载插件 $id")
     }
 
@@ -273,6 +293,114 @@ class PluginManager @Inject constructor(
     }
 
     // ── 内部 ──
+
+    /**
+     * 把 `payload/` 解到插件目录，同时做包内加固与完整性核对。
+     *
+     * 重复文件名拒绝（否则包内可以藏一个覆盖前者的隐藏文件），并限制条目数与总解压体积（防 zip 炸弹）。
+     * 完整性不符只当作可跳过的提示，写进返回值交给界面展示，不影响安装。
+     */
+    private fun unpackPayload(zipFile: File, root: File, manifest: PluginManifest): List<String> {
+        val mismatched = mutableListOf<String>()
+        ZipFile(zipFile).use { zip ->
+            val entries = zip.entries()
+            val seen = HashSet<String>()
+            var scanned = 0
+            var totalBytes = 0L
+            while (entries.hasMoreElements()) {
+                val e = entries.nextElement()
+                scanned++
+                require(scanned <= MAX_ZIP_ENTRIES) { "包内条目过多（上限 $MAX_ZIP_ENTRIES 个）" }
+                if (e.isDirectory) continue
+                if (!e.name.startsWith("$PAYLOAD_DIR/")) continue
+                require(seen.add(e.name)) { "包内存在重复条目：${e.name}" }
+                val out = File(root, e.name)
+                // 防 zip-slip：解出的路径必须仍在插件目录内
+                require(out.canonicalPath.startsWith(root.canonicalPath + File.separator)) {
+                    "包内路径越界：${e.name}"
+                }
+                out.parentFile?.mkdirs()
+                val digest = MessageDigest.getInstance("SHA-256")
+                zip.getInputStream(e).use { input ->
+                    out.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            totalBytes += read
+                            require(totalBytes <= MAX_UNCOMPRESSED_BYTES) {
+                                "包解压后体积超过上限（$MAX_UNCOMPRESSED_BYTES 字节）"
+                            }
+                            digest.update(buffer, 0, read)
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                }
+                if (manifest.integrity.isNotEmpty()) {
+                    val relative = e.name.removePrefix("$PAYLOAD_DIR/")
+                    val expected = manifest.integrity[relative] ?: manifest.integrity[e.name]
+                    val actual = digest.digest().joinToString("") { byte ->
+                        // Byte 是带符号的，直接 %02x 会得到 8 位长串
+                        (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
+                    }
+                    if (expected != null && !expected.equals(actual, ignoreCase = true)) mismatched.add(relative)
+                }
+            }
+        }
+        if (mismatched.isEmpty()) return emptyList()
+        FileLogger.w(TAG, "插件 ${manifest.id} 完整性校验不一致：${mismatched.joinToString()}")
+        // 返回文件名而不是现成文案：用户可见提示由 UI 层按语种拼，这边只给事实
+        return mismatched
+    }
+
+    /** 取走导入时留下的完整性不符文件名（取完即清），供界面提示一次。 */
+    fun takeImportWarnings(id: String): List<String> = importWarnings.remove(id).orEmpty()
+
+    /** 启停成功后才记意愿：失败的不该被巡检当成「应该在跑」反复拉起来。 */
+    private fun markEnabled(id: String, enabled: Boolean) {
+        val record = recordStore.get(id) ?: return
+        if (record.enabled == enabled) return
+        recordStore.save(record.copy(enabled = enabled))
+    }
+
+    /** 启动健康巡检（幂等）。安装流程与插件页都会调，重复调不会多开一份。 */
+    fun startHealthSupervisor() {
+        if (healthJob?.isActive == true) return
+        healthJob = healthScope.launch {
+            while (isActive) {
+                delay(HEALTH_INTERVAL_MS)
+                runCatching { healthCheckOnce() }
+                    .onFailure { FileLogger.w(TAG, "插件健康巡检异常", it) }
+            }
+        }
+    }
+
+    /**
+     * 巡检一轮：只盯用户启用过的常驻服务。
+     *
+     * 连续多次未就绪才动手重启（网络抖动、启动慢都算正常），重启失败按指数退避封顶 5 分钟，
+     * 避免一个永远起不来的插件每 30 秒就被拉起一次。
+     */
+    private suspend fun healthCheckOnce() {
+        recordStore.all().values.filter { it.enabled }.forEach { record ->
+            val manifest = readManifest(record.id) ?: return@forEach
+            if (!manifest.isService) return@forEach
+            if (isPortReady(manifest)) {
+                healthFailures.remove(record.id)
+                nextRestartAt.remove(record.id)
+                return@forEach
+            }
+            val failures = (healthFailures[record.id] ?: 0) + 1
+            healthFailures[record.id] = failures
+            if (failures < UNHEALTHY_THRESHOLD) return@forEach
+            val now = System.currentTimeMillis()
+            if (now < (nextRestartAt[record.id] ?: 0L)) return@forEach
+            val step = (failures - UNHEALTHY_THRESHOLD).coerceAtMost(4)
+            nextRestartAt[record.id] = now + min(MAX_RESTART_BACKOFF_MS, RESTART_BACKOFF_MS shl step)
+            FileLogger.i(TAG, "插件 ${record.id} 连续 $failures 次未就绪，尝试重启")
+            this@PluginManager.launch(record.id)
+        }
+    }
 
     private suspend fun ensureContainer() {
         if (!engine.isContainerInstalled()) engine.ensureInstalled()
@@ -347,5 +475,22 @@ class PluginManager @Inject constructor(
         const val STOP_TIMEOUT_MS = 20_000L
         const val PKILL_TIMEOUT_MS = 20_000L
         const val TAG_TAG_PREFIX = "plugin:"
+
+        /** 包内条目数上限；正常插件包远达不到这个量级。 */
+        const val MAX_ZIP_ENTRIES = 20_001
+
+        /** 解压后总字节上限：防止构造小体积、大膨胀的包把存储吃满。 */
+        const val MAX_UNCOMPRESSED_BYTES = 8L * 1024 * 1024 * 1024
+
+        /** id 会直接拼成目录名，只允许安全字符且不允许 `..`。 */
+        const val ID_MAX_LENGTH = 64
+        val ID_PATTERN = Regex("[A-Za-z0-9._-]{1,$ID_MAX_LENGTH}")
+
+        const val HEALTH_INTERVAL_MS = 30_000L
+
+        /** 连续这么多次探测不到端口才认为真的挂了，避开启动慢与瞬时抖动。 */
+        const val UNHEALTHY_THRESHOLD = 3
+        const val RESTART_BACKOFF_MS = 30_000L
+        const val MAX_RESTART_BACKOFF_MS = 300_000L
     }
 }

@@ -42,6 +42,21 @@ data class PluginManifest(
     val commandLinks: List<String> = emptyList(),
     /** 启动时注入容器的环境变量。 */
     val environment: Map<String, String> = emptyMap(),
+    /**
+     * 以 MCP stdio server 形式暴露给 AI 的入口（容器内可执行名或绝对路径）。
+     *
+     * 留空表示插件不提供 AI 工具，只给用户手动用。填了之后插件目录下的入口会被派生成一个
+     * 不落盘的 MCP server，工具名沿用 `mcp__plugin-<id>__<工具名>` 命名空间，权限走 EXTERNAL_TOOL。
+     */
+    val mcpEntry: String = "",
+    /** 传给 [mcpEntry] 的启动参数（通常声明 stdio 协议，如 `--mcp`）。 */
+    val mcpArgs: List<String> = emptyList(),
+    /**
+     * `payload/` 下每个文件的 SHA-256（相对路径 → 十六进制摘要）。留空表示包未提供校验。
+     *
+     * 不符只提示、不拒绝安装：静态指纹只能提供可跳过的诊断，不能阻断动作。
+     */
+    val integrity: Map<String, String> = emptyMap(),
 ) {
     /** 是否常驻服务（有服务端口）。 */
     val isService: Boolean get() = servicePort in 1..65535

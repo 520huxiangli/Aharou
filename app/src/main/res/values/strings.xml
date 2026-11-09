@@ -1479,6 +1479,7 @@
     <string name="plugin_status_stopped">已停止</string>
     <string name="plugin_action_start">启动</string>
     <string name="plugin_action_stop">停止</string>
+    <string name="plugin_action_open_admin">打开管理页</string>
     <string name="plugin_action_uninstall">卸载</string>
     <string name="plugin_busy">处理中…</string>
     <string name="plugin_no_service">非常驻服务</string>
@@ -1488,6 +1489,7 @@
     <string name="plugin_confirm">卸载</string>
     <string name="plugin_cancel">取消</string>
     <string name="plugin_event_installed">已安装：%1$s %2$s</string>
+    <string name="plugin_warning_integrity">包完整性校验不一致：%1$s（已按清单声明继续安装）</string>
     <string name="plugin_event_completed">完成</string>
     <string name="plugin_event_failed">失败：%1$s</string>
     <string name="skills_market_install">安装</string>

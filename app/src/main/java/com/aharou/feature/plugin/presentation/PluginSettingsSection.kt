@@ -1,5 +1,8 @@
 package com.aharou.feature.plugin.presentation
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -25,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +40,7 @@ import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.feature.plugin.domain.model.InstalledPlugin
+import com.aharou.feature.plugin.domain.model.PluginManifest
 import com.aharou.feature.plugin.domain.model.PluginStatus
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
@@ -55,6 +60,7 @@ internal fun PluginSettingsSection(
     val plugins by viewModel.plugins.collectAsStateWithLifecycle()
     val busyId by viewModel.busyId.collectAsStateWithLifecycle()
     val event by viewModel.event.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) viewModel.importAndInstall(uri)
@@ -105,6 +111,7 @@ internal fun PluginSettingsSection(
                         plugin = plugin,
                         busy = busyId == plugin.manifest.id,
                         anyBusy = busyId != null,
+                        onOpenAdmin = { startPluginAdminPage(context, plugin.manifest) },
                         onLaunch = { viewModel.launch(plugin.manifest.id) },
                         onStop = { viewModel.stop(plugin.manifest.id) },
                         onUninstall = { pendingUninstall = plugin }
@@ -140,6 +147,7 @@ private fun PluginCard(
     plugin: InstalledPlugin,
     busy: Boolean,
     anyBusy: Boolean,
+    onOpenAdmin: () -> Unit,
     onLaunch: () -> Unit,
     onStop: () -> Unit,
     onUninstall: () -> Unit,
@@ -232,6 +240,9 @@ private fun PluginCard(
                     )
                 } else if (manifest.isService) {
                     if (plugin.status == PluginStatus.RUNNING) {
+                        TextButton(onClick = onOpenAdmin, enabled = !anyBusy) {
+                            Text(stringResource(R.string.plugin_action_open_admin))
+                        }
                         TextButton(onClick = onStop, enabled = !anyBusy) {
                             Text(stringResource(R.string.plugin_action_stop))
                         }
@@ -260,7 +271,12 @@ private fun PluginCard(
 @Composable
 private fun PluginEventText(event: PluginEvent) {
     val text = when (event) {
-        is PluginEvent.Installed -> stringResource(R.string.plugin_event_installed, event.name, event.version)
+        is PluginEvent.Installed -> {
+            val head = stringResource(R.string.plugin_event_installed, event.name, event.version)
+            // 完整性不符之类的提示不阻挠安装，但得让用户看见
+            if (event.integrityMismatch.isEmpty()) head
+            else head + "\n" + stringResource(R.string.plugin_warning_integrity, event.integrityMismatch.joinToString())
+        }
         PluginEvent.Completed -> stringResource(R.string.plugin_event_completed)
         is PluginEvent.Failed -> stringResource(R.string.plugin_event_failed, event.reason)
     }
@@ -271,4 +287,20 @@ private fun PluginEventText(event: PluginEvent) {
         color = if (isError) MaterialTheme.colorScheme.error
         else MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+/**
+ * 用系统浏览器打开插件的管理页。
+ *
+ * 走 ACTION_VIEW 而不是内置 WebView：插件页面带着自己的登录态与前端路由，
+ * 塞进应用内 WebView 反而容易被我们自己的导航拦截规则挡住。
+ */
+private fun startPluginAdminPage(context: Context, manifest: PluginManifest) {
+    val path = manifest.servicePath.ifBlank { "/" }.let { if (it.startsWith("/")) it else "/$it" }
+    val url = "http://127.0.0.1:${manifest.servicePort}$path"
+    runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
 }

@@ -70,7 +70,8 @@ class McpConfigRepository @Inject constructor(
     private val containerInstaller: ContainerInstaller,
     private val workspaceRepository: WorkspaceRepository,
     private val projectAicodeRoot: ProjectAharouRoot,
-    private val fileChangeHub: FileChangeHub
+    private val fileChangeHub: FileChangeHub,
+    private val pluginServers: McpPluginServers
 ) {
     private companion object {
         const val TAG = "McpConfigRepository"
@@ -355,11 +356,24 @@ class McpConfigRepository @Inject constructor(
 
     /** 当前项目生效的合并配置（项目优先覆盖同名），供 [McpManager] 连接使用。 */
     suspend fun getEffectiveServers(): List<McpServerConfig> =
-        getEffectiveEntries().map { it.server }
+        withPluginServers(getEffectiveEntries().map { it.server })
 
     /** 按**指定工作区**读合并配置：[McpManager] 按工作区维护连接时用它，不能用 currentPath。 */
     suspend fun getEffectiveServersFor(workspacePath: String): List<McpServerConfig> =
-        getEffectiveEntriesFor(workspacePath).map { it.server }
+        withPluginServers(getEffectiveEntriesFor(workspacePath).map { it.server })
+
+    /**
+     * 追加插件声明的 MCP server（派生，不落盘）。
+     *
+     * 用户手写配置优先：同名 server 以配置文件为准，否则用户想覆盖插件入口时会被默默盖回去。
+     * 只加在「供连接使用」的入口上，不进 [getEffectiveEntries]，免得设置页里出现删不掉的条目。
+     */
+    private suspend fun withPluginServers(configured: List<McpServerConfig>): List<McpServerConfig> {
+        val derived = pluginServers.servers()
+        if (derived.isEmpty()) return configured
+        val taken = configured.map { it.name }.toSet()
+        return configured + derived.filterNot { it.name in taken }
+    }
 
     suspend fun getEffectiveEntriesFor(workspacePath: String): List<McpServerEntry> {
         // 直接读磁盘：调用方问的是「文件里现在有什么」。内存快照靠文件监听刷新，
