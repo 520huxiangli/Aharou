@@ -400,18 +400,18 @@ class BrowserUseManager(
                 // of the WebView so they reach the matching app instead of
                 // surfacing as ERR_UNKNOWN_URL_SCHEME.
                 //
-                // [T-android-user-initiated-scheme-dispatch] AGENT_BACKGROUND:
-                // this WebView is pool-managed and never rendered to the user,
-                // so any navigation here came from the PAGE, not a tap. Keep
-                // T318's block — otherwise a page the agent visits can throw
-                // the user into another app mid-task.
+                // [T-android-user-initiated-scheme-dispatch] 来源按 hasGesture() 判，不按「谁在用浏览器」猜：
+                // 这个 WebView 平时由 agent 驱动，但用户会直接在浮层里点（接不接管都一样）。
+                // 用户点出来的跳转必须交给系统，否则 jsbridge / mqq 这类唤起手机的 scheme
+                // 会被当成网页导航吞掉，NapCat WebUI 的 QQ 验证就卡在这一步；
+                // 页面自己弹的仍然拦下，免得 agent 跑任务时被页面甩进别的 App——这是 T318 的本意。
+                val origin = if (request.hasGesture()) {
+                    com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler.Origin.USER_INITIATED
+                } else {
+                    com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler.Origin.AGENT_BACKGROUND
+                }
                 return com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler
-                    .handle(
-                        view.context,
-                        request.url,
-                        com.aharou.feature.browser.presentation.BrowserExternalSchemeHandler
-                            .Origin.AGENT_BACKGROUND,
-                    )
+                    .handle(view.context, request.url, origin)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
