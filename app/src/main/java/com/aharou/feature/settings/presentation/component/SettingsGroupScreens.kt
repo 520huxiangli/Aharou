@@ -32,6 +32,7 @@ import compose.icons.feathericons.User
 import compose.icons.feathericons.BarChart2
 import compose.icons.feathericons.BookOpen
 import compose.icons.feathericons.Box
+import compose.icons.feathericons.Briefcase
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
@@ -216,6 +217,18 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.HardDrive,
                 title = stringResource(SettingsSection.QqBot.titleRes),
                 onClick = { onOpen(SettingsSection.QqBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.MessageSquare,
+                title = stringResource(SettingsSection.DingTalkBot.titleRes),
+                onClick = { onOpen(SettingsSection.DingTalkBot) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Briefcase,
+                title = stringResource(SettingsSection.WeComBot.titleRes),
+                onClick = { onOpen(SettingsSection.WeComBot) }
             )
         }
     }

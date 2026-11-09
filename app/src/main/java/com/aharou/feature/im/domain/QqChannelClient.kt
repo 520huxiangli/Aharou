@@ -64,6 +64,8 @@ class QqChannelClient @Inject constructor(
 
     override val id: String = "qq"
 
+    override val capabilities = ImChannelCapabilities(sendMedia = true, downloadAttachment = true)
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -434,6 +436,8 @@ class QqChannelClient @Inject constructor(
                 text = text,
                 isGroup = chatId.startsWith("group:"),
                 messageId = inboundId,
+                // 官方开放平台的事件体只有本条 id/content/author/附件，不带被引用消息；
+                // 要取原文得另调消息详情接口，不值得为一句引用在回复链路上多一个失败点
                 replyToSenderId = null,
                 // 群消息只会以 GROUP_AT_MESSAGE_CREATE 推给我们，能收到就是 @ 了
                 mentionsBot = type.contains("GROUP"),

@@ -28,6 +28,7 @@ class McpJsonImporterTest {
         containerInstaller = mockk(relaxed = true),
         workspaceRepository = mockk(relaxed = true),
         projectAicodeRoot = mockk(relaxed = true),
+        pluginServers = mockk(relaxed = true),
         fileChangeHub = mockk<FileChangeHub>(relaxed = true).also { hub ->
             every { hub.watchAicode() } returns emptyFlow<FileChangeBatch>()
             every { hub.watchWorkspace(any()) } returns emptyFlow<FileChangeBatch>()

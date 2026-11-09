@@ -35,6 +35,7 @@ import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.agent.domain.tool.file.ReadFileTool
 import com.aharou.feature.agent.domain.tool.pet.PetAvatarTool
 import com.aharou.feature.agent.domain.tool.SendImFileTool
+import com.aharou.feature.agent.domain.tool.ImSendMessageTool
 import com.aharou.feature.agent.domain.tool.file.SendFileTool
 import com.aharou.feature.agent.domain.tool.file.GenerateImageTool
 import com.aharou.feature.agent.domain.tool.file.ViewImageTool
@@ -421,6 +422,7 @@ object AgentModule {
         readFileTool: ReadFileTool,
         sendFileTool: SendFileTool,
         sendImFileTool: SendImFileTool,
+        sendImMessageTool: ImSendMessageTool,
         viewImageTool: ViewImageTool,
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
@@ -462,6 +464,7 @@ object AgentModule {
             register("readFile", readFileTool)
             register("sendFile", sendFileTool)
             register("sendToChat", sendImFileTool)
+            register("send_im_message", sendImMessageTool)
             register("viewImage", viewImageTool)
             register("writeFile", writeFileTool)
             register("editFile", editFileTool)

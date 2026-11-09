@@ -3,9 +3,11 @@ package com.aharou.feature.im.data
 import com.aharou.core.config.ConfigAccess
 import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.ConfigValue
+import com.aharou.feature.im.data.repository.DingTalkSettingsRepository
 import com.aharou.feature.im.data.repository.FeishuSettingsRepository
 import com.aharou.feature.im.data.repository.QqSettingsRepository
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
+import com.aharou.feature.im.data.repository.WeComSettingsRepository
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
 import com.aharou.feature.im.domain.ImBotBridge
 import com.aharou.feature.im.domain.ImChannelState
@@ -25,9 +27,14 @@ class ConfigImFieldsTest {
         val weixin = mockk<WeixinSettingsRepository>(relaxed = true)
         val feishu = mockk<FeishuSettingsRepository>(relaxed = true)
         val qq = mockk<QqSettingsRepository>(relaxed = true)
+        val dingTalk = mockk<DingTalkSettingsRepository>(relaxed = true)
+        val weCom = mockk<WeComSettingsRepository>(relaxed = true)
         val napCat = mockk<ConfigNapCatFields>(relaxed = true)
         val registry = ConfigRegistry::class.java.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
-        ConfigImFields(telegram, weixin, feishu, qq, napCat, bridge, bridge, bridge, bridge).registerInto(registry)
+        ConfigImFields(
+            telegram, weixin, feishu, qq, dingTalk, weCom, napCat,
+            bridge, bridge, bridge, bridge, bridge, bridge,
+        ).registerInto(registry)
         for (channel in listOf("telegram", "weixin", "feishu", "qq")) {
             val field = requireNotNull(registry.resolveField("im.$channel.state"))
             assertEquals(ConfigAccess.READONLY, field.access)

@@ -116,7 +116,8 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
             SettingsDivider()
             InfoRow(stringResource(R.string.napcat_connection), when (val current = connection) {
                 is ImChannelState.Connected -> stringResource(R.string.settings_qq_bot_status_connected, current.identity)
-                is ImChannelState.Error -> viewModel.redact(current.message)
+                is ImChannelState.Error ->
+                    viewModel.redact(current.message) + imDiagnosticSuffix(current.diagnostic)
                 ImChannelState.Connecting -> stringResource(R.string.im_status_connecting)
                 ImChannelState.Stopped -> stringResource(R.string.settings_qq_bot_status_stopped)
             })

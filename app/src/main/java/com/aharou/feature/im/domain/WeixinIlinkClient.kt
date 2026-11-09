@@ -67,6 +67,8 @@ class WeixinIlinkClient @Inject constructor(
 
     override val id: String = "weixin"
 
+    override val capabilities = ImChannelCapabilities(sendMedia = true, downloadAttachment = true)
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -420,6 +422,7 @@ class WeixinIlinkClient @Inject constructor(
             text = text,
             isGroup = session.isNotBlank() && session != from && to.isNotBlank(),
             messageId = obj["client_id"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            // 现有解析里 item_list 只承载本条自己的 text_item/图片等，取不到引用原文
             replyToSenderId = null,
             contextToken = contextToken.ifBlank { null },
             attachments = attachments

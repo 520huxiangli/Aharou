@@ -243,6 +243,28 @@
                 android:value="持有 QQ 机器人 WebSocket 连接，让用户能在 QQ 里与本机 AI agent 对话" />
         </service>
 
+        <!-- 钉钉：Stream 长连接，同样 specialUse。 -->
+        <service
+            android:name=".feature.im.service.DingTalkBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有钉钉 Stream 长连接，让用户能在钉钉里与本机 AI agent 对话" />
+        </service>
+
+        <!-- 企业微信：长连接模式，同样 specialUse。 -->
+        <service
+            android:name=".feature.im.service.WeComBotService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="持有企业微信长连接，让用户能在企业微信里与本机 AI agent 对话" />
+        </service>
+
         <service
             android:name=".feature.im.service.NapCatInstallService"
             android:exported="false"

@@ -205,7 +205,7 @@ private fun connectionLabel(state: ImChannelState): String = when (state) {
     is ImChannelState.Error -> stringResource(
         R.string.settings_telegram_bot_status_error,
         state.message
-    )
+    ) + imDiagnosticSuffix(state.diagnostic)
     ImChannelState.Connecting -> stringResource(R.string.im_status_connecting)
     ImChannelState.Stopped -> stringResource(R.string.settings_telegram_bot_status_stopped)
 }

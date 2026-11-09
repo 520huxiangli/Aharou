@@ -41,7 +41,18 @@ data class ImInboundMessage(
      * 平台要求回复时回带的上下文令牌（微信 iLink 的 context_token）。
      * 其余平台为 null，不影响原有行为。
      */
-    val contextToken: String? = null
+    val contextToken: String? = null,
+
+    /**
+     * 被引用消息的正文（[replyToSenderId] 的配套字段）。
+     *
+     * 只有平台在入站事件里已经带上原文时才填，取不到就留 null——
+     * 不为它额外发请求：多打一次 API 换一段引用文本，不值得在回复链路上引入新的失败点。
+     *
+     * 放在参数表末尾而不是紧挨 [replyToSenderId]：仓库里还有按位置传满参数的构造点，
+     * 插在中间会让后面的实参整体错位。
+     */
+    val replyToText: String? = null
 )
 
 /** 一次内联按钮点击（审批卡片）。 */

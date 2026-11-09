@@ -4,6 +4,7 @@ import android.content.Context
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.session.SessionUseCase
 import com.aharou.feature.agent.domain.tool.ToolPermissionManager
+import com.aharou.feature.im.data.repository.DingTalkSettingsRepository
 import com.aharou.feature.im.data.repository.FeishuSettingsRepository
 import com.aharou.feature.im.data.repository.NapCatSettingsRepository
 import com.aharou.feature.im.domain.NapCatChannelClient
@@ -11,8 +12,11 @@ import com.aharou.feature.im.domain.NapCatMessagePolicy
 import com.aharou.feature.im.domain.ImOwnerStore
 import com.aharou.feature.im.data.repository.QqSettingsRepository
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
+import com.aharou.feature.im.data.repository.WeComSettingsRepository
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
+import com.aharou.feature.im.domain.DingTalkChannelClient
 import com.aharou.feature.im.domain.FeishuChannelClient
+import com.aharou.feature.im.domain.WeComChannelClient
 import com.aharou.feature.im.domain.ImBotBridge
 import com.aharou.feature.im.domain.ImWorkspaceResolver
 import com.aharou.feature.im.domain.QqChannelClient
@@ -112,5 +116,35 @@ object ImBridgeModule {
         @ApplicationContext context: Context
     ): ImBotBridge =
         ImBotBridge("qq", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
+
+    @Provides
+    @Singleton
+    @Named("dingtalk")
+    fun provideDingTalkBridge(
+        channel: DingTalkChannelClient,
+        settings: DingTalkSettingsRepository,
+        runner: AgentTurnRunner,
+        sessionUseCase: SessionUseCase,
+        permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
+        @ApplicationContext context: Context
+    ): ImBotBridge =
+        ImBotBridge("dingtalk", channel, settings, runner, sessionUseCase, permissions, context,
+            fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
+
+    @Provides
+    @Singleton
+    @Named("wecom")
+    fun provideWeComBridge(
+        channel: WeComChannelClient,
+        settings: WeComSettingsRepository,
+        runner: AgentTurnRunner,
+        sessionUseCase: SessionUseCase,
+        permissions: ToolPermissionManager,
+        workspaceResolver: ImWorkspaceResolver,
+        @ApplicationContext context: Context
+    ): ImBotBridge =
+        ImBotBridge("wecom", channel, settings, runner, sessionUseCase, permissions, context,
             fallbackWorkspacePath = { workspaceResolver.fallbackPath() })
 }

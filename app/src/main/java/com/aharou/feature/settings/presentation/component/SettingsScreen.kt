@@ -160,6 +160,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     ContainerSources(R.string.container_sources_title),
     Proxy(R.string.proxy_title),
     TelegramBot(R.string.settings_telegram_bot), WeixinBot(R.string.settings_weixin_bot), FeishuBot(R.string.settings_feishu_bot), QqBot(R.string.settings_qq_bot),
+    DingTalkBot(R.string.settings_dingtalk_bot), WeComBot(R.string.settings_wecom_bot),
     Log(R.string.settings_log),
     Permissions(R.string.settings_permissions),
     AppPermissions(R.string.settings_app_permissions),
@@ -423,7 +424,8 @@ fun SettingsScreen(
         SettingsSection.Pet -> SettingsSection.AharouGroup
         SettingsSection.AccountCenter -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels, SettingsSection.ScheduledTasks, SettingsSection.Extensions,
-        SettingsSection.TelegramBot, SettingsSection.WeixinBot, SettingsSection.FeishuBot, SettingsSection.QqBot -> SettingsSection.AiGroup
+        SettingsSection.TelegramBot, SettingsSection.WeixinBot, SettingsSection.FeishuBot,
+        SettingsSection.QqBot, SettingsSection.DingTalkBot, SettingsSection.WeComBot -> SettingsSection.AiGroup
         SettingsSection.Mcp, SettingsSection.Connectors, SettingsSection.Skills, SettingsSection.Plugins, SettingsSection.Knowledge -> SettingsSection.Extensions
         SettingsSection.General, SettingsSection.Theme -> SettingsSection.GeneralGroup
         SettingsSection.Permissions,
@@ -1263,10 +1265,8 @@ fun SettingsScreen(
                     onSetPassword = viewModel::setProxyPassword,
                     onSetNoProxy = viewModel::setProxyNoProxy
                 )
-                SettingsSection.WeixinBot -> WeixinBotSection()
-                SettingsSection.FeishuBot -> FeishuBotSection()
-                SettingsSection.QqBot -> QqBotSection()
-                SettingsSection.TelegramBot -> TelegramBotSection()
+                SettingsSection.TelegramBot, SettingsSection.WeixinBot, SettingsSection.FeishuBot,
+                SettingsSection.QqBot, SettingsSection.DingTalkBot, SettingsSection.WeComBot -> ImBotChannelSection(current)
                 SettingsSection.Log -> LogSection(
                     current = logLevel,
                     onSelect = { viewModel.setLogLevel(it) },

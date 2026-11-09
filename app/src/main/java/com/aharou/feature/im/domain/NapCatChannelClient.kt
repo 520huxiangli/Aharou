@@ -45,6 +45,8 @@ class NapCatChannelClient @Inject constructor(
     @param:ApplicationContext private val context: Context
 ) : ImChannel {
     override val id: String = "qq_napcat"
+
+    override val capabilities = ImChannelCapabilities(sendMedia = true, downloadAttachment = true)
     private val json = Json { ignoreUnknownKeys = true }
     private val incoming = Channel<String>(Channel.UNLIMITED)
     private val sequence = AtomicLong(System.currentTimeMillis())
@@ -158,6 +160,7 @@ class NapCatChannelClient @Inject constructor(
         val attachments = mutableListOf<ImAttachment>()
         var mentioned = false
         var replyAuthor: String? = null
+        var replyText: String? = null
         for (segment in segments) {
             val s = segment as? JsonObject ?: continue
             val data = s["data"] as? JsonObject ?: continue
@@ -168,6 +171,9 @@ class NapCatChannelClient @Inject constructor(
                     val reply = try { api(c, "get_msg", buildJsonObject { put("message_id", data.string("id")) }) }
                     catch (e: CancellationException) { throw e } catch (_: Throwable) { null }
                     replyAuthor = (reply?.get("sender") as? JsonObject)?.string("user_id")?.takeIf(String::isNotBlank)
+                    // 优先用引用段自带的文本（部分 OneBot 实现把原文塞在 reply.data.text），
+                    // 没有就用同一次 get_msg 拿回来的正文——两条路都不额外发请求
+                    replyText = data.string("text").takeIf(String::isNotBlank) ?: reply?.let { quotedText(it) }
                 }
                 "image" -> attachments.add(ImAttachment(ImAttachment.Kind.IMAGE,
                     fileId = data.string("file"), url = data.string("url").ifBlank { null },
@@ -180,8 +186,18 @@ class NapCatChannelClient @Inject constructor(
         val sender = event["sender"] as? JsonObject
         return ImInboundMessage(sequence.incrementAndGet(), chatId, senderId,
             sender?.let { it.string("card").ifBlank { it.string("nickname") } }.orEmpty(),
-            if (group) groupId else senderId, text.toString(), group, messageId, replyAuthor, mentioned, attachments)
+            if (group) groupId else senderId, text.toString(), group, messageId, replyAuthor, mentioned, attachments,
+            replyToText = replyText)
     }
+
+    /** 从 get_msg 的返回值里抖出被引用消息的正文（只要 text 段，别的一段没有可读文本）。 */
+    private fun quotedText(message: JsonObject): String? = (message["message"] as? JsonArray)
+        ?.mapNotNull { it as? JsonObject }
+        ?.filter { it.string("type") == "text" }
+        ?.mapNotNull { (it["data"] as? JsonObject)?.string("text")?.takeIf(String::isNotBlank) }
+        ?.joinToString("")
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
 
     private fun fileAttachment(data: JsonObject, group: String): ImAttachment {
         val id = data.string("file_id").ifBlank { data.string("id").ifBlank { data.string("file") } }

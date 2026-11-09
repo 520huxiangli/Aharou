@@ -165,7 +165,8 @@ private fun QqHint(text: String) {
 @Composable
 private fun connectionLabel(state: ImChannelState): String = when (state) {
     is ImChannelState.Connected -> stringResource(R.string.settings_qq_bot_status_connected, state.identity)
-    is ImChannelState.Error -> stringResource(R.string.settings_qq_bot_status_error, state.message)
+    is ImChannelState.Error ->
+        stringResource(R.string.settings_qq_bot_status_error, state.message) + imDiagnosticSuffix(state.diagnostic)
     ImChannelState.Connecting -> stringResource(R.string.im_status_connecting)
     ImChannelState.Stopped -> stringResource(R.string.settings_qq_bot_status_stopped)
 }

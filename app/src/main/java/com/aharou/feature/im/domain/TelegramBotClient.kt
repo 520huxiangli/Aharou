@@ -61,7 +61,12 @@ class TelegramBotClient @Inject constructor(
 
     override val id: String = "telegram"
 
-    override val supportsButtons: Boolean get() = true
+    override val capabilities = ImChannelCapabilities(
+        editMessage = true,
+        inlineButtons = true,
+        sendMedia = true,
+        downloadAttachment = true,
+    )
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -368,6 +373,11 @@ class TelegramBotClient @Inject constructor(
         val replyTo = (message["reply_to_message"] as? JsonObject)
             ?.get("from")?.let { it as? JsonObject }
             ?.get("id")?.jsonPrimitive?.longOrNull?.toString()
+        // 被回复消息的正文：整条回复看 text/caption；局部引用（quote）只有被选中的那一段
+        val replyMessage = message["reply_to_message"] as? JsonObject
+        val replyBody = replyMessage?.let {
+            it["text"]?.jsonPrimitive?.contentOrNull ?: it["caption"]?.jsonPrimitive?.contentOrNull
+        } ?: (message["quote"] as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull
         return ImInboundMessage(
             updateId = updateId,
             chatId = chatId,
@@ -378,6 +388,7 @@ class TelegramBotClient @Inject constructor(
             isGroup = isGroup,
             messageId = message["message_id"]?.jsonPrimitive?.longOrNull?.toString().orEmpty(),
             replyToSenderId = replyTo,
+            replyToText = replyBody?.takeIf { it.isNotBlank() },
             attachments = attachments
         )
     }
@@ -396,9 +407,6 @@ class TelegramBotClient @Inject constructor(
     }
 
     // ── ImChannel 实现：把渠道无关的调用映射到上面的具体方法 ────────────────
-
-    /** Telegram 支持 editMessageText，流式过程中可以就地刷新。 */
-    override val supportsEdit: Boolean get() = true
 
     override suspend fun identity(cfg: ImChannelConfig): ImBotIdentity = getMe(cfg.asTelegram())
 

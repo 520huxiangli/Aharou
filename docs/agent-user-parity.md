@@ -130,6 +130,12 @@
 | 个人 QQ 日志与高级管理 | `NapCatBotSection.kt` 日志和 WebUI | 有 | `napcat action=logs/webui/status`；`config im.qq_napcat.runtime/login/state/version/error` | 安装阶段由 status.stage 与 runtime.stage 提供；实时脱敏命令日志可查，完整交互在内嵌 WebUI |
 | 查看个人 QQ 的群、群成员与好友 | NapCat WebUI 内自行查看 | 有 | `napcat action=groups/group_members/friends`（`NapCatTool.kt`） | 只返回群号群名人数、成员昵称群名片角色、好友昵称备注；手机号与邮箱等联系方式不提供给模型 |
 | 修改个人 QQ 环境的配置与插件 | 无独立界面，仅高级 WebUI | 有 | `napcat action=exec`（带 `command`） | 专用 Debian 已就绪即可执行，包括后续安装失败时的诊断；不自动安装或回退开发容器，输出脱敏并限 12k 字符；需 EXECUTE_COMMANDS 和 MODIFY_CONTAINER_ENV 能力，PLAN 模式不可用 |
+| 看状态行里的失败环节、处理建议与参考号 | 五个渠道状态行统一追加：`component/TelegramBotSection.kt:208`、`WeixinBotSection.kt:217`、`FeishuBotSection.kt:144`、`QqBotSection.kt:169`、`NapCatBotSection.kt:120`；拼装逻辑 `component/ImDiagnosticText.kt:16` | 部分 | `config get im.<渠道>.state` / `.error`（`ConfigImFields.kt:45-56`）只给状态词与脱敏错误文本 | 诊断由界面按状态对象拼出（阶段 + 建议 + `IM-xxx-nnnn` 参考号），**agent 读不到环节与参考号**，排障时无法与日志锚点对账；目前只有连接、收消息两处会产生诊断 |
+| 在 IM 里发 `/new` 开新会话、`/status` 看当前会话状态 | 无 App 内入口，在聊天客户端直接发（`ImBotBridge.kt:480` 拦截、`:515` 处理、`:541` 拼状态行） | 无 | `sessions` 只有 list/search/read（`feature/agent/domain/tool/session/SessionTool.kt:31`），没有新建会话 | **缺口**：agent 不能替用户在 IM 侧开会话或看 IM 轮次状态；`/stop` 也只回一句「这个渠道还停不了正在跑的任务」（`ImBotBridge.kt:524`），软打断未接通（记入第 13 节 D 类） |
+| 引用某条消息回复，让模型看到被引用原文 | 无 App 内入口，用聊天客户端的「回复」（`ImMessageContext.kt:9-19`；仅 `TelegramBotClient.kt:378` 与 `NapCatChannelClient.kt:189` 填充） | 无 | 行为在 IM 编排层，没有对应工具 | 差异：agent 不能主动「引用某条历史消息」进 prompt；飞书、微信、官方 QQ 不提供引用原文（入站结构里没有） |
+| 每个聊天独立的文件目录 | 无界面，自动生效（`ImBotBridge.kt:729` 建会话时 `:804` 分配目录） | 有 | 会话工作区就是该目录，`Bash` / `writeFile` / `readFile` 直接可用 | 无差异；目录名由渠道与聊天标识生成（`im/<渠道>-<净化id>-<8 位短码>`），agent 不能改归属或重命名，且只对新建会话生效 |
+
+> 无界面但属于本轮行为变化的三项，补在本节而不占表格行：发送结果分「已送达 / 明确失败 / 结果未知」三态，结果未知不再自动补发（`ImChannel.kt` 的 `ImSendResult`，`ImBotBridge.kt:570-585`、`:888-895`）；处理失败重试 3 次后发提示并推进游标（`:366-400`）；各渠道集中声明能力（编辑消息 / 内联按钮 / 发媒体 / 收附件）由编排层统一降级（`ImChannel.kt` 的 `ImChannelCapabilities`，`ImBotBridge.kt:621`、`:854`、`:883`）。三者都只影响行为，用户没有单独开关，agent 也没有对应工具。
 
 ## 10. 会话
 
@@ -177,11 +183,11 @@
 
 ## 13. 缺口汇总
 
-统计（92 条能力）：**有对应工具 55 条 / 只能靠 Bash 或文件工具临时替代 8 条 / agent 完全没有 26 条 / 双方都没有 3 条**；另有 1 条反向缺口（远程设备端口，属有意不做界面）。
+统计（按表格逐行重数，2026-11-09）：共 104 行能力对照——**有对应工具 62 行 / 靠 `config`、`Bash` 或文件工具部分替代 10 行 / agent 完全没有 32 行**。32 行「无」里有 3 行属于「双方都没有」（手动跑一次、采样温度、会话归档），故实际 agent 缺口为 **29 条**；另加上 IM `/stop` 未接通，双方都没有共 4 条。反向缺口 1 条（远程设备端口，属有意不做界面）。
 
-### A. 用户能做、agent 完全没有工具（26 条）
+### A. 用户能做、agent 完全没有工具（29 条）
 
-1. 手动跑一次自动化任务 —— 双方都无（不计入 26，列在此处便于对照）
+1. 手动跑一次自动化任务 —— 双方都无（不计入 29，列在此处便于对照）
 2. 记忆：合并压缩（`MemorySection.kt:282`）
 3. 记忆：蒸馏（`MemorySection.kt:311`）
 4. 记忆：召回测试（`MemorySection.kt:318`）
@@ -208,14 +214,18 @@
 25. 备份：导入/恢复（`BackupSection.kt:380`）
 26. 备份：网络目标增删改/测试（`BackupViewModel.kt:345`、`:359`）
 27. 备份：上传/从网络恢复（`BackupViewModel.kt:374`、`:446`）
+28. IM：斜杠命令 `/new`（开新会话）与 `/status`（看当前会话状态）——`ImBotBridge.kt:515`；`sessions` 只能看不能建
+29. IM：引用某条消息回复，带被引用原文进模型——`ImMessageContext.kt:9-19`；agent 没有「引用某条历史消息」的工具
 
-（第 1 条属于“双方都没有”，不计入 26；26 条为第 2–27 条。）
+（第 1 条属于“双方都没有”，不计入；第 2–29 条共 28 项，其中第 12、17 两项已补齐、待清出；另加 12b 插件未列入本列表的 3 项，合计 29 条。）
 
-按域看，缺口最集中的是**会话（6 条）**、**工作区（5 条）**、**备份（4 条）**：这三块都是“App 自身状态管理”，工具范围里只有文件、配置、只读会话浏览三类接口，没有“改 App 内数据”的写通道。
+按域看，缺口最集中的是**会话（6 条）**、**工作区（5 条）**、**备份（4 条）**，以及本轮新增的 **IM（2 条）**：前三块都是“App 自身状态管理”，工具范围里只有文件、配置、只读会话浏览三类接口，没有“改 App 内数据”的写通道；IM 则是因为编排层的行为（开会话、引用、停止）没包成工具。
 
-### B. 只能靠 `Bash` / 文件工具临时替代（8 条）
+### B. 靠 `config` / `Bash` / 文件工具部分替代（10 条，下面按大类归并）
 
 文件重命名、文件删除、复制/剪切/粘贴、`rules.d` 片段新建与编辑、规则片段/主规则删除、技能导入安装、技能删除、（补）文件新建虽已用 `writeFile` 覆盖，但“文件夹新建”同样只有 `Bash`（`writeFile` 不建目录）。
+
+IM 侧本轮新增一条：状态行诊断可以用 `config get im.<渠道>.state/error` 拿到状态与脱敏错误，但读不到「处在哪个环节」与 `IM-xxx-nnnn` 参考号——这部分是界面按状态对象现拼的。
 
 共同问题：这些动作**没有专用工具，所以不在工具名层面可发现**——agent 得先知道“可以用 shell 凑”，才做得出来；也没有 UI 那层的合法性校验（片段命名、技能目录必须含 SKILL.md）。
 
@@ -224,9 +234,9 @@
 - 远程设备端口：`ConfigRemoteDeviceFields.kt:53` 可写；设置页没有端口输入——**有意不做界面**（只有端口撞车才需要改，不做入口），不算缺口。
 - （已消）已配对设备列表与撤销设备授权均已接入设置页：`RemoteDeviceSection.kt:135` 列表、`:144` 撤销按钮（提交 `201e3c60`）。
 
-### D. 双方都没有（3 条）
+### D. 双方都没有（4 条）
 
-采样温度调节、会话归档。自动化任务「手动跑一次」已明确不做（2026-11-03 主人定，调试用单次任务凑合）。写在这里是为了说明：它们不是 agent 工具缺口，不要照着补工具。
+采样温度调节、会话归档、IM 里的 `/stop`、自动化任务「手动跑一次」。其中 `/stop` 与采样温度用户在界面上碰得到（聊天命令与参数），但没有真正可用的实现：`/stop` 目前只回一句「这个渠道还停不了正在跑的任务，等下再试」（`ImBotBridge.kt:524`），软打断需要往会话投 `USER_INTERRUPT`，IM 侧没接上；会话归档与「手动跑一次」则连入口都没有（后者已明确不做，2026-11-03 主人定，调试用单次任务凑合）。写在这里是为了说明：它们不是 agent 工具缺口，不要照着补工具。
 
 ## 14. 方法说明
 
@@ -234,6 +244,7 @@
 - **`config` 通道算不算“有工具”**：算。它同样是 agent 可调用的工具，只是能力面由字段注册决定；因此“有 config 字段”一律记为“有”，并在差距说明里注明“无独立工具、要靠 `config list` 才能在索引里发现”。
 - **界面入口的判据**：从 `component/SettingsScreen.kt:123-178`（`SettingsSection` 枚举）与 `:963-1331`（分区到组件的映射）找到分区文件，再在该文件里定位真正触发调用的 `onClick`/`viewModel.*` 行；不按文件名猜。
 - **没读到就不写“有”**：所有“无 / 未找到”都做了全仓 `rg`（关键词含 `rename`、`revoke`、`setPort`、`runNow`、`temperature`、`archived`、`reasoning_effort`、`testConnection` 等），并检查了 `Config*Fields` 的注册清单（`AIEditorApp.kt:409-434`）。
+- **2026-11-09 复核范围**：IM 这一轮逐个读了 `feature/im/domain/ImChannel.kt`（能力声明与 `ImSendResult` 三态）、`ImChannelDiagnostic.kt`、`ImBotBridge.kt`（斜杠命令、会话目录、重试与收尾）、`ImMessageContext.kt`、`TelegramBotClient.kt`、`NapCatChannelClient.kt`、`WeixinIlinkClient.kt`，以及五个 `*BotSection.kt` 与 `settings/presentation/component/ImDiagnosticText.kt`；钉钉与企业微信当时只有零散的渠道/配置文件，没接入设置页与 `config` 通道（见不确定项 9）。
 
 不确定项（列出来，不猜）：
 
@@ -242,3 +253,7 @@
 3. **记忆 compact / distill**：确认没有工具与 config 字段，但后台 `MemoryMaintenanceWorker` 的触发条件未逐行读，因此“agent 完全无法触发”是按工具范围下的结论，不等于“这两件事永远不会发生”。
 4. **会话导出**（`MainActivity.kt:842-845`）的具体产物格式未核实，只确认入口存在且无对应工具。
 5. `docs/` 下此前没有本文件；本表未接入任何索引（`docs/FILE_INDEX.md` 未改，任务只允许写一份文档）。
+6. **IM 诊断的环节覆盖**：`ImChannelDiagnostic` 有登录/凭证/连接/收消息/发送/附件六个阶段，但全仓只有 `ImBotBridge.kt:145`（连接）与 `:340`（收消息）两处会生成诊断；扫码与登录错误、发送失败目前不带环节与参考号（NapCat 登录错误走单独的 `state.error`/`login.error` 文本）。未核实后续是否补齐。
+7. **IM 斜杠命令的文案**：`ImBotBridge.kt` 通过 `imText("im_cmd_*")` / `imText("im_message_dropped")` 取字符串，读取时 `values/strings.xml` 已有这批键（`im_cmd_new_session` / `im_cmd_status` / `im_cmd_stop_unavailable` / `im_message_dropped`）；本轮复核期间它们曾缺失（`imText` 会退回键名），现按已落地记。
+8. **微信发媒体**：`WeixinIlinkClient.kt:70` 的能力声明写 `sendMedia = true`，但 `sendMedia` 实现仍返回 `null`（`:439-445`），实际发不出去；未核实是否有人正在补实现，表与用户文档暂按“微信不支持发送”记。
+9. **钉钉 / 企业微信**：复核期间仓库里已出现 `DingTalkChannelClient.kt`、`DingTalkSettingsRepository.kt`、`WeComChannelClient.kt`，但当时在 `feature/settings/`、`di/`、`ConfigImFields.kt` 里都找不到注册，属未完成接入；因此两张表与用户文档都没写这两个渠道，未核实最终是否随本轮上线。

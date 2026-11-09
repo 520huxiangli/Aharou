@@ -11,9 +11,11 @@ import javax.inject.Named
 import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreStrField
+import com.aharou.feature.im.data.repository.DingTalkSettingsRepository
 import com.aharou.feature.im.data.repository.FeishuSettingsRepository
 import com.aharou.feature.im.data.repository.QqSettingsRepository
 import com.aharou.feature.im.data.repository.TelegramSettingsRepository
+import com.aharou.feature.im.data.repository.WeComSettingsRepository
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -34,15 +36,26 @@ class ConfigImFields @Inject constructor(
     private val weixin: WeixinSettingsRepository,
     private val feishu: FeishuSettingsRepository,
     private val qq: QqSettingsRepository,
+    private val dingTalk: DingTalkSettingsRepository,
+    private val weCom: WeComSettingsRepository,
     private val napCat: ConfigNapCatFields,
     @Named("telegram") private val telegramBridge: ImBotBridge,
     @Named("weixin") private val weixinBridge: ImBotBridge,
     @Named("feishu") private val feishuBridge: ImBotBridge,
     @Named("qq") private val qqBridge: ImBotBridge,
+    @Named("dingtalk") private val dingTalkBridge: ImBotBridge,
+    @Named("wecom") private val weComBridge: ImBotBridge,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
-        mapOf("telegram" to telegramBridge, "weixin" to weixinBridge, "feishu" to feishuBridge, "qq" to qqBridge).forEach { (id, bridge) ->
+        mapOf(
+            "telegram" to telegramBridge,
+            "weixin" to weixinBridge,
+            "feishu" to feishuBridge,
+            "qq" to qqBridge,
+            "dingtalk" to dingTalkBridge,
+            "wecom" to weComBridge,
+        ).forEach { (id, bridge) ->
             registry.register(ReadOnlyField("im.$id.state", "实际连接状态（$id）", "运行时状态，不等同于启用开关。", ConfigSchema.Str()) {
                 ConfigValue.Str(when (bridge.state.value) {
                     ImChannelState.Stopped -> "stopped"
@@ -100,6 +113,8 @@ class ConfigImFields @Inject constructor(
         registerWeixin(registry)
         registerFeishu(registry)
         registerQq(registry)
+        registerDingTalk(registry)
+        registerWeCom(registry)
         napCat.registerInto(registry)
     }
 
@@ -249,6 +264,97 @@ class ConfigImFields @Inject constructor(
                 description = "可选代理；留空则跟随全局代理设置。",
                 flow = qq.configFlow.map { it.proxy },
                 setter = { qq.setProxy(it) },
+            ),
+        )
+    }
+
+    /** 钉钉：Stream 长连接，需要自建应用的 AppKey + AppSecret。 */
+    private fun registerDingTalk(registry: ConfigRegistry) = with(registry) {
+        register(
+            DataStoreBoolField(
+                path = "im.dingtalk.enabled",
+                displayName = "启用钉钉机器人",
+                description = "开启后以前台服务维持钉钉 Stream 长连接，把收到的消息交给 AI 处理并回复。默认关闭。",
+                flow = dingTalk.configFlow.map { it.enabled },
+                setter = { dingTalk.setEnabled(it) },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.dingtalk.client_id",
+                displayName = "钉钉 AppKey",
+                description = "开放平台「企业内部应用」的 AppKey。留空即清除。",
+                flow = dingTalk.configFlow.map { it.clientId },
+                setter = { dingTalk.setClientId(it) },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.dingtalk.client_secret",
+                displayName = "钉钉 AppSecret",
+                description = "与 AppKey 成对使用的 AppSecret（只显示一次）。留空即清除。",
+                flow = dingTalk.configFlow.map { it.clientSecret },
+                setter = { dingTalk.setClientSecret(it) },
+                risk = ConfigRisk.SENSITIVE,
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.dingtalk.robot_code",
+                displayName = "机器人编码",
+                description = "控制台里的机器人编码，通常与 AppKey 相同；留空按 AppKey 处理。",
+                flow = dingTalk.configFlow.map { it.robotCode },
+                setter = { dingTalk.setRobotCode(it) },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.dingtalk.proxy",
+                displayName = "钉钉代理",
+                description = "可选代理；留空则跟随全局代理设置。",
+                flow = dingTalk.configFlow.map { it.proxy },
+                setter = { dingTalk.setProxy(it) },
+            ),
+        )
+    }
+
+    /** 企业微信：智能机器人长连接，只需 BotID + Secret。 */
+    private fun registerWeCom(registry: ConfigRegistry) = with(registry) {
+        register(
+            DataStoreBoolField(
+                path = "im.wecom.enabled",
+                displayName = "启用企业微信机器人",
+                description = "开启后以前台服务维持企业微信长连接，把收到的消息交给 AI 处理并回复。默认关闭。",
+                flow = weCom.configFlow.map { it.enabled },
+                setter = { weCom.setEnabled(it) },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.wecom.bot_id",
+                displayName = "企业微信 BotID",
+                description = "管理后台「智能机器人」里的机器人 ID。留空即清除。",
+                flow = weCom.configFlow.map { it.botId },
+                setter = { weCom.setBotId(it) },
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.wecom.secret",
+                displayName = "企业微信 Secret",
+                description = "长连接专用密钥，与回调模式的 Token/EncodingAESKey 不是一回事。留空即清除。",
+                flow = weCom.configFlow.map { it.secret },
+                setter = { weCom.setSecret(it) },
+                risk = ConfigRisk.SENSITIVE,
+            ),
+        )
+        register(
+            DataStoreStrField(
+                path = "im.wecom.proxy",
+                displayName = "企业微信代理",
+                description = "可选代理；留空则跟随全局代理设置。",
+                flow = weCom.configFlow.map { it.proxy },
+                setter = { weCom.setProxy(it) },
             ),
         )
     }

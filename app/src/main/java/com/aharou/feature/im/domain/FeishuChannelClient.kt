@@ -70,6 +70,8 @@ class FeishuChannelClient @Inject constructor(
 
     override val id: String = "feishu"
 
+    override val capabilities = ImChannelCapabilities(sendMedia = true, downloadAttachment = true)
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
@@ -547,6 +549,8 @@ class FeishuChannelClient @Inject constructor(
                 text = text,
                 isGroup = (message["chat_type"]?.jsonPrimitive?.contentOrNull ?: "p2p") != "p2p",
                 messageId = messageId,
+                // 事件里只有 parent_id，没有父消息正文；换正文要调 im/v1/messages/{id}，
+                // 这里解析是同步的，也不为引用在本就敏感的回复链路上加网络请求
                 replyToSenderId = null,
                 // 飞书的 @ 在 message.mentions 里，非空即表示这条点了机器人
                 mentionsBot = (message["mentions"] as? JsonArray)?.isNotEmpty() == true,

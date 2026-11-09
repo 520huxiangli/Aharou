@@ -14,6 +14,10 @@ import com.aharou.feature.im.domain.model.ImCallbackQuery
 import com.aharou.feature.im.domain.model.ImInboundMessage
 import com.aharou.feature.im.domain.model.ImUpdate
 import java.io.File
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.ConcurrentHashMap
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -98,6 +102,12 @@ class ImBotBridge (
     /** 这个聊天已经映射到的会话 id（审批要知道发给谁）。 */
     private val chatOfSession = ConcurrentHashMap<String, SessionOrigin>()
 
+    /**
+     * 每个聊天当前的会话轮次：`/new` 之后下一条消息落到后缀会话，老会话与它的历史原样留在列表里。
+     * 只在内存里：进程重启后回到基础会话，再次 `/new` 会按库里已有会话跳过被占用的后缀。
+     */
+    private val chatGenerations = ConcurrentHashMap<String, Int>()
+
     /** 最近一次有消息进来的聊天：工具调用时拿不到 chatId，靠它定位回哪个聊天。 */
     @Volatile private var lastActiveChat: String? = null
 
@@ -130,7 +140,10 @@ class ImBotBridge (
                         throw e
                     } catch (e: Throwable) {
                         FileLogger.e(TAG, "[$channelId] 连接异常退出", e)
-                        _state.value = ImChannelState.Error(channel.redact(e.message.orEmpty(), cfg))
+                        _state.value = ImChannelState.Error(
+                            channel.redact(e.message.orEmpty(), cfg),
+                            ImChannelDiagnostic.of(channelId, ImStage.CONNECT, e) { channel.redact(it, cfg) },
+                        )
                     } finally {
                         channel.disconnect()
                     }
@@ -322,7 +335,10 @@ class ImBotBridge (
                 throw e
             } catch (e: Throwable) {
                 val msg = channel.redact(e.message ?: e::class.java.simpleName, cfg)
-                _state.value = ImChannelState.Error(msg)
+                _state.value = ImChannelState.Error(
+                    msg,
+                    ImChannelDiagnostic.of(channelId, ImStage.POLL, e) { channel.redact(it, cfg) },
+                )
                 FileLogger.w(TAG, "[$channelId] 轮询失败，${delayMs}ms 后重试：$msg")
                 delay(delayMs)
                 delayMs = (delayMs * 2).coerceAtMost(RETRY_MAX_MS)
@@ -371,6 +387,14 @@ class ImBotBridge (
             }
             if (!delivered) {
                 FileLogger.e(TAG, "[$channelId] 消息 $updateId 重试 $MAX_DELIVERY_ATTEMPTS 次仍失败，跳过并推进游标")
+                // 以前是静默丢弃；提示发不出去也绝不能反过来挡住游标推进，否则这条坏消息会永久堵住队列
+                try {
+                    sendNotice(cfg, chatIdOf(update), imText("im_message_dropped"))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    FileLogger.w(TAG, "[$channelId] 发送丢弃提示失败：${channel.redact(e.message.orEmpty(), cfg)}")
+                }
             }
             deliveryLock.withLock {
                 pendingUpdates[updateId] = true
@@ -379,6 +403,12 @@ class ImBotBridge (
                 flushCursor()
             }
         }
+    }
+
+    /** 出错时要给哪个聊天发提示：消息与回调都带 chatId，只是字段位置不同。 */
+    private fun chatIdOf(update: ImUpdate): String = when (update) {
+        is ImUpdate.Message -> update.msg.chatId
+        is ImUpdate.Callback -> update.callback.chatId
     }
 
     private suspend fun flushCursor() {
@@ -446,6 +476,8 @@ class ImBotBridge (
             lastActiveChat = msg.chatId
             // 无按钮平台的审批回复：先当审批处理，不是审批词再走正常对话
             if (!attachmentOnly && msg.attachments.isEmpty() && consumeApprovalReply(cfg, msg.chatId, text)) return@runCatching
+            // 斜杠命令在 runTurn 之前拦下：当成普通消息发给模型会白白跑一轮
+            if (!attachmentOnly && msg.attachments.isEmpty() && handleSlashCommand(cfg, msg.chatId, text)) return@runCatching
             pendingApprovals.remove(msg.chatId)
             runTurn(cfg, msg, text)
         }
@@ -471,6 +503,50 @@ class ImBotBridge (
         return true
     }
 
+    /**
+     * IM 内的斜杠命令。只认整条消息就是一个命令：`/new 顺便干嘛` 的多余参数忽略，
+     * 大小写与前导空格不敏感；其余一律交回正常对话。
+     *
+     * `/stop` 只回一句不可用：软打断是往会话投一条 USER_INTERRUPT 通知，而那个单例拿不到本类，
+     * 用 `cancel()` 顶着实现会把会话停在半截（已落库的消息与半截回合对不上）。
+     *
+     * @return true 表示已由命令处理完毕，不再进 agent。
+     */
+    private suspend fun handleSlashCommand(cfg: ImChannelConfig, chatId: String, text: String): Boolean {
+        val command = text.trim().takeWhile { !it.isWhitespace() }.substringBefore('@').lowercase()
+        if (!command.startsWith("/")) return false
+        when (command) {
+            "/new" -> {
+                startNewSession(chatId)
+                sendNotice(cfg, chatId, imText("im_cmd_new_session"))
+            }
+            "/status" -> sendNotice(cfg, chatId, statusLine(chatId))
+            "/stop" -> sendNotice(cfg, chatId, imText("im_cmd_stop_unavailable"))
+            else -> return false
+        }
+        return true
+    }
+
+    /** 让这个聊天的下一条消息落到新会话：老会话与其历史原样留着，不迁移也不删目录。 */
+    private suspend fun startNewSession(chatId: String) {
+        val base = sessionIdFor(channelId, chatId)
+        var next = (chatGenerations[chatId] ?: 1) + 1
+        // 计数器只在内存，进程重启后归零；按库里已有会话跳过已被占用的后缀，免得 /new 又落回老会话
+        while (next < MAX_SESSION_GENERATIONS && sessionUseCase.getSessionById(idFor(base, next)) != null) next++
+        chatGenerations[chatId] = next
+        FileLogger.i(TAG, "[$channelId] 聊天 $chatId 切到新会话 ${sessionIdFor(chatId)}")
+    }
+
+    /** `/status` 的只读快照：会话末段、模型、以及是否有一轮在跑。 */
+    private suspend fun statusLine(chatId: String): String {
+        val sessionId = sessionIdFor(chatId)
+        val entity = sessionUseCase.getSessionById(sessionId)
+        val model = entity?.model.orEmpty().ifBlank { "-" }
+        val busy = if (chatLocks[chatId]?.isLocked == true) imText("im_cmd_status_busy")
+        else imText("im_cmd_status_idle")
+        return imText("im_cmd_status", sessionId.substringAfterLast('-'), model, busy)
+    }
+
     private fun resolveApproval(pending: PendingApproval, choice: PermissionChoice): Boolean =
         if (pending.single) toolPermissionManager.tryResolve(pending.id, pending.sessionId, choice)
         else toolPermissionManager.tryResolveBatch(pending.id, pending.sessionId, choice)
@@ -481,13 +557,39 @@ class ImBotBridge (
     }
 
     private suspend fun sendNotice(cfg: ImChannelConfig, chatId: String, text: String) {
+        currentCoroutineContext().ensureActive()
+        logSendFailure("发送提示", sendSafely(cfg, chatId, text))
+    }
+
+    /**
+     * 发送并把异常归一成三态。
+     *
+     * 「发出去过没有」决定能不能重试：连不上或平台明确拒收，说明正文没送达；
+     * 读响应超时、连接中途断，平台可能已经收下了，再发对方会收到两条。
+     */
+    private suspend fun sendSafely(cfg: ImChannelConfig, chatId: String, text: String): ImSendResult =
         try {
-            currentCoroutineContext().ensureActive()
-            channel.send(cfg, chatId, text)
+            ImSendResult.Sent(channel.send(cfg, chatId, text))
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Throwable) {
-            FileLogger.w(TAG, "[$channelId] 发送提示失败：${channel.redact(e.message.orEmpty(), cfg)}")
+        } catch (e: SocketTimeoutException) {
+            ImSendResult.Unknown(channel.redact(e.message.orEmpty(), cfg))
+        } catch (e: ConnectException) {
+            ImSendResult.Failed(channel.redact(e.message.orEmpty(), cfg))
+        } catch (e: UnknownHostException) {
+            ImSendResult.Failed(channel.redact(e.message.orEmpty(), cfg))
+        } catch (e: IOException) {
+            ImSendResult.Unknown(channel.redact(e.message.orEmpty(), cfg))
+        } catch (e: Exception) {
+            ImSendResult.Failed(channel.redact(e.message.orEmpty(), cfg))
+        }
+
+    /** 失败与「结果未知」分开记：排障时要能分辨「没发出去」和「不知道发没发出去」。 */
+    private fun logSendFailure(what: String, result: ImSendResult) {
+        when (result) {
+            is ImSendResult.Sent -> Unit
+            is ImSendResult.Failed -> FileLogger.w(TAG, "[$channelId] ${what}失败：${result.reason}")
+            is ImSendResult.Unknown -> FileLogger.w(TAG, "[$channelId] ${what}结果未知：${result.reason}")
         }
     }
 
@@ -528,7 +630,7 @@ class ImBotBridge (
                 )
             } else {
                 pendingApprovals[chatId] = pending
-                channel.send(cfg, chatId, prompt + "\n\n" + imText("im_approval_reply_hint"))
+                logSendFailure("发送审批", sendSafely(cfg, chatId, prompt + "\n\n" + imText("im_approval_reply_hint")))
             }
         } catch (e: CancellationException) {
             throw e
@@ -626,19 +728,22 @@ class ImBotBridge (
 
     private suspend fun ensureSession(cfg: ImChannelConfig, chatId: String): String? {
         val sessionId = sessionIdFor(chatId)
+        // 已存在的会话原样返回：迁目录会把用户历史与正在跑的路径一起搞乱
         if (sessionUseCase.getSessionById(sessionId) != null) return sessionId
         val defaults = policy.sessionDefaults(cfg)
-        val workspace = defaults.workspacePath.ifBlank {
+        val baseWorkspace = defaults.workspacePath.ifBlank {
             agentTurnRunner.currentWorkspacePath().ifBlank { fallbackWorkspacePath() }
         }
-        if (workspace.isBlank()) {
+        if (baseWorkspace.isBlank()) {
             FileLogger.w(TAG, "[$channelId] 工作区未就绪，跳过会话 $sessionId")
             return null
         }
+        val workspace = chatWorkspace(baseWorkspace, chatId)
         val base = agentTurnRunner.createSessionEntity(workspace)
         val entity = base.copy(
             id = sessionId,
-            title = "$channelLabel · $chatId",
+            // 轮次后缀同时进标题：同一个聊天开了多个会话时，列表里才分得清
+            title = "$channelLabel · $chatId${sessionId.removePrefix(sessionIdFor(channelId, chatId))}",
             providerId = defaults.providerId.ifBlank { base.providerId.orEmpty() }.ifBlank { null },
             model = defaults.model.ifBlank { base.model.orEmpty() }.ifBlank { null }
         )
@@ -691,6 +796,21 @@ class ImBotBridge (
         }
     }
 
+    /**
+     * 每个聊天在自己的子目录里干活：共用一个工作区时两个聊天同时改文件会互相覆盖。
+     * 净化后的 chatId 可能撞名（不同字符全被替成 -），再拼 8 位哈希兜底；
+     * 目录建不出来就退回基础工作区，不能因为目录问题连会话都建不出。
+     */
+    private suspend fun chatWorkspace(baseWorkspace: String, chatId: String): String = withContext(Dispatchers.IO) {
+        val safe = chatId.replace(Regex("[^a-zA-Z0-9_-]"), "-").take(32).ifBlank { "chat" }
+        val digest = Integer.toHexString(chatId.hashCode()).padStart(8, '0')
+        val dir = File(File(File(baseWorkspace), IM_WORKSPACE_DIR), "$channelId-$safe-$digest")
+        if (dir.isDirectory || dir.mkdirs()) dir.absolutePath else {
+            FileLogger.w(TAG, "[$channelId] 建 IM 会话目录失败，退回基础工作区：${dir.absolutePath}")
+            baseWorkspace
+        }
+    }
+
     private fun stripMention(text: String): String = text.trim()
 
     // 文案走 Context：编排层在多平台复用，语言跟随 App 当前设置
@@ -725,16 +845,25 @@ class ImBotBridge (
         private var buffer = ""
         private var lastEditAt = 0L
 
+        /** 流式首条发送的结局：失败与「结果未知」在收尾时处理不一样，所以留着类型而不是布尔。 */
+        private var blocked: ImSendResult? = null
+
         suspend fun onDelta(accumulated: String) {
             buffer = accumulated
             // 不支持编辑的平台一条都不发：只在 finish 时发最终稿（同一条里追加会变成多条）
-            if (!channel.supportsEdit) return
+            if (!channel.supportsEdit || blocked != null) return
             val now = System.currentTimeMillis()
             val id = messageId
             try {
                 if (id == null) {
-                    messageId = channel.send(cfg, chatId, accumulated.trim())
-                    lastEditAt = now
+                    when (val sent = sendSafely(cfg, chatId, accumulated.trim())) {
+                        is ImSendResult.Sent -> {
+                            messageId = sent.messageId
+                            lastEditAt = now
+                        }
+                        // 流式期间不重试：再发一次对方会看到两条内容不同的半成品
+                        else -> blocked = sent
+                    }
                 } else if (now - lastEditAt >= EDIT_INTERVAL_MS) {
                     if (channel.edit(cfg, chatId, id, accumulated.trim())) lastEditAt = now
                 }
@@ -757,7 +886,13 @@ class ImBotBridge (
             } catch (e: Throwable) {
                 FileLogger.w(TAG, "[$channelId] 最终编辑失败：${channel.redact(e.message.orEmpty(), cfg)}")
             }
-            sendNotice(cfg, chatId, shown)
+            when (val blockedResult = blocked) {
+                // 确定没发出去：收尾时补一份完整正文是安全的
+                is ImSendResult.Failed -> sendNotice(cfg, chatId, shown)
+                // 可能已经送出去了：宁可少一条也不让对方收到两条
+                is ImSendResult.Unknown -> logSendFailure("发送最终稿", blockedResult)
+                else -> sendNotice(cfg, chatId, shown)
+            }
         }
     }
 
@@ -776,9 +911,18 @@ class ImBotBridge (
         private const val TELEGRAM_POLL_TIMEOUT_S = 50
         private const val WEIXIN_POLL_TIMEOUT_S = 25
 
+        /** 一个聊天最多开多少个 /new 轮次：只是防死循环的尺子，正常用户远到不了。 */
+        private const val MAX_SESSION_GENERATIONS = 99
+
+        /** IM 会话子目录名：放在基础工作区下，与用户的项目目录分开一层。 */
+        private const val IM_WORKSPACE_DIR = "im"
+
         /** 一个聊天固定映射到的 Aharou 会话 id。 */
         fun sessionIdFor(channelId: String, chatId: String): String = "im-$channelId-$chatId"
     }
 
-    private fun sessionIdFor(chatId: String): String = sessionIdFor(channelId, chatId)
+    private fun sessionIdFor(chatId: String): String = idFor(sessionIdFor(channelId, chatId), chatGenerations[chatId] ?: 1)
+
+    /** 第一轮用基础 id，之后接 `#n` 后缀；第 n 轮的 id 必须永远算得一样。 */
+    private fun idFor(base: String, generation: Int): String = if (generation <= 1) base else "$base#$generation"
 }
