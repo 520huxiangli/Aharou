@@ -52,6 +52,7 @@ object MemoryParser {
             keywords = keywords,
             expiresAt = parseExpiresAt(frontmatter["expires_at"]),
             pending = frontmatter["pending"]?.toString()?.equals("true", ignoreCase = true) == true,
+            avoid = frontmatter["avoid"]?.toString()?.equals("true", ignoreCase = true) == true,
             // 版本只跟内容走：同一份全文算出的版本恒定，与路径、mtime 无关。
             version = MemoryFileStorage.versionOf(text)
         )
@@ -64,7 +65,8 @@ object MemoryParser {
         type: MemoryType? = null,
         keywords: List<String>? = null,
         expiresAt: Long? = null,
-        pending: Boolean = false
+        pending: Boolean = false,
+        avoid: Boolean = false
     ): String {
         val safeName = yamlScalar(name)
         val safeDesc = yamlScalar(description)
@@ -73,6 +75,7 @@ object MemoryParser {
         keywords?.let { head.append("keywords: [${it.joinToString(", ") { word -> yamlScalar(word) }}]\n") }
         expiresAt?.takeIf { it > 0L }?.let { head.append("expires_at: $it\n") }
         if (pending) head.append("pending: true\n")
+        if (avoid) head.append("avoid: true\n")
         head.append("---\n")
         return head.toString() + content
     }

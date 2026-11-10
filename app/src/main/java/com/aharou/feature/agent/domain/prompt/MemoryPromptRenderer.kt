@@ -45,6 +45,12 @@ internal object MemoryPromptRenderer {
     private const val PENDING_LABEL = "（待确认：与另一条说法冲突、尚未裁决，不得当作既定事实）"
 
     /**
+     * 禁谈条目的标注：内容还能用来回答主动提问，但不该由她先提起来。
+     * 主动搭话、早安播报这类场合最容易踩中，所以标记必须跟着条目走到提示词里。
+     */
+    private const val AVOID_LABEL = "（禁谈：不要主动提起，只在用户本人先问到时才用）"
+
+    /**
      * 跨设备冲突里本机这一份的索引标注。
      *
      * 它同样是 pending、同样不内联，但语义与 [PENDING_LABEL] 相反：本机版本是正在生效的那份，
@@ -205,6 +211,7 @@ internal object MemoryPromptRenderer {
         if (memory.description.isNotBlank()) {
             append(" —— ").append(SecretMasker.mask(TextSanitizer.sanitize(memory.description)))
         }
+        append(avoidLabel(memory))
         if (body.isNotEmpty()) append('\n').append(body)
     }
 
@@ -243,7 +250,7 @@ internal object MemoryPromptRenderer {
             if (isNotEmpty()) append("\n\n")
             append(if (scope == MemoryScope.GLOBAL) GLOBAL_HEADER else PROJECT_HEADER)
             scoped.forEach {
-                append("\n- ${SecretMasker.mask(TextSanitizer.sanitize(it.name))}: ${SecretMasker.mask(TextSanitizer.sanitize(indexDescription(it)))}${pendingLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
+                append("\n- ${SecretMasker.mask(TextSanitizer.sanitize(it.name))}: ${SecretMasker.mask(TextSanitizer.sanitize(indexDescription(it)))}${pendingLabel(it)}${avoidLabel(it)}${longBodyLabel(it, longBodies)}${recencyLabel(it)}")
             }
         }
     }
@@ -254,6 +261,9 @@ internal object MemoryPromptRenderer {
         isLocalSideConflict(memory) -> LOCAL_CONFLICT_LABEL
         else -> PENDING_LABEL
     }
+
+    /** 禁谈条目的标注；内联与索引两处共用，避免两边口径不一致。 */
+    private fun avoidLabel(memory: Memory): String = if (memory.avoid) AVOID_LABEL else ""
 
     /** 正文长度按掩码后的文本判断，与 [render] 内联时的口径一致，避免两处长度看法不同。 */
     private fun longBodyLabel(memory: Memory, longBodies: Set<String>): String =

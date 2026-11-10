@@ -32,6 +32,13 @@ data class Memory(
      * 由整理器判为冲突时打上；在设置页保存这条记忆即视为已确认（标记清除）。
      */
     val pending: Boolean = false,
+    /**
+     * 禁谈：不要主动提起（尤其主动搭话、早安播报这类她不请自来的场合）。
+     *
+     * 只写 frontmatter，不靠工具参数设置：改保存链要动好几处签名，而这份状态
+     * 本来就是“用户明确说过别碰”的极少条目，直接写文件更可控。
+     */
+    val avoid: Boolean = false,
     val version: String = ""
 )
 
