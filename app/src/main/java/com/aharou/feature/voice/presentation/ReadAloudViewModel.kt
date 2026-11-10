@@ -40,6 +40,9 @@ internal sealed interface ReadAloudState {
  *
  * 同一时刻只播一条：发起新的朗读会打断上一条（[currentText] 用于让 UI 知道哪条在播）。
  */
+/** 这条语音属于谁：决定用 AI 音色还是用户自己那套音色。 */
+enum class VoiceSpeaker { AI, USER }
+
 @HiltViewModel
 internal class ReadAloudViewModel @Inject constructor(
     private val ttsSettings: VoiceTtsSettingsRepository,
@@ -68,6 +71,14 @@ internal class ReadAloudViewModel @Inject constructor(
     /** 自动朗读开关（设置页那个）。 */
     val autoReadEnabled: StateFlow<Boolean> = ttsSettings.autoReadAloudFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** 对话模式：开则聊天页双方消息都以语音条呈现。 */
+    val chatVoiceMode: StateFlow<Boolean> = ttsSettings.chatVoiceModeFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setChatVoiceMode(enabled: Boolean) {
+        viewModelScope.launch { ttsSettings.setChatVoiceMode(enabled) }
+    }
 
     /** 上一次自动念过的消息 id：同一条消息不重复念（消息列表每帧重组都会回调）。 */
     private var lastAutoReadId: String? = null
@@ -105,7 +116,7 @@ internal class ReadAloudViewModel @Inject constructor(
     }
 
     /** 朗读一段文本；正在播同一段时再点即停止。 */
-    fun toggle(text: String) {
+    fun toggle(text: String, speaker: VoiceSpeaker = VoiceSpeaker.AI) {
         if (_currentText.value == text && _state.value is ReadAloudState.Playing) {
             stop()
             return
@@ -116,7 +127,12 @@ internal class ReadAloudViewModel @Inject constructor(
             _currentText.value = text
             _state.value = ReadAloudState.Synthesizing
             try {
-                val voice = ttsSettings.getVoice()
+                // 用户侧没单独设音色时跟 AI 共用同一个；空音色交给服务端默认。
+                val voice = if (speaker == VoiceSpeaker.USER) {
+                    ttsSettings.getUserVoice().ifBlank { ttsSettings.getVoice() }
+                } else {
+                    ttsSettings.getVoice()
+                }
                 // 选了本地克隆音色就走本机合成，不碰网络；音色档案丢了则继续往下回落到云端/系统引擎。
                 val localId = localVoiceIdOrNull(voice)
                 if (localId != null) {

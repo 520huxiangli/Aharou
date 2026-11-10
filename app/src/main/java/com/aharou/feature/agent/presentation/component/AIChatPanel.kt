@@ -107,6 +107,7 @@ import com.aharou.feature.agent.presentation.turnKeyOf
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import com.aharou.feature.voice.presentation.ReadAloudViewModel
+import com.aharou.feature.voice.presentation.VoiceSpeaker
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
@@ -185,7 +186,6 @@ fun AIChatPanel(
     val agentState by viewModel.agentState.collectAsStateWithLifecycle()
     val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
     val messages = messagesState.messages
-    val ghostMode by viewModel.currentSessionGhostMode.collectAsStateWithLifecycle()
 
     // [Aharou] Aharou Computer：点工具行掀开"电脑"详情面板
     val computerOpenTarget by ToolComputerSignal.target.collectAsStateWithLifecycle()
@@ -290,6 +290,8 @@ fun AIChatPanel(
     // 朗读：气泡上的喇叭按钮读这一条；开了自动朗读时，每条回复落地就念
     val readAloudViewModel: ReadAloudViewModel = hiltViewModel()
     val readingText by readAloudViewModel.currentText.collectAsStateWithLifecycle()
+    // 对话模式：聊天页双方消息都以语音条呈现
+    val voiceMode by readAloudViewModel.chatVoiceMode.collectAsStateWithLifecycle()
     // 边回边念：流式文本每帧喂给播报队列（开关关着时 ViewModel 会直接丢）；
     // 文本清空 = 本轮结束，收尾把最后没成句的尾巴也读掉。
     LaunchedEffect(streamingText) {
@@ -1124,6 +1126,13 @@ fun AIChatPanel(
                     summary = toolGroupActivitySummary(group)
                 )
             }
+            item.subAgentGroup != null -> {
+                val subAgents = item.subAgentGroup
+                SubAgentGroupCard(
+                    messages = subAgents,
+                    isRunning = { m -> m.id in runningToolIds || m.isToolRunning(null) }
+                )
+            }
             else -> {
                 val message = item.message
                 val live = runningTool.firstOrNull { it.messageId == message.id }?.text
@@ -1148,6 +1157,14 @@ fun AIChatPanel(
                     onVariantDelete = onVariantDelete,
                     onReadAloud = { readAloudViewModel.toggle(it.content) },
                     isReadingAloud = readingText == message.content,
+                    voiceMode = voiceMode,
+                    isVoicePlaying = readingText == message.content,
+                    onVoiceTogglePlay = {
+                        readAloudViewModel.toggle(
+                            message.content,
+                            if (message.role == MessageRole.USER) VoiceSpeaker.USER else VoiceSpeaker.AI
+                        )
+                    },
                     showSoulHeader = item.showSoulHeader,
                     reasoningVisible = item.reasoningVisible,
                     contentPadding = if (item.groupMember) ToolGroupMemberPadding else PaddingValues(0.dp),
@@ -1195,6 +1212,8 @@ fun AIChatPanel(
                 onOpenActivity = { showActivity = true },
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) },
+                voiceMode = voiceMode,
+                onToggleVoiceMode = { readAloudViewModel.setChatVoiceMode(!voiceMode) },
                 connectionState = connectionState?.takeIf { isRemote },
                 showMenuButton = showMenuButton,
                 terminalActive = terminalActive,
@@ -1222,8 +1241,6 @@ fun AIChatPanel(
             val floatingLayerMaxHeight = maxHeight
             // 内容层：消息列表延伸到屏幕底部，输入框悬浮其上，滚动时卡片可滑入输入框后面
             Column(modifier = Modifier.fillMaxSize()) {
-            GhostModeIndicator(isGhost = ghostMode, onToggle = viewModel::setGhostMode)
-            if (ghostMode) GhostModeBanner()
             Box(modifier = Modifier.weight(1f)) {
                 if (!messagesReady) {
                     // 远程模式连接未就绪时显示连接状态占位，避免空白或旧工作区记录闪烁
@@ -1771,7 +1788,7 @@ fun AIChatPanel(
                     onDismiss = { messageForMenu = null },
                     onEditClick = { editingMessage = message },
                     onRegenerateClick = { viewModel.regenerateMessage(message.id) },
-                    onForkClick = if (ghostMode) null else ({ viewModel.forkSessionFromMessage(message.id) }),
+                    onForkClick = { viewModel.forkSessionFromMessage(message.id) },
                     onCopyClick = {
                         copyScope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", message.content))) }
                     },

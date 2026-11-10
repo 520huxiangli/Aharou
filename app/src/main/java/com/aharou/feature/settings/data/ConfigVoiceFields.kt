@@ -79,6 +79,26 @@ class ConfigVoiceFields @Inject constructor(
         )
 
         registry.register(
+            DataStoreStrField(
+                path = "voice.tts_voice_user",
+                displayName = "用户音色",
+                description = "对话模式下用户自己那条语音条用的音色；留空则与 voice.tts_voice 共用，格式同它（留空用服务端默认、local:<id> 用本机克隆音色）。",
+                flow = ttsSettings.userVoiceFlow,
+                setter = { ttsSettings.setUserVoice(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "voice.chat_mode",
+                displayName = "对话模式",
+                description = "开启后聊天页双方消息都以语音条呈现，点条展开看文字；关闭则是普通文字气泡。",
+                flow = ttsSettings.chatVoiceModeFlow,
+                setter = { ttsSettings.setChatVoiceMode(it) },
+            ),
+        )
+
+        registry.register(
             DataStoreBoolField(
                 path = "voice.auto_read",
                 displayName = "自动朗读",

@@ -1897,11 +1897,6 @@
     <string name="git_pr_token_dialog_label">Personal access token</string>
     <string name="git_pr_ai_prompt_header">Please analyze and fix the following CI failures:\nPR #%1$d %2$s\n%3$s</string>
     <string name="git_pr_ai_prompt_failed">Failed checks:</string>
-    <string name="ghost_mode_label">Ghost mode</string>
-    <string name="ghost_mode_state_on">On</string>
-    <string name="ghost_mode_state_off">Off</string>
-    <string name="ghost_mode_banner_title">Ghost chat</string>
-    <string name="ghost_mode_banner_message">This chat isn\'t saved to history or memory; turning it off or leaving discards everything.</string>
     <string name="ghost_mode_session_not_ready">The chat isn\'t ready yet, so ghost mode can\'t be turned on. Please try again shortly.</string>
     <string name="agent_perm_channel_name">Tool approval</string>
     <string name="agent_perm_channel_desc">Notifications shown while a session waits for tool approval</string>
@@ -3039,9 +3034,24 @@
     <string name="voice_input_busy">A voice call is using the microphone — hang up first</string>
 
     <!-- My voices (local cloning) -->
-    <string name="settings_voice_profile_title">My voices</string>
-    <string name="settings_voice_profile_summary">Record a clip and replies are read in your own voice</string>
-    <string name="settings_voice_profile_manage">Manage</string>
+    <string name="settings_voice_ai_title">AI voice</string>
+    <string name="settings_voice_ai_desc">Voice used for AI replies; leave it unset to use the default</string>
+    <string name="settings_voice_user_title">Your voice</string>
+    <string name="settings_voice_user_desc">Voice used for your own messages; leave it unset to share the AI voice</string>
+    <string name="settings_voice_not_set">Default</string>
+    <string name="voice_profile_sheet_title_ai">My voices · AI replies</string>
+    <string name="voice_profile_sheet_title_user">My voices · Your messages</string>
+    <string name="voice_profile_sheet_desc_ai">Record about 10 seconds of speech; AI replies will be read in this voice. It stays on your phone and is never uploaded.</string>
+    <string name="voice_profile_sheet_desc_user">Record about 10 seconds of speech; your own messages will be read in this voice. It stays on your phone and is never uploaded.</string>
+    <string name="subagent_group_title">Sub-agent tasks</string>
+    <string name="subagent_group_count">%1$d tasks dispatched</string>
+    <string name="voice_bubble_play">Play</string>
+    <string name="voice_bubble_pause">Pause</string>
+    <string name="voice_bubble_expand">Show text</string>
+    <string name="voice_bubble_collapse">Hide text</string>
+    <string name="voice_bubble_duration">%1$d″</string>
+    <string name="chat_mode_work">Work</string>
+    <string name="chat_mode_chat">Chat</string>
     <string name="voice_profile_sheet_title">My voices</string>
     <string name="voice_profile_sheet_desc">Record about 10 seconds of speech and replies will be read in that voice. The audio stays on this phone and is never uploaded.</string>
     <string name="voice_profile_model_title">Voice cloning model</string>

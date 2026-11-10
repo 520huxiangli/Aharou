@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,9 @@ internal fun ChatHeader(
     onOpenActivity: () -> Unit = {},
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
+    /** 对话模式：开启后双方消息都以语音条呈现。 */
+    voiceMode: Boolean = false,
+    onToggleVoiceMode: () -> Unit = {},
     connectionState: com.aharou.feature.agent.domain.container.ConnectionState? = null,
     showMenuButton: Boolean = true,
     terminalActive: Boolean = false,
@@ -117,6 +122,27 @@ internal fun ChatHeader(
                         FeatherIcons.Plus,
                         contentDescription = stringResource(R.string.chat_new_session),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // 对话 / 工作：对话模式下双方消息改用语音条，工作模式就是普通文字气泡
+                Surface(
+                    shape = RoundedCornerShape(Radius.pill),
+                    color = if (voiceMode) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .padding(start = Spacing.xs)
+                        .clickable { onToggleVoiceMode() }
+                ) {
+                    Text(
+                        text = stringResource(
+                            if (voiceMode) R.string.chat_mode_chat else R.string.chat_mode_work
+                        ),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = if (voiceMode) MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
+                    )
                 }
                 // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
                 Spacer(modifier = Modifier.weight(1f))

@@ -1896,11 +1896,6 @@
     <string name="git_pr_token_dialog_label">个人访问令牌</string>
     <string name="git_pr_ai_prompt_header">请分析并修复以下 CI 失败：\nPR #%1$d %2$s\n%3$s</string>
     <string name="git_pr_ai_prompt_failed">失败项：</string>
-    <string name="ghost_mode_label">隐身模式</string>
-    <string name="ghost_mode_state_on">已开启</string>
-    <string name="ghost_mode_state_off">未开启</string>
-    <string name="ghost_mode_banner_title">隐身对话</string>
-    <string name="ghost_mode_banner_message">本会话不写历史、不写记忆；关闭或切走后内容不留存。</string>
     <string name="ghost_mode_session_not_ready">会话还没就绪，暂时无法开启隐身模式，请稍后重试</string>
     <string name="agent_perm_channel_name">工具授权</string>
     <string name="agent_perm_channel_desc">会话等待工具授权时弹出的通知</string>
@@ -3037,9 +3032,24 @@
     <string name="voice_input_busy">语音通话正在用麦克风，先挂断再试</string>
 
     <!-- 我的音色（本地克隆） -->
-    <string name="settings_voice_profile_title">我的音色</string>
-    <string name="settings_voice_profile_summary">录一段话，之后朗读就用你的声音</string>
-    <string name="settings_voice_profile_manage">管理</string>
+    <string name="settings_voice_ai_title">AI 音色</string>
+    <string name="settings_voice_ai_desc">AI 回复用这个声音，不选就用默认</string>
+    <string name="settings_voice_user_title">用户音色</string>
+    <string name="settings_voice_user_desc">你发的话用这个声音，不选就跟 AI 一样</string>
+    <string name="settings_voice_not_set">默认</string>
+    <string name="voice_profile_sheet_title_ai">我的音色 · AI 回复</string>
+    <string name="voice_profile_sheet_title_user">我的音色 · 用户语音条</string>
+    <string name="voice_profile_sheet_desc_ai">录 10 秒左右的一段话，朗读 AI 回复时就用这个声音；声音只存在手机里，不会上传。</string>
+    <string name="voice_profile_sheet_desc_user">录 10 秒左右的一段话，读你发的话时就用这个声音；声音只存在手机里，不会上传。</string>
+    <string name="subagent_group_title">子代理任务</string>
+    <string name="subagent_group_count">已派发 %1$d 个任务</string>
+    <string name="voice_bubble_play">播放</string>
+    <string name="voice_bubble_pause">暂停</string>
+    <string name="voice_bubble_expand">展开文字</string>
+    <string name="voice_bubble_collapse">收起文字</string>
+    <string name="voice_bubble_duration">%1$d″</string>
+    <string name="chat_mode_work">工作</string>
+    <string name="chat_mode_chat">对话</string>
     <string name="voice_profile_sheet_title">我的音色</string>
     <string name="voice_profile_sheet_desc">录 10 秒左右的一段话，朗读 AI 回复时就会用这个声音；声音只存在手机里，不会上传。</string>
     <string name="voice_profile_model_title">声音克隆模型</string>

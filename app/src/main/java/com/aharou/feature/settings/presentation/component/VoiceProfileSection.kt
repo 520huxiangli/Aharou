@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,41 +39,60 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.AdaptiveModalBottomSheet
 import com.aharou.core.ui.AppTextField
 import com.aharou.feature.voice.domain.VoiceModelState
+import com.aharou.feature.voice.tts.CloudVoice
 import com.aharou.feature.voice.tts.VoiceProfile
 import com.aharou.feature.voice.tts.VoiceProfileState
 import com.aharou.feature.voice.tts.VoiceProfileViewModel
+import com.aharou.feature.voice.tts.VoiceTarget
+import com.aharou.feature.voice.tts.localVoiceIdOrNull
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Mic
 import compose.icons.feathericons.Volume2
 
 /**
- * 设置页里「我的音色」这一行，点开是录制与管理的弹层。
+ * 「AI 音色 / 用户音色」可选项：各自用一套音色，空着就是默认音色。
  *
- * 收在一个组件里而不是拆成回调传进父级：音色档案是这个弹层独有的状态，
- * 父级（默认模型设置）没有别的地方要读它，多传一层只会让已经贴着行数上限的
- * DefaultModelsSection 继续变长。
+ * 点开就是录制与管理的完整弹层（克隆音色 + 云端音色），所以不再单独留一行「我的音色」。
  */
 @Composable
-internal fun VoiceProfileRow(modifier: Modifier = Modifier) {
+internal fun VoicePickerRow(
+    target: VoiceTarget,
+    title: String,
+    subtitle: String,
+    modifier: Modifier = Modifier,
+) {
     val viewModel: VoiceProfileViewModel = hiltViewModel()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
-    val selectedId by viewModel.selectedId.collectAsStateWithLifecycle()
+    val aiVoice by viewModel.aiVoiceValue.collectAsStateWithLifecycle()
+    val userVoice by viewModel.userVoiceValue.collectAsStateWithLifecycle()
+    val cloudVoices by viewModel.cloudVoices.collectAsStateWithLifecycle()
     var showSheet by remember { mutableStateOf(false) }
-    val selectedName = profiles.firstOrNull { it.id == selectedId }?.name
+    val value = if (target == VoiceTarget.USER) userVoice else aiVoice
+    // 云端音色存的是 id，可读名在音色列表里；没拉过就先拉一次，失败就退回截断兼底
+    LaunchedEffect(value) {
+        if (value.isNotBlank() && localVoiceIdOrNull(value) == null) viewModel.refreshCloudVoices()
+    }
+    val display = remember(value, profiles, cloudVoices) {
+        voiceDisplayName(value, profiles, cloudVoices)
+    }
     SettingsRow(
-        icon = FeatherIcons.Mic,
-        title = stringResource(R.string.settings_voice_profile_title),
-        subtitle = selectedName ?: stringResource(R.string.settings_voice_profile_summary),
+        icon = FeatherIcons.Volume2,
+        title = title,
+        subtitle = subtitle,
         onClick = {
+            viewModel.setTarget(target)
             viewModel.refresh()
             showSheet = true
         },
         trailing = {
+            // 音色标识可能是整串 speech:xxx:xxx，不限宽会把左边标题挤成一字一行
             Text(
-                text = stringResource(R.string.settings_voice_profile_manage),
+                text = display.ifBlank { stringResource(R.string.settings_voice_not_set) },
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 120.dp),
             )
         },
         modifier = modifier,
@@ -80,6 +101,42 @@ internal fun VoiceProfileRow(modifier: Modifier = Modifier) {
         VoiceProfileSheet(viewModel = viewModel, onDismiss = { showSheet = false })
     }
 }
+
+/**
+ * 把存储里的音色值翻译成能给人看的名。
+ *
+ * 云端音色存的是 `speech:<名字>:<id>:<token>` 这类长串，直接展示会把整行布局撑坏，
+ * 所以取中间那段名字；取不到就截断兜底。
+ */
+private fun voiceDisplayName(
+    value: String,
+    profiles: List<VoiceProfile>,
+    cloudVoices: List<CloudVoice>,
+): String {
+    if (value.isBlank()) return ""
+    localVoiceIdOrNull(value)?.let { id ->
+        return profiles.firstOrNull { it.id == id }?.name ?: value
+    }
+    cloudVoices.firstOrNull { it.uri == value }?.let { return readableVoiceName(it) }
+    val segments = value.split('/', ':')
+        .map { it.trim() }
+        .filter { it.isNotBlank() && it != "speech" && it != "local" }
+    return segments.firstOrNull()?.take(24) ?: value.take(24)
+}
+
+/**
+ * 云端音色的可读名：名字字段本身是 id，能读的名字通常写在参考文本里
+ * （「这是流萤的参考音频。」），先从中拆出来，拆不到就取前面几个字。
+ */
+private fun readableVoiceName(voice: CloudVoice): String {
+    val text = voice.referenceText.replace(Regex("\\s+"), " ").trim()
+    READABLE_VOICE_NAME_RE.find(text)?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+        ?.let { return it.take(24) }
+    if (text.isNotBlank()) return text.take(12)
+    return voice.name.take(24)
+}
+
+private val READABLE_VOICE_NAME_RE = Regex("这是(.+?)的参考音频")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,12 +187,19 @@ private fun VoiceProfileSheet(
                 .imePadding(),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
+            val target by viewModel.target.collectAsStateWithLifecycle()
             Text(
-                text = stringResource(R.string.voice_profile_sheet_title),
+                text = stringResource(
+                    if (target == VoiceTarget.USER) R.string.voice_profile_sheet_title_user
+                    else R.string.voice_profile_sheet_title_ai
+                ),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = stringResource(R.string.voice_profile_sheet_desc),
+                text = stringResource(
+                    if (target == VoiceTarget.USER) R.string.voice_profile_sheet_desc_user
+                    else R.string.voice_profile_sheet_desc_ai
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

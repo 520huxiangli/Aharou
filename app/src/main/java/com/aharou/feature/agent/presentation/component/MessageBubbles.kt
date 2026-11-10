@@ -250,6 +250,12 @@ internal fun AgentMessageItem(
     showSoulHeader: Boolean = false,
     /** 朗读本条回复；null 时不显示朗读按钮（未配置语音合成模型）。 */
     onReadAloud: ((AgentUIMessage) -> Unit)? = null,
+    /** 对话模式：双方消息都用语音条呈现，展开后才看文字。 */
+    voiceMode: Boolean = false,
+    /** 本条的语音条是否正在播放。 */
+    isVoicePlaying: Boolean = false,
+    /** 点语音条播放/暂停；null 时退化成普通文字气泡。 */
+    onVoiceTogglePlay: (() -> Unit)? = null,
     /** 本条是否正在朗读中（按钮变停止图标）。 */
     isReadingAloud: Boolean = false,
     /** 消息变体：本条在当前变体组中的展示位次（0 起）与版本总数；总数 > 1 时气泡下方显示 ‹ n/N ›。 */
@@ -366,7 +372,27 @@ internal fun AgentMessageItem(
                 // 助手消息左对齐，用户消息右对齐
                 horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
             ) {
-                if (hasContent || message.role == MessageRole.TOOL) {
+                if (voiceMode && message.role != MessageRole.TOOL && hasContent && onVoiceTogglePlay != null) {
+                    // 对话模式：语音条常驻，展开区在条下方追加文字，条本身不换成文字。
+                    var voiceExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+                    VoiceBubble(
+                        text = message.content,
+                        isUser = isUser,
+                        isPlaying = isVoicePlaying,
+                        expanded = voiceExpanded,
+                        onTogglePlay = onVoiceTogglePlay,
+                        onToggleExpand = { voiceExpanded = !voiceExpanded },
+                    ) {
+                        SelectableMessageContainer {
+                            MarkdownContent(
+                                text = contentSlice ?: message.content,
+                                color = if (isUser) chatUserBubbleTextColor() else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.fillMaxWidth(),
+                                cache = markdownCache,
+                            )
+                        }
+                    }
+                } else if (hasContent || message.role == MessageRole.TOOL) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -563,7 +589,8 @@ internal fun AgentMessageItem(
                             emitted = true
                         }
                         // 朗读紧跟在复制后面：两者都是对这条回复的整体操作
-                        if (!isUser && actionsVisible && hasContent && onReadAloud != null) {
+                        // 对话模式下语音条自带播放键，这一排不再重复给朗读入口
+                        if (!isUser && !voiceMode && actionsVisible && hasContent && onReadAloud != null) {
                             if (emitted) Spacer(Modifier.width(Spacing.xs))
                             MessageActionIconButton(
                                 icon = if (isReadingAloud) FeatherIcons.VolumeX else FeatherIcons.Volume2,

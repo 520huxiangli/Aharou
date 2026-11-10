@@ -37,11 +37,18 @@ class VoiceTtsSettingsRepository @Inject constructor(
     context.voiceTtsDataStore, "voice_tts_provider_id", "voice_tts_model"
 ) {
     private val voiceKey = stringPreferencesKey("voice_tts_voice")
+    private val userVoiceKey = stringPreferencesKey("voice_tts_voice_user")
     private val autoReadKey = booleanPreferencesKey("voice_tts_auto_read")
-
+    private val chatVoiceModeKey = booleanPreferencesKey("chat_voice_mode")
 
     /** 当前持久化的音色名流；未设置时为空字符串（=用服务端默认音色）。 */
     val voiceFlow: Flow<String> = dataStore.data.map { it[voiceKey] ?: "" }
+
+    /** 用户自己那条语音条用的音色；留空表示与 AI 共用 [voiceFlow]。 */
+    val userVoiceFlow: Flow<String> = dataStore.data.map { it[userVoiceKey] ?: "" }
+
+    /** 对话模式开关：开则聊天页双方都以语音条呈现，关就是普通文字气泡。 */
+    val chatVoiceModeFlow: Flow<Boolean> = dataStore.data.map { it[chatVoiceModeKey] ?: false }
 
     /**
      * 自动朗读开关流：开了之后 AI 每条回复落地就自动念。
@@ -79,6 +86,16 @@ class VoiceTtsSettingsRepository @Inject constructor(
         dataStore.edit { it[voiceKey] = voice }
     }
 
+    /** 只改用户侧音色；留空即与 AI 共用同一个。 */
+    suspend fun setUserVoice(voice: String) {
+        dataStore.edit { it[userVoiceKey] = voice }
+    }
+
+    /** 切换对话模式（语音条展示）。 */
+    suspend fun setChatVoiceMode(enabled: Boolean) {
+        dataStore.edit { it[chatVoiceModeKey] = enabled }
+    }
+
     /** 清空配置——AI 回复不再朗读。 */
     suspend fun clear() {
         dataStore.edit {
@@ -96,4 +113,10 @@ class VoiceTtsSettingsRepository @Inject constructor(
 
     /** 读取一次当前音色（冷读用）。 */
     suspend fun getVoice(): String = voiceFlow.first()
+
+    /** 读取用户侧音色；没单独设过返回空串，调用方自行回落到 [getVoice]。 */
+    suspend fun getUserVoice(): String = userVoiceFlow.first()
+
+    /** 读取一次对话模式开关。 */
+    suspend fun isChatVoiceMode(): Boolean = chatVoiceModeFlow.first()
 }

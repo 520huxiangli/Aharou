@@ -33,6 +33,7 @@ import com.aharou.feature.agent.domain.ocr.TessdataState
 import com.aharou.feature.agent.domain.ocr.TessdataStatus
 import com.aharou.feature.voice.domain.VoiceModelState
 import com.aharou.feature.voice.domain.VoiceModelStatus
+import com.aharou.feature.voice.tts.VoiceTarget
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -363,7 +364,17 @@ internal fun DefaultModelsSection(
                 }
             )
             SettingsDivider()
-            VoiceProfileRow()
+            VoicePickerRow(
+                target = VoiceTarget.AI,
+                title = stringResource(R.string.settings_voice_ai_title),
+                subtitle = stringResource(R.string.settings_voice_ai_desc),
+            )
+            SettingsDivider()
+            VoicePickerRow(
+                target = VoiceTarget.USER,
+                title = stringResource(R.string.settings_voice_user_title),
+                subtitle = stringResource(R.string.settings_voice_user_desc),
+            )
             SettingsDivider()
             SettingsRow(
                 icon = FeatherIcons.Mic,

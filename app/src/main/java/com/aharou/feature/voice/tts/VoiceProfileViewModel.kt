@@ -22,8 +22,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -35,6 +38,9 @@ internal fun localVoiceIdOrNull(voice: String): String? =
     voice.takeIf { it.startsWith(LOCAL_VOICE_PREFIX) }
         ?.removePrefix(LOCAL_VOICE_PREFIX)
         ?.takeIf { it.isNotBlank() }
+
+/** 当前在选哪一套音色：AI 回复的音色，还是用户自己那条语音条的音色。 */
+enum class VoiceTarget { AI, USER }
 
 /** 录制克隆音色时的界面状态。 */
 internal sealed interface VoiceProfileState {
@@ -108,14 +114,37 @@ internal class VoiceProfileViewModel @Inject constructor(
     private var pendingDurationMs = 0L
     private var stopJob: Job? = null
 
+    /** 当前正在编辑的音色槽位；选择与高亮都跟着它走。 */
+    private val _target = MutableStateFlow(VoiceTarget.AI)
+    val target: StateFlow<VoiceTarget> = _target.asStateFlow()
+
+    /** 设置页两行各自显示的当前值（与编辑槽位无关）。 */
+    val aiVoiceValue: StateFlow<String> =
+        ttsSettings.voiceFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val userVoiceValue: StateFlow<String> =
+        ttsSettings.userVoiceFlow.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
     init {
         refresh()
         viewModelScope.launch {
-            ttsSettings.voiceFlow.collect { value ->
-                _currentVoice.value = value
-                _selectedId.value = localVoiceIdOrNull(value)
-            }
+            combine(ttsSettings.voiceFlow, ttsSettings.userVoiceFlow, _target) { ai, user, t ->
+                if (t == VoiceTarget.USER) user else ai
+            }.collect { applyCurrentVoice(it) }
         }
+    }
+
+    /** 切换到另一个音色槽位（AI / 用户）。 */
+    fun setTarget(value: VoiceTarget) {
+        _target.value = value
+    }
+
+    private fun applyCurrentVoice(value: String) {
+        _currentVoice.value = value
+        _selectedId.value = localVoiceIdOrNull(value)
+    }
+
+    private suspend fun writeVoice(value: String) {
+        if (_target.value == VoiceTarget.USER) ttsSettings.setUserVoice(value) else ttsSettings.setVoice(value)
     }
 
     fun refresh() {
@@ -266,12 +295,12 @@ internal class VoiceProfileViewModel @Inject constructor(
     }
 
     fun select(id: String) {
-        viewModelScope.launch { ttsSettings.setVoice("$LOCAL_VOICE_PREFIX$id") }
+        viewModelScope.launch { writeVoice("$LOCAL_VOICE_PREFIX$id") }
     }
 
-    /** 取消本地音色选择，朗读回落到云端合成或系统引擎。 */
+    /** 取消音色选择，朗读回落到云端合成或系统引擎。 */
     fun clearSelection() {
-        viewModelScope.launch { ttsSettings.setVoice("") }
+        viewModelScope.launch { writeVoice("") }
     }
 
     /**
@@ -348,7 +377,7 @@ internal class VoiceProfileViewModel @Inject constructor(
 
     /** 直接用一个云端音色：把它的 uri 写进音色配置，合成时原样传给服务端。 */
     fun selectCloudVoice(voice: CloudVoice) {
-        viewModelScope.launch { ttsSettings.setVoice(voice.uri) }
+        viewModelScope.launch { writeVoice(voice.uri) }
     }
 
     fun delete(id: String) {
