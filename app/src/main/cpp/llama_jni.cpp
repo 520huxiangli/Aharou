@@ -137,14 +137,16 @@ Java_com_aharou_feature_localmodel_LlamaJni_chat(
         {systemRole.c_str(), systemText.c_str()},
         {userRole.c_str(), userText.c_str()},
     };
+    // b11829 的模板函数不带 model 参数：模板字符串先从模型里取出来再交给它
+    const char* chatTemplate = llama_model_chat_template(session->model, nullptr);
     std::vector<char> promptBuffer(8192);
     int promptLength = llama_chat_apply_template(
-        session->model, nullptr, messages.data(), messages.size(), true,
+        chatTemplate, messages.data(), messages.size(), true,
         promptBuffer.data(), static_cast<int32_t>(promptBuffer.size()));
     if (promptLength > static_cast<int>(promptBuffer.size())) {
         promptBuffer.resize(promptLength);
         promptLength = llama_chat_apply_template(
-            session->model, nullptr, messages.data(), messages.size(), true,
+            chatTemplate, messages.data(), messages.size(), true,
             promptBuffer.data(), static_cast<int32_t>(promptBuffer.size()));
     }
     if (promptLength < 0) {
