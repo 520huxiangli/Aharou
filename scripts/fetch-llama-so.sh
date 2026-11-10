@@ -24,7 +24,7 @@ download() {
     local abi="$1" dest="$2" id
     id="$(curl -s -m 30 -H "Authorization: Bearer $TOKEN" \
         "https://api.github.com/repos/$REPO/actions/artifacts?name=llama-jni-$abi&per_page=20" \
-        | python3 -c 'import sys,json; d=json.load(sys.stdin); a=[x for x in d.get("artifacts",[]) if not x.get("expired")]; print(a[0]["id"] if a else "")')"
+        | python3 -c 'import sys,json; d=json.load(sys.stdin); a=sorted([x for x in d.get("artifacts",[]) if not x.get("expired")], key=lambda x: x["created_at"], reverse=True); print(a[0]["id"] if a else "")')"
     if [ -z "$id" ]; then
         echo "找不到 $abi 的构建产物：先跑一次 build-llama-android.yml" >&2
         exit 1

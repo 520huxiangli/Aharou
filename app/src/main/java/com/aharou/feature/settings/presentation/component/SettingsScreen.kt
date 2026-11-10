@@ -132,7 +132,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Memory(R.string.memory_settings_title),
     General(R.string.settings_general),
     Theme(R.string.settings_theme_title),
-    Providers(R.string.settings_providers),
+    Providers(R.string.settings_providers), LocalModels(R.string.settings_local_models),
     AccountCenter(R.string.account_entry_title),
     ProviderEditor(R.string.settings_provider_editor),
     DefaultModels(R.string.settings_default_models),
@@ -970,7 +970,7 @@ fun SettingsScreen(
                 SettingsSection.Vault -> VaultSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
                 SettingsSection.Pet -> PetSection()
-                SettingsSection.Memory -> MemorySection()
+                SettingsSection.Memory -> MemorySection(); SettingsSection.LocalModels -> com.aharou.feature.localmodel.presentation.LocalModelsSection()
                 SettingsSection.Knowledge -> KnowledgeBaseSection()
                 SettingsSection.Extensions -> ExtensionsSection(onOpenSection = openSection)
                 SettingsSection.Theme -> ThemeSettingsSection(

@@ -378,6 +378,12 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.Cpu,
+                title = stringResource(SettingsSection.LocalModels.titleRes),
+                onClick = { onOpen(SettingsSection.LocalModels) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Globe,
                 title = stringResource(SettingsSection.Proxy.titleRes),
                 onClick = { onOpen(SettingsSection.Proxy) }
