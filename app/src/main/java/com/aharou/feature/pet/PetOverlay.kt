@@ -506,12 +506,12 @@ class PetOverlay(private val context: Context) {
         if (request != null) request.invoke() else speakStaticLine()
     }
 
-    /** 写死的三档台词（按好感度分冷/常/亲），也是模型那条路的降级路径。 */
+    /** 写死的三档台词（按当前心情分冷/常/亲，受好感度、冷落时长与时段影响），也是模型那条路的降级路径。 */
     fun speakStaticLine() {
-        val res = when {
+        val res = when (mood.toneFor()) {
             // 闹别扭或被冷落到冷淡档：只说冷话
-            mood.isSulking() || mood.level == PetMood.Level.COLD -> R.array.pet_lines_cold
-            mood.level == PetMood.Level.NORMAL -> R.array.pet_lines
+            PetMood.Level.COLD -> R.array.pet_lines_cold
+            PetMood.Level.NORMAL -> R.array.pet_lines
             else -> R.array.pet_lines_warm
         }
         val all = context.resources.getStringArray(res)
@@ -1488,10 +1488,10 @@ class PetOverlay(private val context: Context) {
         applyBubble(context.getString(patLine()), persistent = false)
     }
 
-    /** 摸头台词按态度分档：冷淡 / 平常 / 亲近。 */
-    private fun patLine(): Int = when {
-        mood.isSulking() || mood.level == PetMood.Level.COLD -> R.string.pet_patted_cold
-        mood.level == PetMood.Level.NORMAL -> R.string.pet_patted
+    /** 摸头台词按当前心情分档：冷淡 / 平常 / 亲近。 */
+    private fun patLine(): Int = when (mood.toneFor()) {
+        PetMood.Level.COLD -> R.string.pet_patted_cold
+        PetMood.Level.NORMAL -> R.string.pet_patted
         else -> R.string.pet_patted_warm
     }
 

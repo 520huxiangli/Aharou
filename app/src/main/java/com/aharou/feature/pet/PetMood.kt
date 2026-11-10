@@ -33,6 +33,42 @@ data class PetMood(
     /** 是不是正在闹别扭（被戳烦之后的一小段时间）。 */
     fun isSulking(now: Long = System.currentTimeMillis()): Boolean = now < sulkUntil
 
+    /**
+     * 0~1：多久没被搭理。隔得越久越想被注意，一天封顶。
+     *
+     * 只拿互动时刻算，不加新字段——落盘格式不动，旧版本读出来的状态照样能算。
+     */
+    fun attentionNeed(now: Long = System.currentTimeMillis()): Double {
+        val hours = ((now - lastTouchAt).coerceAtLeast(0L)) / HOUR_MS.toDouble()
+        return (hours / 24.0).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * 0~1：当前时段的精力。深夜最低，白天满格。
+     *
+     * 作息是人的，不是好感度的——所以按小时算，不按被摸次数算，否则戳多了她会「累」得莫名其妙。
+     */
+    fun energyAt(hour: Int): Double = when (hour) {
+        in 0..5 -> 0.25
+        in 6..7 -> 0.6
+        in 8..22 -> 1.0
+        else -> 0.5
+    }
+
+    /**
+     * 当前该用哪一档口气：好感度打底，冷落时长与时段修正。
+     *
+     * 比单看好感度多两件事：很久没人理时说「普通」而不是冷话，深夜不黏人。
+     * 闹别扭与冷淡档不受影响——那是明确的负向状态，不该被冷落时长抹掉。
+     */
+    fun toneFor(now: Long = System.currentTimeMillis(), hour: Int = hourOf(now)): Level {
+        if (isSulking(now) || level == Level.COLD) return Level.COLD
+        val energy = energyAt(hour)
+        if (energy < 0.4) return Level.NORMAL
+        if (attentionNeed(now) >= NEEDY_AFTER) return Level.NORMAL
+        return level
+    }
+
     /** 隔了几个自然日没见；当天见过算 0。 */
     fun daysSinceSeen(now: Long = System.currentTimeMillis()): Int =
         ((now - lastSeenAt) / DAY_MS).toInt().coerceAtLeast(0)
@@ -74,6 +110,10 @@ data class PetMood(
         const val CLINGY_AT = 85
 
         private const val DAY_MS = 24L * 60 * 60 * 1000
+        private const val HOUR_MS = 60L * 60 * 1000
+
+        /** 冷落超过这个比例就不再装作若无其事，退回「平常」那一档。 */
+        private const val NEEDY_AFTER = 0.5
         private const val PET_BONUS = 2
         private const val POKE_PENALTY = 3
         private const val DAILY_DECAY = 1
@@ -85,6 +125,12 @@ data class PetMood(
 
         fun initial(now: Long = System.currentTimeMillis()): PetMood =
             PetMood(INITIAL, now, now, 0L)
+
+        private fun hourOf(now: Long): Int {
+            val c = java.util.Calendar.getInstance()
+            c.timeInMillis = now
+            return c.get(java.util.Calendar.HOUR_OF_DAY)
+        }
     }
 }
 
