@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -194,18 +195,22 @@ private const val TASK_TEXT_MAX = 120
  * `data` 可能是对象也可能是包着 JSON 文本的字符串，两种都试；拿不到子会话 id = 不出卡。
  */
 internal fun parseSubAgentDispatch(argsJson: String?, resultJson: String?): ParsedSubAgentDispatch? {
-    val args = argsJson?.let { raw ->
-        runCatching { Json.parseToJsonElement(raw).jsonObject }.getOrNull()
-    } ?: return null
+    if (argsJson.isNullOrBlank()) return null
+    val args = runCatching { Json.parseToJsonElement(argsJson.trim()).jsonObject }.getOrNull()
     // read / stop / send / list / team / tell / grant / roles / pipeline 都不是「派发」，保持普通工具行。
-    val action = args.stringOrNull("action")?.lowercase()
+    // 参数串可能是被截断的前 500 字符（task 的 prompt 远超这个长度），此时走字面量兜底：
+    // 只认能抠出的标题，子会话 id 等结果落地后再从结果一侧补。
+    val action = args?.stringOrNull("action")?.lowercase() ?: literalAction(argsJson)
     if (!action.isNullOrEmpty() && action != "create") return null
-    val description = args.stringOrNull("description")?.replace(Regex("\\s+"), " ")?.trim()
-    val promptLine = args.stringOrNull("prompt")
-        ?.lineSequence()?.firstOrNull { it.isNotBlank() }?.replace(Regex("\\s+"), " ")?.trim()
+    val description = args?.stringOrNull("description")?.toSingleLine()
+        ?: literalField(argsJson, LITERAL_DESCRIPTION_RE)
+    val promptLine = args?.stringOrNull("prompt")?.lineSequence()
+        ?.firstOrNull { it.isNotBlank() }?.toSingleLine()
+        ?: literalField(argsJson, LITERAL_PROMPT_RE)
     val taskText = (description?.takeIf { it.isNotBlank() } ?: promptLine?.takeIf { it.isNotBlank() })
         ?.take(TASK_TEXT_MAX) ?: return null
-    val argAgent = args.stringOrNull("agent")?.takeIf { it.isNotBlank() }
+    val argAgent = args?.stringOrNull("agent")?.takeIf { it.isNotBlank() }
+        ?: literalField(argsJson, LITERAL_AGENT_RE)
 
     val raw = resultJson?.trim().orEmpty()
     val pending = raw.isEmpty() ||
@@ -233,6 +238,25 @@ internal fun AgentUIMessage.isSubAgentDispatchCard(): Boolean =
 
 private fun JsonObject.stringOrNull(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull
+
+private fun String.toSingleLine(): String? =
+    replace(Regex("\\s+"), " ").trim().takeIf { it.isNotBlank() }
+
+/** 从被截断的参数串里捞 `action`；捞不到返回 null（此时按 create 处理，与工具缺省一致）。 */
+private fun literalAction(raw: String): String? =
+    literalField(raw, LITERAL_ACTION_RE)?.lowercase()
+
+/** 从被截断的参数串里抓某个字符串字段的首行；JSON 已不完整时靠它保住卡片标题。 */
+private fun literalField(raw: String, regex: Regex): String? =
+    regex.find(raw)?.groupValues?.getOrNull(1)
+        ?.replace("\\n", " ")?.replace("\\t", " ")?.replace("\\\"", "\"")?.replace("\\\\", "\\")
+        ?.toSingleLine()
+
+private val LITERAL_ACTION_RE = Regex("\\\"action\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"")
+private val LITERAL_DESCRIPTION_RE = Regex("\\\"description\\\"\\s*:\\s*\\\"((?:[^\\\"\\\\]|\\\\.)*)")
+private val LITERAL_PROMPT_RE = Regex("\\\"prompt\\\"\\s*:\\s*\\\"((?:[^\\\"\\\\]|\\\\.)*)")
+private val LITERAL_AGENT_RE = Regex("\\\"agent\\\"\\s*:\\s*\\\"((?:[^\\\"\\\\]|\\\\.)*)")
+
 
 /** `data` 既可能是对象（当前形状），也可能是包着一层 JSON 文本的字符串（历史落库形状），两种都兼容。 */
 private fun JsonElement?.asJsonObjectOrNull(): JsonObject? {
@@ -277,6 +301,8 @@ internal val LocalSubAgentCardBridge = compositionLocalOf { EmptySubAgentCardBri
 internal fun SubAgentDispatchCard(
     dispatch: ParsedSubAgentDispatch,
     running: Boolean,
+    /** 同批派发时的序号（从 1 起）；单条派发传 null，不显示编号。 */
+    index: Int? = null,
     modifier: Modifier = Modifier
 ) {
     val bridge = LocalSubAgentCardBridge.current
@@ -316,6 +342,15 @@ internal fun SubAgentDispatchCard(
         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (index != null) {
+                Text(
+                    text = index.toString().padStart(2, '0'),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.width(Spacing.sm))
+            }
             Icon(
                 imageVector = FeatherIcons.Users,
                 contentDescription = null,
@@ -464,6 +499,102 @@ internal fun keepSubAgentCardsVisible(
         next++
     }
     return out
+}
+
+/**
+ * 把相邻的、同一次并行派发出来的子代理卡片合并成一个分组 item。
+ *
+ * 单条不合并：一张孤零零的卡再加个「已派发 1 个任务」的组头只是叠句子。
+ */
+internal fun groupSubAgentCards(items: List<ChatRenderItem>): List<ChatRenderItem> {
+    if (items.size < 2) return items
+    val out = ArrayList<ChatRenderItem>(items.size)
+    var buffer = ArrayList<ChatRenderItem>()
+    fun flush() {
+        if (buffer.isEmpty()) return
+        if (buffer.size == 1) {
+            out += buffer[0]
+        } else {
+            val first = buffer[0]
+            out += first.copy(
+                key = "subagent-group-${first.key}",
+                subAgentGroup = buffer.map { it.message },
+            )
+        }
+        buffer = ArrayList()
+    }
+    for (item in items) {
+        val isCard = item.turnHeader == null && item.toolGroup == null && item.slice == null &&
+            item.message.isSubAgentDispatchCard()
+        if (isCard) buffer += item else {
+            flush()
+            out += item
+        }
+    }
+    flush()
+    return out
+}
+
+/**
+ * 同批子代理的分组容器：组头写总数，下面每条一个带序号的子卡片。
+ *
+ * 序号后面直接接子代理自己的名字，不再重复写「子代理」三个字。
+ */
+@Composable
+internal fun SubAgentGroupCard(
+    messages: List<AgentUIMessage>,
+    isRunning: (AgentUIMessage) -> Boolean,
+) {
+    val shape = RoundedCornerShape(ChatStyle.cardCorner)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(chatCardSurfaceColor())
+            .border(ChatStyle.hairline, chatHairlineColor(), shape)
+            .padding(Spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = FeatherIcons.Users,
+                contentDescription = null,
+                tint = Brand.IconGray,
+                modifier = Modifier.size(ChatStyle.rowIconSize)
+            )
+            Spacer(Modifier.width(Spacing.sm))
+            Text(
+                text = stringResource(R.string.subagent_group_title),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = stringResource(R.string.subagent_group_count, messages.size),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(Radius.sm))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = StatusPillAlpha))
+                    .padding(horizontal = Spacing.sm, vertical = 2.dp)
+            )
+        }
+        messages.forEachIndexed { index, message ->
+            // 解析缓存键同 ToolMessageBody：内容长度相同即视为同一份结果，流式追加时不重解析。
+            val contentKey = message.content.length
+            val dispatch = remember(message.id, contentKey, message.toolArgs) {
+                parseSubAgentDispatch(message.toolArgs, message.content)
+            }
+            if (dispatch != null) {
+                SubAgentDispatchCard(
+                    dispatch = dispatch,
+                    running = isRunning(message),
+                    index = index + 1,
+                )
+            }
+        }
+    }
 }
 
 private fun subAgentCardItem(message: AgentUIMessage) = ChatRenderItem(

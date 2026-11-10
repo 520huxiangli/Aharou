@@ -78,7 +78,10 @@ internal val ToolGroupMemberPadding = PaddingValues(start = 16.dp)
  */
 internal fun AgentUIMessage.isGroupableTool(): Boolean =
     role == MessageRole.TOOL && !isCompactionFailure && !isContextSummary &&
-        !isCompactionMarker && !isBackgroundNotification && !isSamplingLoopStop && attachments.isEmpty()
+        !isCompactionMarker && !isBackgroundNotification && !isSamplingLoopStop &&
+        attachments.isEmpty() &&
+        // 子代理派发卡有自己的分组渲染（组头 + 编号），折进「N 次工具调用」就只剩一排 task 行了
+        !isSubAgentDispatchCard()
 
 /** 分组标识：取组内首条消息 id，保证一批工具调用在追加过程中 item key 稳定（不会重建导致视口跳动）。 */
 internal fun toolGroupKey(first: AgentUIMessage): String = "toolgroup:${first.id}"
@@ -198,6 +201,11 @@ internal data class ChatRenderItem(
     val groupMember: Boolean = false,
     /** 整轮收尾态（仅轮头 item 有意义）：决定折叠头显示「已完成 / 处理失败 / 已取消」。 */
     val turnOutcome: TurnOutcome = TurnOutcome.DONE,
+    /**
+     * 非空表示这是一条「同轮并行派发的子代理」分组 item：下面是按顺序排好的 task 消息。
+     * 只有连续且不少于两条时才合并，单条仍走原来的扁平行渲染。
+     */
+    val subAgentGroup: List<AgentUIMessage>? = null,
 )
 
 /**
@@ -640,7 +648,7 @@ internal fun rememberChatRenderItems(
         messages, groupOverrides, turnOverrides, activeTurnKey, cancelledTurnKey, sessionId, turnKeys
     ) { Any() }
     val build = {
-        keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
+        groupSubAgentCards(keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
             messages = messages,
             groupOverrides = groupOverrides,
             turnOverrides = turnOverrides,
@@ -648,7 +656,7 @@ internal fun rememberChatRenderItems(
             sessionId = sessionId,
             turnKeys = turnKeys,
             cancelledTurnKey = cancelledTurnKey,
-        )), messages)
+        )), messages))
     }
     val useAsync = messages.size > ASYNC_CHAT_ITEMS_THRESHOLD
     var asyncItems by remember { mutableStateOf<AsyncChatItems?>(null) }
