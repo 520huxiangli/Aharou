@@ -532,7 +532,7 @@ fun ProviderEditorScreen(
                         headers = customHeaders,
                         onOpenHeaders = { showHeadersSheet = true },
                         typeLabel = providerTypeLabel(type),
-                        onOpenType = { showTypeSheet = true },
+                        onOpenType = { showTypeSheet = true }, local = type == ProviderType.LOCAL,
                     )
 
                     // ── 选项 ──

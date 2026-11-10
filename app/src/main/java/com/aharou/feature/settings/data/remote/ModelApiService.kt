@@ -200,12 +200,31 @@ class ModelApiService @Inject constructor(
         model: String,
         customHeaders: Map<String, String> = emptyMap()
     ): ModelTestResult = withContext(Dispatchers.IO) {
+        // 本地模型不发 HTTP：加载后真跑一句，耗时就是真实推理时间
+        if (type == ProviderType.LOCAL) return@withContext testLocal(model)
         val start = System.nanoTime()
         val first = testModelOnce(start, baseUrl, apiKey, type, useFullUrl, useResponseApi, model, customHeaders)
         if (!first.retryable) return@withContext first.result
         // DNS 解析失败会被 libcore 缓存，紧接着重试必然重复失败；退避 3 秒再试一次（delay 不占线程）。
         delay(NETWORK_RETRY_DELAY_MS)
         testModelOnce(start, baseUrl, apiKey, type, useFullUrl, useResponseApi, model, customHeaders).result
+    }
+
+    /** 本地模型的「测试」：不走请求，加载并让它回一句。 */
+    private suspend fun testLocal(model: String): ModelTestResult {
+        val started = System.currentTimeMillis()
+        val engine = com.aharou.feature.localmodel.LocalModelEngine.current
+            ?: return ModelTestResult(false, 0L, "本地模型引擎没有初始化")
+        engine.load(model).onFailure { failure ->
+            return ModelTestResult(false, System.currentTimeMillis() - started, failure.message ?: "加载失败")
+        }
+        val reply = engine.chat("你是一个简洁的中文助手。", "回一个字：好", maxTokens = 8)
+        val latency = System.currentTimeMillis() - started
+        return if (reply.isNullOrBlank()) {
+            ModelTestResult(false, latency, "本地模型没有返回内容")
+        } else {
+            ModelTestResult(true, latency, reply.take(80), requestUrl = "local://$model")
+        }
     }
 
     /** 一次尝试；「是否值得重试」随结果带出，因为网络异常类型只在 catch 里看得到。 */
