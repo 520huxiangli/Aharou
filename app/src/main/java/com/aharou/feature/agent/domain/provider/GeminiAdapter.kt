@@ -239,12 +239,13 @@ class GeminiAdapter @Inject constructor(
                     }
                     try {
                         val reader = rb.charStream().buffered()
+                        val rawHead = SseRawHead()
                         while (true) {
                             coroutineContext.ensureActive()
                             val line = reader.readLine()
-                                ?: throw IOException("SSE 流被中断（疑似网络断开）")
+                                ?: throw IOException(interruptedMessage("流提前结束", rawHead.text()))
                             idleWatchdog.touch()
-                            if (!line.startsWith("data:")) continue
+                            if (rawHead.noteIfOther(line)) continue
                             val data = line.removePrefix("data:").trim()
                             if (data.isEmpty()) continue
                             sseLog.append(line)
@@ -506,12 +507,13 @@ class GeminiAdapter @Inject constructor(
                         }
                         try {
                             val reader = rb.charStream().buffered()
+                            val rawHead = SseRawHead()
                             while (!acc.terminated) {
                                 coroutineContext.ensureActive()
                                 val line = reader.readLine()
-                                    ?: throw IOException("SSE 流被中断：interaction 未到终态（疑似网络断开）")
+                                    ?: throw IOException(interruptedMessage("interaction 未到终态", rawHead.text()))
                                 idleWatchdog.touch()
-                                if (!line.startsWith("data:")) continue
+                                if (rawHead.noteIfOther(line)) continue
                                 val data = line.removePrefix("data:").trim()
                                 if (data.isEmpty()) continue
                                 sseLog.append(line)

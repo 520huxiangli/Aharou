@@ -218,6 +218,7 @@ class AnthropicAdapter @Inject constructor(
                 }
                 try {
                     val reader = rb.charStream().buffered()
+                    val rawHead = SseRawHead()
                     // 收到 message_stop 即 break；个别中转发完 stop_reason 后直接关流，内容已完整，
                     // 按正常结束收尾。两者都没有才算真断流，抛异常交给重试与日志。
                     while (true) {
@@ -225,10 +226,10 @@ class AnthropicAdapter @Inject constructor(
                         val line = reader.readLine()
                         if (line == null) {
                             if (stopReason != null) break
-                            throw IOException("SSE 流被中断：未收到 message_stop 结束标记（疑似网络断开）")
+                            throw IOException(interruptedMessage("未收到 message_stop 结束标记", rawHead.text()))
                         }
                         idleWatchdog.touch()
-                        if (!line.startsWith("data:")) continue
+                        if (rawHead.noteIfOther(line)) continue
                         val data = line.removePrefix("data:").trim()
                         if (data.isEmpty()) continue
                         sseLog.append(line)

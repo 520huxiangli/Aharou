@@ -475,6 +475,7 @@ class OpenAIAdapter @Inject constructor(
                 }
                 try {
                     val reader = rb.charStream().buffered()
+                    val rawHead = SseRawHead()
                     // 收到 [DONE] 即 break；部分兼容服务（第三方中转最常见）发完 finish_reason 就关流，
                     // 这种内容已完整、按正常结束收尾。既无终止事件又无 finish_reason 才算真断流，
                     // 抛异常交给重试，否则会用截断数据「正常完成」且不留错误日志。
@@ -483,10 +484,10 @@ class OpenAIAdapter @Inject constructor(
                         val line = reader.readLine()
                         if (line == null) {
                             if (finishReason != null) break
-                            throw IOException("SSE 流被中断：未收到 [DONE] 结束标记（疑似网络断开）")
+                            throw IOException(interruptedMessage("未收到 [DONE] 结束标记", rawHead.text()))
                         }
                         idleWatchdog.touch()
-                        if (!line.startsWith("data:")) continue
+                        if (rawHead.noteIfOther(line)) continue
                         val data = line.removePrefix("data:").trim()
                         if (data.isEmpty()) continue
                         sseLog.append(line)
@@ -663,12 +664,14 @@ class OpenAIAdapter @Inject constructor(
                         }
                         try {
                             val reader = rb.charStream().buffered()
+                            val rawHead = SseRawHead()
                             while (!acc.terminated) {
                                 coroutineContext.ensureActive()
-                                val line = reader.readLine()
-                                    ?: throw IOException("SSE 流被中断：未收到 response.completed 结束事件（疑似网络断开）")
+                                val line = reader.readLine() ?: throw IOException(
+                                    interruptedMessage("未收到 response.completed 结束事件", rawHead.text())
+                                )
                                 idleWatchdog.touch()
-                                if (!line.startsWith("data:")) continue
+                                if (rawHead.noteIfOther(line)) continue
                                 val data = line.removePrefix("data:").trim()
                                 if (data.isEmpty()) continue
                                 sseLog.append(line)
@@ -994,3 +997,4 @@ class OpenAIAdapter @Inject constructor(
         )
     }
 }
+
