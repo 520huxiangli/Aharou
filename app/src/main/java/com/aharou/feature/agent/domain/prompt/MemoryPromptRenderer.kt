@@ -21,6 +21,8 @@ internal object MemoryPromptRenderer {
     /** 最近改动窗口：窗口内动过的条目在索引里标出时间。 */
     private const val RECENT_WINDOW_MILLIS = 7L * 24L * 60L * 60L * 1_000L
 
+    private const val DAY_MILLIS = 24L * 60L * 60L * 1_000L
+
     private const val GLOBAL_HEADER = "全局记忆 (跨项目个人偏好，需要详情时用 memory(action=read, name=xxx, scope=global))："
     private const val PROJECT_HEADER = "项目记忆 (当前项目专属，需要详情时用 memory(action=read, name=xxx, scope=project))："
     private const val OMISSION_NOTICE = "部分记忆索引因 $MAX_INDEX_CHARS 字符总预算未注入；memory(action=list) 仍可查看完整清单，再用 memory(action=read, name=..., scope=...) 读取正文。"
@@ -269,18 +271,29 @@ internal object MemoryPromptRenderer {
     private fun longBodyLabel(memory: Memory, longBodies: Set<String>): String =
         if (memory.name.lowercase() in longBodies) LONG_BODY_LABEL else ""
 
-    /** 最近改动过的条目在索引里带时间标注：让「最近被纠正过什么」一眼可见，不必翻文件时间。 */
+    /**
+     * 最近改动过的条目在索引里带时间标注：让「最近被纠正过什么」一眼可见，不必翻文件时间。
+     *
+     * 过了窗口的事实类再补一个「X月X日志下」：事实会过时，没有绝对时间锚点，半年
+     * 前的印象就会被当成现状来说。
+     */
     private fun recencyLabel(memory: Memory): String {
         val modified = memory.file?.lastModified() ?: return ""
         if (modified <= 0L) return ""
         val age = System.currentTimeMillis() - modified
-        if (age < 0L || age > RECENT_WINDOW_MILLIS) return ""
-        val days = age / (24L * 60L * 60L * 1_000L)
-        return when (days) {
-            0L -> "（今天更新）"
-            1L -> "（昨天更新）"
-            else -> "（${days} 天前更新）"
+        if (age < 0L) return ""
+        if (age <= RECENT_WINDOW_MILLIS) {
+            val days = age / DAY_MILLIS
+            return when (days) {
+                0L -> "（今天更新）"
+                1L -> "（昨天更新）"
+                else -> "（${days} 天前更新）"
+            }
         }
+        if (memory.type != MemoryType.FACT) return ""
+        val day = java.time.Instant.ofEpochMilli(modified)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        return "（${day.monthValue}月${day.dayOfMonth}日记下）"
     }
 
     private fun isCore(memory: Memory): Boolean {

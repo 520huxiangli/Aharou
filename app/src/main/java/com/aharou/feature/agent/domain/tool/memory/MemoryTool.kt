@@ -616,6 +616,14 @@ class MemoryTool @Inject constructor(
                 similar.joinToString("、") { "「${it.name}」（${it.description}）" } +
                 "。若这次写的是同一条事实，请改用 action=edit 就地修改，别再新建条目。"
         }
+        // 库满了不硬拒，但要把「该收拾了」摆到模型面前：清单每轮都占上下文，再写也只是互相抢位。
+        val total = runCatching { memoryRepository.countMemories(projectRoot) }.getOrDefault(0)
+        val scaleHint = if (total >= MEMORY_COUNT_SOFT_LIMIT) {
+            " 记忆库已有 $total 条（软上限 $MEMORY_COUNT_SOFT_LIMIT）：清单每轮都要占上下文，" +
+                "请先用 search 找同主题条目、edit 合并或 delete 清掉过时的，再继续新增。"
+        } else {
+            ""
+        }
         val stored = memoryRepository.findMemory(name, projectRoot, scope)
         // 把新版本一并给回：模型接下来往往还要改同一处，带上它就不用再 read 一次。
         val versionLine = stored?.version?.takeIf { it.isNotBlank() }
@@ -629,7 +637,7 @@ class MemoryTool @Inject constructor(
         return ToolResult.Success(
             JsonPrimitive(
                 "已成功保存记忆「$name」到 ${scope.name.lowercase()} 作用域。$typeNote" +
-                    "$versionLine" + "当前会话若需立即使用，请通过 read 操作读取。$hint"
+                    "$versionLine" + "当前会话若需立即使用，请通过 read 操作读取。$hint$scaleHint"
             )
         )
     }
