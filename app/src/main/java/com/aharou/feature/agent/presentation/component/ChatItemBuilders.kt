@@ -161,6 +161,25 @@ internal fun AgentUIMessage.isResultCandidate(): Boolean =
     role == MessageRole.ASSISTANT && !isSystemCardInTurn() && content.hasVisibleContent()
 
 /**
+ * LazyColumn 要求 item key 全局唯一，重复 key 会直接抛 IllegalArgumentException 把整页聊天崩掉。
+ *
+ * 同一条消息在分页补载 / 重试 / 过程项平铺的交界处可能被产出两次，这里做最后一道保险：
+ * 保持原顺序，只在重复的后一条上加后缀。
+ */
+internal fun dedupeChatItemKeys(items: List<ChatRenderItem>): List<ChatRenderItem> {
+    val seen = HashSet<String>(items.size)
+    var suffix = 0
+    return items.map { item ->
+        if (seen.add(item.key)) {
+            item
+        } else {
+            suffix++
+            item.copy(key = "${item.key}#dup$suffix")
+        }
+    }
+}
+
+/**
  * 长消息拆块渲染：
  *
  * 超长助手正文（长文档复述）如果塞成单条 LazyColumn item，撑到几屏深时手势命中区
@@ -648,7 +667,7 @@ internal fun rememberChatRenderItems(
         messages, groupOverrides, turnOverrides, activeTurnKey, cancelledTurnKey, sessionId, turnKeys
     ) { Any() }
     val build = {
-        groupSubAgentCards(keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
+        dedupeChatItemKeys(groupSubAgentCards(keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
             messages = messages,
             groupOverrides = groupOverrides,
             turnOverrides = turnOverrides,
@@ -656,7 +675,7 @@ internal fun rememberChatRenderItems(
             sessionId = sessionId,
             turnKeys = turnKeys,
             cancelledTurnKey = cancelledTurnKey,
-        )), messages))
+        )), messages)))
     }
     val useAsync = messages.size > ASYNC_CHAT_ITEMS_THRESHOLD
     var asyncItems by remember { mutableStateOf<AsyncChatItems?>(null) }
