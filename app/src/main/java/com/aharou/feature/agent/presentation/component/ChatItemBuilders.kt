@@ -666,9 +666,19 @@ internal fun rememberChatRenderItems(
     val key = remember(
         messages, groupOverrides, turnOverrides, activeTurnKey, cancelledTurnKey, sessionId, turnKeys
     ) { Any() }
+    // 同一个 id 出现两条（重试、占位与最终行合并的交界处）会让下面的渲染项 key 重复，
+    // LazyColumn 直接抛异常整页崩掉。保留靠后的那条：它才是结果行。
+    val uniqueMessages = remember(messages) {
+        val seen = HashSet<String>(messages.size)
+        val out = ArrayList<AgentUIMessage>(messages.size)
+        for (message in messages.asReversed()) {
+            if (seen.add(message.id)) out += message
+        }
+        out.asReversed()
+    }
     val build = {
         dedupeChatItemKeys(groupSubAgentCards(keepSubAgentCardsVisible(flattenTurnProcesses(buildChatItems(
-            messages = messages,
+            messages = uniqueMessages,
             groupOverrides = groupOverrides,
             turnOverrides = turnOverrides,
             activeTurnKey = activeTurnKey,
