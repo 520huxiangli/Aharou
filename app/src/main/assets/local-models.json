@@ -1,0 +1,672 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "qwen3-0.6b-gguf",
+      "name": "Qwen3 0.6B (llama.cpp)",
+      "description": "Qwen3 0.6B local chat model; weights remain on this device.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF",
+      "repository": "Qwen/Qwen3-0.6B-GGUF",
+      "revision": "23749fefcc72300e3a2ad315e1317431b06b590a",
+      "file": "Qwen3-0.6B-Q8_0.gguf",
+      "sizeBytes": 639446688,
+      "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "llm",
+        "offline"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/23749fefcc72300e3a2ad315e1317431b06b590a"
+    },
+    {
+      "id": "qwen3-0.6b-mnn",
+      "name": "Qwen3 0.6B (MNN)",
+      "description": "Qwen3 0.6B local chat model; weights remain on this device.",
+      "kind": "chat",
+      "engine": "mnn",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/taobao-mnn/Qwen3-0.6B-MNN",
+      "repository": "taobao-mnn/Qwen3-0.6B-MNN",
+      "revision": "34dfccda1187ded6e07ea06426da576b0b793c6b",
+      "file": "llm.mnn",
+      "files": [
+        {
+          "path": "config.json",
+          "sizeBytes": 403,
+          "sha256": "d74912484c7f0527494c9184d8d6806554be501e15ca559a1610370b80839ef7"
+        },
+        {
+          "path": "llm.mnn",
+          "sizeBytes": 461520,
+          "sha256": "d426c65a5159c938ccc237cdfbd982137f276804f27b414ca0ecf3fc0a660f8c"
+        },
+        {
+          "path": "llm.mnn.weight",
+          "sizeBytes": 450810338,
+          "sha256": "953afb7e0165818add34a7a6caf0af5d0ed9428da102eb22c9b98ee9da292e9f"
+        },
+        {
+          "path": "llm_config.json",
+          "sizeBytes": 4880,
+          "sha256": "63f9a2f67ec2ae98b4c2363b46355040c34ca5c87a740ab3c94e08288a53225a"
+        },
+        {
+          "path": "tokenizer.txt",
+          "sizeBytes": 3193569,
+          "sha256": "77009625db0b18e74315dd89557c76feaab57e1d54e3240b442649a3c16ec4fb"
+        }
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "llm",
+        "offline"
+      ],
+      "downloadBase": "https://huggingface.co/taobao-mnn/Qwen3-0.6B-MNN/resolve/34dfccda1187ded6e07ea06426da576b0b793c6b"
+    },
+    {
+      "id": "huggingface",
+      "name": "Qwen3.5 0.8B",
+      "description": "Qwen3.5 0.8B multilingual chat and reasoning model, Q4_K_M; text-only local inference.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF",
+      "repository": "unsloth/Qwen3.5-0.8B-GGUF",
+      "revision": "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
+      "file": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "sizeBytes": 532517120,
+      "sha256": "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0"
+    },
+    {
+      "id": "qwen3.5-2b-gguf",
+      "name": "Qwen3.5 2B",
+      "description": "Qwen3.5 2B multilingual chat and reasoning model, Q4_K_M; text-only local inference.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF",
+      "repository": "unsloth/Qwen3.5-2B-GGUF",
+      "revision": "f6d5376be1edb4d416d56da11e5397a961aca8ae",
+      "file": "Qwen3.5-2B-Q4_K_M.gguf",
+      "sizeBytes": 1280835840,
+      "sha256": "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae"
+    },
+    {
+      "id": "qwen3.5-4b-gguf",
+      "name": "Qwen3.5 4B",
+      "description": "Qwen3.5 4B multilingual chat and reasoning model, Q4_K_M; text-only local inference.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+      "repository": "unsloth/Qwen3.5-4B-GGUF",
+      "revision": "e87f176479d0855a907a41277aca2f8ee7a09523",
+      "file": "Qwen3.5-4B-Q4_K_M.gguf",
+      "sizeBytes": 2740937888,
+      "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523"
+    },
+    {
+      "id": "qwen3-1.7b-gguf",
+      "name": "Qwen3 1.7B",
+      "description": "Qwen3 1.7B multilingual chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF",
+      "repository": "unsloth/Qwen3-1.7B-GGUF",
+      "revision": "d7f544eead698dbd1f15126ef60b45a1e1933222",
+      "file": "Qwen3-1.7B-Q4_K_M.gguf",
+      "sizeBytes": 1107409472,
+      "sha256": "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/d7f544eead698dbd1f15126ef60b45a1e1933222"
+    },
+    {
+      "id": "qwen3-4b-gguf",
+      "name": "Qwen3 4B",
+      "description": "Qwen3 4B multilingual chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen3-4B-GGUF",
+      "repository": "Qwen/Qwen3-4B-GGUF",
+      "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b",
+      "file": "Qwen3-4B-Q4_K_M.gguf",
+      "sizeBytes": 2497280256,
+      "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b"
+    },
+    {
+      "id": "qwen3-8b-gguf",
+      "name": "Qwen3 8B",
+      "description": "Qwen3 8B multilingual chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen3-8B-GGUF",
+      "repository": "Qwen/Qwen3-8B-GGUF",
+      "revision": "7c41481f57cb95916b40956ab2f0b139b296d974",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "sizeBytes": 5027783488,
+      "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974"
+    },
+    {
+      "id": "qwen2.5-0.5b-instruct-gguf",
+      "name": "Qwen2.5 0.5B Instruct",
+      "description": "Qwen2.5 0.5B instruction model for Chinese and English chat, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+      "revision": "9217f5db79a29953eb74d5343926648285ec7e67",
+      "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "sizeBytes": 491400032,
+      "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/9217f5db79a29953eb74d5343926648285ec7e67"
+    },
+    {
+      "id": "qwen2.5-1.5b-instruct-gguf",
+      "name": "Qwen2.5 1.5B Instruct",
+      "description": "Qwen2.5 1.5B instruction model for Chinese and English chat, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
+      "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+      "sizeBytes": 1117320736,
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9"
+    },
+    {
+      "id": "qwen2.5-3b-instruct-gguf",
+      "name": "Qwen2.5 3B Instruct",
+      "description": "Qwen2.5 3B instruction model for Chinese and English chat, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "qwen-research",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+      "revision": "7dabda4d13d513e3e842b20f0d435c732f172cbe",
+      "file": "qwen2.5-3b-instruct-q4_k_m.gguf",
+      "sizeBytes": 2104932768,
+      "sha256": "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/7dabda4d13d513e3e842b20f0d435c732f172cbe"
+    },
+    {
+      "id": "qwen2.5-coder-0.5b-instruct-gguf",
+      "name": "Qwen2.5-Coder 0.5B Instruct",
+      "description": "Qwen2.5-Coder 0.5B instruction model for coding and code completion, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+      "revision": "ebb2015119c907b064c512bf053e945850b5875f",
+      "file": "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+      "sizeBytes": 491400064,
+      "sha256": "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "coding"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/ebb2015119c907b064c512bf053e945850b5875f"
+    },
+    {
+      "id": "qwen2.5-coder-1.5b-instruct-gguf",
+      "name": "Qwen2.5-Coder 1.5B Instruct",
+      "description": "Qwen2.5-Coder 1.5B instruction model for coding and code completion, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      "revision": "f86cb2c1fa58255f8052cc32aeede1b7482d4361",
+      "file": "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      "sizeBytes": 1117320768,
+      "sha256": "cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "coding"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/f86cb2c1fa58255f8052cc32aeede1b7482d4361"
+    },
+    {
+      "id": "qwen2.5-coder-3b-instruct-gguf",
+      "name": "Qwen2.5-Coder 3B Instruct",
+      "description": "Qwen2.5-Coder 3B instruction model for coding and code completion, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "qwen-research",
+      "homepage": "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+      "repository": "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
+      "revision": "f74adce6aa16316c625447af059dbebe4983757c",
+      "file": "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+      "sizeBytes": 2104932800,
+      "sha256": "724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "coding"
+      ],
+      "downloadBase": "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/f74adce6aa16316c625447af059dbebe4983757c"
+    },
+    {
+      "id": "spark-x2.6-1.7b-gguf",
+      "name": "讯飞 Spark X2.6 1.7B",
+      "description": "iFlytek Spark X2.6 1.7B on-device chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/XHToken/Spark-X2.6-1.7B-GGUF",
+      "repository": "XHToken/Spark-X2.6-1.7B-GGUF",
+      "revision": "cdc3d8893fba4ce0687f1b49ce1e18b29cae96d0",
+      "file": "Spark-X2.6-1.7B-Q4_K_M.gguf",
+      "sizeBytes": 1768720512,
+      "sha256": "7abd9859c10924be3c583945456fa9b25d0569484876105a7b7376f7938fffb7",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "spark",
+        "iflytek",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/XHToken/Spark-X2.6-1.7B-GGUF/resolve/cdc3d8893fba4ce0687f1b49ce1e18b29cae96d0"
+    },
+    {
+      "id": "spark-x2.6-4b-gguf",
+      "name": "讯飞 Spark X2.6 4B",
+      "description": "iFlytek Spark X2.6 4B on-device chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/XHToken/Spark-X2.6-4B-GGUF",
+      "repository": "XHToken/Spark-X2.6-4B-GGUF",
+      "revision": "0e8aa39a34063946ce07bbaaff392093b11b6829",
+      "file": "Spark-X2.6-4B-Q4_K_M.gguf",
+      "sizeBytes": 3543441312,
+      "sha256": "91cb2811aebb47ac916aa619d27d4cdd7f4143106b7917accb8ead4cd7f5cbd9",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "spark",
+        "iflytek",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/XHToken/Spark-X2.6-4B-GGUF/resolve/0e8aa39a34063946ce07bbaaff392093b11b6829"
+    },
+    {
+      "id": "smollm2-135m-instruct-gguf",
+      "name": "SmolLM2 135M Instruct",
+      "description": "SmolLM2 135M compact English chat model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF",
+      "repository": "bartowski/SmolLM2-135M-Instruct-GGUF",
+      "revision": "09816acd5d99df7be770d85ea30822623dab342c",
+      "file": "SmolLM2-135M-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 105454432,
+      "sha256": "2e8040ceae7815abe0dcb3540b9995eaa1fa0d2ca9e797d0a635ae4433c68c2d",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "smollm",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF/resolve/09816acd5d99df7be770d85ea30822623dab342c"
+    },
+    {
+      "id": "smollm2-360m-instruct-gguf",
+      "name": "SmolLM2 360M Instruct",
+      "description": "SmolLM2 360M compact English chat model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF",
+      "repository": "bartowski/SmolLM2-360M-Instruct-GGUF",
+      "revision": "7be6f65f1db715fe5dc5a4634c0d459b4eed42ec",
+      "file": "SmolLM2-360M-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 270590880,
+      "sha256": "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "smollm",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/7be6f65f1db715fe5dc5a4634c0d459b4eed42ec"
+    },
+    {
+      "id": "smollm2-1.7b-instruct-gguf",
+      "name": "SmolLM2 1.7B Instruct",
+      "description": "SmolLM2 1.7B compact English chat model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF",
+      "repository": "bartowski/SmolLM2-1.7B-Instruct-GGUF",
+      "revision": "1f03464768bfcc0319fc50da8ff5fb20b6417ba2",
+      "file": "SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 1055609824,
+      "sha256": "77665ea4815999596525c636fbeb56ba8b080b46ae85efef4f0d986a139834d7",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "smollm",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/1f03464768bfcc0319fc50da8ff5fb20b6417ba2"
+    },
+    {
+      "id": "smollm3-3b-gguf",
+      "name": "SmolLM3 3B",
+      "description": "SmolLM3 3B multilingual chat and reasoning model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF",
+      "repository": "ggml-org/SmolLM3-3B-GGUF",
+      "revision": "4965cb60b150737b68a0408c36aeefb65078f894",
+      "file": "SmolLM3-Q4_K_M.gguf",
+      "sizeBytes": 1915305312,
+      "sha256": "8334b850b7bd46238c16b0c550df2138f0889bf433809008cc17a8b05761863e",
+      "languages": [
+        "en",
+        "fr",
+        "es",
+        "de",
+        "it",
+        "pt"
+      ],
+      "tags": [
+        "smollm",
+        "reasoning"
+      ],
+      "downloadBase": "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/4965cb60b150737b68a0408c36aeefb65078f894"
+    },
+    {
+      "id": "minicpm4-0.5b-gguf",
+      "name": "MiniCPM4 0.5B",
+      "description": "MiniCPM4 0.5B lightweight Chinese and English chat model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/mradermacher/MiniCPM4-0.5B-GGUF",
+      "repository": "mradermacher/MiniCPM4-0.5B-GGUF",
+      "revision": "232b2c20f1350b2dc667684f88c0737d7a070c2f",
+      "file": "MiniCPM4-0.5B.Q4_K_M.gguf",
+      "sizeBytes": 278689216,
+      "sha256": "c77c0e149683e2d29c5537128b7679fa7e3c6205c91021dc11f465b9424ac231",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "minicpm",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/mradermacher/MiniCPM4-0.5B-GGUF/resolve/232b2c20f1350b2dc667684f88c0737d7a070c2f"
+    },
+    {
+      "id": "llama-3.2-1b-instruct-gguf",
+      "name": "Llama 3.2 1B Instruct",
+      "description": "Llama 3.2 1B multilingual instruction model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "llama3.2",
+      "homepage": "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF",
+      "repository": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+      "revision": "067b946cf014b7c697f3654f621d577a3e3afd1c",
+      "file": "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 807694464,
+      "sha256": "6f85a640a97cf2bf5b8e764087b1e83da0fdb51d7c9fab7d0fece9385611df83",
+      "languages": [
+        "en",
+        "de",
+        "fr",
+        "it",
+        "pt",
+        "hi",
+        "es",
+        "th"
+      ],
+      "tags": [
+        "llama",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/067b946cf014b7c697f3654f621d577a3e3afd1c"
+    },
+    {
+      "id": "llama-3.2-3b-instruct-gguf",
+      "name": "Llama 3.2 3B Instruct",
+      "description": "Llama 3.2 3B multilingual instruction model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "llama3.2",
+      "homepage": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF",
+      "repository": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+      "revision": "5ab33fa94d1d04e903623ae72c95d1696f09f9e8",
+      "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 2019377696,
+      "sha256": "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff",
+      "languages": [
+        "en",
+        "de",
+        "fr",
+        "it",
+        "pt",
+        "hi",
+        "es",
+        "th"
+      ],
+      "tags": [
+        "llama",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/5ab33fa94d1d04e903623ae72c95d1696f09f9e8"
+    },
+    {
+      "id": "lfm2.5-1.2b-instruct-gguf",
+      "name": "LFM2.5 1.2B Instruct",
+      "description": "LiquidAI LFM2.5 1.2B compact multilingual instruction model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "lfm1.0",
+      "homepage": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+      "repository": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
+      "revision": "8ed288026e23958ad9dfa92d53ed773a8eee7125",
+      "file": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
+      "sizeBytes": 730895168,
+      "sha256": "b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5",
+      "languages": [
+        "en",
+        "ar",
+        "zh",
+        "fr",
+        "de",
+        "ja",
+        "ko",
+        "es"
+      ],
+      "tags": [
+        "lfm",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct-GGUF/resolve/8ed288026e23958ad9dfa92d53ed773a8eee7125"
+    },
+    {
+      "id": "gemma-3-1b-it-gguf",
+      "name": "Gemma 3 1B IT",
+      "description": "Gemma 3 1B instruction model, Q4_K_M; text-only local inference.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "gemma",
+      "homepage": "https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF",
+      "repository": "ggml-org/gemma-3-1b-it-GGUF",
+      "revision": "f9c28bcd85737ffc5aef028638d3341d49869c27",
+      "file": "gemma-3-1b-it-Q4_K_M.gguf",
+      "sizeBytes": 806058240,
+      "sha256": "8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135",
+      "languages": [
+        "en"
+      ],
+      "tags": [
+        "gemma",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/ggml-org/gemma-3-1b-it-GGUF/resolve/f9c28bcd85737ffc5aef028638d3341d49869c27"
+    },
+    {
+      "id": "phi-4-mini-instruct-gguf",
+      "name": "Phi 4 Mini 3.8B Instruct",
+      "description": "Microsoft Phi 4 Mini 3.8B multilingual instruction model, Q4_K_M.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "mit",
+      "homepage": "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF",
+      "repository": "unsloth/Phi-4-mini-instruct-GGUF",
+      "revision": "78eb92a46fc37e6b524df991ed9aca9bc6aa7b80",
+      "file": "Phi-4-mini-instruct-Q4_K_M.gguf",
+      "sizeBytes": 2491874272,
+      "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "phi",
+        "instruct"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Phi-4-mini-instruct-GGUF/resolve/78eb92a46fc37e6b524df991ed9aca9bc6aa7b80"
+    },
+    {
+      "id": "qwen3.8-27b-gguf",
+      "name": "Qwen3.8 27B",
+      "description": "Qwen3.8 27B reasoning model, UD-Q4_K_M; text-only. Downloads 16.46 GB of weights and needs additional runtime memory; intended for high-memory devices.",
+      "kind": "chat",
+      "engine": "llama-cpp",
+      "license": "apache-2.0",
+      "homepage": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF",
+      "repository": "unsloth/Qwen3.8-27B-GGUF",
+      "revision": "4ca720788d1e01f1bff70c033e0d0028fd02e502",
+      "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "sizeBytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "tags": [
+        "qwen",
+        "reasoning",
+        "large"
+      ],
+      "downloadBase": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/4ca720788d1e01f1bff70c033e0d0028fd02e502"
+    }
+  ]
+}

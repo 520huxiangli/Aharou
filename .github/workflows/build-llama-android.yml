@@ -1,0 +1,54 @@
+name: Build llama.cpp Android
+
+# llama.cpp 的 .so 必须在 x86_64 runner 上编：容器里的 NDK 只带 linux-x86_64 工具链，
+# 在 aarch64 跑不起来。编好的 .so 由 scripts/fetch-llama-so.sh 取回放进 jniLibs。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/src/main/cpp/**'
+      - '.github/workflows/build-llama-android.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.0.12077973" > /dev/null
+          ls "$ANDROID_HOME/ndk/27.0.12077973" | head
+
+      - name: Fetch llama.cpp b11829
+        run: |
+          curl -fsSL -o /tmp/llama.zip https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b11829
+          unzip -q /tmp/llama.zip -d /tmp
+          mv /tmp/llama.cpp-b11829 app/src/main/cpp/llama.cpp
+
+      - name: Build ${{ matrix.abi }}
+        run: |
+          cmake -S app/src/main/cpp -B "build/${{ matrix.abi }}" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.0.12077973/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=${{ matrix.abi }} \
+            -DANDROID_PLATFORM=android-26
+          cmake --build "build/${{ matrix.abi }}" --target llama_jni -j 4
+
+      - name: Strip and stage
+        run: |
+          mkdir -p "out/${{ matrix.abi }}"
+          cp "build/${{ matrix.abi }}/libllama_jni.so" "out/${{ matrix.abi }}/"
+          "$ANDROID_HOME/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+            --strip-unneeded "out/${{ matrix.abi }}/libllama_jni.so"
+          ls -l "out/${{ matrix.abi }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llama-jni-${{ matrix.abi }}
+          path: out/${{ matrix.abi }}/libllama_jni.so
+          if-no-files-found: error
