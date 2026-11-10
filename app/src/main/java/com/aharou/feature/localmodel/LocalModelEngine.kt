@@ -26,6 +26,10 @@ internal class LocalModelEngine @Inject constructor(
     private var loadedId: String? = null
     private var handle: Long = 0L
 
+    init {
+        instance = this
+    }
+
     /** 原生库在不在。缺库时界面提示「本地模型暂不可用」，不要当成加载失败。 */
     val available: Boolean get() = LlamaJni.available
 
@@ -90,6 +94,12 @@ internal class LocalModelEngine @Inject constructor(
         Runtime.getRuntime().availableProcessors().let { if (it > 2) it - 1 else it }.coerceIn(1, 6)
 
     private companion object {
+        @Volatile
+        var instance: LocalModelEngine? = null
+
+        /** 给 [LocalProvider] 用：provider 由工作流在任意处构造，拿不到构造注入。 */
+        val current: LocalModelEngine? get() = instance
+
         const val TAG = "LocalModelEngine"
     }
 }

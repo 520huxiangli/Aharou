@@ -42,7 +42,7 @@ class OneShotProviderFactory @Inject constructor(
             ProviderType.ANTHROPIC -> AnthropicAdapter(anthropicApi).also {
                 it.cacheBreakpointsEnabled = config.anthropicCacheBreakpoints
             }
-            ProviderType.GEMINI -> GeminiAdapter(geminiApi)
+            ProviderType.GEMINI -> GeminiAdapter(geminiApi); ProviderType.LOCAL -> com.aharou.feature.localmodel.LocalProvider()
             else -> OpenAIAdapter(openAIApi).also { it.chatCacheKeyEnabled = config.openaiChatCacheKey }
         }
         provider.apiKey = providerKeyRotator.activeKey(config, sessionId) ?: return null

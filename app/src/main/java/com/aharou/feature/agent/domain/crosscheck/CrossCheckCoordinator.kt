@@ -116,7 +116,7 @@ class CrossCheckCoordinator @Inject constructor(
             ProviderType.ANTHROPIC -> AnthropicAdapter(anthropicApi).also {
                 it.cacheBreakpointsEnabled = target.anthropicCacheBreakpoints
             }
-            ProviderType.GEMINI -> GeminiAdapter(geminiApi)
+            ProviderType.GEMINI -> GeminiAdapter(geminiApi); ProviderType.LOCAL -> com.aharou.feature.localmodel.LocalProvider()
             else -> OpenAIAdapter(openAIApi).also { it.chatCacheKeyEnabled = target.openaiChatCacheKey }
         }
         // 免鉴权的本地网关没有 Key，此时 activeKey 为 null，退回空串照发（与主链路一致）。

@@ -1241,7 +1241,7 @@ private fun ProviderSwitchRow(
 internal fun providerTypeLabel(type: ProviderType): String = when (type) {
     ProviderType.OPENAI -> "OpenAI"
     ProviderType.ANTHROPIC -> "Anthropic"
-    ProviderType.GEMINI -> "Gemini"
+    ProviderType.GEMINI -> "Gemini"; ProviderType.LOCAL -> "Local"
 }
 
 @Composable

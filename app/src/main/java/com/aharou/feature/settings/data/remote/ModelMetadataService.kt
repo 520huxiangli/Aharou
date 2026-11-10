@@ -395,7 +395,7 @@ class ModelMetadataService @Inject constructor(
                 "togetherai", "alibaba", "moonshot", "github-copilot"
             )
             ProviderType.ANTHROPIC -> listOf("anthropic", "google-vertex-anthropic")
-            ProviderType.GEMINI -> listOf("google", "google-vertex")
+            ProviderType.GEMINI -> listOf("google", "google-vertex"); ProviderType.LOCAL -> emptyList()
         }
 
         /** 在 [catalog]（键大小写已由调用方对齐）里按候选顺序查找：先偏好 provider，再全目录同名键。 */
