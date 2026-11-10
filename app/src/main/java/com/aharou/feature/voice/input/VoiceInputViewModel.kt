@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.voice.data.RecordStartResult
+import com.aharou.feature.voice.data.CloudSttClient
 import com.aharou.feature.voice.data.StreamingAsrEngine
 import com.aharou.feature.voice.data.VoiceRecorder
 import com.aharou.feature.voice.domain.VoiceModelManager
@@ -47,6 +48,7 @@ internal sealed interface VoiceInputState {
 internal class VoiceInputViewModel @Inject constructor(
     private val recorder: VoiceRecorder,
     private val asrEngine: StreamingAsrEngine,
+    private val cloudStt: CloudSttClient,
     private val modelManager: VoiceModelManager,
 ) : ViewModel() {
 
@@ -134,9 +136,15 @@ internal class VoiceInputViewModel @Inject constructor(
         closing = true
         generation++
         _state.value = VoiceInputState.Finishing
-        recorder.stop()
-        val text = synchronized(this) { session?.finish().orEmpty() }
+        val samples = recorder.stop()
+        val localText = synchronized(this) { session?.finish().orEmpty() }
         releaseSession()
+        // 配了云端识别就用整段音频再认一次：按住说话等一两秒无所谓，准头更重要。
+        val text = if (localText.isNotBlank() && samples.isNotEmpty() && cloudStt.configured()) {
+            cloudStt.transcribe(samples) ?: localText
+        } else {
+            localText
+        }
         _draft.value = prefix
         _state.value = VoiceInputState.Idle
         // 还在准备阶段就松手，说明按得太短，不提交也不提示：这时候说「没听清」只会让人以为麦克风坏了。

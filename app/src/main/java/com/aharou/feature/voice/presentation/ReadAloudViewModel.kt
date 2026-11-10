@@ -7,11 +7,9 @@ import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
-import com.aharou.feature.voice.call.SpeechQueue
 import com.aharou.feature.voice.data.CloudSpeechClient
-import com.aharou.feature.voice.data.SystemTtsPlayer
 import com.aharou.feature.voice.data.TtsCache
-import com.aharou.feature.voice.data.TtsPlayer
+import com.aharou.feature.voice.playback.SpeechPlayback
 import com.aharou.feature.voice.tts.VoiceProfileStore
 import com.aharou.feature.voice.tts.ZipVoiceTtsEngine
 import com.aharou.feature.voice.tts.localVoiceIdOrNull
@@ -48,9 +46,7 @@ internal class ReadAloudViewModel @Inject constructor(
     private val ttsSettings: VoiceTtsSettingsRepository,
     private val providerRepository: AIProviderRepository,
     private val cloudSpeech: CloudSpeechClient,
-    private val player: TtsPlayer,
-    private val systemTts: SystemTtsPlayer,
-    private val speechQueue: SpeechQueue,
+    private val playbackHub: SpeechPlayback,
     private val ttsCache: TtsCache,
     private val profileStore: VoiceProfileStore,
     private val localTts: ZipVoiceTtsEngine,
@@ -64,6 +60,9 @@ internal class ReadAloudViewModel @Inject constructor(
     val currentText: StateFlow<String?> = _currentText.asStateFlow()
 
     private var job: Job? = null
+
+    /** 朗读独占的播报会话：与通话分开，点朗读不会掐断正在进行的通话。 */
+    private val playback = playbackHub.newSession()
 
     /** 上一次喂进来的流式累积文本：用来判断新一轮（文本变短了）与收尾。 */
     private var lastStreamText = ""
@@ -93,13 +92,13 @@ internal class ReadAloudViewModel @Inject constructor(
         // 文本比上次短 = 新的一轮开始了，先打断上一轮的尾巴
         val interrupt = accumulated.length < lastStreamText.length
         lastStreamText = accumulated
-        speechQueue.feed(accumulated, interrupt = interrupt)
+        playback.feed(accumulated, interrupt = interrupt)
     }
 
     /** 一轮结束（流式文本清空）：把还没成句的尾巴也读掉。 */
     fun finishStream() {
         if (!autoReadEnabled.value) return
-        if (lastStreamText.isNotBlank()) speechQueue.feed(lastStreamText, finish = true)
+        if (lastStreamText.isNotBlank()) playback.feed(lastStreamText, finish = true)
         lastStreamText = ""
     }
 
@@ -123,7 +122,7 @@ internal class ReadAloudViewModel @Inject constructor(
         }
         job?.cancel()
         job = viewModelScope.launch {
-            player.stop()
+            playback.stop()
             _currentText.value = text
             _state.value = ReadAloudState.Synthesizing
             try {
@@ -144,7 +143,7 @@ internal class ReadAloudViewModel @Inject constructor(
                             val cloudAudio = synthesizeInCloud(cloudUri, text)
                             if (cloudAudio != null) {
                                 _state.value = ReadAloudState.Playing
-                                player.play(cloudAudio) {
+                                playback.playOnce(cloudAudio) {
                                     viewModelScope.launch {
                                         _currentText.value = null
                                         _state.value = ReadAloudState.Idle
@@ -165,7 +164,7 @@ internal class ReadAloudViewModel @Inject constructor(
                             .getOrNull()?.also { ttsCache.put(localKey, it) }
                         if (audio != null) {
                             _state.value = ReadAloudState.Playing
-                            player.play(audio) {
+                            playback.playOnce(audio) {
                                 viewModelScope.launch {
                                     _currentText.value = null
                                     _state.value = ReadAloudState.Idle
@@ -185,7 +184,7 @@ internal class ReadAloudViewModel @Inject constructor(
                 if (provider == null || model.isBlank() || provider.firstUsableApiKey.isBlank()) {
                     // 没配云端合成：落回手机自带的引擎；连它也没有才算真没法念
                     _state.value = ReadAloudState.Playing
-                    val spoken = systemTts.speakAndWait(text)
+                    val spoken = playback.speakSystem(text)
                     _currentText.value = null
                     _state.value = if (spoken) {
                         ReadAloudState.Idle
@@ -209,7 +208,7 @@ internal class ReadAloudViewModel @Inject constructor(
                     ).also { ttsCache.put(cacheKey, it) }
                 }
                 _state.value = ReadAloudState.Playing
-                player.play(audio) {
+                playback.playOnce(audio) {
                     // 自然播完：回到空闲。在 IO 线程回调，切回主线程改状态
                     viewModelScope.launch {
                         _currentText.value = null
@@ -249,8 +248,7 @@ internal class ReadAloudViewModel @Inject constructor(
     fun stop() {
         job?.cancel()
         job = null
-        player.stop()
-        systemTts.stop()
+        playback.stop()
         _currentText.value = null
         _state.value = ReadAloudState.Idle
     }
@@ -260,8 +258,7 @@ internal class ReadAloudViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        player.stop()
-        systemTts.stop()
+        playback.close()
         super.onCleared()
     }
 

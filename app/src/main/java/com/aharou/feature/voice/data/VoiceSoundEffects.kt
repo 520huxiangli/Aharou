@@ -27,6 +27,9 @@ internal class VoiceSoundEffects @Inject constructor() {
 
         /** 挂断。 */
         HANGUP(ToneGenerator.TONE_PROP_BEEP2, 180),
+
+        /** 拨出后等接起。 */
+        RING(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 700),
     }
 
     @Volatile

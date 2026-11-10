@@ -3109,6 +3109,14 @@
     <string name="voice_call_state_speaking">Speaking…</string>
     <string name="voice_call_notification_title">Voice call in progress</string>
     <string name="voice_call_notification_text">Tap to return to Aharou</string>
+    <string name="voice_call_screen_default_name">Xiaoran</string>
+    <string name="voice_call_screen_hangup">Hang up</string>
+    <string name="voice_call_screen_mute">Mute</string>
+    <string name="voice_call_screen_muted">Muted</string>
+    <string name="voice_call_screen_tap_interrupt">Tap anywhere to interrupt</string>
+    <string name="voice_call_screen_error_no_workspace">No workspace yet — open the terminal once</string>
+    <string name="voice_call_screen_error_no_session">Couldn\'t start the session, try again later</string>
+    <string name="voice_call_still_there">Hey, still there?</string>
     <string name="voice_wake_ack">I\'m here. What do you need?</string>
     <string name="voice_wake_title">Voice wake word</string>
     <string name="voice_wake_summary">Say "Xiaoran Xiaoran" to start talking</string>

@@ -188,6 +188,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var executionModeHolder: com.aharou.feature.settings.data.repository.ExecutionModeHolder
     @Inject lateinit var imServiceRestore: com.aharou.feature.im.ImServiceRestore
+    @Inject internal lateinit var voiceCallSession: com.aharou.feature.voice.call.VoiceCallSession
 
     /** 三端（UI/AI Bash/交互终端）git 缺凭据统一弹窗桥：在 AIEditorApp 启动后监听 helper 的文件 IPC 请求。 */
     @Inject
@@ -385,6 +386,8 @@ class MainActivity : ComponentActivity() {
                             onboardingRepository = onboardingRepository,
                             pendingExternalIntent = pendingExternalIntent
                         )
+                        // 免手通话的全屏页：盖在所有页面之上，只在真有一轮对话时出现
+                        com.aharou.feature.voice.presentation.VoiceCallScreen(voiceCallSession)
                         // 全局凭据弹窗：覆盖所有页面，命令行 git 缺凭据在任意页面都能弹。
                         com.aharou.feature.credentials.presentation.component.GlobalCredentialDialogHost(
                             bridge = credentialRequestBridge

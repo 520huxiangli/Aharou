@@ -2,11 +2,13 @@ package com.aharou.feature.voice.call
 
 import android.content.pm.ApplicationInfo
 import android.content.Context
+import android.os.SystemClock
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.runner.AgentTurnRequest
 import com.aharou.feature.agent.domain.runner.AgentTurnRunner
 import com.aharou.feature.agent.domain.workflow.AgentEvent
+import com.aharou.feature.voice.data.CloudSttClient
 import com.aharou.feature.voice.data.OfflineAsrEngine
 import com.aharou.feature.voice.data.RecordStartResult
 import com.aharou.feature.voice.data.StreamingAsrEngine
@@ -17,6 +19,7 @@ import com.aharou.feature.voice.data.WakeWordEngine
 import com.aharou.feature.voice.domain.VoiceModelManager
 import com.aharou.feature.voice.domain.VoiceModels
 import com.aharou.feature.voice.domain.VoiceWakeWord
+import com.aharou.feature.voice.playback.SpeechPlayback
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,16 +45,18 @@ import kotlinx.coroutines.launch
  *
  * 三种硬约束：
  *  - **出声期间不收音**：否则麦克风会把自己的播报录进去，形成自问自答。
- *  - **播报走 [SpeechQueue] 的分段队列**：一轮回复可能很长，边合成边念、能被打断。
+ *  - **播报走自己那一路 [SpeechPlayback] 会话**：一轮回复可能很长，边合成边念、能被打断；
+ *    会话是通话独占的，朗读那边怎么播都掐不断这里的队列。
  *  - **唤醒词监听与识别不共用引擎**：唤醒跑 3.3M 的小模型（[WakeWordEngine]），
  *    唤醒后才换 160M 的识别模型——常驻监听才不至于把电吃光。
  */
 @Singleton
 internal class VoiceCallSession @Inject constructor(
     private val agentTurnRunner: AgentTurnRunner,
-    private val speechQueue: SpeechQueue,
+    private val playbackHub: SpeechPlayback,
     private val asrEngine: StreamingAsrEngine,
     private val offlineAsrEngine: OfflineAsrEngine,
+    private val cloudStt: CloudSttClient,
     private val wakeEngine: WakeWordEngine,
     private val modelManager: VoiceModelManager,
     private val recorder: VoiceRecorder,
@@ -64,6 +69,9 @@ internal class VoiceCallSession @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    /** 通话独占的播报会话：自己的队列与打断代号，与朗读互不干扰。 */
+    private val playback = playbackHub.newSession()
+
     private val _state = MutableStateFlow(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -73,6 +81,11 @@ internal class VoiceCallSession @Inject constructor(
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    private val _muted = MutableStateFlow(false)
+
+    /** 是否已静音：停掉录音，话筒指示器也跟着灭，不是只把声音丢掉。 */
+    val muted: StateFlow<Boolean> = _muted.asStateFlow()
+
     /** 唤醒词命中时的回调，供桌宠给视觉/触觉反馈。 */
     @Volatile
     var onWakeDetected: (() -> Unit)? = null
@@ -81,7 +94,7 @@ internal class VoiceCallSession @Inject constructor(
      * 当前该摆在胶囊上的台词：优先它正在说的，其次你正在说的（边说边出的识别文本）。
      * 通话是一来一回，同一时刻只需要显示正在开口的那一方。
      */
-    val displayText: StateFlow<String> = combine(speechQueue.currentText, _liveText) { speaking, live ->
+    val displayText: StateFlow<String> = combine(playback.currentText, _liveText) { speaking, live ->
         speaking.ifBlank { live }
     }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), "")
 
@@ -100,6 +113,9 @@ internal class VoiceCallSession @Inject constructor(
     private var ongoingTurn: Job? = null
     private var ackJob: Job? = null
     private var listenTimeoutJob: Job? = null
+
+    /** 没有人说话时的计时：先问一句，再挂断。 */
+    private var silenceJob: Job? = null
     private var sessionId: String = ""
 
     /** 唤醒监听模式：一回合结束后回到听唤醒词，而不是继续收音。 */
@@ -187,6 +203,9 @@ internal class VoiceCallSession @Inject constructor(
                 }
                 beginWakeListening()
             } else {
+                // 先响一下再接：秒接像那头根本没人
+                soundEffects.play(VoiceSoundEffects.Effect.RING)
+                delay(MIN_RING_MS)
                 beginListening()
             }
         }
@@ -200,6 +219,46 @@ internal class VoiceCallSession @Inject constructor(
         _error.value = null
         // 只有真在通话中挂断才响，会话自行回到空闲（超时/失败）时不响
         if (wasActive) soundEffects.play(VoiceSoundEffects.Effect.HANGUP)
+    }
+
+    /**
+     * 静音：真把录音停掉，不然系统话筒指示器还亮着，等于骗人。
+     * 取消静音时只有正在聆听才重新开；在说的时候等这一轮结束会自然恢复。
+     */
+    fun setMuted(on: Boolean) {
+        if (_muted.value == on) return
+        _muted.value = on
+        if (on) {
+            listenTimeoutJob?.cancel()
+            listenTimeoutJob = null
+            stopRecording()
+            releaseAsr()
+            synchronized(audioLock) { _liveText.value = "" }
+        } else if (_state.value == State.Listening || _state.value == State.WakeListening) {
+            scope.launch {
+                if (_state.value == State.WakeListening) beginWakeListening() else beginListening()
+            }
+        }
+    }
+
+    /**
+     * 界面上的挂断。唤醒常驻时只结束这一轮、回到待命，服务继续听唤醒词；
+     * 普通通话才真正收摊（服务会跟着停）。
+     */
+    fun hangUp() {
+        if (wakeMode && _state.value != State.Idle) {
+            synchronized(audioLock) {
+                ongoingTurn?.cancel()
+                ongoingTurn = null
+                _liveText.value = ""
+            }
+            playback.stop()
+            _error.value = null
+            soundEffects.play(VoiceSoundEffects.Effect.HANGUP)
+            scope.launch { beginWakeListening() }
+            return
+        }
+        stop()
     }
 
     /** 统一的 state 赋值入口：只在真正变化时打一条 INFO，附触发场景，便于对照 UI 状态与会话真实状态。 */
@@ -219,6 +278,8 @@ internal class VoiceCallSession @Inject constructor(
             ackJob = null
             listenTimeoutJob?.cancel()
             listenTimeoutJob = null
+            silenceJob?.cancel()
+            silenceJob = null
             stopRecording()
             asrSession?.release()
             asrSession = null
@@ -229,14 +290,15 @@ internal class VoiceCallSession @Inject constructor(
             _liveText.value = ""
             setState(State.Idle, "teardown 收尾")
         }
-        if (stopSpeech) speechQueue.stop()
+        if (stopSpeech) playback.stop()
+        _muted.value = false
         audioSession.exitCommunicationMode()
     }
 
     /** 用户主动打断当前播报/思考，直接回到收音。 */
     fun interrupt() {
         if (_state.value == State.Speaking || _state.value == State.Thinking) {
-            speechQueue.stop()
+            playback.stop()
             ongoingTurn?.cancel()
             ongoingTurn = null
             scope.launch { beginListening() }
@@ -362,6 +424,7 @@ internal class VoiceCallSession @Inject constructor(
             }
         }
         scheduleListenTimeout()
+        scheduleSilenceProbe()
     }
 
     /** 唤醒词命中：只换识别引擎，录音不中断。 */
@@ -402,6 +465,11 @@ internal class VoiceCallSession @Inject constructor(
                         listenTimeoutJob?.cancel()
                         listenTimeoutJob = null
                     }
+                    // 有人开口了，沉默计时作废，下一轮从 beginListening 重新算
+                    if (live.isNotBlank() && silenceJob?.isActive == true) {
+                        silenceJob?.cancel()
+                        silenceJob = null
+                    }
                     // 停顿满阈值（1.4s 静音）即认为一句话说完
                     if (session.isEndpoint() && live.isNotBlank()) {
                         val command = stripWakeWord(live)
@@ -431,10 +499,19 @@ internal class VoiceCallSession @Inject constructor(
         _liveText.value = ""
         stopRecording()
         releaseAsr()
+        // 本轮延迟基准：提交 → 首字 → 说完，只记耗时与阶段名
+        val turnStart = SystemClock.elapsedRealtime()
         ongoingTurn = scope.launch {
+            // 设置里填了云端识别模型就先用它：整段音频送服务端，比端上小模型准很多；
+            // 没填、没 Key、请求失败都返回 null，照旧往下走离线与流式。
+            val cloudText = if (audio.isNotEmpty()) {
+                cloudStt.transcribe(audio)?.let { stripWakeWord(it) }?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
             // 停顿后用离线模型对整句重新识别。流式为了实时只能看左边那点上下文，
             // 准头差一截；这里的音频是完整的，能拿到更准的中文。失败就退回流式结果。
-            val offlineText = if (audio.isNotEmpty()) {
+            val offlineText = if (cloudText == null && audio.isNotEmpty()) {
                 // 兜底：预热还没跑完（或失败）时，这里确保一次。
                 // 模型不落盘时就 recognize 永远返回 null，表现是「识别毫无变化」。
                 runCatching { modelManager.ensureModel(VoiceModels.ASR_ZH_OFFLINE, allowDownload = false) }
@@ -445,8 +522,8 @@ internal class VoiceCallSession @Inject constructor(
             } else {
                 null
             }
-            val text = offlineText ?: streamedText
-            FileLogger.i(TAG, "提交文本：离线=${offlineText != null} 长度=${text.length} 内容=$text")
+            val text = cloudText ?: offlineText ?: streamedText
+            FileLogger.i(TAG, "提交文本：云端=${cloudText != null} 离线=${offlineText != null} 长度=${text.length} 内容=$text")
             dumpUtteranceForDebug()
 
             var first = true
@@ -455,7 +532,10 @@ internal class VoiceCallSession @Inject constructor(
                     AgentTurnRequest(sessionId = sessionId, text = text)
                 ).collect { event ->
                     if (event is AgentEvent.AssistantText && event.content.isNotBlank()) {
-                        speechQueue.enqueue(event.content, interrupt = first)
+                        if (first) {
+                            FileLogger.i(TAG, "timing stage=first_text ms=${SystemClock.elapsedRealtime() - turnStart}")
+                        }
+                        playback.enqueue(event.content, interrupt = first)
                         first = false
                         setState(State.Speaking, "收到首个回复片段")
                     }
@@ -463,8 +543,9 @@ internal class VoiceCallSession @Inject constructor(
             }.onFailure { FileLogger.e(TAG, "通话一轮失败", it) }
 
             // 本轮回复已收完：最后那句没带句末标点的补投出去，否则它一个字也不会被念。
-            speechQueue.finishUtterance()
+            playback.finishUtterance()
             awaitSpeechDone()
+            FileLogger.i(TAG, "timing stage=turn_done ms=${SystemClock.elapsedRealtime() - turnStart}")
             if (_state.value == State.Idle) return@launch
             if (wakeMode) beginWakeListening() else beginListening()
         }
@@ -581,8 +662,8 @@ internal class VoiceCallSession @Inject constructor(
 
     /** 等队列播完：先等段数归零，再等最后一段真的出完声。 */
     private suspend fun awaitSpeechDone() {
-        speechQueue.pendingCount.first { it == 0 }
-        speechQueue.isSpeaking.first { !it }
+        playback.pendingCount.first { it == 0 }
+        playback.isSpeaking.first { !it }
     }
 
     /**
@@ -648,6 +729,33 @@ internal class VoiceCallSession @Inject constructor(
         }
     }
 
+    /**
+     * 好久没人说话就让 TA 问一句，再久一点就挂断。
+     *
+     * 唤醒常驻不参与：那边有 10 秒回待命的超时，本来就不会干耗着。
+     */
+    private fun scheduleSilenceProbe() {
+        silenceJob?.cancel()
+        if (wakeMode) return
+        silenceJob = scope.launch {
+            delay(SILENCE_ASK_MS)
+            if (_state.value != State.Listening || _liveText.value.isNotBlank() || _muted.value) return@launch
+            setState(State.Speaking, "沉默探测：问一句")
+            stopRecording()
+            releaseAsr()
+            playback.enqueue(context.getString(R.string.voice_call_still_there), interrupt = true)
+            awaitSpeechDone()
+            if (_state.value == State.Idle) return@launch
+            beginListening()
+            // 问过还不说话，就当真没人了
+            delay(SILENCE_HANG_UP_MS)
+            if (_state.value == State.Listening && _liveText.value.isBlank() && !_muted.value) {
+                FileLogger.i(TAG, "沉默时间过长，挂断")
+                stop()
+            }
+        }
+    }
+
     /** 延迟播唤醒应答语：这段时间足够「连说」出字，出字就不播了。 */
     private fun scheduleWakeAck() {
         ackJob?.cancel()
@@ -663,7 +771,7 @@ internal class VoiceCallSession @Inject constructor(
         setState(State.Speaking, "播唤醒应答语")
         stopRecording()
         releaseAsr()
-        speechQueue.enqueue(context.getString(R.string.voice_wake_ack), interrupt = true)
+        playback.enqueue(context.getString(R.string.voice_wake_ack), interrupt = true)
         scope.launch {
             awaitSpeechDone()
             if (_state.value == State.Idle) return@launch
@@ -693,10 +801,10 @@ internal class VoiceCallSession @Inject constructor(
         FileLogger.w(TAG, "通话失败：$code")
         FileLogger.i(TAG, "fail() 入口：当前状态=${_state.value} 原因=$code")
         // 语音场景下人多半没在看屏幕，失败原因必须说出来，不能只画在界面上；
-        // 所以这里不调 speechQueue.stop()，让刚排进去的那句提示能念完。
+        // 所以这里不调 playback.stop()，让刚排进去的那句提示能念完。
         teardown(stopSpeech = false)
         _error.value = code
-        speechQueue.enqueue(speechForError(code), interrupt = true)
+        playback.enqueue(speechForError(code), interrupt = true)
     }
 
     /** 把内部错误码翻成人话，并说清要开哪个权限、去哪儿开。 */
@@ -715,8 +823,17 @@ internal class VoiceCallSession @Inject constructor(
         const val PRE_ROLL_MS = 1200
         const val PRE_ROLL_SAMPLES = 16000 * PRE_ROLL_MS / 1000
 
+        /** 拨出后至少响这么久再开始听，不然像没有人接。 */
+        const val MIN_RING_MS = 1_500L
+
         /** 聆听超时：开了口但 10 秒没听到人说话，自动结束这次聆听。 */
         const val LISTEN_TIMEOUT_MS = 10_000L
+
+        /** 一声不响这么久，让 TA 问一句还在不在。 */
+        const val SILENCE_ASK_MS = 120_000L
+
+        /** 问过之后再等这么久还没人说话，挂断。 */
+        const val SILENCE_HANG_UP_MS = 60_000L
 
         /** 唤醒词的转写容错：小/晓 + 染/冉/然/燃，最多两组。 */
         val WAKE_PREFIX = Regex("^[小晓][染冉然燃][小晓]?[染冉然燃]?")
