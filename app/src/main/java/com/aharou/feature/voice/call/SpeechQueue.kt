@@ -87,7 +87,7 @@ internal class SpeechQueue @Inject constructor(
     fun enqueue(text: String, interrupt: Boolean = false) {
         if (interrupt) stop()
         val current = generation.get()
-        val (segments, rest) = splitInto(text)
+        val (segments, rest) = splitWithFirstShort(text)
         val carry = pendingTail
         pendingTail = rest.trim()
         if (carry.isNotEmpty()) pushSegment(carry, current)
@@ -122,7 +122,7 @@ internal class SpeechQueue @Inject constructor(
         val rest = accumulated.substring(spokenLength)
         var consumed = 0
         while (true) {
-            val cut = findCut(rest.substring(consumed))
+            val cut = findCut(rest.substring(consumed), segmentLimitForNext())
             if (cut <= 0) break
             val sentence = rest.substring(consumed, consumed + cut).trim()
             if (sentence.isNotEmpty()) pushSegment(sentence)
@@ -140,6 +140,16 @@ internal class SpeechQueue @Inject constructor(
         _pending.value += 1
         queue.trySend(SpeechSegment(sentence, gen))
     }
+
+    /**
+     * 还没轮到自己开口时段落切短一点，首字能更早送合成；已经在排或正在念时用常规长度。
+     */
+    private fun segmentLimitForNext(): Int =
+        if (_pending.value == 0 && !_isSpeaking.value) FIRST_SEGMENT_LENGTH else MAX_SEGMENT_LENGTH
+
+    /** 首段按短上限切，后续段用常规上限（具体长度由 [segmentLimitForNext] 逐段决定）。 */
+    private fun splitWithFirstShort(text: String): Pair<List<String>, String> =
+        splitInto(text, segmentLimitForNext())
 
     /** 打断并清空：停掉当前播放，丢弃队列里排着的段。 */
     fun stop() {
@@ -174,7 +184,11 @@ internal class SpeechQueue @Inject constructor(
                     _currentText.value = ""
                 }
             } finally {
-                _pending.value = (_pending.value - 1).coerceAtLeast(0)
+                // 打断会把计数清零，旧段的收尾不能再减：新一轮刚排进去的段会被少算，
+                // 通话编排等 pendingCount 归零时会提前判定「说完了」。
+                if (segment.generation == generation.get()) {
+                    _pending.value = (_pending.value - 1).coerceAtLeast(0)
+                }
             }
         }
     }
@@ -264,6 +278,12 @@ internal class SpeechQueue @Inject constructor(
         /** 云端 TTS 单次长度上限普遍在 200 字左右，这里取四分之一留足余量。 */
         const val MAX_SEGMENT_LENGTH = 50
 
+        /**
+         * 每轮首段的长度上限。首段决定什么时候能开口，切短就早出声；
+         * 后续段仍按 [MAX_SEGMENT_LENGTH]，免得整段回复碎成一句一顿。
+         */
+        const val FIRST_SEGMENT_LENGTH = 18
+
         /** 本地合成的缓存标识：没有 provider/model 可填，用固定串与云端结果区分开。 */
         const val LOCAL_TTS_MODEL = "zipvoice-local"
         const val LOCAL_TTS_SOURCE = "local"
@@ -282,21 +302,26 @@ internal class SpeechQueue @Inject constructor(
         /**
          * 切出能立刻送合成的句子，同时把没切出去的尾巴带回去（末尾没标点、也没攒够长度）。
          */
-        fun splitInto(text: String): Pair<List<String>, String> {
+        fun splitInto(text: String): Pair<List<String>, String> =
+            splitInto(text, MAX_SEGMENT_LENGTH)
+
+        internal fun splitInto(text: String, firstLimit: Int): Pair<List<String>, String> {
             val out = mutableListOf<String>()
             var rest = text
+            var limit = firstLimit
             while (true) {
-                val cut = findCut(rest)
+                val cut = findCut(rest, limit)
                 if (cut <= 0) break
                 rest.substring(0, cut).trim().takeIf { it.isNotEmpty() }?.let { out += it }
                 rest = rest.substring(cut)
+                limit = MAX_SEGMENT_LENGTH
             }
             return out to rest
         }
 
         /** 返回下一个切点（不含）的下标；0 表示还切不了，得继续攒。 */
-        private fun findCut(text: String): Int {
-            val limit = minOf(text.length, MAX_SEGMENT_LENGTH)
+        private fun findCut(text: String, maxLength: Int = MAX_SEGMENT_LENGTH): Int {
+            val limit = minOf(text.length, maxLength)
             var i = 0
             while (i < limit) {
                 val c = text[i]
@@ -316,7 +341,7 @@ internal class SpeechQueue @Inject constructor(
                 i++
             }
             // 攒够上限还没有句末标点：退到软断点，再不行硬切——不切会被云端截断
-            if (text.length > MAX_SEGMENT_LENGTH) {
+            if (text.length > maxLength) {
                 for (j in limit - 1 downTo 1) {
                     if (text[j] in SOFT_BREAKS) return j + 1
                 }
