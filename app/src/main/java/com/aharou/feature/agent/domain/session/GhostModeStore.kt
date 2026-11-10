@@ -29,14 +29,14 @@ object GhostModeStore {
     /** 缓冲变更版本号：驱动 [bufferFlow] 重新发射，让界面及时看到刚产生的隐身消息。 */
     private val revision = MutableStateFlow(0L)
 
-    /** 会话是否处于隐身模式；内存未命中时回查数据库，查到隐身即缓存。 */
-    suspend fun isGhost(sessionDao: ChatSessionDao, sessionId: String): Boolean {
-        if (sessionId.isBlank()) return false
-        if (sessionId in ghostIds) return true
-        val flag = sessionDao.getById(sessionId)?.ghostMode == true
-        if (flag) ghostIds.add(sessionId)
-        return flag
-    }
+    /**
+     * 隐身入口已从聊天页移除，这里恒判非隐身。
+     *
+     * 旧会话行里可能还留着 ghostMode=1：若继续按它拦截，那些会话的消息会静默不落库，
+     * 而用户已经找不到关掉它的入口了。
+     */
+    @Suppress("UNUSED_PARAMETER")
+    suspend fun isGhost(sessionDao: ChatSessionDao, sessionId: String): Boolean = false
 
     /** 持久化隐身开关并同步缓存；关闭时立即丢弃该会话的内存消息（符合「关掉后不留痕」）。 */
     suspend fun setGhost(sessionDao: ChatSessionDao, sessionId: String, enabled: Boolean) {
