@@ -93,7 +93,7 @@ internal class LocalModelEngine @Inject constructor(
     private fun defaultThreads(): Int =
         Runtime.getRuntime().availableProcessors().let { if (it > 2) it - 1 else it }.coerceIn(1, 6)
 
-    private companion object {
+    internal companion object {
         @Volatile
         var instance: LocalModelEngine? = null
 

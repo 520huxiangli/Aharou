@@ -41,7 +41,7 @@ fun providerBrandKey(provider: AIProviderConfig?): String? {
     return when (provider.type) {
         com.aharou.feature.settings.domain.model.ProviderType.OPENAI -> "openai"
         com.aharou.feature.settings.domain.model.ProviderType.ANTHROPIC -> "anthropic"
-        com.aharou.feature.settings.domain.model.ProviderType.GEMINI -> "google"
+        com.aharou.feature.settings.domain.model.ProviderType.GEMINI -> "google"; com.aharou.feature.settings.domain.model.ProviderType.LOCAL -> null
     }
 }
 
