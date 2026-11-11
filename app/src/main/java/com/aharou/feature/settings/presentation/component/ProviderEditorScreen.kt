@@ -532,7 +532,7 @@ fun ProviderEditorScreen(
                         headers = customHeaders,
                         onOpenHeaders = { showHeadersSheet = true },
                         typeLabel = providerTypeLabel(type),
-                        onOpenType = { showTypeSheet = true }, local = type == ProviderType.LOCAL,
+                        onOpenType = { showTypeSheet = true },
                     )
 
                     // ── 选项 ──
@@ -1241,7 +1241,7 @@ private fun ProviderSwitchRow(
 internal fun providerTypeLabel(type: ProviderType): String = when (type) {
     ProviderType.OPENAI -> "OpenAI"
     ProviderType.ANTHROPIC -> "Anthropic"
-    ProviderType.GEMINI -> "Gemini"; ProviderType.LOCAL -> "Local"
+    ProviderType.GEMINI -> "Gemini"
 }
 
 @Composable

@@ -36,7 +36,6 @@ import compose.icons.feathericons.Briefcase
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
-import compose.icons.feathericons.DownloadCloud
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
@@ -179,12 +178,6 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.Cpu,
                 title = stringResource(SettingsSection.DefaultModels.titleRes),
                 onClick = { onOpen(SettingsSection.DefaultModels) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.DownloadCloud,
-                title = stringResource(SettingsSection.LocalModels.titleRes),
-                onClick = { onOpen(SettingsSection.LocalModels) }
             )
             SettingsDivider()
             SettingsRow(

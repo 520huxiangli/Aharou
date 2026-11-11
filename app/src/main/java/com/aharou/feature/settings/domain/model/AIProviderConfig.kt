@@ -150,10 +150,7 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
 )
 
 enum class ProviderType {
-    OPENAI, ANTHROPIC, GEMINI,
-
-    /** 本机跑的小模型：不走网络，由 llama.cpp 推理。 */
-    LOCAL
+    OPENAI, ANTHROPIC, GEMINI
 }
 
 /** 默认触发多 Key 自动切换的 HTTP 状态码：鉴权（401）、计费/额度（402）、权限（403）、限流（429）。 */

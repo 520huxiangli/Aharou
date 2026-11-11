@@ -468,7 +468,7 @@ class MobileOperator @Inject constructor(
         if (config.effectiveModel.isBlank()) return null
         val provider: AIProvider = when (config.type) {
             ProviderType.ANTHROPIC -> AnthropicAdapter(anthropicApi).also { it.cacheBreakpointsEnabled = config.anthropicCacheBreakpoints }
-            ProviderType.GEMINI -> GeminiAdapter(geminiApi); ProviderType.LOCAL -> com.aharou.feature.localmodel.LocalProvider()
+            ProviderType.GEMINI -> GeminiAdapter(geminiApi)
             else -> OpenAIAdapter(openAIApi).also { it.chatCacheKeyEnabled = config.openaiChatCacheKey }
         }
         provider.apiKey = providerKeyRotator.activeKey(config, sessionId) ?: return null

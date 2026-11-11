@@ -40,8 +40,6 @@ internal fun ProviderBasicGroup(
     onOpenHeaders: () -> Unit,
     typeLabel: String,
     onOpenType: () -> Unit,
-    /** 本地模型不走网络：地址与 Key 对它没意义，隐藏这两行。 */
-    local: Boolean = false,
 ) {
     SettingsGroupHeader(text = stringResource(R.string.provider_section_basic))
     SettingsGroup(
@@ -52,7 +50,7 @@ internal fun ProviderBasicGroup(
             value = name,
             onValueChange = onNameChange
         )
-        if (!multiKeyEnabled && !local) {
+        if (!multiKeyEnabled) {
             ProviderTextFieldRow(
                 label = stringResource(R.string.provider_api_key),
                 value = apiKey,
@@ -78,7 +76,7 @@ internal fun ProviderBasicGroup(
                 }
             )
         }
-        if (!local) ProviderTextFieldRow(
+        ProviderTextFieldRow(
             label = stringResource(R.string.provider_base_url),
             value = baseUrl,
             onValueChange = onBaseUrlChange
