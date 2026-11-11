@@ -35,3 +35,7 @@ endif()
 
 add_library(llama_jni SHARED llama_jni.cpp)
 target_link_libraries(llama_jni llama android log)
+
+# Android 15 起要求 .so 按 16KB 页对齐，否则 16KB 页的设备上装不了或起不来。
+# NDK r27 的默认仍是 4KB，必须显式告诉链接器。
+target_link_options(llama_jni PRIVATE "-Wl,-z,max-page-size=16384")
