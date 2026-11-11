@@ -181,6 +181,12 @@ internal fun SettingsAiGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
+                icon = FeatherIcons.DownloadCloud,
+                title = stringResource(SettingsSection.LocalModels.titleRes),
+                onClick = { onOpen(SettingsSection.LocalModels) }
+            )
+            SettingsDivider()
+            SettingsRow(
                 icon = FeatherIcons.Box,
                 title = stringResource(SettingsSection.Extensions.titleRes),
                 onClick = { onOpen(SettingsSection.Extensions) }
@@ -375,12 +381,6 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 icon = FeatherIcons.HardDrive,
                 title = stringResource(SettingsSection.Container.titleRes),
                 onClick = { onOpen(SettingsSection.Container) }
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Cpu,
-                title = stringResource(SettingsSection.LocalModels.titleRes),
-                onClick = { onOpen(SettingsSection.LocalModels) }
             )
             SettingsDivider()
             SettingsRow(
