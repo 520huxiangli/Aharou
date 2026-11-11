@@ -45,9 +45,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.soul.SoulIcon
 import com.aharou.core.soul.SoulStore
+import com.aharou.core.ui.ChatBackgroundLayer
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.voice.call.VoiceCallSession
+import com.aharou.feature.voice.data.CallBackgroundRepository
 
 /**
  * 免手通话的全屏页：人设头像、当前状态、正在说的那句，和一个挂断键。
@@ -56,7 +58,10 @@ import com.aharou.feature.voice.call.VoiceCallSession
  * 说话中途点屏幕任意处是打断，与「挂断」不是一回事：前者继续听，后者收摊。
  */
 @Composable
-internal fun VoiceCallScreen(session: VoiceCallSession) {
+internal fun VoiceCallScreen(
+    session: VoiceCallSession,
+    background: CallBackgroundRepository.Config = CallBackgroundRepository.Config(),
+) {
     val state by session.state.collectAsStateWithLifecycle()
     if (state == VoiceCallSession.State.Idle || state == VoiceCallSession.State.WakeListening) return
     val beingSaid by session.displayText.collectAsStateWithLifecycle()
@@ -71,6 +76,12 @@ internal fun VoiceCallScreen(session: VoiceCallSession) {
     BackHandler { session.hangUp() }
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize()) {
+        ChatBackgroundLayer(
+            imageName = background.imagePath,
+            blurDp = background.blurDp,
+            dim = background.dim,
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -232,6 +243,7 @@ private fun SoulAvatar(icon: String, size: Dp) {
                     style = MaterialTheme.typography.displaySmall,
                 )
             }
+        }
         }
     }
 }

@@ -58,6 +58,7 @@ import compose.icons.feathericons.Check
 import compose.icons.feathericons.Plus
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
+import com.aharou.feature.voice.data.CallBackgroundRepository
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.launch
@@ -91,11 +92,15 @@ internal fun ThemeSettingsSection(
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val chatAppearance by chatRepository.settingsFlow
         .collectAsStateWithLifecycle(initialValue = ChatAppearance())
+    val callBackgroundRepository = entryPoint.callBackgroundRepository()
+    val callBackground by callBackgroundRepository.config
+        .collectAsStateWithLifecycle(initialValue = CallBackgroundRepository.Config())
     val activePreset = AppThemePreset.findById(selectedPresetId, customSkins)
     val scope = rememberCoroutineScope()
     var editorVisible by remember { mutableStateOf(false) }
     var editorTarget by remember { mutableStateOf<CustomSkin?>(null) }
     var chatSheetVisible by remember { mutableStateOf(false) }
+    var callBackgroundVisible by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -263,6 +268,23 @@ internal fun ThemeSettingsSection(
             onAlphaChange = onBackgroundAlphaChange,
             onRemove = onRemoveBackgroundImage
         )
+        SettingsRow(
+            icon = null,
+            title = stringResource(R.string.settings_call_background),
+            subtitle = stringResource(R.string.call_bg_hint),
+            onClick = { callBackgroundVisible = true }
+        )
+
+        if (callBackgroundVisible) {
+            com.aharou.feature.voice.presentation.CallBackgroundSheet(
+                current = callBackground,
+                onDismiss = { callBackgroundVisible = false },
+                onSave = { config ->
+                    scope.launch { callBackgroundRepository.update(config) }
+                    callBackgroundVisible = false
+                }
+            )
+        }
 
         if (editorVisible) {
             SkinEditorSheet(
@@ -403,4 +425,5 @@ private fun AddCustomSkinChip(enabled: Boolean, onClick: () -> Unit) {
 interface ThemeSkinEntryPoint {
     fun themeSettingsRepository(): ThemeSettingsRepository
     fun chatAppearanceRepository(): ChatAppearanceRepository
+    fun callBackgroundRepository(): CallBackgroundRepository
 }

@@ -3117,6 +3117,13 @@
     <string name="voice_call_screen_error_no_workspace">No workspace yet — open the terminal once</string>
     <string name="voice_call_screen_error_no_session">Couldn\'t start the session, try again later</string>
     <string name="voice_call_still_there">Hey, still there?</string>
+    <string name="settings_call_background">Call background</string>
+    <string name="call_bg_hint">Only on the full-screen voice call, separate from the chat background</string>
+    <string name="call_bg_pick">Choose image</string>
+    <string name="call_bg_clear">Remove background</string>
+    <string name="call_bg_blur">Blur</string>
+    <string name="call_bg_dim">Dim</string>
+    <string name="call_bg_save">Save</string>
     <string name="voice_wake_ack">I\'m here. What do you need?</string>
     <string name="voice_wake_title">Voice wake word</string>
     <string name="voice_wake_summary">Say "Xiaoran Xiaoran" to start talking</string>
