@@ -36,6 +36,7 @@ import compose.icons.feathericons.Briefcase
 import compose.icons.feathericons.Clock
 import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
+import compose.icons.feathericons.DownloadCloud
 import compose.icons.feathericons.Eye
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Globe
