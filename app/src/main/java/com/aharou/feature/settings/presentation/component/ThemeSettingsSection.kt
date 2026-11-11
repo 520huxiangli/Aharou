@@ -422,7 +422,7 @@ private fun AddCustomSkinChip(enabled: Boolean, onClick: () -> Unit) {
 /** 主题页直读仓库：这条链路不经过行数已满的 SettingsViewModel。 */
 @EntryPoint
 @InstallIn(SingletonComponent::class)
-interface ThemeSkinEntryPoint {
+internal interface ThemeSkinEntryPoint {
     fun themeSettingsRepository(): ThemeSettingsRepository
     fun chatAppearanceRepository(): ChatAppearanceRepository
     fun callBackgroundRepository(): CallBackgroundRepository

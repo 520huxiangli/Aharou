@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -45,6 +46,7 @@ import kotlinx.coroutines.launch
  *
  * 与聊天背景分开是刻意的：通话页整屏都是字，聊天那张往往不够暗。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CallBackgroundSheet(
     current: CallBackgroundRepository.Config,

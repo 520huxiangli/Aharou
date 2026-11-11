@@ -208,6 +208,7 @@ internal fun VoiceCallScreen(
             }
             Spacer(Modifier.size(Spacing.xl))
         }
+        }
     }
 }
 
@@ -243,7 +244,6 @@ private fun SoulAvatar(icon: String, size: Dp) {
                     style = MaterialTheme.typography.displaySmall,
                 )
             }
-        }
         }
     }
 }
