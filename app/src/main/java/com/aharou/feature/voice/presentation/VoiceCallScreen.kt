@@ -81,6 +81,7 @@ internal fun VoiceCallScreen(
             imageName = background.imagePath,
             blurDp = background.blurDp,
             dim = background.dim,
+            dirName = "aharou/call_bg",
         )
         Column(
             modifier = Modifier

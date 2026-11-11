@@ -26,12 +26,14 @@ internal fun ChatBackgroundLayer(
     imageName: String?,
     blurDp: Int,
     dim: Float,
+    /** 背景图所在子目录：聊天与通话各自一套，不能混用（换背景时会删同目录旧图）。 */
+    dirName: String = "aharou/chat_bg",
     modifier: Modifier = Modifier
 ) {
     if (imageName.isNullOrBlank()) return
     val context = LocalContext.current
-    val file = remember(imageName) {
-        File(context.filesDir, "aharou/chat_bg/$imageName").takeIf { it.exists() }
+    val file = remember(imageName, dirName) {
+        File(context.filesDir, "$dirName/$imageName").takeIf { it.exists() }
     }
     if (file == null) return
 
