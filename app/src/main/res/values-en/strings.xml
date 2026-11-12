@@ -2310,8 +2310,6 @@
     <string name="chat_action_edit">Edit Message</string>
     <string name="chat_action_copy">Copy Text</string>
     <string name="chat_action_quote">Quote</string>
-    <string name="chat_action_crosscheck">Cross-check with another model</string>
-    <string name="chat_crosscheck_failed">Cross-check failed: %1$s</string>
     <string name="models_catalog_refresh">Refresh model catalog</string>
     <string name="models_catalog_updated">Model catalog updated</string>
     <string name="models_catalog_failed">Catalog refresh failed, still using the local snapshot</string>

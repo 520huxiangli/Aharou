@@ -337,7 +337,6 @@ fun AIChatPanel(
     val attachmentUploadMutex = remember { Mutex() }
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
-    var crossCheckMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
     var showActivity by remember { mutableStateOf(false) }
     val quoteReplyEnabled = rememberQuoteReplyEnabled()
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
@@ -1794,12 +1793,10 @@ fun AIChatPanel(
                     },
                     onQuoteClick = if (quoteReplyEnabled)
                         ({ viewModel.updateInputDraft(buildQuoteDraft(message.content, inputText)) }) else null,
-                    onCrossCheckClick = { crossCheckMessage = message },
                     onDeleteClick = { viewModel.deleteMessage(message.id) }
                 )
             }
 
-            crossCheckMessage?.let { message -> CrossCheckSheet(message, currentSessionId) { crossCheckMessage = null } }
             if (showActivity) {
                 val receipts by viewModel.currentSessionReceipts.collectAsStateWithLifecycle()
                 ActivityTimelineSheet(receipts = receipts, onDismiss = { showActivity = false })

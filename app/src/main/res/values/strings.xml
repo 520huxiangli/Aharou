@@ -2309,8 +2309,6 @@
     <string name="chat_action_edit">编辑消息</string>
     <string name="chat_action_copy">复制文本</string>
     <string name="chat_action_quote">引用</string>
-    <string name="chat_action_crosscheck">让另一个模型复审</string>
-    <string name="chat_crosscheck_failed">复审失败：%1$s</string>
     <string name="models_catalog_refresh">刷新模型目录</string>
     <string name="models_catalog_updated">模型目录已更新</string>
     <string name="models_catalog_failed">模型目录刷新失败，继续用本地快照</string>

@@ -34,7 +34,6 @@ import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Trash2
-import compose.icons.feathericons.Eye
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,9 +48,7 @@ internal fun MessageActionsBottomSheet(
     /** 重新生成：仅助手回答（有正文）提供，生成新版本而不覆盖当前回答。 */
     onRegenerateClick: (() -> Unit)? = null,
     /** 从此处新建分支：以该消息（含）之前的历史另起会话。隐身会话不提供，传 null 即隐藏该项。 */
-    onForkClick: (() -> Unit)? = null,
-    // 让另一个模型复审：有正文的消息才提供，传 null 即隐藏该项。
-    onCrossCheckClick: (() -> Unit)? = null
+    onForkClick: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -131,18 +128,6 @@ internal fun MessageActionsBottomSheet(
                     onClick = {
                         onDismiss()
                         onRegenerateClick()
-                    }
-                )
-            }
-
-            // 让另一个模型复审：结果只进弹层，不写回消息、不进会话历史
-            if (onCrossCheckClick != null && message.content.hasVisibleContent()) {
-                MessageActionItem(
-                    icon = FeatherIcons.Eye,
-                    title = stringResource(R.string.chat_action_crosscheck),
-                    onClick = {
-                        onDismiss()
-                        onCrossCheckClick()
                     }
                 )
             }
