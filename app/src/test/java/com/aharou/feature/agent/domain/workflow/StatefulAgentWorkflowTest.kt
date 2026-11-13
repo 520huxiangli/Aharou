@@ -161,6 +161,8 @@ class StatefulAgentWorkflowTest {
         every { provider.model } returns "model"
         every { provider.completeStream(any(), any(), any(), any()) } returns chunks
         every { prompts.build(any(), any()) } returns "system"
+        // 记忆清单改装在当轮 user 前缀里；默认不注入，让各用例断言的消息数组保持原样。
+        every { prompts.memoryPrefixBlock(any()) } returns null
         // 卡死提示改为文件驱动后，workflow 首次用到时会 resolvePrompt；不打桩会抛 MockKException。
         every { prompts.resolvePrompt(any()) } returns "（测试）你在重复同一个动作"
         coEvery { metadata.resolve(any(), any(), any()) } returns ModelMetadata("model", contextTokens = 100_000, supportsVision = true)
