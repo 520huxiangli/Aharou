@@ -9,6 +9,7 @@ import com.aharou.core.config.ConfigRisk
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.core.config.fields.DataStoreBoolField
 import com.aharou.core.config.fields.DataStoreEnumField
 import com.aharou.core.config.fields.DataStoreIntField
 import com.aharou.core.config.fields.DataStoreStrField
@@ -16,6 +17,7 @@ import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.ContainerWorkspaceKeys
 import com.aharou.feature.agent.domain.container.RootfsSource
+import com.aharou.feature.agent.domain.tool.container.ContainerEnvRedactionSetting
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.presentation.ContainerDnsMode
 import com.aharou.feature.settings.presentation.ContainerMirrorMode
@@ -40,6 +42,7 @@ class ConfigContainerFields @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val containerSettings: ContainerSettingsRepository,
     private val containerSources: ContainerSourcesRepository,
+    private val envRedaction: ContainerEnvRedactionSetting,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
@@ -80,6 +83,18 @@ class ConfigContainerFields @Inject constructor(
                 setter = { containerSettings.setGradleHeapMb(it) },
                 minValue = ContainerSettingsRepository.GRADLE_HEAP_MIN_MB,
                 maxValue = ContainerSettingsRepository.GRADLE_HEAP_MAX_MB,
+            ),
+        )
+
+        registry.register(
+            DataStoreBoolField(
+                path = "container.env_output_redaction",
+                displayName = "命令输出隐藏环境变量值",
+                description = "开启后，命令输出里与注入的环境变量值相同的文本会被替换成 [已隐藏:环境变量]" +
+                    "并追一句提示，避免 API Key、私有仓库 token 被 `env`、`echo \$KEY` 这类命令带进" +
+                    "会话上下文与日志。默认开启；关掉只用于自己排查输出为什么不完整。",
+                flow = envRedaction.enabledFlow,
+                setter = { envRedaction.setEnabled(it) },
             ),
         )
 

@@ -33,8 +33,6 @@ data class ChatSessionEntity(
     val parentId: String? = null,
     /** 子代理会话：派生子代理的类型（如 coder / researcher）；null 表示普通根会话。 */
     val subagentType: String? = null,
-    /** 隐身模式：开启后本会话消息不落库、记忆不写入，关闭或切走即不留痕。 */
-    val ghostMode: Boolean = false,
     // 以下 5 列为兼容已发布的迁移 73 保留（列已建在库表里，迁移不可回滚），业务逻辑不再读写。
     val goal: String? = null,
     val goalStatus: String? = null,
@@ -58,8 +56,7 @@ data class ChatSessionEntity(
         lastInputTokens = lastInputTokens,
         isPinned = isPinned,
         parentId = parentId,
-        subagentType = subagentType,
-        ghostMode = ghostMode
+        subagentType = subagentType
     )
 
     companion object {
@@ -79,8 +76,7 @@ data class ChatSessionEntity(
             lastInputTokens = session.lastInputTokens,
             isPinned = session.isPinned,
             parentId = session.parentId,
-            subagentType = session.subagentType,
-            ghostMode = session.ghostMode
+            subagentType = session.subagentType
         )
     }
 }

@@ -49,8 +49,7 @@ class SessionUseCase @Inject constructor(
         model: String? = null,
         reasoningEffort: String = ReasoningEffort.DEFAULT.name,
         // Aharou: 新会话默认 AUTO（自动化、免逐项确认）；用户仍可在会话内手动切 BUILD/PLAN。
-        mode: String = AgentMode.AUTO.name,
-        ghostMode: Boolean = false
+        mode: String = AgentMode.AUTO.name
     ): ChatSessionEntity {
         val now = System.currentTimeMillis()
         return ChatSessionEntity(
@@ -62,8 +61,7 @@ class SessionUseCase @Inject constructor(
             providerId = providerId,
             model = model,
             reasoningEffort = reasoningEffort,
-            mode = mode,
-            ghostMode = ghostMode
+            mode = mode
         )
     }
 
@@ -81,13 +79,11 @@ class SessionUseCase @Inject constructor(
             agentMessageDao.deleteBySession(child.id)
             chatSessionDao.delete(child.id)
             messageArchiveStore.deleteSession(child.id)
-            GhostModeStore.forget(child.id)
             deleted.add(child.id)
         }
         agentMessageDao.deleteBySession(id)
         chatSessionDao.delete(id)
         messageArchiveStore.deleteSession(id)
-        GhostModeStore.forget(id)
         return deleted
     }
 
@@ -111,12 +107,9 @@ class SessionUseCase @Inject constructor(
 
     /**
      * 工作区里一条「还没发过消息」的根会话，供新建会话时复用，避免每点一次「新建」就多插一条空会话。
-     *
-     * 排除隐身会话：隐身开关是按会话记的（[ChatSessionEntity.ghostMode]），复用一条带隐身标记的
-     * 旧会话，会让用户以为的新会话实际是隐身会话。
      */
     suspend fun getEmptySessionOfWorkspace(workspacePath: String): ChatSessionEntity? {
-        // 单次子查询完成（含排除隐身会话），不再把全部根会话拉回内存逐条查。
+        // 单次子查询完成，不再把全部根会话拉回内存逐条查。
         return chatSessionDao.getEmptyRootSessionByWorkspace(workspacePath)
     }
 
@@ -175,9 +168,7 @@ class SessionUseCase @Inject constructor(
             model = model ?: parent.model,
             reasoningEffort = reasoningEffort ?: parent.reasoningEffort,
             parentId = parentId,
-            subagentType = subagentType,
-            // 子代理会话继承父会话的隐身开关：否则主会话隐身、子代理仍会把消息落进库，漏出内容。
-            ghostMode = parent.ghostMode
+            subagentType = subagentType
         )
     }
 
@@ -221,14 +212,6 @@ class SessionUseCase @Inject constructor(
     suspend fun updateReasoningEffort(sessionId: String, effort: String) {
         chatSessionDao.updateReasoningEffort(sessionId, effort)
     }
-
-    /** 切换会话级隐身模式；关闭时会丢弃该会话驻留内存的隐身消息。 */
-    suspend fun updateGhostMode(sessionId: String, enabled: Boolean) {
-        GhostModeStore.setGhost(chatSessionDao, sessionId, enabled)
-    }
-
-    /** 会话是否处于隐身模式。 */
-    suspend fun isGhostSession(sessionId: String): Boolean = GhostModeStore.isGhost(chatSessionDao, sessionId)
 
     suspend fun updateLastInputTokens(sessionId: String, tokens: Int) {
         chatSessionDao.updateLastInputTokens(sessionId, tokens)

@@ -238,8 +238,6 @@ class AgentTurnRunner @Inject constructor(
         val isFirst = history.isEmpty()
 
         val userMsgId = UUID.randomUUID().toString()
-        // 隐身会话不建检查点、不动标题：检查点会存下用户提问片段、标题会写进会话行，都属内容外泄。
-        val ghost = messagePersistenceUseCase.isGhost(sessionId)
         if (!turn.isAutoTrigger) {
             messagePersistenceUseCase.persist(
                 sessionId,
@@ -248,14 +246,12 @@ class AgentTurnRunner @Inject constructor(
                 id = userMsgId,
                 attachments = turn.inputAttachments,
             )
-            if (!ghost) {
-                checkpointManager.createCheckpoint(sessionId, userMsgId, turn.text)
-                if (isFirst && !turn.skipTitleUpdate) {
-                    sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(turn.text))
-                    // 后台异步用 LLM 生成更贴切的标题替换临时标题；失败或取不到时保留临时标题
-                    scope.launch {
-                        agentWorkflow.generateTitle(sessionId, turn.text)?.let { sessionUseCase.updateTitle(sessionId, it) }
-                    }
+            checkpointManager.createCheckpoint(sessionId, userMsgId, turn.text)
+            if (isFirst && !turn.skipTitleUpdate) {
+                sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(turn.text))
+                // 后台异步用 LLM 生成更贴切的标题替换临时标题；失败或取不到时保留临时标题
+                scope.launch {
+                    agentWorkflow.generateTitle(sessionId, turn.text)?.let { sessionUseCase.updateTitle(sessionId, it) }
                 }
             }
         } else if (turn.persistUserMessage) {

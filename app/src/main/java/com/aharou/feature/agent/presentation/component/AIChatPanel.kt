@@ -338,7 +338,6 @@ fun AIChatPanel(
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
     var showActivity by remember { mutableStateOf(false) }
-    val quoteReplyEnabled = rememberQuoteReplyEnabled()
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
     var queuedEditing by remember { mutableStateOf<QueuedRequest?>(null) }
     val listState = rememberLazyListState()
@@ -1082,6 +1081,8 @@ fun AIChatPanel(
 
     // 附件点击：普通文件交给系统 app（远程模式要先下载），HTML 走应用内预览。
     val attachmentOpener = rememberAttachmentOpener(context, viewModel.fileAccess, scope)
+    // 压缩摘要上的撤销入口：摘要条数变化（新压一次 / 撤掉一次）时重新判定还能不能撤。
+    val compactionRevert = rememberCompactionRevert(currentSessionId, messages.count { it.isContextSummary })
 
     // 过程项一律由 [flattenTurnProcesses] 平铺成主列表 item：折叠头与分组头在这里只画自己那一行，
     // 不再内联展开子项——展开就是列表里多出几个顶层 item，交给 LazyColumn 按可见范围组合。
@@ -1152,6 +1153,7 @@ fun AIChatPanel(
                     isChunkFooter = item.isChunkFooter,
                     variantPosition = message.variantIndex,
                     variantCount = message.variantCount,
+                    compactionRevert = compactionRevert,
                     onVariantSelect = onVariantSelect,
                     onVariantDelete = onVariantDelete,
                     onReadAloud = { readAloudViewModel.toggle(it.content) },
@@ -1791,8 +1793,6 @@ fun AIChatPanel(
                     onCopyClick = {
                         copyScope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", message.content))) }
                     },
-                    onQuoteClick = if (quoteReplyEnabled)
-                        ({ viewModel.updateInputDraft(buildQuoteDraft(message.content, inputText)) }) else null,
                     onDeleteClick = { viewModel.deleteMessage(message.id) }
                 )
             }

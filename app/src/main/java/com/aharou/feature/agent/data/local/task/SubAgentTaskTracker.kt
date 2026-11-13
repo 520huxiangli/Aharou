@@ -7,7 +7,6 @@ import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.AgentMessageEntity
 import com.aharou.feature.agent.data.local.entity.AgentTaskEntity
 import com.aharou.feature.agent.data.local.entity.AgentTaskStatus
-import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.subagent.SubAgentEvent
 import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
 import com.aharou.feature.agent.domain.subagent.SubAgentEventType
@@ -68,8 +67,7 @@ class SubAgentTaskTracker @Inject constructor(
         return lock(sessionId).withLock {
             val session = chatSessionDao.getById(sessionId) ?: return@withLock null
             if (session.parentId != parentSessionId) return@withLock null
-            val ghost = GhostModeStore.isGhost(chatSessionDao, parentSessionId)
-            val old = if (ghost) null else agentTaskDao.getById(sessionId)
+            val old = agentTaskDao.getById(sessionId)
             val version = nextVersion(old?.updatedAt)
             val reserved = eventBus.currentRun(sessionId)?.takeIf { it.version == 0L }
             val run = try {
@@ -77,7 +75,7 @@ class SubAgentTaskTracker @Inject constructor(
             } catch (rejected: SubAgentRunRejectedException) {
                 if (reserved != null) {
                     try {
-                        if (!ghost && old == null) agentTaskDao.insertIfAbsent(AgentTaskEntity(
+                        if (old == null) agentTaskDao.insertIfAbsent(AgentTaskEntity(
                             id = sessionId, parentSessionId = parentSessionId,
                             instruction = eventBus.instruction(sessionId), status = AgentTaskStatus.FAILED.name,
                             result = rejected.message, createdAt = version, updatedAt = version, finishedAt = version,
@@ -91,19 +89,17 @@ class SubAgentTaskTracker @Inject constructor(
                 throw rejected
             } ?: return@withLock null
             try {
-                if (!ghost) {
-                    if (old == null) {
-                        check(agentTaskDao.insertIfAbsent(AgentTaskEntity(
-                            id = sessionId,
-                            parentSessionId = parentSessionId,
-                            instruction = eventBus.instruction(sessionId),
-                            status = AgentTaskStatus.RUNNING.name,
-                            createdAt = version,
-                            updatedAt = version,
-                        )) >= 0)
-                    } else {
-                        check(agentTaskDao.beginRun(sessionId, old.updatedAt, version) > 0)
-                    }
+                if (old == null) {
+                    check(agentTaskDao.insertIfAbsent(AgentTaskEntity(
+                        id = sessionId,
+                        parentSessionId = parentSessionId,
+                        instruction = eventBus.instruction(sessionId),
+                        status = AgentTaskStatus.RUNNING.name,
+                        createdAt = version,
+                        updatedAt = version,
+                    )) >= 0)
+                } else {
+                    check(agentTaskDao.beginRun(sessionId, old.updatedAt, version) > 0)
                 }
                 check(eventBus.runStarted(run))
                 run
@@ -152,7 +148,7 @@ class SubAgentTaskTracker @Inject constructor(
             }
             val event = SubAgentEvent(sessionId, parentSessionId, type, runId = current?.runId)
             val old = agentTaskDao.getById(sessionId)
-            if (old == null && current != null && !GhostModeStore.isGhost(chatSessionDao, parentSessionId)) {
+            if (old == null && current != null) {
                 val now = nextVersion(null)
                 agentTaskDao.insertIfAbsent(AgentTaskEntity(
                     id = sessionId, parentSessionId = parentSessionId, instruction = eventBus.instruction(sessionId),
@@ -179,20 +175,17 @@ class SubAgentTaskTracker @Inject constructor(
         require(type == SubAgentEventType.COMPLETED || type == SubAgentEventType.FAILED ||
             type == SubAgentEventType.STOPPED || type == SubAgentEventType.DELETED)
         if (!eventBus.isCurrentRun(run)) return false
-        val ghost = GhostModeStore.isGhost(chatSessionDao, run.parentSessionId)
-        if (!ghost) {
-            val status = when (type) {
-                SubAgentEventType.COMPLETED -> AgentTaskStatus.COMPLETED
-                SubAgentEventType.FAILED -> AgentTaskStatus.FAILED
-                else -> AgentTaskStatus.CANCELLED
-            }
-            val now = nextVersion(run.version)
-            if (agentTaskDao.compareAndSetStatus(
-                run.sessionId, AgentTaskStatus.RUNNING.name, status.name,
-                if (type == SubAgentEventType.COMPLETED) null else detail.ifBlank { null },
-                now, now, run.version,
-            ) == 0) return false
+        val status = when (type) {
+            SubAgentEventType.COMPLETED -> AgentTaskStatus.COMPLETED
+            SubAgentEventType.FAILED -> AgentTaskStatus.FAILED
+            else -> AgentTaskStatus.CANCELLED
         }
+        val now = nextVersion(run.version)
+        if (agentTaskDao.compareAndSetStatus(
+            run.sessionId, AgentTaskStatus.RUNNING.name, status.name,
+            if (type == SubAgentEventType.COMPLETED) null else detail.ifBlank { null },
+            now, now, run.version,
+        ) == 0) return false
         return eventBus.finishRun(run, SubAgentEvent(run.sessionId, run.parentSessionId, type,
             detail, accepted, runId = run.runId), broadcast)
     }

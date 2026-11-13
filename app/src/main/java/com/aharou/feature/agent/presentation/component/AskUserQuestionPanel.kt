@@ -32,8 +32,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,9 +42,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestion
+import com.aharou.feature.agent.domain.tool.question.QuestionDraft
 import com.aharou.feature.agent.domain.tool.question.QuestionItem
 import com.aharou.feature.agent.domain.tool.question.SingleAnswer
 import com.aharou.feature.agent.domain.tool.question.UserQuestionAnswer
@@ -64,7 +64,8 @@ private const val OTHER_SENTINEL = "\u0000__other__"
  *
  * 风格对齐 [ToolPermissionPanel]：内联 Surface，不用 AlertDialog。
  *
- * @param question 待回答的问题请求。
+ * @param question 待回答的问题请求；用户填报中的草稿也存在它身上（[PendingUserQuestion.drafts]），
+ * 面板只读写、不自己持有，所以面板被销毁重建后勾选和输入还在。
  * @param onConfirm 用户点击确认后回传答案。
  * @param onSkip 用户点击「补充」，返回空答案——表示用户想补充说明而非在预设选项中做选择。
  */
@@ -75,18 +76,10 @@ fun AskUserQuestionPanel(
     onSkip: () -> Unit,
     forceCollapse: Boolean = false
 ) {
-    // 每个问题的已选 label 集合
-    val selectedMap = remember(question.id) {
-        mutableStateMapOf<Int, MutableList<String>>().apply {
-            question.questions.forEachIndexed { idx, _ -> this[idx] = mutableStateListOf() }
-        }
-    }
-    // 每个问题的「其他」自由文本
-    val customTexts = remember(question.id) {
-        mutableStateMapOf<Int, String>().apply {
-            question.questions.forEachIndexed { idx, _ -> this[idx] = "" }
-        }
-    }
+    // 在这里 collect 而不是在上层：草稿每次按键都变，收在面板内才能把重组限在面板里
+    val draftSlots by question.drafts.state.collectAsStateWithLifecycle()
+    fun draftOf(index: Int): QuestionDraft = draftSlots.getOrNull(index) ?: QuestionDraft()
+
     // 面板折叠状态：默认展开；多问题时长面板可收起，避免挡住 AI 输出
     var expanded by remember(question.id) { mutableStateOf(true) }
     // 余额面板展开时同帧收起本面板，避免叠加顶开输入框
@@ -158,12 +151,14 @@ fun AskUserQuestionPanel(
                         if (idx > 0) Spacer(Modifier.height(Spacing.md))
                         QuestionCard(
                             item = q,
-                            selected = selectedMap[idx] ?: mutableListOf(),
-                            customText = customTexts[idx] ?: "",
+                            selected = draftOf(idx).selected,
+                            customText = draftOf(idx).customText,
                             onSelectionChanged = { newSelection ->
-                                selectedMap[idx] = newSelection.toMutableList() as MutableList<String>
+                                question.drafts.update(idx, draftOf(idx).copy(selected = newSelection))
                             },
-                            onCustomTextChanged = { customTexts[idx] = it }
+                            onCustomTextChanged = { text ->
+                                question.drafts.update(idx, draftOf(idx).copy(customText = text))
+                            }
                         )
                     }
 
@@ -180,11 +175,11 @@ fun AskUserQuestionPanel(
                             text = stringResource(R.string.ask_confirm),
                             onClick = {
                                 val answers = question.questions.mapIndexed { i, q ->
-                                    val sel = selectedMap[i] ?: emptyList<String>()
-                                    val custom = customTexts[i]?.takeIf { it.isNotBlank() && OTHER_SENTINEL in sel }
+                                    val draft = draftOf(i)
+                                    val custom = draft.customText.takeIf { it.isNotBlank() && OTHER_SENTINEL in draft.selected }
                                     SingleAnswer(
                                         question = q.question,
-                                        selected = sel.filter { it != OTHER_SENTINEL },
+                                        selected = draft.selected.filter { it != OTHER_SENTINEL },
                                         customText = custom
                                     )
                                 }

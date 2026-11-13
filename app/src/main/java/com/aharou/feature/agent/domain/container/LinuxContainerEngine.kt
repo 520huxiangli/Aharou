@@ -4,6 +4,7 @@ import com.aharou.core.util.BoundedLineReader
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.LINE_TRUNCATED_NOTE
 import com.aharou.core.util.ProcessIdentity
+import com.aharou.core.util.ProotShutdown
 import com.aharou.R
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -961,7 +962,8 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     private fun buildProcessBuilder(invocation: ProotInvocation): ProcessBuilder {
-        val processBuilder = ProcessBuilder(invocation.argv)
+        // 包一层 mksh 中转再 exec：直接起进程会把 App 那边屏蔽的 SIGQUIT 继承给 proot，害它收不到退出请求
+        val processBuilder = ProcessBuilder(ProotShutdown.wrapForSignalMaskClearing(invocation.argv))
         processBuilder.environment().apply { ContainerEnvSanitizer.scrubInherited(this); putAll(invocation.env) }
         return processBuilder
     }

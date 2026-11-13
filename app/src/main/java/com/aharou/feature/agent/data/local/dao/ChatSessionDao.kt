@@ -66,10 +66,6 @@ interface ChatSessionDao {
     @Query("UPDATE chat_sessions SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: String, pinned: Boolean)
 
-    /** 切换会话级隐身模式。 */
-    @Query("UPDATE chat_sessions SET ghostMode = :ghost WHERE id = :id")
-    suspend fun updateGhostMode(id: String, ghost: Boolean)
-
     @Query("DELETE FROM chat_sessions WHERE id = :id")
     suspend fun delete(id: String)
 
@@ -103,14 +99,14 @@ interface ChatSessionDao {
     suspend fun incrementGoalTurn(id: String)
 
     /**
-     * 工作区里最近更新、且一条消息都还没有的根会话（排除隐身会话）。
+     * 工作区里最近更新、且一条消息都还没有的根会话。
      *
      * 用子查询代替「取全部根会话再逐条 hasMessages」：后者是 O(会话数) 次查库，
      * 会话多了会明显拖慢「新建会话」这个高频操作。
      */
     @Query(
         "SELECT * FROM chat_sessions WHERE workspacePath = :workspacePath AND parentId IS NULL " +
-            "AND ghostMode = 0 AND id NOT IN (SELECT DISTINCT sessionId FROM agent_messages) " +
+            "AND id NOT IN (SELECT DISTINCT sessionId FROM agent_messages) " +
             "ORDER BY updatedAt DESC LIMIT 1"
     )
     suspend fun getEmptyRootSessionByWorkspace(workspacePath: String): ChatSessionEntity?

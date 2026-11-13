@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.tool.container
 import com.aharou.feature.agent.domain.container.BoundedOutput
 import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.container.CommandEvent
+import com.aharou.feature.agent.domain.container.ContainerEnvValueRedactor
 import com.aharou.feature.agent.domain.container.ContainerOutputSanitizer
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -14,6 +15,7 @@ import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.ToolStreamEvent
+import com.aharou.feature.settings.data.repository.EnvVarRepository
 import com.aharou.feature.terminal.domain.TerminalSessionProvider
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.CancellationException
@@ -45,7 +47,9 @@ import javax.inject.Inject
 class ExecuteCommandTool @Inject constructor(
     private val commandEngine: CommandEngine,
     private val workspaceRepository: WorkspaceRepository,
-    private val terminalSessionProvider: TerminalSessionProvider
+    private val terminalSessionProvider: TerminalSessionProvider,
+    private val envVarRepository: EnvVarRepository,
+    private val envRedaction: ContainerEnvRedactionSetting
 ) : AgentTool(), StreamingAgentTool {
     private companion object {
         const val TAG = "ExecuteCommandTool"
@@ -329,12 +333,39 @@ class ExecuteCommandTool @Inject constructor(
      * 预算。代价是截断点可能落在转义序列中间，残留的 ESC 字节会被清洗器的控制字符规则剥掉，最多
      * 留下少许参数碎片（如 `[38;5`），不影响可读性。
      *
+     * 脱敏紧跟清洗（截断 → 清洗 → 脱敏）：必须排在 ANSI 清洗之后，否则 `\e[32m` 这类控制字符会把
+     * 变量值从中间切断，正则就匹配不到了。脱敏只作用于本出口——终端 PTY 的显示不经这里，
+     * 用户自己看自己的输出是正常的。
+     *
      * 退出码拼在清洗之后的末尾，让模型能分辨「跑完没输出」和「失败没输出」；拿不到退出码（超时、
      * 引擎异常、远程通道断开）就不拼，别让模型把未知当成成功。退出码行是本函数生成的，不参与清洗。
      */
     private fun toModelOutput(output: String, exitCode: Int?): String {
         val cleaned = ContainerOutputSanitizer.sanitize(output)
-        val line = exitCode?.let { "[退出码: $it]" } ?: return cleaned
-        return if (cleaned.isBlank()) line else "$cleaned\n$line"
+        val redacted = redactEnvValues(cleaned)
+        val withCode = when {
+            exitCode == null -> redacted.text
+            redacted.text.isBlank() -> "[退出码: $exitCode]"
+            else -> "${redacted.text}\n[退出码: $exitCode]"
+        }
+        // 提示放在退出码之后：退出码要紧跟输出，中间不应该插一行给模型的元信息。
+        return if (redacted.hit) ContainerEnvValueRedactor.withNotice(withCode) else withCode
+    }
+
+    /**
+     * 把输出里与用户注入的环境变量值相同的文本抹掉。
+     *
+     * 开关关掉时整段不生效（用户明确要看到原值排查问题时用）；默认开启——关掉不会让任何功能更好用，
+     * 只会把 API Key、私有仓库 token 送进会话上下文与日志。
+     *
+     * 只记「命中」这个事实，不把值或输出写进日志：日志本身也是泄漏面。
+     */
+    private fun redactEnvValues(text: String): ContainerEnvValueRedactor.Result {
+        if (text.isBlank() || !envRedaction.enabled) {
+            return ContainerEnvValueRedactor.Result(text, false)
+        }
+        val result = ContainerEnvValueRedactor.redact(text, envVarRepository.asMap())
+        if (result.hit) FileLogger.i(TAG, "命令输出命中环境变量值，已隐藏")
+        return result
     }
 }

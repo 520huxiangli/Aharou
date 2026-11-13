@@ -1,6 +1,5 @@
 package com.aharou.feature.agent.domain.provider
 
-import com.aharou.core.util.AILogger
 import com.aharou.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aharou.feature.agent.data.remote.gemini.GeminiApi
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
@@ -51,7 +50,7 @@ class OneShotProviderFactory @Inject constructor(
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
-        provider.logSessionId = AILogger.loggableSessionId(sessionId, sessionUseCase::isGhostSession)
+        provider.logSessionId = sessionId?.takeIf { it.isNotBlank() }
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         provider.maxOutputTokens = metadata.outputTokens

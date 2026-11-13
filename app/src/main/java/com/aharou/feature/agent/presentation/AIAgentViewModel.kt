@@ -4,7 +4,6 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
-import android.widget.Toast
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -137,7 +136,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -1072,10 +1070,6 @@ class AIAgentViewModel @Inject constructor(
 
     val currentSessionMode: StateFlow<AgentMode> = currentSessionState.map { it?.mode ?: AgentMode.BUILD }
         .stateIn(viewModelScope, SharingStarted.Eagerly, AgentMode.BUILD)
-
-    /** 当前会话是否处于隐身模式（不写历史、不写记忆，见 GhostModeStore）。 */
-    val currentSessionGhostMode: StateFlow<Boolean> = currentSessionState.map { it?.ghostMode ?: false }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     init {
         // 轮 key 表只服务当前会话：切走就丢，否则长会话切来切去会一直往上积（每条消息一条）。
@@ -2602,31 +2596,6 @@ class AIAgentViewModel @Inject constructor(
         _currentSessionId.value = id
     }
 
-    /**
-     * 切换当前会话的隐身模式。空会话（还没建 session）点「开启」时先等当前工作区就绪，再走 [newSession] 建会话
-     * 并开启（工作区为空时 newSession 会直接返回）；远程未连接等场景等不到就弹提示，不静默。关闭时无会话可关。
-     */
-    fun setGhostMode(enabled: Boolean) {
-        val id = _currentSessionId.value
-        if (id != null) {
-            viewModelScope.launch { sessionUseCase.updateGhostMode(id, enabled) }
-            return
-        }
-        if (!enabled) return
-        viewModelScope.launch {
-            withTimeoutOrNull(3_000L) {
-                // 工作区为空时 newSession 会直接返回：先等它就绪再走既有入口建会话，随后等会话落定。
-                _currentWorkspace.first { it.isNotBlank() }
-                newSession()
-                _currentSessionId.filterNotNull().first()
-            }
-            // 取最新值而非等待结果：期间若有别的链路落定会话，也据它开启，避免对过期 id 操作。
-            val sid = _currentSessionId.value
-            if (sid == null) Toast.makeText(context, R.string.ghost_mode_session_not_ready, Toast.LENGTH_SHORT).show()
-            else sessionUseCase.updateGhostMode(sid, true)
-        }
-    }
-
     fun setSessionMode(mode: AgentMode) {
         val sid = _currentSessionId.value ?: return
         viewModelScope.launch {
@@ -3214,7 +3183,7 @@ class AIAgentViewModel @Inject constructor(
      * 助手行专门承载它——它不渲染气泡、也不参与上下文回放，只用于重载后恢复错误横幅与重试入口。
      */
     private suspend fun persistFailureMessage(sessionId: String, error: String) {
-        if (error.isBlank() || sessionUseCase.isGhostSession(sessionId)) return
+        if (error.isBlank()) return
         runCatching {
             val last = agentMessageDao.getMessagesBySessionOnce(sessionId).lastOrNull()
             if (last != null && last.role == MessageRole.ASSISTANT.name) {
@@ -3311,9 +3280,6 @@ class AIAgentViewModel @Inject constructor(
         try {
             val sourceId = _currentSessionId.value ?: return@launch
             val source = sessionUseCase.getSessionById(sourceId) ?: return@launch
-            // 隐身会话的消息只在内存、不落库；分叉必然把内容写进磁盘，等于给隐身内容留痕。
-            // 界面已隐藏该入口，这里再兜一层，防切换会话期间的竞态。
-            if (source.ghostMode) return@launch
             val all = agentMessageDao.getMessagesBySessionOnce(sourceId)
             val cut = all.indexOfFirst { it.id == messageId }
             if (cut < 0) return@launch

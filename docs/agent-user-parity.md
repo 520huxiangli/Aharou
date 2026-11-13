@@ -147,7 +147,7 @@
 | 删除会话 | `ChatDrawer.kt:450`、`:471` → `MainActivity.kt:839` | 无 | 未找到 | **缺口** |
 | 置顶/取消置顶 | `ChatDrawer.kt:1391` → `MainActivity.kt:841` | 无 | 未找到 | **缺口** |
 | 导出会话 | `MainActivity.kt:842-845`（`sessionExportLauncher`） | 无 | 未找到 | **缺口** |
-| 归档会话 | 未找到（`ChatSessionEntity.kt:19-52` 无归档字段，只有 `isPinned`/`ghostMode`） | 无 | 未找到 | 双方都没有：这条能力不存在 |
+| 归档会话 | 未找到（`ChatSessionEntity.kt:19-52` 无归档字段，只有 `isPinned`） | 无 | 未找到 | 双方都没有：这条能力不存在 |
 | 浏览/搜索其它会话内容 | `ChatDrawer.kt:337`、`:556`（列表）、搜索命中 `:348` | 有 | `sessions` `action=list/search/read`（`AgentModule.kt:480`；`domain/tool/session/SessionTool.kt:31`） | 严格只读，且限当前工作区（`:150` 跨工作区拒绝） |
 
 ## 11. 备份

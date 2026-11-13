@@ -90,17 +90,6 @@ object AILogger {
         FileLogger.i(TAG, "AILogger 初始化完成，AI 会话日志目录: ${dir.absolutePath}")
     }
 
-    /**
-     * 日志侧的会话判定：只有确认不是隐身会话时才返回 [sessionId]，否则返回 null（该请求整份不落盘）。
-     *
-     * 隐身会话的正文绝不能写到磁盘上，所以查库失败按隐身处理——宁可少记一份日志。
-     * 判定做成「传入查库函数」是因为各个调用方手里拿的是不同的 use case（MessagePersistence /
-     * Session），但策略必须是同一份：主链路、手机操作子代理、视觉调用、交叉复审全走这里，
-     * 各自复制一份就会漏掉某条路径（隐身会话仍然明文落盘）。
-     */
-    suspend fun loggableSessionId(sessionId: String?, isGhost: suspend (String) -> Boolean): String? =
-        sessionId?.takeIf { sid -> runCatching { isGhost(sid) }.getOrNull() == false }
-
     /** 记录一次请求的 URL 与请求体，并把本会话计数 +1（作为本次交互的序号）。
      *
      * @return 本次分配的序号 `n`，调用方必须把它原样回传给对应的 [logResponse] /

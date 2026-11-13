@@ -30,7 +30,7 @@ internal data class PromptTail(
     val subAgents: String? = null,
     /** 团队预设清单。 */
     val teams: String? = null,
-    /** 记忆索引（含内联正文）。 */
+    /** 记忆纪律规则正文（清单本身走当轮 user 消息前缀，不进 system）。 */
     val memories: String? = null,
     /** 项目规则（AGENTS.md / CLAUDE.md / rules.md + rules.d）。 */
     val projectRules: String? = null,

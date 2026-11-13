@@ -123,7 +123,7 @@ class ResponsesPayloadTest {
             systemPrompt = "",
             systemRole = "system",
             messages = listOf(
-                AgentMessage.ToolResultMessage(id = "ghost", toolName = "readFile", result = "body"),
+                AgentMessage.ToolResultMessage(id = "orphan-call", toolName = "readFile", result = "body"),
                 AgentMessage.UserMessage(id = "u1", content = "hi")
             )
         )

@@ -110,6 +110,8 @@ class AskUserQuestionManager @Inject constructor(
     private suspend fun waitForAnswer(question: PendingUserQuestion, timeoutMs: Long): UserQuestionAnswer? {
         val decision = CompletableDeferred<UserQuestionAnswer>()
         synchronized(lock) {
+            // 面板同一时刻只显示一个问题：上一个请求的草稿已经没人读，连带它一起丢掉
+            _pendingQuestion.value?.takeIf { it.id != question.id }?.drafts?.clear()
             currentId = question.id
             currentDecision = decision
             _pendingQuestion.value = question

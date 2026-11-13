@@ -3,7 +3,6 @@ package com.aharou.feature.agent.domain.tool.file
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
-import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.LlmCallRecordDao
 import com.aharou.feature.agent.data.local.entity.LlmCallRecordEntity
@@ -356,8 +355,7 @@ class ViewImageTool @Inject constructor(
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
-        // 视觉调用同样是模型请求，隐身会话不能留 AI 日志；判定与主链路共用一份。
-        provider.logSessionId = AILogger.loggableSessionId(sessionId, sessionUseCase::isGhostSession)
+        provider.logSessionId = sessionId?.takeIf { it.isNotBlank() }
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         provider.maxOutputTokens = metadata.outputTokens

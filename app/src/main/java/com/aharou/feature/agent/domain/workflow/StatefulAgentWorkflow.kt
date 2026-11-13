@@ -2,7 +2,6 @@ package com.aharou.feature.agent.domain.workflow
 
 import android.os.SystemClock
 import android.util.Base64
-import com.aharou.core.util.AILogger
 import com.aharou.core.util.FileLogger
 import com.aharou.core.util.runCancellationSafeTail
 import com.aharou.feature.agent.domain.privacy.maskIfNeeded
@@ -35,6 +34,7 @@ import com.aharou.feature.agent.domain.checkpoint.CheckpointManager
 import com.aharou.feature.agent.domain.permission.PermissionChoice
 import com.aharou.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aharou.feature.agent.domain.receipt.ToolCallReceiptRepository
+import com.aharou.feature.agent.domain.prompt.MemoryPrefixInjector
 import com.aharou.feature.agent.domain.prompt.SystemPromptProvider
 import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.AIResponse
@@ -375,7 +375,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
-        provider.logSessionId = AILogger.loggableSessionId(sessionId, messagePersistenceUseCase::isGhost)
+        provider.logSessionId = sessionId?.takeIf { it.isNotBlank() }
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         // 模型元数据的输出上限（models.dev limit.output）：不传时 Anthropic 会把输出卡在 adapter 兜底值上。
@@ -450,8 +450,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val promptStartedNs = System.nanoTime()
         FileLogger.memoryCheckpoint(TAG, "prompt.start", details = "operation=$promptStartedNs")
         val systemPrompt = withContext(Dispatchers.IO) { promptProvider.build(currentContext) }
-        FileLogger.memoryCheckpoint(TAG, "prompt.ready",
-            elapsedMs = (System.nanoTime() - promptStartedNs) / 1_000_000,
+        FileLogger.memoryCheckpoint(TAG, "prompt.ready", elapsedMs = (System.nanoTime() - promptStartedNs) / 1_000_000,
             details = "operation=$promptStartedNs promptChars=${systemPrompt.length}")
         val aiProvider = getEffectiveProvider(currentContext.sessionId)
         val metadata = modelMetadataService.resolve(aiProvider.providerId, when (aiProvider) {
@@ -476,8 +475,7 @@ class StatefulAgentWorkflow @Inject constructor(
             } else 0
         )
         telemetry.historyReady(systemPrompt.length, currentTools.size, currentContext.history.size)
-        FileLogger.memoryCheckpoint(TAG, "history.ready",
-            elapsedMs = (System.nanoTime() - historyStartedNs) / 1_000_000,
+        FileLogger.memoryCheckpoint(TAG, "history.ready", elapsedMs = (System.nanoTime() - historyStartedNs) / 1_000_000,
             details = "operation=$historyStartedNs messages=${currentContext.history.size} tools=${currentTools.size}")
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
@@ -689,8 +687,9 @@ class StatefulAgentWorkflow @Inject constructor(
         try {
             // 早轮次里已落盘的工具结果换成引用，长会话不必每轮重发全文。图片投影沿用上面那份：估算的就是发出去的。
             val outboundMasker = outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled())
-            val messagesToSend = foldStoredToolResults(sendProjection)
-                .let { list -> if (outboundMasker == null) list else list.maskedForOutbound(outboundMasker) }
+            val messagesToSend = MemoryPrefixInjector.inject(foldStoredToolResults(sendProjection)
+                .let { list -> if (outboundMasker == null) list else list.maskedForOutbound(outboundMasker) },
+                withContext(Dispatchers.IO) { promptProvider.memoryPrefixBlock(currentContext) })
             // 采样循环检测：命中后 takeWhile 会取消上游流，模型不再继续把重复内容刷下去。
             var samplingLoopCut = false
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。

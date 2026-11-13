@@ -265,6 +265,8 @@ internal fun AgentMessageItem(
     onVariantSelect: ((Int) -> Unit)? = null,
     /** 删除当前展示的版本；null 时不显示删除入口。 */
     onVariantDelete: (() -> Unit)? = null,
+    /** 会话级撤销压缩入口：只有最近一次压缩的摘要卡片会用到它，见 [CompactionRevertAction]。 */
+    compactionRevert: CompactionRevertAction? = null,
 ) {
     if (message.isCompactionMarker) {
         // 压缩内部锚点不再渲染分隔线：摘要卡片已提供压缩反馈，避免与卡片重复。
@@ -272,7 +274,7 @@ internal fun AgentMessageItem(
     }
 
     if (message.isContextSummary) {
-        CompactionSummaryCard(message, markdownCache)
+        CompactionSummaryCard(message, markdownCache, compactionRevert)
         return
     }
 
@@ -760,7 +762,11 @@ private fun BackgroundNotificationBar(message: AgentUIMessage) {
  * 扁平行 + 弱底面板，与工具行同构，只用圆点颜色区分事件类型。
  */
 @Composable
-private fun CompactionSummaryCard(message: AgentUIMessage, markdownCache: MarkdownRenderCache?) {
+private fun CompactionSummaryCard(
+    message: AgentUIMessage,
+    markdownCache: MarkdownRenderCache?,
+    compactionRevert: CompactionRevertAction?
+) {
     // 默认展开：摘要折叠成一行时与工具行同形，很容易被当成普通工具行划过去，
     // 用户反而会以为压缩没生效；展开后是「分隔线 + 摘要正文」，一眼能看见。
     var expanded by remember(message.id) { mutableStateOf(true) }
@@ -804,6 +810,10 @@ private fun CompactionSummaryCard(message: AgentUIMessage, markdownCache: Markdo
                     modifier = Modifier.fillMaxWidth(),
                     cache = markdownCache
                 )
+            }
+            // 压缩本身不可见（marker 消息不渲染），撤销入口只能挂在摘要上：按操作记录里的摘要 id 认这一条。
+            if (compactionRevert != null && compactionRevert.revertibleSummaryId == message.id) {
+                CompactionRevertRow(onClick = compactionRevert.onRevert)
             }
         }
     }

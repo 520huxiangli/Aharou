@@ -2,8 +2,6 @@ package com.aharou.feature.agent.domain.prompt
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.SecretMasker
-import com.aharou.core.util.TextSanitizer
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.context.ProjectIndex
@@ -13,7 +11,6 @@ import com.aharou.feature.agent.domain.memory.MemoryRepository
 import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.model.WorkspaceRef
 import com.aharou.feature.agent.domain.rule.RuleRepository
-import com.aharou.feature.agent.domain.session.GhostModeStore
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionRepository
@@ -483,14 +480,16 @@ class SystemPromptProvider @Inject constructor(
     }
 
     private inner class MemoryListSource : PromptSource {
-        // 会话级缓存：同一 (sessionId, projectRoot) 内只读一次盘，保持 system prompt 稳定以命中 KV 缓存；
-        // 新开会话 / 切换工作区 / 重启 App 时缓存自然失效重建。空内容用 "" 占位以区分"未缓存"。
-        // 相关性排序只在本会话首次 build 时算一次，之后沿用——每轮重排会让提示词前缀跟着变、
-        // 打断 KV 缓存，代价大于收益。但话题换掉后旧清单会长期占位、新话题相关的记忆永远进不来，
-        // 所以缓存里记下当时的提问，只在「不像同一件事」时才失效重排（判据见 MemoryRepository.isTopicDrift）。
+        // 会话级缓存：同一 (sessionId, projectRoot) 内只读一次盘，保持注入文本稳定以命中输入缓存；
+        // 空内容用 "" 占位区分"未缓存"。相关性排序也只在首次计算时算一次，之后沿用；
+        // 只有话题明显换掉才失效重排（判据见 MemoryRepository.isTopicDrift），否则新话题的记忆永远进不来。
         private val cachedByKey = ConcurrentHashMap<SourceCacheKey, CachedList>()
 
-        override fun build(ctx: AgentContext): String? {
+        /** 系统提示词里只留记忆纪律这段静态规则：清单随记忆写入而变，留在 system 会打断输入缓存。 */
+        override fun build(ctx: AgentContext): String? = memoryDiscipline()
+
+        /** 记忆清单正文：注入到当轮 user 消息前缀（见 [MemoryPrefixInjector]），不进 system。 */
+        fun listContent(ctx: AgentContext): String? {
             val key = SourceCacheKey(ctx.sessionId, ctx.projectRoot)
             val query = ctx.currentUserText
             val cached = cachedByKey[key]
@@ -510,18 +509,12 @@ class SystemPromptProvider @Inject constructor(
             } catch (e: Exception) { memories.size }
             val content = MemoryPromptRenderer
                 .withScaleNotice(MemoryPromptRenderer.render(memories), memories.size, totalInScope)
-                .ifEmpty { null }
-
-            // 记忆纪律紧跟清单注入：清单告诉模型「有什么」，纪律告诉它「何时必须写」。
-            val full = listOf(content, memoryDiscipline()).mapNotNull { it }.joinToString("\n\n")
-            if (full.isEmpty()) return null
-
-            cachedByKey[key] = CachedList(query, full)
+            cachedByKey[key] = CachedList(query, content)
             trimIfNeeded()
-            return full
+            return content.ifEmpty { null }
         }
 
-        /** 记忆纪律正文（无记忆清单时单独注入）。 */
+        /** 记忆纪律正文（静态规则，留在 system 里）。 */
         private fun memoryDiscipline(): String? =
             resolvePrompt(MEMORY_DISCIPLINE_FILE).replace(LEADING_COMMENT, "").trim().ifEmpty { null }
 
@@ -608,37 +601,6 @@ class SystemPromptProvider @Inject constructor(
                 ?.takeIf { it.isNotBlank() }
     }
 
-    private val coreArchiveSource = CoreArchiveSource()
-
-    /**
-     * 隐身会话用的记忆段：只保留核心档案（身份与行为红线），不注入全局记忆与今日日志。
-     * 隐身会话不写记忆（见 GhostModeStore），也就不该把跨会话记忆读进来——否则用户以为
-     * 「隐身」了，模型却仍能说出之前会话里的用户信息。
-     */
-    private inner class CoreArchiveSource : PromptSource {
-        override fun build(ctx: AgentContext): String? = runCatching {
-            if (!aharouMemoryStore.isMemoryEnabled()) return@runCatching null
-            val core = aharouMemoryStore.readCore()?.trim()
-                ?.let { SecretMasker.mask(TextSanitizer.sanitize(it)) }.orEmpty()
-            if (core.isEmpty()) return@runCatching null
-            "## 记忆（持久，跨会话）\n### 核心档案\n$core"
-        }.getOrNull()
-    }
-
-    /**
-     * 当前会话是否隐身。
-     *
-     * [build] 是非 suspend 函数（调用方在用 withContext(Dispatchers.IO) 包着跑），而隐身标记既可能在
-     * GhostModeStore 的内存集合里、也可能只在会话行上，所以这里只能阻塞查一次。
-     * 不缓存结果：用户可能在会话中途开关隐身，缓存会让「刚打开隐身」的那一轮仍然注入记忆。
-     */
-    private fun isGhostSession(ctx: AgentContext): Boolean {
-        val sessionId = ctx.sessionId?.takeIf { it.isNotBlank() } ?: return false
-        return runCatching { runBlocking { GhostModeStore.isGhost(chatSessionDao, sessionId) } }
-            .onFailure { FileLogger.w(TAG, "读取会话隐身标记失败: ${it.message}", it) }
-            .getOrDefault(false)
-    }
-
     /**
      * 当前会话是否是子代理会话。
      *
@@ -673,24 +635,20 @@ class SystemPromptProvider @Inject constructor(
         }
 
         // 1. 获取各个 Source 的基线快照。
-        // 隐身会话只保留核心档案：记忆清单与常驻记忆全部不注入（写入侧已由 GhostModeStore 拦住，
-        // 读取侧不拦的话，「隐身」只挡住了落盘、挡不住模型把旧会话里的用户信息读进上下文）。
-        val ghost = isGhostSession(agentContext)
         // 用户在提示词页关掉的动态区块：不取内容也不追加（与片段里的 {{AICODE_*}} 变量同一语义）。
         val offBlocks = promptFragmentCatalog.disabledBlocks()
         val rawStatic = staticRuleSource.build(agentContext)
         val soulContent = gate(InjectionBlock.SOUL, offBlocks) { soulSource.build(agentContext) }
-        val aharouMemoryContent = gate(InjectionBlock.ARCHIVE, offBlocks) { if (ghost) coreArchiveSource.build(agentContext) else aharouMemorySource.build(agentContext) }
+        val aharouMemoryContent = gate(InjectionBlock.ARCHIVE, offBlocks) { aharouMemorySource.build(agentContext) }
         val skillsContent = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(agentContext) }
         val subAgentsContent = gate(InjectionBlock.SUB_AGENTS, offBlocks) { subAgentListSource.build(agentContext) }
         val teamsContent = gate(InjectionBlock.TEAMS, offBlocks) { teamListSource.build(agentContext) }
-        val memoriesContent = gate(InjectionBlock.MEMORIES, offBlocks) { if (ghost) null else memoryListSource.build(agentContext) }
+        val memoryDisciplineContent = gate(InjectionBlock.MEMORIES, offBlocks) { memoryListSource.build(agentContext) }
         val projectRules = gate(InjectionBlock.PROJECT_RULES, offBlocks) { projectRuleSource.build(agentContext) }
         val rulesContent = gate(InjectionBlock.RULES, offBlocks) { availableRulesSource.build(agentContext) }
         val workspaceTypeContent = gate(InjectionBlock.WORKSPACE_TYPE, offBlocks) { workspaceTypeSource.build(agentContext) }
         val modelIdentityContent = gate(InjectionBlock.MODEL_IDENTITY, offBlocks) { modelIdentitySource.build(agentContext) }
-        // 隐身会话不读也不消费信箱：不把其他工作区的内容带进隐身对话，也不替用户吃掉这些消息。
-        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { if (ghost) null else sharedInboxSource.build(agentContext, consumeInbox) }
+        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { sharedInboxSource.build(agentContext, consumeInbox) }
 
         // 2. Workspace 上下文固定输出（内容已精简，无需快照占位）
         val effectiveWorkspaceContent = if (InjectionBlock.WORKSPACE.key in offBlocks) "" else workspaceSource.build(agentContext)
@@ -700,7 +658,7 @@ class SystemPromptProvider @Inject constructor(
         val staticContent = renderVariables(
             rawStatic,
             skillsContent,
-            memoriesContent,
+            memoryDisciplineContent,
             subAgentsContent,
             projectRules,
             effectiveWorkspaceContent,
@@ -718,7 +676,7 @@ class SystemPromptProvider @Inject constructor(
                 skills = skillsContent,
                 subAgents = subAgentsContent,
                 teams = teamsContent,
-                memories = memoriesContent,
+                memories = memoryDisciplineContent,
                 projectRules = projectRules,
                 workspace = effectiveWorkspaceContent,
                 rules = rulesContent,
@@ -735,7 +693,7 @@ class SystemPromptProvider @Inject constructor(
 
     /**
      * [PromptFragmentResolver.DISABLE_BUILTIN_FILE] 生效时：**静态区**只输出 `prompts.custom/` 顶层的数字片段，
-     * 不注入任何内置提示词片段；**动态区**（人格、核心档案、技能清单、子代理索引、团队、记忆清单、项目规则、
+     * 不注入任何内置提示词片段；**动态区**（人格、核心档案、技能清单、子代理索引、团队、记忆纪律、项目规则、
      * 工作区、按需规则、工作区类型、模型身份、信箱、时间、工作区变更）与内置路径同序追加在末尾。
      *
      * 追加规则：某个变量（如 `{{AICODE_SKILLS}}`）已出现在片段原文里时不再自动追加，避免重复。
@@ -753,7 +711,6 @@ class SystemPromptProvider @Inject constructor(
             )
             return ""
         }
-        val ghost = isGhostSession(ctx)
         // 与内置路径同一套开关：关掉的动态区块在「只用自定义片段」模式下也不追加。
         val offBlocks = promptFragmentCatalog.disabledBlocks()
 
@@ -761,21 +718,21 @@ class SystemPromptProvider @Inject constructor(
         val skillsContent = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(ctx) }
         val subAgentsContent = gate(InjectionBlock.SUB_AGENTS, offBlocks) { subAgentListSource.build(ctx) }
         val teamsContent = gate(InjectionBlock.TEAMS, offBlocks) { teamListSource.build(ctx) }
-        val memoriesContent = gate(InjectionBlock.MEMORIES, offBlocks) { if (ghost) null else memoryListSource.build(ctx) }
+        val memoryDisciplineContent = gate(InjectionBlock.MEMORIES, offBlocks) { memoryListSource.build(ctx) }
         val projectRules = gate(InjectionBlock.PROJECT_RULES, offBlocks) { projectRuleSource.build(ctx) }
         val rulesContent = gate(InjectionBlock.RULES, offBlocks) { availableRulesSource.build(ctx) }
         val soulContent = gate(InjectionBlock.SOUL, offBlocks) { soulSource.build(ctx) }
-        val archiveContent = gate(InjectionBlock.ARCHIVE, offBlocks) { if (ghost) coreArchiveSource.build(ctx) else aharouMemorySource.build(ctx) }
+        val archiveContent = gate(InjectionBlock.ARCHIVE, offBlocks) { aharouMemorySource.build(ctx) }
         val workspaceContent = if (InjectionBlock.WORKSPACE.key in offBlocks) "" else workspaceSource.build(ctx)
         val workspaceTypeContent = gate(InjectionBlock.WORKSPACE_TYPE, offBlocks) { workspaceTypeSource.build(ctx) }
         val modelIdentityContent = gate(InjectionBlock.MODEL_IDENTITY, offBlocks) { modelIdentitySource.build(ctx) }
-        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { if (ghost) null else sharedInboxSource.build(ctx, consumeInbox) }
+        val inboxContent = gate(InjectionBlock.INBOX, offBlocks) { sharedInboxSource.build(ctx, consumeInbox) }
         val timeContent = if (InjectionBlock.TIME.key in offBlocks) null else currentTimeSource.build(ctx)
 
         val rendered = renderVariables(
             content,
             skillsContent,
-            memoriesContent,
+            memoryDisciplineContent,
             subAgentsContent,
             projectRules,
             workspaceContent,
@@ -790,7 +747,7 @@ class SystemPromptProvider @Inject constructor(
                 skills = skillsContent,
                 subAgents = subAgentsContent,
                 teams = teamsContent,
-                memories = memoriesContent,
+                memories = memoryDisciplineContent,
                 projectRules = projectRules,
                 workspace = workspaceContent,
                 rules = rulesContent,
@@ -806,7 +763,7 @@ class SystemPromptProvider @Inject constructor(
         FileLogger.d(
             TAG,
             "custom-only 提示词组装完成：片段 ${content.length} 字符 → 总计 ${assembled.length} 字符" +
-                "（技能=${skillsContent?.length ?: 0} 记忆=${memoriesContent?.length ?: 0} " +
+                "（技能=${skillsContent?.length ?: 0} 记忆纪律=${memoryDisciplineContent?.length ?: 0} " +
                 "项目规则=${projectRules?.length ?: 0} 按需规则=${rulesContent?.length ?: 0}）"
         )
         return assembled
@@ -835,9 +792,7 @@ class SystemPromptProvider @Inject constructor(
             append("专注完成本会话交给你的任务，并在最后一条回复里给出完整结论——主代理只能读到你的最后一条回复，中间过程与工具结果它看不到。\n\n")
             append(definition.prompt)
         }
-        val memories = gate(InjectionBlock.MEMORIES, offBlocks) {
-            if (isGhostSession(agentContext)) null else memoryListSource.build(agentContext)
-        }
+        val memories = gate(InjectionBlock.MEMORIES, offBlocks) { memoryListSource.build(agentContext) }
         // 与主代理同一套区块开关：设置里关掉的区块，子代理不能照样带全（并发多个时成倍消耗）。
         val skills = gate(InjectionBlock.SKILLS, offBlocks) { activeSkillsSource.build(agentContext) }
         // 按需规则清单：子代理只在自身提示词写了 {{AICODE_RULES}} 时才看得到，同样受区块开关控制。
@@ -935,7 +890,19 @@ class SystemPromptProvider @Inject constructor(
      */
     fun resolvePrompt(name: String): String = promptFileResolver.resolve(name)
 
-    /** 失效记忆清单的会话级缓存：整理器写入新记忆后调用，让下一轮 system prompt 看到新清单。 */
+    /**
+     * 当轮 user 消息前缀里的记忆清单（[InjectionBlock.MEMORIES] 关掉或子代理未声明记忆时为空）。
+     *
+     * 不放进 system 是因为 Anthropic 的 cache_control 断点在 tools 末尾与最后一条文本块上：
+     * 记忆每写一次 system 前缀就整段变化，断点之后全部重新计费；挂在 user 消息上只影响本轮增量。
+     */
+    fun memoryPrefixBlock(agentContext: AgentContext): String? {
+        if (InjectionBlock.MEMORIES.key in promptFragmentCatalog.disabledBlocks()) return null
+        if (agentContext.agentDefinition?.let { InjectPart.MEMORY !in it.inject } == true) return null
+        return memoryListSource.listContent(agentContext)
+    }
+
+    /** 失效记忆清单的会话级缓存：整理器写入新记忆后调用，让下一轮注入看到新清单。 */
     fun invalidateMemoryCache(sessionId: String?, projectRoot: String?) {
         memoryListSource.invalidate(SourceCacheKey(sessionId, projectRoot.orEmpty()))
     }

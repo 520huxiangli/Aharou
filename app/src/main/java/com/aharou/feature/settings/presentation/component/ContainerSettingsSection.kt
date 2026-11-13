@@ -182,8 +182,8 @@ internal fun ContainerSection(
             }
 
             ContainerGradleHeapSection()
+            ContainerEnvRedactionSection()
             ContainerWorkspaceProfilesSection()
-
             // 容器出问题时用户往往只看到一句「命令失败」，一键体检把真实原因摆出来。
             ContainerHealthSection()
         }

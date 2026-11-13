@@ -202,6 +202,8 @@
     <string name="settings_container_workspace_env_picker_follow_desc">不单独指定，跟着容器页选中的那个走</string>
     <string name="settings_container_workspace_env_remote">远程 SSH</string>
     <string name="settings_container_workspace_env_local">本地容器</string>
+    <string name="settings_container_env_redaction_title">命令输出隐藏环境变量值</string>
+    <string name="settings_container_env_redaction_desc">开启后，命令输出里与注入的环境变量值相同的文本会被替换成「已隐藏」，避免 API Key、私有仓库 token 被 env、echo $KEY 这类命令带进会话上下文与日志。默认开启。</string>
     <string name="settings_log_no_files">还没有日志文件</string>
     <string name="settings_log_read_failed">读取日志失败：%1$s</string>
     <string name="settings_models_fetch_failed">拉取失败</string>
@@ -1722,14 +1724,6 @@
     <string name="subagent_comm_enabled">允许子代理互相对话</string>
     <string name="subagent_comm_enabled_desc">同一批次的子代理可以互相查看队友、发消息（team / tell）；关闭后它们只能向上汇报，主代理对子代理的收发不受影响。</string>
     <string name="settings_teams">团队预设</string>
-    <string name="settings_experiments">实验开关</string>
-    <string name="experiment_quote_reply">长按引用回复</string>
-    <string name="experiment_quote_reply_desc">长按消息气泡弹出菜单，可复制或引用整条消息；引用会把该条摘要带进输入框</string>
-    <string name="experiment_state_follow">跟随默认</string>
-    <string name="experiment_state_on">已开启</string>
-    <string name="experiment_state_off">已关闭</string>
-    <string name="experiment_default_on">开</string>
-    <string name="experiment_default_off">关</string>
     <string name="subagent_teams_entry_desc">把拆解、并行实现与审查串成一条可复用的流程</string>
     <string name="team_list_empty">还没有团队预设。在容器里新建 ~/.aharou/teams/&lt;名&gt;.md：frontmatter 写 stages、正文写团队公约，格式见文档「子代理 → 团队预设」。</string>
     <string name="team_scope_global">全局</string>
@@ -1896,7 +1890,6 @@
     <string name="git_pr_token_dialog_label">个人访问令牌</string>
     <string name="git_pr_ai_prompt_header">请分析并修复以下 CI 失败：\nPR #%1$d %2$s\n%3$s</string>
     <string name="git_pr_ai_prompt_failed">失败项：</string>
-    <string name="ghost_mode_session_not_ready">会话还没就绪，暂时无法开启隐身模式，请稍后重试</string>
     <string name="agent_perm_channel_name">工具授权</string>
     <string name="agent_perm_channel_desc">会话等待工具授权时弹出的通知</string>
     <string name="agent_perm_notification_title">%1$s 请求工具授权</string>
@@ -2308,7 +2301,6 @@
     <string name="chat_more_options">更多选项</string>
     <string name="chat_action_edit">编辑消息</string>
     <string name="chat_action_copy">复制文本</string>
-    <string name="chat_action_quote">引用</string>
     <string name="models_catalog_refresh">刷新模型目录</string>
     <string name="models_catalog_updated">模型目录已更新</string>
     <string name="models_catalog_failed">模型目录刷新失败，继续用本地快照</string>
@@ -3543,6 +3535,10 @@
     <string name="chat_perm_scope_session">本次会话</string>
     <string name="chat_perm_scope_24h">24 小时</string>
     <string name="chat_perm_scope_always">始终允许</string>
+    <string name="chat_compaction_revert">撤销这次压缩</string>
+    <string name="chat_compaction_reverted">已撤销，原始消息已恢复</string>
+    <string name="chat_compaction_revert_no_snapshot">这次压缩没有留下快照，无法撤销</string>
+    <string name="chat_compaction_revert_failed">撤销失败</string>
     <string name="settings_telegram_bot_enable">启用机器人</string>
     <string name="settings_telegram_bot_enable_subtitle">在后台接收消息并交由本机 Aharou 处理</string>
     <string name="settings_telegram_bot_status">连接状态</string>

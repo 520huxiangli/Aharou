@@ -202,6 +202,8 @@
     <string name="settings_container_workspace_env_picker_follow_desc">Use the container selected on the container page</string>
     <string name="settings_container_workspace_env_remote">Remote SSH</string>
     <string name="settings_container_workspace_env_local">Local container</string>
+    <string name="settings_container_env_redaction_title">Hide environment variable values in command output</string>
+    <string name="settings_container_env_redaction_desc">When on, text in command output that matches an injected environment variable value is replaced with a hidden marker, so API keys and repository tokens printed by commands such as env or echo $KEY never reach the conversation or logs. On by default.</string>
     <string name="settings_log_no_files">No log files yet</string>
     <string name="settings_log_read_failed">Failed to read log: %1$s</string>
     <string name="settings_models_fetch_failed">Fetch failed</string>
@@ -1723,14 +1725,6 @@
     <string name="subagent_comm_enabled">Let subagents talk to each other</string>
     <string name="subagent_comm_enabled_desc">Subagents in the same batch can list their teammates and message them (team / tell). When off, they can only report upward; the parent side is unaffected.</string>
     <string name="settings_teams">Team presets</string>
-    <string name="settings_experiments">Experiments</string>
-    <string name="experiment_quote_reply">Long-press quote</string>
-    <string name="experiment_quote_reply_desc">Long-press a message bubble to copy it or quote it whole; quoting puts a short excerpt into the input box</string>
-    <string name="experiment_state_follow">Follow default</string>
-    <string name="experiment_state_on">On</string>
-    <string name="experiment_state_off">Off</string>
-    <string name="experiment_default_on">on</string>
-    <string name="experiment_default_off">off</string>
     <string name="subagent_teams_entry_desc">Chain triage, parallel implementation and review into one reusable flow</string>
     <string name="team_list_empty">No team presets yet. Create ~/.aharou/teams/&lt;name&gt;.md in the container: stages in the frontmatter, team charter in the body. The format is documented under Subagents → Team presets.</string>
     <string name="team_scope_global">Global</string>
@@ -1897,7 +1891,6 @@
     <string name="git_pr_token_dialog_label">Personal access token</string>
     <string name="git_pr_ai_prompt_header">Please analyze and fix the following CI failures:\nPR #%1$d %2$s\n%3$s</string>
     <string name="git_pr_ai_prompt_failed">Failed checks:</string>
-    <string name="ghost_mode_session_not_ready">The chat isn\'t ready yet, so ghost mode can\'t be turned on. Please try again shortly.</string>
     <string name="agent_perm_channel_name">Tool approval</string>
     <string name="agent_perm_channel_desc">Notifications shown while a session waits for tool approval</string>
     <string name="agent_perm_notification_title">%1$s is requesting tool approval</string>
@@ -2309,7 +2302,6 @@
     <string name="chat_more_options">More Options</string>
     <string name="chat_action_edit">Edit Message</string>
     <string name="chat_action_copy">Copy Text</string>
-    <string name="chat_action_quote">Quote</string>
     <string name="models_catalog_refresh">Refresh model catalog</string>
     <string name="models_catalog_updated">Model catalog updated</string>
     <string name="models_catalog_failed">Catalog refresh failed, still using the local snapshot</string>
@@ -3545,6 +3537,10 @@
     <string name="chat_perm_scope_session">This session</string>
     <string name="chat_perm_scope_24h">24 hours</string>
     <string name="chat_perm_scope_always">Always allow</string>
+    <string name="chat_compaction_revert">Undo this compaction</string>
+    <string name="chat_compaction_reverted">Undone. The original messages are restored.</string>
+    <string name="chat_compaction_revert_no_snapshot">This compaction left no snapshot and cannot be undone.</string>
+    <string name="chat_compaction_revert_failed">Undo failed</string>
     <string name="settings_telegram_bot_enable">Enable bot</string>
     <string name="settings_telegram_bot_enable_subtitle">Receive messages in the background and handle them with Aharou</string>
     <string name="settings_telegram_bot_status">Connection status</string>

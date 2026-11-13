@@ -10,6 +10,9 @@ import java.io.File
  * 会把容器内的子孙留成孤儿——PRoot 忽略 SIGTERM，而 `--kill-on-exit` 靠 atexit 生效、SIGKILL
  * 又绕过 atexit，于是出现「进程已消失但容器里的任务还在跑」。
  *
+ * 所以对 proot tracer 先走 [ProotShutdown] 的 SIGQUIT（让它自己杀掉并 reap 整个被 trace 集合），
+ * 确认不了才回落 SIGTERM → SIGKILL。
+ *
  * 这里用 `/proc/<pid>/stat` 的启动时钟（第 22 字段）给进程定代次：同一次开机内 PID 被复用后
  * 启动时钟必然不同。只有代次核验通过才发信号，核验不了就一个信号都不发（宁可漏杀也不杀错）。
  */
@@ -22,6 +25,9 @@ object ProcessIdentity {
 
     /** 发 SIGKILL 后等待进程消失的时长，之后复核根进程。 */
     private const val KILL_GRACE_MS = 150L
+
+    /** 复核根进程是否已退出时的轮询间隔；proot 收尾通常几十毫秒内完成，没必要更密。 */
+    private const val EXIT_POLL_MS = 50L
 
     /** 一个进程的身份：宿主 pid + 该代次的启动时钟（读不到时为 null）。 */
     data class Handle(val pid: Int, val startTimeTicks: Long?)
@@ -100,8 +106,9 @@ object ProcessIdentity {
      * 终止以 [handle] 为根的一整棵进程树，返回是否**确认**根进程已消失。
      *
      * 根已消失或已成僵尸 → true；身份读不出来或启动时钟对不上（PID 已被复用）→ 不发任何信号并
-     * 返回 false。其余情况自子向父发 SIGTERM，宽限后重扫一次（覆盖期间新 fork 的）对仍属原代次的
-     * 发 SIGKILL，最后复核根已终止才算确认。调用方不得把 false 当作「已停止」。
+     * 返回 false。其余情况先请 proot 自己收场（见 [shutdownProotFirst]），它没收干净才自子向父发
+     * SIGTERM，宽限后重扫一次（覆盖期间新 fork 的）对仍属原代次的发 SIGKILL，最后复核根已终止
+     * 才算确认。调用方不得把 false 当作「已停止」。
      */
     fun terminateTree(handle: Handle): Boolean {
         val initial = state(handle.pid, handle.startTimeTicks)
@@ -116,6 +123,7 @@ object ProcessIdentity {
             // 身份读不出来时不再直接放弃：拿不到代次至多发错一个信号，比整棵树都杀不掉要好
             State.UNREADABLE, State.MATCHED_ACTIVE -> Unit
         }
+        if (shutdownProotFirst(handle)) return true
         // 每个 pid 首次观察到的代次；两轮信号都按这份快照核验，期间被复用的 pid 会被跳过。
         val generations = HashMap<Int, Long?>()
         generations[handle.pid] = handle.startTimeTicks
@@ -128,6 +136,46 @@ object ProcessIdentity {
         val finalState = state(handle.pid, handle.startTimeTicks)
         FileLogger.i(TAG, "终止进程树结束 pid=${handle.pid} 末态=$finalState")
         return finalState == State.MISSING || finalState == State.MATCHED_ZOMBIE
+    }
+
+    /**
+     * 先请 proot 自己退：SIGQUIT 是它唯一会「杀掉整个 tracee 集合并 reap 它们」的入口，强杀会绕过
+     * 这层清理、把 guest 留成孤儿。只有确认对端确实是 proot、且它的 handler 已就绪才发；任何一步
+     * 不成立都返回 false，交回原来的 SIGTERM/SIGKILL 流程，绝不因为这条路没走通就少杀一刀。
+     */
+    private fun shutdownProotFirst(handle: Handle): Boolean {
+        if (!ProotShutdown.isProotProcess(handle.pid.toLong())) return false
+        FileLogger.i(TAG, "pid=${handle.pid} 是 proot tracer，先发 SIGQUIT 让它自己收掉 tracee")
+        val requested = runCatching {
+            // 代次核验同一套：轮询与发信号之间 pid 可能被复用，不是原代次就不许打信号
+            ProotShutdown.requestProotShutdown(handle.pid.toLong()) {
+                state(handle.pid, handle.startTimeTicks) == State.MATCHED_ACTIVE
+            }
+        }.getOrElse {
+            FileLogger.w(TAG, "向 proot pid=${handle.pid} 发 SIGQUIT 失败，回落强杀: ${it.message}")
+            false
+        }
+        if (!requested) return false
+        return awaitRootExit(handle, ProotShutdown.EXIT_GRACE_MS)
+    }
+
+    /** 等 [handle] 的根进程退出；僵尸算退出（已死、只等回收），PID 被复用说明原来那个已经不在了。 */
+    private fun awaitRootExit(handle: Handle, graceMs: Long): Boolean {
+        val deadline = System.nanoTime() + graceMs * 1_000_000L
+        while (true) {
+            when (state(handle.pid, handle.startTimeTicks)) {
+                State.MISSING, State.MATCHED_ZOMBIE, State.REUSED -> {
+                    FileLogger.i(TAG, "proot pid=${handle.pid} 已退出（SIGQUIT 收场）")
+                    return true
+                }
+                State.MATCHED_ACTIVE, State.UNREADABLE -> Unit
+            }
+            if (System.nanoTime() - deadline >= 0) {
+                FileLogger.w(TAG, "proot pid=${handle.pid} 收到 SIGQUIT 后 ${graceMs}ms 仍在，回落强杀")
+                return false
+            }
+            sleep(EXIT_POLL_MS)
+        }
     }
 
     /** 对整棵树发信号：先子孙后根，逐个核验代次，新出现的 pid 记录当下代次。 */

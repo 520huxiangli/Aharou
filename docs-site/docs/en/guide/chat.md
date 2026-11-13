@@ -5,7 +5,7 @@ This page explains what every button and area on the main screen does.
 ## Top Title Bar
 
 - **Menu button** (top-left): opens the sidebar, where you manage your session list and browse files.
-- **New session**: starts a new conversation. If the current workspace still holds an empty session that never received a message (ghost sessions excluded), you're switched to it instead of creating another one.
+- **New session**: starts a new conversation. If the current workspace still holds an empty session that never received a message, you're switched to it instead of creating another one.
 - **Git entry**: jumps to the Git version management page.
 - **Terminal entry**: jumps to the terminal page.
 - **Browser entry**: opens the built-in browser (a floating panel on phones, a right-hand pane on large screens).
@@ -195,23 +195,6 @@ The preview page has three buttons at the top-right:
 The pill only appears when the block is a **complete document** (HTML must start with `<!doctype` or `<html` and contain `</html>`; SVG must start with `<svg` and contain `</svg>`). Ordinary snippets, truncated fragments, blocks in other languages and over-long blocks don't get it.
 
 While previewing, the page cannot reach any local file, and links inside it don't navigate (the preview can't be sent elsewhere). Network resources the page needs (chart libraries on a CDN, remote images) are still loaded over the network. If rendering fails you'll see "Content failed to render — switch to View code to see the source"; the source is still viewable, copyable and savable.
-
-## Ghost Conversations
-
-To keep a turn completely off the record, turn on **Ghost mode**: a "Ghost mode" pill sits at the top of the chat page — tap it to turn it on, tap again to turn it off. Once on, the pill reads "On" and an amber banner reminds you that this session writes no history and no memory, and that its content disappears when it is turned off or you switch away.
-
-While Ghost mode is on:
-
-- **Messages live only in memory**: this turn's conversation is not written to the chat history database or any archive. Kill the app, or switch to another session and come back, and it is gone.
-- **No memory writes**: the AI is refused if it tries to write memory in this session, and automatic memory curation skips it. Read-only memory lookups still work.
-- **Not searchable**: ghost messages don't enter the chat history, so the sidebar's chat search won't find them.
-
-A few notes:
-
-- The toggle is **per session**, affecting only the session you turned it on in; new sessions default to off.
-- The toggle itself is remembered, so after restarting the app that session is still in Ghost mode (but its earlier content has been cleared).
-- Turning the toggle off, switching to another session, or deleting the session clears that session's ghost content immediately and **irreversibly**.
-- Nothing being written also means very long tool output is only visible in truncated form in later turns; if you need a record, don't use Ghost mode.
 
 ## Usage & Timing Below Replies
 

@@ -402,12 +402,6 @@ internal fun SettingsMoreGroupScreen(onOpen: (SettingsSection) -> Unit) {
             )
             SettingsDivider()
             SettingsRow(
-                icon = FeatherIcons.Users,
-                title = stringResource(SettingsSection.Experiments.titleRes),
-                onClick = { onOpen(SettingsSection.Experiments) }
-            )
-            SettingsDivider()
-            SettingsRow(
                 icon = FeatherIcons.Server,
                 title = stringResource(SettingsSection.RemoteServers.titleRes),
                 onClick = { onOpen(SettingsSection.RemoteServers) }

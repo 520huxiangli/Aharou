@@ -57,7 +57,6 @@ internal object DebugMcpTools {
                 put("sessionTitle", vm?.currentSessionState?.value?.title.orEmpty())
                 put("sessionWorkspace", vm?.currentSessionWorkspace?.value.orEmpty())
                 put("route", AIEditorApp.currentRoute.orEmpty())
-                put("ghostMode", vm?.currentSessionGhostMode?.value ?: false)
                 put("agentRunning", runtime.active)
                 put("agentBusy", runtime.busy)
                 put("runningTool", runtime.toolName)

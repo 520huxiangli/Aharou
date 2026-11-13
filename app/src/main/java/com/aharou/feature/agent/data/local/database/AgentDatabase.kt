@@ -21,6 +21,8 @@ import com.aharou.feature.agent.data.local.entity.TodoItemEntity
 import com.aharou.feature.agent.data.local.entity.ToolCallReceiptEntity
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionDao
 import com.aharou.feature.agent.domain.tool.question.PendingUserQuestionEntity
+import com.aharou.feature.agent.domain.workflow.ContextOperationDao
+import com.aharou.feature.agent.domain.workflow.ContextOperationEntity
 import com.aharou.feature.backup.data.local.dao.BackupTargetDao
 import com.aharou.feature.backup.data.local.entity.BackupTargetEntity
 import com.aharou.feature.settings.data.local.dao.AIProviderDao
@@ -30,7 +32,7 @@ import com.aharou.feature.workspace.data.local.entity.RemoteConnectionEntity
 import com.aharou.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
-    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class, BackupTargetEntity::class, PendingUserQuestionEntity::class, ToolCallReceiptEntity::class],
+    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AgentTaskEntity::class, ScheduledTaskEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, CheckpointEntity::class, CheckpointFileSnapshotEntity::class, LlmCallRecordEntity::class, BackupTargetEntity::class, PendingUserQuestionEntity::class, ToolCallReceiptEntity::class, ContextOperationEntity::class],
     version = AgentDatabase.SCHEMA_VERSION,
     exportSchema = true
 )
@@ -47,9 +49,10 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun backupTargetDao(): BackupTargetDao
     abstract fun pendingUserQuestionDao(): PendingUserQuestionDao
     abstract fun toolCallReceiptDao(): ToolCallReceiptDao
+    abstract fun contextOperationDao(): ContextOperationDao
 
     companion object {
-        const val SCHEMA_VERSION = 80
+        const val SCHEMA_VERSION = 82
 
         /** 数据库文件名（落在 `databases/` 下，另有 Room 默认 WAL 模式产生的 `-wal`/`-shm`）。 */
         const val DATABASE_NAME = "aicode_agent_db"

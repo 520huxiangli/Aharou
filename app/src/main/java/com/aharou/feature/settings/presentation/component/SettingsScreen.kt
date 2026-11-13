@@ -150,7 +150,6 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     SubAgentDetail(R.string.settings_subagents),
     SubAgentEditor(R.string.settings_subagents),
     Teams(R.string.settings_teams),
-    Experiments(R.string.settings_experiments),
     Prompts(R.string.prompts_title),
     Rules(R.string.rules_title),
     PromptDetail(R.string.prompts_title),
@@ -196,7 +195,6 @@ private fun SettingsSection.depth(): Int = when (this) {
     SettingsSection.SkillMarketDetail,
     SettingsSection.SubAgentDetail,
     SettingsSection.Teams,
-    SettingsSection.Experiments,
     SettingsSection.PromptDetail,
     SettingsSection.ContainerDownloads, SettingsSection.ContainerSources,
     SettingsSection.Log -> 2
@@ -442,8 +440,7 @@ fun SettingsScreen(
         SettingsSection.Vault,
         SettingsSection.Storage,
         SettingsSection.TokenStats,
-        SettingsSection.Backup,
-        SettingsSection.Experiments -> SettingsSection.MoreGroup
+        SettingsSection.Backup -> SettingsSection.MoreGroup
         SettingsSection.About -> SettingsSection.HelpGroup
         SettingsSection.Prompts -> SettingsSection.AharouGroup
         SettingsSection.Rules -> SettingsSection.AharouGroup
@@ -965,7 +962,6 @@ fun SettingsScreen(
                 SettingsSection.Soul -> SoulSettingsSection()
                 SettingsSection.ConfigAudit -> ConfigAuditSection()
                 SettingsSection.ShadowScreen -> ShadowScreenSection()
-                SettingsSection.Experiments -> ExperimentsSection()
                 SettingsSection.EnvVars -> EnvVarsSection()
                 SettingsSection.Vault -> VaultSection()
                 SettingsSection.Accessibility -> AccessibilitySection()

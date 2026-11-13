@@ -43,8 +43,6 @@ internal fun MessageActionsBottomSheet(
     onEditClick: () -> Unit,
     onCopyClick: () -> Unit,
     onDeleteClick: () -> Unit,
-    /** 引用本条：传 null 隐藏该项（实验开关关闭时）。 */
-    onQuoteClick: (() -> Unit)? = null,
     /** 重新生成：仅助手回答（有正文）提供，生成新版本而不覆盖当前回答。 */
     onRegenerateClick: (() -> Unit)? = null,
     /** 从此处新建分支：以该消息（含）之前的历史另起会话。隐身会话不提供，传 null 即隐藏该项。 */
@@ -90,18 +88,6 @@ internal fun MessageActionsBottomSheet(
                     onClick = {
                         onDismiss()
                         onCopyClick()
-                    }
-                )
-            }
-
-            // 引用本条：把摘要写进输入框，当成普通草稿继续编辑
-            if (onQuoteClick != null && message.content.hasVisibleContent()) {
-                MessageActionItem(
-                    icon = FeatherIcons.Copy,
-                    title = stringResource(R.string.chat_action_quote),
-                    onClick = {
-                        onDismiss()
-                        onQuoteClick()
                     }
                 )
             }

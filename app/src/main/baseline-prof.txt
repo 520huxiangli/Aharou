@@ -39,7 +39,6 @@ HSPLcom/aharou/feature/browser/data/ConfigBrowserFields;->registerInto(Lcom/ahar
 HSPLcom/aharou/feature/im/data/ConfigImFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
 HSPLcom/aharou/feature/agent/data/ConfigStewardFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
 HSPLcom/aharou/feature/agent/data/ConfigSubAgentFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
-HSPLcom/aharou/feature/settings/data/ConfigExperimentFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
 HSPLcom/aharou/feature/pet/data/ConfigPetFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
 HSPLcom/aharou/feature/remotedevice/data/ConfigRemoteDeviceFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
 HSPLcom/aharou/feature/settings/data/ConfigCredentialFields;->registerInto(Lcom/aharou/core/config/ConfigRegistry;)V
