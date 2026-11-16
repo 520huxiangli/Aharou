@@ -182,6 +182,29 @@ class ImBotBridgeTest {
         } finally { f.stop() }
     }
 
+    @Test fun `已有绑定后新群被 @ 仍能自行授权并回复`() = runBlocking {
+        val f = Fixture(id = "qq_napcat")
+        try {
+            coEvery { f.owners.owners(any()) } returns setOf("chat")
+            coEvery { f.owners.bindIfAbsent(any(), any()) } returns true
+            f.start()
+            f.push(message(1, "第二个群打招呼", chat = "account:10000:group:20002", group = true, mentioned = true))
+            until { f.calls.isNotEmpty() }
+            assertEquals("im-qq_napcat-account:10000:group:20002", f.calls.single().sessionId)
+        } finally { f.stop() }
+    }
+
+    @Test fun `已有绑定后陌生私聊仍被丢弃`() = runBlocking {
+        val f = Fixture(id = "qq_napcat")
+        try {
+            coEvery { f.owners.owners(any()) } returns setOf("account:10000:group:20002")
+            f.start()
+            f.push(message(1, "陌生人", chat = "account:10000:private:99999"))
+            until { f.settings.saved == "2" }
+            assertTrue(f.calls.isEmpty())
+        } finally { f.stop() }
+    }
+
     @Test fun `纯附件成功后占位正文和发送者同时进入模型而空消息仍跳过`() = runBlocking {
         val f = Fixture()
         val good = File.createTempFile("im-context", ".bin", context.cacheDir).apply { writeText("ok") }

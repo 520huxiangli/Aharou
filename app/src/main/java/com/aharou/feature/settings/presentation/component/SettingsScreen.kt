@@ -1151,6 +1151,7 @@ fun SettingsScreen(
                             viewModel.moveSkill(entry.name, entry.scope, target)
                         },
                         onExport = { viewModel.exportSkill(entry) },
+                        onPublish = { viewModel.publishSkill(entry) },
                         exporting = skillExportState is SkillExportState.Running
                     )
                 }

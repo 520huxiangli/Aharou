@@ -42,6 +42,7 @@ internal fun SkillDetailSection(
     onMove: (SkillScope) -> Unit,
     onExport: () -> Unit,
     exporting: Boolean,
+    onPublish: () -> Unit = {},
     cache: MarkdownRenderCache? = null
 ) {
     Column(
@@ -138,6 +139,30 @@ internal fun SkillDetailSection(
                     Text(
                         text = stringResource(R.string.skills_export_running),
                         style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.semanticColors.subtleText
+                    )
+                }
+            }
+        }
+
+        // 卡片 3：上传到社区（走 CNB 社区仓库，其他人在技能市场能看到）
+        SettingsGroup {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(enabled = !entry.builtin) { onPublish() }
+                    .padding(horizontal = Spacing.lg, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.skills_publish),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.skills_publish_desc),
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.semanticColors.subtleText
                     )
                 }
