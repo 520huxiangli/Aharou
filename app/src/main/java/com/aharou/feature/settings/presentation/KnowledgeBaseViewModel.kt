@@ -10,9 +10,14 @@ import com.aharou.feature.agent.domain.knowledge.KnowledgeRepository
 import com.aharou.feature.agent.domain.knowledge.KnowledgeSourceDef
 import com.aharou.feature.agent.domain.knowledge.KnowledgeSourceRepository
 import com.aharou.feature.agent.domain.skill.market.SkillRepoAccess
+import com.aharou.feature.im.domain.maibot.KnowledgePublisher
+import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.io.File
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 知识库页的状态：只在有动作时才有意义，[Idle] 表示界面不提示任何结果。 */
 enum class KnowledgeBaseStatus { Idle, Installing, Installed, Failed, InvalidRepo }
@@ -28,8 +33,25 @@ enum class KnowledgeBaseStatus { Idle, Installing, Installed, Failed, InvalidRep
 class KnowledgeBaseViewModel @Inject constructor(
     private val catalog: KnowledgeCatalog,
     private val repository: KnowledgeRepository,
-    private val sourceRepository: KnowledgeSourceRepository
+    private val sourceRepository: KnowledgeSourceRepository,
+    private val publisher: KnowledgePublisher,
+    private val workspaces: WorkspaceRepository
 ) : ViewModel() {
+
+    private val _message = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val message: kotlinx.coroutines.flow.StateFlow<String?> = _message
+    /** 把当前工作区根目录下的 knowledge/ 目录发布到社区仓库。 */
+    fun publishWorkspaceKnowledge() {
+        viewModelScope.launch {
+            val dir = withContext(Dispatchers.IO) { File(workspaces.currentPath(), "knowledge") }
+            if (!dir.isDirectory) {
+                _message.value = "工作区里没有 knowledge 目录"
+                return@launch
+            }
+            val result = publisher.publish("workspace-knowledge", "工作区知识库", dir)
+            _message.value = result.message
+        }
+    }
 
     /**
      * 界面上的一个源。[definition] 原样带出来，让界面按当前语言取展示名——

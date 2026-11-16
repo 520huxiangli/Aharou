@@ -83,6 +83,10 @@ jobs:
       - name: Check official skills
         run: python3 scripts/check_skills.py
 
+      # 插件索引自检：schema 版本、ID 与 SemVer、作者名、包地址形态。
+      - name: Check plugin index
+        run: python3 scripts/check_plugins.py
+
       # 架构门禁：禁用组件 import、文件行数棘轮、双语 strings 一致性。
       - name: Check architecture rules
         run: python3 scripts/check_architecture.py

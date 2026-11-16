@@ -1336,6 +1336,8 @@ class SettingsViewModel @Inject constructor(
 
     fun exportSkill(entry: SkillUiEntry) = skillController.exportSkill(entry)
 
+    fun publishSkill(entry: SkillUiEntry) = skillController.publishSkill(entry)
+
     fun clearSkillExportState() = skillController.clearExportState()
 
     fun refreshSubAgents() {

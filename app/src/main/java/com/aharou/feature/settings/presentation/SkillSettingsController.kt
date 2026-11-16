@@ -53,6 +53,7 @@ class SkillSettingsController @Inject constructor(
     private val skillMarketRepository: SkillMarketRepository,
     private val skillMarketTranslator: SkillMarketTranslator,
     private val skillCategoryTagger: SkillCategoryTagger,
+    private val publisher: com.aharou.feature.im.domain.maibot.SkillPublisher,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -388,6 +389,15 @@ class SkillSettingsController @Inject constructor(
      * 导出技能：在缓存目录打一个 zip，成功后由 UI 弹系统分享。
      * 内置技能也能导——正文从 assets 现攒一份 SKILL.md 打进包里，导出的东西同样能导回来。
      */
+    fun publishSkill(entry: SkillUiEntry) {
+        scope.launch {
+            val result = publisher.publish(entry.name, entry.scope)
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(context, result.message, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     fun exportSkill(entry: SkillUiEntry) {
         if (_exportState.value is SkillExportState.Running) return
         _exportState.value = SkillExportState.Running

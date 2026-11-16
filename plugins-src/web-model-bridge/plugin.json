@@ -1,0 +1,71 @@
+{
+  "manifestVersion": 1,
+  "id": "aharou.web-model-bridge",
+  "name": {
+    "default": "Web Model Bridge",
+    "zh-CN": "网页模型接入"
+  },
+  "version": "0.6.2",
+  "publisher": "aharou",
+  "repository": "https://github.com/520huxiangli/Aharou",
+  "description": {
+    "default": "Expose your own DeepSeek / Doubao web sessions as OpenAI-compatible providers through a local reverse proxy.",
+    "zh-CN": "用本地反向代理把你自己的 DeepSeek、豆包网页会话包装成 OpenAI 兼容供应商，在模型列表里直接选。"
+  },
+  "license": "GPL-3.0",
+  "engines": {
+    "pluginApi": "^1.0.0"
+  },
+  "runtime": {
+    "type": "python",
+    "entry": "runtime/bridge.py",
+    "command": [
+      "python3",
+      "runtime/bridge.py"
+    ],
+    "resident": true
+  },
+  "contributes": {
+    "providers": [
+      {
+        "id": "deepseek-web",
+        "name": {
+          "default": "DeepSeek Web",
+          "zh-CN": "DeepSeek 网页版"
+        },
+        "description": {
+          "default": "Chat through your own chat.deepseek.com session.",
+          "zh-CN": "通过你自己的 chat.deepseek.com 会话对话，不消耗 API 额度。"
+        },
+        "format": "openai",
+        "baseUrl": "http://127.0.0.1:4000/v1"
+      },
+      {
+        "id": "doubao-web",
+        "name": {
+          "default": "Doubao Web",
+          "zh-CN": "豆包网页版"
+        },
+        "description": {
+          "default": "Chat through your own doubao.com session.",
+          "zh-CN": "通过你自己的豆包网页会话对话，不消耗 API 额度。"
+        },
+        "format": "openai",
+        "baseUrl": "http://127.0.0.1:4124/v1"
+      }
+    ],
+    "configPage": "pages/config.html",
+    "hooks": [
+      {
+        "id": "started",
+        "event": "app.started",
+        "handler": "hooks.boot"
+      },
+      {
+        "id": "enabled",
+        "event": "plugin.enabled",
+        "handler": "hooks.boot"
+      }
+    ]
+  }
+}

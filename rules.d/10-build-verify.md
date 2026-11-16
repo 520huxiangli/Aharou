@@ -37,7 +37,7 @@ at: 2026-10-29T21:00
 
 Aharou 特有的部分是：子代理交付后只做只读核实（读文件、抽查它自报的 file:line、跑 `python3 scripts/check_architecture.py`），不要顺手起构建；同一任务里的多处改动攒齐一次再编，不要做一个功能编一个功能。
 
-**经用户同意后**，改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
+**经用户同意后**，改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前跑冒烟编译；并跑 `check_migrations.py` 迁移对账。 改了 `skills/` 下官方技能或 `evals/` 时，跑 `check_skills.py` 技能自检；改了 `plugins/index.json` 或插件包时，跑 `check_plugins.py`。只改文档 / 资源文案 / 纯 `.md` 时这些都跳过。
 
 单元测试（`:app:testUniversalDebugUnitTest` / `:app:testArmsoloDebugUnitTest`——两个 flavor 各一个任务名，**没有** `testDebugUnitTest`）在容器里可能根本跑不动：项目用 Robolectric，首次要下对应 SDK 的 `android-all-instrumented`（约 190 MB，**不走 Gradle 镜像**，流量网络下会永久 hang：worker `wchan=futex_wait`、CPU 近 0、daemon 日志停写）。**跑不动就跳过交给 CI** —— `.github/workflows/android-release.yml` 在构建前会跑同一套单测，失败会拦住发版。
 
@@ -49,6 +49,7 @@ Aharou 特有的部分是：子代理交付后只做只读核实（读文件、�
 | 推送前单测 | `./gradlew :app:testUniversalDebugUnitTest` |
 | 推送前迁移对账 | `python3 scripts/check_migrations.py`（或 `./gradlew checkMigrations`） |
 | 推送前技能自检 | `python3 scripts/check_skills.py`（frontmatter/命名、description、验收用例齐全、市场配置与文档同步） |
+| 推送前插件索引自检 | `python3 scripts/check_plugins.py`（schema 版本、ID 与 SemVer、作者名、包地址形态与本地包） |
 | 推送前架构门禁 | `python3 scripts/check_architecture.py`（或 `./gradlew checkArchitecture`；已挂 `preBuild`，禁用组件 import、单文件行数棘轮、双语 strings 不一致会直接编不过） |
 | proot 资产校验 | `python3 scripts/check_proot_assets.py`（或 `./gradlew checkProotAssets`；已挂 `preBuild`，换了 .so 却没同步 `assets/proot-runtime.json` 时拦下） |
 | 发版构建 APK / AAB | `./gradlew assembleRelease` / `./gradlew bundleRelease` |

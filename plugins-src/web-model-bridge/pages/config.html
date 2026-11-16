@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/__aharou/aicode.js"></script>
+<title>网页模型接入</title>
+<!-- build: 0.6.1 -->
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: var(--aharou-bg, #fff); color: var(--aharou-text, #111); }
+  h2 { font-size: 16px; margin: 4px 0 12px; }
+  .card { border: 1px solid rgba(128,128,128,.25); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+  .step { font-size: 14px; line-height: 1.8; }
+  code { background: rgba(128,128,128,.15); padding: 2px 6px; border-radius: 6px; font-size: 13px; }
+  button { margin-top: 12px; padding: 9px 16px; border-radius: 8px; border: none; background: #3b82f6; color: #fff; font-size: 14px; }
+  button.ghost { background: transparent; color: #3b82f6; border: 1px solid #3b82f6; }
+  .status { font-size: 12px; opacity: .75; margin-top: 10px; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h2>网页模型接入</h2>
+
+<div class="card">
+  <div class="step">
+    <b>1.</b> 点下面按钮打开管理页（端口 4000）<br>
+    <b>2.</b> 用 <code>admin</code> / <code>aharou-admin</code> 登录<br>
+    <b>3.</b> 把 DeepSeek 网页的 userToken 粘进去保存
+  </div>
+  <button onclick="openAdmin()">打开管理页</button>
+  <button class="ghost" onclick="probe()">测试连接</button>
+  <div class="status" id="status"></div>
+</div>
+
+<div class="card">
+  <div class="step">
+    <b>模型设置里填这几项：</b><br>
+    地址 <code>http://127.0.0.1:4000/v1</code><br>
+    Key <code>aharou-local</code><br>
+    模型 <code>v4.1flash</code>
+  </div>
+</div>
+
+<div class="card">
+  <div class="step">
+    <b>userToken 怎么取：</b><br>
+    浏览器打开 chat.deepseek.com 登录 → F12 控制台执行<br>
+    <code>JSON.parse(localStorage.getItem("userToken")).value</code><br>
+    复制结果粘到管理页。
+  </div>
+</div>
+
+<script>
+const api = window.aharou || {};
+const ADMIN_URL = 'http://127.0.0.1:4000/dashboard';
+
+function openAdmin() {
+  const hint = document.getElementById('status');
+  if (api.ui && api.ui.openUrl) api.ui.openUrl(ADMIN_URL);
+  else window.open(ADMIN_URL, '_blank');
+  hint.textContent = '没跳转就手动打开：' + ADMIN_URL;
+}
+
+async function probe() {
+  const box = document.getElementById('status');
+  if (!api.http || typeof api.http.request !== 'function') {
+    box.textContent = '当前宿主没有提供 http 桥';
+    return;
+  }
+  box.textContent = '检测中…';
+  try {
+    const res = await api.http.request({
+      url: 'http://127.0.0.1:4000/v1/models',
+      method: 'GET',
+      headers: { Authorization: 'Bearer aharou-local' }
+    });
+    const body = typeof res.body === 'string' ? res.body : JSON.stringify(res.body);
+    box.textContent = body;
+  } catch (e) {
+    box.textContent = '连不上：' + (e && e.message ? e.message : e) + '（首次安装要几分钟）';
+  }
+}
+</script>
+</body>
+</html>

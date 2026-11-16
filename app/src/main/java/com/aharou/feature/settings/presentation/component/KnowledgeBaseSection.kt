@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ internal fun KnowledgeBaseSection(
     val categories = viewModel.categories
     val status = viewModel.status
     val busyId = viewModel.busyId
+    val publishMessage by viewModel.message.collectAsStateWithLifecycle()
 
     val visible = remember(sources, category) {
         if (category == null) sources else sources.filter { it.definition.category == category }
@@ -127,6 +129,17 @@ internal fun KnowledgeBaseSection(
                     color = MaterialTheme.semanticColors.subtleText
                 )
             }
+
+            TextButton(onClick = { viewModel.publishWorkspaceKnowledge() }) {
+                Text(stringResource(R.string.knowledge_publish))
+            }
+            publishMessage?.let { msg ->
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.semanticColors.subtleText
+                )
+            }
         }
 
         if (visible.isEmpty()) {
@@ -153,7 +166,14 @@ internal fun KnowledgeBaseSection(
                 items(visible, key = { it.id }) { source ->
                     KnowledgeRow(
                         title = source.definition.displayName(lang),
-                        description = source.definition.displayDescription(lang),
+                        description = buildString {
+                            append(source.definition.displayDescription(lang))
+                            val author = source.definition.author
+                            if (author.isNotBlank()) {
+                                if (isNotEmpty()) append(" · ")
+                                append(author)
+                            }
+                        },
                         docCount = source.docCount,
                         installed = source.installed,
                         hasUpdate = source.hasUpdate,
