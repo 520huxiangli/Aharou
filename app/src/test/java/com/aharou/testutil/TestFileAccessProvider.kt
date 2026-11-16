@@ -2,6 +2,7 @@ package com.aharou.testutil
 
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.FileEntry
+import com.aharou.feature.workspace.domain.FileReadTooLargeException
 import com.aharou.feature.workspace.domain.sha256Fingerprint
 import java.io.File
 import java.io.FileOutputStream
@@ -74,6 +75,15 @@ class TestFileAccessProvider : FileAccessProvider {
     }
 
     override fun readBytes(path: String): ByteArray = File(path).readBytes()
+
+    override fun readBytes(path: String, maxBytes: Long): ByteArray {
+        val file = File(path)
+        if (file.length() > maxBytes) throw FileReadTooLargeException(maxBytes)
+        return file.readBytes()
+    }
+
+    override fun resolvePath(path: String, followFinalLink: Boolean): String =
+        runCatching { File(path).canonicalPath }.getOrDefault(File(path).absolutePath)
 
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
         val file = File(path)

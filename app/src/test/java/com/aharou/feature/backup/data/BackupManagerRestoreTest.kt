@@ -98,7 +98,8 @@ class BackupManagerRestoreTest {
         syncSettingsRepository = mockk(relaxed = true),
         workspaceRepository = workspaces,
         database = database,
-        restoreSettings = settings
+        restoreSettings = settings,
+        pluginArchive = mockk(relaxed = true)
     )
 
     private fun metadata() = json.encodeToString(BackupMetadata.serializer(), BackupMetadata(80, createdAt = 0))
