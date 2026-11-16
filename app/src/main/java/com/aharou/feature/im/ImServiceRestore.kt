@@ -35,10 +35,13 @@ class ImServiceRestore @Inject constructor(
     private val wecom: WeComSettingsRepository,
     private val napcat: com.aharou.feature.im.data.repository.NapCatSettingsRepository,
     private val napcatRuntime: com.aharou.feature.im.domain.napcat.NapCatRuntimeManager,
+    private val maiBotMode: com.aharou.feature.im.domain.maibot.MaiBotModeController,
 ) {
 
     fun restore(context: Context, scope: CoroutineScope) {
         scope.launch {
+            runCatching { maiBotMode.restore() }
+                .onFailure { FileLogger.w(TAG, "恢复 MaiBot 模式失败", it) }
             runCatching {
                 if (telegram.current().enabled) TelegramBotService.start(context)
             }.onFailure { FileLogger.w(TAG, "恢复 Telegram 机器人失败", it) }

@@ -49,6 +49,11 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
     val error by viewModel.error.collectAsStateWithLifecycle()
     val webUrl by viewModel.webUrl.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
+    val workMode by viewModel.workMode.collectAsStateWithLifecycle()
+    val maiBot by viewModel.maiBotState.collectAsStateWithLifecycle()
+    val maiBotInstalling by viewModel.maiBotInstalling.collectAsStateWithLifecycle()
+    val maiBotProgress by viewModel.maiBotProgress.collectAsStateWithLifecycle()
+    val maiBotMessage by viewModel.maiBotMessage.collectAsStateWithLifecycle()
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -109,7 +114,9 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
                 (state.phase == "error" && state.version.isBlank())), viewModel::install)
             NapAction(R.string.napcat_update, !working && !running && state.version.isNotBlank(), viewModel::update)
             NapAction(if (running || cfg.enabled) R.string.napcat_stop else R.string.napcat_start,
-                !working && (running || cfg.enabled || state.version.isNotBlank())) { viewModel.setEnabled(!(running || cfg.enabled)) }
+                state.phase != "installing" && (running || cfg.enabled || state.version.isNotBlank())) {
+                viewModel.setEnabled(!(running || cfg.enabled))
+            }
             if (cfg.enabled && !working && !running && state.version.isNotBlank()) {
                 NapAction(R.string.napcat_retry_start, true, viewModel::retryStart)
             }
@@ -157,6 +164,36 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
             NapToggle(R.string.napcat_groups, groups, !working) { groups = it }
             NapToggle(R.string.napcat_mention, mention, !working) { mention = it }
             NapToggle(R.string.napcat_self, self, !working) { self = it }
+            SettingsRow(
+                title = stringResource(R.string.maibot_work_mode),
+                subtitle = stringResource(R.string.maibot_work_mode_desc),
+                enabled = !working,
+                trailing = {
+                    AppSwitch(
+                        checked = workMode,
+                        enabled = !working,
+                        onCheckedChange = viewModel::setWorkMode
+                    )
+                }
+            )
+            SettingsDivider()
+            InfoRow(
+                stringResource(R.string.maibot_section),
+                maiBotMessage ?: when {
+                    maiBotInstalling -> stringResource(R.string.maibot_installing) + " " + (maiBotProgress * 100).toInt() + "%"
+                    maiBot.phase == "running" -> maiBot.phase + (maiBot.pid?.let { " pid=$it" } ?: "")
+                    else -> maiBot.phase.ifBlank { "stopped" }
+                }
+            )
+            if (maiBotInstalling) {
+                LinearProgressIndicator(
+                    progress = { maiBotProgress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg)
+                )
+            }
+            NapAction(R.string.maibot_install, !maiBotInstalling) { viewModel.installMaiBot() }
+            NapAction(R.string.maibot_start, !maiBotInstalling && maiBot.phase != "running") { viewModel.startMaiBot() }
+            NapAction(R.string.maibot_stop, !maiBotInstalling && maiBot.phase == "running") { viewModel.stopMaiBot() }
             NapHint(R.string.napcat_allowlist_hint)
             NapField(R.string.napcat_allowed_users, users, { users = it }, enabled = !working)
             NapField(R.string.napcat_allowed_groups, groupIds, { groupIds = it }, enabled = !working)

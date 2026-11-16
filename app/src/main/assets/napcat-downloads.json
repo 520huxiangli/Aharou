@@ -2,21 +2,21 @@
   "schemaVersion": 1,
   "napcatVersion": "v4.18.42",
   "qqVersion": "3.2.34-53644",
-  "rootfsVersion": "v4.29.0",
+  "rootfsVersion": "24.04.3",
   "assets": [
     {
-      "name": "debian-trixie-aarch64-pd-v4.29.0.tar.xz",
-      "source": "https://github.com/termux/proot-distro/releases/download/v4.29.0/debian-trixie-aarch64-pd-v4.29.0.tar.xz",
-      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/debian-trixie-aarch64-pd-v4.29.0.tar.xz",
-      "sha256": "3834a11cbc6496935760bdc20cca7e2c25724d0cd8f5e4926da8fd5ca1857918",
-      "sizeBytes": 35409704
+      "name": "ubuntu-base-24.04.3-base-arm64.tar.gz",
+      "source": "https://mirrors.huaweicloud.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-arm64.tar.gz",
+      "url": "https://mirrors.huaweicloud.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-arm64.tar.gz",
+      "sha256": "7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48dabb048",
+      "sizeBytes": 29865086
     },
     {
-      "name": "debian-trixie-x86_64-pd-v4.29.0.tar.xz",
-      "source": "https://github.com/termux/proot-distro/releases/download/v4.29.0/debian-trixie-x86_64-pd-v4.29.0.tar.xz",
-      "url": "https://cnb.cool/huxiangli/aharou-releases/-/releases/download/napcat-runtime-v4.18.42-qq-53644-pd-4.29.0/debian-trixie-x86_64-pd-v4.29.0.tar.xz",
-      "sha256": "4b8f33b80a10d734ff935e5934588572f860c0c38a68bf91db59af0580370716",
-      "sizeBytes": 36728936
+      "name": "ubuntu-base-24.04.3-base-amd64.tar.gz",
+      "source": "https://mirrors.huaweicloud.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-amd64.tar.gz",
+      "url": "https://mirrors.huaweicloud.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-amd64.tar.gz",
+      "sha256": "6bc2cde3930ad088b3bb46fa45279e96d25bc3810f209850ecbe4722711874f9",
+      "sizeBytes": 29983772
     },
     {
       "name": "NapCat-v4.18.42.Shell.zip",

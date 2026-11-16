@@ -79,7 +79,6 @@ internal fun SkillsSection(
     archived: List<SkillRepository.ArchivedSkill> = emptyList(),
     onRestoreArchived: (SkillRepository.ArchivedSkill) -> Unit = {}
 ) {
-    ArchivedSkillsRow(archived = archived, onRestore = onRestoreArchived)
     // 已禁用的沉到组末尾：禁用项一多，混在中间会把启用的冲散。
     val builtinSkills = entries.filter { it.builtin }.sortedBy { it.disabled }
     val projectSkills = entries.filter { it.scope == SkillScope.PROJECT }.sortedBy { it.disabled }
@@ -147,6 +146,10 @@ internal fun SkillsSection(
             .padding(horizontal = Spacing.lg),
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
+        // 归档入口必须作为列表项：与 LazyColumn 平级会被父级 Box 叠在一起
+        item(key = "skills_archived", contentType = "archived") {
+            ArchivedSkillsRow(archived = archived, onRestore = onRestoreArchived)
+        }
         if (selection.selectionMode) {
             item(key = "skills_selection_bar", contentType = "batch_entry") {
                 SelectionActionBar(

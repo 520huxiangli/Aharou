@@ -186,11 +186,12 @@ class NapCatRuntimeManager @Inject constructor(
                         status = "unavailable", error = message)
                     settings.setAccountId("")
                     _state.value = _state.value.copy(error = message)
-                    if (ready || attempts >= 60) {
+                    if (ready || attempts >= 180) {
                         _state.value = _state.value.copy(phase = "error", error = if (ready) message else "NapCat WebUI startup timed out: ${safeError(e)}")
                     }
                 }
-                delay(2000)
+                // 登录失败（含 WebUI 限流）时逐步拉长间隔，持续 2 秒一次只会一直撞限流
+                delay(if (ready) 2_000L else (2_000L * minOf(attempts, 15)).toLong())
             }
         }
     }
@@ -269,7 +270,8 @@ class NapCatRuntimeManager @Inject constructor(
 
     private suspend fun refreshLogin() {
         installer.syncConnection()
-        val token = settings.current().webUiToken
+        // 以文件里的令牌为准：App 存储里的副本可能解密失败或不同步
+        val token = installer.currentWebUiToken() ?: settings.current().webUiToken
         val status = web.call(token, "/api/QQLogin/CheckLoginStatus").getJSONObject("data")
         if (status.optBoolean("isLogin")) {
             val info = web.call(token, "/api/QQLogin/GetQQLoginInfo").getJSONObject("data")

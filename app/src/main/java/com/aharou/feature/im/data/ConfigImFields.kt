@@ -39,6 +39,7 @@ class ConfigImFields @Inject constructor(
     private val dingTalk: DingTalkSettingsRepository,
     private val weCom: WeComSettingsRepository,
     private val napCat: ConfigNapCatFields,
+    private val maiBot: ConfigMaiBotFields,
     @Named("telegram") private val telegramBridge: ImBotBridge,
     @Named("weixin") private val weixinBridge: ImBotBridge,
     @Named("feishu") private val feishuBridge: ImBotBridge,
@@ -48,6 +49,7 @@ class ConfigImFields @Inject constructor(
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
+        maiBot.registerInto(registry)
         mapOf(
             "telegram" to telegramBridge,
             "weixin" to weixinBridge,

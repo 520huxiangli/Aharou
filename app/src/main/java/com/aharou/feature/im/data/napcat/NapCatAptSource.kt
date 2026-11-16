@@ -6,9 +6,9 @@ internal object NapCatAptSource {
 
     // 首次安装尚未保证 CA 包存在；HTTP 引导沿用容器惯例，索引及包仍由 apt 验签。
     val sources = """
-        deb http://mirrors.huaweicloud.com/debian trixie main contrib
-        deb http://mirrors.huaweicloud.com/debian trixie-updates main contrib
-        deb http://mirrors.huaweicloud.com/debian-security trixie-security main contrib
+        deb http://mirrors.huaweicloud.com/ubuntu-ports noble main restricted universe multiverse
+        deb http://mirrors.huaweicloud.com/ubuntu-ports noble-updates main restricted universe multiverse
+        deb http://mirrors.huaweicloud.com/ubuntu-ports noble-security main restricted universe multiverse
     """.trimIndent() + "\n"
 
     fun arguments(command: String, packages: List<String> = emptyList()): List<String> {

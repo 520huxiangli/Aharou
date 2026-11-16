@@ -12,6 +12,7 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -93,8 +94,9 @@ class QqChannelClient @Inject constructor(
     /**
      * 被动回复凭据：QQ 的主动消息有严格频次限制，回带入站 msg_id 才算「回话」。
      * 同一条入站消息最多回 5 次、5 分钟内有效，所以带 TTL 与次数上限。
+     * 按 chatId 存：一个 bot 可能同时在多个群里，单一槽位会让别的群把本群的凭据顶掉。
      */
-    @Volatile private var lastInbound: InboundRef? = null
+    private val lastInbounds = ConcurrentHashMap<String, InboundRef>()
 
     override fun disconnect() {
         socketGeneration = Any()
@@ -108,7 +110,7 @@ class QqChannelClient @Inject constructor(
         tokenExpireAt = 0L
         reconnectAt = 0L
         reconnectDelayMs = RECONNECT_MIN_MS
-        lastInbound = null
+        lastInbounds.clear()
         while (inbox.tryReceive().isSuccess) { }
     }
 
@@ -191,7 +193,7 @@ class QqChannelClient @Inject constructor(
         chatId: String,
         chunk: String,
     ): String {
-        val ref = lastInbound?.takeIf { it.chatId == chatId && !it.expired() && it.remaining() > 0 }
+        val ref = lastInbounds[chatId]?.takeIf { it.chatId == chatId && !it.expired() && it.remaining() > 0 }
         if (ref != null) {
             val msgSeq = ref.nextSeq()
             val body = buildJsonObject {
@@ -425,7 +427,7 @@ class QqChannelClient @Inject constructor(
         val chatId = if (type.contains("GROUP") || groupId.isNotBlank()) "group:$groupId" else "c2c:$userId"
         // 记住这条入站消息：后续回话可以带 msg_id 走被动回复，不吃主动消息配额
         val inboundId = d["id"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        if (inboundId.isNotBlank()) lastInbound = InboundRef(chatId, inboundId)
+        if (inboundId.isNotBlank()) lastInbounds[chatId] = InboundRef(chatId, inboundId)
         return ImUpdate.Message(
             ImInboundMessage(
                 updateId = ++localUpdateId,
@@ -521,7 +523,7 @@ class QqChannelClient @Inject constructor(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val fileInfo = uploadMedia(c, token, scope, target, file, fileType)
-                val ref = lastInbound?.takeIf { it.chatId == chatId && !it.expired() && it.remaining() > 0 }
+                val ref = lastInbounds[chatId]?.takeIf { it.chatId == chatId && !it.expired() && it.remaining() > 0 }
                 val body = buildJsonObject {
                     if (ref != null) {
                         put("msg_id", ref.msgId)

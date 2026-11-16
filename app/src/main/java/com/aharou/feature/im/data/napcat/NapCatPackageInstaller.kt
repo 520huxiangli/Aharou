@@ -45,7 +45,11 @@ class NapCatPackageInstaller @Inject constructor(
 ) {
     private val base get() = File(context.filesDir, "aharou-global/napcat")
     private val manifest get() = AtomicFile(File(base, "installed.json"))
-    private val archive get() = File(base, "downloads/debian-rootfs.tar.gz")
+    private val archive get() = File(base, "downloads/ubuntu-rootfs.tar.gz")
+
+    private companion object {
+        const val DEFAULT_WEBUI_PORT = 6099
+    }
 
     private fun installed(): JSONObject? = runCatching {
         manifest.openRead().bufferedReader().use { JSONObject(it.readText()) }
@@ -58,7 +62,7 @@ class NapCatPackageInstaller @Inject constructor(
     fun profile(): ContainerProfile {
         val home = File(base, "data/home").apply { mkdirs() }
         return ContainerProfile(
-            id = "napcat-debian", name = "NapCat Debian", isBuiltin = false,
+            id = "napcat-debian", name = "NapCat Ubuntu", isBuiltin = false,
             shellPath = "/bin/bash", rootfsSource = RootfsSource.LocalFile(Uri.fromFile(archive).toString()),
             extraBindings = listOf("${base.absolutePath}:/napcat", "${base.absolutePath}:/opt/aharou-napcat", "${home.absolutePath}:/root"),
             extraArgs = ContainerProfile.DEFAULT_PROOT_ARGS
@@ -79,8 +83,21 @@ class NapCatPackageInstaller @Inject constructor(
             else -> error("NapCat requires arm64-v8a or x86_64")
         }
         val debArchitecture = if (architecture == "aarch64") "arm64" else "amd64"
-        val selected = if (update) releases.latest(debArchitecture) else releases.bundled(debArchitecture)
-        if (installed()?.let { it.optString("version") == selected.version && it.optString("qqVersion") == selected.qqVersion } == true) {
+        val selected = if (update) {
+            // 取最新版本要连 GitHub，国内常超时；取不到就回退内置版本，只提示不中断安装
+            runCatching { releases.latest(debArchitecture) }.getOrElse {
+                onLog("获取最新版本失败（${it.message ?: it.javaClass.simpleName}），回退内置版本")
+                releases.bundled(debArchitecture)
+            }
+        } else {
+            releases.bundled(debArchitecture)
+        }
+        if (installed()?.let {
+                it.optString("version") == selected.version &&
+                    it.optString("qqVersion") == selected.qqVersion &&
+                    it.optString("rootfsVersion") == NapCatRootfs.VERSION
+            } == true
+        ) {
             onProgress(1f)
             return@withContext
         }
@@ -88,9 +105,16 @@ class NapCatPackageInstaller @Inject constructor(
         File(base, "releases").mkdirs()
         File(base, "data/config").mkdirs()
         File(base, "data/plugins").mkdirs()
-        if (!container.isInstalledFor(profile())) {
+        val installedRootfs = installed()?.optString("rootfsVersion").orEmpty()
+        val rootfsOutdated = installedRootfs != NapCatRootfs.VERSION
+        if (!container.isInstalledFor(profile()) || rootfsOutdated) {
+            // 基座换了（如 Debian → Ubuntu）：删安装标记，让 installRootfsIfNeed 重新解压
+            if (rootfsOutdated && container.isInstalledFor(profile())) {
+                onLog("检测到机器人基座变更（$installedRootfs → ${NapCatRootfs.VERSION}），重建环境")
+                File(container.rootfsDirFor(profile()), ".installed_custom").delete()
+            }
             onStage("rootfs_download")
-            val (rootfs, candidate) = downloadCandidates(catalog.rootfsCandidates(architecture), "napcat-debian-$architecture.archive") {
+            val (rootfs, candidate) = downloadCandidates(catalog.rootfsCandidates(architecture), "napcat-ubuntu-$architecture.archive") {
                 onProgress(it * 0.2f)
             }
             onStage("rootfs_unpack")
@@ -106,7 +130,7 @@ class NapCatPackageInstaller @Inject constructor(
             writeAtomic(File(base, NapCatAptSource.SOURCE_FILE), NapCatAptSource.sources)
             val lists = File(base, "${NapCatAptSource.LISTS_DIRECTORY}/partial")
             check(lists.isDirectory || lists.mkdirs()) { "Cannot prepare NapCat apt index directory" }
-            onLog("APT source: mirrors.huaweicloud.com (Debian trixie)")
+            onLog("APT source: mirrors.huaweicloud.com (Ubuntu 24.04 noble)")
             onStage("dependency_index")
             command("/usr/bin/apt-get", NapCatAptSource.arguments("update"))
             onProgress(0.3f)
@@ -139,7 +163,8 @@ class NapCatPackageInstaller @Inject constructor(
         packageFile.writeText(JSONObject(packageFile.readText()).put("main", "./loadNapCat.js").toString())
         command("/bin/bash", listOf("-c", "set -e; for name in config plugins; do target=\"\$1/napcat/\$name\"; if [ -d \"\$target\" ] && [ ! -L \"\$target\" ]; then if [ \"\$name\" = plugins ]; then cp -an \"\$target/.\" \"/napcat/data/\$name/\"; fi; mv \"\$target\" \"\$target.bundled\"; fi; ln -s \"/napcat/data/\$name\" \"\$target\"; done", "napcat-install", "$guest/qq/opt/QQ/resources/app/app_launcher"))
         onStage("configure")
-        val metadata = JSONObject().put("version", selected.version).put("qqVersion", selected.qqVersion).put("release", release)
+        val metadata = JSONObject().put("version", selected.version).put("qqVersion", selected.qqVersion)
+            .put("rootfsVersion", NapCatRootfs.VERSION).put("release", release)
         configure(release)
         val output = manifest.startWrite()
         try {
@@ -155,8 +180,14 @@ class NapCatPackageInstaller @Inject constructor(
         val webToken = config.webUiToken.ifBlank { newToken() }
         val dir = File(base, "data/config").apply { mkdirs() }
         val webFile = File(dir, "webui.json")
-        if (!webFile.isFile) writeAtomic(webFile, JSONObject().put("host", "127.0.0.1").put("port", 6099)
-            .put("token", webToken).put("loginRate", 10).put("disableWebUI", false).toString())
+        // 端口不写死：同机可能还装着另一个 Aharou（正式版/debug），它的 NapCat 占着 6099
+        val existing = runCatching { if (webFile.isFile) JSONObject(webFile.readText()) else null }.getOrNull()
+        val preferred = existing?.optInt("port")?.takeIf { it > 0 } ?: DEFAULT_WEBUI_PORT
+        val port = if (!isPortBusy(preferred)) preferred else pickFreePort(preferred + 1)
+        val webConfig = existing ?: JSONObject().put("host", "127.0.0.1")
+            .put("token", webToken).put("loginRate", 10).put("disableWebUI", false)
+        webConfig.put("port", port)
+        writeAtomic(webFile, webConfig.toString())
         val oneBotFile = File(dir, "onebot11.json")
         if (!oneBotFile.isFile) writeAtomic(oneBotFile, oneBotConfig(token).toString())
         val logFile = File(dir, "napcat.json")
@@ -181,13 +212,21 @@ class NapCatPackageInstaller @Inject constructor(
         if (!usable) writeAtomic(file, template.readText())
     }
 
+    /** 直接读 NapCat 的 WebUI 令牌：登录用它，绕开 App 存储（加密读写可能不同步）。 */
+    fun currentWebUiToken(): String? = runCatching {
+        val file = File(base, "data/config/webui.json")
+        if (!file.isFile) null else JSONObject(file.readText()).optString("token").takeIf { it.isNotBlank() }
+    }.getOrNull()
+
     suspend fun syncConnection(account: String? = null) = withContext(Dispatchers.IO) {
         val config = settings.current()
         val dir = File(base, "data/config")
         val selectedAccount = account ?: config.accountId
         val accountFile = if (selectedAccount.matches(Regex("[0-9]{5,20}"))) NapCatLocalConfig.accountFile(dir, selectedAccount) else null
         val oneBotFile = accountFile?.takeIf { it.isFile } ?: File(dir, "onebot11.json")
-        val connection = NapCatLocalConfig.connection(JSONObject(File(dir, "webui.json").readText()), JSONObject(oneBotFile.readText()))
+        // NapCat 首次启动前还没有 webui.json，此时不强行同步，等它生成后再读
+        val webJson = File(dir, "webui.json").takeIf { it.isFile } ?: return@withContext
+        val connection = NapCatLocalConfig.connection(JSONObject(webJson.readText()), JSONObject(oneBotFile.readText()))
         if (config.baseUrl != connection.httpUrl || config.webUiUrl != connection.webUiUrl ||
             config.token != connection.token || config.webUiToken != connection.webUiToken) {
             settings.setConnection(connection.httpUrl, connection.webUiUrl, connection.token, connection.webUiToken)
@@ -288,7 +327,7 @@ class NapCatPackageInstaller @Inject constructor(
             try {
                 val uri = downloader.download(
                     candidate.url, name, candidate.sha256,
-                    connectTimeoutSeconds = 30, readTimeoutSeconds = 120
+                    connectTimeoutSeconds = 30, readTimeoutSeconds = 600
                 ) { read, total ->
                     progress(if (total > 0) (read.toFloat() / total).coerceIn(0f, 1f) else 0f)
                 }
@@ -376,6 +415,13 @@ class NapCatPackageInstaller @Inject constructor(
 
     private fun newToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }
         .joinToString("") { "%02x".format(it) }
+
+    private fun isPortBusy(port: Int): Boolean = runCatching {
+        java.net.ServerSocket(port).close()
+        false
+    }.getOrDefault(true)
+
+    private fun pickFreePort(start: Int): Int = (start..start + 100).firstOrNull { !isPortBusy(it) } ?: start
 
 
 }

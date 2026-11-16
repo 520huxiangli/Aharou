@@ -65,6 +65,25 @@ class ImOwnerStore @Inject constructor(
         return bound
     }
 
+    /**
+     * 把 [chatId] 追加进集合（已有则不动），返回是否由本次调用写入。
+     * 群聊要按群累积：每个群各自认主一次，不能因为本渠道已有一个聊天绑了就把新群挡在外面。
+     */
+    suspend fun bindIfAbsent(channelId: String, chatId: String): Boolean {
+        if (chatId.isBlank()) return false
+        var added = false
+        context.imOwnerDataStore.edit { prefs ->
+            val key = keyFor(channelId)
+            val current = prefs[key].orEmpty()
+            if (chatId !in current) {
+                prefs[key] = current + chatId
+                added = true
+            }
+        }
+        if (added) FileLogger.i(TAG, "[$channelId] 已授权聊天 chat=$chatId")
+        return added
+    }
+
     /** 解开该渠道的全部绑定：下一个进来的聊天会重新成为所有者。 */
     suspend fun clearOwners(channelId: String) {
         context.imOwnerDataStore.edit { prefs -> prefs.remove(keyFor(channelId)) }

@@ -64,7 +64,8 @@ class ImBotBridge (
     // 显式传入时以传入的为准（DataStore 由文件级委托统一持有，多实例不会各开一份）
     private val owners: ImOwnerStore = ImOwnerStore(context),
     private val policy: ImBridgePolicy = ImBridgePolicy.Default,
-    private val fallbackWorkspacePath: suspend () -> String = { "" }
+    private val fallbackWorkspacePath: suspend () -> String = { "" },
+    private val botMode: BotModeState = BotModeState()
 ) {
     /** 设置界面的 ViewModel 拿它读写本渠道的配对记录。 */
     val id: String get() = channelId
@@ -211,7 +212,8 @@ class ImBotBridge (
     /**
      * 所有者门禁 + 认主，消息与回调共用的头一道关。
      *
-     * 已有绑定：只认集合内的聊天，其余一律丢弃。
+     * 已有绑定：私聊只认集合内的聊天，其余一律丢弃；群聊则按群各自认主一次后累积，
+     * 不因为本渠道已有一个聊天绑了就把新拉的群挡在外面。
      * 尚无绑定：确认这个聊天确实在跟机器人说话（[directed]）才把它认成所有者；
      * 群聊里不带 @ 的路人发言不认，否则群里任何人说一句话就把整个群变成了所有者。
      *
@@ -225,7 +227,15 @@ class ImBotBridge (
         val current = owners.owners(namespace)
         if (chatId in current) return true
         if (current.isNotEmpty()) {
-            FileLogger.d(TAG, "[$channelId] 丢弃非所有者聊天 $chatId（已绑定 ${current.size} 个）")
+            if (policy.isGroupChat(chatId) && directed && policy.permitsNewGroup(cfg, chatId)) {
+                if (owners.bindIfAbsent(namespace, chatId)) {
+                    FileLogger.i(TAG, "[$channelId] 新群已授权 chat=$chatId（共 ${current.size + 1} 个）")
+                    return true
+                }
+                // 并发下另一个协程刚把同一个群绑上：以落盘结果为准
+                if (owners.isOwner(namespace, chatId)) return true
+            }
+            FileLogger.i(TAG, "[$channelId] 丢弃非所有者聊天 $chatId（已绑定 ${current.size} 个）")
             return false
         }
         if (!directed) return true
@@ -451,6 +461,11 @@ class ImBotBridge (
 
     private suspend fun handleMessage(cfg: ImChannelConfig, msg: ImInboundMessage): Boolean {
         val result = runCatching {
+            // 日常模式：消息由 MaiBot 处理，这里只推进游标不跑 agent
+            if (botMode.handedToMaiBot) {
+                FileLogger.d(TAG, "[$channelId] 日常模式，消息交给 MaiBot chat=${msg.chatId}")
+                return@runCatching
+            }
             // 所有者校验摆在最前面：没有绑定时这里会把当前聊天认成所有者，已有绑定时陌生聊天直接丢弃，
             // 不再往下走到 @ 判定与 runTurn（否则任何能给 bot 发消息的人都能驱动本机的 agent）
             if (!policy.accepts(cfg, msg)) return@runCatching

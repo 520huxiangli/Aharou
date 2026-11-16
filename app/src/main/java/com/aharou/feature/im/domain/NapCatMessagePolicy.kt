@@ -9,6 +9,16 @@ interface ImBridgePolicy {
         !message.isGroup || message.mentionsBot || message.text.contains("@") || message.replyToSenderId != null
     fun explicitlyAuthorized(cfg: ImChannelConfig, message: ImInboundMessage): Boolean = false
     fun ownerNamespace(channelId: String, cfg: ImChannelConfig): String = channelId
+
+    /**
+     * 群聊按群各自授权，私聊只认第一个；靠 chatId 形态区分是群还是私聊。
+     * 官方 QQ 是 `group:<openid>`，NapCat 是 `account:<账号>:group:<群号>`。
+     */
+    fun isGroupChat(chatId: String): Boolean =
+        chatId.startsWith("group:") || chatId.contains(":group:")
+
+    /** 是否允许新群自动认主。配了显式群白名单的平台应返回 false，白名单外的群一律拒绝。 */
+    fun permitsNewGroup(cfg: ImChannelConfig, chatId: String): Boolean = true
     fun sessionDefaults(cfg: ImChannelConfig): ImSessionDefaults = ImSessionDefaults()
     val cancelApprovalsOnReset: Boolean get() = false
 
@@ -35,6 +45,9 @@ class NapCatMessagePolicy : ImBridgePolicy {
         val group = message.chatId.substringAfterLast(':')
         return c.respondGroups && (c.allowedGroups.isEmpty() || group in c.allowedGroups) && directed(cfg, message)
     }
+
+    override fun permitsNewGroup(cfg: ImChannelConfig, chatId: String): Boolean =
+        (cfg as NapCatConfig).allowedGroups.isEmpty()
 
     override fun explicitlyAuthorized(cfg: ImChannelConfig, message: ImInboundMessage): Boolean {
         val c = cfg as NapCatConfig

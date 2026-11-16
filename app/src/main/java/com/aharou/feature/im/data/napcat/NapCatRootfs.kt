@@ -11,27 +11,36 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 
 internal object NapCatRootfs {
+    /** 基座发行版标识：安装记录里存一份，升级时用它判断要不要重建 rootfs。 */
+    const val VERSION = "ubuntu-24.04.3"
+
     fun requireArchitecture(architecture: String) {
         require(architecture in setOf("aarch64", "x86_64")) { "Unsupported NapCat rootfs architecture: $architecture" }
     }
 
     fun url(architecture: String): String {
         requireArchitecture(architecture)
-        return "https://github.com/termux/proot-distro/releases/download/v4.29.0/debian-trixie-$architecture-pd-v4.29.0.tar.xz"
+        val arch = if (architecture == "aarch64") "arm64" else "amd64"
+        return "https://mirrors.huaweicloud.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.3-base-$arch.tar.gz"
     }
 
     fun sha256(architecture: String): String {
         requireArchitecture(architecture)
         return if (architecture == "aarch64")
-            "3834a11cbc6496935760bdc20cca7e2c25724d0cd8f5e4926da8fd5ca1857918"
-        else "4b8f33b80a10d734ff935e5934588572f860c0c38a68bf91db59af0580370716"
+            "7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48dabb048"
+        else "6bc2cde3930ad088b3bb46fa45279e96d25bc3810f209850ecbe4722711874f9"
+    }
+
+    private fun isGzip(source: File): Boolean = source.inputStream().use { stream ->
+        stream.read() == 0x1f && stream.read() == 0x8b
     }
 
     fun normalize(source: File, dest: File, preinstalled: Boolean = false) {
         val temporary = File(dest.parentFile, dest.name + ".part")
         try {
             source.inputStream().buffered().use { raw ->
-                val input = if (preinstalled) GzipCompressorInputStream(raw) else XZCompressorInputStream(raw)
+                // Ubuntu Base 是 .tar.gz，proot-distro 包是 .tar.xz；按魔数判断，不依赖文件名。
+                val input = if (preinstalled || isGzip(source)) GzipCompressorInputStream(raw) else XZCompressorInputStream(raw)
                 TarArchiveInputStream(input).use { tar ->
                     GzipCompressorOutputStream(temporary.outputStream().buffered()).use { gzip ->
                         TarArchiveOutputStream(gzip).use { output ->
@@ -61,7 +70,7 @@ internal object NapCatRootfs {
                     }
                 }
             }
-            check(temporary.renameTo(dest)) { "Cannot commit Debian archive" }
+            check(temporary.renameTo(dest)) { "Cannot commit Ubuntu archive" }
         } finally { temporary.delete() }
     }
 }
@@ -71,7 +80,9 @@ internal object NapCatDependencies {
         "ca-certificates", "xvfb", "xauth", "dpkg", "unzip", "libnss3", "libatk1.0-0t64",
         "libatk-bridge2.0-0t64", "libcups2t64", "libdrm2", "libxkbcommon0", "libxcomposite1",
         "libxdamage1", "libxfixes3", "libxrandr2", "libgbm1", "libasound2t64", "libgtk-3-0t64", "libgssapi-krb5-2",
-        "libnotify4", "libsecret-1-0", "libxss1", "libxtst6", "libatomic1", "fonts-noto-cjk"
+        "libnotify4", "libsecret-1-0", "libxss1", "libxtst6", "libatomic1", "fonts-noto-cjk",
+        // MaiBot 需要 Python 3.12+ 与编译环境（quick_algo 等包要在本机编）
+        "python3", "python3-venv", "python3-pip", "python3-dev", "build-essential", "git", "curl"
     )
 
     val probeScript = """
