@@ -11,12 +11,14 @@ class NapCatAptSourceTest {
     fun `三个仓库均使用国内镜像且固定发行版`() {
         val lines = NapCatAptSource.sources.trim().lines()
         assertEquals(listOf(
-            "deb http://mirrors.huaweicloud.com/debian trixie main contrib",
-            "deb http://mirrors.huaweicloud.com/debian trixie-updates main contrib",
-            "deb http://mirrors.huaweicloud.com/debian-security trixie-security main contrib"
+            "deb http://mirrors.huaweicloud.com/ubuntu-ports noble main restricted universe multiverse",
+            "deb http://mirrors.huaweicloud.com/ubuntu-ports noble-updates main restricted universe multiverse",
+            "deb http://mirrors.huaweicloud.com/ubuntu-ports noble-security main restricted universe multiverse"
         ), lines)
         assertFalse(NapCatAptSource.sources.contains("deb.debian.org"))
         assertFalse(NapCatAptSource.sources.contains("security.debian.org"))
+        // arm64 的 Ubuntu 包只在 ubuntu-ports 下，用普通 ubuntu 目录会 404
+        assertFalse(NapCatAptSource.sources.contains("huaweicloud.com/ubuntu "))
         assertFalse(NapCatAptSource.sources.contains("stable"))
     }
 

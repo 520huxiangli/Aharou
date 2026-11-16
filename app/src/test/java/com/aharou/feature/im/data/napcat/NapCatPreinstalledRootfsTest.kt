@@ -69,7 +69,7 @@ class NapCatPreinstalledRootfsTest {
             listOf(NapCatDownloadCandidate(x86Source, x86Digest)),
             manifest().rootfsCandidates("x86_64", x86Source, x86Digest)
         )
-        val otherVersion = armSource.replace("v4.29.0", "v4.30.0")
+        val otherVersion = armSource.replace("24.04.3", "24.10.0")
         assertEquals(
             listOf(NapCatDownloadCandidate(otherVersion, armDigest)),
             manifest().rootfsCandidates("aarch64", otherVersion, armDigest)

@@ -42,9 +42,9 @@ class NapCatDependenciesTest {
     }
 
     @Test
-    fun `探测全部25个包的ii状态和运行命令而不是marker`() {
-        assertEquals(25, NapCatDependencies.packages.size)
-        assertEquals(25, NapCatDependencies.packages.distinct().size)
+    fun `探测全部依赖包的ii状态和运行命令而不是marker`() {
+        // 数量随基座变化（Ubuntu 下多了 Python 与编译工具），这里只保证内部一致且覆盖关键包
+        assertEquals(NapCatDependencies.packages.size, NapCatDependencies.packages.distinct().size)
         assertTrue(NapCatDependencies.packages.containsAll(listOf("xvfb", "xauth", "dpkg", "fonts-noto-cjk")))
         val script = NapCatDependencies.probeScript
         assertTrue(script.contains("/usr/bin/dpkg-query -W"))
