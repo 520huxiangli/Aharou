@@ -43,6 +43,7 @@ class CodeEditorViewModelTest {
     private val second = mockk<FileAccessProvider>(relaxed = true)
     private val identity = mockk<EditorWorkspaceIdentity>(relaxed = true)
     private val settings = mockk<EditorSettingsRepository>()
+    private val fileChangeHub = mockk<com.aharou.core.watch.FileChangeHub>(relaxed = true)
     private lateinit var model: CodeEditorViewModel
 
     @Before
@@ -54,8 +55,14 @@ class CodeEditorViewModelTest {
         every { second.fingerprint(any()) } returns "second"
         every { identity.matches(any(), any()) } returns true
         every { settings.settingsFlow } returns MutableStateFlow(EditorSettings())
+        every {
+            fileChangeHub.watchWorkspace(
+                any<String>(), any<Boolean>(), any<com.aharou.core.watch.WatchFilter>(), any<Boolean>(), any<Int>()
+            )
+        } returns kotlinx.coroutines.flow.emptyFlow()
         model = CodeEditorViewModel(mockk<Context>(relaxed = true), files, settings,
-            mockk<EditorLspManager>(relaxed = true), mockk<FileVersionRegistry>(relaxed = true), identity)
+            mockk<EditorLspManager>(relaxed = true), mockk<FileVersionRegistry>(relaxed = true), identity,
+            fileChangeHub)
     }
 
     @After

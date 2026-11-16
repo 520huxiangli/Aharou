@@ -33,6 +33,7 @@ class ConfigImFieldsTest {
         val registry = ConfigRegistry::class.java.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
         ConfigImFields(
             telegram, weixin, feishu, qq, dingTalk, weCom, napCat,
+            mockk<ConfigMaiBotFields>(relaxed = true),
             bridge, bridge, bridge, bridge, bridge, bridge,
         ).registerInto(registry)
         for (channel in listOf("telegram", "weixin", "feishu", "qq")) {
