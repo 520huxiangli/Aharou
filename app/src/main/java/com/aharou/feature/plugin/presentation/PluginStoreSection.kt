@@ -114,6 +114,7 @@ internal fun PluginStoreSection(
                 item.plugin.name.resolve(languageTag).lowercase().contains(query) ||
                     item.plugin.id.lowercase().contains(query) ||
                     item.plugin.author.lowercase().contains(query) ||
+                    item.plugin.authorDisplay?.resolve(languageTag)?.lowercase()?.contains(query) == true ||
                     item.plugin.description.resolve(languageTag).lowercase().contains(query)
             }
         }
@@ -448,7 +449,7 @@ private fun StoreHeaderCard(item: PluginStoreItem, languageTag: String) {
                     }
                 }
                 Text(
-                    text = item.plugin.author,
+                    text = item.plugin.authorDisplay?.resolve(languageTag) ?: item.plugin.author,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

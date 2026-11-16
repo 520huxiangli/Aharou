@@ -95,6 +95,15 @@ class PluginIndexClient @Inject constructor(
      * version 为空时取 latest Release 中 `{id}_*.zip` 的最高版本；有 version 时精确查找 `{id}_{version}.zip`。
      */
     suspend fun resolveRelease(plugin: PluginIndexPlugin): PluginReleaseAsset = withContext(Dispatchers.IO) {
+        plugin.packageUrl?.let { url ->
+            val version = plugin.version ?: throw NoMatchingReleaseException("${plugin.id} 缺少版本号")
+            return@withContext PluginReleaseAsset(
+                version = version,
+                name = assetName(plugin.id, version),
+                url = url,
+                size = headContentLength(url)
+            )
+        }
         val (owner, repo) = parseGitHubRepo(plugin.repository)
             ?: throw NoMatchingReleaseException("不是 GitHub 仓库: ${plugin.repository}")
         val expectedName = plugin.version?.let { assetName(plugin.id, it) }
@@ -134,6 +143,16 @@ class PluginIndexClient @Inject constructor(
         val file = File(context.cacheDir, "plugin-${sha256(bytes).take(16)}.zip")
         file.writeBytes(bytes)
         DownloadedPluginPackage(file, asset)
+    }
+
+    /** 仓库内托管的包没有大小字段，用 HEAD 取一次 Content-Length。 */
+    private fun headContentLength(url: String): Long {
+        val request = Request.Builder().url(url).head().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw NoMatchingReleaseException("插件包不可用: HTTP ${response.code}")
+            return response.header("Content-Length")?.toLongOrNull()
+                ?: throw NoMatchingReleaseException("插件包大小未知")
+        }
     }
 
     /** 配置了镜像加速时给 GitHub 地址加上前缀；其他主机的索引仓库保持原地址。 */

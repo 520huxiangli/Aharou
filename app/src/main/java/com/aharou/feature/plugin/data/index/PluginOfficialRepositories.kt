@@ -2,9 +2,9 @@ package com.aharou.feature.plugin.data.index
 
 import java.net.URI
 
-/** 官方插件判定只看插件源码仓库是否归属 AiCode 官方 GitHub 账号/组织。 */
+/** 官方插件判定只看插件源码仓库是否归属 Aharou 官方 GitHub 账号/组织。 */
 object PluginOfficialRepositories {
-    val GITHUB_OWNERS = setOf("jieapi")
+    val GITHUB_OWNERS = setOf("520huxiangli")
 
     fun ownerOf(repository: String): String? {
         val uri = runCatching { URI(repository) }.getOrNull() ?: return null

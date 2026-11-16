@@ -33,7 +33,13 @@ data class PluginIndexPlugin(
     @Serializable(with = LocalizedTextJsonSerializer::class) val name: LocalizedText,
     @Serializable(with = LocalizedTextJsonSerializer::class) val description: LocalizedText,
     val author: String,
+    /** 作者展示名（如用户个人中心昵称）；为空时界面退回 [author]。 */
+    @SerialName("author_display")
+    @Serializable(with = LocalizedTextJsonSerializer::class)
+    val authorDisplay: LocalizedText? = null,
     val repository: String,
+    /** 官方仓库内托管的插件包地址；非空时优先于 GitHub Release。 */
+    @SerialName("package") val packageUrl: String? = null,
     val logo: String? = null,
     val homepage: String? = null,
     val license: String? = null,

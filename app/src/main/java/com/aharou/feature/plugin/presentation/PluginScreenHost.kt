@@ -47,6 +47,7 @@ private enum class PluginHostPage { List, Detail, StoreDetail, DevDetail }
 @Composable
 internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
     val plugins by viewModel.plugins.collectAsStateWithLifecycle()
+    val publishState by viewModel.publishState.collectAsStateWithLifecycle()
     val loaded by viewModel.loaded.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val dependencyStates by viewModel.dependencyStates.collectAsStateWithLifecycle()
@@ -132,6 +133,15 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
                             onBack = { page = PluginHostPage.List },
                             onUninstall = { showUninstallConfirm = true }
                         )
+                        TextButton(onClick = { viewModel.publish(plugin.id) }) {
+                            Text(
+                                text = when {
+                                    publishState == null -> stringResource(R.string.plugins_publish_action)
+                                    publishState!!.isEmpty() -> stringResource(R.string.plugins_publish_running)
+                                    else -> publishState!!
+                                }
+                            )
+                        }
                         val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
                         PluginDetailSection(
                             plugin = plugin,

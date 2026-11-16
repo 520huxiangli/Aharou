@@ -33,8 +33,8 @@ data class PluginIndexSource(
 }
 
 object PluginIndexDefaults {
-    const val OFFICIAL_URL = "https://raw.githubusercontent.com/jieapi/AiCode-Plugins-Store/main/index.json"
-    const val OFFICIAL_NAME = "AiCode Plugins"
+    const val OFFICIAL_URL = "https://cnb.cool/huxiangli/aharou-plugins/-/git/raw/main/plugins/index.json"
+    const val OFFICIAL_NAME = "Aharou 官方插件"
     const val OFFICIAL_ID = "aharou.official"
 
     val official = PluginIndexSource(

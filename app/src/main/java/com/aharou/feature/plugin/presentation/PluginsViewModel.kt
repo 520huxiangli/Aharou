@@ -27,7 +27,9 @@ import com.aharou.feature.plugin.domain.PluginError
 import com.aharou.feature.plugin.domain.PluginErrorCode
 import com.aharou.feature.plugin.domain.PluginInstallOrigin
 import com.aharou.feature.plugin.domain.PluginInstallResult
+import com.aharou.core.identity.UserIdentityStore
 import com.aharou.feature.plugin.domain.PluginManager
+import com.aharou.feature.plugin.domain.PluginPublisher
 import com.aharou.feature.plugin.domain.PluginPreview
 import com.aharou.feature.plugin.domain.PluginPreviewResult
 import com.aharou.feature.plugin.domain.PluginPage
@@ -172,10 +174,29 @@ class PluginsViewModel @Inject constructor(
     private val systemService: PluginSystemService,
     private val introspectionService: PluginIntrospectionService,
     private val toolService: PluginToolService,
-    private val httpService: PluginHttpService
+    private val httpService: PluginHttpService,
+    private val pluginPublisher: PluginPublisher
 ) : ViewModel() {
 
     val plugins: StateFlow<List<InstalledPlugin>> = manager.plugins
+
+    /** 上传插件到官方索引的结果文案；null 表示没有进行中的上传，空串表示进行中。 */
+    private val _publishState = MutableStateFlow<String?>(null)
+    val publishState: StateFlow<String?> = _publishState.asStateFlow()
+
+    fun publish(id: String) {
+        if (_publishState.value != null) return
+        _publishState.value = ""
+        viewModelScope.launch(Dispatchers.IO) {
+            val displayName = runCatching { UserIdentityStore.observe(context).first().name }.getOrDefault("")
+            val result = pluginPublisher.publish(id, displayName)
+            _publishState.value = result.message
+        }
+    }
+
+    fun clearPublishState() {
+        _publishState.value = null
+    }
 
     val loaded: StateFlow<Boolean> = manager.isLoaded
 

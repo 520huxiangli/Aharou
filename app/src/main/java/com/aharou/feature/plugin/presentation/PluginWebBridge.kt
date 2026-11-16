@@ -327,6 +327,16 @@ class PluginWebBridge(
             buildJsonObject { put("ok", true) }
         }
 
+        // 让插件拿到某个站点的 cookie（用于网页版模型登录后自动取会话）
+        "cookies.get" -> {
+            val url = PluginHostPaths.requireString(params, "url")
+            val cookie = android.webkit.CookieManager.getInstance().getCookie(url).orEmpty()
+            buildJsonObject {
+                put("cookie", cookie)
+                put("empty", cookie.isBlank())
+            }
+        }
+
         "ui.close" -> {
             mainHandler.post { onClosePage() }
             buildJsonObject { put("ok", true) }

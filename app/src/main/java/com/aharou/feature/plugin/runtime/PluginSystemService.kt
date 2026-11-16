@@ -98,6 +98,8 @@ class PluginSystemService @Inject constructor(
     suspend fun openUrl(pluginId: String, url: String): JsonElement {
         ensureActive(pluginId)
         val target = requireHttpUrl(url)
+        // 优先用 App 内置浏览器：插件里的「登录」按钮应该就地打开，而不是跳到系统浏览器
+        if (com.aharou.feature.browser.presentation.BrowserLaunchBus.launchIfCollected(target)) return ok()
         withContext(Dispatchers.Main) {
             try {
                 context.startActivity(

@@ -780,7 +780,6 @@ fun AppNavigation(
         }
     }
 
-    // Aharou：工具消息两个互联入口的实现
     val browserOpener: (String) -> Unit = { url ->
         // 非 http(s) 协议（tel: / mailto: / market:// / intent: 等）得在 loadUrl 之前分流：
         // loadUrl 不触发 shouldOverrideUrlLoading，直接塞进 WebView 只会得到 ERR_UNKNOWN_URL_SCHEME。
@@ -790,11 +789,12 @@ fun AppNavigation(
             runCatching {
                 if (url.isNotBlank()) agentViewModel.browserTabPool.selectOrCreateTabForURL(url)
             }
-            // 右栏已经是浏览器时不再叠一层 sheet —— 同一个 WebView 被两个宿主同时挂载
-            // 会互相抢（BrowserWebView.update 里的 re-parent），输的那个容器空着就是白屏。
+            // 右栏已经是浏览器时不再叠一层 sheet：同一个 WebView 被两个宿主同时挂载会互抢（BrowserWebView.update 的 re-parent）
             if (paneKind != WorkbenchPaneKind.BROWSER) browserSheetOpen = true
         }
     }
+    val browserVm: com.aharou.feature.browser.presentation.BrowserViewModel = hiltViewModel()
+    LaunchedEffect(Unit) { com.aharou.feature.browser.presentation.BrowserLaunchBus.requests.collect { url -> runCatching { browserVm.tabPool.selectOrCreateTabForURL(url) }; navController.navigate("browser") } }
     val terminalOpener: (String) -> Unit = { cmd ->
         terminalInitCommand = cmd
         openWorkbench(WorkbenchPaneKind.TERMINAL)

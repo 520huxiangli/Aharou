@@ -29,6 +29,9 @@ internal object PluginIndexParser {
             validateLocalized(plugin.id, "name", plugin.name, MAX_NAME, allowNewlines = false)
             validateLocalized(plugin.id, "description", plugin.description, MAX_DESCRIPTION, allowNewlines = true)
             if (!AUTHOR.matches(plugin.author)) throw PluginIndexException("${plugin.id} 的 author 非法")
+            plugin.authorDisplay?.let {
+                validateLocalized(plugin.id, "author_display", it, MAX_NAME, allowNewlines = false)
+            }
             val repository = runCatching { java.net.URI(plugin.repository) }.getOrNull()
             if (repository?.scheme != "https" || repository.host != "github.com") {
                 throw PluginIndexException("${plugin.id} 的 repository 不是 GitHub 地址")
@@ -48,6 +51,7 @@ internal object PluginIndexParser {
                 throw PluginIndexException("${plugin.id} 的 tags 数量或重复项非法")
             }
             plugin.logo?.let { requireHttps(it, "${plugin.id} logo") }
+            plugin.packageUrl?.let { requireHttps(it, "${plugin.id} package") }
             plugin.homepage?.let { requireHttps(it, "${plugin.id} homepage") }
         }
         return index

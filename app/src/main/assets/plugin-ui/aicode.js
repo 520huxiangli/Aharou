@@ -571,6 +571,12 @@
         return call('http.request', options || {});
       }
     },
+    // 读取宿主 WebView 里某个站点的 cookie（用于网页版模型登录后自动取会话）。
+    cookies: {
+      get: function (options) {
+        return call('cookies.get', { url: String((options && options.url) || '') });
+      }
+    },
     // 写宿主日志，便于插件作者在应用日志里排查。
     log: {
       write: function (level, message, options) {
