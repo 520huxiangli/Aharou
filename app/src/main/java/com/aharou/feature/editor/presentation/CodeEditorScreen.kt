@@ -112,6 +112,9 @@ fun CodeEditorScreen(
     embedded: Boolean = false,
     onAddSelectionToInput: (String) -> Unit,
     leaveGuard: EditorLeaveGuard? = null,
+    pluginEntries: List<com.aharou.feature.plugin.domain.PluginUiEntry> = emptyList(),
+    pluginLanguageTag: String = "zh-CN",
+    onPluginEntry: (com.aharou.feature.plugin.domain.PluginUiEntry, com.aharou.feature.plugin.presentation.PluginEntryContext) -> Unit = { _, _ -> },
     viewModel: CodeEditorViewModel = hiltViewModel()
 ) = key(workspaceIdentity) {
     val session = remember(workspaceIdentity) { EditorSessionManager.forWorkspace(workspaceIdentity) }
@@ -606,6 +609,7 @@ fun CodeEditorScreen(
         )
     }
 
+    PluginSelectionAction(editorRef.value, activePath, pluginEntries, pluginLanguageTag, onPluginEntry)
     if (showSettings) {
         EditorSettingsScreen(onBack = { showSettings = false })
     }
@@ -799,6 +803,7 @@ private fun EditorSurface(
         editor.invalidate()
         onBackgroundResolved(Color(editor.colorScheme.getColor(EditorColorScheme.WHOLE_BACKGROUND)))
     }
+
     LaunchedEffect(settings.fontSizeSp, editor) {
         editor?.setTextSize(settings.fontSizeSp.toFloat())
     }

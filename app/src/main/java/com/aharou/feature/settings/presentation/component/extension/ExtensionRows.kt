@@ -28,8 +28,6 @@ import com.aharou.core.theme.semanticColors
 import com.aharou.feature.extension.domain.ExtensionEntry
 import com.aharou.feature.extension.domain.ExtensionKind
 import com.aharou.feature.extension.domain.ExtensionState
-import com.aharou.feature.plugin.domain.market.PluginMarketEntry
-import com.aharou.feature.plugin.presentation.PluginEvent
 
 /** 类型标签（标题右侧的小徽标）用的字符串资源。 */
 @StringRes
@@ -200,95 +198,4 @@ internal fun extensionSubtitle(entry: ExtensionEntry): String = when {
     entry.kind == ExtensionKind.SKILL -> stringResource(R.string.extension_subtitle_skill)
     entry.kind == ExtensionKind.PLUGIN -> stringResource(R.string.extension_subtitle_plugin)
     else -> stringResource(R.string.extension_subtitle_mcp)
-}
-
-/** 市场里的一条插件：名称 + 版本/作者/描述 + 安装（或已安装 / 更新）按钮。 */
-@Composable
-internal fun MarketPluginRow(
-    entry: PluginMarketEntry,
-    installedVersion: String?,
-    busy: Boolean,
-    anyBusy: Boolean,
-    onInstall: () -> Unit,
-) {
-    val hasUpdate = installedVersion != null && entry.version.isNotBlank() && entry.version != installedVersion
-    val meta = remember(entry) {
-        listOfNotNull(
-            entry.version.takeIf { it.isNotBlank() }?.let { "v$it" },
-            entry.author.takeIf { it.isNotBlank() },
-            entry.repo.takeIf { it.isNotBlank() },
-        ).joinToString(" · ")
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Spacing.lg, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-    ) {
-        Text(
-            text = entry.name.ifBlank { entry.id },
-            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (meta.isNotEmpty()) {
-            Text(
-                text = meta,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.semanticColors.subtleText,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        if (entry.description.isNotBlank()) {
-            Text(
-                text = entry.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (busy) {
-                Text(
-                    text = stringResource(R.string.extension_busy),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.semanticColors.subtleText
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            when {
-                installedVersion != null && !hasUpdate -> Text(
-                    text = stringResource(R.string.extension_state_installed),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.semanticColors.subtleText
-                )
-                else -> TextButton(onClick = onInstall, enabled = !anyBusy) {
-                    Text(
-                        stringResource(
-                            if (hasUpdate) R.string.extension_action_update
-                            else R.string.extension_action_install
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 最近一次操作的提示行。 */
-@Composable
-internal fun ExtensionNotice(event: PluginEvent?) {
-    if (event == null) return
-    val isError = event is PluginEvent.Failed
-    val text = when (event) {
-        is PluginEvent.Installed -> stringResource(R.string.extension_event_installed, event.name, event.version)
-        PluginEvent.Completed -> stringResource(R.string.extension_event_completed)
-        is PluginEvent.Failed -> stringResource(R.string.extension_event_failed, event.reason)
-    }
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }

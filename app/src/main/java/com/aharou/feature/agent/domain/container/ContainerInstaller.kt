@@ -352,6 +352,14 @@ class ContainerInstaller @Inject constructor(
     val aharouDir: File
         get() = migrateLegacyDir(context)
 
+    /** 把 [aharouDir] 下的宿主文件映射为容器内路径；`.aharou` 绑定到 `/root/.aharou`。 */
+    fun containerPathFor(file: File): String {
+        val root = aharouDir.canonicalFile
+        val relative = runCatching { file.canonicalFile.relativeTo(root) }.getOrNull()
+            ?: return file.absolutePath
+        return "/root/.aharou/" + relative.invariantSeparatorsPath
+    }
+
     /**
      * 跨工作区共享区（容器内 `/root/shared`）：所有工作区共用同一份，切工作区不重置。
      *

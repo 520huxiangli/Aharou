@@ -7,8 +7,6 @@ import com.aharou.feature.agent.domain.knowledge.KnowledgeSourceRepository
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.market.SkillInstallRepository
 import com.aharou.feature.connectors.domain.ConnectorLibrary
-import com.aharou.feature.plugin.domain.PluginManager
-import com.aharou.feature.plugin.domain.model.PluginStatus
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +20,6 @@ import javax.inject.Singleton
  */
 @Singleton
 class InstalledExtensionAggregator @Inject constructor(
-    private val pluginManager: PluginManager,
     private val skillRepository: SkillRepository,
     private val skillInstalls: SkillInstallRepository,
     private val knowledgeCatalog: KnowledgeCatalog,
@@ -33,7 +30,6 @@ class InstalledExtensionAggregator @Inject constructor(
 
     /** 全部已有扩展：插件 + 技能 + 知识库源 + 内置连接器。UI 层按 [ExtensionEntry.kind] 分组。 */
     suspend fun installed(): List<ExtensionEntry> = buildList {
-        addAll(pluginEntries())
         addAll(skillEntries())
         addAll(mcpEntries())
         addAll(knowledgeEntries())
@@ -52,26 +48,6 @@ class InstalledExtensionAggregator @Inject constructor(
                 sourceLabel = entry.scope.name,
                 state = if (server.enabled) ExtensionState.RUNNING else ExtensionState.INSTALLED,
                 detail = if (server.isStdio) "stdio" else "http",
-            )
-        }
-
-    private suspend fun pluginEntries(): List<ExtensionEntry> =
-        pluginManager.listInstalled().map { plugin ->
-            val manifest = plugin.manifest
-            ExtensionEntry(
-                id = "plugin:${manifest.id}",
-                kind = ExtensionKind.PLUGIN,
-                name = manifest.name,
-                description = manifest.description,
-                author = manifest.publisher,
-                version = manifest.version,
-                sourceLabel = manifest.homepage.ifBlank { manifest.id },
-                state = when (plugin.status) {
-                    PluginStatus.RUNNING -> ExtensionState.RUNNING
-                    PluginStatus.FAILED -> ExtensionState.FAILED
-                    else -> ExtensionState.INSTALLED
-                },
-                detail = plugin.detail,
             )
         }
 

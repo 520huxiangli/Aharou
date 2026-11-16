@@ -65,6 +65,8 @@ class TerminalTab(
      * 故必须记下来：与发起会话当前工作区不一致时，AI 工具会提醒。交互标签为 null。
      */
     val workspacePath: String? = null,
+    /** 插件创建的标签带归属，不出现在面向 AI / 用户的 [TabInfo] 列表里。 */
+    val ownerPluginId: String? = null,
     val client: com.termux.terminal.TerminalSessionClient? = null,
     runState: RunState
 ) {
@@ -95,7 +97,14 @@ data class TabInfo(
     val running: Boolean,
     val command: String?,
     val workspacePath: String? = null,
-    val startedAt: Long = 0L
+    val startedAt: Long = 0L,
+    val ownerPluginId: String? = null
+)
+
+/** 标签的运行状态快照；[exitCode] 仅在已结束时非空。 */
+data class TerminalTabStatus(
+    val running: Boolean,
+    val exitCode: Int?
 )
 
 /** 终端标签 → 摘要（不携带 session/view 等运行时对象）。 */
@@ -106,7 +115,8 @@ fun TerminalTab.toTabInfo(): TabInfo = TabInfo(
     running = runState is RunState.Running,
     command = command,
     workspacePath = workspacePath,
-    startedAt = startedAt
+    startedAt = startedAt,
+    ownerPluginId = ownerPluginId
 )
 
 /**

@@ -25,6 +25,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -79,10 +83,15 @@ class TerminalSessionManager @Inject constructor(
         const val TAIL_SELECT_MAX_COLUMNS = 4096
         /** 交互标签创建后多久仍无任何输出就 dump 容器诊断（proot 没起来/卡住时的主动取证）。 */
         const val SILENT_DIAGNOSTIC_DELAY_MS = 10_000L
+        /** 插件原始输出队列容量；写端丢最早数据，读端按自己的 offset 感知截断。 */
+        const val OUTPUT_CHANNEL_CAPACITY = 64
     }
 
     private val _tabs = MutableStateFlow<List<TerminalTab>>(emptyList())
     val tabs: StateFlow<List<TerminalTab>> = _tabs.asStateFlow()
+
+    /** 每个标签的原始输出有界队列，由 [tabOutput] 暴露给插件日志消费端。 */
+    private val outputChannels = ConcurrentHashMap<String, Channel<ByteArray>>()
 
     private val _activeTabId = MutableStateFlow<String?>(null)
     val activeTabId: StateFlow<String?> = _activeTabId.asStateFlow()
@@ -239,6 +248,37 @@ class TerminalSessionManager @Inject constructor(
         return id
     }
 
+    /**
+     * 插件命令标签：执行完命令后 exit，标签保留为 Finished，由插件关闭；不设为当前标签。
+     */
+    override suspend fun startPluginCommand(command: String, title: String?, pluginId: String): String {
+        val id = nextId()
+        val workspace = resolveWorkspace(null)
+        ensureContainer(workspace)
+        val shellCommand = "cd ~/workspace 2>/dev/null; export ENV=/etc/profile; " +
+            "$command; ec=\$?; echo \"[command exited: \$ec]\"; exit \$ec"
+        val (session, client) = buildSession(shellCommand, workspace)
+        addTab(
+            TerminalTab(
+                id = id,
+                title = title ?: id,
+                session = session,
+                isBackground = true,
+                command = command,
+                startedAt = System.currentTimeMillis(),
+                notifyOnExit = false,
+                workspacePath = workspace,
+                ownerPluginId = pluginId,
+                client = client,
+                runState = RunState.Running
+            )
+        )
+        monitorBackgroundExit(id)
+        startKeepaliveService(workspace)
+        FileLogger.i(TAG, "插件命令标签 $id（$pluginId）: $command")
+        return id
+    }
+
     private fun runningTab(id: String): TerminalTab? {
         val t = tab(id) ?: return null
         return if (t.runState is RunState.Running) t else null
@@ -316,7 +356,19 @@ class TerminalSessionManager @Inject constructor(
         }
 
     /** 列出全部标签的摘要（id/标题/是否后台/运行状态/命令），供 AI 选目标。 */
-    override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
+    override fun listTabs(): List<TabInfo> = _tabs.value
+        .filter { it.ownerPluginId == null }
+        .map { it.toTabInfo() }
+
+    override fun tabStatus(id: String): TerminalTabStatus? {
+        val tab = tab(id) ?: return null
+        return when (val state = tab.runState) {
+            is RunState.Running -> TerminalTabStatus(running = true, exitCode = null)
+            is RunState.Finished -> TerminalTabStatus(running = false, exitCode = state.exitCode)
+        }
+    }
+
+    override fun tabOutput(id: String): Flow<ByteArray>? = outputChannels[id]?.receiveAsFlow()
 
     override val runningBackgroundTabs: Flow<List<TabInfo>> =
         combine(_tabs, revision) { tabs, _ -> tabs.runningBackgroundTabInfos() }.distinctUntilChanged()
@@ -330,6 +382,7 @@ class TerminalSessionManager @Inject constructor(
     override fun closeTab(id: String): Boolean {
         val tab = tab(id) ?: return false
         runCatching { tab.session.finishIfRunning() }
+        closeOutput(id)
         tab.view = null
         val remaining = _tabs.value.filterNot { it.id == id }
         _tabs.value = remaining
@@ -433,6 +486,7 @@ class TerminalSessionManager @Inject constructor(
                         val tail = readTabTailOnMain(tabId, EXIT_MARKER_TAIL_ROWS) ?: ""
                         val exitCode = extractExitCode(tail) ?: 0
                         current.runState = RunState.Finished(exitCode)
+                        closeOutput(tabId)
                         bumpRevision()
                         FileLogger.i(TAG, "兜底：标签 $tabId 检测到退出标记，强制收尾 exit=$exitCode")
                         if (current.isBackground) maybeStopKeepalive(current)
@@ -456,7 +510,21 @@ class TerminalSessionManager @Inject constructor(
 
     private fun addTab(tab: TerminalTab) {
         _tabs.value = _tabs.value + tab
+        attachOutput(tab)
         bumpRevision()
+    }
+
+    private fun attachOutput(tab: TerminalTab) {
+        val channel = Channel<ByteArray>(OUTPUT_CHANNEL_CAPACITY, BufferOverflow.DROP_OLDEST)
+        outputChannels.remove(tab.id)?.close()
+        outputChannels[tab.id] = channel
+        tab.session.setRawOutputListener { _, data, length ->
+            channel.trySend(data.copyOf(length))
+        }
+    }
+
+    private fun closeOutput(id: String) {
+        outputChannels.remove(id)?.close()
     }
 
     private fun writeToSession(session: TerminalSession, text: String) {
@@ -496,6 +564,7 @@ class TerminalSessionManager @Inject constructor(
             onFinished = { finished ->
                 _tabs.value.firstOrNull { it.session === finished }?.let { target ->
                     target.runState = RunState.Finished(finished.exitStatus)
+                    closeOutput(target.id)
                     bumpRevision()
                     FileLogger.i(TAG, "终端标签 ${target.id} 会话结束 exit=${finished.exitStatus}")
                     if (target.isBackground) maybeStopKeepalive(target)

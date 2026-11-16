@@ -99,7 +99,7 @@ internal fun CollapsibleGroupHeader(
 
 /** 设置页背景：统一使用语义定义的 pageBackground。 */
 @Composable
-internal fun settingsPageBackground(): Color =
+fun settingsPageBackground(): Color =
     MaterialTheme.semanticColors.pageBackground
 
 /**
@@ -108,7 +108,7 @@ internal fun settingsPageBackground(): Color =
  * 传了 [onToggle] 就变成可点折叠的标题（右侧带个朝下/朝右的小箭头），由调用方控制 [expanded]。
  */
 @Composable
-internal fun SettingsGroupHeader(
+fun SettingsGroupHeader(
     text: String,
     expanded: Boolean? = null,
     onToggle: (() -> Unit)? = null
@@ -143,7 +143,7 @@ private val GroupCardCorner = 14.dp
 
 /** 白色/深色分组圆角卡片容器：内部按行排布，行间用 [SettingsDivider] 分隔。[visible] 为 false 时整组不渲染（可折叠分组用）。 */
 @Composable
-internal fun SettingsGroup(
+fun SettingsGroup(
     modifier: Modifier = Modifier,
     visible: Boolean = true,
     content: @Composable ColumnScope.() -> Unit
@@ -170,7 +170,7 @@ internal fun SettingsGroup(
  * @param count 所属分组的行数。
  */
 @Composable
-internal fun LazyGroupItem(
+fun LazyGroupItem(
     index: Int,
     count: Int,
     modifier: Modifier = Modifier,
@@ -201,7 +201,7 @@ internal fun LazyGroupItem(
  * @param onClick null 表示无点击行为（如开关行）；非 null 时行尾自动显示右箭头。
  */
 @Composable
-internal fun SettingsRow(
+fun SettingsRow(
     icon: ImageVector? = null,
     title: String,
     onClick: (() -> Unit)? = null,
@@ -257,7 +257,7 @@ internal fun SettingsRow(
 
 /** 分组内行间分隔线：左右两端均缩进对齐行内容，末行不显示。 */
 @Composable
-internal fun SettingsDivider() {
+fun SettingsDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = Spacing.lg),
         thickness = 0.5.dp,
@@ -292,7 +292,7 @@ internal fun InfoRow(label: String, value: String) {
 /** iOS 风格搜索框：浅灰胶囊背景、无边框，与设置页分组风格一致。
  *  [trailing] 为可选尾部控件（如清除按钮）。 */
 @Composable
-internal fun ModelSearchField(
+fun ModelSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     placeholder: String,

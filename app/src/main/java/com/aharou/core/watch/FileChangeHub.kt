@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
@@ -52,7 +53,8 @@ class FileChangeHub @Inject constructor(
     private val workspaceRepository: WorkspaceRepository,
     private val containerInstaller: ContainerInstaller,
     private val pathMapper: WorkspacePathMapper,
-    private val executionModeHolder: ExecutionModeHolder
+    private val executionModeHolder: ExecutionModeHolder,
+    private val remoteFileWatchHub: RemoteFileWatchHub
 ) {
     companion object {
         private const val TAG = "FileChangeHub"
@@ -159,6 +161,47 @@ class FileChangeHub @Inject constructor(
                 )
             }
         }
+
+    /**
+     * 订阅任意远端目录。远端没有宿主 [File]，由 [RemoteFileWatchHub] 按根共享轮询。
+     *
+     * 远程 SSH 下目标落在当前工作区内时，统一订阅工作区根一次（递归），再按目标路径过滤事件，
+     * 使同一工作区里的多个子路径订阅共享同一次快照；目标在工作区外仍按自身根订阅。
+     */
+    fun watchRemoteDir(rootPath: String, recursive: Boolean = false): Flow<FileChangeBatch> {
+        val root = trimRemotePath(rootPath)
+        val workspaceRoot = if (executionModeHolder.currentMode() == ExecutionMode.REMOTE_SSH) {
+            trimRemotePath(workspaceRepository.currentPath()).takeIf { it.isNotEmpty() && it != "/" }
+        } else {
+            null
+        }
+        val sharedRoot = workspaceRoot?.takeIf { root == it || root.startsWith("$it/") }
+            ?: return remoteFileWatchHub.watch(rootPath, recursive)
+        return remoteFileWatchHub.watch(sharedRoot, recursive = true)
+            .mapNotNull { batch -> filterRemoteBatch(batch, root, recursive) }
+    }
+
+    private fun trimRemotePath(path: String): String =
+        if (path.length > 1) path.trimEnd('/') else path
+
+    private fun filterRemoteBatch(
+        batch: FileChangeBatch,
+        rootPath: String,
+        recursive: Boolean
+    ): FileChangeBatch? {
+        val kept = batch.changes.filter { inRemoteScope(it.containerPath, rootPath, recursive) }
+        if (kept.size == batch.changes.size) return batch
+        if (kept.isEmpty() && !batch.truncated) return null
+        return FileChangeBatch(kept, batch.truncated)
+    }
+
+    private fun inRemoteScope(changePath: String, rootPath: String, recursive: Boolean): Boolean {
+        val path = trimRemotePath(changePath)
+        if (path == rootPath) return true
+        if (!path.startsWith("$rootPath/")) return false
+        if (recursive) return true
+        return !path.removePrefix("$rootPath/").contains('/')
+    }
 
     /** 订阅 AI 配置目录（`~/.aharou`）下的子路径，[containerSubPath] 为空表示该目录本身。 */
     fun watchAicode(

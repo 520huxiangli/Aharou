@@ -229,6 +229,10 @@ class AIAgentViewModel @Inject constructor(
     /** Aharou：影子屏控制器 —— 聊天页小屏幕实时预览与 vscreen 工具共用。 */
     private val vdController: com.aharou.feature.agent.domain.vdisplay.VdController,
     private val workspaceRepository: com.aharou.feature.workspace.data.repository.WorkspaceRepository,
+    /** 插件宿主 API 与聊天页之间的单消费者队列；本 VM 是唯一消费者。 */
+    private val pluginChatRequestBus: com.aharou.feature.agent.domain.session.AgentChatRequestBus,
+    /** 跨页面共享的轮次运行状态，供插件页面判断本轮是否还在跑。 */
+    private val pluginRunStateStore: com.aharou.feature.agent.domain.session.AgentRunStateStore,
     @param:ApplicationContext private val context: Context
 ) : ViewModel(), SlashCommandContext {
 
@@ -388,6 +392,10 @@ class AIAgentViewModel @Inject constructor(
         .flatMapLatest { id -> _inputDrafts.map { it[id ?: PENDING_DRAFT_KEY].orEmpty() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private var draftSaveJob: Job? = null
+
+    /** 会话是否存在；插件发消息前用它拦掉已删会话。 */
+    suspend fun sessionExists(sessionId: String): Boolean =
+        sessionUseCase.getSessionById(sessionId) != null
 
     fun updateInputDraft(text: String) {
         val id = _currentSessionId.value ?: PENDING_DRAFT_KEY
@@ -1427,6 +1435,9 @@ class AIAgentViewModel @Inject constructor(
     private companion object {
         const val TAG = "AIAgentViewModel"
 
+        /** 插件会话队列的消费者标识；队列本身只允许一个消费者。 */
+        const val PLUGIN_CHAT_CONSUMER_ID = "chat-view-model"
+
         /** 续跑时发给模型的引导语：任务中途被中断后接着进度做，避免重做已完成部分。 */
         const val RESUMED_TURN_PROMPT = "上一轮任务在中途被中断。请基于当前已有的对话与文件进度继续，" +
             "不要重做已经完成的部分，也不要重新读取或重写已经正确的文件。" +
@@ -1472,6 +1483,16 @@ class AIAgentViewModel @Inject constructor(
     }
 
     init {
+        // 插件会话请求：插件只入队，真正开轮次仍由本 VM 执行（工具授权、运行状态、通知都在这），
+        // 否则插件能绕过这些边界另起一套发送。
+        pluginChatRequestBus.attach(PLUGIN_CHAT_CONSUMER_ID)
+        viewModelScope.launch {
+            while (true) {
+                val request = pluginChatRequestBus.receive()
+                runCatching { handlePluginChatRequest(request) }
+                    .onFailure { FileLogger.w(TAG, "处理插件会话请求失败", it) }
+            }
+        }
         // 冷启动收尾：上次进程被杀时残留的「执行中」工具回填为「已中断」。在后台执行，不阻塞首屏与会话展示。
         viewModelScope.launch(Dispatchers.IO) {
             sessionUseCase.initColdStartCleanup()
@@ -2031,6 +2052,15 @@ class AIAgentViewModel @Inject constructor(
         }
     }
 
+    /** 当前会话或指定会话的输入框草稿；插件写入草稿时读它拼追加。 */
+    fun inputDraftOf(sessionId: String?): String =
+        _inputDrafts.value[sessionId ?: _currentSessionId.value.orEmpty()].orEmpty()
+
+    override fun onCleared() {
+        pluginChatRequestBus.detach(PLUGIN_CHAT_CONSUMER_ID)
+        super.onCleared()
+    }
+
     fun executeAgentRequestStream(
         request: String,
         modelRequest: String = request,
@@ -2071,11 +2101,13 @@ class AIAgentViewModel @Inject constructor(
             }
             sessionJobs[sessionId] = currentJob
             _activeAgentSessions.value = _activeAgentSessions.value + sessionId
+            pluginRunStateStore.started(sessionId)
             currentJob.invokeOnCompletion {
                 viewModelScope.launch {
                     if (sessionJobs[sessionId] !== currentJob) return@launch
                     sessionJobs.remove(sessionId)
                     _activeAgentSessions.value = _activeAgentSessions.value - sessionId
+                    pluginRunStateStore.finished(sessionId, "completed", null)
                     if (sessionId !in stoppingSessions) {
                         flushPendingNotifications(sessionId)
                         processNextInQueue(sessionId)

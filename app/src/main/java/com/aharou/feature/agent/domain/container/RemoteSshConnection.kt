@@ -272,7 +272,7 @@ class RemoteSshConnection @Inject constructor(
      * 两者均取 15s，与同项目 SftpSyncClient/FtpSyncClient 的取值一致。sshj 的 Reader 捕获
      * SocketTimeoutException 后仅重试、不清连接，故 15s 读超时不会误断空闲但健康的连接。
      */
-    private fun newSshClient(config: RemoteConnectionConfig): SSHClient = SSHClient(
+    internal fun newSshClient(config: RemoteConnectionConfig): SSHClient = SSHClient(
         DefaultConfig().apply { keepAliveProvider = KeepAliveProvider.KEEP_ALIVE }
     ).apply {
         addHostKeyVerifier(hostKeyVerifier)

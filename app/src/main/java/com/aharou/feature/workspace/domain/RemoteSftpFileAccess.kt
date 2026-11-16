@@ -254,6 +254,30 @@ class RemoteSftpFileAccess private constructor(
 
     override fun readBytes(path: String): ByteArray = readAll(toRemotePath(path))
 
+    override fun readBytes(path: String, maxBytes: Long): ByteArray = withSftp { sftp ->
+        val remote = toRemotePath(path)
+        val attrs = sftp.statExistence(remote) ?: throw NoSuchFileException(File(remote))
+        if (attrs.type == FileMode.Type.DIRECTORY) throw IOException("not a file: $remote")
+        if (attrs.size > maxBytes) throw FileReadTooLargeException(maxBytes)
+        RemoteFileInputStream(sftp.open(remote)).use { it.readBytesBounded(maxBytes) }
+    }
+
+    override fun resolvePath(path: String, followFinalLink: Boolean): String =
+        withSftp { resolveRemotePath(it, toRemotePath(path), followFinalLink) }
+
+    private fun resolveRemotePath(sftp: SFTPClient, path: String, followFinalLink: Boolean): String {
+        val trimmed = path.trimEnd('/').ifEmpty { "/" }
+        val leaf = trimmed.substringAfterLast('/')
+        val preserveLeaf = !followFinalLink && leaf.isNotEmpty() && leaf != "." && leaf != ".."
+        val parent = trimmed.substringBeforeLast('/', "").ifEmpty { "/" }
+        return try {
+            val canonical = sftp.canonicalize(if (preserveLeaf) parent else trimmed)
+            if (preserveLeaf) canonical.trimEnd('/') + "/" + leaf else canonical
+        } catch (_: SFTPException) {
+            if (preserveLeaf) parent.trimEnd('/') + "/" + leaf else trimmed
+        }
+    }
+
     override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
         writeStream(path, ByteArrayInputStream(bytes), overwrite)
     }
@@ -552,6 +576,7 @@ internal fun remotePathFor(path: String, workspaceRoot: String, remoteHome: Stri
         else -> root + "/" + p
     }
 }
+
 
 /** 远程真实路径 → AI 视角的容器路径（回显用）。 */
 internal fun displayPathFor(remotePath: String, workspaceRoot: String): String {

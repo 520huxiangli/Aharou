@@ -1,496 +1,754 @@
 package com.aharou.feature.plugin.domain
 
-import android.os.Build
+import android.content.Context
 import com.aharou.core.util.FileLogger
-import com.aharou.core.util.ProcessIdentity
 import com.aharou.feature.agent.domain.container.ContainerInstaller
-import com.aharou.feature.agent.domain.container.LinuxContainerEngine
-import com.aharou.feature.agent.domain.container.RuntimeProcessStore
-import com.aharou.feature.agent.domain.container.TrackedStdioProcess
+import com.aharou.feature.agent.domain.skill.Skill
+import com.aharou.feature.agent.domain.subagent.AgentDefinition
+import com.aharou.feature.plugin.data.ExtractedPackage
+import com.aharou.feature.plugin.data.PackageReadResult
+import com.aharou.feature.plugin.data.PluginInstallTransaction
+import com.aharou.feature.plugin.data.PluginPackageReader
 import com.aharou.feature.plugin.data.PluginRecord
-import com.aharou.feature.plugin.data.PluginRecordStore
-import com.aharou.feature.plugin.domain.model.InstalledPlugin
-import com.aharou.feature.plugin.domain.model.PluginManifest
-import com.aharou.feature.plugin.domain.model.PluginStatus
+import com.aharou.feature.plugin.data.PluginRegistryStore
+import com.aharou.feature.plugin.runtime.PluginDependencyPreparer
+import com.aharou.feature.plugin.runtime.PluginDependencyResult
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
+import java.io.IOException
+import java.io.InputStream
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.ZipFile
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.min
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
+
+enum class PluginStatus {
+    OK,
+
+    /** 安装目录或清单文件丢失。 */
+    MISSING,
+
+    /** 清单摘要与安装时记录不一致，或贡献文件缺失 / 无法解析。 */
+    CORRUPTED,
+
+    /** 清单不再通过校验（例如宿主插件 API 升级后不兼容）。 */
+    INVALID
+}
+
+/** 已安装插件的运行视图：宿主记录 + 从安装目录读出的清单与贡献。 */
+data class InstalledPlugin(
+    val record: PluginRecord,
+    val status: PluginStatus,
+    val manifest: PluginManifest?,
+    val content: PluginContent,
+    val errors: List<PluginError> = emptyList()
+) {
+    val id: String get() = record.id
+
+    /** 启用且状态正常、清单可读时，它声明的全部贡献都生效。 */
+    val isActive: Boolean
+        get() = record.enabled && status == PluginStatus.OK && manifest != null
+}
+
+/** 已通过校验、等待使用者确认安装的暂存包。 */
+data class PluginPreview(
+    val token: String,
+    val manifest: PluginManifest,
+    val content: PluginContent,
+    /** 已安装的同 ID 插件版本；非空表示这次导入会替换它。 */
+    val installedVersion: String?,
+    /** 被替换安装的来源信息；新装时为 null，供界面判断来源是否变化。 */
+    val installedSourceId: String? = null,
+    val installedRepository: String? = null,
+    val installedOfficial: Boolean? = null
+)
+
+sealed interface PluginPreviewResult {
+    data class Ready(val preview: PluginPreview) : PluginPreviewResult
+    data class Failed(val errors: List<PluginError>) : PluginPreviewResult
+}
+
+sealed interface PluginInstallResult {
+    data class Installed(val pluginId: String) : PluginInstallResult
+    data class Failed(val error: PluginError) : PluginInstallResult
+}
 
 /**
- * 插件管理器：把 `.txplugin` 包（zip：manifest.json + payload/）落到容器里安装、启动、停止与卸载。
+ * 插件的安装、启停与贡献聚合。
  *
- * 定位与边界：插件本体（payload 下的脚本与运行时）在**容器**里跑，不进 App 进程——所以这不是「动态加载
- * 代码」，而是「声明式包 + 容器脚本 + 本地服务」，与 Aharou 既有架构一致。宿主只负责读清单、跑安装脚本、
- * 拉起服务、探测端口，以及在设置页里给一个入口。
- *
- * 容器内路径映射：宿主 `filesDir/aharou` 经 PRoot 绑定为容器内 `/root/.aharou`（读写），
- * 故插件落在 `filesDir/aharou/plugins/<id>`，容器里就是 `/root/.aharou/plugins/<id>`。
+ * 插件包与数据保存在容器内全局配置目录 `~/.aharou/plugins`（宿主侧为 [ContainerInstaller.aharouDir]，
+ * 由 PRoot 绑定到容器内 `/root/.aharou`），本地容器里的命令可以直接访问插件文件与将来的依赖。
+ * 安装记录留在宿主私有目录，不随包进入容器，避免容器内进程改写启停状态。SSH 模式下插件仍只在手机端。
  */
 @Singleton
-class PluginManager @Inject constructor(
-    private val engine: LinuxContainerEngine,
-    private val containerInstaller: ContainerInstaller,
-    private val recordStore: PluginRecordStore,
-    private val runtimeProcessStore: RuntimeProcessStore,
+class PluginManager internal constructor(
+    private val rootDir: File,
+    private val hostApi: SemVer,
+    private val clock: () -> Long,
+    private val registryFile: File = File(rootDir, "registry.json"),
+    private val legacyRootDir: File? = null,
+    private val dependencyPreparer: PluginDependencyPreparer? = null
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        installer: ContainerInstaller,
+        dependencyPreparer: PluginDependencyPreparer
+    ) : this(
+        File(installer.aharouDir, PLUGINS_DIR),
+        PluginApi.VERSION,
+        System::currentTimeMillis,
+        File(context.filesDir, REGISTRY_FILE),
+        File(context.filesDir, PLUGINS_DIR),
+        dependencyPreparer
+    )
 
-    /** 正在运行的插件服务句柄（内存态；App 重启后为空，靠端口探测与进程账本兜底）。 */
-    private val running = ConcurrentHashMap<String, TrackedStdioProcess>()
+    private val installedDir = File(rootDir, "installed")
+    private val stagingDir = File(rootDir, "staging")
+    private val dataRoot = File(rootDir, "data")
+    private val store = PluginRegistryStore(registryFile)
+    private val reader = PluginPackageReader()
 
-    /** 本进程内最近一次启动失败的原因（插件 id → 原因）。只用于把「失败」状态与副标题带到界面上。 */
-    private val lastFailure = ConcurrentHashMap<String, String>()
+    private val mutex = Mutex()
+    private val loadLock = Any()
 
-    /** 导入时发现的非致命问题（插件 id → 提示）。不阻挠安装，只让用户在卡片上看到。 */
-    private val importWarnings = ConcurrentHashMap<String, List<String>>()
+    @Volatile
+    private var loaded = false
 
-    /** 连续未就绪次数（插件 id → 次数）。健康巡检用；就绪一次即清零。 */
-    private val healthFailures = ConcurrentHashMap<String, Int>()
+    private val _plugins = MutableStateFlow<List<InstalledPlugin>>(emptyList())
+    val plugins: StateFlow<List<InstalledPlugin>> = _plugins.asStateFlow()
 
-    /** 下次允许自动重启的时间点（插件 id → 毫秒）。退避期内不再重试。 */
-    private val nextRestartAt = ConcurrentHashMap<String, Long>()
+    private val _isLoaded = MutableStateFlow(false)
 
-    /** 巡检跑在进程级 scope：与任何页面生命周期无关，页面关了也照样盯。 */
-    private val healthScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var healthJob: Job? = null
+    /** 安装记录是否已从磁盘读完。读完之前 [plugins] 为空不代表没有插件，界面据此避免闪一下空状态。 */
+    val isLoaded: StateFlow<Boolean> = _isLoaded.asStateFlow()
 
-    private fun pluginsRoot(): File = File(containerInstaller.aharouDir, "plugins").apply { mkdirs() }
+    private val revisionCounter = AtomicLong(0)
 
-    /** 宿主侧插件根目录：`filesDir/aharou/plugins/<id>`。 */
-    fun hostDir(id: String): File = File(pluginsRoot(), id)
+    /** 插件集合每变化一次递增，供提示词缓存等据此失效。 */
+    val revision: Long get() = revisionCounter.get()
 
-    /** 容器内插件根目录（宿主 [hostDir] 的绑定路径）。 */
-    private fun containerDir(id: String): String = "/root/.aharou/plugins/$id"
+    private class StagedPackage(
+        val pkg: ExtractedPackage,
+        val manifest: PluginManifest,
+        val content: PluginContent
+    )
 
-    /** 读取插件目录里的 manifest.json；不存在返回 null。 */
-    fun readManifest(id: String): PluginManifest? {
-        val f = File(hostDir(id), MANIFEST_FILE)
-        if (!f.isFile) return null
-        return runCatching { json.decodeFromString<PluginManifest>(f.readText(Charsets.UTF_8)) }.getOrNull()
+    private class LoadedRegistry(
+        val records: List<PluginRecord>,
+        val failed: Boolean
+    )
+
+    private val staged = ConcurrentHashMap<String, StagedPackage>()
+
+    /** 首次调用时从磁盘读取安装记录；会做文件 IO，调用方不要放在主线程。 */
+    fun ensureLoaded() {
+        if (loaded) return
+        synchronized(loadLock) {
+            if (loaded) return
+            migrateLegacyRoot()
+            // 进程重启后不可能存在进行中的安装，暂存目录里的都是残留
+            cleanup { deleteTree(stagingDir) }
+            val registry = loadRecords()
+            val recovered = !registry.failed && recoverInterruptedInstall(registry.records)
+            publish(registry.records.map { loadInstalled(it) })
+            // registry 或事务恢复失败时保留目录，避免把待恢复的备份当成孤儿。
+            if (recovered) sweepOrphans(registry.records.map { it.id }.toSet())
+            loaded = true
+            _isLoaded.value = true
+        }
+    }
+
+    /** 重新读取安装记录与清单；只更新界面快照，不重启已启用的插件运行时。 */
+    suspend fun refresh() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            ensureLoaded()
+            val loaded = loadRecords()
+            val recovered = !loaded.failed && recoverInterruptedInstall(loaded.records)
+            publish(loaded.records.map { loadInstalled(it) })
+            if (recovered) sweepOrphans(loaded.records.map { it.id }.toSet())
+        }
+    }
+
+    /** 当前生效的插件技能：插件启用即可用。 */
+    fun activeSkills(): List<Skill> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { plugin -> plugin.content.skills.map { it.skill } }
+    }
+
+    /** 全部已读出的插件技能，不论插件是否启用。供设置页全量展示使用。 */
+    fun allSkills(): List<Skill> {
+        ensureLoaded()
+        return _plugins.value.flatMap { plugin -> plugin.content.skills.map { it.skill } }
+    }
+
+    /** 当前生效的插件子代理定义，条件同 [activeSkills]。 */
+    fun activeAgents(): List<AgentDefinition> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { plugin -> plugin.content.agents.map { it.definition } }
     }
 
     /**
-     * 导入一个插件包：校验 zip 结构、读出 manifest.json、把 payload/ 解到插件目录。
-     * 只落盘，不执行任何脚本（安装是 [install] 的事）。
+     * 全部已读出的插件子代理定义，不论插件是否启用。已经派出去的子会话要靠它还原自己的提示词与工具集，
+     * 停用只该拦住新的派发。
      */
-    suspend fun importPackage(zipFile: File): Result<PluginManifest> = withContext(Dispatchers.IO) {
-        runCatching {
-            require(zipFile.isFile) { "插件包不存在：${zipFile.path}" }
-            val (manifestText, manifest) = ZipFile(zipFile).use { zip ->
-                val entry = zip.getEntry(MANIFEST_FILE) ?: error("包内缺少 $MANIFEST_FILE")
-                val text = zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { it.readText() }
-                text to json.decodeFromString<PluginManifest>(text)
-            }
-            require(manifest.id.isNotBlank()) { "manifest 缺少 id" }
-            // id 会拼进插件目录路径，必须拦住 `../` 这类写法，否则 payload 能落到插件根之外；
-            // 「至少含一个字母或数字」是专门堵 `.` / `..` / `___` 的，单靠字符集挡不住。
-            require(ID_PATTERN.matches(manifest.id) && manifest.id.any { it.isLetterOrDigit() }) {
-                "manifest 的 id 只能包含字母、数字、点、下划线与连字符，且至少含一个字母或数字（最长 $ID_MAX_LENGTH）"
-            }
-            require(manifest.name.isNotBlank()) { "manifest 缺少 name" }
-            require(manifest.schemaVersion <= SUPPORTED_SCHEMA_VERSION) {
-                "插件包清单版本 ${manifest.schemaVersion} 高于本应用支持的 $SUPPORTED_SCHEMA_VERSION，请先升级应用"
-            }
-            // 架构不符的包在容器里跑不起来，等安装脚本报错更难查，导入时就拦下
-            require(manifest.architectures.isEmpty() || manifest.architectures.any { abiSupported(it) }) {
-                "插件包不支持本机架构（需要 ${manifest.architectures.joinToString("/")}，" +
-                    "本机 ${Build.SUPPORTED_ABIS.joinToString("/")}）"
-            }
-
-            val root = hostDir(manifest.id)
-            // 重装：先清掉旧 payload，避免残留旧版本文件
-            File(root, PAYLOAD_DIR).deleteRecursively()
-            root.mkdirs()
-
-            val warnings = unpackPayload(zipFile, root, manifest)
-            File(root, MANIFEST_FILE).writeText(manifestText, Charsets.UTF_8)
-            if (warnings.isEmpty()) importWarnings.remove(manifest.id) else importWarnings[manifest.id] = warnings
-            FileLogger.i(TAG, "导入插件 ${manifest.id} v${manifest.version}")
-            manifest
-        }
+    fun allAgents(): List<AgentDefinition> {
+        ensureLoaded()
+        return _plugins.value.flatMap { plugin -> plugin.content.agents.map { it.definition } }
     }
 
-    /** 安装：在容器里依次执行 installSteps，再跑 verifyCommand。任一步失败即中止并返回错误。 */
-    suspend fun install(id: String): Result<Unit> = runCatching {
-        val manifest = readManifest(id) ?: error("插件未导入：$id")
-        ensureContainer()
-        val dir = containerDir(id)
-        manifest.installSteps.forEachIndexed { index, step ->
-            // 只拿文本判不了成败：脚本非零退出（缺依赖、下载失败）会静默算作装好
-            val r = engine.runCommandSyncWithExit(envPrefix(dir) + step, null, INSTALL_TIMEOUT_MS)
-            if (r.output.isNotBlank()) FileLogger.d(TAG, "install step ${index + 1} 输出：${r.output.take(400)}")
-            errorIfFailed(r.exitCode, r.output, "安装步骤 ${index + 1}")
-        }
-        if (manifest.verifyCommand.isNotBlank()) {
-            val result = engine.runCommandSyncWithExit(envPrefix(dir) + manifest.verifyCommand, null, INSTALL_TIMEOUT_MS)
-            errorIfFailed(result.exitCode, result.output, "自检")
-        }
-        recordStore.save(
-            PluginRecord(
-                id = manifest.id,
-                name = manifest.name,
-                version = manifest.version,
-                installedAt = System.currentTimeMillis(),
-            )
-        )
-        FileLogger.i(TAG, "安装插件完成 ${manifest.id}")
-        // 重新装过一遍，旧的启动失败原因不再作数
-        lastFailure.remove(manifest.id)
-        // 装了插件就该开始盯它的服务；无需用户进插件页碰一下才启动巡检
-        startHealthSupervisor()
+    /** 当前生效的插件工作区工具：插件启用即可用。 */
+    fun activeWorkspaceTools(): List<PluginWorkspaceTool> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { it.content.workspaceTools }
     }
 
-    /** 启动常驻服务：解析 launchCommand → 起进程 → 轮询端口就绪。非服务型插件不启动。 */
-    suspend fun launch(id: String): Result<Unit> {
-        val result = runCatchingLaunch(id)
-        // 失败原因留给 listInstalled 换算成 FAILED 状态与卡片副标题
-        result.onSuccess {
-            lastFailure.remove(id)
-            markEnabled(id, true)
-        }.onFailure { lastFailure[id] = it.message ?: it::class.java.simpleName }
-        return result
+    /** 全部插件声明的工作区工具，供全部工具库展示添加。 */
+    fun allWorkspaceTools(): List<PluginWorkspaceTool> {
+        ensureLoaded()
+        return _plugins.value.flatMap { it.content.workspaceTools }
     }
 
-    private suspend fun runCatchingLaunch(id: String): Result<Unit> = runCatching {
-        val manifest = readManifest(id) ?: error("插件未导入：$id")
-        require(manifest.isService) { "插件 ${manifest.name} 不是常驻服务，无需启动" }
-        ensureContainer()
+    /** 插件专属数据目录，对应桥里的 `data://` 根。 */
+    fun dataDirFor(pluginId: String): File = File(dataRoot, pluginId)
 
-        if (isPortReady(manifest)) {
-            FileLogger.i(TAG, "插件 ${id} 服务已在运行")
-            return@runCatching
-        }
-
-        val dir = containerDir(id)
-        val program = resolveLaunchCommand(manifest, dir)
-        val env = manifest.environment +
-            mapOf("TAIXU_TOOL_DIR" to dir, "TAIXU_TOOL_DATA" to "$dir/data")
-        val handle = engine.startTrackedStdioProcess(
-            program = program,
-            programArgs = emptyList(),
-            projectPath = null,
-            tag = tagOf(id),
-            extraEnv = env,
-        )
-        running[id] = handle
-
-        // 轮询端口就绪；超时则杀掉进程并报错，避免留下半死不活的服务
-        val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
-        while (System.currentTimeMillis() < deadline) {
-            if (isPortReady(manifest)) {
-                FileLogger.i(TAG, "插件 ${id} 服务就绪（端口 ${manifest.servicePort}）")
-                return@runCatching
-            }
-            if (!handle.process.isAlive) {
-                handle.clearLedger()
-                running.remove(id)
-                error("启动进程已退出（检查容器内 node / 依赖是否齐备）")
-            }
-            delay(500)
-        }
-        handle.process.destroy()
-        handle.clearLedger()
-        running.remove(id)
-        error("启动超时：端口 ${manifest.servicePort} 未就绪")
-    }
+    /** 开发者侧载目录，容器内对应 `~/.aharou/plugin-dev`。 */
+    val devDir: File
+        get() = File(rootDir.parentFile ?: rootDir, DEV_DIR).apply { mkdirs() }
 
     /**
-     * 停止常驻服务。三条路一起走，任一条命中就杀：
-     * 1. 本会话启动的句柄——按进程树终止（PRoot 忽略 SIGTERM，用 [ProcessIdentity.terminateTree] 才杀得掉）；
-     * 2. 进程账本里同 tag 的残留（上次会话遗留、句柄已丢）；
-     * 3. 兜底：容器里凡是从插件目录起来的进程一律清掉——覆盖「非本 App 启动」的（如手动跑的）。
-     *
-     * 最后等服务端口释放，未释放则报错，避免 UI 仍显示「运行中」。
+     * 在本地容器、插件安装目录里准备依赖；长操作不持锁，失败时保留未准备状态。
+     * 没有运行时的纯声明式插件与没有依赖声明的运行时直接视为无需准备。
      */
-    suspend fun stop(id: String): Result<Unit> = runCatching {
-        val manifest = readManifest(id)
-        val dir = containerDir(id)
-
-        // 1. 本会话句柄
-        running.remove(id)?.let { handle ->
-            handle.pid?.let { pid -> ProcessIdentity.terminateTree(ProcessIdentity.Handle(pid, null)) }
-            handle.clearLedger()
+    suspend fun prepareDependencies(id: String): PluginDependencyResult = withContext(Dispatchers.IO) {
+        ensureLoaded()
+        val plugin = mutex.withLock { _plugins.value.firstOrNull { it.id == id } }
+            ?: return@withContext PluginDependencyResult.Failed("插件不存在")
+        val runtime = plugin.content.runtime
+            ?: return@withContext PluginDependencyResult.Failed("插件没有运行时，无需依赖")
+        val preparer = dependencyPreparer
+            ?: return@withContext PluginDependencyResult.Failed("依赖准备不可用")
+        val result = preparer.prepare(runtime)
+        val saved = mutateRecords { current ->
+            val installed = current.firstOrNull { it.id == id } ?: return@mutateRecords null
+            if (!sameInstallation(installed.record, plugin.record)) return@mutateRecords null
+            current.map { installed ->
+                if (installed.id != id) installed else {
+                    val record = when (result) {
+                        is PluginDependencyResult.Ready -> installed.record.copy(
+                            dependenciesReady = true,
+                            dependenciesHash = result.hash
+                        )
+                        else -> installed.record.copy(dependenciesReady = false, dependenciesHash = null)
+                    }
+                    installed.copy(record = record)
+                }
+            }.also { next -> store.save(next.map { it.record }) }
         }
-
-        // 2. 账本残留（上次会话遗留）
-        val tag = tagOf(id)
-        runtimeProcessStore.stale()
-            .filter { it.command == tag }
-            .forEach { runtimeProcessStore.terminate(it) }
-
-        // 3. 兜底：按插件目录杀（pkill 不可用时静默跳过）
-        runCatching {
-            engine.runCommandSync("pkill -f '$dir/[a-z]' 2>/dev/null; true", null, PKILL_TIMEOUT_MS)
-        }
-
-        // 4. 等端口释放；仍被占用则视为失败
-        if (manifest != null && manifest.isService) {
-            val deadline = System.currentTimeMillis() + STOP_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline && isPortReady(manifest)) delay(300)
-            if (isPortReady(manifest)) error("停止失败：端口 ${manifest.servicePort} 仍被占用")
-        }
-        // 主动停止成功：清掉上次的启动失败记录，否则卡片会一直挂着「失败」
-        lastFailure.remove(id)
-        markEnabled(id, false)
+        if (saved) result else PluginDependencyResult.Failed(
+            "Plugin changed or dependency state could not be saved",
+            code = "STATE_NOT_SAVED"
+        )
     }
 
-    /** 卸载：先停服务、跑 uninstallSteps，再删目录与记录。 */
-    suspend fun uninstall(id: String): Result<Unit> = runCatching {
-        stop(id)
-        val manifest = readManifest(id)
-        val dir = containerDir(id)
-        manifest?.uninstallSteps?.forEach { step ->
-            runCatching { engine.runCommandSync(envPrefix(dir) + step, null, INSTALL_TIMEOUT_MS) }
-        }
-        hostDir(id).deleteRecursively()
-        recordStore.remove(id)
-        healthFailures.remove(id)
-        nextRestartAt.remove(id)
-        importWarnings.remove(id)
-        FileLogger.i(TAG, "卸载插件 $id")
+    private fun sameInstallation(current: PluginRecord, prepared: PluginRecord): Boolean =
+        if (prepared.installRevision != null) current.installRevision == prepared.installRevision
+        else current.installRevision == null && current.installedAt == prepared.installedAt &&
+            current.archiveSha256 == prepared.archiveSha256 && current.manifestSha256 == prepared.manifestSha256
+
+    /** 当前生效的插件 AI 工具：插件启用即可用。 */
+    fun activeTools(): List<PluginTool> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { it.content.tools }
     }
 
-    /** 列出已安装插件：记录 + 目录里的清单 + 实时状态。目录已不存在的记录视为孤儿，顺手清掉。 */
-    suspend fun listInstalled(): List<InstalledPlugin> = withContext(Dispatchers.IO) {
-        recordStore.all().values.mapNotNull { record ->
-            val manifest = readManifest(record.id)
-            if (manifest == null) {
-                recordStore.remove(record.id)
-                return@mapNotNull null
+    /** 全部插件声明的 AI 工具，不论插件是否启用；供设置页与调试展示。 */
+    fun allTools(): List<PluginTool> {
+        ensureLoaded()
+        return _plugins.value.flatMap { it.content.tools }
+    }
+
+    /** 当前生效的插件生命周期 hook：插件启用即可用。 */
+    fun activeHooks(): List<PluginHook> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { it.content.hooks }
+    }
+
+    /** 全部插件声明的生命周期 hook，不论插件是否启用或已授权；供设置页与调试展示。 */
+    fun allHooks(): List<PluginHook> {
+        ensureLoaded()
+        return _plugins.value.flatMap { it.content.hooks }
+    }
+
+    /** 当前生效的插件 MCP server：插件启用即可用。 */
+    fun activeMcpServers(): List<PluginMcpServer> {
+        ensureLoaded()
+        return _plugins.value
+            .filter { it.isActive }
+            .flatMap { it.content.mcp }
+    }
+
+    /** 全部插件声明的 MCP server，不论插件是否启用；供设置页展示。 */
+    fun allMcpServers(): List<PluginMcpServer> {
+        ensureLoaded()
+        return _plugins.value.flatMap { it.content.mcp }
+    }
+
+    /** 读取并校验 [input] 中的插件包，通过后暂存等待 [install]。同一时刻只保留一个待确认的暂存包。 */
+    suspend fun preview(input: InputStream): PluginPreviewResult = withContext(Dispatchers.IO) {
+        try {
+            mutex.withLock {
+                ensureLoaded()
+                discardAll()
             }
-            // 失败原因只在本进程内有意义：重启后无从判断上次为什么没起来，回落成「已停止」
-            val failure = if (manifest.isService) lastFailure[record.id] else null
-            val status = when {
-                !manifest.isService -> PluginStatus.STOPPED
-                isPortReady(manifest) -> PluginStatus.RUNNING
-                failure != null -> PluginStatus.FAILED
-                else -> PluginStatus.STOPPED
-            }
-            InstalledPlugin(
+        } catch (e: IOException) {
+            FileLogger.w(TAG, "清理插件暂存包失败", e)
+            return@withContext PluginPreviewResult.Failed(listOf(PluginError(PluginErrorCode.STORAGE_FAILED)))
+        }
+        val token = UUID.randomUUID().toString()
+        val dir = File(stagingDir, token)
+        when (val read = reader.read(input, dir)) {
+            is PackageReadResult.Failed -> PluginPreviewResult.Failed(listOf(read.error))
+            is PackageReadResult.Ok -> previewExtracted(token, read.pkg)
+        }
+    }
+
+    private fun previewExtracted(token: String, pkg: ExtractedPackage): PluginPreviewResult {
+        val manifest = when (val parsed = PluginManifestParser.parse(pkg.manifestText, hostApi)) {
+            is ManifestParseResult.Failure -> return rejected(pkg, parsed.errors)
+            is ManifestParseResult.Success -> parsed.manifest
+        }
+        val content = when (val loadedContent = PluginContentLoader.load(pkg.dir, manifest)) {
+            is ContentLoadResult.Failed -> return rejected(pkg, loadedContent.errors)
+            is ContentLoadResult.Ok -> loadedContent.content
+        }
+        staged[token] = StagedPackage(pkg, manifest, content)
+        val existing = _plugins.value.firstOrNull { it.id == manifest.id }?.record
+        return PluginPreviewResult.Ready(
+            PluginPreview(
+                token = token,
                 manifest = manifest,
-                hostDir = hostDir(record.id).absolutePath,
-                installedAt = record.installedAt,
-                status = status,
-                // 只有失败态有可说的原因，其余态留空避免把内部信息洒到卡片上
-                detail = if (status == PluginStatus.FAILED) failure.orEmpty() else "",
+                content = content,
+                installedVersion = existing?.version,
+                installedSourceId = existing?.sourceId,
+                installedRepository = existing?.repository,
+                installedOfficial = existing?.official
             )
-        }.sortedBy { it.manifest.name.lowercase() }
+        )
     }
 
-    // ── 内部 ──
+    private fun rejected(pkg: ExtractedPackage, errors: List<PluginError>): PluginPreviewResult {
+        val cleaned = cleanup { deleteTree(pkg.dir) }
+        return PluginPreviewResult.Failed(
+            if (cleaned) errors else errors + PluginError(PluginErrorCode.STORAGE_FAILED)
+        )
+    }
 
-    /**
-     * 把 `payload/` 解到插件目录，同时做包内加固与完整性核对。
-     *
-     * 重复文件名拒绝（否则包内可以藏一个覆盖前者的隐藏文件），并限制条目数与总解压体积（防 zip 炸弹）。
-     * 完整性不符只当作可跳过的提示，写进返回值交给界面展示，不影响安装。
-     */
-    private fun unpackPayload(zipFile: File, root: File, manifest: PluginManifest): List<String> {
-        val mismatched = mutableListOf<String>()
-        ZipFile(zipFile).use { zip ->
-            val entries = zip.entries()
-            val seen = HashSet<String>()
-            var scanned = 0
-            var totalBytes = 0L
-            while (entries.hasMoreElements()) {
-                val e = entries.nextElement()
-                scanned++
-                require(scanned <= MAX_ZIP_ENTRIES) { "包内条目过多（上限 $MAX_ZIP_ENTRIES 个）" }
-                if (e.isDirectory) continue
-                if (!e.name.startsWith("$PAYLOAD_DIR/")) continue
-                require(seen.add(e.name)) { "包内存在重复条目：${e.name}" }
-                val out = File(root, e.name)
-                // 防 zip-slip：解出的路径必须仍在插件目录内
-                require(out.canonicalPath.startsWith(root.canonicalPath + File.separator)) {
-                    "包内路径越界：${e.name}"
-                }
-                out.parentFile?.mkdirs()
-                val digest = MessageDigest.getInstance("SHA-256")
-                zip.getInputStream(e).use { input ->
-                    out.outputStream().use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            totalBytes += read
-                            require(totalBytes <= MAX_UNCOMPRESSED_BYTES) {
-                                "包解压后体积超过上限（$MAX_UNCOMPRESSED_BYTES 字节）"
-                            }
-                            digest.update(buffer, 0, read)
-                            output.write(buffer, 0, read)
-                        }
-                    }
-                }
-                if (manifest.integrity.isNotEmpty()) {
-                    val relative = e.name.removePrefix("$PAYLOAD_DIR/")
-                    val expected = manifest.integrity[relative] ?: manifest.integrity[e.name]
-                    val actual = digest.digest().joinToString("") { byte ->
-                        // Byte 是带符号的，直接 %02x 会得到 8 位长串
-                        (byte.toInt() and 0xFF).toString(16).padStart(2, '0')
-                    }
-                    if (expected != null && !expected.equals(actual, ignoreCase = true)) mismatched.add(relative)
-                }
-            }
+    /** 放弃一个待确认的暂存包。 */
+    suspend fun discard(token: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val pending = staged[token] ?: return@withLock false
+            if (!cleanup { deleteTree(pending.pkg.dir) }) return@withLock false
+            staged.remove(token)
+            true
         }
-        if (mismatched.isEmpty()) return emptyList()
-        FileLogger.w(TAG, "插件 ${manifest.id} 完整性校验不一致：${mismatched.joinToString()}")
-        // 返回文件名而不是现成文案：用户可见提示由 UI 层按语种拼，这边只给事实
-        return mismatched
     }
 
-    /** 取走导入时留下的完整性不符文件名（取完即清），供界面提示一次。 */
-    fun takeImportWarnings(id: String): List<String> = importWarnings.remove(id).orEmpty()
-
-    /** 启停成功后才记意愿：失败的不该被巡检当成「应该在跑」反复拉起来。 */
-    private fun markEnabled(id: String, enabled: Boolean) {
-        val record = recordStore.get(id) ?: return
-        if (record.enabled == enabled) return
-        recordStore.save(record.copy(enabled = enabled))
-    }
-
-    /** 启动健康巡检（幂等）。安装流程与插件页都会调，重复调不会多开一份。 */
-    fun startHealthSupervisor() {
-        if (healthJob?.isActive == true) return
-        healthJob = healthScope.launch {
-            while (isActive) {
-                delay(HEALTH_INTERVAL_MS)
-                runCatching { healthCheckOnce() }
-                    .onFailure { FileLogger.w(TAG, "插件健康巡检异常", it) }
-            }
+    private fun discardAll() {
+        staged.entries.forEach { (token, pending) ->
+            deleteTree(pending.pkg.dir)
+            staged.remove(token)
         }
     }
 
     /**
-     * 巡检一轮：只盯用户启用过的常驻服务。
-     *
-     * 连续多次未就绪才动手重启（网络抖动、启动慢都算正常），重启失败按指数退避封顶 5 分钟，
-     * 避免一个永远起不来的插件每 30 秒就被拉起一次。
+     * 安装暂存包。插件清单里的贡献随启用生效，安装不再逐项授权。
+     * 同 ID 已安装时整体替换并沿用原启用状态，来源记录为本次安装的来源。
      */
-    private suspend fun healthCheckOnce() {
-        recordStore.all().values.filter { it.enabled }.forEach { record ->
-            val manifest = readManifest(record.id) ?: return@forEach
-            if (!manifest.isService) return@forEach
-            if (isPortReady(manifest)) {
-                healthFailures.remove(record.id)
-                nextRestartAt.remove(record.id)
-                return@forEach
+    suspend fun install(
+        token: String,
+        origin: PluginInstallOrigin = PluginInstallOrigin()
+    ): PluginInstallResult =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                ensureLoaded()
+                val pending = staged[token]
+                    ?: return@withLock PluginInstallResult.Failed(PluginError(PluginErrorCode.PREVIEW_EXPIRED))
+                val manifest = pending.manifest
+                try {
+                    commitInstall(token, pending, origin)
+                    PluginInstallResult.Installed(manifest.id)
+                } catch (e: IOException) {
+                    FileLogger.e(TAG, "安装插件失败: ${manifest.id}", e)
+                    PluginInstallResult.Failed(PluginError(PluginErrorCode.STORAGE_FAILED, e.javaClass.simpleName))
+                }
             }
-            val failures = (healthFailures[record.id] ?: 0) + 1
-            healthFailures[record.id] = failures
-            if (failures < UNHEALTHY_THRESHOLD) return@forEach
-            val now = System.currentTimeMillis()
-            if (now < (nextRestartAt[record.id] ?: 0L)) return@forEach
-            val step = (failures - UNHEALTHY_THRESHOLD).coerceAtMost(4)
-            nextRestartAt[record.id] = now + min(MAX_RESTART_BACKOFF_MS, RESTART_BACKOFF_MS shl step)
-            FileLogger.i(TAG, "插件 ${record.id} 连续 $failures 次未就绪，尝试重启")
-            this@PluginManager.launch(record.id)
         }
-    }
 
-    private suspend fun ensureContainer() {
-        if (!engine.isContainerInstalled()) engine.ensureInstalled()
-    }
-
-    /** 退出码非 0 表示失败；null 表示超时或容器未就绪——两种情况都不能当作成功。 */
-    private fun errorIfFailed(code: Int?, output: String, what: String) {
-        if (code == null) error("$what 未返回退出码（超时或容器未就绪）：${output.take(300)}")
-        if (code != 0) error("$what 失败（退出码 $code）：${output.take(300)}")
-    }
-
-    /** 清单里的架构名（ARM64 / amd64 等）是否被本机 ABI 覆盖；不认识的写法按原样比对。 */
-    private fun abiSupported(arch: String): Boolean {
-        val key = arch.trim().lowercase()
-        val abis = Build.SUPPORTED_ABIS.map { it.lowercase() }
-        return when (key) {
-            "arm64", "aarch64", "arm64-v8a" -> "arm64-v8a" in abis
-            "amd64", "x86_64", "x64" -> "x86_64" in abis
-            "arm", "armv7", "armv7l", "armhf", "armeabi-v7a" -> "armeabi-v7a" in abis
-            "x86", "i686" -> "x86" in abis
-            else -> key in abis
+    private fun commitInstall(token: String, pending: StagedPackage, origin: PluginInstallOrigin) {
+        val manifest = pending.manifest
+        if (!recoverInterruptedInstall(_plugins.value.map { it.record })) {
+            throw IOException("上次安装事务尚未恢复")
         }
-    }
+        installedDir.mkdirs()
+        val target = File(installedDir, manifest.id)
+        val backup = File(installedDir, "${manifest.id}$REPLACED_SUFFIX")
+        deleteTree(backup)
 
-    /** launchCommand 是绝对路径就原样用；否则优先取插件自带 bin/ 下的同名入口，再回退 PATH。 */
-    private fun resolveLaunchCommand(manifest: PluginManifest, containerDir: String): String {
-        val cmd = manifest.launchCommand
-        if (cmd.startsWith("/")) return cmd
-        val inBin = "$containerDir/bin/$cmd"
-        // 宿主侧对应文件存在就用容器内绝对路径，避免依赖 PATH 里的软链（/opt/taixu 在 rootfs，重装即失）
-        val hostFile = File(hostDir(manifest.id), "bin/$cmd")
-        return if (hostFile.isFile) inBin else cmd
-    }
+        val existing = _plugins.value.firstOrNull { it.id == manifest.id }
+        if (existing == null) deleteTree(dataDirFor(manifest.id))
+        val installRevision = UUID.randomUUID().toString()
+        val record = PluginRecord(
+            id = manifest.id,
+            version = manifest.version.toString(),
+            enabled = existing?.record?.enabled ?: true,
+            installedAt = clock(),
+            origin = origin.kind,
+            archiveSha256 = pending.pkg.archiveSha256,
+            manifestSha256 = pending.pkg.manifestSha256,
+            sourceId = origin.sourceId,
+            sourceName = origin.sourceName,
+            indexUrl = origin.indexUrl,
+            repository = origin.repository,
+            official = origin.official,
+            installRevision = installRevision
+        )
 
-    /** 安装/卸载脚本与启动注入的 TAIXU_* 环境变量前缀（沿用太墟包约定的变量名）。 */
-    private fun envPrefix(containerDir: String): String =
-        "export TAIXU_PLUGIN_PAYLOAD='$containerDir/payload' " +
-            "TAIXU_TOOL_DIR='$containerDir' " +
-            "TAIXU_TOOL_DATA='$containerDir/data'; "
-
-    private fun tagOf(id: String): String = "$TAG_TAG_PREFIX$id"
-
-    /** 端口就绪探测：GET servicePath，拿到任意 HTTP 响应即认为服务已起（含 4xx，说明在监听）。 */
-    private suspend fun isPortReady(manifest: PluginManifest): Boolean = withContext(Dispatchers.IO) {
-        val port = manifest.servicePort
-        if (port !in 1..65535) return@withContext false
-        val path = manifest.servicePath.ifBlank { "/" }.let { if (it.startsWith("/")) it else "/$it" }
-        runCatching {
-            val conn = (URL("http://127.0.0.1:$port$path").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 1500
-                readTimeout = 1500
-                instanceFollowRedirects = false
+        val transaction = PluginInstallTransaction(manifest.id, installRevision, entryExists(target))
+        store.saveInstallTransaction(transaction)
+        var movedOld = false
+        var movedNew = false
+        val others = _plugins.value.filter { it.id != manifest.id }
+        val installed: InstalledPlugin
+        try {
+            if (transaction.hadPrevious) {
+                moveDirectory(target, backup)
+                movedOld = true
             }
+            moveDirectory(pending.pkg.dir, target)
+            movedNew = true
+            installed = loadInstalled(record)
+            store.save(others.map { it.record } + record)
+        } catch (e: IOException) {
+            // 只在 registry 提交前回滚；恢复失败时保留私有事务与备份供下次重试。
             try {
-                conn.responseCode in 200..499
-            } finally {
-                conn.disconnect()
+                if (movedNew) moveDirectory(target, pending.pkg.dir)
+                if (movedOld) moveDirectory(backup, target)
+                store.clearInstallTransaction()
+            } catch (rollback: IOException) {
+                e.addSuppressed(rollback)
             }
-        }.getOrDefault(false)
+            throw e
+        }
+        staged.remove(token)
+        publish(others + installed)
+        cleanup {
+            deleteTree(backup)
+            store.clearInstallTransaction()
+        }
     }
 
-    private companion object {
-        const val TAG = "PluginManager"
-        const val MANIFEST_FILE = "manifest.json"
-        const val PAYLOAD_DIR = "payload"
-        const val INSTALL_TIMEOUT_MS = 600_000L
+    suspend fun uninstall(id: String): Boolean = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            ensureLoaded()
+            val current = _plugins.value
+            if (current.none { it.id == id }) return@withLock false
+            val next = current.filter { it.id != id }
+            if (!cleanup { store.save(next.map { it.record }) }) return@withLock false
+            publish(next)
+            val installedDeleted = cleanup { deleteTree(File(installedDir, id)) }
+            val dataDeleted = cleanup { deleteTree(dataDirFor(id)) }
+            installedDeleted && dataDeleted
+        }
+    }
 
-        /** 本应用能读懂的清单版本上限；更高版本的包字段语义可能变了，宁可拒装。 */
-        const val SUPPORTED_SCHEMA_VERSION = 1
-        const val START_TIMEOUT_MS = 60_000L
-        const val STOP_TIMEOUT_MS = 20_000L
-        const val PKILL_TIMEOUT_MS = 20_000L
-        const val TAG_TAG_PREFIX = "plugin:"
+    suspend fun setEnabled(id: String, enabled: Boolean): Boolean = updateRecord(id) { record, _ ->
+        record.copy(enabled = enabled)
+    }
 
-        /** 包内条目数上限；正常插件包远达不到这个量级。 */
-        const val MAX_ZIP_ENTRIES = 20_001
+    private suspend fun updateRecord(
+        id: String,
+        transform: (PluginRecord, InstalledPlugin) -> PluginRecord
+    ): Boolean = mutateRecords { current ->
+        val target = current.firstOrNull { it.id == id } ?: return@mutateRecords null
+        val updated = transform(target.record, target)
+        if (updated == target.record) return@mutateRecords current
+        current.map { if (it.id == id) it.copy(record = updated) else it }.also { next ->
+            store.save(next.map { it.record })
+        }
+    }
 
-        /** 解压后总字节上限：防止构造小体积、大膨胀的包把存储吃满。 */
-        const val MAX_UNCOMPRESSED_BYTES = 8L * 1024 * 1024 * 1024
+    /** 串行执行一次变更；[block] 返回新的插件列表，返回 null 表示目标不存在。IO 失败返回 false。 */
+    private suspend fun mutateRecords(block: (List<InstalledPlugin>) -> List<InstalledPlugin>?): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                ensureLoaded()
+                try {
+                    val next = block(_plugins.value) ?: return@withLock false
+                    if (next != _plugins.value) publish(next)
+                    true
+                } catch (e: IOException) {
+                    FileLogger.e(TAG, "更新插件记录失败", e)
+                    false
+                }
+            }
+        }
 
-        /** id 会直接拼成目录名，只允许安全字符且不允许 `..`。 */
-        const val ID_MAX_LENGTH = 64
-        val ID_PATTERN = Regex("[A-Za-z0-9._-]{1,$ID_MAX_LENGTH}")
+    private fun publish(next: List<InstalledPlugin>) {
+        _plugins.value = next.sortedBy { it.id }
+        revisionCounter.incrementAndGet()
+    }
 
-        const val HEALTH_INTERVAL_MS = 30_000L
+    private fun loadInstalled(record: PluginRecord): InstalledPlugin {
+        fun broken(status: PluginStatus, errors: List<PluginError> = emptyList()) =
+            InstalledPlugin(record, status, manifest = null, content = PluginContent(), errors = errors)
 
-        /** 连续这么多次探测不到端口才认为真的挂了，避开启动慢与瞬时抖动。 */
-        const val UNHEALTHY_THRESHOLD = 3
-        const val RESTART_BACKOFF_MS = 30_000L
-        const val MAX_RESTART_BACKOFF_MS = 300_000L
+        val dir = File(installedDir, record.id)
+        val manifestFile = File(dir, PluginPackageReader.MANIFEST_FILE)
+        if (!manifestFile.isFile) return broken(PluginStatus.MISSING)
+        if (manifestFile.length() > PluginManifestParser.MAX_MANIFEST_BYTES) return broken(PluginStatus.CORRUPTED)
+
+        val bytes = manifestFile.readBytes()
+        if (PluginPackageReader.sha256Hex(bytes) != record.manifestSha256) return broken(PluginStatus.CORRUPTED)
+
+        val manifest = when (val parsed = PluginManifestParser.parse(String(bytes, Charsets.UTF_8), hostApi)) {
+            is ManifestParseResult.Failure -> return broken(PluginStatus.INVALID, parsed.errors)
+            is ManifestParseResult.Success -> parsed.manifest
+        }
+        if (manifest.id != record.id || manifest.version.toString() != record.version) {
+            return broken(PluginStatus.CORRUPTED)
+        }
+        return when (val content = PluginContentLoader.load(dir, manifest)) {
+            is ContentLoadResult.Failed -> InstalledPlugin(record, PluginStatus.CORRUPTED, manifest, PluginContent(), content.errors)
+            is ContentLoadResult.Ok -> InstalledPlugin(
+                refreshDependencyState(record, content.content),
+                PluginStatus.OK,
+                manifest,
+                content.content
+            )
+        }
+    }
+
+    /** 依赖文件被改动后，准备状态失效；这里只修正视图，不写盘。 */
+    private fun refreshDependencyState(record: PluginRecord, content: PluginContent): PluginRecord {
+        val dependency = content.runtime?.dependencies ?: return record.copy(dependenciesReady = true)
+        val hash = runCatching {
+            PluginPackageReader.sha256Hex(dependency.file.readBytes())
+        }.getOrNull() ?: return record.copy(dependenciesReady = false)
+        return if (record.dependenciesHash == hash) record.copy(dependenciesReady = true)
+        else record.copy(dependenciesReady = false)
+    }
+
+    /**
+     * 旧版本把插件放在 `filesDir/plugins`，安装记录也在包目录内。迁移后包进容器，记录留宿主私有。
+     * 迁移失败时保留旧目录，下次启动重试；这里不删除尚未确认搬走的数据。
+     */
+    private fun migrateLegacyRoot() {
+        val legacy = legacyRootDir ?: return
+        // renameTo 要求目标父目录存在，插件可能先于容器初始化被访问。
+        rootDir.parentFile?.mkdirs()
+        if (!rootDir.exists() && legacy.isDirectory) {
+            if (!legacy.renameTo(rootDir)) {
+                FileLogger.w(TAG, "插件目录迁移失败，继续使用旧目录: ${legacy.absolutePath}")
+                return
+            }
+        }
+        val insideRegistry = File(rootDir, "registry.json")
+        val source = when {
+            insideRegistry.isFile -> insideRegistry
+            File(legacy, "registry.json").isFile -> File(legacy, "registry.json")
+            else -> null
+        }
+        if (!registryFile.exists() && source != null) {
+            registryFile.parentFile?.mkdirs()
+            if (!source.renameTo(registryFile)) {
+                // 目标目录不可写或跨挂载点时 rename 会失败；先保证记录还能读到，再等下次清理。
+                runCatching { source.copyTo(registryFile, overwrite = true) }
+                    .onFailure { FileLogger.w(TAG, "插件安装记录迁移失败: ${source.absolutePath}", it) }
+            }
+        }
+        // 迁移后包目录不该再留一份记录，否则容器内进程可以改写它。
+        if (registryFile.exists() && insideRegistry.isFile) insideRegistry.delete()
+        if (legacy.isDirectory && legacy.listFiles().isNullOrEmpty()) legacy.delete()
+    }
+
+    /**
+     * 记录尚未搬到宿主私有目录时（迁移未完成），退回到包目录里的副本读取，
+     * 避免把已安装插件当成孤儿清掉。
+     */
+    private fun loadRecords(): LoadedRegistry {
+        if (registryFile.isFile) {
+            val records = store.load()
+            val failed = store.loadFailed || hasCorruptRegistryBackup() || hasLegacyCorruptBackup()
+            return LoadedRegistry(records, failed)
+        }
+        val inside = File(rootDir, "registry.json")
+        if (!inside.isFile) {
+            return LoadedRegistry(emptyList(), failed = hasCorruptRegistryBackup() || hasLegacyCorruptBackup())
+        }
+        val legacyStore = PluginRegistryStore(inside)
+        return LoadedRegistry(
+            legacyStore.load(),
+            legacyStore.loadFailed || hasCorruptRegistryBackup() || hasLegacyCorruptBackup()
+        )
+    }
+
+    /** 上一次读取失败会留下备份；此时 registry 文件已不存在，但安装目录不能当孤儿清理。 */
+    private fun hasCorruptRegistryBackup(): Boolean =
+        registryFile.parentFile?.listFiles().orEmpty().any {
+            it.name.startsWith("${registryFile.name}.corrupt-")
+        }
+
+    private fun hasLegacyCorruptBackup(): Boolean {
+        val backupPrefix = "registry.json.corrupt-"
+        return rootDir.listFiles().orEmpty().any { it.name.startsWith(backupPrefix) }
+    }
+
+    /**
+     * 安装/升级在“旧目录已移走、新目录尚未就位或 registry 尚未落盘”之间崩溃时，
+     * 按 registry 仍指向的版本恢复，避免下一次 sweep 把备份当孤儿删掉。
+     */
+    private fun recoverInterruptedInstall(records: List<PluginRecord>): Boolean = cleanup {
+        val transaction = store.loadInstallTransaction()
+        if (transaction != null) {
+            val target = File(installedDir, transaction.id)
+            val backup = File(installedDir, "${transaction.id}$REPLACED_SUFFIX")
+            val committed = records.any {
+                it.id == transaction.id && it.installRevision == transaction.revision
+            }
+            when {
+                committed -> deleteTree(backup)
+                transaction.hadPrevious && entryExists(backup) -> {
+                    deleteTree(target)
+                    moveDirectory(backup, target)
+                }
+                !transaction.hadPrevious -> deleteTree(target)
+                !entryExists(target) -> throw IOException("安装事务的旧目录已丢失: ${transaction.id}")
+            }
+            store.clearInstallTransaction()
+        }
+        // 兼容尚未写事务记录的旧安装：清单相同时优先保留 registry 对应的备份。
+        records.forEach { record ->
+            val target = File(installedDir, record.id)
+            val backup = File(installedDir, "${record.id}$REPLACED_SUFFIX")
+            if (!Files.isDirectory(backup.toPath(), NOFOLLOW_LINKS)) return@forEach
+            when {
+                !entryExists(target) -> moveDirectory(backup, target)
+                manifestMatches(backup, record) -> {
+                    deleteTree(target)
+                    moveDirectory(backup, target)
+                }
+                manifestMatches(target, record) -> deleteTree(backup)
+                else -> throw IOException("无法确定中断安装的旧目录: ${record.id}")
+            }
+        }
+    }
+
+    private fun manifestMatches(dir: File, record: PluginRecord): Boolean {
+        val manifestFile = File(dir, PluginPackageReader.MANIFEST_FILE)
+        if (!manifestFile.isFile || manifestFile.length() > PluginManifestParser.MAX_MANIFEST_BYTES) {
+            return false
+        }
+        val bytes = runCatching { manifestFile.readBytes() }.getOrNull() ?: return false
+        if (PluginPackageReader.sha256Hex(bytes) != record.manifestSha256) return false
+        val parsed = PluginManifestParser.parse(String(bytes, Charsets.UTF_8), hostApi)
+        val manifest = (parsed as? ManifestParseResult.Success)?.manifest ?: return false
+        return manifest.id == record.id && manifest.version.toString() == record.version
+    }
+
+    /** 没有安装记录的目录不具备任何授权，直接清掉（多半是安装中途崩溃留下的）。 */
+    private fun sweepOrphans(knownIds: Set<String>) {
+        cleanup {
+            if (Files.isSymbolicLink(installedDir.toPath())) {
+                deleteTree(installedDir)
+            } else if (entryExists(installedDir)) {
+                Files.newDirectoryStream(installedDir.toPath()).use { entries ->
+                    entries.filter { it.fileName.toString() !in knownIds }.forEach { deleteTree(it.toFile()) }
+                }
+            }
+        }
+    }
+
+    private fun entryExists(file: File): Boolean = try {
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        true
+    } catch (_: NoSuchFileException) {
+        false
+    }
+
+    private fun checkCleanupParents(file: File) {
+        val root = rootDir.toPath().toAbsolutePath().normalize()
+        val path = file.toPath().toAbsolutePath().normalize()
+        if (!path.startsWith(root)) throw IOException("清理路径不在插件目录内")
+        var parent = path.parent
+        while (parent != null && parent.startsWith(root)) {
+            if (Files.isSymbolicLink(parent)) throw IOException("清理路径的父目录是符号链接: $parent")
+            parent = parent.parent
+        }
+    }
+
+    private fun deleteTree(file: File) {
+        checkCleanupParents(file)
+        if (!entryExists(file)) return
+        // walkFileTree 默认不跟随链接，目录链接（包括悬空链接）只作为文件删除。
+        Files.walkFileTree(file.toPath(), object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                Files.deleteIfExists(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                if (exc != null) throw exc
+                Files.deleteIfExists(dir)
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
+
+    private inline fun cleanup(block: () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: IOException) {
+        FileLogger.w(TAG, "插件存储操作失败", e)
+        false
+    }
+
+    private fun moveDirectory(from: File, to: File) {
+        checkCleanupParents(from)
+        checkCleanupParents(to)
+        if (!from.renameTo(to)) throw IOException("无法移动 ${from.name} 到 ${to.name}")
+    }
+
+    companion object {
+        private const val TAG = "PluginManager"
+        private const val REPLACED_SUFFIX = ".replaced"
+        private const val PLUGINS_DIR = "plugins"
+        private const val DEV_DIR = "plugin-dev"
+        private const val REGISTRY_FILE = "plugin-registry.json"
     }
 }

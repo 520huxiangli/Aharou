@@ -503,7 +503,7 @@ private fun oauthPillStatusRes(status: McpOAuthStatus): Int = when (status) {
 
 /** 紧凑 pill 标签：胶囊背景 + 小字，用于状态/类型/摘要。 */
 @Composable
-internal fun McpPill(
+fun McpPill(
     text: String,
     textColor: Color,
     backgroundColor: Color,

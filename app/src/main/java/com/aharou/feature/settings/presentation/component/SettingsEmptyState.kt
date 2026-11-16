@@ -38,7 +38,7 @@ private val IconGlyphSize = 28.dp
  * 需要垂直居中时由调用方在 modifier 传 `fillMaxSize()`；在可滚动页面里不传则按内容高度排布。
  */
 @Composable
-internal fun SettingsEmptyState(
+fun SettingsEmptyState(
     icon: ImageVector,
     title: String,
     modifier: Modifier = Modifier,

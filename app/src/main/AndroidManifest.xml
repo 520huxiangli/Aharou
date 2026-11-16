@@ -189,6 +189,12 @@
              用 specialUse 而不是 dataSync：Android 15(35) 起 dataSync 前台服务在 24 小时内累计只能跑 6 小时，
              超时会被系统强杀，保活形同虚设；specialUse 面向「用户可见的自定义用途」，正对本场景。 -->
         <service
+            android:name=".feature.plugin.overlay.PluginOverlayService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
             android:name=".feature.terminal.domain.TerminalKeepaliveService"
             android:enabled="true"
             android:exported="false"

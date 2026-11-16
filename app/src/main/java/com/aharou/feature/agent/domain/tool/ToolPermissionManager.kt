@@ -125,9 +125,13 @@ class ToolPermissionManager @Inject constructor() {
 
     /** 在持锁区内调用：把内部表投影到对外 StateFlow。 */
     private fun publish() {
-        _pendingRequest.value = pending.values.firstOrNull()?.request
+        // 插件发起的授权只交给插件侧 pending/resolve，不占用聊天页弹窗与侧边栏等待指示。
+        val chatRequests = pending.values
+            .map { it.request }
+            .filter { it.origin != PendingToolPermission.ORIGIN_PLUGIN }
+        _pendingRequest.value = chatRequests.firstOrNull()
         _pendingBatch.value = pendingBatches.values.firstOrNull()?.batch
-        val singleIds = pending.values.mapNotNull { it.request.sessionId.ifBlank { null } }
+        val singleIds = chatRequests.mapNotNull { it.sessionId.ifBlank { null } }
         val batchIds = pendingBatches.values.mapNotNull { it.batch.sessionId.ifBlank { null } }
         _awaitingSessionIds.value = (singleIds + batchIds).toSet()
     }

@@ -9,7 +9,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import com.aharou.core.ui.rememberSafeDocumentPicker
 import androidx.annotation.StringRes
-import com.aharou.feature.plugin.presentation.PluginSettingsSection
+import com.aharou.feature.plugin.presentation.PluginScreenHost
 import androidx.core.content.FileProvider
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
@@ -1081,7 +1081,7 @@ fun SettingsScreen(
                 )
                 SettingsSection.Connectors -> ConnectorsSection(languageTag = languageTag)
                 SettingsSection.RemoteDevice -> RemoteDeviceSection()
-                SettingsSection.Plugins -> PluginSettingsSection()
+                SettingsSection.Plugins -> PluginScreenHost()
                 SettingsSection.Skills -> SkillsSection(
                     projectName = currentProjectName,
                     entries = skills,

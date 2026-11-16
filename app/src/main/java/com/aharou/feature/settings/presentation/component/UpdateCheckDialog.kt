@@ -213,7 +213,7 @@ private fun downloadSourceLabel(url: String): String = when {
 }
 
 /** 用隐式 Intent 打开浏览器，捕获异常避免崩溃。 */
-internal fun openUrl(context: android.content.Context, url: String) {
+fun openUrl(context: android.content.Context, url: String) {
     runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }

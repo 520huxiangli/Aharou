@@ -26,6 +26,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
@@ -44,6 +48,9 @@ private const val EXIT_MARKER_POLL_MS = 1_000L
 /** 匹配命令退出标记 `[command exited: N]` 的定位前缀。 */
 private const val EXIT_MARKER_PREFIX = "[command exited: "
 
+/** 插件原始输出队列容量；写端丢最早数据，读端按自己的 offset 感知截断。 */
+private const val OUTPUT_CHANNEL_CAPACITY = 64
+
 /**
  * 远程 SSH 终端会话管理器：用 sshj shell channel 驱动 [TerminalSession]（接 [SshShellBackend]），
  * 与本地 [TerminalSessionManager]（fork PTY 进程）共用同一套 UI/工具接口。
@@ -59,6 +66,9 @@ class RemoteTerminalSessionManager @Inject constructor(
 ) : TerminalSessionProvider {
 
     private val _tabs = MutableStateFlow<List<TerminalTab>>(emptyList())
+
+    /** 每个标签的原始输出有界队列，由 [tabOutput] 暴露给插件日志消费端。 */
+    private val outputChannels = ConcurrentHashMap<String, Channel<ByteArray>>()
     val tabs: StateFlow<List<TerminalTab>> = _tabs.asStateFlow()
 
     private val _activeTabId = MutableStateFlow<String?>(null)
@@ -146,6 +156,23 @@ class RemoteTerminalSessionManager @Inject constructor(
         return id
     }
 
+    /** 插件命令标签：执行完命令后退出 shell，标签保留为 Finished，由插件关闭。 */
+    override suspend fun startPluginCommand(command: String, title: String?, pluginId: String): String {
+        if (!ensureRemote()) throw IllegalStateException("非远程模式或 SSH 未连接")
+        val id = openShellTab(
+            command,
+            isBackground = true,
+            notify = false,
+            title = title,
+            sourceSessionId = null,
+            ownerPluginId = pluginId,
+            exitOnFinish = true
+        )
+        monitorBackgroundExit(id)
+        FileLogger.i(TAG, "插件命令标签 $id（$pluginId）: $command")
+        return id
+    }
+
     /**
      * 开一个 SSH shell channel，分配 PTY，构造 [TerminalSession]（接 [SshShellBackend]），
      * 加入标签列表。交互标签与后台命令共用此路径，区别仅在元数据。
@@ -157,7 +184,9 @@ class RemoteTerminalSessionManager @Inject constructor(
         title: String?,
         sourceSessionId: String?,
         workspacePath: String? = null,
-        createdByAgent: Boolean = false
+        createdByAgent: Boolean = false,
+        ownerPluginId: String? = null,
+        exitOnFinish: Boolean = false
     ): String {
         val id = nextId()
         // sshj startSession/startShell 走网络 I/O，必须离开主线程，否则 NetworkOnMainThreadException。
@@ -184,7 +213,7 @@ class RemoteTerminalSessionManager @Inject constructor(
             // sshj 的 Session.Shell 没有退出状态（SshShellBackend.waitForExit 恒 0），真实退出码只能靠命令
             // 回显的 `[command exited: N]` 标记解析；notify 时 `exit $ec` 让 shell 自然结束触发 onFinished，
             // 非 notify 时 `exec /bin/sh` 保活供后续复用（与本地 TerminalSessionManager 的三件套一致）。
-            val afterCommand = if (notify) "; exit \$ec" else "; exec /bin/sh"
+            val afterCommand = if (notify || exitOnFinish) "; exit \$ec" else "; exec /bin/sh"
             val init = "$command; ec=\$?; echo \"[command exited: \$ec]\"$afterCommand"
             termSession.write(init + "\n")
         }
@@ -199,6 +228,7 @@ class RemoteTerminalSessionManager @Inject constructor(
             createdByAgent = createdByAgent,
             sourceSessionId = sourceSessionId,
             workspacePath = wsPath,
+            ownerPluginId = ownerPluginId,
             runState = RunState.Running
         )
         addTab(tab)
@@ -247,7 +277,19 @@ class RemoteTerminalSessionManager @Inject constructor(
     private suspend fun readTabOutputOnMain(id: String): String? =
         withContext(Dispatchers.Main) { getTabOutput(id) }
 
-    override fun listTabs(): List<TabInfo> = _tabs.value.map { it.toTabInfo() }
+    override fun listTabs(): List<TabInfo> = _tabs.value
+        .filter { it.ownerPluginId == null }
+        .map { it.toTabInfo() }
+
+    override fun tabStatus(id: String): TerminalTabStatus? {
+        val tab = tab(id) ?: return null
+        return when (val state = tab.runState) {
+            is RunState.Running -> TerminalTabStatus(running = true, exitCode = null)
+            is RunState.Finished -> TerminalTabStatus(running = false, exitCode = state.exitCode)
+        }
+    }
+
+    override fun tabOutput(id: String): Flow<ByteArray>? = outputChannels[id]?.receiveAsFlow()
 
     override val runningBackgroundTabs: Flow<List<TabInfo>> =
         combine(_tabs, revision) { tabs, _ -> tabs.runningBackgroundTabInfos() }.distinctUntilChanged()
@@ -255,6 +297,7 @@ class RemoteTerminalSessionManager @Inject constructor(
     override fun closeTab(id: String): Boolean {
         val tab = tab(id) ?: return false
         runCatching { tab.session.finishIfRunning() }
+        closeOutput(id)
         tab.view = null
         val remaining = _tabs.value.filterNot { it.id == id }
         _tabs.value = remaining
@@ -312,7 +355,21 @@ class RemoteTerminalSessionManager @Inject constructor(
 
     private fun addTab(tab: TerminalTab) {
         _tabs.value = _tabs.value + tab
+        attachOutput(tab)
         bumpRevision()
+    }
+
+    private fun attachOutput(tab: TerminalTab) {
+        val channel = Channel<ByteArray>(OUTPUT_CHANNEL_CAPACITY, BufferOverflow.DROP_OLDEST)
+        outputChannels.remove(tab.id)?.close()
+        outputChannels[tab.id] = channel
+        tab.session.setRawOutputListener { _, data, length ->
+            channel.trySend(data.copyOf(length))
+        }
+    }
+
+    private fun closeOutput(id: String) {
+        outputChannels.remove(id)?.close()
     }
 
     private fun bumpRevision() {
@@ -343,6 +400,7 @@ class RemoteTerminalSessionManager @Inject constructor(
         val current = tab(tabId) ?: return
         if (current.runState !is RunState.Running) return
         current.runState = RunState.Finished(exitCode)
+        closeOutput(tabId)
         bumpRevision()
         FileLogger.i(TAG, "远程标签 $tabId 结束 exit=$exitCode")
         if (current.isBackground) maybeStopKeepalive(current)

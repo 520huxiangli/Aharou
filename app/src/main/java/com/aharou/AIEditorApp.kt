@@ -168,6 +168,9 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var mcpManager: McpManager
 
+    @Inject lateinit var pluginToolManager: com.aharou.feature.plugin.runtime.PluginToolManager
+    @Inject lateinit var pluginHookDispatcher: com.aharou.feature.plugin.runtime.PluginHookDispatcher
+
     /** 编辑器语言服务器管理器：冷启动时按进程账本清扫上次进程被杀后遗留的语言服务器。 */
     @Inject
     lateinit var editorLspManager: EditorLspManager
@@ -373,10 +376,6 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var skillMarketCatalog: com.aharou.feature.agent.domain.skill.market.SkillMarketCatalog
 
-    /** 插件市场源清单：同样启动即对账，索引放仓库里那个 JSON 就行。 */
-    @Inject
-    lateinit var pluginMarketCatalog: com.aharou.feature.plugin.domain.market.PluginMarketCatalog
-
     /** 灵动岛 / 流体云：把通话、Agent、后台终端三路运行态汇成一条 promoted ongoing 通知。
       * internal：它依赖同为 internal 的 VoiceCallSession，公开属性无法暴露该类型。 */
     @Inject
@@ -499,7 +498,6 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             containerImageCatalog.refreshFromNetworkIfStale()
             skillMarketCatalog.refreshFromNetworkIfStale()
-            pluginMarketCatalog.refreshFromNetworkIfStale()
         }
         // 启动即刷新知识库源清单并同步本地副本（失败静默，沿用上次同步到的内容）。
         appScope.launch {
@@ -588,6 +586,10 @@ class AIEditorApp : Application(), Configuration.Provider {
         }
         // 连接已配置的 MCP server，把其工具注册进 ToolRegistry（内部自有 scope，失败不影响启动）。
         mcpManager.start()
+        // 插件运行时：注册 AI 工具并派发 app.started（细节见 PluginAppStartup）。
+        com.aharou.feature.plugin.runtime.startPluginRuntime(
+            appScope, pluginToolManager, pluginHookDispatcher, packageManager, packageName
+        )
         // 语言服务器：App 被系统杀死时 stdio 进程拿不到旧句柄，会在容器里留成孤儿；
         // 这里按进程账本清一次（账本只认自家遗留进程，不会误伤 MCP/终端）。失败只记日志。
         appScope.launch {
@@ -1001,6 +1003,8 @@ class AIEditorApp : Application(), Configuration.Provider {
                 setShowBadge(false)
             }
             notificationManager.createNotificationChannel(agentChannel)
+
+            com.aharou.feature.plugin.runtime.createPluginNotificationChannel(this, notificationManager)
         }
     }
 }

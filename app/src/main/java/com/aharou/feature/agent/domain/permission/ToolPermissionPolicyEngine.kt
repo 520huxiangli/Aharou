@@ -178,6 +178,18 @@ class ToolPermissionPolicyEngine @Inject constructor(
      * @param workspacePath 发起这次工具调用的**会话工作区**（不是界面当前选中的工作区），
      *   规则读取与「始终允许」落库都以它为准，避免多会话或切工作区时读写到别的范围。
      */
+    /** 固定当前工作区后再评估；插件工具调用用。 */
+    fun captureProject(workspacePath: String): PermissionRulesRepository.ProjectContext =
+        rulesRepo.captureProject(workspacePath)
+
+    suspend fun evaluate(
+        tool: AgentTool?,
+        toolName: String,
+        args: Map<String, JsonElement>,
+        mode: com.aharou.feature.agent.domain.model.AgentMode,
+        project: PermissionRulesRepository.ProjectContext
+    ): EvalResult = evaluate(tool, toolName, args, mode, project.workspacePath)
+
     suspend fun evaluate(
         tool: AgentTool?,
         toolName: String,
@@ -561,6 +573,17 @@ class ToolPermissionPolicyEngine @Inject constructor(
         workspacePath: String
     ) {
         remember(toolName, patterns, ApprovalScope.ALWAYS, workspacePath, null, PermissionDecision.ALLOW)
+    }
+
+    /** 把「始终允许」写进固定项目的规则文件；插件侧审批用。 */
+    suspend fun remember(
+        toolName: String,
+        patterns: List<String>,
+        project: PermissionRulesRepository.ProjectContext
+    ) {
+        patterns.distinct().forEach { pattern ->
+            rulesRepo.addToProject(project, PermissionRule(toolName, pattern, PermissionDecision.ALLOW))
+        }
     }
 
     // ── 通用（非 shell）评估 ──────────────────────────────────────

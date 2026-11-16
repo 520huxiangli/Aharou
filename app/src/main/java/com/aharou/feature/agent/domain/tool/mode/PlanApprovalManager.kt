@@ -70,6 +70,11 @@ class PlanApprovalManager @Inject constructor(
         }
     }
 
+    /** 取某会话当前的计划审批请求；插件侧查询与回传都靠它定位。 */
+    fun pendingForSession(sessionId: String): PlanApprovalRequest? = synchronized(entries) {
+        entries.values.firstOrNull { it.request.sessionId == sessionId }?.request
+    }
+
     /** 按请求 id 回传用户选择（通知栏按钮走这条：陈旧的 id 解析不到，自然不会误批新请求）。 */
     fun resolve(id: String, choice: PlanApprovalChoice) {
         val entry = synchronized(entries) {

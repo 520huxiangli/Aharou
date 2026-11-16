@@ -759,9 +759,10 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         extraEnv: Map<String, String> = emptyMap(),
         profile: ContainerProfile? = null,
-        inheritUserConfig: Boolean = true
+        inheritUserConfig: Boolean = true,
+        workingDir: String? = null
     ): Process {
-        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile ?: profileResolver.forWorkspace(projectPath), inheritUserConfig)
+        val invocation = buildStdioInvocation(program, programArgs, projectPath, extraEnv, profile ?: profileResolver.forWorkspace(projectPath), inheritUserConfig, workingDir)
         val pb = buildProcessBuilder(invocation)
         // 刻意不 redirectErrorStream：stdout 留给 JSON-RPC，stderr 由调用方单独消费。
         // 同样刻意不重定向 stdin：这里的 stdin 就是 JSON-RPC 的请求通道，接 /dev/null 会让 server 立刻收到 EOF 退出。
@@ -777,11 +778,12 @@ class LinuxContainerEngine @Inject constructor(
         tag: String,
         extraEnv: Map<String, String> = emptyMap(),
         profile: ContainerProfile? = null,
-        inheritUserConfig: Boolean = true
+        inheritUserConfig: Boolean = true,
+        workingDir: String? = null
     ): TrackedStdioProcess {
         val effectiveProfile = profile ?: profileResolver.forWorkspace(projectPath)
         val childrenBefore = ProcessIdentity.childPids()
-        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, effectiveProfile, inheritUserConfig)
+        val process = startStdioProcess(program, programArgs, projectPath, extraEnv, effectiveProfile, inheritUserConfig, workingDir)
         val identity = ProcessIdentity.capture(process)
             ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
         identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, tag) }
@@ -798,9 +800,10 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String?,
         extraEnv: Map<String, String>,
         profile: ContainerProfile,
-        inheritUserConfig: Boolean
+        inheritUserConfig: Boolean,
+        workingDir: String? = null
     ): ProotInvocation {
-        val argv = buildBaseProotArgv(projectPath, profile, inheritUserConfig)
+        val argv = buildBaseProotArgv(projectPath, profile, inheritUserConfig, workingDir)
         argv.add("/bin/sh")
         argv.add("-c")
         argv.add("exec \"\$0\" \"\$@\"")
@@ -833,7 +836,12 @@ class LinuxContainerEngine @Inject constructor(
      * 构造 PRoot 调用的公共前缀 argv：proot 二进制 + rootfs + 标准绑定 + 伪 root + 工作区绑定，
      * 但**不含**最终的客户机命令（由各调用方自行追加 `/bin/sh -c …` 或 `exec` 形式）。
      */
-    private fun buildBaseProotArgv(projectPath: String?, profile: ContainerProfile, inheritUserConfig: Boolean = true): MutableList<String> {
+    private fun buildBaseProotArgv(
+        projectPath: String?,
+        profile: ContainerProfile,
+        inheritUserConfig: Boolean = true,
+        workingDir: String? = null
+    ): MutableList<String> {
         val rootfs = containerInstaller.rootfsDirFor(profile).absolutePath
         val prootBin = containerInstaller.prootBin.absolutePath
         if (!containerInstaller.prootBin.exists()) {
@@ -856,7 +864,11 @@ class LinuxContainerEngine @Inject constructor(
             argv.add("-b")
             argv.add("$projectPath:/root/workspace")
             argv.add("-w")
-            argv.add("/root/workspace")
+            argv.add(workingDir ?: "/root/workspace")
+        } else if (workingDir != null) {
+            // 插件进程不需要工作区绑定，只把 cwd 指向自己的安装目录。
+            argv.add("-w")
+            argv.add(workingDir)
         }
 
         if (inheritUserConfig) argv.addAll(containerUserBindings(context, containerInstaller))

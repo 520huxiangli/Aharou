@@ -42,8 +42,6 @@ import com.aharou.feature.extension.domain.ExtensionEntry
 import com.aharou.feature.extension.domain.ExtensionKind
 import com.aharou.feature.settings.presentation.ExtensionsViewModel
 import com.aharou.feature.settings.presentation.component.extension.ExtensionEntryRow
-import com.aharou.feature.settings.presentation.component.extension.ExtensionNotice
-import com.aharou.feature.settings.presentation.component.extension.MarketPluginRow
 import com.aharou.feature.settings.presentation.component.extension.extensionKindLabelRes
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Book
@@ -69,31 +67,8 @@ internal fun ExtensionsSection(
     val entries by viewModel.visibleEntries.collectAsStateWithLifecycle()
     val loading by viewModel.loading.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
-    val busyId by viewModel.busyId.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val kindFilter by viewModel.kindFilter.collectAsStateWithLifecycle()
-    val marketPlugins by viewModel.marketPlugins.collectAsStateWithLifecycle()
-    val marketLoading by viewModel.marketLoading.collectAsStateWithLifecycle()
-    val marketLoaded by viewModel.marketLoaded.collectAsStateWithLifecycle()
-    val marketFailed by viewModel.marketFailed.collectAsStateWithLifecycle()
-    val marketSourceLabel by viewModel.marketSourceLabel.collectAsStateWithLifecycle()
-    val installedVersions by viewModel.installedVersions.collectAsStateWithLifecycle()
-    val event by viewModel.event.collectAsStateWithLifecycle()
-
-    var pendingUninstall by remember { mutableStateOf<ExtensionEntry?>(null) }
-
-    // 提示条说的是「刚发生了什么」，看完就该收走：否则「已安装 xxx」会一直挂在页面顶部
-    LaunchedEffect(event) {
-        if (event != null) {
-            delay(EVENT_NOTICE_MS)
-            viewModel.consumeEvent()
-        }
-    }
-
-    // 只在切到「插件」分类时拉市场索引：不进这个分类就不产生网络请求
-    LaunchedEffect(kindFilter, marketLoaded) {
-        if (kindFilter == ExtensionKind.PLUGIN && !marketLoaded) viewModel.loadMarket()
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -104,8 +79,6 @@ internal fun ExtensionsSection(
                 .padding(top = Spacing.sm, bottom = Spacing.xl),
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            ExtensionNotice(event)
-
             ExtensionKindChips(selected = kindFilter, onSelect = viewModel::setKindFilter)
 
             AppTextField(
@@ -148,107 +121,18 @@ internal fun ExtensionsSection(
                 else -> SettingsGroup {
                     entries.forEachIndexed { index, entry ->
                         if (index > 0) SettingsDivider()
-                        val busy = busyId == entry.id
-                        val row: @Composable () -> Unit = {
-                            ExtensionEntryRow(
-                                entry = entry,
-                                busy = busy,
-                                anyBusy = busyId != null,
-                                onAction = { viewModel.togglePlugin(entry) },
-                                onUninstall = { pendingUninstall = entry },
-                                onOpenOriginal = { onOpenSection(extensionJumpSection(entry.kind)) },
-                            )
-                        }
-                        // 只有插件能卸：其余类型的「删除」在各自原页里管
-                        if (entry.kind == ExtensionKind.PLUGIN) {
-                            SwipeToDeleteRow(
-                                onDelete = { pendingUninstall = entry },
-                                deleteEnabled = busyId == null,
-                                content = row,
-                            )
-                        } else {
-                            row()
-                        }
-                    }
-                }
-            }
-
-            // 源里确实没有插件时整块不渲染：一个永远空着的「插件市场」标题比不显示更让人困惑。
-            // 拉取中与拉取失败仍要露出，那里带着刷新按钮和原因说明。
-            val marketIdleEmpty = marketLoaded && marketPlugins.isEmpty() && !marketFailed
-            if (kindFilter == ExtensionKind.PLUGIN && !marketIdleEmpty) {
-                Spacer(Modifier.width(Spacing.xs))
-                Text(
-                    text = stringResource(R.string.extension_market_title),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (marketSourceLabel.isNotBlank()) {
-                        Text(
-                            text = stringResource(R.string.extension_market_source, marketSourceLabel),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.semanticColors.subtleText,
-                            modifier = Modifier.weight(1f)
+                        ExtensionEntryRow(
+                            entry = entry,
+                            busy = false,
+                            anyBusy = false,
+                            onAction = {},
+                            onUninstall = {},
+                            onOpenOriginal = { onOpenSection(extensionJumpSection(entry.kind)) },
                         )
-                    } else {
-                        Spacer(Modifier.weight(1f))
-                    }
-                    TextButton(onClick = viewModel::loadMarket, enabled = !marketLoading) {
-                        Icon(
-                            FeatherIcons.RefreshCw,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = MaterialTheme.semanticColors.subtleText
-                        )
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text(stringResource(R.string.extension_market_refresh))
-                    }
-                }
-
-                if (marketPlugins.isEmpty()) {
-                    // 能走到这里只剩「还在拉」与「没取到」：源里确实没有插件的情况整块已经被隐藏
-                    HintText(
-                        stringResource(
-                            if (marketFailed) R.string.extension_market_failed
-                            else R.string.extension_market_loading
-                        )
-                    )
-                } else {
-                    SettingsGroup {
-                        marketPlugins.forEachIndexed { index, plugin ->
-                            if (index > 0) SettingsDivider()
-                            MarketPluginRow(
-                                entry = plugin,
-                                installedVersion = installedVersions[plugin.id],
-                                busy = busyId == ExtensionsViewModel.MARKET_BUSY_PREFIX + plugin.id,
-                                anyBusy = busyId != null,
-                                onInstall = { viewModel.installMarketPlugin(plugin) }
-                            )
-                        }
                     }
                 }
             }
         }
-    }
-
-    pendingUninstall?.let { entry ->
-        AlertDialog(
-            onDismissRequest = { pendingUninstall = null },
-            title = { Text(stringResource(R.string.extension_uninstall_title)) },
-            text = { Text(stringResource(R.string.extension_uninstall_message, entry.name)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.uninstallPlugin(entry)
-                    pendingUninstall = null
-                }) { Text(stringResource(R.string.extension_uninstall_confirm)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingUninstall = null }) {
-                    Text(stringResource(R.string.extension_cancel))
-                }
-            }
-        )
     }
 }
 

@@ -103,7 +103,8 @@ class BackupManagerImpl @Inject constructor(
     private val syncSettingsRepository: SyncSettingsRepository,
     private val workspaceRepository: WorkspaceRepository,
     private val database: AgentDatabase,
-    private val restoreSettings: BackupRestoreSettings
+    private val restoreSettings: BackupRestoreSettings,
+    private val pluginArchive: com.aharou.feature.plugin.runtime.PluginBackupArchiveService
 ) : BackupManager {
 
     private val json = Json {
@@ -135,22 +136,32 @@ class BackupManagerImpl @Inject constructor(
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
     }.getOrDefault("")
 
-    override suspend fun export(password: CharArray?, options: BackupOptions, output: OutputStream) {
+    override suspend fun export(
+        password: CharArray?,
+        options: BackupOptions,
+        output: OutputStream,
+        pluginIds: Set<String>
+    ) {
         withContext(Dispatchers.IO) {
             val pw = password?.takeIf { it.isNotEmpty() }
-            if (pw == null) {
-                // 明文备份直连调用方输出流，省掉一次「落临时文件再拷回」的往返。
-                writeTarGz(output, options)
-                return@withContext
-            }
-            val temp = createTempFile()
+            val sections = pluginArchive.prepareExport(pluginIds)
             try {
-                FileOutputStream(temp).buffered().use { writeTarGz(it, options) }
-                FileInputStream(temp).buffered().use { input ->
-                    BackupCrypto.encryptStream(input, output, pw)
+                if (pw == null) {
+                    // 明文备份直连调用方输出流，省掉一次「落临时文件再拷回」的往返。
+                    writeTarGz(output, options, sections)
+                    return@withContext
+                }
+                val temp = createTempFile()
+                try {
+                    FileOutputStream(temp).buffered().use { writeTarGz(it, options, sections) }
+                    FileInputStream(temp).buffered().use { input ->
+                        BackupCrypto.encryptStream(input, output, pw)
+                    }
+                } finally {
+                    temp.delete()
                 }
             } finally {
-                temp.delete()
+                pluginArchive.cleanupExport(sections)
             }
         }
     }
@@ -337,7 +348,11 @@ class BackupManagerImpl @Inject constructor(
 
     // ── 导出辅助 ──────────────────────────────────────────────
 
-    private suspend fun writeTarGz(output: OutputStream, options: BackupOptions) {
+    private suspend fun writeTarGz(
+        output: OutputStream,
+        options: BackupOptions,
+        sections: List<com.aharou.feature.plugin.runtime.PluginBackupArchiveService.Section> = emptyList()
+    ) {
         output.bufferedNonClosing().use { fos ->
             GzipCompressorOutputStream(fos).use { gz ->
                 TarArchiveOutputStream(gz).use { tar ->
@@ -351,6 +366,11 @@ class BackupManagerImpl @Inject constructor(
                     }
                     if (options.workspaceFiles) {
                         writeWorkspaceEntries(tar)
+                    }
+                    if (sections.isNotEmpty()) {
+                        writePluginSections(sections, pluginArchive) { name, bytes ->
+                            writeTarEntry(tar, name, bytes)
+                        }
                     }
                     if (options.chatHistory) {
                         writeJsonlFileEntry(tar, FILE_SESSIONS) { writer ->

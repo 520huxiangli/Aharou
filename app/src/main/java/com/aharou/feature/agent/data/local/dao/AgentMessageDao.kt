@@ -26,6 +26,24 @@ interface AgentMessageDao {
     @Query("SELECT * FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     suspend fun getMessagesBySessionOnce(sessionId: String): List<AgentMessageEntity>
 
+    /** 从新到旧分页读取（插件 chat API 用）；[before]/[after] 为当前页两端的时间戳锚点。 */
+    @Query(
+        """
+        SELECT * FROM agent_messages
+        WHERE sessionId = :sessionId
+          AND (:before IS NULL OR timestamp < :before)
+          AND (:after IS NULL OR timestamp > :after)
+        ORDER BY timestamp DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun getMessagesPageDescending(
+        sessionId: String,
+        before: Long?,
+        after: Long?,
+        limit: Int
+    ): List<AgentMessageEntity>
+
     /**
      * 历史回放专用：只取 [com.aharou.feature.agent.domain.session.MessagePersistenceUseCase] 真正要用的列，
      * 不拉 toolArgs（单行可达 150KB）。字段列表必须与 [HistoryRow] 一致。

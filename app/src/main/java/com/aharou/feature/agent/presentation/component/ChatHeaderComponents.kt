@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +51,7 @@ import com.aharou.feature.agent.domain.model.AgentMode
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.MoreHorizontal
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.Archive
 import compose.icons.feathericons.ChevronRight
@@ -83,7 +86,11 @@ internal fun ChatHeader(
     showMenuButton: Boolean = true,
     terminalActive: Boolean = false,
     gitActive: Boolean = false,
-    browserActive: Boolean = false
+    browserActive: Boolean = false,
+    /** 顶栏溢出菜单里的插件页面入口（`chat.header` 槽位）。 */
+    pluginEntries: List<com.aharou.feature.plugin.domain.PluginUiEntry> = emptyList(),
+    pluginLanguageTag: String = "zh-CN",
+    onPluginEntry: (com.aharou.feature.plugin.domain.PluginUiEntry) -> Unit = {}
 ) {
     // 顶栏工具收纳：Git / 终端 / 浏览器 收进一个按钮，展开时在原位覆盖成那三个入口，
     // 替出来的格子给智能托管。展开态只改这一段，不弹浮层也不撑开新行。
@@ -193,6 +200,9 @@ internal fun ChatHeader(
                         active = false,
                         onClick = onNavigateToShared
                     )
+                    if (pluginEntries.isNotEmpty()) {
+                        PluginMenuButton(pluginEntries, pluginLanguageTag, onPluginEntry)
+                    }
                     IconButton(onClick = { toolsExpanded = true }) {
                         Icon(
                             FeatherIcons.Archive,
@@ -219,6 +229,44 @@ internal fun ChatHeader(
             }
             // 本地容器会话没有连接状态，胶囊不能挂在上面那个远程分支里。
             ScheduledTaskPill(sessionId = sessionId)
+        }
+    }
+}
+
+/** 顶栏插件菜单：插件声明的页面入口收在一个溢出菜单里，不跟工作台按钮抢仓位。 */
+@Composable
+private fun PluginMenuButton(
+    entries: List<com.aharou.feature.plugin.domain.PluginUiEntry>,
+    languageTag: String,
+    onEntry: (com.aharou.feature.plugin.domain.PluginUiEntry) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                FeatherIcons.MoreHorizontal,
+                contentDescription = stringResource(R.string.settings_plugins),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            entries.forEach { entry ->
+                DropdownMenuItem(
+                    text = { Text(entry.title.resolve(languageTag)) },
+                    leadingIcon = {
+                        Icon(
+                            com.aharou.feature.plugin.presentation.pluginPageIcon(entry.icon),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onEntry(entry)
+                    }
+                )
+            }
         }
     }
 }

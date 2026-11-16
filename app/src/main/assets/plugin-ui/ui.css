@@ -1,0 +1,1136 @@
+/*
+ * AiCode 插件页面组件库。
+ *
+ * 尺寸与排版对齐设置页的 Compose 组件：
+ * 顶栏 64dp / 标题 22sp，分组标题 13sp，卡片圆角 14dp 无边框，
+ * 行高 11dp 上下、图标 16dp、标题 16sp、副标题 14sp、分隔线左右 16dp。
+ * 颜色与间距来自 /__aharou/theme.css 注入的 CSS 变量。
+ */
+
+/* WebView 默认的点击高亮是浅蓝色，与 App 的灰/主题色反馈不一致；按压态由各组件自己给。 */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── 页面与顶栏 ── */
+.aharou-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--aharou-page-bg);
+  color: var(--aharou-on-surface);
+}
+
+.aharou-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 64px;
+  padding: 0 8px;
+  background: var(--aharou-page-bg);
+}
+
+.aharou-page-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: calc(22px * var(--aharou-font-scale));
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aharou-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 24px;
+  background: transparent;
+  color: var(--aharou-on-surface);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.aharou-icon-button:active {
+  background: var(--aharou-surface-variant);
+}
+
+.aharou-icon-button svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ── 分组与卡片 ── */
+.aharou-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.aharou-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--aharou-space-sm);
+  width: 100%;
+  padding: 16px 16px 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--aharou-on-surface-variant);
+  font: inherit;
+  font-size: calc(13px * var(--aharou-font-scale));
+  font-weight: 400;
+  text-align: left;
+  cursor: default;
+}
+
+.aharou-group-header[data-collapsible="true"] {
+  cursor: pointer;
+}
+
+.aharou-group-header .aharou-chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--aharou-subtle-text);
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+
+.aharou-group-header:active,
+.aharou-segment:active,
+.aharou-button:active,
+.aharou-text-button:active {
+  filter: brightness(0.96);
+}
+
+.aharou-group-header[data-expanded="false"] .aharou-chevron {
+  transform: rotate(0deg);
+}
+
+.aharou-card {
+  overflow: hidden;
+  background: var(--aharou-card-surface);
+  border: none;
+  border-radius: 14px;
+}
+
+/* ── 列表行 ── */
+.aharou-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 11px 16px;
+  border: none;
+  background: transparent;
+  color: var(--aharou-on-surface);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.aharou-row:active {
+  background: var(--aharou-surface-variant);
+}
+
+.aharou-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-right: 12px;
+  color: var(--aharou-on-surface);
+}
+
+.aharou-row-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.aharou-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.aharou-row-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aharou-on-surface);
+  font-size: calc(16px * var(--aharou-font-scale));
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.aharou-row-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aharou-row-subtitle {
+  overflow: hidden;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.aharou-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-left: 4px;
+  color: var(--aharou-subtle-text);
+}
+
+.aharou-row-chevron svg {
+  width: 18px;
+  height: 18px;
+}
+
+.aharou-divider {
+  height: 0.5px;
+  margin: 0 16px;
+  background: var(--aharou-subtle-border);
+}
+
+.aharou-divider-flat {
+  margin: 0 16px;
+}
+
+/* ── 徽章 ── */
+.aharou-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--aharou-surface-variant);
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(11px * var(--aharou-font-scale));
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.aharou-badge-plugin {
+  background: var(--aharou-primary-soft);
+  color: var(--aharou-primary);
+}
+
+.aharou-badge-enabled {
+  background: var(--aharou-tertiary-soft);
+  color: var(--aharou-tertiary);
+}
+
+/* ── 信息行与文本 ── */
+.aharou-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--aharou-space-md);
+  padding: 12px 16px;
+  font-size: calc(14px * var(--aharou-font-scale));
+}
+
+.aharou-info-row > span:first-child {
+  color: var(--aharou-on-surface-variant);
+}
+
+.aharou-info-row > span:last-child {
+  text-align: right;
+  word-break: break-all;
+}
+
+.aharou-text {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Markdown ── */
+.aharou-markdown {
+  padding: 12px 16px;
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+/* GitHub Markdown 样式动态加载为 .markdown-body；覆盖底色与排版，保持插件卡片观感。 */
+.aharou-markdown.markdown-body {
+  padding: 12px 16px;
+  background: transparent;
+  color: var(--aharou-on-surface);
+  font-family: inherit;
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: 1.6;
+}
+
+.aharou-markdown.markdown-body pre {
+  padding: 10px;
+  background: var(--aharou-surface-variant);
+  border-radius: 8px;
+}
+
+.aharou-markdown.markdown-body code {
+  background: var(--aharou-surface-variant);
+  color: inherit;
+  font-family: var(--aharou-font-mono);
+}
+
+.aharou-markdown.markdown-body pre code,
+.aharou-markdown.markdown-body pre code.hljs {
+  padding: 0;
+  background: transparent;
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+.aharou-markdown h1,
+.aharou-markdown h2,
+.aharou-markdown h3,
+.aharou-markdown h4 {
+  margin: 14px 0 6px;
+  font-size: calc(16px * var(--aharou-font-scale));
+  line-height: 1.4;
+}
+
+.aharou-markdown h1:first-child,
+.aharou-markdown h2:first-child,
+.aharou-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.aharou-markdown p {
+  margin: 6px 0;
+}
+
+.aharou-markdown ul,
+.aharou-markdown ol {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+.aharou-markdown li {
+  margin: 2px 0;
+}
+
+.aharou-markdown pre {
+  margin: 8px 0;
+  padding: 10px;
+  overflow: auto;
+  background: var(--aharou-surface-variant);
+  border-radius: 8px;
+}
+
+.aharou-markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--aharou-surface-variant);
+  font-family: var(--aharou-font-mono);
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+.aharou-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+/* ── 空态 ── */
+.aharou-empty {
+  padding: 12px 16px;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: 1.5;
+  text-align: left;
+}
+
+/* ── 表单 ── */
+.aharou-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+.aharou-input,
+.aharou-select,
+.aharou-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: max(56px, calc(32px + 24px * var(--aharou-font-scale)));
+  margin: 0;
+  padding: 16px;
+  border: none;
+  border-radius: var(--aharou-radius-md-large);
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--aharou-text-field-border);
+  background: var(--aharou-text-field-bg, var(--aharou-card-surface));
+  color: var(--aharou-on-surface);
+  caret-color: var(--aharou-primary);
+  font: inherit;
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: calc(21px * var(--aharou-font-scale));
+  letter-spacing: calc(0.25px * var(--aharou-font-scale));
+}
+
+.aharou-input,
+.aharou-textarea {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.aharou-input::placeholder,
+.aharou-textarea::placeholder {
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(16px * var(--aharou-font-scale));
+  line-height: calc(24px * var(--aharou-font-scale));
+  letter-spacing: calc(0.5px * var(--aharou-font-scale));
+  opacity: 1;
+}
+
+.aharou-input:focus,
+.aharou-select:focus,
+.aharou-textarea:focus {
+  box-shadow: inset 0 0 0 2px var(--aharou-primary);
+  background: var(--aharou-text-field-focused-bg);
+}
+
+.aharou-input:disabled,
+.aharou-select:disabled,
+.aharou-textarea:disabled {
+  box-shadow: inset 0 0 0 1px var(--aharou-text-field-disabled-border);
+  background: var(--aharou-text-field-bg, var(--aharou-card-surface));
+  color: var(--aharou-text-field-disabled-text);
+  -webkit-text-fill-color: var(--aharou-text-field-disabled-text);
+  opacity: 1;
+}
+
+.aharou-input:disabled::placeholder,
+.aharou-textarea:disabled::placeholder {
+  color: var(--aharou-text-field-disabled-text);
+}
+
+.aharou-textarea {
+  display: block;
+  min-height: 180px;
+  resize: vertical;
+}
+
+.aharou-password-field {
+  position: relative;
+  min-width: 0;
+}
+
+.aharou-password-field > .aharou-input {
+  display: block;
+  padding-right: 52px;
+}
+
+.aharou-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--aharou-on-surface-variant);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.aharou-password-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.aharou-password-toggle:active:not(:disabled) {
+  background: var(--aharou-surface-variant);
+}
+
+.aharou-password-toggle:focus-visible {
+  outline: 2px solid var(--aharou-primary);
+  outline-offset: -4px;
+}
+
+.aharou-password-toggle:disabled {
+  color: var(--aharou-text-field-disabled-text);
+  cursor: default;
+}
+
+/* ── 按钮 ── */
+.aharou-button {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--aharou-subtle-border);
+  border-radius: 8px;
+  background: var(--aharou-surface-variant);
+  color: var(--aharou-on-surface);
+  font: inherit;
+  font-size: calc(15px * var(--aharou-font-scale));
+  cursor: pointer;
+}
+
+.aharou-button:disabled {
+  opacity: 0.5;
+}
+
+.aharou-button-primary {
+  border-color: transparent;
+  background: var(--aharou-primary);
+  color: var(--aharou-on-primary);
+}
+
+.aharou-button-danger {
+  border-color: transparent;
+  background: transparent;
+  color: var(--aharou-error);
+}
+
+.aharou-button-compact {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+.aharou-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.aharou-error {
+  margin: 0;
+  color: var(--aharou-error);
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+/* ── 顶栏文字按钮（如「保存」） ── */
+.aharou-text-button {
+  min-height: 48px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--aharou-primary);
+  font: inherit;
+  font-size: calc(16px * var(--aharou-font-scale));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.aharou-text-button:disabled {
+  opacity: 0.5;
+}
+
+/* ── 浮动标签输入框（对齐 AppTextField） ── */
+.aharou-outlined-field {
+  position: relative;
+  margin: 8px 16px 12px;
+}
+
+.aharou-text-field[data-label="true"] {
+  padding-top: calc(8px * var(--aharou-font-scale));
+}
+
+.aharou-field-label {
+  position: absolute;
+  top: calc(50% + 4px * var(--aharou-font-scale));
+  left: 16px;
+  z-index: 1;
+  max-width: calc(100% - 32px);
+  overflow: hidden;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(16px * var(--aharou-font-scale));
+  line-height: calc(24px * var(--aharou-font-scale));
+  letter-spacing: calc(0.5px * var(--aharou-font-scale));
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transform: translateY(-50%);
+  transform-origin: left center;
+  transition: top 0.15s ease, font-size 0.15s ease, line-height 0.15s ease, color 0.15s ease;
+  cursor: text;
+}
+
+.aharou-text-field[data-multiline="true"] > .aharou-field-label {
+  top: calc(16px + 20px * var(--aharou-font-scale));
+}
+
+.aharou-text-field[data-password="true"] > .aharou-field-label {
+  max-width: calc(100% - 68px);
+}
+
+.aharou-text-field[data-filled="true"] > .aharou-field-label,
+.aharou-text-field:focus-within > .aharou-field-label {
+  top: calc(8px * var(--aharou-font-scale));
+  font-size: calc(12px * var(--aharou-font-scale));
+  line-height: calc(16px * var(--aharou-font-scale));
+  letter-spacing: calc(0.4px * var(--aharou-font-scale));
+}
+
+.aharou-text-field:focus-within > .aharou-field-label {
+  color: var(--aharou-primary);
+}
+
+.aharou-field-outline {
+  position: absolute;
+  top: calc(8px * var(--aharou-font-scale));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--aharou-text-field-border);
+  border-radius: var(--aharou-radius-md-large);
+  pointer-events: none;
+}
+
+.aharou-text-field[data-label="false"] > .aharou-field-outline {
+  top: 0;
+}
+
+.aharou-field-outline > legend {
+  width: 0;
+  max-width: calc(100% - 8px);
+  height: 0;
+  padding: 0;
+  overflow: hidden;
+  font-size: calc(12px * var(--aharou-font-scale));
+  line-height: calc(16px * var(--aharou-font-scale));
+  letter-spacing: calc(0.4px * var(--aharou-font-scale));
+  white-space: nowrap;
+  visibility: hidden;
+}
+
+.aharou-field-outline > legend > span {
+  padding: 0 4px;
+}
+
+.aharou-text-field[data-filled="true"] > .aharou-field-outline > legend,
+.aharou-text-field:focus-within > .aharou-field-outline > legend {
+  width: auto;
+}
+
+.aharou-text-field:focus-within > .aharou-field-outline {
+  padding: 0 11px;
+  border-width: 2px;
+  border-color: var(--aharou-primary);
+}
+
+.aharou-text-field .aharou-input,
+.aharou-text-field .aharou-textarea,
+.aharou-text-field .aharou-select {
+  box-shadow: none;
+}
+
+.aharou-text-field[data-label="true"][data-filled="false"]:not(:focus-within) .aharou-input::placeholder,
+.aharou-text-field[data-label="true"][data-filled="false"]:not(:focus-within) .aharou-textarea::placeholder {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.aharou-text-field[data-disabled="true"] > .aharou-field-label {
+  color: var(--aharou-text-field-disabled-text);
+  cursor: default;
+}
+
+.aharou-text-field[data-disabled="true"] > .aharou-field-outline {
+  border-color: var(--aharou-text-field-disabled-border);
+}
+
+.aharou-outlined-field-body {
+  margin: 16px;
+}
+
+.aharou-outlined-field-body .aharou-textarea {
+  min-height: 220px;
+}
+
+/* ── 作用域分段按钮 ── */
+.aharou-scope-row {
+  display: flex;
+  align-items: center;
+  gap: var(--aharou-space-md);
+  padding: 4px 16px 16px;
+}
+
+.aharou-scope-label {
+  flex: none;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(14px * var(--aharou-font-scale));
+}
+
+.aharou-segmented {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 42px;
+  padding: 3px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--aharou-surface-variant);
+}
+
+.aharou-segmented-thumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  border-radius: 9px;
+  background: var(--aharou-card-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+  transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.aharou-segment {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--aharou-on-surface-variant);
+  font: inherit;
+  font-size: calc(14px * var(--aharou-font-scale));
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.aharou-segment[aria-pressed="true"] {
+  color: var(--aharou-on-surface);
+  font-weight: 600;
+}
+
+.aharou-segment:disabled {
+  cursor: default;
+}
+
+.aharou-segmented-disabled {
+  opacity: 0.55;
+}
+
+/* ── 多选 ── */
+.aharou-checkbox {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  margin-right: 12px;
+  border: 2px solid var(--aharou-outline);
+  border-radius: 6px;
+}
+
+.aharou-checkbox[data-checked="true"] {
+  border-color: var(--aharou-primary);
+  background: var(--aharou-primary);
+}
+
+.aharou-checkbox[data-checked="true"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 6px;
+  width: 5px;
+  height: 10px;
+  border: solid var(--aharou-on-primary);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.aharou-selection-bar {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--aharou-subtle-border);
+  border-radius: 14px;
+  background: var(--aharou-card-surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.aharou-selection-bar > span {
+  flex: 1;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(13px * var(--aharou-font-scale));
+}
+
+/* ── 左滑删除（尺寸与动画对齐 SwipeToDeleteRow） ── */
+.aharou-swipe-row {
+  position: relative;
+  overflow: hidden;
+  background: var(--aharou-card-surface);
+}
+
+.aharou-swipe-action {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 104px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid #F87171;
+  border-radius: 10px;
+  background: #EF4444;
+  color: #fff;
+  font: inherit;
+  font-size: calc(14px * var(--aharou-font-scale));
+  font-weight: 600;
+  cursor: pointer;
+  transform-origin: right center;
+}
+
+.aharou-swipe-action:active {
+  filter: brightness(0.94);
+}
+
+.aharou-swipe-action svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+
+.aharou-swipe-content {
+  position: relative;
+  background: var(--aharou-card-surface);
+  touch-action: pan-y;
+}
+
+/* ── 页面切换 ── */
+@keyframes aicode-view-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.aharou-view-enter {
+  animation: aicode-view-in 0.18s ease;
+}
+
+/* ── 开关（对齐 AppSwitch 42×24） ── */
+.aharou-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: var(--aharou-switch-track, #e2e8f0);
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.aharou-switch[aria-checked="true"] {
+  background: var(--aharou-primary);
+}
+
+.aharou-switch:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.aharou-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--aharou-switch-thumb, #ffffff);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+  transition: left 0.2s ease;
+}
+
+.aharou-switch[aria-checked="true"] .aharou-switch-thumb {
+  left: 20px;
+}
+
+/* ── 底部弹窗（对齐 AdaptiveModalBottomSheet） ── */
+@keyframes aicode-sheet-mask-in {
+  from { opacity: 0; }
+}
+
+@keyframes aicode-sheet-in {
+  from { transform: translate3d(0, 100%, 0); }
+}
+
+@keyframes aicode-dialog-in {
+  from { opacity: 0; transform: scale(0.96); }
+}
+
+.aharou-sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.aharou-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  animation: aicode-sheet-mask-in 0.2s ease;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.aharou-sheet {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 85%;
+  overflow: hidden;
+  border-radius: 28px 28px 0 0;
+  background: var(--aharou-surface);
+  color: var(--aharou-on-surface);
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: aicode-sheet-in 0.25s cubic-bezier(0.2, 0, 0, 1);
+  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1);
+  will-change: transform;
+}
+
+.aharou-sheet-dragging {
+  transition: none;
+}
+
+.aharou-sheet-grabber {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  flex: none;
+  padding-top: 8px;
+  box-sizing: border-box;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.aharou-sheet-grabber:active {
+  cursor: grabbing;
+}
+
+.aharou-sheet-handle {
+  width: 32px;
+  height: 4px;
+  flex: none;
+  margin: 0;
+  border-radius: 2px;
+  background: var(--aharou-outline);
+  opacity: 0.4;
+}
+
+.aharou-sheet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--aharou-space-md);
+  padding: 16px;
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.aharou-sheet-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--aharou-on-surface);
+  font-size: calc(18px * var(--aharou-font-scale));
+  font-weight: 600;
+}
+
+.aharou-sheet-body {
+  padding: 0 16px 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+@media (min-width: 600px) {
+  .aharou-sheet-mask {
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+  }
+
+  .aharou-sheet {
+    width: 100%;
+    max-width: 560px;
+    max-height: 85%;
+    padding-bottom: 0;
+    border-radius: 16px;
+    animation-name: aicode-dialog-in;
+  }
+
+  .aharou-sheet-grabber {
+    display: none;
+  }
+
+  .aharou-sheet-header {
+    touch-action: auto;
+  }
+}
+
+/* ── 对话框（对齐 AlertDialog） ── */
+.aharou-dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 32px;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.aharou-dialog {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: min(280px, 100%);
+  max-width: min(560px, 100%);
+  max-height: 100%;
+  overflow: hidden;
+  padding: 24px;
+  border-radius: 28px;
+  outline: none;
+  background: var(--aharou-dialog-surface);
+  color: var(--aharou-on-surface);
+  font-family: var(--aharou-font-sans);
+  animation: aicode-dialog-in 0.15s ease;
+}
+
+.aharou-dialog-title {
+  flex: none;
+  margin: 0 0 16px;
+  overflow-wrap: anywhere;
+  font-size: calc(24px * var(--aharou-font-scale));
+  font-weight: 600;
+  line-height: calc(32px * var(--aharou-font-scale));
+  letter-spacing: 0;
+}
+
+.aharou-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  margin-bottom: 24px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.aharou-dialog-message {
+  margin: 0;
+  color: var(--aharou-on-surface-variant);
+  font-size: calc(14px * var(--aharou-font-scale));
+  line-height: calc(21px * var(--aharou-font-scale));
+  letter-spacing: calc(0.25px * var(--aharou-font-scale));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.aharou-dialog-form {
+  width: 100%;
+  --aharou-text-field-bg: transparent;
+  --aharou-text-field-focused-bg: transparent;
+}
+
+.aharou-dialog-form .aharou-outlined-field {
+  flex: none;
+  margin: 0;
+}
+
+.aharou-dialog-form .aharou-field {
+  padding: 0;
+}
+
+.aharou-dialog-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: 12px 8px;
+}
+
+.aharou-dialog-button {
+  box-sizing: border-box;
+  min-width: 58px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--aharou-primary);
+  font: inherit;
+  font-size: calc(14px * var(--aharou-font-scale));
+  font-weight: 500;
+  line-height: calc(20px * var(--aharou-font-scale));
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.aharou-dialog-button:active:not(:disabled),
+.aharou-dialog-button:focus-visible {
+  background: var(--aharou-primary-soft);
+}
+
+.aharou-dialog-button:disabled {
+  color: var(--aharou-on-surface);
+  opacity: 0.38;
+  cursor: default;
+}

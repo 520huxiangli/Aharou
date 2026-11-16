@@ -513,7 +513,7 @@ fun AppNavigation(
     val agentViewModel: AIAgentViewModel = hiltViewModel()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
     val workspaceViewModel: WorkspaceViewModel = hiltViewModel()
-
+    val pluginHost = com.aharou.feature.plugin.presentation.rememberPluginHostState()
     // ── 首次启动引导 ──
     val onboardingStateHolder = remember { OnboardingStateHolder() }
     val onboardingUiState by onboardingStateHolder.state.collectAsStateWithLifecycle()
@@ -871,6 +871,7 @@ fun AppNavigation(
                 navController.navigate("settings")
                 if (!permanentDrawer) scope.launch { drawerState.snapTo(DrawerValue.Closed) }
             },
+            pluginHost = pluginHost,
             searchQuery = chatSearchQuery,
             searchState = chatSearchState,
             onSearchQueryChange = { agentViewModel.updateChatSearchQuery(it) },
@@ -881,8 +882,8 @@ fun AppNavigation(
             }
         )
     }
-
-    // 页面主体（NavHost）：大屏放进 Row 的右侧，窄窗放进 modal 抽屉容器里。
+    com.aharou.feature.plugin.presentation.PluginHostOverlay(pluginHost) { agentViewModel.currentSessionId.value }
+    com.aharou.feature.plugin.presentation.PluginToolsHost(pluginHost) { pluginHost.closeToolbox() }
     val navBody: @Composable () -> Unit = {
         NavHost(
             navController = navController,
@@ -931,7 +932,7 @@ fun AppNavigation(
                             onAddSelectionToInput = { text ->
                                 agentViewModel.attachEditorSelectionToInput(paneEditorPath, text)
                             },
-                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) }, onTakeoverAgent = { agentViewModel.stopAgent() },
+                            onSendToChat = { text -> agentViewModel.updateInputDraft(text) }, onTakeoverAgent = { agentViewModel.stopAgent() }, pluginHost = pluginHost,
                         )
                     },
                     leftPane = {
@@ -971,8 +972,8 @@ fun AppNavigation(
                                 onNavigateToSandbox = { navController.navigate("sandbox") },
                                 onNavigateToShared = { navController.navigate("shared") },
                                 terminalActive = paneOpen && paneKind == WorkbenchPaneKind.TERMINAL,
-                                gitActive = paneOpen && paneKind == WorkbenchPaneKind.GIT,
-                                browserActive = paneOpen && paneKind == WorkbenchPaneKind.BROWSER,
+                                gitActive = paneOpen && paneKind == WorkbenchPaneKind.GIT, browserActive = paneOpen && paneKind == WorkbenchPaneKind.BROWSER,
+                                pluginHost = pluginHost,
                                 onboardingStep = if (onboardingUiState.active) onboardingUiState.step else null,
                                 onSelectModelInOnboarding = {
                                     if (onboardingUiState.active && onboardingUiState.step == OnboardingStep.SIMULATE_CHOOSE_MODEL) {

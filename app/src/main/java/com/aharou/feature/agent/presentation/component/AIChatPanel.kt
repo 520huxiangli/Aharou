@@ -181,6 +181,8 @@ fun AIChatPanel(
     onboardingStep: OnboardingStep? = null,
     onSelectModelInOnboarding: (() -> Unit)? = null,
     onDismissModelSheetInOnboarding: (() -> Unit)? = null,
+    /** 插件入口（顶栏菜单）；null 表示不展示。 */
+    pluginHost: com.aharou.feature.plugin.presentation.PluginHostState? = null,
     modifier: Modifier = Modifier
 ) {
     val agentState by viewModel.agentState.collectAsStateWithLifecycle()
@@ -1219,7 +1221,10 @@ fun AIChatPanel(
                 showMenuButton = showMenuButton,
                 terminalActive = terminalActive,
                 gitActive = gitActive,
-                browserActive = browserActive
+                browserActive = browserActive,
+                pluginEntries = pluginHost?.slots?.header.orEmpty(),
+                pluginLanguageTag = pluginHost?.languageTag ?: "zh-CN",
+                onPluginEntry = { pluginHost?.open(it) }
             )
         }
     ) { padding ->

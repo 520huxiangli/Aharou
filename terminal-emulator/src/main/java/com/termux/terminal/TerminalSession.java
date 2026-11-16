@@ -401,6 +401,18 @@ public final class TerminalSession extends TerminalOutput {
         return null;
     }
 
+    /** 原始输出监听：插件需要拿到未经过 emulator 处理的字节流（运行日志、stdout 转发）。 */
+    public interface RawOutputListener {
+        void onRawOutput(TerminalSession session, byte[] data, int length);
+    }
+
+    private volatile RawOutputListener mRawOutputListener;
+
+    /** 设置原始输出监听；传 null 取消。回调在主线程。 */
+    public void setRawOutputListener(RawOutputListener listener) {
+        mRawOutputListener = listener;
+    }
+
     @SuppressLint("HandlerLeak")
     class MainThreadHandler extends Handler {
 
@@ -410,6 +422,14 @@ public final class TerminalSession extends TerminalOutput {
         public void handleMessage(Message msg) {
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0) {
+                RawOutputListener listener = mRawOutputListener;
+                if (listener != null) {
+                    try {
+                        listener.onRawOutput(TerminalSession.this, mReceiveBuffer, bytesRead);
+                    } catch (Exception e) {
+                        mClient.logWarn(LOG_TAG, "原始输出监听异常: " + e);
+                    }
+                }
                 mEmulator.append(mReceiveBuffer, bytesRead);
                 notifyScreenUpdate();
             }

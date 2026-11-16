@@ -47,6 +47,8 @@ internal fun WorkbenchPaneContent(
     onOpenFile: ((String) -> Unit)? = null,
     onTakeoverAgent: () -> Unit = {},
     editorLeaveGuard: EditorLeaveGuard? = null,
+    /** 编辑器选区菜单里的插件动作（`editor.selection` 槽位）。 */
+    pluginHost: com.aharou.feature.plugin.presentation.PluginHostState? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -61,7 +63,10 @@ internal fun WorkbenchPaneContent(
                 onBack = onClose,
                 embedded = true,
                 onAddSelectionToInput = onAddSelectionToInput,
-                leaveGuard = editorLeaveGuard
+                leaveGuard = editorLeaveGuard,
+                pluginEntries = pluginHost?.slots?.editor.orEmpty(),
+                pluginLanguageTag = pluginHost?.languageTag ?: "zh-CN",
+                onPluginEntry = { entry, _ -> pluginHost?.open(entry) }
             )
 
             WorkbenchPaneKind.TERMINAL -> {

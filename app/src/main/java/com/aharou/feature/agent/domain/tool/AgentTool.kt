@@ -189,8 +189,18 @@ data class PendingToolPermission(
      */
     val previewHunks: List<ToolPermissionHunk> = emptyList(),
     /** 预览类型："edit" 时 UI 按文件差异渲染 [previewHunks]，其余按 [summary]/[details] 渲染。 */
-    val itemKind: String = "tool"
-)
+    val itemKind: String = "tool",
+    /**
+     * 发起方：[ORIGIN_CHAT] 为聊天页 Agent 循环，[ORIGIN_PLUGIN] 为插件工具调用。
+     * 插件发起的请求不进入聊天页弹窗队列，只通过插件侧的 pending/resolve 处理。
+     */
+    val origin: String = ORIGIN_CHAT
+) {
+    companion object {
+        const val ORIGIN_CHAT = "chat"
+        const val ORIGIN_PLUGIN = "plugin"
+    }
+}
 
 abstract class AgentTool {
     abstract val name: String

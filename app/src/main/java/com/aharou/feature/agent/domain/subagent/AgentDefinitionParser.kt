@@ -46,6 +46,29 @@ object AgentDefinitionParser {
         )
     }
 
+    /** 解析一段定义文本（插件包内的贡献文件）；[fallbackName] 用于未写 name 时。 */
+    fun parseText(text: String, fallbackName: String, filePath: String? = null): AgentDefinition? {
+        val (frontmatter, body) = Frontmatter.splitAndParse(text, TAG, "解析子代理定义 YAML 失败")
+        val prompt = body.trim()
+        if (prompt.isEmpty()) return null
+        val name = frontmatter["name"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: fallbackName
+        val description = (frontmatter["description"]?.toString() ?: "").take(MAX_DESC_CHARS)
+        return AgentDefinition(
+            name = name,
+            description = description,
+            providerId = frontmatter["provider"]?.toString()?.trim()?.takeIf { it.isNotBlank() },
+            model = frontmatter["model"]?.toString()?.trim()?.takeIf { it.isNotBlank() },
+            reasoningEffort = frontmatter["reasoningEffort"]?.toString()?.trim()?.lowercase()
+                ?.takeIf { it in VALID_EFFORTS },
+            mode = parseMode(frontmatter["mode"]),
+            allowedTools = stringList(frontmatter["tools"]),
+            disallowedTools = stringList(frontmatter["disallowedTools"]),
+            inject = parseInject(frontmatter["inject"]),
+            prompt = prompt,
+            filePath = filePath
+        )
+    }
+
     /** 同时接受 YAML 列表与逗号分隔字符串两种写法。 */
     internal fun stringList(raw: Any?): List<String> = when (raw) {
         null -> emptyList()

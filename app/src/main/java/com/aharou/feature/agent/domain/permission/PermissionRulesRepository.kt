@@ -266,6 +266,14 @@ class PermissionRulesRepository @Inject constructor(
      * 按 scope 新增规则。PROJECT 写入 [workspacePath] 指向的工作区——由调用方传
      * 「发起这次调用的会话工作区」，本方法不能自己取界面当前工作区。
      */
+    /** 在挂起前固定工作区，后续 IO 不再读取当前项目；插件侧审批记忆用。 */
+    class ProjectContext internal constructor(internal val workspacePath: String)
+
+    fun captureProject(workspacePath: String): ProjectContext = ProjectContext(workspacePath)
+
+    suspend fun addToProject(project: ProjectContext, rule: PermissionRule) =
+        add(PermissionScope.PROJECT, rule, project.workspacePath)
+
     suspend fun add(scope: PermissionScope, rule: PermissionRule, workspacePath: String) {
         when (scope) {
             PermissionScope.GLOBAL -> editGlobal { if (rule !in it) it.add(rule) }
