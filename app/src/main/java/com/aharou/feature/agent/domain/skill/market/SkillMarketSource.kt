@@ -27,6 +27,8 @@ data class SkillMarketSourceDef(
     val path: String = "",
     val host: String = SkillRepoAccess.GITHUB,
     val name: Map<String, String> = emptyMap(),
+    /** 源作者展示名（用户上传时填个人中心昵称），空则不显示。 */
+    val author: String = "",
     /** `search` 型的检索接口，`{q}` 是关键词占位符。 */
     val searchUrl: String = ""
 ) {

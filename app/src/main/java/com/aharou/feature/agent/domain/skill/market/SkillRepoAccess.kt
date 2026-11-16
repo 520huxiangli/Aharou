@@ -26,6 +26,7 @@ object SkillRepoAccess {
     const val GITHUB = "github"
     const val GITEE = "gitee"
     const val GITLAB = "gitlab"
+    const val CNB = "cnb"
 
     /** skills.sh 的路径就是 GitHub 的 `owner/repo[/技能名]`，光靠地址就能换算，不用联网查。 */
     private const val SKILLS_SH = "skills.sh"
@@ -111,6 +112,7 @@ object SkillRepoAccess {
             hostRaw.contains("github") -> GITHUB
             hostRaw.contains("gitee") -> GITEE
             hostRaw.contains("gitlab") -> GITLAB
+            hostRaw == "cnb.cool" || hostRaw.endsWith(".cnb.cool") -> CNB
             // Gitea / Forgejo 及各类自建实例：域名本身就是平台标识，取文件时直接拼它
             else -> hostRaw
         }
@@ -163,6 +165,9 @@ object SkillRepoAccess {
     fun fileUrls(coord: Coord, path: String): List<String> {
         val clean = path.trim('/')
         return when (coord.host) {
+            CNB -> listOf(
+                "https://cnb.cool/${coord.repo}/-/git/raw/${coord.ref}/$clean"
+            )
             GITEE -> listOf(
                 "https://gitee.com/${coord.repo}/raw/${coord.ref}/$clean"
             )
@@ -182,6 +187,9 @@ object SkillRepoAccess {
 
     /** 列整棵文件树（递归）的候选地址。 */
     fun treeUrls(coord: Coord): List<String> = when (coord.host) {
+        CNB -> listOf(
+            "https://api.cnb.cool/${coord.repo}/-/git/contents?ref=${coord.ref}&recursive=true"
+        )
         GITEE -> listOf(
             "https://gitee.com/api/v5/repos/${coord.repo}/git/trees/${coord.ref}?recursive=1"
         )
@@ -251,7 +259,7 @@ object SkillRepoAccess {
             objectsIn(root)
         } else {
             val obj = runCatching { root.jsonObject }.getOrNull() ?: return emptyList()
-            objectsIn(obj["tree"]).ifEmpty { objectsIn(obj["files"]) }
+            objectsIn(obj["tree"]).ifEmpty { objectsIn(obj["files"]) }.ifEmpty { objectsIn(obj["entries"]) }
         }
     }
 

@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
  * 知识库源清单：读取顺序「内存缓存 → 磁盘已下载文件 → 内置 assets」。
  *
  * 与技能市场（[com.aharou.feature.agent.domain.skill.market.SkillMarketCatalog]）、
- * `container-images.json` 同一套机制：拉本仓库的 `data/knowledge.json`（多 CDN 降级 + 磁盘缓存），
+ * `container-images.json` 同一套机制：优先拉 CNB 索引仓库的 `knowledge/index.json`（多 CDN 降级 + 磁盘缓存），
  * 加源、换地址只改仓库里那个 JSON，不必发版。
  */
 @Singleton
@@ -35,7 +35,8 @@ class KnowledgeCatalog @Inject constructor(
 
         // maxAgeMs = 0：跳过默认保鲜期，每次启动条件请求对账（内容未变时靠 ETag 回 304）。
         val remote = when (val result = runCatching {
-            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
+            RepoDataFetcher(context, priorityBases = listOf(RepoDataFetcher.CNB_INDEX_BASE))
+                .fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
         }.getOrNull()) {
             is RepoDataFetcher.FetchResult.Success -> result.content
             is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content
@@ -61,7 +62,8 @@ class KnowledgeCatalog @Inject constructor(
         cached?.let { return it }
 
         val diskRaw = runCatching {
-            RepoDataFetcher(context).readLocalCache(REMOTE_CATALOG_PATH)
+            RepoDataFetcher(context, priorityBases = listOf(RepoDataFetcher.CNB_INDEX_BASE))
+                .readLocalCache(REMOTE_CATALOG_PATH)
         }.getOrNull()
         if (!diskRaw.isNullOrBlank()) {
             val parsed = runCatching { json.decodeFromString<KnowledgeData>(diskRaw) }.getOrNull()
@@ -85,7 +87,7 @@ class KnowledgeCatalog @Inject constructor(
         const val ASSET_FILE = "knowledge.json"
 
         /** 统一拉取器中的仓库相对路径：本仓库维护的知识库源清单。 */
-        const val REMOTE_CATALOG_PATH = "data/knowledge.json"
+        const val REMOTE_CATALOG_PATH = "knowledge/index.json"
 
         val json = Json { ignoreUnknownKeys = true }
 

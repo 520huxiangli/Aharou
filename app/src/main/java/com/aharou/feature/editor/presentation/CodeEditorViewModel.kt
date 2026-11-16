@@ -48,7 +48,8 @@ class CodeEditorViewModel @Inject constructor(
     private val editorSettings: EditorSettingsRepository,
     private val editorLspManager: EditorLspManager,
     private val versions: FileVersionRegistry,
-    private val workspaceIdentity: EditorWorkspaceIdentity
+    private val workspaceIdentity: EditorWorkspaceIdentity,
+    private val fileChangeHub: com.aharou.core.watch.FileChangeHub
 ) : ViewModel() {
     private data class DocumentKey(val root: String, val path: String)
     private data class Binding(val root: String, val identity: String, val generation: Long, val access: FileAccessProvider)
@@ -73,6 +74,33 @@ class CodeEditorViewModel @Inject constructor(
     private val loadedFingerprints = mutableMapOf<DocumentKey, String?>()
     private val pendingSaves = mutableSetOf<EditorSaveRequest>()
     private val writeMutex = Mutex()
+
+    private val _externalReload = MutableStateFlow(0)
+    /** 外部（AI 或其他入口）改了当前文件时自增，界面在无未保存改动时据此重载。 */
+    val externalReload: StateFlow<Int> = _externalReload.asStateFlow()
+    private var watchJob: kotlinx.coroutines.Job? = null
+    @Volatile private var lastSelfWriteAt = 0L
+
+    private fun watchFile(path: String) {
+        watchJob?.cancel()
+        watchJob = viewModelScope.launch {
+            fileChangeHub.watchWorkspace(recursive = true).collect { batch ->
+                val touched = batch.changes.any { it.containerPath.endsWith(path) || it.hostPath.endsWith(path) }
+                // 自己保存也会产生变更，窗口内忽略，避免把自己写当成外部改动
+                if (touched && System.currentTimeMillis() - lastSelfWriteAt > 1500) _externalReload.value++
+            }
+        }
+    }
+
+    /** 丢掉缓存后重新读取：只在界面没有未保存改动时调用。 */
+    fun forceReload(path: String) {
+        val bound = binding ?: return
+        val key = DocumentKey(bound.identity, path)
+        loadedStates.remove(key)
+        loadedFingerprints.remove(key)
+        if (currentPath == path) currentPath = null
+        load(path)
+    }
 
     fun bindWorkspace(root: String, identity: String): Long {
         require(root.isNotBlank())
@@ -148,6 +176,7 @@ class CodeEditorViewModel @Inject constructor(
         val bound = binding ?: return
         if (currentPath == path) return
         currentPath = path
+        watchFile(path)
         val key = DocumentKey(bound.identity, path)
         val loading = ++loadId
         loadedStates[key]?.let { cached ->
@@ -229,6 +258,7 @@ class CodeEditorViewModel @Inject constructor(
                         }
                     }
                     if (result.first is SaveResult.Success) {
+                        lastSelfWriteAt = System.currentTimeMillis()
                         EditorSessionManager.forWorkspace(bound.identity).markSaved(request.path, request.content)
                         loadedStates[key] = EditorUiState.Success(request.content,
                             (loadedStates[key] as? EditorUiState.Success)?.scopeName)

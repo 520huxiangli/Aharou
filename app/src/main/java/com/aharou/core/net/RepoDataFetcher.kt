@@ -27,7 +27,9 @@ class RepoDataFetcher(
     private val repo: String = DEFAULT_REPO,
     private val branch: String = DEFAULT_BRANCH,
     private val defaultMaxAgeMs: Long = DEFAULT_CACHE_MAX_AGE_MS,
-    private val client: OkHttpClient = DEFAULT_CLIENT
+    private val client: OkHttpClient = DEFAULT_CLIENT,
+    /** 优先候选基址（如 CNB 原始文件根）：拼上仓库内路径后排在其他 CDN 之前。 */
+    private val priorityBases: List<String> = emptyList()
 ) {
 
     /**
@@ -156,7 +158,8 @@ class RepoDataFetcher(
      */
     fun buildCandidateUrls(path: String): List<String> {
         val raw = "https://raw.githubusercontent.com/$owner/$repo/$branch/$path"
-        return listOf(
+        val primary = priorityBases.map { "${it.trimEnd('/')}/$path" }
+        return primary + listOf(
             "https://gh-proxy.com/$raw",
             "https://ghproxy.net/$raw",
             "https://fastly.jsdelivr.net/gh/$owner/$repo@$branch/$path",
@@ -208,6 +211,9 @@ class RepoDataFetcher(
         const val DEFAULT_OWNER = "520huxiangli"
         const val DEFAULT_REPO = "Aharou"
         const val DEFAULT_BRANCH = "master"
+
+        /** CNB 上的统一扩展索引仓库根（插件/技能/知识库索引都放这里）。 */
+        const val CNB_INDEX_BASE = "https://cnb.cool/huxiangli/aharou-plugins/-/git/raw/main"
 
         /** 默认缓存 12 小时 */
         const val DEFAULT_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000L

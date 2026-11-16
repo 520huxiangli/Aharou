@@ -147,9 +147,9 @@ fun CodeEditorScreen(
         mutableStateOf(snapshots[activePath]?.baselineContent ?: (state as? EditorUiState.Success)?.content.orEmpty())
     }
     val saveState = remember { EditorSaveState() }
-    LaunchedEffect(documentVersion) {
-        if (state is EditorUiState.Success) dirty = snapshots[activePath]?.dirty == true
-    }
+    LaunchedEffect(documentVersion) { if (state is EditorUiState.Success) dirty = snapshots[activePath]?.dirty == true }
+    val externalReload by viewModel.externalReload.collectAsStateWithLifecycle()
+    LaunchedEffect(externalReload, activePath) { if (externalReload > 0 && !dirtyState.value) viewModel.forceReload(activePath) }
     // 待确认的离开动作（关页面 / 大屏右栏换文件），保存成功后执行。
     var pendingLeave by remember { mutableStateOf<PendingLeave?>(null) }
     var showUnsavedDialog by remember { mutableStateOf(false) }

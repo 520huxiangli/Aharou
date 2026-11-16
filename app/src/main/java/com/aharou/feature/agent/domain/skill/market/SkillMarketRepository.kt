@@ -533,7 +533,12 @@ class SkillMarketRepository @Inject constructor(
 
     private suspend fun httpGet(url: String): String? = withContext(Dispatchers.IO) {
         runCatching {
-            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).get().build()
+            val builder = Request.Builder().url(url).header("User-Agent", USER_AGENT)
+            // CNB 的 OpenAPI 不认默认 Accept，不带头会直接 406
+            if (url.startsWith("https://api.cnb.cool/")) {
+                builder.header("Accept", "application/vnd.cnb.api+json")
+            }
+            val req = builder.get().build()
             client.newCall(req).execute().use { response ->
                 if (response.isSuccessful) response.body?.string() else null
             }

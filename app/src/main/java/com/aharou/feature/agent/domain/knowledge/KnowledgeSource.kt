@@ -24,6 +24,8 @@ data class KnowledgeSourceDef(
     val host: String = SkillRepoAccess.GITHUB,
     val name: Map<String, String> = emptyMap(),
     val description: Map<String, String> = emptyMap(),
+    /** 源作者展示名（用户上传时填个人中心昵称），空则不显示。 */
+    val author: String = "",
     val category: String = "",
     val cover: String = "",
     val exclude: List<String> = emptyList()

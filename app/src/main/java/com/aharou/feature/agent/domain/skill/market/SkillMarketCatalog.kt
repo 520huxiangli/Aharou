@@ -13,7 +13,7 @@ import javax.inject.Singleton
 /**
  * 技能市场源清单：读取顺序「内存缓存 → 磁盘已下载文件 → 内置 assets」。
  *
- * 与 `container-images.json` 同一套机制：拉本仓库的 `data/skills.json`（多 CDN 降级 + 磁盘缓存），
+ * 与 `container-images.json` 同一套机制：优先拉 CNB 索引仓库的 `skills/index.json`（多 CDN 降级 + 磁盘缓存），
  * 加源、换地址只改仓库里那个 JSON，不必发版。网络预热由 [refreshFromNetworkIfStale] 在启动阶段
  * 后台执行，任何失败都静默。
  */
@@ -39,7 +39,8 @@ class SkillMarketCatalog @Inject constructor(
         // maxAgeMs = 0：跳过默认 12 小时保鲜期，每次启动条件请求对账，让清单改动立即生效
         // （内容未变时靠 ETag 回 304）。
         val remote = when (val result = runCatching {
-            RepoDataFetcher(context).fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
+            RepoDataFetcher(context, priorityBases = listOf(RepoDataFetcher.CNB_INDEX_BASE))
+                .fetch(REMOTE_CATALOG_PATH, maxAgeMs = 0L)
         }.getOrNull()) {
             is RepoDataFetcher.FetchResult.Success -> result.content
             is RepoDataFetcher.FetchResult.FallbackDiskCache -> result.content
@@ -65,7 +66,8 @@ class SkillMarketCatalog @Inject constructor(
         cached?.let { return it }
 
         val diskRaw = runCatching {
-            RepoDataFetcher(context).readLocalCache(REMOTE_CATALOG_PATH)
+            RepoDataFetcher(context, priorityBases = listOf(RepoDataFetcher.CNB_INDEX_BASE))
+                .readLocalCache(REMOTE_CATALOG_PATH)
         }.getOrNull()
         if (!diskRaw.isNullOrBlank()) {
             val parsed = runCatching { json.decodeFromString<SkillMarketData>(diskRaw) }.getOrNull()
@@ -89,7 +91,7 @@ class SkillMarketCatalog @Inject constructor(
         const val ASSET_FILE = "skills-market.json"
 
         /** 统一拉取器中的仓库相对路径：本仓库维护的技能市场源清单。 */
-        const val REMOTE_CATALOG_PATH = "data/skills.json"
+        const val REMOTE_CATALOG_PATH = "skills/index.json"
 
         val json = Json { ignoreUnknownKeys = true }
     }
