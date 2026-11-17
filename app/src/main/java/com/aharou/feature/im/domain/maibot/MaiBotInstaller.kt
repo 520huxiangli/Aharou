@@ -234,10 +234,12 @@ class MaiBotInstaller @Inject constructor(
         echo "@@P:45"
         cd $MAIBOT_DIR
         [ -d .venv ] || python3 -m venv .venv
+        # 目录被挪过时 venv 里 pip 的 shebang 会失效，统一走 python -m pip
+        .venv/bin/python -c "import sys" 2>/dev/null || python3 -m venv --clear .venv
         echo "@@P:55"
-        .venv/bin/pip install -q -i https://mirrors.aliyun.com/pypi/simple/ --upgrade pip
+        .venv/bin/python -m pip install -q -i https://mirrors.aliyun.com/pypi/simple/ --upgrade pip
         echo "@@P:60"
-        .venv/bin/pip install -q -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
+        .venv/bin/python -m pip install -q -i https://mirrors.aliyun.com/pypi/simple/ -r requirements.txt
         echo "@@P:90"
         EULA_AGREE=8e6e7d647f7f82d6ea98456b73908656 PRIVACY_AGREE=91e5db7659c560bc3545e63859b6ebc0 timeout 40 .venv/bin/python bot.py || true
         echo "@@P:100"
