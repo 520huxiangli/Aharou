@@ -19,7 +19,28 @@ interface AgentMessageDao {
     @Query("SELECT * FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp ASC")
     fun getMessagesBySession(sessionId: String): Flow<List<AgentMessageEntity>>
 
-    @Query("SELECT * FROM (SELECT * FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT :limit) ORDER BY timestamp ASC")
+    /**
+     * 聊天页展示用的末段分页。
+     *
+     * 刻意不用 `SELECT *`：历史版本写入的消息行可能带几 MB 的正文或工具输出，整行超过
+     * CursorWindow 单行上限（约 2MB）时，一进会话就抛 SQLiteBlobTooBigException。大文本列在
+     * SQL 里按字符截到 20 万（UTF-8 最多 600KB）：合法行各字段落库上限为 15 万字节，永远碰不到
+     * 这个阈值，只有遗留的超大行会被截断显示。signature 不截——回放要原样回传，且它不在超大列里。
+     */
+    @Query(
+        "SELECT * FROM (" +
+            "SELECT id, sessionId, role, timestamp, toolCallId, toolName, isError, signature, " +
+            "isCompacted, isContextSummary, isCompactionMarker, inputTokens, outputTokens, cachedInputTokens, " +
+            "isContextExcluded, compactedBySummaryId, error, variantGroupId, variantIndex, " +
+            "substr(content, 1, 200000) AS content, " +
+            "substr(toolCallsJson, 1, 200000) AS toolCallsJson, " +
+            "substr(toolArgs, 1, 200000) AS toolArgs, " +
+            "substr(reasoning, 1, 200000) AS reasoning, " +
+            "substr(thinkingBlocksJson, 1, 200000) AS thinkingBlocksJson, " +
+            "substr(attachmentsJson, 1, 200000) AS attachmentsJson " +
+            "FROM agent_messages WHERE sessionId = :sessionId ORDER BY timestamp DESC LIMIT :limit) " +
+            "ORDER BY timestamp ASC"
+    )
     fun getMessagesBySessionPaged(sessionId: String, limit: Int): Flow<List<AgentMessageEntity>>
 
     /** 一次性读取（非 Flow），用于跨请求重建上下文历史。 */

@@ -39,8 +39,11 @@ class CompactionOperationStore @Inject constructor(
         /**
          * 单条快照的落库上限。工具输出单行可达上百 KB，长会话压一次几十 MB 也正常；
          * 超过就只记元数据，宁可放弃这一次撤销，也不让一次压缩把数据库撑爆。
+         *
+         * 必须低于 SQLite CursorWindow 的单行上限（约 2MB）：聊天页读「最近一次压缩」时会取这条记录，
+         * 行超窗会抛 SQLiteBlobTooBigException 把整个进程带崩。1.5MB 还给同行的 id 列表留了余量。
          */
-        const val MAX_SNAPSHOT_BYTES = 4L * 1024 * 1024
+        const val MAX_SNAPSHOT_BYTES = 1_500_000L
 
         /** SQLite 单条语句的绑定变量上限是 999，留出余量后分片。 */
         private const val ID_CHUNK = 900
@@ -103,7 +106,7 @@ class CompactionOperationStore @Inject constructor(
 
     /** 本会话最近一条未撤销的操作（含不可撤销的，界面要能解释为什么撤不了）。 */
     suspend fun latest(sessionId: String): CompactionOperation? =
-        operationDao.latestActive(sessionId)?.toOperation()
+        operationDao.latestActiveMeta(sessionId, MAX_SNAPSHOT_BYTES)?.toOperation()
 
     /** 本会话最近一条可撤销的压缩操作。 */
     suspend fun latestRevertible(sessionId: String): CompactionOperation? =
@@ -118,12 +121,12 @@ class CompactionOperationStore @Inject constructor(
      */
     suspend fun revertCompaction(operationId: String): Result<Unit> {
         return try {
-            val operation = operationDao.byId(operationId)
+            val operation = operationDao.metaById(operationId, MAX_SNAPSHOT_BYTES)
                 ?: throw CompactionRevertException(CompactionRevertFailure.NOT_FOUND)
             if (operation.revoked) throw CompactionRevertException(CompactionRevertFailure.ALREADY_REVERTED)
-            val latest = operationDao.latestActive(operation.sessionId)
+            val latest = operationDao.latestActiveMeta(operation.sessionId, MAX_SNAPSHOT_BYTES)
             if (latest?.id != operation.id) throw CompactionRevertException(CompactionRevertFailure.NOT_LATEST)
-            val snapshotJson = operation.snapshotJson
+            val snapshotJson = operationDao.snapshotJsonById(operation.id, MAX_SNAPSHOT_BYTES)
                 ?: throw CompactionRevertException(CompactionRevertFailure.SNAPSHOT_UNAVAILABLE)
             val summaryId = operation.summaryMessageId
                 ?: throw CompactionRevertException(CompactionRevertFailure.SNAPSHOT_UNAVAILABLE)
@@ -166,14 +169,14 @@ class CompactionOperationStore @Inject constructor(
         emptyList()
     }
 
-    private fun ContextOperationEntity.toOperation(): CompactionOperation = CompactionOperation(
+    private fun ContextOperationMeta.toOperation(): CompactionOperation = CompactionOperation(
         id = id,
         sessionId = sessionId,
         createdAt = createdAt,
         summaryMessageId = summaryMessageId,
         removedMessageIds = decodeIds(removedMessageIds),
         snapshotBytes = snapshotBytes,
-        hasSnapshot = snapshotJson != null
+        hasSnapshot = hasSnapshot
     )
 
     /**

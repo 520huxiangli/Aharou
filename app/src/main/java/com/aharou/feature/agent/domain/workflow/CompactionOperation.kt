@@ -59,12 +59,35 @@ interface ContextOperationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(operation: ContextOperationEntity)
 
-    @Query("SELECT * FROM context_operations WHERE id = :id LIMIT 1")
-    suspend fun byId(id: String): ContextOperationEntity?
+    /**
+     * 撤销入口只看元数据：`snapshotJson` 单条可达数 MB，超过 CursorWindow 约 2MB 的单行上限时，
+     * 读整行会直接抛 SQLiteBlobTooBigException。有没有可用快照由 [snapshotBytes] 判断，不碰正文。
+     */
+    @Query(
+        "SELECT id, sessionId, createdAt, summaryMessageId, markerMessageId, removedMessageIds, " +
+            "snapshotBytes, (snapshotJson IS NOT NULL AND snapshotBytes <= :maxSnapshotBytes) AS hasSnapshot, " +
+            "revoked FROM context_operations WHERE id = :id LIMIT 1"
+    )
+    suspend fun metaById(id: String, maxSnapshotBytes: Long): ContextOperationMeta?
 
     /** 本会话最近一条未撤销的操作（不限于可撤销的：快照过大的记录也要能查到并解释原因）。 */
-    @Query("SELECT * FROM context_operations WHERE sessionId = :sessionId AND revoked = 0 ORDER BY createdAt DESC, id DESC LIMIT 1")
-    suspend fun latestActive(sessionId: String): ContextOperationEntity?
+    @Query(
+        "SELECT id, sessionId, createdAt, summaryMessageId, markerMessageId, removedMessageIds, " +
+            "snapshotBytes, (snapshotJson IS NOT NULL AND snapshotBytes <= :maxSnapshotBytes) AS hasSnapshot, " +
+            "revoked FROM context_operations WHERE sessionId = :sessionId AND revoked = 0 " +
+            "ORDER BY createdAt DESC, id DESC LIMIT 1"
+    )
+    suspend fun latestActiveMeta(sessionId: String, maxSnapshotBytes: Long): ContextOperationMeta?
+
+    /**
+     * 撤销时才取快照正文。超出窗口上限的记录一律按「没有快照」处理：宁可这次撤不了，
+     * 也不能为了一块不可能放进 Cursor 的内容把进程炸掉。
+     */
+    @Query(
+        "SELECT snapshotJson FROM context_operations WHERE id = :id AND snapshotJson IS NOT NULL " +
+            "AND snapshotBytes <= :maxSnapshotBytes LIMIT 1"
+    )
+    suspend fun snapshotJsonById(id: String, maxSnapshotBytes: Long): String?
 
     @Query("UPDATE context_operations SET revoked = 1, revokedAt = :revokedAt WHERE id = :id AND revoked = 0")
     suspend fun markRevoked(id: String, revokedAt: Long): Int
@@ -83,6 +106,23 @@ interface ContextOperationDao {
     @Query("DELETE FROM agent_messages WHERE id IN (:ids)")
     suspend fun deleteMessagesByIds(ids: List<String>)
 }
+
+/**
+ * `context_operations` 的行投影，刻意不带 [ContextOperationEntity.snapshotJson]：
+ * 那一列可能远超 CursorWindow 的单行上限，聊天页每次进会话都会查最近一次压缩，读整行必崩。
+ */
+data class ContextOperationMeta(
+    val id: String,
+    val sessionId: String,
+    val createdAt: Long,
+    val summaryMessageId: String?,
+    val markerMessageId: String?,
+    val removedMessageIds: String,
+    val snapshotBytes: Long,
+    /** 快照存在且不超过当前上限：超限的历史记录会落成 false，语义与「没有快照」一致。 */
+    val hasSnapshot: Boolean,
+    val revoked: Boolean
+)
 
 /** 一次压缩在撤销入口眼里的样子。[revertible] 为 false 时说明快照没存全文。 */
 data class CompactionOperation(
