@@ -182,7 +182,7 @@ internal fun NapCatBotSection(viewModel: NapCatViewModel = hiltViewModel()) {
                 maiBotMessage ?: when {
                     maiBotInstalling -> stringResource(R.string.maibot_installing) + " " + (maiBotProgress * 100).toInt() + "%"
                     maiBot.phase == "running" -> maiBot.phase + (maiBot.pid?.let { " pid=$it" } ?: "")
-                    else -> maiBot.phase.ifBlank { "stopped" }
+                    else -> maiBot.error.ifBlank { maiBot.phase.ifBlank { "stopped" } }
                 }
             )
             if (maiBotInstalling) {
