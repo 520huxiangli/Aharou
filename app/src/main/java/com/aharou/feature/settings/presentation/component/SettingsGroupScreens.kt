@@ -117,12 +117,6 @@ internal fun SettingsAharouGroupScreen(onOpen: (SettingsSection) -> Unit) {
                 title = stringResource(R.string.assistant_digital_title),
                 onClick = { onOpen(SettingsSection.AssistantDigital) }
             )
-            SettingsDivider()
-            SettingsRow(
-                icon = FeatherIcons.Heart,
-                title = stringResource(SettingsSection.Pet.titleRes),
-                onClick = { onOpen(SettingsSection.Pet) }
-            )
         }
     }}
 

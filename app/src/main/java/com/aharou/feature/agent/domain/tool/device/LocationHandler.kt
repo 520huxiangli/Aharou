@@ -19,8 +19,7 @@ import kotlinx.serialization.json.put
 /**
  * 取一次「最后已知位置」，不做持续定位、不等待新定位。
  *
- * provider 顺序与桌宠每日问候（PetDailyBrief）一致：网络定位优先，够用且省电；
- * GPS 只作为兜底。天气能力也复用这里的坐标。
+ * provider 顺序：网络定位优先，够用且省电；GPS 只作为兜底。天气能力也复用这里的坐标。
  */
 @Singleton
 class LocationHandler @Inject constructor(

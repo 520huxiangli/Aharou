@@ -153,8 +153,7 @@ internal class VoiceCallService : Service() {
             wakeMode = intent?.getBooleanExtra(EXTRA_WAKE_MODE, false) ?: false
             _wakeMode.value = wakeMode
             watchSessionIdle()
-            // 界面由 [com.aharou.feature.pet.PetOverlayService] 身上的小染承担：气泡显示字幕，
-            // 径向菜单里的麦克风开关通话，这里只管通话本身
+            // 通话界面由 VoiceCallScreen 承担（头像与名字读灵魂设置），这里只管通话本身
             audioSession.enterCommunicationMode()
             session.start("", wakeMode = wakeMode)
             notificationManager().notify(NOTIFICATION_ID, buildNotification())

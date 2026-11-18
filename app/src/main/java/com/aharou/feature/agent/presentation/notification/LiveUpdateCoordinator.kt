@@ -21,8 +21,8 @@ import kotlinx.coroutines.launch
 /**
  * 把三路运行态（语音通话 / Agent 任务 / 后台终端）汇成一条灵动岛通知。
  *
- * 挂载点是 App 进程启动即拉起（见 AIEditorApp.onCreate），不挂在 [com.aharou.feature.pet.PetOverlayService]
- * 上——小染开关关着时也必须能用，故做成独立的 [Singleton]。
+ * 挂载点是 App 进程启动即拉起（见 AIEditorApp.onCreate），做成独立的 [Singleton]，
+ * 不依赖任何前台可见的界面存活。
  *
  * 合并优先级（高到低）：通话中 > Agent 跑任务中 > 后台终端运行中 > 刚结束的收尾提示。
  * 同优先级内多路只取一路代表（终端多开时取第一个标签，正文附总数）；收尾提示只显示 [DONE_WINDOW_MS]

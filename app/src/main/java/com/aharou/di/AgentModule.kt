@@ -33,7 +33,6 @@ import com.aharou.feature.agent.domain.container.SshLoginKeyStore
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import com.aharou.feature.agent.domain.tool.file.ReadFileTool
-import com.aharou.feature.agent.domain.tool.pet.PetAvatarTool
 import com.aharou.feature.agent.domain.tool.SendImFileTool
 import com.aharou.feature.agent.domain.tool.ImSendMessageTool
 import com.aharou.feature.agent.domain.tool.file.SendFileTool
@@ -461,7 +460,6 @@ object AgentModule {
         sessionTool: SessionTool,
         deviceTool: DeviceTool,
         personalContextTool: PersonalContextTool,
-        petAvatarTool: PetAvatarTool,
         diagnosticsTool: DiagnosticsTool,
         gitBlameTool: GitBlameTool,
         guard: ToolCallGuard
@@ -504,7 +502,6 @@ object AgentModule {
             register("sessions", sessionTool)
             register("device", deviceTool)
             register("personal_context", personalContextTool)
-            register("petAvatar", petAvatarTool)
             register("diagnostics", diagnosticsTool)
             register("git_blame", gitBlameTool)
         }

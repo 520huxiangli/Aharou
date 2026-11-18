@@ -55,7 +55,6 @@
 | `backup/` | 加密备份导出/导入 | `BackupManagerImpl`、`BackupSnapshot` |
 | `credentials/` | 凭据管理 | `CredentialScreen` |
 | `voice/` | 语音：识别、合成、通话、唤醒 | `call/`、`assistant/` |
-| `pet/` | 桌面伙伴小染（悬浮窗、动作、语音） | `PetOverlayService`、`PetOverlay` |
 | `onboarding/` | 首次启动引导 | `OnboardingStep` |
 
 ### feature/agent 内部

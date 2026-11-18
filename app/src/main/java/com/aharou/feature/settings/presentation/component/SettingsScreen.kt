@@ -128,7 +128,6 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     EnvVars(R.string.envvars_title),
     Vault(R.string.settings_vault),
     Accessibility(R.string.a11y_settings_title),
-    Pet(R.string.pet_title),
     Memory(R.string.memory_settings_title),
     General(R.string.settings_general),
     Theme(R.string.settings_theme_title),
@@ -418,8 +417,7 @@ fun SettingsScreen(
         SettingsSection.HelpGroup -> SettingsSection.Menu
         SettingsSection.Soul,
         SettingsSection.ConfigAudit,
-        SettingsSection.Memory,
-        SettingsSection.Pet -> SettingsSection.AharouGroup
+        SettingsSection.Memory -> SettingsSection.AharouGroup
         SettingsSection.AccountCenter -> SettingsSection.AiGroup
         SettingsSection.Providers, SettingsSection.DefaultModels, SettingsSection.ScheduledTasks, SettingsSection.Extensions,
         SettingsSection.TelegramBot, SettingsSection.WeixinBot, SettingsSection.FeishuBot,
@@ -965,7 +963,6 @@ fun SettingsScreen(
                 SettingsSection.EnvVars -> EnvVarsSection()
                 SettingsSection.Vault -> VaultSection()
                 SettingsSection.Accessibility -> AccessibilitySection()
-                SettingsSection.Pet -> PetSection()
                 SettingsSection.Memory -> MemorySection()
                 SettingsSection.Knowledge -> KnowledgeBaseSection()
                 SettingsSection.Extensions -> ExtensionsSection(onOpenSection = openSection)

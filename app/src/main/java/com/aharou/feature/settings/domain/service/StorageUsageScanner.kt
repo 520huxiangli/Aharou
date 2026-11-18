@@ -74,7 +74,6 @@ class StorageUsageScanner @Inject constructor(
         emit(aiConfigEntry(cancelled))
         emit(voiceModelsEntry(cancelled))
         emit(tessdataEntry())
-        emit(petAssetsEntry(cancelled))
         emit(workspacesEntry(cancelled))
         emit(containerEntry(cancelled))
     }.flowOn(Dispatchers.IO)
@@ -98,7 +97,6 @@ class StorageUsageScanner @Inject constructor(
             CleanupKind.VoiceModels -> clearDirContents(File(context.filesDir, VOICE_MODELS_DIR))
             // 整个 tessdata-parent 一起清：里面的 .part 与 tessdata/ 都是同一批下载的残留
             CleanupKind.OcrTessdata -> clearDirContents(File(context.filesDir, TESSDATA_PARENT_DIR))
-            CleanupKind.PetAssets -> clearDirContents(File(context.filesDir, PET_ASSETS_DIR))
         }
     }
 
@@ -266,22 +264,6 @@ class StorageUsageScanner @Inject constructor(
      * AI 配置目录名直接取自 [ContainerInstaller.aharouDir]，与 [aiConfigEntry] 同一来源；
      * 不在这里另写一份目录名，否则目录改名后两处各说一套，该目录会被重复计入总占用。
      */
-    /**
-     * 用户自己导入的桌宠形象。内置角色（小染 / 虎鲸娘）在 assets 里，不占这里的空间。
-     *
-     * 只算目录总大小，不逐个列出角色名：清掉就全没了，列出来反而让人以为能单独删某一个。
-     */
-    private fun petAssetsEntry(cancelled: () -> Boolean): StorageEntry {
-        val root = File(context.filesDir, PET_ASSETS_DIR)
-        if (!root.isDirectory) return StorageEntry(StorageCategory.PetAssets, 0L)
-        val roles = root.listFiles { f: File -> f.isDirectory && !f.name.startsWith(".") }
-            ?.sortedBy { it.name }.orEmpty()
-        val details = roles
-            .map { StorageDetail(label = it.name, bytes = dirSize(it, cancelled)) }
-            .filter { it.bytes > 0 }
-        return StorageEntry(StorageCategory.PetAssets, details.sumOf { it.bytes }, details)
-    }
-
     private fun otherDataEntry(cancelled: () -> Boolean): StorageEntry {
         val aiConfigDirName = containerInstaller.aharouDir.name
         val rest = context.filesDir.listFiles()?.filterNot { file ->
@@ -324,8 +306,6 @@ class StorageUsageScanner @Inject constructor(
         private const val VOICE_MODELS_DIR = VoiceModels.MODEL_ROOT_DIR
         /** OCR 语言包根目录（内含 tessdata/），与 [TessdataPack] 同一来源。 */
         private const val TESSDATA_PARENT_DIR = TessdataPack.PARENT_DIR
-        /** 用户导入的桌宠形象根目录（内置角色在 assets，不在这）。 */
-        private const val PET_ASSETS_DIR = "pet"
         private const val PREFS_DIR = "shared_prefs"
         private const val ATTACHMENTS_RELATIVE = ".aharou/attachments"
 
@@ -336,7 +316,7 @@ class StorageUsageScanner @Inject constructor(
          */
         private val CLASSIFIED_DIRS = setOf(
             PROJECTS_DIR, IMAGES_DIR, CHECKPOINTS_DIR, VOICE_MODELS_DIR, TESSDATA_PARENT_DIR,
-            PET_ASSETS_DIR, "logs", "ai-logs"
+            "logs", "ai-logs"
         )
 
         private const val TOP_SESSIONS = 5

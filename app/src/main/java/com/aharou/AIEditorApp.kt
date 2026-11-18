@@ -235,10 +235,6 @@ class AIEditorApp : Application(), Configuration.Provider {
     @Inject
     lateinit var imServiceRestore: com.aharou.feature.im.ImServiceRestore
 
-    /** 桌面伙伴「小染」字段注册。 */
-    @Inject
-    lateinit var configPetFields: com.aharou.feature.pet.data.ConfigPetFields
-
     /** 跨设备协作字段注册（开关/端口/配对码/已配对设备）。 */
     @Inject
     lateinit var configRemoteDeviceFields: com.aharou.feature.remotedevice.data.ConfigRemoteDeviceFields
@@ -423,7 +419,6 @@ class AIEditorApp : Application(), Configuration.Provider {
         configImFields.registerInto(configRegistry)
         configStewardFields.registerInto(configRegistry)
         configSubAgentFields.registerInto(configRegistry)
-        configPetFields.registerInto(configRegistry)
         configRemoteDeviceFields.registerInto(configRegistry)
         configCredentialFields.registerInto(configRegistry)
         configBackupFields.registerInto(configRegistry)

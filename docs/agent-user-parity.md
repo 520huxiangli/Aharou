@@ -4,7 +4,7 @@
 
 ## 0. 工具集合与事实来源
 
-- 内置工具的唯一注册点是 `app/src/main/java/com/aharou/di/AgentModule.kt:453-489`，共 **37 个**：`readFile` `sendFile` `sendToChat` `viewImage` `writeFile` `editFile` `generateImage` `Bash` `Shizuku` `terminal` `list` `search` `loadSkill` `loadRule` `knowledge_search` `askUserQuestion` `manageMcp` `tool_search` `websearch` `webfetch` `planMode` `todo` `memory` `task` `messageParent` `browser` `config` `vscreen` `a11y` `open_app` `check_dependencies` `sessions` `device` `personal_context` `petAvatar` `diagnostics` `git_blame`。
+- 内置工具的唯一注册点是 `app/src/main/java/com/aharou/di/AgentModule.kt:453-489`，共 **36 个**：`readFile` `sendFile` `sendToChat` `viewImage` `writeFile` `editFile` `generateImage` `Bash` `Shizuku` `terminal` `list` `search` `loadSkill` `loadRule` `knowledge_search` `askUserQuestion` `manageMcp` `tool_search` `websearch` `webfetch` `planMode` `todo` `memory` `task` `messageParent` `browser` `config` `vscreen` `a11y` `open_app` `check_dependencies` `sessions` `device` `personal_context` `diagnostics` `git_blame`。
 - MCP 工具在连接时动态注册（`feature/agent/domain/mcp/McpManager.kt:266`，卸载见 `:272` / `:354`）。
 - 每轮注入：`StatefulAgentWorkflow.kt:317` 取全部工具，`:568` 只过滤 `deferredLoading`（当前只有 MCP 工具延迟）；所以**内置的 37 个工具都在第一轮索引里**，MCP 工具要靠 `tool_search` 展开（`ToolSearchTool.kt:48`）。
 - `config`（`di/AgentModule.kt:475`，实现 `feature/agent/domain/tool/config/ConfigTool.kt`）是一层**通用配置接口**：agent 能改什么，取决于 `ConfigRegistry` 里注册了哪些字段，注册入口集中在 `AIEditorApp.kt:409-434`（24 个 `Config*Fields`）。下文写“config `path`”即指这条路径。

@@ -88,7 +88,7 @@ private const val MAX_ENTRIES = 200
 internal val SIDE_EFFECT_TOOL_NAMES: Set<String> = setOf(
     "Bash", "Shizuku", "terminal", "a11y", "vscreen", "device", "browser",
     "editFile", "writeFile", "sendFile", "sendToChat", "generateImage",
-    "todo", "memory", "config", "planMode", "task", "manageMcp", "petAvatar",
+    "todo", "memory", "config", "planMode", "task", "manageMcp",
     // 问用户与向父会话发消息也是不可重复的：重跑一次就是再拦一次人、再发一条消息。
     "askUserQuestion", "messageParent"
 )
