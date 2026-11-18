@@ -15,6 +15,7 @@ import com.aharou.feature.im.data.repository.TelegramSettingsRepository
 import com.aharou.feature.im.data.repository.WeComSettingsRepository
 import com.aharou.feature.im.data.repository.WeixinSettingsRepository
 import com.aharou.feature.im.domain.DingTalkChannelClient
+import com.aharou.feature.im.domain.BotModeState
 import com.aharou.feature.im.domain.FeishuChannelClient
 import com.aharou.feature.im.domain.WeComChannelClient
 import com.aharou.feature.im.domain.ImBotBridge
@@ -96,11 +97,13 @@ object ImBridgeModule {
         permissions: ToolPermissionManager,
         workspaceResolver: ImWorkspaceResolver,
         owners: ImOwnerStore,
+        botMode: BotModeState,
         @ApplicationContext context: Context
     ): ImBotBridge = ImBotBridge(
         "qq_napcat", channel, settings, runner, sessionUseCase, permissions, context,
         owners = owners, policy = NapCatMessagePolicy(),
-        fallbackWorkspacePath = { workspaceResolver.fallbackPath() }
+        fallbackWorkspacePath = { workspaceResolver.fallbackPath() },
+        botMode = botMode,
     )
 
     @Provides

@@ -753,8 +753,7 @@ class ImBotBridge (
             FileLogger.w(TAG, "[$channelId] 工作区未就绪，跳过会话 $sessionId")
             return null
         }
-        val workspace = chatWorkspace(baseWorkspace, chatId)
-        val base = agentTurnRunner.createSessionEntity(workspace)
+        val base = agentTurnRunner.createSessionEntity(baseWorkspace)
         val entity = base.copy(
             id = sessionId,
             // 轮次后缀同时进标题：同一个聊天开了多个会话时，列表里才分得清
@@ -808,21 +807,6 @@ class ImBotBridge (
                 }
                 else -> Unit
             }
-        }
-    }
-
-    /**
-     * 每个聊天在自己的子目录里干活：共用一个工作区时两个聊天同时改文件会互相覆盖。
-     * 净化后的 chatId 可能撞名（不同字符全被替成 -），再拼 8 位哈希兜底；
-     * 目录建不出来就退回基础工作区，不能因为目录问题连会话都建不出。
-     */
-    private suspend fun chatWorkspace(baseWorkspace: String, chatId: String): String = withContext(Dispatchers.IO) {
-        val safe = chatId.replace(Regex("[^a-zA-Z0-9_-]"), "-").take(32).ifBlank { "chat" }
-        val digest = Integer.toHexString(chatId.hashCode()).padStart(8, '0')
-        val dir = File(File(File(baseWorkspace), IM_WORKSPACE_DIR), "$channelId-$safe-$digest")
-        if (dir.isDirectory || dir.mkdirs()) dir.absolutePath else {
-            FileLogger.w(TAG, "[$channelId] 建 IM 会话目录失败，退回基础工作区：${dir.absolutePath}")
-            baseWorkspace
         }
     }
 
@@ -928,9 +912,6 @@ class ImBotBridge (
 
         /** 一个聊天最多开多少个 /new 轮次：只是防死循环的尺子，正常用户远到不了。 */
         private const val MAX_SESSION_GENERATIONS = 99
-
-        /** IM 会话子目录名：放在基础工作区下，与用户的项目目录分开一层。 */
-        private const val IM_WORKSPACE_DIR = "im"
 
         /** 一个聊天固定映射到的 Aharou 会话 id。 */
         fun sessionIdFor(channelId: String, chatId: String): String = "im-$channelId-$chatId"
