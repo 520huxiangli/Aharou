@@ -123,7 +123,7 @@ class TaskTool @Inject constructor(
         }
     }
 
-    override val description: String get() = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 ${eventBus.maxRunning} 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。" + SubAgentCommGate.descriptionHint(eventBus.communicationEnabled()) + "子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。团队预设（teams/*.md）可一键跑完整流程：task(action=\"team_run\", team=\"<名>\", goal=\"<本次目标>\")，阶段内并行、阶段间串行；先用 action=\"teams\" 看有哪些团队。"
+    override val description: String get() = "管理子代理：创建、发消息、读取结果、停止、删除、列表、查角色。子代理拥有独立上下文与完整工具能力，可并行工作，最多同时运行 ${eventBus.maxRunning} 个。任务复杂或几个活能并行时默认直接派，不必等用户开口；多个独立子任务应同一轮并发发起多个 create。完成后会收到后台通知，不要轮询。用 send 可反复追加指令或对已完成子代理继续追问；子代理运行中也可能主动发消息。create 选角：优先用 department + agentQuery（部门 + 2~5 个功能关键词，中英文都可）让系统选一个最对口的角色；不确定有哪些角色名时先用 action=\"roles\" 查出来，确知角色名时用 agent 点名。" + SubAgentCommGate.descriptionHint(eventBus.communicationEnabled()) + "子代理最多嵌套 2 层。子代理写到租约外被拦时会来求助，用 action=\"grant\"（id + writePaths）运行期追加写权限即可，不必重派。团队预设（teams/*.md）可一键跑完整流程：task(action=\"team_run\", team=\"<名>\", goal=\"<本次目标>\")，阶段内并行、阶段间串行；先用 action=\"teams\" 看有哪些团队。要在同一议题上取多视角（方案权衡、风险评审、头脑风暴），用 action=\"discuss\"（topic + participants + rounds）：2–4 个角色分轮发言，每轮都能看到前面所有人的观点，最后拿到完整讨论记录。"
 
     override val parameters: Map<String, ToolParameter> = TaskToolSpec.parameters
 
@@ -143,7 +143,8 @@ class TaskTool @Inject constructor(
             "grant" -> grantWrite(args, context)
             "teams" -> workflowTarget(args)?.let { workflowRunner.list(it) } ?: teamTasks.list(args)
             "team_run" -> runTeam(args, context)
-            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant / teams / team_run", "INVALID_ARGS")
+            "discuss" -> SubAgentDiscussion.run(this, args, context)
+            else -> ToolResult.Error("未知 action: $action，支持：create / pipeline / send / read / stop / del / list / roles / team / tell / grant / teams / team_run / discuss", "INVALID_ARGS")
         }
     }
 
@@ -329,7 +330,7 @@ class TaskTool @Inject constructor(
     }
 
     /** 等这些子代理全部跑到终态；超时则返回已收到的部分（缺失即「仍在运行」）。 */
-    private suspend fun awaitSubAgents(ids: Set<String>): Map<String, SubAgentEvent> =
+    internal suspend fun awaitSubAgents(ids: Set<String>): Map<String, SubAgentEvent> =
         withTimeoutOrNull(PIPELINE_WAIT_TIMEOUT_MS) {
             val done = mutableMapOf<String, SubAgentEvent>()
             // 先回捞已发过的终态：本层刚派发完就结束的子代理，事件早已过去（SharedFlow 无 replay）
@@ -364,7 +365,7 @@ class TaskTool @Inject constructor(
         } ?: emptyMap()
 
     /** 读子代理最后输出；复用 read 路径，保证与手动 read 拿到的是同一份结论。 */
-    private suspend fun readSubagentOutput(subSessionId: String, context: AgentContext): String {
+    internal suspend fun readSubagentOutput(subSessionId: String, context: AgentContext): String {
         val readArgs = buildJsonObject {
             put("action", "read")
             put("id", subSessionId)
@@ -435,7 +436,7 @@ class TaskTool @Inject constructor(
     }
 
     /** 创建子代理并启动执行。 */
-    private suspend fun createSubagent(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+    internal suspend fun createSubagent(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
         val parentSessionId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
         val parentSession = sessionUseCase.getSessionById(parentSessionId)
             ?: return ToolResult.Error("当前会话不存在", "SESSION_NOT_FOUND")
@@ -569,7 +570,7 @@ class TaskTool @Inject constructor(
      * 事件交由 ViewModel 按收件人状态分发：运行中的子代理把消息入通知队列、在下一批工具结果里搭车送达；
      * 已完成的子代理则被重新唤醒并起新一轮。不在工具层直接投递，以复用同一套忙碌/空闲分发逻辑。
      */
-    private suspend fun sendToSubagent(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
+    internal suspend fun sendToSubagent(args: Map<String, JsonElement>, context: AgentContext): ToolResult {
         val parentSessionId = context.sessionId ?: return ToolResult.Error("缺少会话上下文", "NO_SESSION")
         val subSessionId = (args["id"] as? JsonPrimitive)?.contentOrNull?.trim()
         if (subSessionId.isNullOrBlank()) {

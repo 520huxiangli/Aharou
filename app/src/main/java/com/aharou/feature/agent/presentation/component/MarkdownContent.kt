@@ -47,7 +47,6 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aharou.R
@@ -65,9 +64,6 @@ import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBackground
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
-import com.mikepenz.markdown.compose.elements.MarkdownTable
-import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
-import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.compose.elements.material.MarkdownBasicText
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -422,32 +418,12 @@ internal fun MarkdownContent(
                         ArtifactAwareCodeBlock(code, language, style, highlightsBuilder, showHeader = true, cacheEnabled = cacheEnabled)
                     }
                 },
-                // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
+                // 库自带的表格按固定单元宽算总宽，列多时每列被压成竖排；改用带最小列宽的实现。
                 table = {
-                    MarkdownTable(
+                    FixedWidthMarkdownTable(
                         content = it.content,
                         node = it.node,
                         style = it.typography.table,
-                        headerBlock = { content, header, tableWidth, style ->
-                            MarkdownTableHeader(
-                                content = content,
-                                header = header,
-                                tableWidth = tableWidth,
-                                style = style,
-                                maxLines = Int.MAX_VALUE,
-                                overflow = TextOverflow.Clip,
-                            )
-                        },
-                        rowBlock = { content, header, tableWidth, style ->
-                            MarkdownTableRow(
-                                content = content,
-                                header = header,
-                                tableWidth = tableWidth,
-                                style = style,
-                                maxLines = Int.MAX_VALUE,
-                                overflow = TextOverflow.Clip,
-                            )
-                        },
                     )
                 },
             )

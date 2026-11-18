@@ -15,7 +15,7 @@ internal object TaskToolSpec {
         "action" to ToolParameter(
             name = "action",
             type = ParameterType.STRING,
-            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）/ teams（列出团队预设 teams/*.md；给 team 参数看单个预设的阶段与成员；给 workflow 列工作流）/ team_run（按团队预设跑完整流程：team + goal，阶段内并行、阶段间串行；给 workflow 则走多团队逐层流转与驳回）",
+            description = "操作类型：create（默认，创建子代理并执行任务）/ send（向子代理发一条消息，可反复发送）/ read（读取子代理的最后输出）/ stop（停止子代理的执行）/ del（删除子代理会话及其消息）/ list（列出当前会话的全部子代理）/ roles（列出可用子代理角色，可按 department、agentQuery 过滤排序，用于查名字后再用 agent 点名）/ team（列出同批队友：同一父会话下的其它子代理及其任务与状态）/ tell（向同批队友发一条消息，配 id 与 message 使用）/ grant（运行期给已派发的子代理追加可写路径：id + writePaths）/ teams（列出团队预设 teams/*.md；给 team 参数看单个预设的阶段与成员；给 workflow 列工作流）/ team_run（按团队预设跑完整流程：team + goal，阶段内并行、阶段间串行；给 workflow 则走多团队逐层流转与驳回）/ discuss（多智能体讨论：topic + participants + rounds，各角色分轮发言并看到前人观点，返回完整讨论记录）",
             required = false
         ),
         "id" to ToolParameter(
@@ -127,6 +127,35 @@ internal object TaskToolSpec {
             type = ParameterType.STRING,
             description = "发给子代理的消息正文（send/tell 必填）。可反复调用；运行中的子代理会尽快收到，已完成的会被重新唤醒",
             required = false
+        ),
+        "topic" to ToolParameter(
+            name = "topic",
+            type = ParameterType.STRING,
+            description = "讨论议题（action=discuss 必填）：一句话说清要讨论什么，例如「这个方案该不该上缓存」。",
+            required = false
+        ),
+        "rounds" to ToolParameter(
+            name = "rounds",
+            type = ParameterType.INTEGER,
+            description = "讨论轮数（action=discuss，默认 2，范围 1–5）：每多一轮每个角色都会基于前一轮全部发言再表态一次。",
+            required = false
+        ),
+        "participants" to ToolParameter(
+            name = "participants",
+            type = ParameterType.ARRAY,
+            description = "讨论参与者（action=discuss 必填，2–4 个）。每项：{name, stance?, agent? / department?+agentQuery?}；" +
+                "name 是发言时显示的称呼，stance 可选、写该角色从哪个角度看问题（如「只关心性能」）。",
+            required = false,
+            itemsSchema = mapOf(
+                "type" to "object",
+                "properties" to mapOf(
+                    "name" to mapOf("type" to "string", "description" to "发言时显示的称呼"),
+                    "stance" to mapOf("type" to "string", "description" to "该角色的立场或视角，可选"),
+                    "agent" to mapOf("type" to "string", "description" to "自定义子代理名，可选"),
+                    "department" to mapOf("type" to "string", "description" to "部门，可选"),
+                    "agentQuery" to mapOf("type" to "string", "description" to "选角关键词，可选")
+                )
+            )
         )
     )
 }
