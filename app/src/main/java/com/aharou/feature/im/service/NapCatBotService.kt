@@ -95,6 +95,14 @@ class NapCatBotService : Service() {
                     withContext(Dispatchers.Main.immediate) { guard.stop(lastStartId) }
                     return@withLock
                 }
+                // 没装 NapCat 时启动必然失败；收回开关并结束服务，别把报错通知挂在通知栏。
+                // 先置 stopping，避免 setEnabled 触发的 collector 把当前 job 取消掉。
+                if (runtime.state.value.phase == "not_installed") {
+                    stopping = true
+                    settings.setEnabled(false)
+                    withContext(Dispatchers.Main.immediate) { guard.stop(lastStartId) }
+                    return@withLock
+                }
                 try {
                     val phase = runtime.state.value.phase
                     if (phase != "running" && phase != "starting") settings.setAccountId("")

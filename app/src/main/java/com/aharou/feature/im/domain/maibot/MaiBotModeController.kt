@@ -3,7 +3,6 @@ package com.aharou.feature.im.domain.maibot
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.im.data.repository.MaiBotSettingsRepository
 import com.aharou.feature.im.data.repository.MaiBotSettingsRepository.Mode
-import com.aharou.feature.im.data.repository.NapCatSettingsRepository
 import com.aharou.feature.im.domain.BotModeState
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -19,7 +18,6 @@ class MaiBotModeController @Inject constructor(
     private val settings: MaiBotSettingsRepository,
     private val botMode: BotModeState,
     private val maiBot: MaiBotRuntimeManager,
-    private val napCatSettings: NapCatSettingsRepository,
 ) {
     suspend fun current(): Mode = settings.current()
 
@@ -40,7 +38,8 @@ class MaiBotModeController @Inject constructor(
         botMode.handedToMaiBot = mode == Mode.DAILY
         when (mode) {
             Mode.DAILY -> {
-                if (!napCatSettings.current().enabled) napCatSettings.setEnabled(true)
+                // 日常模式只管「谁回消息」和 MaiBot 进程；个人 QQ 开关是用户的选择，不能在这里替他打开。
+                // 服务启停由 ImServiceRestore 按「已启用且已安装」恢复，否则用户关掉的开关每次冷启动又被翻回来。
                 runCatching { maiBot.start() }
             }
             Mode.WORK -> {
