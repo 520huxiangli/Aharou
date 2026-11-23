@@ -18,11 +18,10 @@ import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
-import com.aharou.feature.settings.domain.model.DEFAULT_KEY_WEIGHT
 import com.aharou.feature.settings.domain.model.KeyRotationStrategy
-import com.aharou.feature.settings.domain.model.MAX_KEY_WEIGHT
-import com.aharou.feature.settings.domain.model.ProviderKey
 import com.aharou.feature.settings.domain.model.ProviderType
+import com.aharou.feature.settings.domain.model.parseProviderKeyLines
+import com.aharou.feature.settings.domain.model.toProviderKeyLines
 import com.aharou.feature.settings.domain.model.ProxyType
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -58,19 +57,6 @@ class ConfigProviderFields @Inject constructor(
 
     private fun save(updated: AIProviderConfig) =
         runBlocking { providers.saveProvider(updated) }
-
-    /** 解析多 Key 串：每行 `值|权重`，与 AIProviderRepositoryImpl 的存储格式一致。 */
-    private fun parseProviderKeys(text: String): List<ProviderKey> =
-        text.split('\n').mapNotNull { line ->
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) return@mapNotNull null
-            val sep = trimmed.lastIndexOf('|')
-            if (sep < 0) return@mapNotNull ProviderKey(trimmed)
-            val value = trimmed.substring(0, sep).trim()
-            if (value.isEmpty()) return@mapNotNull null
-            val weight = trimmed.substring(sep + 1).trim().toIntOrNull() ?: DEFAULT_KEY_WEIGHT
-            ProviderKey(value, weight.coerceIn(0, MAX_KEY_WEIGHT))
-        }
 
     /** 解析「名: 值」逐行的键值对，忽略空行与没有冒号的行。 */
     private fun parsePairs(text: String): Map<String, String> =
@@ -305,10 +291,10 @@ class ConfigProviderFields @Inject constructor(
                 str(
                     field = "api_keys",
                     name = "多 Key 列表",
-                    desc = "多 Key 模式下的候选 Key，每行一个「Key|权重」（权重省略取默认 1，≤0 表示暂不参与调度）。与库内存储同格式。",
+                    desc = "多 Key 模式下的候选 Key，每行一个「Key|权重|地址」（权重省略取默认 1，≤0 表示暂不参与调度；地址省略时走 provider 的 baseUrl）。与库内存储同格式。",
                     risk = ConfigRisk.SENSITIVE,
-                    read = { it.apiKeys.joinToString("\n") { k -> "${k.value}|${k.weight}" } },
-                    write = { p, s -> p.copy(apiKeys = parseProviderKeys(s)) },
+                    read = { it.apiKeys.toProviderKeyLines() },
+                    write = { p, s -> p.copy(apiKeys = parseProviderKeyLines(s)) },
                 ),
                 enumField(
                     field = "key_rotation_strategy",

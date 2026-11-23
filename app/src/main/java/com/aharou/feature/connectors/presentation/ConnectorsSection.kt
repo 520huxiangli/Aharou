@@ -42,6 +42,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -88,12 +89,14 @@ internal fun ConnectorsSection(
     val installed by viewModel.installed.collectAsStateWithLifecycle()
     val installedByConnector = remember(installed) { installed.associateBy { it.server.name } }
     val installError by viewModel.error.collectAsStateWithLifecycle()
+    val deviceAuth by viewModel.deviceAuth.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var query by remember { mutableStateOf("") }
     var keyTarget by remember { mutableStateOf<Connector?>(null) }
     var clientTarget by remember { mutableStateOf<Connector?>(null) }
     var manageTarget by remember { mutableStateOf<Pair<Connector, McpServerEntry>?>(null) }
+    var deviceTarget by remember { mutableStateOf<Connector?>(null) }
 
     // 首次接入与「重新授权」共用同一套分流：按鉴权方式弹对应表单或直接写配置
     val startAuth: (Connector) -> Unit = { connector ->
@@ -102,6 +105,10 @@ internal fun ConnectorsSection(
             ConnectorAuthKind.KEY_HEADER,
             ConnectorAuthKind.KEY_QUERY -> keyTarget = connector
             ConnectorAuthKind.OAUTH_CLIENT_ID -> clientTarget = connector
+            ConnectorAuthKind.DEVICE -> {
+                deviceTarget = connector
+                viewModel.beginDeviceAuth(connector)
+            }
             else -> scope.launch {
                 val prepared = viewModel.prepareOAuth(connector)
                 oauthController.open(prepared)
@@ -199,6 +206,17 @@ internal fun ConnectorsSection(
             onSubmit = { key ->
                 viewModel.installWithKey(connector, key)
                 keyTarget = null
+            }
+        )
+    }
+    deviceTarget?.let { connector ->
+        ConnectorDeviceDialog(
+            connector = connector,
+            state = deviceAuth,
+            context = context,
+            onDismiss = {
+                viewModel.cancelDeviceAuth()
+                deviceTarget = null
             }
         )
     }
@@ -523,6 +541,7 @@ private fun connectorReauthLabel(kind: ConnectorAuthKind): Int = when (kind) {
     ConnectorAuthKind.NONE -> R.string.connector_reauth_none
     ConnectorAuthKind.KEY_HEADER,
     ConnectorAuthKind.KEY_QUERY -> R.string.connector_reauth_key
+    ConnectorAuthKind.DEVICE -> R.string.connector_reauth_device
     else -> R.string.connector_reauth_oauth
 }
 
@@ -541,6 +560,82 @@ private fun connectorCategoryLabel(category: String): Int = when (category) {
 }
 
 /** 解析品牌色（#RRGGBB）；清单里个别颜色可能非法，退回中性灰避免整行渲染失败。 */
+
+/**
+ * 设备码登录面板：显示一串码 + 跳浏览器，其余交给轮询。
+ *
+ * 不在这里做轮询：面板会随列表滚动重建，轮询放 ViewModel 才不会被打断。
+ */
+@Composable
+private fun ConnectorDeviceDialog(
+    connector: Connector,
+    state: ConnectorsViewModel.DeviceAuthUi,
+    context: android.content.Context,
+    onDismiss: () -> Unit
+) {
+    // 成功后自己关掉：此时配置已经写好、连接已重试，留着这个面板没有意义
+    LaunchedEffect(state) {
+        if (state is ConnectorsViewModel.DeviceAuthUi.Success) {
+            delay(1_200L)
+            onDismiss()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.connector_device_title, connector.name)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                when (state) {
+                    ConnectorsViewModel.DeviceAuthUi.Idle -> Unit
+                    is ConnectorsViewModel.DeviceAuthUi.Waiting -> {
+                        if (state.userCode.isBlank()) {
+                            Text(stringResource(R.string.connector_device_requesting))
+                        } else {
+                            Text(
+                                text = stringResource(R.string.connector_device_step),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            SelectionContainer {
+                                Text(
+                                    text = state.userCode,
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent(
+                                                android.content.Intent.ACTION_VIEW,
+                                                android.net.Uri.parse(
+                                                    state.verificationUri.ifBlank { "https://github.com/login/device" }
+                                                )
+                                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }
+                                }
+                            ) { Text(stringResource(R.string.connector_device_open_browser)) }
+                        }
+                    }
+                    is ConnectorsViewModel.DeviceAuthUi.Success ->
+                        Text(stringResource(R.string.connector_device_success))
+                    is ConnectorsViewModel.DeviceAuthUi.Failed -> Text(
+                        text = stringResource(R.string.connector_device_failed, state.message),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        }
+    )
+}
+
 private fun parseBrandColor(hex: String): Color =
     runCatching { Color(AndroidColor.parseColor(hex)) }.getOrDefault(Color(0xFF8A8A8A))
 

@@ -477,7 +477,9 @@ fun McpServerEditDialog(
                                         .toMap(),
                                     enabled = enabled,
                                     keepAlive = keepAlive,
-                                    disabledTools = disabledToolsSet.toSet()
+                                    disabledTools = disabledToolsSet.toSet(),
+                                    // 与 oauth 同理：这是配对时自动协商出来的标记，编辑不该把它抹掉。
+                                    encrypted = seed?.encrypted ?: false
                                 )
                             } else {
                                 McpServerConfig(
@@ -491,7 +493,9 @@ fun McpServerEditDialog(
                                     keepAlive = keepAlive,
                                     disabledTools = disabledToolsSet.toSet(),
                                     // 保留既有 oauth 块（目录 OAuth 项预填的、或已授权 server 的令牌），避免编辑时丢失。
-                                    oauth = seed?.oauth
+                                    oauth = seed?.oauth,
+                                    // 同上：加密标记由配对写入，用户在这里编辑名称/头部时不该丢。
+                                    encrypted = seed?.encrypted ?: false
                                 )
                             }
                             onSave(config, scope)

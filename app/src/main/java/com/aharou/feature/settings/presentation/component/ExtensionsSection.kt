@@ -40,8 +40,10 @@ import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.feature.extension.domain.ExtensionEntry
 import com.aharou.feature.extension.domain.ExtensionKind
+import com.aharou.feature.extension.domain.ExtensionState
 import com.aharou.feature.settings.presentation.ExtensionsViewModel
 import com.aharou.feature.settings.presentation.component.extension.ExtensionEntryRow
+import com.aharou.feature.settings.presentation.component.extension.ExtensionExportFeedback
 import com.aharou.feature.settings.presentation.component.extension.extensionKindLabelRes
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Book
@@ -69,6 +71,8 @@ internal fun ExtensionsSection(
     val error by viewModel.error.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     val kindFilter by viewModel.kindFilter.collectAsStateWithLifecycle()
+    val exporting by viewModel.exporting.collectAsStateWithLifecycle()
+    val exportableIds by viewModel.exportableIds.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -102,6 +106,9 @@ internal fun ExtensionsSection(
                 )
             }
 
+            // 导出的分享/失败反馈挂在这里：两者都是全局一次性动作，不能随行重组反复触发
+            ExtensionExportFeedback(viewModel)
+
             // 去原页的入口常驻最上面：某一类可能一条都没有（如还没配过 MCP），但路不能断
             // ——曾经把它挂在列表末尾、且要求列表非空才渲染，结果空分类下整块功能都进不去。
             kindFilter?.let { kind ->
@@ -125,9 +132,16 @@ internal fun ExtensionsSection(
                             entry = entry,
                             busy = false,
                             anyBusy = false,
-                            onAction = {},
-                            onUninstall = {},
+                            onAction = {
+                                // 运行中则停用，其余状态则启用；非插件条目由原页处理，视图层直接忽略。
+                                viewModel.setPluginEnabled(entry.id, entry.state != ExtensionState.RUNNING)
+                            },
+                            onUninstall = { viewModel.uninstallPlugin(entry.id) },
                             onOpenOriginal = { onOpenSection(extensionJumpSection(entry.kind)) },
+                            onExport = if (entry.id in exportableIds) {
+                                { viewModel.exportEntry(entry.id) }
+                            } else null,
+                            exportBusy = exporting,
                         )
                     }
                 }

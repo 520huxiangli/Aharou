@@ -208,7 +208,7 @@ internal fun rememberModelTester(): suspend (AIProviderConfig, String) -> ModelT
     return remember(service) {
         val tester: suspend (AIProviderConfig, String) -> ModelTestResult = { provider, model ->
             service.testModel(
-                provider.baseUrl,
+                provider.baseUrlForKey(provider.firstUsableApiKey),
                 provider.firstUsableApiKey,
                 provider.type,
                 provider.useFullUrl,

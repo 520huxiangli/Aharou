@@ -26,7 +26,15 @@ enum class ConnectorAuthKind {
     NONE,
 
     /** 服务端自行决定（本实现按 OAuth 尝试）。 */
-    AUTO
+    AUTO,
+
+    /**
+     * 设备码流：只要 client id，不要 client secret，用户去网页输一串码即可。
+     *
+     * GitHub 的 OAuth 换令牌强制要 secret，而 secret 不能内置进客户端，
+     * 所以这类厂商只能走设备码；能内置的正是它的 client id（公开信息）。
+     */
+    DEVICE
 }
 
 /** 清单里的 `auth` 块，字段按 kind 取用。 */
@@ -43,7 +51,9 @@ data class ConnectorAuth(
     /** 密钥写入的 URL query 参数名。 */
     val query: String? = null,
     /** 密钥获取位置的人话说明。 */
-    val where: String? = null
+    val where: String? = null,
+    /** 设备码流用的 client id（公开信息，非密钥）；空则用内置默认。 */
+    val clientId: String? = null
 )
 
 @Serializable
@@ -63,6 +73,7 @@ data class Connector(
         get() = when {
             auth.kind == "oauth" && auth.clientIdRequired -> ConnectorAuthKind.OAUTH_CLIENT_ID
             auth.kind == "oauth" -> ConnectorAuthKind.OAUTH
+            auth.kind == "device" -> ConnectorAuthKind.DEVICE
             auth.kind == "key" && !auth.query.isNullOrBlank() -> ConnectorAuthKind.KEY_QUERY
             auth.kind == "key" -> ConnectorAuthKind.KEY_HEADER
             auth.kind == "none" -> ConnectorAuthKind.NONE

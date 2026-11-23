@@ -19,6 +19,7 @@ import com.aharou.feature.agent.domain.container.ContainerWorkspaceKeys
 import com.aharou.feature.agent.domain.container.RootfsSource
 import com.aharou.feature.agent.domain.tool.container.ContainerEnvRedactionSetting
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
+import com.aharou.feature.settings.data.repository.ProotSeccompMode
 import com.aharou.feature.settings.presentation.ContainerDnsMode
 import com.aharou.feature.settings.presentation.ContainerMirrorMode
 import com.aharou.feature.settings.presentation.ContainerSourcesRepository
@@ -95,6 +96,24 @@ class ConfigContainerFields @Inject constructor(
                     "会话上下文与日志。默认开启；关掉只用于自己排查输出为什么不完整。",
                 flow = envRedaction.enabledFlow,
                 setter = { envRedaction.setEnabled(it) },
+            ),
+        )
+
+        registry.register(
+            DataStoreEnumField(
+                path = "container.proot_seccomp_mode",
+                displayName = "PRoot seccomp 兼容模式",
+                description = "陌生 ROM 上 proot 可能因 seccomp 翻译不了客户机程序而报「execve: Operation not permitted」，" +
+                    "容器里什么都跑不起来。AUTO（默认）= 容器就绪时自动探测，只在默认模式失败且失败特征确实是 seccomp 相关时才切到兼容；" +
+                    "FORCE_DEFAULT = 永远不加 PROOT_NO_SECCOMP（加此功能前的行为）；" +
+                    "COMPAT = 永远加 PROOT_NO_SECCOMP=1（全量 ptrace，部分机型上曾触发 ptrace 错误）。" +
+                    "改完立即对新启动的命令生效，已在跑的命令不受影响。",
+                flow = containerSettings.prootSeccompModeFlow.map { it.name },
+                setter = { value ->
+                    ProotSeccompMode.entries.firstOrNull { it.name == value }
+                        ?.let { containerSettings.setProotSeccompMode(it) }
+                },
+                cases = ProotSeccompMode.entries.map { it.name },
             ),
         )
 

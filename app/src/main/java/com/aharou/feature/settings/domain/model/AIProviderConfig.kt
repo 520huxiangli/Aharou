@@ -1,5 +1,8 @@
 package com.aharou.feature.settings.domain.model
 
+import com.aharou.core.util.FileLogger
+import java.util.Collections
+
 data class AIProviderConfig(
     val id: String,
     val name: String,
@@ -72,6 +75,24 @@ data class AIProviderConfig(
         get() = selectedModel.ifBlank { defaultModel }
 
     /**
+     * 指定 Key 的生效 Base URL：该 Key 配了合法地址就用它，否则回退 [baseUrl]。
+     *
+     * 单条坏地址只应该影响它自己那条 Key，不能让整个 provider 报错；非法地址只记一次日志，
+     * 原值照样保留，用户能在设置里看到并修正。
+     */
+    fun baseUrlForKey(keyValue: String?): String {
+        val custom = effectiveApiKeys.firstOrNull { it.value == keyValue }?.baseUrl?.trim().orEmpty()
+        if (custom.isEmpty()) return baseUrl
+        if (!isValidProviderEndpoint(custom)) {
+            if (warnedKeyEndpoints.add("$id|$custom")) {
+                FileLogger.w(KEY_ENDPOINT_TAG, "供应商「$name」的 Key 地址缺少 http(s) 协议头，本条 Key 改用默认地址：$custom")
+            }
+            return baseUrl
+        }
+        return custom
+    }
+
+    /**
      * 实际可用的 Key 列表。多 Key 模式开启且列表非空时用 [apiKeys]，否则退回单 [apiKey]，
      * 使「开关关闭」与「开着但没填」都能落到既有单 Key 行为上。
      */
@@ -98,18 +119,97 @@ data class AIProviderConfig(
 }
 
 /**
- * 多 Key 模式下的一条候选 Key：值 + 调度权重。
+ * 多 Key 模式下的一条候选 Key：值 + 调度权重 + 可选专属 Base URL。
  *
  * [weight] 参与轮询调度：越大被分到的新会话越多；≤ 0 表示该 Key 暂不参与调度（保留但不选用）。
+ * [baseUrl] 是该 Key 单独走的地址（官方 Key 与中转 Key 混用时需要）；null 表示沿用提供商默认地址。
+ * 用 null 而不是空串，是为了写回存储时不给「没有单独地址」的 Key 补一段空占位。
  */
 data class ProviderKey(
     val value: String,
-    val weight: Int = DEFAULT_KEY_WEIGHT
+    val weight: Int = DEFAULT_KEY_WEIGHT,
+    val baseUrl: String? = null
 )
 
 /** 调度权重默认值与上限。 */
 const val DEFAULT_KEY_WEIGHT: Int = 1
 const val MAX_KEY_WEIGHT: Int = 1_000_000
+
+/** 已告警过的非法 Key 地址（providerId|地址）：一次请求会拼好几次 URL，不去重会把日志刷满。 */
+private const val KEY_ENDPOINT_TAG = "ProviderEndpoint"
+private val warnedKeyEndpoints: MutableSet<String> = Collections.synchronizedSet(HashSet())
+
+/** 地址能否直接当 Base URL 用：拼 URL 前必须带 http(s) 协议头，否则 OkHttp 会直接抛异常。 */
+fun isValidProviderEndpoint(url: String): Boolean =
+    url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)
+
+/** 手填地址常见的「只有域名 / 域名加端口」形态：判为写错的地址，而不是 Key 的一部分。 */
+private val ENDPOINT_LIKE_REGEX =
+    Regex("""^(?:[\w-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:/\S*)?$|^[\w-]+:\d+(?:/\S*)?$""")
+
+private fun looksLikeEndpoint(raw: String): Boolean =
+    raw.contains("://") || raw.startsWith("http", ignoreCase = true) || ENDPOINT_LIKE_REGEX.matches(raw)
+
+/**
+ * 解析多 Key 存储串（每行一条），格式 `值|权重|地址`。
+ *
+ * 后两段都可缺省，必须兼容两种旧数据：裸 `值`、`值|权重`。Key 自身含 `|` 时按旧规则
+ * 「最后一个 `|` 之后不是数字就当 Key 的一部分」剥离。地址合法性留到使用时判定，这样写错的
+ * 地址能在日志里被看到，而不是静默丢成默认地址。
+ */
+fun parseProviderKeyLines(raw: String): List<ProviderKey> =
+    raw.split('\n').mapNotNull { line ->
+        val trimmed = line.trim()
+        if (trimmed.isEmpty()) return@mapNotNull null
+        val parts = trimmed.split('|')
+        val last = parts.last().trim()
+        val value: String
+        val weight: Int
+        var url: String? = null
+        val lastWeight = last.toIntOrNull()
+        if (parts.size == 1) {
+            value = last
+            weight = DEFAULT_KEY_WEIGHT
+        } else if (lastWeight != null) {
+            // 旧格式 `值|权重`：末段一定是权重，前面的部分整体是 Key（兼容 Key 内含 `|`）。
+            value = parts.dropLast(1).joinToString("|").trim()
+            weight = lastWeight.coerceIn(0, MAX_KEY_WEIGHT)
+        } else if (looksLikeEndpoint(last)) {
+            url = last
+            val head = parts.dropLast(1)
+            val headWeight = head.last().trim().toIntOrNull()
+            if (head.size > 1 && headWeight != null) {
+                value = head.dropLast(1).joinToString("|").trim()
+                weight = headWeight.coerceIn(0, MAX_KEY_WEIGHT)
+            } else {
+                value = head.joinToString("|").trim()
+                weight = DEFAULT_KEY_WEIGHT
+            }
+        } else if (parts.size >= 3 && parts[parts.size - 2].trim().toIntOrNull() != null) {
+            // `值|权重|地址`，但地址写错（缺协议头）：保留下来，使用侧会记日志并回退默认地址。
+            value = parts.dropLast(2).joinToString("|").trim()
+            weight = parts[parts.size - 2].trim().toInt().coerceIn(0, MAX_KEY_WEIGHT)
+            url = last.ifEmpty { null }
+        } else if (parts.size == 2) {
+            // 两段且末段既不是权重也不像地址：旧行为本来就会丢掉尾段，这里当成写错的地址保留，
+            // 取出的 Key 与旧行为一致。
+            value = parts[0].trim()
+            weight = DEFAULT_KEY_WEIGHT
+            url = last.ifEmpty { null }
+        } else {
+            // 三段以上但倒数第二段不是权重：末段属于 Key 本身（旧规则），不当作地址。
+            value = parts.dropLast(1).joinToString("|").trim()
+            weight = DEFAULT_KEY_WEIGHT
+        }
+        if (value.isEmpty()) null else ProviderKey(value, weight, url)
+    }
+
+/** 序列化回存储串。没有单独地址的 Key 只写两段，避免每次保存都把旧配置整体改写成三段。 */
+fun List<ProviderKey>.toProviderKeyLines(): String =
+    joinToString("\n") { key ->
+        val url = key.baseUrl?.trim().orEmpty()
+        if (url.isEmpty()) "${key.value}|${key.weight}" else "${key.value}|${key.weight}|$url"
+    }
 
 /** 绝不包含空白的字段（API Key / URL / 代理主机）：连中间空白一并去掉。 */
 private fun String.stripAllWhitespace(): String = filterNot { it.isWhitespace() }
@@ -127,7 +227,14 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
     name = name.stripLineBreaks(),
     apiKey = apiKey.stripAllWhitespace(),
     apiKeys = apiKeys
-        .map { it.copy(value = it.value.stripAllWhitespace(), weight = it.weight.coerceIn(0, MAX_KEY_WEIGHT)) }
+        .map {
+            it.copy(
+                value = it.value.stripAllWhitespace(),
+                weight = it.weight.coerceIn(0, MAX_KEY_WEIGHT),
+                // 地址里的空白（粘贴带入的换行/空格）会让 URL 拼错，保存前一并清掉。
+                baseUrl = it.baseUrl?.stripAllWhitespace()?.takeIf(String::isNotEmpty)
+            )
+        }
         .filter { it.value.isNotEmpty() }
         .distinctBy { it.value },
     keySwitchStatusCodes = keySwitchStatusCodes.filter { it in 100..599 }.distinct(),

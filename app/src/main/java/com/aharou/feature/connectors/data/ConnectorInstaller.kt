@@ -31,7 +31,7 @@ class ConnectorInstaller @Inject constructor(
 
     /** 无鉴权：直接写一条只带 url 的配置。 */
     suspend fun installOpen(connector: Connector): McpServerEntry =
-        upsert(connector, McpServerConfig(name = connector.id, url = connector.url))
+        upsert(connector, McpServerConfig(name = connector.id, url = connector.url), clearOauth = true)
 
     /**
      * OAuth：写一条带空 oauth 块的配置，使 [com.aharou.feature.agent.domain.mcp.McpOAuthClient]
@@ -66,7 +66,26 @@ class ConnectorInstaller @Inject constructor(
                 )
             }
         }
-        return upsert(connector, config)
+        // 密钥形态与 OAuth 互斥：覆盖已有的 OAuth 配置时必须清掉旧块
+        return upsert(connector, config, clearOauth = true)
+    }
+
+    /**
+     * 设备码流拿到的令牌落库并写成请求头。
+     *
+     * 令牌存凭据库、配置里只留占位符，和密钥类连接器同一口径；
+     * 覆盖写入时清掉旧 oauth 块，否则连接仍会走 OAuth 分支报未授权。
+     */
+    suspend fun installDevice(connector: Connector, token: String): McpServerEntry {
+        vault.set(connector.vaultName, token.trim())
+        val header = connector.auth.header?.takeIf { it.isNotBlank() } ?: DEFAULT_HEADER
+        val prefix = connector.auth.prefix ?: "Bearer "
+        val config = McpServerConfig(
+            name = connector.id,
+            url = connector.url,
+            headers = mapOf(header to "$prefix{{vault:${connector.vaultName}}}")
+        )
+        return upsert(connector, config, clearOauth = true)
     }
 
     suspend fun setEnabled(name: String, enabled: Boolean, scope: McpScope) {
@@ -90,7 +109,17 @@ class ConnectorInstaller @Inject constructor(
      * 写入配置。已存在同 id 条目时保留用户设置（启停、禁用工具、已授权令牌），
      * 只补上本次新增的部分（如 OAuth 首次接入时的空 oauth 块）。
      */
-    private suspend fun upsert(connector: Connector, config: McpServerConfig): McpServerEntry {
+    /**
+     * 写入或覆盖一条连接器配置。
+     *
+     * [clearOauth] 用于「同一连接换了鉴权方式」：从 OAuth 改成密钥时，旧配置里的 oauth 块必须清掉，
+     * 否则连接仍会走 OAuth 分支并报「尚未完成授权」，用户填了新密钥也连不上。
+     */
+    private suspend fun upsert(
+        connector: Connector,
+        config: McpServerConfig,
+        clearOauth: Boolean = false
+    ): McpServerEntry {
         val scope = configRepository.findEntry(connector.id)?.scope ?: McpScope.GLOBAL
         val ordered = LinkedHashMap<String, McpServerConfig>()
         scopeServers(scope).forEach { ordered[it.name] = it }
@@ -101,7 +130,7 @@ class ConnectorInstaller @Inject constructor(
             config.copy(
                 enabled = prev.enabled,
                 disabledTools = prev.disabledTools,
-                oauth = prev.oauth ?: config.oauth
+                oauth = if (clearOauth) null else (config.oauth ?: prev.oauth)
             )
         }
         ordered[connector.id] = merged

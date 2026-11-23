@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -72,6 +71,8 @@ internal fun ExtensionEntryRow(
     onAction: () -> Unit,
     onUninstall: () -> Unit,
     onOpenOriginal: () -> Unit,
+    onExport: (() -> Unit)? = null,
+    exportBusy: Boolean = false,
 ) {
     val meta = remember(entry) {
         listOfNotNull(
@@ -138,34 +139,17 @@ internal fun ExtensionEntryRow(
             )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (busy) {
-                Text(
-                    text = stringResource(R.string.extension_busy),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.semanticColors.subtleText
-                )
-            } else if (entry.kind == ExtensionKind.PLUGIN) {
-                TextButton(onClick = onAction, enabled = !anyBusy) {
-                    Text(
-                        stringResource(
-                            if (entry.state == ExtensionState.RUNNING) R.string.extension_action_stop
-                            else R.string.extension_action_start
-                        )
-                    )
-                }
-            } else {
-                TextButton(onClick = onOpenOriginal) {
-                    Text(stringResource(R.string.extension_action_open))
-                }
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            if (entry.kind == ExtensionKind.PLUGIN) {
-                TextButton(onClick = onUninstall, enabled = !anyBusy) {
-                    Text(stringResource(R.string.extension_action_uninstall))
-                }
-            }
-        }
+        // 操作区单独成文件：导出与启停/卸载同排，行内只留一处调用，行数不再随按钮增加
+        ExtensionEntryActions(
+            entry = entry,
+            busy = busy,
+            anyBusy = anyBusy,
+            onAction = onAction,
+            onUninstall = onUninstall,
+            onOpenOriginal = onOpenOriginal,
+            onExport = onExport,
+            exportBusy = exportBusy,
+        )
     }
 }
 

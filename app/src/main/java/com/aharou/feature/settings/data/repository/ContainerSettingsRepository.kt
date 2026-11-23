@@ -2,6 +2,7 @@ package com.aharou.feature.settings.data.repository
 
 import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -12,6 +13,7 @@ import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.ContainerWorkspaceKeys
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -38,6 +40,22 @@ data class DownloadedImageRecord(
     val version: String = "",
     val installed: Boolean = false
 )
+
+/**
+ * PRoot 的 seccomp 处理方式。
+ *
+ * 陌生 ROM 上 proot 的 seccomp 加速可能翻译不了客户机 execve（表现为 `execve: Operation not
+ * permitted`），此时容器里一条命令都跑不起来，只能退回全量 ptrace（PROOT_NO_SECCOMP=1）。
+ * 但该变量在本设备触发过 `ptrace(PEEKDATA) I/O error`，所以默认绝不加：
+ * - [AUTO]：容器就绪时探测一次，只有默认模式失败且失败特征确实是 seccomp 相关才切兼容；
+ * - [FORCE_DEFAULT]：永远不加（加此功能前的行为）；
+ * - [COMPAT]：永远加（用户已确认自己的机器需要它）。
+ */
+enum class ProotSeccompMode {
+    AUTO,
+    FORCE_DEFAULT,
+    COMPAT,
+}
 
 /**
  * 持久化当前选中的容器 profile 与用户自定义 profile 列表。
@@ -96,9 +114,19 @@ class ContainerSettingsRepository @Inject constructor(
         val GRADLE_HEAP_MB_KEY = intPreferencesKey("gradle_heap_mb")
         /** 工作区路径 → profile id 的覆盖表（JSON 对象）；键已由 [ContainerWorkspaceKeys] 归一化。 */
         val WORKSPACE_PROFILES_KEY = stringPreferencesKey("workspace_profiles_json")
+        /** PRoot seccomp 兼容模式；无值时 AUTO。 */
+        val PROOT_SECCOMP_MODE_KEY = stringPreferencesKey("proot_seccomp_mode")
+        /** seccomp 探测结论缓存（JSON 对象：缓存键 → COMPAT / DEFAULT）。缓存键见 [seccompCacheKey]。 */
+        val PROOT_SECCOMP_VERDICTS_KEY = stringPreferencesKey("proot_seccomp_verdicts_json")
+
+        /** 系统指纹（ROM / OTA 一换就变）：seccomp 结论缓存按它失效，避免把旧 ROM 的结论带到新 ROM 上。 */
+        fun deviceFingerprint(): String =
+            "${Build.FINGERPRINT}|${Build.VERSION.SDK_INT}|${Build.VERSION.INCREMENTAL}"
+
         val downloadedImageSerializer = ListSerializer(DownloadedImageRecord.serializer())
         val profileSerializer = ListSerializer(ContainerProfile.serializer())
         val workspaceProfilesSerializer = MapSerializer(String.serializer(), String.serializer())
+        val seccompVerdictsSerializer = MapSerializer(String.serializer(), String.serializer())
         val json = Json { ignoreUnknownKeys = true }
     }
 
@@ -121,6 +149,64 @@ class ContainerSettingsRepository @Inject constructor(
     val defaultContainerIdFlow: Flow<String> = context.containerDataStore.data.map { prefs ->
         prefs[DEFAULT_CONTAINER_ID_KEY]?.takeIf { it.isNotBlank() } ?: ContainerProfile.BUILTIN_ID
     }
+
+    /** PRoot seccomp 模式；无值（含加此功能前的历史数据）时 [ProotSeccompMode.AUTO]。 */
+    val prootSeccompModeFlow: Flow<ProotSeccompMode> = context.containerDataStore.data.map { prefs ->
+        prefs[PROOT_SECCOMP_MODE_KEY]
+            ?.let { name -> ProotSeccompMode.entries.firstOrNull { it.name == name } }
+            ?: ProotSeccompMode.AUTO
+    }
+
+    suspend fun setProotSeccompMode(mode: ProotSeccompMode) {
+        context.containerDataStore.edit { it[PROOT_SECCOMP_MODE_KEY] = mode.name }
+    }
+
+    /** 探测结论的缓存键：profile + 发行版 + 系统指纹。换 ROM / OTA 后指纹变化，旧结论自然失效。 */
+    fun seccompCacheKey(profileId: String, distroId: String?): String =
+        "$profileId|${distroId?.takeIf { it.isNotBlank() } ?: "unknown"}|${deviceFingerprint()}"
+
+    /** 读缓存结论：null = 没探过；true = 用兼容模式；false = 保持默认。 */
+    suspend fun seccompVerdict(key: String): Boolean? {
+        val raw = context.containerDataStore.data.first()[PROOT_SECCOMP_VERDICTS_KEY] ?: return null
+        return decodeSeccompVerdicts(raw)[key]?.let { it == "COMPAT" }
+    }
+
+    /** 写入一条结论；顺带清掉其它系统指纹下的旧结论（与当前 ROM 无关，留着只会越积越多）。 */
+    suspend fun putSeccompVerdict(key: String, compat: Boolean) {
+        val suffix = "|${deviceFingerprint()}"
+        context.containerDataStore.edit { prefs ->
+            val kept = decodeSeccompVerdicts(prefs[PROOT_SECCOMP_VERDICTS_KEY])
+                .filterKeys { it.endsWith(suffix) }
+            prefs[PROOT_SECCOMP_VERDICTS_KEY] = json.encodeToString(
+                seccompVerdictsSerializer,
+                kept + (key to if (compat) "COMPAT" else "DEFAULT"),
+            )
+        }
+    }
+
+    /**
+     * 清掉某个容器已缓存的探测结论（用户在设置里切了 PRoot 兼容模式后调用，保证新模式立即生效）。
+     *
+     * 键的格式是「profileId|发行版|系统指纹」，所以按前缀匹配就能把该容器在各发行版下的条目都删掉；
+     * 另一容器的结论不动——那是「这台机器上那个容器能不能跑默认模式」的事实，与本次模式选择无关。
+     */
+    suspend fun clearSeccompVerdicts(profileId: String) {
+        val prefix = "$profileId|"
+        context.containerDataStore.edit { prefs ->
+            val kept = decodeSeccompVerdicts(prefs[PROOT_SECCOMP_VERDICTS_KEY])
+                .filterKeys { !it.startsWith(prefix) }
+            if (kept.isEmpty()) {
+                prefs.remove(PROOT_SECCOMP_VERDICTS_KEY)
+            } else {
+                prefs[PROOT_SECCOMP_VERDICTS_KEY] = json.encodeToString(seccompVerdictsSerializer, kept)
+            }
+        }
+    }
+
+    /** 解析结论缓存；历史 / 损坏数据回退空表（等同没探过，重新探测）。 */
+    private fun decodeSeccompVerdicts(raw: String?): Map<String, String> =
+        raw?.let { runCatching { json.decodeFromString(seccompVerdictsSerializer, it) }.getOrNull() }
+            ?: emptyMap()
 
     /** 用户自定义 profile 列表（不含内置）。解析失败回退空列表。 */
     val customProfilesFlow: Flow<List<ContainerProfile>> = context.containerDataStore.data.map { prefs ->
