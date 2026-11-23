@@ -150,6 +150,23 @@ class ConfigRemoteDeviceFields @Inject constructor(
 
         registry.register(
             ClosureField(
+                path = "remote.device.encrypt_channel",
+                displayName = "远程通道加密",
+                description = "与已配对设备之间的应用层加密（P-256 协商 + AES-256-GCM）。默认开启；关闭后一律明文、" +
+                    "不改写任何 server 自己的加密标记，重新打开即恢复。只对 Aharou 对端生效，第三方 MCP 客户端不受影响。",
+                valueSchema = ConfigSchema.Bool,
+                revertable = true,
+                reader = { ConfigValue.Bool(state().config.encryptChannel) },
+                writer = { v ->
+                    val flag = (v as? ConfigValue.Bool)?.value
+                        ?: throw ConfigError.TypeMismatch("boolean")
+                    runBlocking { controller.setEncryptChannel(flag) }
+                },
+            ),
+        )
+
+        registry.register(
+            ClosureField(
                 path = "remote.device.pair_code",
                 displayName = "配对码",
                 description = "念给对端的 6 位码（不做废，配对成功后自动换新）。读取时若还没有码会自动生成一枚；" +

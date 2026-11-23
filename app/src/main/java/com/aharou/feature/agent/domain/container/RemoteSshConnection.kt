@@ -5,9 +5,11 @@ import com.aharou.core.util.shellQuote
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.credentials.domain.model.GitCredential
 import com.aharou.feature.settings.data.repository.ExecutionMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,12 +36,18 @@ import javax.inject.Singleton
 private const val TAG = "RemoteSshConnection"
 
 /**
- * 共享的 SSH 连接管理器：持有两条独立的 sshj [SSHClient]——exec 通道供 [RemoteSshEngine] 执行命令，
- * SFTP 通道供 [RemoteSftpFileAccess] 读写文件。两者隔离，SFTP 的 Buffer 溢出不会拖垮命令通道。
+ * 并发 SFTP 通道上限。OpenSSH 默认 MaxSessions=10，还要留给 exec、终端与端口转发，取 4 足够
+ * 并行工具调用同时读写，又不会因为一次批量扫描就撞上服务器的会话上限。
+ */
+private const val SFTP_CHANNEL_LIMIT = 4
+
+/**
+ * 共享的 SSH 连接管理器：exec 用一条独立 sshj [SSHClient]（供 [RemoteSshEngine] 执行命令），
+ * SFTP 用另一条独立 transport，在其上按需开多条 SFTP 通道（见 [SftpChannelPool]）。两者隔离，
+ * SFTP 的 Buffer 溢出不会拖垮命令通道。
  *
- * 连接配置（host/port/username/auth）由调用方在 [connect] 时传入。连接断开后下次 [connect]
- * 重新建立；SFTP 通道按需惰性建立（见 [sftp]）。exec 侧操作串行化（[mutex]），SFTP 侧由
- * [RemoteSftpFileAccess] 串行化（sshj 的 SFTPClient 非线程安全）。
+ * 连接配置（host/port/username/auth）由调用方在 [connect] 时传入，断开后下次 [connect] 重建；
+ * SFTP 通道按需扩缩。exec 侧串行化（[mutex]），SFTP 侧由租约独占（[SFTPClient] 非线程安全）。
  */
 @Singleton
 class RemoteSshConnection @Inject constructor(
@@ -53,29 +61,85 @@ class RemoteSshConnection @Inject constructor(
     private var sshClient: SSHClient? = null
 
     /**
-     * 独立的 SFTP 通道：与 exec 各用一条 SSH transport。sshj 的 SFTP 有间歇性 Buffer 溢出
-     * （hierynomus/sshj#461），共用 transport 时崩溃会一并拖垮 Bash/终端；分开后只影响文件通道，
-     * 崩溃由 [invalidateSftp] + 下次 [sftp] 重建兜底。
+     * SFTP 专用 transport：与 exec 各用一条 SSH 连接。sshj 的 SFTP 有间歇性 Buffer 溢出
+     * （hierynomus/sshj#461），共用 transport 时崩溃会一并拖垮 Bash/终端；分开后只影响文件通道。
+     *
+     * 这条 transport 上按需开多条 SFTP 通道（每条自有独立 SFTPEngine），由 [SftpChannelPool] 以租约
+     * 分配，达到上限后排队。
      */
     @Volatile
     private var sftpSshClient: SSHClient? = null
 
-    @Volatile
-    private var sftpClient: SFTPClient? = null
-
     private val mutex = Mutex()
     private val sftpLock = Mutex()
-    private val sftpOperationMutex = Mutex()
+    private val sftpPool = SftpChannelPool(SFTP_CHANNEL_LIMIT) { createSftpChannel() }
 
-    // 切连接与文件操作共用此锁，避免身份校验后取到另一台服务器的通道。
-    suspend fun <T> withSftpOperation(
+    /**
+     * 借一条通道执行 [block]：借之前校验连接身份，正常返回、抛异常、协程取消都经 finally 归还。
+     * 写入不自动重试，避免重复提交。
+     */
+    internal suspend fun <T> withSftpOperation(
         expectedConfig: RemoteConnectionConfig? = null,
-        block: suspend () -> T
-    ): T = sftpOperationMutex.withLock {
+        block: suspend (SFTPClient) -> T
+    ): T {
         if (expectedConfig != null && config != expectedConfig) {
             throw java.io.IOException("SSH connection changed; rebind the workspace before accessing files")
         }
-        block()
+        val lease = acquireSftp()
+        try {
+            return block(lease.client)
+        } finally {
+            // 取消也要走到这里：漏还一条就少一个额度，攒够上限后所有文件操作永久排队
+            withContext(NonCancellable) { lease.release() }
+        }
+    }
+
+    /** 租一条通道；无空闲通道且已达上限时挂起等待归还。 */
+    internal suspend fun acquireSftp(): SftpLease {
+        val lease = sftpPool.acquire()
+        return SftpLease(lease.client) { lease.release() }
+    }
+
+    /** 通道租约：包住池的租约，供连接层与测试替身共用。 */
+    internal class SftpLease internal constructor(
+        internal val client: SFTPClient,
+        private val onRelease: suspend () -> Unit
+    ) {
+        internal suspend fun release() = onRelease()
+    }
+
+    /** 丢弃一条出问题的通道（传输层异常后调用），其余通道保持不变。 */
+    internal suspend fun invalidateSftpChannel(client: SFTPClient) = sftpPool.invalidate(client)
+
+    /** 建一条新通道：transport 由 [ensureSftpTransport] 惰性建立与自愈。 */
+    private suspend fun createSftpChannel(): SFTPClient =
+        withContext(Dispatchers.IO) { ensureSftpTransport().newSFTPClient() }
+
+    /** 取得可用的 SFTP transport（与 exec 隔离的第二条 SSH 连接），失效时重建并清空其上通道。 */
+    private suspend fun ensureSftpTransport(): SSHClient = sftpLock.withLock {
+        val cfg = config ?: throw IllegalStateException("SSH 未配置")
+        sftpSshClient?.takeIf { it.isConnected && it.isAuthenticated }?.let { return@withLock it }
+        // 先清空旧 transport 上的通道：它们绑在已失效的 engine 上，留着只会借出死通道
+        closeSftpTransport(failWaiters = false)
+        // 建连失败在这里翻译成友好文案：上层（工具/UI）直接展示，不必各自再翻一层
+        val client = withContext(Dispatchers.IO) {
+            try {
+                newSshClient(cfg)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                throw java.io.IOException(friendlySshError(e), e)
+            }
+        }
+        sftpSshClient = client
+        client
+    }
+
+    /** 关闭 SFTP transport 及其上所有通道。[failWaiters] 为真时让等待者报错，否则让其重试。 */
+    private suspend fun closeSftpTransport(failWaiters: Boolean) {
+        sftpPool.closeAll(failWaiters)
+        runCatching { sftpSshClient?.disconnect() }
+        sftpSshClient = null
     }
 
     /**
@@ -152,7 +216,7 @@ class RemoteSshConnection @Inject constructor(
     }
 
     suspend fun connect(config: RemoteConnectionConfig) = mutex.withLock {
-        sftpOperationMutex.withLock { connectInternal(config) }
+        connectInternal(config)
     }
 
     private suspend fun connectInternal(config: RemoteConnectionConfig) {
@@ -234,7 +298,7 @@ class RemoteSshConnection @Inject constructor(
             runCatching { onBeforeDisconnect?.invoke(this) }
                 .onFailure { FileLogger.w(TAG, "断开前回拉失败", it) }
         }
-        sftpOperationMutex.withLock { disconnectInternal() }
+        disconnectInternal()
     }
 
     /** 断开前的回调（由上层注册，用于回拉共享区等收尾动作）。 */
@@ -245,19 +309,12 @@ class RemoteSshConnection @Inject constructor(
         onBeforeDisconnect = block
     }
 
-    private fun disconnectInternal() {
-        closeSftpInternal()
+    private suspend fun disconnectInternal() {
+        // 断开即作废整个池：旧 transport 上的通道不能再借给下一次连接的身份
+        sftpLock.withLock { closeSftpTransport(failWaiters = true) }
         runCatching { sshClient?.disconnect() }
         sshClient = null
         _connectionState.value = ConnectionState.DISCONNECTED
-    }
-
-    /** 关闭并清空独立 SFTP 通道；下次 [sftp] 会按当前 config 重建。 */
-    private fun closeSftpInternal() {
-        runCatching { sftpClient?.close() }
-        runCatching { sftpSshClient?.disconnect() }
-        sftpClient = null
-        sftpSshClient = null
     }
 
     /**
@@ -348,10 +405,6 @@ class RemoteSshConnection @Inject constructor(
     }
 
     /**
-     * 获取独立的 SFTP client（惰性建立第二条 SSH 连接，与 exec 隔离）。调用方不应关闭它——
-     * 由 [disconnect] 统一管理。连接失效（未连接/未认证）时丢弃重建，覆盖 SFTP 通道崩溃后的自愈。
-     */
-    /**
      * 回拉远端共享区的小文件到本地（远端 → 本地的增量合并）。
      *
      * 只推不拉会让远程模式写的信丢掉：AI 在远端改了 `~/shared/inbox/x.md`，不回拉就永远
@@ -378,8 +431,7 @@ class RemoteSshConnection @Inject constructor(
                 )
                 val listing = cmd.inputStream.bufferedReader().readText()
                 cmd.join(); s.close()
-                withSftpOperation(snapshot.config) {
-                    val sftp = sftp()
+                withSftpOperation(snapshot.config) { sftp ->
                     var pulled = 0
                     listing.lineSequence().forEach { line ->
                         val parts = line.split('\t', limit = 2)
@@ -416,22 +468,6 @@ class RemoteSshConnection @Inject constructor(
             }.onFailure { FileLogger.w(TAG, "回拉远端共享区失败", it) }
         }
     }
-
-    suspend fun sftp(): SFTPClient = sftpLock.withLock {
-        val cfg = config ?: throw IllegalStateException("SSH 未配置")
-        sftpClient
-            ?.takeIf { sftpSshClient?.isConnected == true && sftpSshClient?.isAuthenticated == true }
-            ?.let { return@withLock it }
-        closeSftpInternal()
-        val client = withContext(Dispatchers.IO) { newSshClient(cfg) }
-        sftpSshClient = client
-        val sftp = withContext(Dispatchers.IO) { client.newSFTPClient() }
-        sftpClient = sftp
-        sftp
-    }
-
-    /** 丢弃当前 SFTP 通道（通道异常后调用），下次 [sftp] 会重建。 */
-    suspend fun invalidateSftp() = sftpLock.withLock { closeSftpInternal() }
 
     /** 若已配置但未连接，立即尝试重连一次。返回是否最终连通。供 App 回到前台时主动触发。 */
     suspend fun tryReconnectIfDisconnected(): Boolean {

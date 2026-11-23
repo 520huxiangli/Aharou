@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.ui.ImageViewerHost
+import com.aharou.core.ui.LocalInlineTagRegistry
 import com.aharou.core.ui.LocalImageViewer
 import com.aharou.core.ui.readableContentMaxWidth
 import com.aharou.core.util.FileLogger
@@ -321,6 +322,7 @@ fun AIChatPanel(
     }
     // 外部分享进来的文件（ACTION_SEND）：MainActivity 已拷进工作区，这里并入附件列表。
     val appContext = LocalContext.current.applicationContext
+    val inlineTagRegistry = rememberChatInlineTagRegistry()
     val sharedIntakeHolder = remember(appContext) {
         EntryPointAccessors.fromApplication(appContext, SharedIntakeEntryPoint::class.java)
             .sharedIntakeHolder()
@@ -1192,7 +1194,8 @@ fun AIChatPanel(
         LocalMarkdownImageTransformer provides markdownImageTransformer,
         LocalImageViewer provides imageViewerState,
         LocalAttachmentOpener provides attachmentOpener,
-        LocalSubAgentCardBridge provides viewModel.subAgentCardBridge
+        LocalSubAgentCardBridge provides viewModel.subAgentCardBridge,
+        LocalInlineTagRegistry provides inlineTagRegistry
     ) {
         Scaffold(
         containerColor = androidx.compose.ui.graphics.Color.Transparent,

@@ -20,6 +20,45 @@ import java.io.IOException
 import java.util.concurrent.atomic.AtomicLong
 
 /**
+ * 一条应用层加密请求帧：正文（`nonce || ciphertext`）加上它需要的额外头（会话 id、加密标记）。
+ */
+class McpEnvelope(val body: ByteArray, val headers: Map<String, String>)
+
+/**
+ * 应用层加密通道。由远端设备模块实现，传输层只在这几处调用它。
+ *
+ * 语义是「要么真的加密，要么报错」：传输层只在配置明确要求加密（`encrypted=true`）时才拿到
+ * 通道实例，拿到之后任何一步失败都以 [McpException] 上抛，**不会**静默退回明文——
+ * 否则同网段中间人每次重连都能把加密剥掉而用户无感。
+ */
+interface McpEncryption {
+    /** 建会话（懒握手）；失败抛 [McpException]，消息会被写进连接状态供用户诊断。 */
+    suspend fun prepare()
+
+    /** 把明文请求体封成一帧。 */
+    fun seal(plain: ByteArray): McpEnvelope
+
+    /** 解开一帧响应；失败抛 [McpException]。 */
+    fun open(frame: ByteArray): ByteArray
+
+    /** 丢掉当前会话，下一次 [prepare] 重新握手（对端回收会话 / 计数器错位后重新上台）。 */
+    fun reset()
+}
+
+/**
+ * 按对端端点与长期凭据造一条加密通道；返回 null 表示该 server 不加密。
+ */
+interface McpEncryptionFactory {
+    /**
+     * 用户总开关：false 时所有 server 一律明文（包括 `encrypted=true` 的），且**不算**配置错误。
+     * 不缓存：开关关闭后新连接应该立刻按新值走，不要求重启进程。
+     */
+    suspend fun allowed(): Boolean
+
+    fun create(endpoint: String, token: String?): McpEncryption?
+}
+
+/**
  * MCP「Streamable HTTP」传输实现。
  *
  * 单一端点 POST JSON-RPC；server 可回 `application/json`（单条响应）或
@@ -35,12 +74,18 @@ class StreamableHttpTransport(
     private val extraHeaders: Map<String, String> = emptyMap(),
     /** OAuth 令牌提供者；非空时每条请求带 `Authorization: Bearer`，401 时强制刷新一次并重试。 */
     private val authProvider: McpBearerProvider? = null,
-    private val json: Json = DEFAULT_JSON
+    private val json: Json = DEFAULT_JSON,
+    /** 应用层加密通道；null 时整条传输的行为与加入加密前完全一致。 */
+    private val encryption: McpEncryption? = null
 ) : McpTransport {
 
     private companion object {
         const val TAG = "McpHttpTransport"
         val JSON_MEDIA = "application/json".toMediaType()
+        val BINARY_MEDIA = "application/octet-stream".toMediaType()
+
+        /** 响应头：服务端用它标明正文是加密帧；缺席 = 明文（老服务端或不认会话）。 */
+        const val ENC_RESPONSE_HEADER = "X-Aharou-Enc"
 
         /** SSE 事件读取上限：超出仍未等到匹配 id 的事件就当作没有响应，避免 server 持续推事件时死循环。 */
         const val MAX_SSE_EVENTS = 100
@@ -74,8 +119,15 @@ class StreamableHttpTransport(
     private suspend fun sendWithAuth(bodyJson: String, id: Long, method: String): JsonRpcResponse {
         var bearer = authProvider?.accessToken()
         var refreshed = false
+        // 配了加密的 server 必须先握手成功：这一步失败就直接报错（见 McpEncryption 的说明）。
+        val channel = encryption
+        channel?.prepare()
+        // 对端回收了会话（空闲超时 / 重启）时重握手一次再发同一条请求：服务端在解密前就拒了，
+        // 不会重复执行动作；只重试一次，避免死循环。
+        var rehandshaked = false
         while (true) {
-            val resp = awaitCall(client.newCall(buildRequest(bodyJson, bearer)))
+            val envelope = channel?.seal(bodyJson.toByteArray(Charsets.UTF_8))
+            val resp = awaitCall(client.newCall(buildRequest(bodyJson, bearer, envelope)))
             try {
                 resp.header("Mcp-Session-Id")?.let { if (it.isNotBlank()) sessionId = it }
 
@@ -84,6 +136,30 @@ class StreamableHttpTransport(
                     bearer = authProvider.refreshAfterUnauthorized()
                     continue
                 }
+
+                if (channel != null && envelope != null) {
+                    // 要求加密的连接只接受加密响应：对端没带标记说明它没认这条会话（或根本不支持），
+                    // 这时退回明文等于给中间人一次剥加密的机会，所以要么重握手，要么报错。
+                    if (resp.header(ENC_RESPONSE_HEADER) == null) {
+                        if (resp.code == 400 && !rehandshaked) {
+                            rehandshaked = true
+                            FileLogger.w(TAG, "对端不认加密会话（HTTP 400），重新握手后重试: $method")
+                            channel.reset()
+                            channel.prepare()
+                            continue
+                        }
+                        throw McpException(
+                            message = "对端未按应用层加密响应（HTTP ${resp.code}）：" +
+                                "这条 server 要求加密，已拒绝本次调用"
+                        )
+                    }
+                    if (!resp.isSuccessful) {
+                        throw McpException(message = "HTTP ${resp.code} 调用 $method 失败: ${resp.message}")
+                    }
+                    val frame = resp.body?.bytes() ?: throw McpException(message = "$method 响应体为空")
+                    return parseAndValidate(String(channel.open(frame), Charsets.UTF_8), id, method)
+                }
+
                 if (!resp.isSuccessful) {
                     throw McpException(message = "HTTP ${resp.code} 调用 $method 失败: ${resp.message}")
                 }
@@ -108,7 +184,12 @@ class StreamableHttpTransport(
         val bodyJson = json.encodeToString(JsonRpcNotification.serializer(), payload)
         FileLogger.d(TAG, "→ notify [$method]")
         val bearer = authProvider?.accessToken()
-        awaitCall(client.newCall(buildRequest(bodyJson, bearer))).use { resp ->
+        val envelope = encryption?.seal(bodyJson.toByteArray(Charsets.UTF_8))
+        awaitCall(client.newCall(buildRequest(bodyJson, bearer, envelope))).use { resp ->
+            if (envelope != null && resp.header(ENC_RESPONSE_HEADER) == null) {
+                // 通知没有回退价值，但也不静默：这条 server 要求加密，对端却没认，得在日志里留住原因。
+                FileLogger.w(TAG, "通知 $method 未被对端按加密接收（HTTP ${resp.code}）")
+            }
             // 通知按 spec 服务端通常返回 202 且无 body；非 2xx 仅记日志，不阻断流程。
             if (!resp.isSuccessful) {
                 FileLogger.w(TAG, "通知 $method 返回 HTTP ${resp.code}")
@@ -142,25 +223,31 @@ class StreamableHttpTransport(
         })
     }
 
-    private fun buildRequest(bodyJson: String, bearer: String? = null): Request {
+    private fun buildRequest(bodyJson: String, bearer: String? = null, envelope: McpEnvelope? = null): Request {
         val headers = Headers.Builder().apply {
-            add("Content-Type", "application/json")
+            // 加密帧是二进制，Content-Type 必须跟着换；明文分支保持原样。
+            add("Content-Type", if (envelope != null) "application/octet-stream" else "application/json")
             // 同时接受两种响应，让 server 自行决定单条 JSON 还是 SSE。
             add("Accept", "application/json, text/event-stream")
             sessionId?.let { add("Mcp-Session-Id", it) }
             // OAuth Bearer 优先；此时配置里同名的静态 Authorization 头不再重复添加。
-            bearer?.let { if (it.isNotBlank()) add("Authorization", "Bearer $it") }
+            if (envelope == null) {
+                bearer?.let { if (it.isNotBlank()) add("Authorization", "Bearer $it") }
+            }
             // 名称为空的 header 会被 OkHttp 拒绝（name is empty）并整条连接失败，配置里常见的空行不该拖垮连接。
             extraHeaders.forEach { (k, v) ->
                 val isDuplicateAuth = bearer != null && k.equals("Authorization", ignoreCase = true)
-                if (k.isNotBlank() && !isDuplicateAuth) add(k, v)
+                // 加密请求不带 Authorization：token 由通道封进密文体内，留在头上等于白加密。
+                val isSealedAuth = envelope != null && k.equals("Authorization", ignoreCase = true)
+                if (k.isNotBlank() && !isDuplicateAuth && !isSealedAuth) add(k, v)
             }
+            envelope?.headers?.forEach { (k, v) -> if (k.isNotBlank()) add(k, v) }
         }.build()
 
         return Request.Builder()
             .url(endpoint)
             .headers(headers)
-            .post(bodyJson.toRequestBody(JSON_MEDIA))
+            .post(envelope?.body?.toRequestBody(BINARY_MEDIA) ?: bodyJson.toRequestBody(JSON_MEDIA))
             .build()
     }
 

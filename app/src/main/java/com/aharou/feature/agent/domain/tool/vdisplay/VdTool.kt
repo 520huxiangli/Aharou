@@ -27,9 +27,13 @@ import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.vdisplay.VdController
 import com.aharou.feature.agent.domain.vdisplay.VdInfo
+import com.aharou.feature.agent.domain.workflow.AgentWorkflow
+import dagger.Lazy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -52,11 +56,17 @@ class VdTool @Inject constructor(
     private val hostShell: HostShellManager,
     private val mobileOperator: MobileOperator,
     private val mobileTraceStore: MobileTraceStore,
+    // Lazy 断环：AgentWorkflow 的实现依赖 ToolRegistry，而 ToolRegistry 依赖本工具；
+    // 真要拿工作流也只在 tap_target 执行时才用，构造期不需要实例化它。
+    private val agentWorkflow: Lazy<AgentWorkflow>,
 ) : AgentTool(), MobileHand {
     private companion object {
         const val TAG = "VdTool"
         const val MAX_IMAGE_EDGE = 1440
         const val JPEG_QUALITY = 75
+
+        /** 动作后等这么久再取后帧：给界面一个开始过渡的机会，又不把单步操作拖成秒级。 */
+        const val RECEIPT_SETTLE_MS = 500L
 
         /** 子代理每看一屏附带的控件上限：再多会把每一步的提示撑大，模型也读不过来。 */
         const val MAX_OBSERVE_NODES = 80
@@ -64,6 +74,9 @@ class VdTool @Inject constructor(
         /** 有「手指下是什么」这回事、需要 label 的动作：语义风控只看这几个。 */
         val LABEL_ACTIONS = setOf("tap", "type")
     }
+
+    /** 同一位置反复点的守卫；按位置分桶，换屏时清空（同一坐标在新界面上是另一个元素）。 */
+    private val tapGuard = VdTapGuard()
 
     override val name = "vscreen"
 
@@ -73,7 +86,12 @@ class VdTool @Inject constructor(
             "action=start 创建（可选 width/height/dpi）；status 查询；stop 停止；launch 启动应用（component=\"包名/Activity\" 或仅包名）；" +
             "shot 截图（图片随结果返回，图上带坐标网格；传 ocr=true 则改回文字、传 grid=false 关闭网格）；" +
             "nodes 列出屏上控件（文字、类型、中心点像素坐标），比对着截图估坐标准；" +
+            "zoom 放大看一块区域（给 x/y/w/h 像素或 nx/ny/nw/nh 归一化，四种一组；可选 scale 限定最大放大倍数），" +
+            "图上画准星与边框、不叠整屏网格，返回区域在屏幕像素里的边界；小按钮看不清时先用它；" +
             "tap / swipe / key 触控，tap 可以不给 x/y、改传 target=控件上的文字，按控件实际位置点；" +
+            "tap_target 按描述找元素并点下去（target=界面元素的描述，如「红色的删除按钮」）：先让模型看图定位再换算成像素，" +
+            "图标与无文字按钮都能找，比对着缩小截图估坐标准；" +
+            "单步 tap / swipe / tap_target 的结果带 tap_delivered（swipe 为 swipe_delivered）、screen_changed（true / false / \"unknown\"）与 note，用它们判断动作有没有生效；" +
             "type 往焦点输入框输文字（text=内容，可选 submit=true 回车，支持中文；优先直接写进输入框，不弹键盘、不动用户剪贴板）。" +
             "task 把「看屏→决策→动作→再看屏」的多步循环交给手机操作子代理：goal 是要完成的事，一次调用返回一个结果（不逐步吃上下文）；" +
             "子代理内部的动作坐标是 0..1000 归一化值（换分辨率不失效），与本工具 tap/swipe 用的像素坐标不是一套，不要把两者混用；" +
@@ -86,8 +104,8 @@ class VdTool @Inject constructor(
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
             "action", ParameterType.STRING,
-            "操作：start / status / stop / launch / shot / nodes / tap / swipe / key / type / task / trace", true,
-            enum = listOf("start", "status", "stop", "launch", "shot", "nodes", "tap", "swipe", "key", "type", "task", "trace"),
+            "操作：start / status / stop / launch / shot / zoom / nodes / tap / tap_target / swipe / key / type / task / trace", true,
+            enum = listOf("start", "status", "stop", "launch", "shot", "zoom", "nodes", "tap", "tap_target", "swipe", "key", "type", "task", "trace"),
         ),
         "width" to ToolParameter("width", ParameterType.INTEGER, "start 专用：宽（默认 1080）", false),
         "height" to ToolParameter("height", ParameterType.INTEGER, "start 专用：高（默认 1920）", false),
@@ -97,7 +115,22 @@ class VdTool @Inject constructor(
         "y" to ToolParameter("y", ParameterType.INTEGER, "tap/swipe 起点 Y（像素，直接读图上网格数字）", false),
         "target" to ToolParameter(
             "target", ParameterType.STRING,
-            "tap 专用：要点的控件上的文字（先完全相等、再包含），给了就不用 x/y。屏上读不到控件时会报错，改用 x/y。",
+            "tap / tap_target 专用：tap 时是要点的控件上的文字（先完全相等、再包含），给了就不用 x/y；" +
+                "tap_target 时是要找的界面元素的描述（文字、颜色、图标都可以）。",
+            false,
+        ),
+        "nx" to ToolParameter("nx", ParameterType.INTEGER, "zoom 专用：区域左上的归一化 X（0-1000，相对屏宽）", false),
+        "ny" to ToolParameter("ny", ParameterType.INTEGER, "zoom 专用：区域左上的归一化 Y（0-1000，相对屏高）", false),
+        "nw" to ToolParameter("nw", ParameterType.INTEGER, "zoom 专用：区域宽（0-1000 归一化，与 nx/ny/nh 一组）", false),
+        "nh" to ToolParameter("nh", ParameterType.INTEGER, "zoom 专用：区域高（0-1000 归一化，与 nx/ny/nw 一组）", false),
+        "scale" to ToolParameter(
+            "scale", ParameterType.INTEGER,
+            "zoom 专用：放大倍数上限（可选；不给则只受长边 1440 限制）",
+            false,
+        ),
+        "note" to ToolParameter(
+            "note", ParameterType.STRING,
+            "tap_target 专用：可选的补充说明（如「这是右侧卡片上的按钮」），帮模型区分同名元素。",
             false,
         ),
         "x2" to ToolParameter("x2", ParameterType.INTEGER, "swipe 终点 X", false),
@@ -212,12 +245,16 @@ class VdTool @Inject constructor(
         )
     }
 
-    /** 不带会话上下文的执行（工具调用链统一走 [executeWithContext]，这里只为兼容签名）。 */
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult = executeInternal(args, null)
+    /**
+     * 不带会话上下文的执行。只有 [MobileHand.act]（多步任务子代理的每一步）走这里：
+     * 子代理自己有「动作后等界面静默」的轮询，不需要也不该再叠加本工具的单步回执。
+     */
+    override suspend fun execute(args: Map<String, JsonElement>): ToolResult =
+        executeInternal(args, null, withReceipt = false)
 
-    /** 带会话上下文：task 动作需要 sessionId（模型解析）。 */
+    /** 带会话上下文（工具调用链的路径）：单步动作带屏幕变化回执。 */
     override suspend fun executeWithContext(args: Map<String, JsonElement>, context: AgentContext): ToolResult =
-        executeInternal(args, context.sessionId)
+        executeInternal(args, context.sessionId, withReceipt = true)
 
     // ------------------------------------------------------------------ MobileHand
 
@@ -297,9 +334,16 @@ class VdTool @Inject constructor(
         }
     }
 
-    private suspend fun executeInternal(args: Map<String, JsonElement>, sessionId: String?): ToolResult {
+    private suspend fun executeInternal(
+        args: Map<String, JsonElement>,
+        sessionId: String?,
+        withReceipt: Boolean,
+    ): ToolResult {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()
-            ?: return ToolResult.Error("缺少 action（start / status / stop / launch / shot / nodes / tap / swipe / key / type / task / trace）", "MISSING_ACTION")
+            ?: return ToolResult.Error(
+                "缺少 action（start / status / stop / launch / shot / zoom / nodes / tap / tap_target / swipe / key / type / task / trace）",
+                "MISSING_ACTION",
+            )
         return try {
             when (action) {
                 "task" -> runMobileTask(args, sessionId)
@@ -310,6 +354,7 @@ class VdTool @Inject constructor(
                     val h = args["height"]?.jsonPrimitive?.intOrNull ?: VdController.DEFAULT_HEIGHT
                     val dpi = args["dpi"]?.jsonPrimitive?.intOrNull ?: VdController.DEFAULT_DPI
                     val info = vdController.start(w, h, dpi)
+                    tapGuard.reset()
                     ToolResult.Success(infoJson(info, "影子屏已就绪"))
                 }
 
@@ -324,6 +369,7 @@ class VdTool @Inject constructor(
 
                 "stop" -> {
                     vdController.stop()
+                    tapGuard.reset()
                     ToolResult.Success(
                         buildJsonObject {
                             put("running", false)
@@ -338,6 +384,7 @@ class VdTool @Inject constructor(
                         return ToolResult.Error("launch 需要 component（\"pkg/act\" 或 \"pkg\"）", "MISSING_COMPONENT")
                     }
                     val info = vdController.launch(component)
+                    tapGuard.reset()
                     ToolResult.Success(infoJson(info, "已在影子屏启动 $component"))
                 }
 
@@ -371,6 +418,8 @@ class VdTool @Inject constructor(
                     }
                 }
 
+                "zoom" -> zoomRegion(args)
+
                 "nodes" -> {
                     val list = vdController.nodes()
                     ToolResult.Success(
@@ -389,15 +438,32 @@ class VdTool @Inject constructor(
                 "tap" -> {
                     val target = args["target"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
                     if (target != null) {
+                        // 按文字点不进位置守卫：重复点同一个确认按钮是正常操作。
+                        val before = if (withReceipt) currentSignature() else null
                         val hit = vdController.tapByText(target)
-                        return ToolResult.Success(buildJsonObject { put("message", "已点「${hit.render()}」") })
+                        val message = "已点「${hit.render()}」"
+                        return if (withReceipt) {
+                            receiptSuccess(message, before, deliveredKey = "tap_delivered")
+                        } else {
+                            ToolResult.Success(buildJsonObject { put("message", message) })
+                        }
                     }
                     val x = args["x"]?.jsonPrimitive?.intOrNull
                     val y = args["y"]?.jsonPrimitive?.intOrNull
                     if (x == null || y == null) return ToolResult.Error("tap 需要 x / y，或给 target（控件上的文字）", "MISSING_ARGS")
+                    if (!tapGuard.allow(x, y)) {
+                        return ToolResult.Error(VdTapGuard.REJECT_MESSAGE, "TAP_REPEAT_GUARD")
+                    }
+                    val before = if (withReceipt) currentSignature() else null
                     vdController.tap(x, y)
-                    ToolResult.Success(buildJsonObject { put("message", "已点击 ($x, $y)") })
+                    if (withReceipt) {
+                        receiptSuccess("已点击 ($x, $y)", before, deliveredKey = "tap_delivered")
+                    } else {
+                        ToolResult.Success(buildJsonObject { put("message", "已点击 ($x, $y)") })
+                    }
                 }
+
+                "tap_target" -> tapTarget(args, sessionId, withReceipt)
 
                 "swipe" -> {
                     val x = args["x"]?.jsonPrimitive?.intOrNull
@@ -408,8 +474,15 @@ class VdTool @Inject constructor(
                         return ToolResult.Error("swipe 需要 x / y / x2 / y2", "MISSING_ARGS")
                     }
                     val duration = args["duration"]?.jsonPrimitive?.intOrNull ?: 300
+                    // 长列表重复滑是合法操作，swipe 不进位置守卫。
+                    val before = if (withReceipt) currentSignature() else null
                     vdController.swipe(x, y, x2, y2, duration)
-                    ToolResult.Success(buildJsonObject { put("message", "已滑动 ($x,$y) → ($x2,$y2)") })
+                    val message = "已滑动 ($x,$y) → ($x2,$y2)"
+                    if (withReceipt) {
+                        receiptSuccess(message, before, deliveredKey = "swipe_delivered")
+                    } else {
+                        ToolResult.Success(buildJsonObject { put("message", message) })
+                    }
                 }
 
                 "key" -> {
@@ -439,6 +512,193 @@ class VdTool @Inject constructor(
             FileLogger.e(TAG, "vscreen 执行失败：$action", e)
             ToolResult.Error("影子屏操作失败：${e.message}")
         }
+    }
+
+    // ------------------------------------------------------------------ 单步回执
+
+    /** 动作前后的画面签名。取不到就返回 null（回执记 unknown），不把截图失败变成动作失败。 */
+    private suspend fun currentSignature(): IntArray? = try {
+        VdScreenDelta.signature(vdController.screenshot().second)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        FileLogger.i(TAG, "取动作前后的画面签名失败：${e.message}")
+        null
+    }
+
+    /**
+     * 动作成功后的回执：先等 [RECEIPT_SETTLE_MS] 再取后帧，与 [before] 比一次。
+     * 三态由 [VdScreenDelta.Receipt] 给出——拿不到帧就是 unknown，不能报 false 骗模型。
+     */
+    private suspend fun receiptSuccess(
+        message: String,
+        before: IntArray?,
+        deliveredKey: String,
+        extras: JsonObjectBuilder.() -> Unit = {},
+    ): ToolResult {
+        delay(RECEIPT_SETTLE_MS)
+        val receipt = VdScreenDelta.receipt(before, currentSignature())
+        return ToolResult.Success(
+            buildJsonObject {
+                put("message", message)
+                put(deliveredKey, true)
+                put(
+                    "screen_changed",
+                    when (receipt.changed) {
+                        true -> JsonPrimitive(true)
+                        false -> JsonPrimitive(false)
+                        null -> JsonPrimitive("unknown")
+                    },
+                )
+                put("note", receipt.note)
+                extras()
+            }
+        )
+    }
+
+    /** zoom：裁一块区域放大并画准星，让模型看清小控件再给坐标。 */
+    private suspend fun zoomRegion(args: Map<String, JsonElement>): ToolResult {
+        val (_, file) = vdController.screenshot()
+        val src = BitmapFactory.decodeFile(file.absolutePath)
+            ?: return ToolResult.Error("zoom 失败：截图解码失败，先用 shot 确认影子屏在出图", "SHOT_FAILED")
+        try {
+            return when (val resolved = VdAim.resolve(args, src.width, src.height)) {
+                VdAim.Resolve.None -> ToolResult.Error(
+                    "zoom 需要一组区域：x/y/w/h（像素）或 nx/ny/nw/nh（0-1000 归一化），四种要么都给要么都不给",
+                    "MISSING_ARGS",
+                )
+
+                is VdAim.Resolve.Fail -> ToolResult.Error(resolved.message, "INVALID_REGION")
+
+                is VdAim.Resolve.Ok -> {
+                    val region = resolved.region
+                    val zoomed = VdAim.render(src, region, args["scale"]?.jsonPrimitive?.intOrNull, MAX_IMAGE_EDGE)
+                    try {
+                        ToolResult.Success(
+                            buildJsonObject {
+                                put(
+                                    "message",
+                                    "已放大区域 (${region.left},${region.top})-(${region.right},${region.bottom})：" +
+                                        "区域 ${region.width}×${region.height} → 放大图 ${zoomed.width}×${zoomed.height}，图中央有准星",
+                                )
+                                put("left", region.left)
+                                put("top", region.top)
+                                put("right", region.right)
+                                put("bottom", region.bottom)
+                                put("regionWidth", region.width)
+                                put("regionHeight", region.height)
+                                put("imageWidth", zoomed.width)
+                                put("imageHeight", zoomed.height)
+                                put("scale", zoomed.width.toFloat() / region.width)
+                                put(
+                                    "coordinateHint",
+                                    "放大图里给的坐标请按 (缩放后的位置 × 区域宽 ÷ 放大图宽) 换算回屏幕，或者直接用你看到的位置比例；" +
+                                        "换算后再加上区域左上角 (${region.left}, ${region.top}) 就是 tap 用的屏幕坐标" +
+                                        "（屏幕 ${src.width}×${src.height}）。",
+                                )
+                            },
+                            listOf(AgentImage(mimeType = "image/jpeg", base64Data = encodeJpeg(zoomed.image))),
+                        )
+                    } finally {
+                        zoomed.image.recycle()
+                    }
+                }
+            }
+        } finally {
+            src.recycle()
+        }
+    }
+
+    /**
+     * tap_target：截图 → 让模型按描述定位（带图一次性调用）→ 归一化坐标换算成像素 → 点下去。
+     * 任何一步失败都明确报错并且**不点**，不抛异常、也不退化成「点个大概位置」。
+     */
+    private suspend fun tapTarget(
+        args: Map<String, JsonElement>,
+        sessionId: String?,
+        withReceipt: Boolean,
+    ): ToolResult {
+        val target = args["target"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (target.isEmpty()) {
+            return ToolResult.Error("tap_target 需要 target（要找的界面元素的描述）", "MISSING_ARGS")
+        }
+        val (_, file) = vdController.screenshot()
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            ?: return ToolResult.Error("tap_target 失败：截图解码失败，先用 shot 确认影子屏在出图", "SHOT_FAILED")
+        val shot = try {
+            encodeScreenshot(bitmap, withGrid = false)
+        } finally {
+            bitmap.recycle()
+        }
+        if (shot.base64.isEmpty() || shot.inputWidth <= 0 || shot.inputHeight <= 0) {
+            return ToolResult.Error("tap_target 失败：当前屏幕画面为空，无法定位", "SHOT_FAILED")
+        }
+        // 发给模型的就是动作前那一帧，回执直接拿它的签名当 before，省一次截图。
+        val before = if (withReceipt) VdScreenDelta.signature(file) else null
+        val raw = try {
+            agentWorkflow.get().completeOnceWithImage(
+                systemPrompt = VdTapTarget.SYSTEM_PROMPT,
+                userText = VdTapTarget.prompt(target, args["note"]?.jsonPrimitive?.contentOrNull),
+                images = listOf(AgentImage(mimeType = "image/jpeg", base64Data = shot.base64)),
+                sessionId = sessionId,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FileLogger.w(TAG, "tap_target 定位调用失败：${e.message}")
+            null
+        }
+        if (raw.isNullOrBlank()) {
+            return ToolResult.Error(
+                "tap_target 失败：调用模型看图定位「$target」没有拿到结果（未配置可用供应商、超时或请求出错），本次没有点击",
+                "TAP_TARGET_LLM_FAILED",
+            )
+        }
+        val answer = VdTapTarget.parse(raw)
+        val point = answer.point
+        if (point == null) {
+            if (answer.none) {
+                return ToolResult.Success(
+                    buildJsonObject {
+                        put("found", false)
+                        put("message", "没在屏幕上找到「$target」，本次没有点击")
+                        answer.seen?.let { put("seen", it) }
+                    }
+                )
+            }
+            return ToolResult.Error(
+                "tap_target 失败：${answer.error ?: "解析不出坐标"}，本次没有点击。模型原文：${raw.take(300)}",
+                "TAP_TARGET_PARSE_FAILED",
+            )
+        }
+        val (px, py) = VdTapTarget.toPixels(point, shot.inputWidth, shot.inputHeight)
+        if (!tapGuard.allow(px, py)) {
+            return ToolResult.Error(VdTapGuard.REJECT_MESSAGE, "TAP_REPEAT_GUARD")
+        }
+        try {
+            vdController.tap(px, py)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return ToolResult.Error("tap_target 失败：点击 ($px, $py) 时出错：${e.message}", "TAP_FAILED")
+        }
+        val seen = answer.seen ?: target
+        val message = "已点击「$seen」（描述：$target）@ ($px, $py)"
+        val fields: JsonObjectBuilder.() -> Unit = {
+            put("found", true)
+            put("seen", seen)
+            put("point", buildJsonObject { put("x", point.x); put("y", point.y) })
+            put("pixel", buildJsonObject { put("x", px); put("y", py) })
+        }
+        if (!withReceipt) {
+            return ToolResult.Success(
+                buildJsonObject {
+                    put("message", message)
+                    fields()
+                }
+            )
+        }
+        return receiptSuccess(message, before, deliveredKey = "tap_delivered", extras = fields)
     }
 
     /** task 动作：把目标交给手机操作子代理（一次调用一个结果）。 */
@@ -589,16 +849,21 @@ class VdTool @Inject constructor(
         }
         val scale = scaled.width.toFloat() / inputW
         val annotated = if (withGrid && inputW > 0 && inputH > 0) drawGrid(scaled, inputW, inputH, scale) else scaled
-        val bos = ByteArrayOutputStream()
-        annotated.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
         return ShotImage(
-            base64 = Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP),
+            base64 = encodeJpeg(annotated),
             imageWidth = annotated.width,
             imageHeight = annotated.height,
             inputWidth = inputW,
             inputHeight = inputH,
             scale = scale,
         )
+    }
+
+    /** Bitmap → JPEG base64（质量沿用 [JPEG_QUALITY]）；shot / zoom 共用这一处，不另设魔数。 */
+    private fun encodeJpeg(bitmap: Bitmap): String {
+        val bos = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, bos)
+        return Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
     }
 
     /** 在缩略图上叠坐标网格：细线半透明不盖内容，顶部信息条给出缩放比与尺寸。 */

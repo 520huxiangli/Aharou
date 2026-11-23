@@ -64,7 +64,15 @@ data class RemoteDeviceConfig(
      * 打开等于本机用户明确表态「这些设备可以问」，本机 AI 才有依据回答；否则一律按不可信输入挡回。
      * 它放宽的只是「能不能问」，不是「能不能动手」——改文件、跑命令照样走原有审批。
      */
-    val allowRemoteAskAi: Boolean = true
+    val allowRemoteAskAi: Boolean = true,
+
+    /**
+     * 是否允许与已配对设备之间建立应用层加密通道（本机作客户端与服务端两个方向都管）。
+     *
+     * 默认开：加密是安全默认，开就是现有行为；关掉只是逃生口，关掉后一律明文、不报错、不改任何
+     * server 自己的 `encrypted` 标记（那是用户/配对留下的意图，重新打开要能恢复）。
+     */
+    val encryptChannel: Boolean = true
 ) {
     companion object {
         /** 正式包的默认端口：避开 debug 变体内置 MCP server 的 47821。 */
@@ -94,6 +102,7 @@ class RemoteDeviceSettings @Inject constructor(
         val ALLOW_PUBLIC = booleanPreferencesKey("remote_device_allow_public")
         val AUTO_PAIR_BACK = booleanPreferencesKey("remote_device_auto_pair_back")
         val ALLOW_REMOTE_ASK_AI = booleanPreferencesKey("remote_device_allow_ask_ai")
+        val ENCRYPT_CHANNEL = booleanPreferencesKey("remote_device_encrypt_channel")
     }
 
     /**
@@ -115,7 +124,8 @@ class RemoteDeviceSettings @Inject constructor(
             alwaysAskRemote = prefs[ALWAYS_ASK] ?: false,
             allowPublicPeer = prefs[ALLOW_PUBLIC] ?: true,
             autoPairBack = prefs[AUTO_PAIR_BACK] ?: true,
-            allowRemoteAskAi = prefs[ALLOW_REMOTE_ASK_AI] ?: true
+            allowRemoteAskAi = prefs[ALLOW_REMOTE_ASK_AI] ?: true,
+            encryptChannel = prefs[ENCRYPT_CHANNEL] ?: true
         )
     }
 
@@ -149,6 +159,10 @@ class RemoteDeviceSettings @Inject constructor(
 
     suspend fun setAllowRemoteAskAi(value: Boolean) {
         context.remoteDeviceDataStore.edit { it[ALLOW_REMOTE_ASK_AI] = value }
+    }
+
+    suspend fun setEncryptChannel(value: Boolean) {
+        context.remoteDeviceDataStore.edit { it[ENCRYPT_CHANNEL] = value }
     }
 
     /** 对端看到的设备名：用户自定义优先，否则回退机型。 */

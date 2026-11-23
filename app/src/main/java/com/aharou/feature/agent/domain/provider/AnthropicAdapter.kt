@@ -61,6 +61,10 @@ class AnthropicAdapter @Inject constructor(
     private fun extraHeaders(): Map<String, String> =
         resolveCustomHeaders(customHeaders, logSessionId, apiKey)
 
+    /** 每次尝试前重算：多 Key 切换会同步改写 baseUrl，捕获一次的 URL 会把新 Key 发到旧地址。 */
+    private fun resolveApiUrl(): String =
+        if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
+
     override suspend fun complete(
         systemPrompt: String,
         messages: List<AgentMessage>,
@@ -79,7 +83,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
+        val url = resolveApiUrl()
         val (thinking, outputConfig) = buildThinkingConfig(reasoningEffort)
         val request = AnthropicMessageRequest(
             model = model,
@@ -100,7 +104,7 @@ class AnthropicAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createMessage(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
+                api.createMessage(url = resolveApiUrl(), apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -162,7 +166,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
+        val url = resolveApiUrl()
         val (thinking, outputConfig) = buildThinkingConfig(reasoningEffort)
         val request = AnthropicMessageRequest(
             model = model,
@@ -208,7 +212,7 @@ class AnthropicAdapter @Inject constructor(
             // content block index -> thinking / redacted_thinking 累积；按 index 分槽，避免一轮多个思考块被合并。
             val thinkingBlocks = LinkedHashMap<Int, ThinkingBlockAcc>()
 
-            val body = firstContent.awaitBody(api.streamMessage(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
+            val body = firstContent.awaitBody(api.streamMessage(url = resolveApiUrl(), apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
 
             body.use { rb ->
                 firstContent.attach { rb.close() }

@@ -45,7 +45,7 @@ class OneShotProviderFactory @Inject constructor(
             else -> OpenAIAdapter(openAIApi).also { it.chatCacheKeyEnabled = config.openaiChatCacheKey }
         }
         provider.apiKey = providerKeyRotator.activeKey(config, sessionId) ?: return null
-        provider.baseUrl = config.baseUrl
+        provider.baseUrl = config.baseUrlForKey(provider.apiKey)
         provider.model = config.effectiveModel
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi

@@ -22,7 +22,7 @@ class ConfigModelTestAction @Inject constructor(
         if (id.isBlank() || model.isBlank()) return ToolResult.Error("test_model 需要 provider_id 和 model", "INVALID_ARGS")
         val provider = providers.getProviderById(id) ?: return ToolResult.Error("供应商不存在", "PROVIDER_NOT_FOUND")
         return try {
-            val result = service.testModel(provider.baseUrl, provider.firstUsableApiKey, provider.type,
+            val result = service.testModel(provider.baseUrlForKey(provider.firstUsableApiKey), provider.firstUsableApiKey, provider.type,
                 provider.useFullUrl, provider.useResponseApi, model, provider.customHeaders)
             ToolResult.Success(buildJsonObject {
                 put("success", result.success)

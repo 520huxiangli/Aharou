@@ -88,8 +88,15 @@ data class AIResponse(
 
 /**
  * 一次 Key 切换的结果：新 Key 与其在候选列表中的序号（1 起），供 adapter 改写凭据并通知 UI。
+ * [newBaseUrl] 是新 Key 自己的地址（未单独配置时为提供商默认地址）；为 null 表示保持当前地址。
+ * 必须跟着 Key 一起返回，否则重发时会出现「拿 B Key 的额度打 A 家的地址」。
  */
-data class KeySwitchOutcome(val newKey: String, val newIndex: Int, val total: Int)
+data class KeySwitchOutcome(
+    val newKey: String,
+    val newIndex: Int,
+    val total: Int,
+    val newBaseUrl: String? = null
+)
 
 /**
  * 所有候选 Key 都失败时抛出。文案已包含原始失败原因，交由上层原样展示。
@@ -412,6 +419,8 @@ suspend fun AIProvider.switchKeyOnFailure(error: Throwable, triedKeys: MutableSe
     val switcher = keySwitcher ?: return null
     val outcome = switcher(error, apiKey, triedKeys) ?: return null
     apiKey = outcome.newKey
+    // 换 Key 同时换地址：一条 Key 走官方、一条走中转时，只换鉴权头会把请求发错家。
+    outcome.newBaseUrl?.let { baseUrl = it }
     triedKeys += outcome.newKey
     return outcome
 }

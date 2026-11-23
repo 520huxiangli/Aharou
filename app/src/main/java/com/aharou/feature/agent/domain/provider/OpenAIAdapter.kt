@@ -145,7 +145,7 @@ class OpenAIAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createChatCompletion(url = url, authorization = bearerTokenOrNull(apiKey), extraHeaders = extraHeaders(), request = request)
+                api.createChatCompletion(url = resolveApiUrl(), authorization = bearerTokenOrNull(apiKey), extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -356,7 +356,7 @@ class OpenAIAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createResponses(url = url, authorization = bearerTokenOrNull(apiKey), extraHeaders = extraHeaders(), request = request)
+                api.createResponses(url = resolveApiUrl(), authorization = bearerTokenOrNull(apiKey), extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -461,7 +461,7 @@ class OpenAIAdapter @Inject constructor(
             var streamCacheCreationTokens = 0
 
             val body = firstContent.awaitBody(api.streamChatCompletion(
-                url = url,
+                url = resolveApiUrl(),
                 authorization = bearerTokenOrNull(apiKey),
                 extraHeaders = extraHeaders(),
                 request = request
@@ -650,7 +650,7 @@ class OpenAIAdapter @Inject constructor(
                     val argProgress = ToolArgProgressSampler()
 
                     val body = firstContent.awaitBody(api.streamResponses(
-                        url = url,
+                        url = resolveApiUrl(),
                         authorization = bearerTokenOrNull(apiKey),
                         extraHeaders = extraHeaders(),
                         request = request

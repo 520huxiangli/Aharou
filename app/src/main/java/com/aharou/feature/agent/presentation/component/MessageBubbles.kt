@@ -386,7 +386,7 @@ internal fun AgentMessageItem(
                         onToggleExpand = { voiceExpanded = !voiceExpanded },
                     ) {
                         SelectableMessageContainer {
-                            MarkdownContent(
+                            InlineChatContent(
                                 text = contentSlice ?: message.content,
                                 color = if (isUser) chatUserBubbleTextColor() else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.fillMaxWidth(),
@@ -459,7 +459,7 @@ internal fun AgentMessageItem(
                                             backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
                                         )
                                     ) {
-                                        MarkdownContent(
+                                        InlineChatContent(
                                             text = contentSlice ?: message.content,
                                             color = chatAssistantBubbleTextColor(),
                                             modifier = Modifier.padding(
@@ -481,7 +481,7 @@ internal fun AgentMessageItem(
                                         backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
                                     )
                                 ) {
-                                    MarkdownContent(
+                                    InlineChatContent(
                                         text = contentSlice ?: message.content,
                                         color = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.fillMaxWidth(),

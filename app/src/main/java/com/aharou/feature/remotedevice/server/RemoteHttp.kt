@@ -59,12 +59,23 @@ internal fun readHttpHead(input: InputStream): HttpHead? {
 
 /** 按 Content-Length 把正文读成字符串（JSON 路由用）。 */
 internal fun readHttpBody(input: InputStream, head: HttpHead, maxBodyBytes: Int): String {
+    val bytes = readHttpBodyBytes(input, head, maxBodyBytes)
+    return String(bytes, StandardCharsets.UTF_8)
+}
+
+/**
+ * 按 Content-Length 把正文读成原始字节。
+ *
+ * 加密的 `/mcp` 请求体是 `nonce || ciphertext` 的二进制帧，先转成 String 会把它解坏，
+ * 所以那条路径必须拿到字节。
+ */
+internal fun readHttpBodyBytes(input: InputStream, head: HttpHead, maxBodyBytes: Int): ByteArray {
     val length = head.contentLength
     if (length > maxBodyBytes) throw HttpBodyTooLarge()
-    if (length <= 0L) return ""
+    if (length <= 0L) return ByteArray(0)
     val buf = ByteArray(length.toInt())
     readFully(input, buf)
-    return String(buf, StandardCharsets.UTF_8)
+    return buf
 }
 
 /**
@@ -141,6 +152,29 @@ internal fun writeHttpResponse(
     }
     out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
     if (bodyBytes.isNotEmpty()) out.write(bodyBytes)
+    out.flush()
+}
+
+/** 写一条二进制响应（加密帧）；头字段与 [writeHttpResponse] 同口径，只是正文换成字节。 */
+internal fun writeHttpResponseBytes(
+    out: OutputStream,
+    status: Int,
+    body: ByteArray,
+    contentType: String?,
+    headers: Map<String, String>
+) {
+    val header = buildString {
+        append("HTTP/1.1 ").append(status).append(' ').append(reason(status)).append("\r\n")
+        if (contentType != null && body.isNotEmpty()) {
+            append("Content-Type: ").append(contentType).append("\r\n")
+        }
+        headers.forEach { (k, v) -> append(k).append(": ").append(v).append("\r\n") }
+        append("Content-Length: ").append(body.size).append("\r\n")
+        append("Connection: close\r\n")
+        append("\r\n")
+    }
+    out.write(header.toByteArray(StandardCharsets.ISO_8859_1))
+    if (body.isNotEmpty()) out.write(body)
     out.flush()
 }
 

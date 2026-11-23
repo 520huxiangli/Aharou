@@ -360,14 +360,14 @@ class StatefulAgentWorkflow @Inject constructor(
                             throw AllKeysFailedException(
                                 "「${config.name}」的 ${activeKeys.size} 个 Key 均失败：${e.message ?: e.javaClass.simpleName}", e)
                         }
-                        KeySwitchOutcome(switched.newKey, switched.newIndex, switched.total)
+                        KeySwitchOutcome(switched.newKey, switched.newIndex, switched.total, config.baseUrlForKey(switched.newKey))
                     }
                 }
             } else {
                 null
             }
         provider.keySwitcher = keySwitcher
-        provider.baseUrl = config.baseUrl
+        provider.baseUrl = config.baseUrlForKey(provider.apiKey)
         // 声明式中间件：模型映射只改真正发出去的模型名，UI/会话仍显示用户选的原名
         provider.model = applyProviderMiddleware(
             config.requestMiddleware, config.id, config.type.name, config.effectiveModel, ""
@@ -1333,6 +1333,7 @@ class StatefulAgentWorkflow @Inject constructor(
     }.onFailure { e ->
         FileLogger.w(TAG, "一次性调用失败", e)
     }.getOrNull()
+    override suspend fun completeOnceWithImage(systemPrompt: String, userText: String, images: List<AgentImage>, sessionId: String?) = runOneShotWithImage(systemPrompt, userText, images) { getEffectiveProvider(sessionId) to outboundMaskerOrNull(generalSettingsRepository.privacyMaskingEnabled()) }
 
     override suspend fun generateCommitMessage(diff: String): String? = runCatching {
         if (diff.isBlank()) return@runCatching null

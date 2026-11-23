@@ -82,7 +82,8 @@ class LinuxContainerEngine @Inject constructor(
     private val profileResolver: ContainerProfileResolver,
     private val pathHomeResolver: com.aharou.feature.workspace.domain.PathHomeResolver,
     private val runtimeProcessStore: RuntimeProcessStore,
-    private val gradleHeapApplier: ContainerGradleHeapApplier
+    private val gradleHeapApplier: ContainerGradleHeapApplier,
+    private val prootSeccomp: com.aharou.feature.settings.data.repository.ProotSeccompPolicy
 ) : CommandEngine {
     /** 容器初始化的实时进度，供所有入口（终端页/AI/后台终端/MCP）共享同一份状态。 */
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -348,7 +349,7 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /** 一次容器内执行的内部结果：限幅后的完整输出 + 退出码（超时/异常时为 null）。 */
-    private data class ExecResult(val output: String, val exitCode: Int?, val truncated: Boolean = false)
+    internal data class ExecResult(val output: String, val exitCode: Int?, val truncated: Boolean = false)
 
     /**
      * 仅在容器已就绪（rootfs 已安装）时执行命令；不会触发 rootfs 解压。
@@ -386,18 +387,18 @@ class LinuxContainerEngine @Inject constructor(
      * [timeoutMs] 为命令最长执行时间（毫秒），钳到 [MAX_TIMEOUT_MS]。超时则强杀进程，
      * 返回已收集的部分输出并在末尾追加超时提示，[ExecResult.exitCode] 记为 null。
      */
-    private suspend fun execCaptured(
+    internal suspend fun execCaptured(
         command: String,
         projectPath: String?,
         timeoutMs: Long,
         profile: ContainerProfile,
-        unbounded: Boolean = false
+        unbounded: Boolean = false, seccompOverride: Boolean? = null
     ): ExecResult = withContext(Dispatchers.IO) {
         try {
             val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
             FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath profile=${profile.id} timeout=${effectiveTimeout}ms: ${sanitizeCommandForLog(command)}")
             val childrenBefore = ProcessIdentity.childPids()
-            val process = startContainerProcess(command, projectPath, profile)
+            val process = startContainerProcess(command, projectPath, profile, seccompOverride)
             val identity = ProcessIdentity.capture(process)
                 ?: ProcessIdentity.childPids().minus(childrenBefore).minOrNull()?.let { ProcessIdentity.Handle(it, null) }
             identity?.let { runtimeProcessStore.record(it.pid, it.startTimeTicks, command) }
@@ -536,12 +537,12 @@ class LinuxContainerEngine @Inject constructor(
      * 启动进程。rootfs/proot 安装就绪则用 PRoot 进入容器；
      * 否则回退到 Android 原生 shell（rootfs 缺失时的兜底）。
      */
-    private fun startContainerProcess(command: String, projectPath: String?, profile: ContainerProfile): Process {
+    private fun startContainerProcess(command: String, projectPath: String?, profile: ContainerProfile, seccompOverride: Boolean? = null): Process {
         ensureHostsForCommand(command, profile)
         val useProot = containerInstaller.isInstalledFor(profile)
 
         val processBuilder = if (useProot) {
-            buildProcessBuilder(buildProotInvocation(command, projectPath, profile))
+            buildProcessBuilder(buildProotInvocation(command, projectPath, profile, seccompOverride))
         } else {
             FileLogger.w(TAG, "PRoot 未安装，回退到原生 shell")
             buildNativeProcess(command, projectPath)
@@ -648,6 +649,7 @@ class LinuxContainerEngine @Inject constructor(
             _initProgress.value = ContainerInitState.Ready
             refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
+            prootSeccomp.onContainerReady(profile, containerOsDetector.cachedOs(profile.id)) { runSeccompProbe(profile, it) }
             FileLogger.i(TAG, "ensureInstalled 完成（快路径，耗时 ${System.currentTimeMillis() - startedAt}ms）")
             logContainerDiagnostics("ensureInstalled 快路径", profile)
             return
@@ -675,6 +677,7 @@ class LinuxContainerEngine @Inject constructor(
             _initProgress.value = ContainerInitState.Ready
             refreshContainerHome(profile)
             detectAndCacheOsIfNeeded(profile)
+            prootSeccomp.onContainerReady(profile, containerOsDetector.cachedOs(profile.id)) { runSeccompProbe(profile, it) }
             FileLogger.i(TAG, "ensureInstalled 完成（耗时 ${System.currentTimeMillis() - startedAt}ms）")
             logContainerDiagnostics("ensureInstalled 完成后", profile)
         } else {
@@ -809,7 +812,7 @@ class LinuxContainerEngine @Inject constructor(
         argv.add("exec \"\$0\" \"\$@\"")
         argv.add(program)
         argv.addAll(programArgs)
-        return ProotInvocation(argv, buildContainerEnv(profile, inheritUserConfig) + profile.env + extraEnv)
+        return ProotInvocation(argv, prootSeccomp.withPolicy(buildContainerEnv(profile, inheritUserConfig) + profile.env + extraEnv, profile.id))
     }
 
     /**
@@ -822,14 +825,14 @@ class LinuxContainerEngine @Inject constructor(
     private fun buildProotInvocation(
         command: String,
         projectPath: String?,
-        profile: ContainerProfile
+        profile: ContainerProfile, seccompOverride: Boolean? = null
     ): ProotInvocation {
         val argv = buildBaseProotArgv(projectPath, profile)
         // 用同一 profile 的 shell：bash 装好后 AI 命令与终端会话都走 bash；装机期间/失败回退 /bin/sh。
         argv.add(defaultShellFor(profile))
         argv.add("-c")
         argv.add(command)
-        return ProotInvocation(argv, buildContainerEnv(profile) + profile.env)
+        return ProotInvocation(argv, prootSeccomp.withPolicy(buildContainerEnv(profile) + profile.env, profile.id, seccompOverride))
     }
 
     /**
@@ -911,9 +914,9 @@ class LinuxContainerEngine @Inject constructor(
             "LD_LIBRARY_PATH" to "${containerInstaller.prootLibDir.absolutePath}:/system/lib64:/system/lib",
             // 说明（statx / seccomp）：旧 proot 5.1.0 的 seccomp 过滤表没有 statx，Node 用 statx 解析
             // 模块路径会拿到未翻译的 ~/workspace/xxx → ENOENT「Cannot find module」。Termux proot
-            // (5.1.107.x) 的 seccomp 过滤表已包含 statx，默认 seccomp 模式即可正确翻译，故此处
-            // **刻意不设 PROOT_NO_SECCOMP**——这正是 Termux 自己用 proot 的方式；强制全量 ptrace
-            // (PROOT_NO_SECCOMP=1) 反而在本设备触发过 ptrace(PEEKDATA) I/O error。
+            // (5.1.107.x) 已含 statx，默认模式即可正确翻译，故这里**不加** PROOT_NO_SECCOMP——这正是
+            // Termux 自己用 proot 的方式；强制全量 ptrace 反而在本设备触发过 ptrace(PEEKDATA) I/O error。
+            // 陌生 ROM 上默认模式跑不动时，由 ProotSeccompPolicy 探测确认后对单个容器追加。
             // 前缀 /root/.aharou/bin：容器内环境工具（见 ContainerInstaller.extractEnvTool）。
             "PATH" to CONTAINER_PATH,
             "HOME" to "/root",

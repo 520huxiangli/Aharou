@@ -98,6 +98,10 @@ class RemoteDeviceViewModel @Inject constructor(
         controller.setAllowRemoteAskAi(value)
     }
 
+    fun setEncryptChannel(value: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        controller.setEncryptChannel(value)
+    }
+
     fun acceptAssistance(host: String, port: Int, code: String) = viewModelScope.launch(Dispatchers.IO) {
         _assist.value = AssistUiState.Working
         _assist.value = when (val outcome = controller.acceptAssistance(host, port, code)) {

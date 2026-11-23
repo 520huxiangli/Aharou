@@ -437,6 +437,8 @@ class McpConfigRepository @Inject constructor(
                         }
                     }
                     put("enabled", server.enabled)
+                    // 只在为 true 时写：普通配置文件的字节保持与加这个字段前完全一致。
+                    if (server.encrypted) put("encrypted", true)
                     if (server.keepAlive) put("keepAlive", true)
                     if (server.disabledTools.isNotEmpty()) {
                         putJsonArray("disabledTools") { server.disabledTools.forEach { add(it) } }
@@ -460,6 +462,8 @@ class McpConfigRepository @Inject constructor(
             val enabled = (obj["enabled"] as? JsonPrimitive)?.booleanOrNull ?: true
             // 旧配置没有这个字段，按 false 读（等价于原来的行为）。
             val keepAlive = (obj["keepAlive"] as? JsonPrimitive)?.booleanOrNull ?: false
+            // 同理：没有 encrypted 就是明文，与加这个字段前一致。
+            val encrypted = (obj["encrypted"] as? JsonPrimitive)?.booleanOrNull ?: false
 
             val command = (obj["command"] as? JsonPrimitive)?.contentOrNull
             val url = (obj["url"] as? JsonPrimitive)?.contentOrNull
@@ -497,7 +501,8 @@ class McpConfigRepository @Inject constructor(
                         enabled = enabled,
                         keepAlive = keepAlive,
                         disabledTools = disabledTools,
-                        oauth = parseOAuth(obj["oauth"] as? JsonObject)
+                        oauth = parseOAuth(obj["oauth"] as? JsonObject),
+                        encrypted = encrypted
                     )
                 }
                 else -> {

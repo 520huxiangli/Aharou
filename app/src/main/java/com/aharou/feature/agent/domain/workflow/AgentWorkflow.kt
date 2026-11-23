@@ -1,13 +1,21 @@
 package com.aharou.feature.agent.domain.workflow
 
+import com.aharou.core.privacy.OutboundMasker
+import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.model.AgentImage
 import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.model.AgentMode
+import com.aharou.feature.agent.domain.privacy.maskIfNeeded
+import com.aharou.feature.agent.domain.privacy.restoreIfNeeded
+import com.aharou.feature.agent.domain.provider.AIProvider
 import com.aharou.feature.agent.domain.provider.RetryErrorInfo
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.TOOL_TITLE_PARAM
 import com.aharou.feature.agent.domain.tool.ToolCall
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import java.security.MessageDigest
 
@@ -182,6 +190,20 @@ interface AgentWorkflow {
     suspend fun completeOnce(systemPrompt: String, userText: String, sessionId: String? = null): String?
 
     /**
+     * 带图片的一次性调用：在 [completeOnce] 的基础上给用户消息附上图片（多模态）。
+     * 同样不建会话、不进历史、不占上下文，用于「让模型看一眼截图再回答」（影子屏按描述点元素）。
+     * 失败或超时返回 null，由调用方按「定位失败」处理，不抛异常。
+     *
+     * 默认返回 null：不支持的实现方不必实现它，调用方拿到 null 会明确报错，不会静默点错。
+     */
+    suspend fun completeOnceWithImage(
+        systemPrompt: String,
+        userText: String,
+        images: List<AgentImage>,
+        sessionId: String? = null
+    ): String? = null
+
+    /**
      * 根据 Git 差异文本生成符合 Conventional Commits 规范的提交信息。
      * 默认使用全局生效的 AI 供应商及默认模型。
      * @param diff 变更内容差异文本（`git diff --cached` 或工作区差异）
@@ -197,6 +219,45 @@ interface AgentWorkflow {
      */
     suspend fun curateMemory(sessionId: String, projectRoot: String?, transcript: String): Int
 }
+
+/**
+ * 带图一次性调用的公共实现（[AgentWorkflow.completeOnceWithImage] 用）。
+ *
+ * 为何放在接口文件而不是实现类里：`StatefulAgentWorkflow.kt` 已经顶到单文件行数棘轮基线，
+ * 按仓规不能再往里加逻辑（到线就拆到同包）。这里只负责超时、拼消息与清空结果；
+ * 「用哪个供应商、要不要出站遮罩」由 [resolve] 给出，接口层不碰供应商配置。
+ */
+internal suspend fun runOneShotWithImage(
+    systemPrompt: String,
+    userText: String,
+    images: List<AgentImage>,
+    timeoutMs: Long = ONE_SHOT_IMAGE_TIMEOUT_MS,
+    resolve: suspend () -> Pair<AIProvider, OutboundMasker?>,
+): String? {
+    return try {
+        withTimeoutOrNull(timeoutMs) {
+            val (provider, masker) = resolve()
+            provider.complete(
+                systemPrompt = systemPrompt,
+                messages = listOf(
+                    AgentMessage.UserMessage(content = userText.maskIfNeeded(masker), images = images)
+                ),
+                tools = emptyList()
+            ).content.restoreIfNeeded(masker).trim().ifBlank { null }
+        }
+    } catch (e: CancellationException) {
+        // 真正的取消（调用方被中止）原样上抛；withTimeoutOrNull 的自身超时已经在上面吞成 null。
+        throw e
+    } catch (e: Exception) {
+        FileLogger.w(ONE_SHOT_TAG, "带图一次性调用失败", e)
+        null
+    }
+}
+
+/** 带图一次性调用的超时：定位一次元素不值得无限等，超时就按「定位失败」返回，不挂住工具。 */
+private const val ONE_SHOT_IMAGE_TIMEOUT_MS = 20_000L
+
+private const val ONE_SHOT_TAG = "AgentWorkflow"
 
 /**
  * 工具循环检测的三级阈值。

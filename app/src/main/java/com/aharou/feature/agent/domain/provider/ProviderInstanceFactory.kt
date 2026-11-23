@@ -55,14 +55,14 @@ class ProviderInstanceFactory @Inject constructor(
                                 error
                             )
                         }
-                        KeySwitchOutcome(switched.newKey, switched.newIndex, switched.total)
+                        KeySwitchOutcome(switched.newKey, switched.newIndex, switched.total, config.baseUrlForKey(switched.newKey))
                     }
                 }
             } else {
                 null
             }
         provider.keySwitcher = keySwitcher
-        provider.baseUrl = config.baseUrl
+        provider.baseUrl = config.baseUrlForKey(provider.apiKey)
         provider.model = config.effectiveModel
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi

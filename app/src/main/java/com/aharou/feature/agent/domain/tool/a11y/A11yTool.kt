@@ -21,7 +21,9 @@ import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import com.aharou.feature.agent.domain.tool.vdisplay.ScreenActionSemantics
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
@@ -49,12 +51,35 @@ class A11yTool @Inject constructor(
         const val MAX_IMAGE_EDGE = 1440
         const val JPEG_QUALITY = 75
 
+        const val NORMALIZED_SPAN = 1000
+
+        /** 结构快照的预算：只用来前后对比，不需要看得全，压小一点省时间。 */
+        const val SNAPSHOT_MAX_NODES = 150
+        const val SNAPSHOT_BUDGET_MS = 2_000L
+        const val ACTION_SETTLE_MS = 500L
+
+        /** 回执文案：三态必须分开说，否则模型会把「看不到变化」当成「没点中」再点一遍。 */
+        const val NOTE_CHANGED = "动作已发出，界面元素树有变化，可以按新画面继续。"
+        const val NOTE_UNCHANGED =
+            "动作已发出，但界面元素树没有变化：刷新、开关、提交这类原地动作本来就画面不变，这不是没点中的证据，别重瞄。"
+        const val NOTE_UNKNOWN = "动作已发出，但这次没拿到前后画面，结果是未知，不是没点中。"
+
+        /** 自绘界面的类名特征：读得到类名却一个控件都读不到时，用它区分「自绘」和「连接僵了」。 */
+        val SURFACE_CLASS_HINTS =
+            listOf("webview", "surfaceview", "textureview", "flutter", "unity", "cocos", "canvas")
+
         /** 会改变他人应用状态的写动作：有影子屏可用时必须走影子屏。 */
         val WRITE_ACTIONS = setOf("tap", "swipe", "key", "settext")
 
         /** 有「手指下是什么」这回事、需要 label 的动作：语义风控只看这几个。 */
         val LABEL_ACTIONS = setOf("tap", "settext")
     }
+
+    /**
+     * 曾经从哪些包读到过可用节点。用来看「同一个应用这次读到 0 个」——那多半是无障碍连接
+     * 失效，而不是界面本来就读不到。不写死包名：谁读到过谁才进这个集合。
+     */
+    private val packagesWithReadableTree = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     override val name = "a11y"
 
@@ -158,7 +183,17 @@ class A11yTool @Inject constructor(
 
         return try {
             when (action) {
-                "dump" -> ToolResult.Success(kotlinx.serialization.json.JsonPrimitive(dumpTree(service)))
+                "dump" -> {
+                    val dump = dumpTree(service)
+                    ToolResult.Success(
+                        buildJsonObject {
+                            put("tree", dump.text)
+                            put("node_count", dump.count)
+                            // 只有空树才给诊断：非空时模型直接读 tree 就行，多一个字段只会分散注意。
+                            dump.diagnosis?.let { put("diagnosis", it) }
+                        }
+                    )
+                }
 
                 "find" -> {
                     val query = args["text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -171,8 +206,9 @@ class A11yTool @Inject constructor(
                     if (id.isNotEmpty()) {
                         val node = service.nodeRegistry.get(id)
                             ?: return ToolResult.Error("节点 id「$id」已过期——请重新 dump/find 再点。", "STALE_NODE")
+                        val before = structureSnapshot(service)
                         if (clickNode(service, node)) {
-                            ToolResult.Success(buildJsonObject { put("message", "已点击节点 $id") })
+                            actionSuccess(service, "已点击节点 $id", before)
                         } else {
                             ToolResult.Error("节点点击失败（不可点击且坐标兜底失败）", "TAP_FAILED")
                         }
@@ -180,8 +216,9 @@ class A11yTool @Inject constructor(
                         val x = args["x"]?.jsonPrimitive?.intOrNull
                         val y = args["y"]?.jsonPrimitive?.intOrNull
                         if (x == null || y == null) return ToolResult.Error("tap 需要 id 或 x/y", "MISSING_ARGS")
+                        val before = structureSnapshot(service)
                         if (tapAt(service, x, y)) {
-                            ToolResult.Success(buildJsonObject { put("message", "已点击 ($x, $y)") })
+                            actionSuccess(service, "已点击 ($x, $y)", before)
                         } else {
                             ToolResult.Error("点击手势失败", "TAP_FAILED")
                         }
@@ -197,8 +234,9 @@ class A11yTool @Inject constructor(
                         return ToolResult.Error("swipe 需要 x / y / x2 / y2", "MISSING_ARGS")
                     }
                     val duration = args["duration"]?.jsonPrimitive?.intOrNull ?: 300
+                    val before = structureSnapshot(service)
                     if (swipeAt(service, x, y, x2, y2, duration)) {
-                        ToolResult.Success(buildJsonObject { put("message", "已滑动 ($x,$y) → ($x2,$y2)") })
+                        actionSuccess(service, "已滑动 ($x,$y) → ($x2,$y2)", before)
                     } else {
                         ToolResult.Error("滑动手势失败", "SWIPE_FAILED")
                     }
@@ -243,8 +281,9 @@ class A11yTool @Inject constructor(
                     if (id.isEmpty() || text == null) return ToolResult.Error("setText 需要 id 和 text", "MISSING_ARGS")
                     val node = service.nodeRegistry.get(id)
                         ?: return ToolResult.Error("节点 id「$id」已过期——请重新 dump/find。", "STALE_NODE")
+                    val before = structureSnapshot(service)
                     if (service.setNodeText(node, text)) {
-                        ToolResult.Success(buildJsonObject { put("message", "已写入文本") })
+                        actionSuccess(service, "已写入文本", before)
                     } else {
                         ToolResult.Error("写入失败（该节点可能不支持设置文本）", "SET_TEXT_FAILED")
                     }
@@ -274,39 +313,55 @@ class A11yTool @Inject constructor(
         }
     }
 
-    private fun dumpTree(service: AharouAccessibilityService): String {
+    /** dump 的结果：空树时 [diagnosis] 非空，[text] 就是给模型看的那句诊断提示。 */
+    private class DumpResult(val text: String, val count: Int, val diagnosis: String? = null)
+
+    private fun dumpTree(service: AharouAccessibilityService): DumpResult {
         val sb = StringBuilder()
+        val screen = service.screenSize()
         var count = 0
+        val packages = HashSet<String>()
         fun walk(node: AccessibilityNodeInfo?, depth: Int) {
             if (node == null || depth > MAX_DEPTH || count >= MAX_NODES) return
             val id = service.nodeRegistry.put(node)
-            sb.append("  ".repeat(depth)).append(describeNode(node, id)).append('\n')
+            sb.append("  ".repeat(depth)).append(describeNode(node, id, screen)).append('\n')
+            node.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packages.add(it) }
             count++
             for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
         }
         service.rootNodes().forEach { walk(it, 0) }
-        return if (count == 0) "（界面为空——无障碍服务可能未就绪）" else sb.toString()
+        if (count == 0) {
+            val (diagnosis, hint) = diagnoseEmptyTree(service)
+            return DumpResult(hint, 0, diagnosis)
+        }
+        packagesWithReadableTree.addAll(packages)
+        return DumpResult(sb.toString(), count)
     }
 
     private fun findNodes(service: AharouAccessibilityService, query: String): String {
         val out = StringBuilder()
+        val screen = service.screenSize()
         var found = 0
+        val packages = HashSet<String>()
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || found >= 50) return
             val text = node.text?.toString().orEmpty()
             val desc = node.contentDescription?.toString().orEmpty()
             if (text.contains(query, ignoreCase = true) || desc.contains(query, ignoreCase = true)) {
                 val id = service.nodeRegistry.put(node)
-                out.append(describeNode(node, id)).append('\n')
+                out.append(describeNode(node, id, screen)).append('\n')
+                node.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packages.add(it) }
                 found++
             }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
         service.rootNodes().forEach { walk(it) }
-        return if (found == 0) "没有找到包含「$query」的节点" else out.toString()
+        if (found == 0) return "没有找到包含「$query」的节点"
+        packagesWithReadableTree.addAll(packages)
+        return out.toString()
     }
 
-    private fun describeNode(node: AccessibilityNodeInfo, id: String): String {
+    private fun describeNode(node: AccessibilityNodeInfo, id: String, screen: Pair<Int, Int>?): String {
         val className = node.className?.toString()?.substringAfterLast('.') ?: "?"
         val rect = Rect().also { node.getBoundsInScreen(it) }
         val flags = buildString {
@@ -324,7 +379,150 @@ class A11yTool @Inject constructor(
             append(" bounds=[").append(rect.left).append(',').append(rect.top)
                 .append("][").append(rect.right).append(',').append(rect.bottom).append(']')
             append(flags)
+            // 像素 bounds 保留给能自己算的场合，归一化中心点直接给算好的：
+            // 实测模型从 bounds 自己算中心再按屏幕宽高换算会算错，不如把结果写进同一行。
+            if (screen != null) {
+                val cx = (rect.left + rect.right) / 2
+                val cy = (rect.top + rect.bottom) / 2
+                val span = NORMALIZED_SPAN.toLong()
+                val nx = (cx.toLong() * NORMALIZED_SPAN / screen.first).coerceIn(0L, span)
+                val ny = (cy.toLong() * NORMALIZED_SPAN / screen.second).coerceIn(0L, span)
+                append(" @ 中心($cx,$cy)px 归一($nx,$ny)/1000")
+            }
         }
+    }
+
+    /**
+     * 空树时区分三种情况：能做的处置完全不同（自绘→改看截图；连接僵了→重开服务；纯空→等一等）。
+     * 只看还能拿到的元数据：此时树里一个节点也读不到。
+     */
+    private fun diagnoseEmptyTree(service: AharouAccessibilityService): Pair<String, String> {
+        val foregroundPkg = foregroundPackageHint(service)
+        // 先看「以前读到过、这次 0 个」：这是最强的判据，处置也最具体。
+        // 放在自绘判断之前，是因为连接僵死时窗口根也可能还在、却一个子节点都没有，
+        // 那种形态与自绘界面分不开；一旦这个包以前读到过，就该按连接失效处置。
+        if (foregroundPkg != null && packagesWithReadableTree.contains(foregroundPkg)) {
+            return "stale" to
+                "这个应用（$foregroundPkg）以前能读到控件，现在读到 0 个，多半是无障碍连接失效，" +
+                "需要用户去 设置 → 权限与后台 → 无障碍 把本服务关掉再打开，三秒即可。"
+        }
+        if (looksSelfDrawn(service)) {
+            return "surface" to
+                "这个界面是自绘的，读不到控件，改看截图；要离开它优先用系统返回/主页换一条路，不要凭坐标盲点。"
+        }
+        return "empty" to "（界面为空——无障碍服务可能未就绪；也可能是这个界面正在切换）"
+    }
+
+    /**
+     * 树读不到时 rootInActiveWindow 往往也是 null，退回最近事件里的包名才能把
+     * 「这个应用以前读到过、现在读到 0 个」判出来；拿不到就交给「纯空」分支。
+     */
+    private fun foregroundPackageHint(service: AharouAccessibilityService): String? {
+        val (pkg, _) = service.foregroundPackage()
+        if (!pkg.isNullOrBlank()) return pkg
+        return service.snapshotEvents().asReversed()
+            .firstOrNull { !it.packageName.isNullOrBlank() }
+            ?.packageName
+    }
+
+    /**
+     * 自绘界面判据：拿到类名就看类名；类名拿不到时，有 application 窗口且根存在却一个子节点都没有，
+     * 也按自绘处理（纯 SurfaceView / Unity 类界面就是这样）。
+     */
+    private fun looksSelfDrawn(service: AharouAccessibilityService): Boolean {
+        val (_, cls) = service.foregroundPackage()
+        if (cls != null && isSurfaceClassName(cls)) return true
+        for (w in service.windowInfos()) {
+            if (w["type"] != "application") continue
+            val rootPackage = (w["rootPackage"] as? String).orEmpty()
+            val rootChildren = (w["rootChildren"] as? Number)?.toInt() ?: -1
+            if (rootPackage.isNotBlank() && rootChildren == 0) return true
+        }
+        return false
+    }
+
+    private fun isSurfaceClassName(className: String): Boolean {
+        val lower = className.lowercase()
+        return SURFACE_CLASS_HINTS.any { lower.contains(it) }
+    }
+
+    /**
+     * 动作前后各取一次「结构快照」并比较：模型看不见点按有没有落地，只能靠返回值判断。
+     *
+     * 不复用 nodeRegistry.put：那会往 id 表里塞一堆后续没人点的节点，把模型手里已有的 id 顶掉。
+     * 拿不到可读树、或没能在预算内走完（截断的两帧不可比）时返回 null——此时结果只能是「未知」，
+     * 不能当「没变化」。
+     */
+    private fun structureSnapshot(service: AharouAccessibilityService): Long? {
+        val deadline = System.currentTimeMillis() + SNAPSHOT_BUDGET_MS
+        var hash = 1L
+        var count = 0
+        var readable = false
+        var aborted = false
+
+        fun walk(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > MAX_DEPTH || count >= SNAPSHOT_MAX_NODES) return
+            if (System.currentTimeMillis() > deadline) {
+                aborted = true
+                return
+            }
+            try {
+                val rect = Rect().also { node.getBoundsInScreen(it) }
+                val signature = buildString(64) {
+                    append(node.packageName?.toString().orEmpty()).append('|')
+                    append(node.className?.toString().orEmpty()).append('|')
+                    append(node.viewIdResourceName.orEmpty()).append('|')
+                    append(node.text?.toString().orEmpty()).append('|')
+                    append(rect.left).append(',').append(rect.top).append(',')
+                    append(rect.right).append(',').append(rect.bottom)
+                }
+                hash = hash * 31 + signature.hashCode()
+                readable = true
+                count++
+            } catch (_: Throwable) {
+            }
+            val children = try {
+                node.childCount
+            } catch (_: Throwable) {
+                0
+            }
+            for (i in 0 until children) {
+                walk(try { node.getChild(i) } catch (_: Throwable) { null }, depth + 1)
+            }
+        }
+
+        service.rootNodes().forEach { walk(it, 0) }
+        return if (readable && !aborted) hash else null
+    }
+
+    private data class ChangeReceipt(val screenChanged: JsonElement, val note: String)
+
+    /** 动作后等 500ms 再取后帧：界面动画与列表刷新都需要一点时间，等太短会把「刚变完」当成「没变」。 */
+    private suspend fun observeChange(service: AharouAccessibilityService, before: Long?): ChangeReceipt {
+        delay(ACTION_SETTLE_MS)
+        val after = structureSnapshot(service)
+        return when {
+            before == null || after == null -> ChangeReceipt(JsonPrimitive("unknown"), NOTE_UNKNOWN)
+            before != after -> ChangeReceipt(JsonPrimitive(true), NOTE_CHANGED)
+            else -> ChangeReceipt(JsonPrimitive(false), NOTE_UNCHANGED)
+        }
+    }
+
+    /** 写动作统一回执；tap_delivered 只说明手势被系统接受了，界面是否响应看 screen_changed。 */
+    private suspend fun actionSuccess(
+        service: AharouAccessibilityService,
+        message: String,
+        before: Long?,
+    ): ToolResult.Success {
+        val receipt = observeChange(service, before)
+        return ToolResult.Success(
+            buildJsonObject {
+                put("message", message)
+                put("tap_delivered", true)
+                put("screen_changed", receipt.screenChanged)
+                put("note", receipt.note)
+            }
+        )
     }
 
     /** 优先点可点击祖先；否则用坐标兜底。 */

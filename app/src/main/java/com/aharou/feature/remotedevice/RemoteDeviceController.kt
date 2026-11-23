@@ -2,8 +2,9 @@ package com.aharou.feature.remotedevice
 
 import android.content.Context
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
+import com.aharou.feature.agent.domain.mcp.McpManager
+import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.remotedevice.domain.RemoteActionCatalog
 import com.aharou.feature.remotedevice.domain.RemoteDeviceConfig
 import com.aharou.feature.remotedevice.domain.RemoteDeviceSettings
@@ -81,7 +82,8 @@ class RemoteDeviceController @Inject constructor(
     private val server: RemoteMcpServer,
     private val catalog: RemoteActionCatalog,
     private val mcpConfigRepository: McpConfigRepository,
-    private val pathMapper: WorkspacePathMapper
+    private val pathMapper: WorkspacePathMapper,
+    private val mcpManager: McpManager
 ) {
     private companion object {
         const val TAG = "RemoteDeviceController"
@@ -146,6 +148,25 @@ class RemoteDeviceController @Inject constructor(
     suspend fun setAutoPairBack(value: Boolean) = settings.setAutoPairBack(value)
 
     suspend fun setAllowRemoteAskAi(value: Boolean) = settings.setAllowRemoteAskAi(value)
+
+    /**
+     * 加密总开关。关掉后一律明文、不报错，也**不改写**任何 server 自己的 `encrypted` 标记——
+     * 那是用户/配对留下的意图，重新打开要能恢复。
+     *
+     * 为了“关了就是关了”，已连的远端设备会被重连一次（不重启进程只需重连；标记不动，
+     * 重新打开时同一条会重新握手）。
+     */
+    suspend fun setEncryptChannel(value: Boolean) {
+        settings.setEncryptChannel(value)
+        if (!value) server.dropEncryptionSessions()
+        val targets = runCatching { mcpConfigRepository.getGlobalServers() }
+            .getOrDefault(emptyList())
+            .filter { it.encrypted }
+        targets.forEach { config ->
+            runCatching { mcpManager.reloadServer(config.name) }
+                .onFailure { FileLogger.w(TAG, "切换加密开关后重连「${config.name}」失败: ${it.message}") }
+        }
+    }
 
     /** 生成（或复用）一枚 6 位配对码；**不过期**，对端拿它换长期 token，配对成功后自动换新。 */
     suspend fun pairingCode(): String = pairing.issueCode()
@@ -253,8 +274,13 @@ class RemoteDeviceController @Inject constructor(
         }.getOrNull().orEmpty()
         if (token.isBlank()) return AssistOutcome.Failed(AssistError.NO_TOKEN)
 
+        // 对端声明支持应用层加密时才标记：老服务端不返回该字段，保持明文（行为不变）。
+        val peerSupportsEnc = runCatching {
+            json.parseToJsonElement(body).jsonObject["enc"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+        }.getOrNull() ?: false
+
         val serverName = "远端设备 ${if (target.length > 24) target.take(24) + "…" else target}"
-        val config = mcpConfigFor(serverName, target, port, token)
+        val config = mcpConfigFor(serverName, target, port, token, peerSupportsEnc)
         val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
         mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
         // 配对已经落地，探活只负责提示：它失败不会把已经建立好的协助关系弄丢。
@@ -350,11 +376,14 @@ class RemoteDeviceController @Inject constructor(
         name: String,
         host: String,
         port: Int = RemoteDeviceConfig.DEFAULT_PORT,
-        token: String
+        token: String,
+        /** 对端在配对响应里宣传了加密能力时为 true；之后的握手与收发由传输层负责，失败会直接报错而不是降级。 */
+        encrypted: Boolean = false
     ): McpServerConfig = McpServerConfig(
         name = name,
         url = "http://${hostLiteral(host)}:$port${RemoteMcpServer.MCP_PATH}",
-        headers = mapOf("Authorization" to "Bearer $token")
+        headers = mapOf("Authorization" to "Bearer $token"),
+        encrypted = encrypted
     )
 
     /**

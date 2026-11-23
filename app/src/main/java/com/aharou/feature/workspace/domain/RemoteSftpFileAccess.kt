@@ -4,7 +4,6 @@ import com.aharou.core.util.BoundedLineReader
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.container.RemoteConnectionConfig
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
-import com.aharou.feature.agent.domain.container.friendlySshError
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.WorkspacePathMapper.Companion.CONTAINER_ROOT
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +50,8 @@ class RemoteOutputTooLargeException(message: String) : IOException(message)
  * 一并拖垮命令通道；分开后只影响文件读写，通道失效时丢弃、下次调用自动重建。
  *
  * 路径映射：AI 给的 `~/workspace/...` 映射到当前选中工作区的远程绝对路径；其它绝对路径（如 `/etc/...`）
- * 直接作为远程绝对路径使用。sshj 的 [SFTPClient] 非线程安全，所有操作经连接级共享锁串行化。
+ * 直接作为远程绝对路径使用。sshj 的 [SFTPClient] 非线程安全，每次操作向 [RemoteSshConnection] 借一条
+ * 通道独占使用、用完归还，不同操作可以并行。
  */
 class RemoteSftpFileAccess private constructor(
     private val connection: RemoteSshConnection,
@@ -102,36 +102,20 @@ class RemoteSftpFileAccess private constructor(
         }
     }
 
-    /** 共享锁内校验连接身份并获取通道；写入不自动重试，避免重复提交。 */
+    /** 借一条通道执行一次操作（借之前校验连接身份）；写入不自动重试，避免重复提交。 */
     private fun <T> withSftp(block: (SFTPClient) -> T): T = runBlocking {
         requireBoundConnection()
         withContext(Dispatchers.IO) {
-            connection.withSftpOperation(boundConfig) {
-                val sftp = try {
-                    connection.sftp()
-                } catch (e: Exception) {
-                    throw IOException(friendlySshError(e), e)
-                }
-                guarded { block(sftp) }
-            }
+            connection.withSftpOperation(boundConfig) { sftp -> guarded(sftp) { block(sftp) } }
         }
     }
 
-    /**
-     * 复用已打开的 SFTP 通道执行一次操作（不重新取 client）。供 [readLines] 惰性迭代使用：每次只锁住
-     * 一次读取，`yield` 在锁外，调用方中途放弃迭代时不会永久占住连接级操作锁。
-     */
-    private fun <T> onSftp(block: () -> T): T = runBlocking {
-        requireBoundConnection()
-        withContext(Dispatchers.IO) { connection.withSftpOperation(boundConfig) { guarded(block) } }
-    }
-
-    /** 传输层异常时丢弃 SFTP 通道（下次调用自动重建）后原样抛出；业务错误不重建。 */
-    private suspend fun <T> guarded(block: () -> T): T = try {
+    /** 传输层异常时丢弃这条通道（下次操作从池里换一条）后原样抛出；业务错误不换通道。 */
+    private suspend fun <T> guarded(client: SFTPClient, block: () -> T): T = try {
         block()
     } catch (e: Exception) {
         if (e !is SFTPException && e !is NoSuchFileException && e !is FileAlreadyExistsException) {
-            runCatching { connection.invalidateSftp() }
+            runCatching { connection.invalidateSftpChannel(client) }
         }
         throw e
     }
@@ -141,35 +125,74 @@ class RemoteSftpFileAccess private constructor(
     /**
      * 惰性逐行读取：每次只物化当前一行（单行封顶 64K 字符），读到哪算哪，整文件不进内存。
      * 序列可重复迭代（每次迭代重新打开远程文件）；调用方需在 IO 线程上迭代。
+     *
+     * 按块重新借通道，而不是整条序列占住一条：`FileTools` 读大文件会在字节/超时上限处提前 `break`，
+     * 序列被丢弃时没有任何回调可以归还，整条序列占通道会让池子被几次截断读耗尽。
      */
     override fun readLines(path: String): Sequence<String> {
         val remote = toRemotePath(path)
         return sequence {
-            val reader = withSftp { sftp ->
-                val attrs = sftp.statExistence(remote) ?: throw NoSuchFileException(remote)
-                if (attrs.type == FileMode.Type.DIRECTORY) throw IOException("是目录，无法按文件读取: $remote")
-                BoundedLineReader(InputStreamReader(RemoteFileInputStream(sftp.open(remote))))
-            }
-            try {
-                while (true) {
-                    // 每行一次 runBlocking + 加锁，大文件逐行读时调度开销很大：一次读一批，
-                    // 锁的获取次数从「每行一次」降到「每批一次」；读不满一批就说明到文件尾了。
-                    val batch = onSftp {
-                        val lines = ArrayList<String>(READ_BATCH_LINES)
-                        while (lines.size < READ_BATCH_LINES) {
-                            val line = reader.readLine() ?: break
-                            lines.add(line.text)
-                        }
-                        lines
-                    }
-                    if (batch.isEmpty()) break
-                    for (line in batch) yield(line)
-                    if (batch.size < READ_BATCH_LINES) break
-                }
-            } finally {
-                runCatching { onSftp { reader.close() } }
+            val attrs = withSftp { it.statExistence(remote) } ?: throw NoSuchFileException(remote)
+            if (attrs.type == FileMode.Type.DIRECTORY) throw IOException("是目录，无法按文件读取: $remote")
+            val reader = BoundedLineReader(InputStreamReader(RemoteChunkInputStream(remote, attrs.size)))
+            while (true) {
+                val line = reader.readLine() ?: break
+                yield(line.text)
             }
         }
+    }
+
+    /** 远程文件的分块字节流：每块单独借还通道，块之间不占额度，迭代中途被丢弃也不会泄漏通道。 */
+    private inner class RemoteChunkInputStream(
+        private val remote: String,
+        private val size: Long
+    ) : InputStream() {
+        private var buffer = ByteArray(0)
+        private var position = 0
+        private var offset = 0L
+        private var exhausted = false
+        private val single = ByteArray(1)
+
+        override fun read(): Int = if (read(single, 0, 1) <= 0) -1 else single[0].toInt() and 0xFF
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (len == 0) return 0
+            while (position >= buffer.size && !exhausted) fill()
+            if (position >= buffer.size) return -1
+            val n = minOf(len, buffer.size - position)
+            System.arraycopy(buffer, position, b, off, n)
+            position += n
+            return n
+        }
+
+        private fun fill() {
+            val want = minOf(READ_CHUNK_BYTES.toLong(), size - offset)
+            if (want <= 0L) {
+                exhausted = true
+                buffer = ByteArray(0)
+                position = 0
+                return
+            }
+            val bytes = withSftp { sftp -> sftp.open(remote).use { readChunk(it, offset, want.toInt()) } }
+            offset += bytes.size
+            if (bytes.size < want) exhausted = true
+            buffer = bytes
+            position = 0
+        }
+    }
+
+    /** 从 [offset] 起读出至多 [size] 字节：SFTP 单次读不保证读满，按块拼到位。 */
+    private fun readChunk(file: RemoteFile, offset: Long, size: Int): ByteArray {
+        val out = ByteArrayOutputStream(size)
+        val buf = ByteArray(minOf(IO_CHUNK, size))
+        var pos = offset
+        while (out.size() < size) {
+            val n = file.read(pos, buf, 0, minOf(buf.size, size - out.size()))
+            if (n <= 0) break
+            out.write(buf, 0, n)
+            pos += n
+        }
+        return out.toByteArray()
     }
 
     override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) =
@@ -511,8 +534,8 @@ class RemoteSftpFileAccess private constructor(
 
     private companion object {
 
-        /** 远程逐行读的批量大小：一批一次锁，避免每行一次 runBlocking + 加锁。 */
-        const val READ_BATCH_LINES = 256
+        /** 逐行读每次向通道要的字节数：块越大借还通道次数越少，块越小内存占用越小。 */
+        const val READ_CHUNK_BYTES = 256 * 1024
         /** 同目录临时文件带随机标识，避免不同写入共用候选文件。 */
         const val TMP_FILE_SUFFIX = ".aicode-part"
     }

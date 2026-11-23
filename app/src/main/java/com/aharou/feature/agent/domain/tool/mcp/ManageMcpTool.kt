@@ -223,6 +223,8 @@ class ManageMcpTool @Inject constructor(
                             enabled = existing?.enabled ?: true,
                             disabledTools = existing?.disabledTools ?: emptySet(),
                             oauth = existing?.oauth,
+                            // 配对协商出来的加密标记：同名覆盖时同样不能被抹掉。
+                            encrypted = existing?.encrypted ?: false,
                             keepAlive = args["keep_alive"]?.jsonPrimitive?.booleanOrNull ?: existing?.keepAlive ?: false,
                         )
                         servers.filterNot { it.name == name } + newServer

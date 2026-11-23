@@ -325,6 +325,12 @@ dependencies {
     // Vico 图表（Token 统计趋势图）
     implementation("com.patrykandpatrick.vico:compose-m3:2.4.4")
 
+    // 插件音乐能力（Tools.music.*）需要真正的播放器：Operit 用 ExoPlayer，
+    // 系统 MediaPlayer 不支持 HLS 也无法做播放队列的可靠切换。
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
+
     // 二维码生成：微信扫码绑定要把 iLink 返回的链接编成可扫的位图（纯 Java，无 native）
     implementation("com.google.zxing:core:3.5.3")
 

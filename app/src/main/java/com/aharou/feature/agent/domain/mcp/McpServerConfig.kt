@@ -17,7 +17,11 @@ data class McpServerConfig(
     // 旧配置无此字段时按 false 读，等价于原来的行为。
     val keepAlive: Boolean = false,
     // OAuth 授权配置（仅远程 HTTP 形态用）；为 null 表示该 server 不走 OAuth。旧配置无此块时保持 null。
-    val oauth: McpOAuthConfig? = null
+    val oauth: McpOAuthConfig? = null,
+    // 应用层加密：由配对自动协商写入，不是用户可配置项。
+    // 为 true 时这条连接必须先握手成功、之后按加密收发；任一步失败即报错，不静默退回明文（否则中间人可随时剥加密）。
+    // false / 旧配置保持现有明文行为。
+    val encrypted: Boolean = false
 ) {
     val isStdio: Boolean get() = !command.isNullOrBlank()
 

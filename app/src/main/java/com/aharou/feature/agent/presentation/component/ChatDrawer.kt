@@ -113,6 +113,7 @@ import compose.icons.feathericons.FilePlus
 import compose.icons.feathericons.Folder
 import compose.icons.feathericons.FolderPlus
 import compose.icons.feathericons.Globe
+import compose.icons.feathericons.Lock
 import compose.icons.feathericons.MessageSquare
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Settings

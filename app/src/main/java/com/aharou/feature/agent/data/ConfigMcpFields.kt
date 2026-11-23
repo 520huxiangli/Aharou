@@ -246,6 +246,8 @@ class ConfigMcpFields @Inject constructor(
                 enabled = existing?.enabled ?: true,
                 disabledTools = existing?.disabledTools ?: emptySet(),
                 oauth = existing?.oauth,
+                // 配对协商出来、不往用户暴露的标记：同名覆盖时同样不能被抹掉。
+                encrypted = existing?.encrypted ?: false,
             )
             saveAll(servers().filterNot { it.name == name } + created)
             return name

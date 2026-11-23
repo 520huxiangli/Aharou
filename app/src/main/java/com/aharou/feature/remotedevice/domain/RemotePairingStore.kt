@@ -166,6 +166,14 @@ class RemotePairingStore @Inject constructor(
             .sortedByDescending { it.approvedAt }
     }
 
+    /**
+     * 已授权设备的 token 摘要（与磁盘上的 key 同形）。
+     *
+     * 加密握手要拿它逐个候选去派生会话密钥：服务端从来只存摘要，派生输入也就只能用摘要。
+     * 只给摘要不给 `ApprovedDeviceEntry`，是为了不让调用方有机会把可鉴权的材料拿到手。
+     */
+    internal suspend fun tokenHashes(): List<String> = mutex.withLock { read().devices.keys.toList() }
+
     /** 撤销某台设备的授权（按 deviceId）；下次调用会拿到 401，需重新配对。 */
     suspend fun revoke(deviceId: String): Boolean = mutex.withLock {
         val data = read()

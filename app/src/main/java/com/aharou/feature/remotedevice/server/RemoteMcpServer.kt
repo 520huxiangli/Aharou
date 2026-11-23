@@ -5,6 +5,7 @@ import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.domain.mcp.McpConfigRepository
 import com.aharou.feature.agent.domain.mcp.McpServerConfig
 import com.aharou.feature.agent.domain.model.AgentImage
+import com.aharou.feature.remotedevice.crypto.AharouCrypto
 import com.aharou.feature.remotedevice.domain.PairOutcome
 import com.aharou.feature.remotedevice.domain.RemoteActionCatalog
 import com.aharou.feature.remotedevice.domain.RemoteActionExecutor
@@ -96,6 +97,13 @@ class RemoteMcpServer @Inject constructor(
         const val PAIR_PATH = "/pair"
         const val HEALTH_PATH = "/health"
 
+        /** 握手路由：本身不要求 Bearer，否则每次重连都要先多一轮带 token 的明文。 */
+        const val ENC_HANDSHAKE_PATH = "/enc-handshake"
+
+        /** 加密请求/响应头：会话 id，以及「正文是密文帧」的标记（缺席即明文）。 */
+        const val SESSION_HEADER = "X-Aharou-Session"
+        const val ENC_HEADER = "X-Aharou-Enc"
+
         /** 文件下载/上传的路径前缀，后面接一次性票据 id（见 [RemoteFileTicketStore]）。 */
         const val FILE_PATH = "/file"
         const val UPLOAD_PATH = "/upload"
@@ -135,6 +143,9 @@ class RemoteMcpServer @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** 加密会话表：只认证不鉴权（鉴权仍走 pairing.authenticate，撤销设备对加密通道立即生效）。 */
+    private val encryption = RemoteEncryptionSessions(tokenHashes = { pairing.tokenHashes() })
+
     /** 幂等启动：已在跑就直接返回。 */
     fun start() {
         if (acceptJob?.isActive == true) return
@@ -154,6 +165,12 @@ class RemoteMcpServer @Inject constructor(
     fun restart() {
         stop()
         start()
+    }
+
+    /** 用户关掉加密总开关时调用：立刻作废全部握手与会话，旧连接的下一次请求会拿到 enc_session_unknown。 */
+    fun dropEncryptionSessions() {
+        encryption.clear()
+        FileLogger.i(TAG, "加密总开关已关闭，已清空全部加密会话")
     }
 
     /**
@@ -245,6 +262,12 @@ class RemoteMcpServer @Inject constructor(
                 return
             }
 
+            // 加密的 /mcp 请求体是二进制帧，必须按字节读：先当 UTF-8 字符串解一遍会把它毁掉。
+            if (head.method == "POST" && head.path == MCP_PATH && head.header(SESSION_HEADER) != null) {
+                handleEncryptedMcp(head, input, out)
+                return
+            }
+
             val request = try {
                 HttpRequest(head.method, head.target, head.headers, readHttpBody(input, head, MAX_BODY_BYTES))
             } catch (e: HttpBodyTooLarge) {
@@ -257,6 +280,8 @@ class RemoteMcpServer @Inject constructor(
                     writeHttpResponse(out, 200, healthBody())
                 request.path == PAIR_PATH && request.method == "POST" ->
                     handlePair(request, out, peer)
+                request.path == ENC_HANDSHAKE_PATH && request.method == "POST" ->
+                    handleEncHandshake(request, out)
                 request.path == MCP_PATH && request.method == "POST" ->
                     handleMcp(request, out)
                 request.path == MCP_PATH ->
@@ -353,6 +378,8 @@ class RemoteMcpServer @Inject constructor(
                     put("device_name", outcome.device.deviceName)
                     put("protocol_version", PROTOCOL_VERSION)
                     put("path", MCP_PATH)
+                    // 能力标记：对端据此把这条 server 标成 encrypted。老对端不认识这个字段，直接忽略，行为不变。
+                    put("enc", true)
                 }.toString()
                 writeHttpResponse(out, 200, body)
                 // 先把 token 交给对端再回连：回连失败只影响反向那一段，不影响本次配对结果。
@@ -433,11 +460,16 @@ class RemoteMcpServer @Inject constructor(
             json.parseToJsonElement(body).jsonObject["token"]?.jsonPrimitive?.contentOrNull
         }.getOrNull().orEmpty()
         if (token.isBlank()) return "对端没有返回 token"
+        // 对端声明支持应用层加密时才把这条 server 标成 encrypted；老对端没有这个字段，保持明文。
+        val peerSupportsEnc = runCatching {
+            json.parseToJsonElement(body).jsonObject["enc"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+        }.getOrNull() ?: false
         val serverName = "远端设备 ${if (literal.length > 24) literal.take(24) + "…" else literal}"
         val config = McpServerConfig(
             name = serverName,
             url = "http://$literal:$port$MCP_PATH",
-            headers = mapOf("Authorization" to "Bearer $token")
+            headers = mapOf("Authorization" to "Bearer $token"),
+            encrypted = peerSupportsEnc
         )
         val existing = runCatching { mcpConfigRepository.getGlobalServers() }.getOrDefault(emptyList())
         mcpConfigRepository.setGlobalServers(existing.filterNot { it.name == config.name } + config)
@@ -447,20 +479,25 @@ class RemoteMcpServer @Inject constructor(
 
     // ── MCP（Streamable HTTP） ────────────────────────────────────
 
-    private suspend fun handleMcp(request: HttpRequest, out: java.io.OutputStream) {
+    private suspend fun handleMcp(
+        request: HttpRequest,
+        out: java.io.OutputStream,
+        session: RemoteEncryptionSessions.ActiveSession? = null
+    ) {
         val device = pairing.authenticate(bearerToken(request))
         if (device == null) {
             FileLogger.w(TAG, "MCP 调用未通过鉴权")
-            writeHttpResponse(
+            respondMcp(
                 out, 401, """{"error":"unauthorized"}""",
-                headers = mapOf("WWW-Authenticate" to "Bearer")
+                headers = mapOf("WWW-Authenticate" to "Bearer"),
+                session = session
             )
             return
         }
 
         val obj = runCatching { json.parseToJsonElement(request.body) as? JsonObject }.getOrNull()
             ?: run {
-                writeHttpResponse(out, 200, rpcError(null, -32700, "Parse error"))
+                respondMcp(out, 200, rpcError(null, -32700, "Parse error"), session = session)
                 return
             }
         val idEl = obj["id"]
@@ -468,26 +505,164 @@ class RemoteMcpServer @Inject constructor(
 
         // 无 id → 通知（如 notifications/initialized）：按 spec 回 202 无体。
         if (idEl == null || idEl is JsonNull) {
-            writeHttpResponse(out, 202, "")
+            respondMcp(out, 202, "", session = session)
             return
         }
         if (method.isNullOrBlank()) {
-            writeHttpResponse(out, 200, rpcError(idEl, -32600, "Invalid Request"))
+            respondMcp(out, 200, rpcError(idEl, -32600, "Invalid Request"), session = session)
             return
         }
 
         when (method) {
             "initialize" -> {
                 val sessionId = UUID.randomUUID().toString()
-                writeHttpResponse(
+                respondMcp(
                     out, 200, rpcResult(idEl, initializeResult()),
-                    headers = mapOf("Mcp-Session-Id" to sessionId)
+                    headers = mapOf("Mcp-Session-Id" to sessionId),
+                    session = session
                 )
             }
-            "tools/list" -> writeHttpResponse(out, 200, rpcResult(idEl, toolsListResult()))
-            "tools/call" -> writeHttpResponse(out, 200, rpcResult(idEl, callTool(obj["params"] as? JsonObject, device)))
-            "ping" -> writeHttpResponse(out, 200, rpcResult(idEl, buildJsonObject { }))
-            else -> writeHttpResponse(out, 200, rpcError(idEl, -32601, "Method not found: $method"))
+            "tools/list" -> respondMcp(out, 200, rpcResult(idEl, toolsListResult()), session = session)
+            "tools/call" -> respondMcp(
+                out, 200, rpcResult(idEl, callTool(obj["params"] as? JsonObject, device)), session = session
+            )
+            "ping" -> respondMcp(out, 200, rpcResult(idEl, buildJsonObject { }), session = session)
+            else -> respondMcp(out, 200, rpcError(idEl, -32601, "Method not found: $method"), session = session)
+        }
+    }
+
+    /** `/mcp` 的唯一响应出口：有会话就封成帧，没有会话就走原来的明文写回（逐字节不变）。 */
+    private fun respondMcp(
+        out: java.io.OutputStream,
+        status: Int,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+        session: RemoteEncryptionSessions.ActiveSession?
+    ) {
+        if (session == null) {
+            writeHttpResponse(out, status, body, headers = headers)
+            return
+        }
+        val frame = encryption.seal(session, body.toByteArray(StandardCharsets.UTF_8))
+        if (frame == null) {
+            // 封不出来不能把调用搞断：以明文回、且不带加密头，客户端据此自己降级。
+            FileLogger.w(TAG, "响应加密失败，本次以明文回给对端")
+            writeHttpResponse(out, status, body, headers = headers)
+            return
+        }
+        writeHttpResponseBytes(
+            out, status, frame,
+            contentType = "application/octet-stream",
+            headers = headers + (ENC_HEADER to "1")
+        )
+    }
+
+    /**
+     * 带 `X-Aharou-Session` 的 `/mcp` 请求：解帧 → 取回明文 token → 走与明文完全相同的 [handleMcp]。
+     *
+     * token 封在密文体内而不是请求头：带在头上等于把长期凭据直接交给被动监听者，加密就白做了。
+     * 鉴权仍由 `pairing.authenticate` 负责，所以撤销设备对加密通道同样立即生效。
+     */
+    private suspend fun handleEncryptedMcp(head: HttpHead, input: InputStream, out: OutputStream) {
+        val sessionId = head.header(SESSION_HEADER).orEmpty()
+        val session = encryption.active(sessionId)
+        if (session == null) {
+            // 在解密之前就拒：保证这条请求没有执行任何动作。
+            FileLogger.w(TAG, "加密会话不存在或已过期（${sessionId.take(8)}…），已拒绝，未执行任何动作")
+            writeHttpResponse(out, 400, """{"error":"enc_session_unknown"}""")
+            return
+        }
+        val frame = try {
+            readHttpBodyBytes(input, head, MAX_BODY_BYTES)
+        } catch (e: HttpBodyTooLarge) {
+            writeHttpResponse(out, 413, """{"error":"payload_too_large"}""")
+            return
+        }
+        val plain = encryption.open(session, frame)
+        if (plain == null) {
+            // 只记事实，不记密钥与明文片段：计数器错位（对端重启）与真正的攻击在这里看起来一样。
+            FileLogger.w(TAG, "加密帧解密失败（会话 ${sessionId.take(8)}…），已丢弃，未执行任何动作")
+            writeHttpResponse(out, 400, """{"error":"enc_decrypt_failed"}""")
+            return
+        }
+        val text = String(plain, StandardCharsets.UTF_8)
+        val separator = text.indexOf('\n')
+        if (separator <= 0) {
+            FileLogger.w(TAG, "加密请求里缺少 token 段，拒绝")
+            writeHttpResponse(
+                out, 401, """{"error":"unauthorized"}""",
+                headers = mapOf("WWW-Authenticate" to "Bearer")
+            )
+            return
+        }
+        val token = text.substring(0, separator).trim()
+        // 把 token 还原成 Authorization 头：handleMcp 与明文路径走同一套鉴权代码。
+        val headers = head.headers + ("authorization" to "Bearer $token")
+        handleMcp(HttpRequest("POST", head.target, headers, text.substring(separator + 1)), out, session)
+    }
+
+    /**
+     * `/enc-handshake`：不带 `confirm` 是第一步（换临时公钥），带了就是第二步（交确认值）。
+     *
+     * 这一步不要求 Bearer，也不执行任何动作：它只负责让双方算出一把相同密钥，
+     * 真正的使用权在之后的每条加密请求里由 token 重新鉴权。
+     */
+    private suspend fun handleEncHandshake(request: HttpRequest, out: java.io.OutputStream) {
+        // 本机用户关掉了总开关：一条会话也不建。给明确拒绝码，对端能在日志里定位到原因。
+        if (!settings.current().encryptChannel) {
+            writeHttpResponse(
+                out, 403,
+                """{"error":"enc_handshake_disabled","reason":"disabled_by_user"}"""
+            )
+            return
+        }
+        val obj = runCatching { json.parseToJsonElement(request.body) as? JsonObject }.getOrNull()
+        if (obj == null) {
+            writeHttpResponse(out, 400, """{"error":"enc_handshake_failed","reason":"invalid_body"}""")
+            return
+        }
+
+        val confirm = AharouCrypto.base64OrNull(obj["confirm"]?.jsonPrimitive?.contentOrNull)
+        if (confirm != null) {
+            val sessionId = obj["session"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            if (sessionId.isBlank()) {
+                writeHttpResponse(out, 400, """{"error":"enc_handshake_failed","reason":"missing_session"}""")
+                return
+            }
+            when (val outcome = encryption.confirm(sessionId, confirm)) {
+                is RemoteEncryptionSessions.ConfirmOutcome.Ok ->
+                    writeHttpResponse(out, 200, """{"ok":true}""")
+                is RemoteEncryptionSessions.ConfirmOutcome.Rejected ->
+                    writeHttpResponse(
+                        out,
+                        if (outcome.code == "enc_handshake_rejected") 403 else 400,
+                        """{"error":"${outcome.code}","reason":"${outcome.reason}"}"""
+                    )
+            }
+            return
+        }
+
+        val clientPublic = AharouCrypto.base64OrNull(obj["ephemeral_pub"]?.jsonPrimitive?.contentOrNull)
+        val nonceC = AharouCrypto.base64OrNull(obj["nonce_c"]?.jsonPrimitive?.contentOrNull)
+        if (clientPublic == null || nonceC == null) {
+            writeHttpResponse(
+                out, 400,
+                """{"error":"enc_handshake_failed","reason":"missing_ephemeral_pub_or_nonce_c"}"""
+            )
+            return
+        }
+        when (val outcome = encryption.begin(clientPublic, nonceC)) {
+            is RemoteEncryptionSessions.BeginOutcome.Ok -> writeHttpResponse(
+                out, 200,
+                buildJsonObject {
+                    put("ephemeral_pub", AharouCrypto.base64(outcome.ephemeralPub))
+                    put("nonce_s", AharouCrypto.base64(outcome.nonceS))
+                    put("session", outcome.sessionId)
+                }.toString()
+            )
+            is RemoteEncryptionSessions.BeginOutcome.Rejected -> writeHttpResponse(
+                out, 400, """{"error":"${outcome.code}","reason":"${outcome.reason}"}"""
+            )
         }
     }
 

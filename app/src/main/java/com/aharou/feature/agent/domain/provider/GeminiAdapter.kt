@@ -63,6 +63,18 @@ class GeminiAdapter @Inject constructor(
         return if (stream) "$url?alt=sse" else url
     }
 
+    /**
+     * generateContent 目标端点。每次尝试前重算：多 Key 切换会同步改写 baseUrl，
+     * 捕获一次的 URL 会把新 Key 发到旧地址。
+     */
+    private fun resolveGenerateContentUrl(stream: Boolean): String {
+        if (useFullUrl) return baseUrl
+        val trimmedBase = baseUrl.trimEnd('/')
+        val suffix = if (stream) ":streamGenerateContent?alt=sse" else ":generateContent"
+        return if (trimmedBase.endsWith(model)) trimmedBase + suffix
+        else joinUrl(baseUrl, "v1beta/models/$model$suffix")
+    }
+
     override suspend fun complete(
         systemPrompt: String,
         messages: List<AgentMessage>,
@@ -75,16 +87,7 @@ class GeminiAdapter @Inject constructor(
 
         val request = buildRequestBody(systemPrompt, messages, tools, reasoningEffort)
 
-        val url = if (useFullUrl) {
-            baseUrl
-        } else {
-            val path = if (baseUrl.trimEnd('/').endsWith(model)) {
-                baseUrl.trimEnd('/') + ":generateContent"
-            } else {
-                joinUrl(baseUrl, "v1beta/models/$model:generateContent")
-            }
-            path
-        }
+        val url = resolveGenerateContentUrl(stream = false)
         val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
 
         val triedKeys = mutableSetOf(apiKey)
@@ -93,7 +96,7 @@ class GeminiAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.generateContent(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
+                api.generateContent(url = resolveGenerateContentUrl(stream = false), apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -191,16 +194,7 @@ class GeminiAdapter @Inject constructor(
 
         val request = buildRequestBody(systemPrompt, messages, tools, reasoningEffort)
 
-        val url = if (useFullUrl) {
-            baseUrl
-        } else {
-            val path = if (baseUrl.trimEnd('/').endsWith(model)) {
-                baseUrl.trimEnd('/') + ":streamGenerateContent?alt=sse"
-            } else {
-                joinUrl(baseUrl, "v1beta/models/$model:streamGenerateContent?alt=sse")
-            }
-            path
-        }
+        val url = resolveGenerateContentUrl(stream = true)
         
         val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
         val sseLog = AILogger.beginRawSse(logSessionId, "Gemini", seq)
@@ -229,7 +223,7 @@ class GeminiAdapter @Inject constructor(
                 var streamOutputTokens = 0
                 var streamCachedInputTokens = 0
 
-                val body = firstContent.awaitBody(api.streamGenerateContent(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
+                val body = firstContent.awaitBody(api.streamGenerateContent(url = resolveGenerateContentUrl(stream = true), apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request))
 
                 body.use { rb ->
                     firstContent.attach { rb.close() }
@@ -427,7 +421,7 @@ class GeminiAdapter @Inject constructor(
                 maxRetries = maxNetworkRetries,
                 onKeyFailure = { e, _ -> switchKeyOnFailure(e, triedKeys) != null }
             ) {
-                api.createInteraction(url = url, apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
+                api.createInteraction(url = resolveInteractionsUrl(stream = false), apiKey = apiKey.takeIf { it.isNotBlank() }, extraHeaders = extraHeaders(), request = request)
             }
         } catch (e: CancellationException) {
             throw e
@@ -493,7 +487,7 @@ class GeminiAdapter @Inject constructor(
                     val argProgress = ToolArgProgressSampler()
 
                     val body = firstContent.awaitBody(api.streamInteraction(
-                        url = url,
+                        url = resolveInteractionsUrl(stream = true),
                         apiKey = apiKey.takeIf { it.isNotBlank() },
                         extraHeaders = extraHeaders(),
                         request = request

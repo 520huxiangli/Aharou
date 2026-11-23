@@ -66,7 +66,9 @@ class McpManager @Inject constructor(
     private val workspaceRepository: WorkspaceRepository,
     private val containerSettingsRepository: ContainerSettingsRepository,
     private val profileResolver: ContainerProfileResolver,
-    private val vault: VaultRepository
+    private val vault: VaultRepository,
+    /** 应用层加密通道的工厂（远端设备模块实现）；不配加密的 server 不会碰它。 */
+    private val encryptionFactory: McpEncryptionFactory
 ) {
     private companion object {
         const val TAG = "McpManager"
@@ -322,15 +324,35 @@ class McpManager @Inject constructor(
                     onClosed = { onTransportClosed(workspacePath, cfg.name, created) }
                 )
             } else {
+                // 先把密钥占位符解成真值：加密通道要拿 Bearer token 参与密钥派生，
+                // 而传输层只看到解析后的头。
+                val resolvedHeaders = cfg.headers.mapValues { (_, v) -> vault.resolve(v, strict = false) }
+                val endpoint = vault.resolve(cfg.url.orEmpty(), strict = false)
                 StreamableHttpTransport(
                     // 配置里的密钥是占位符，这里必须换成真值——且要在传输层内部解析 URL 之前，
                     // query 形态的 URL 才能拼对。strict=false：密钥被删时保留占位符、由连接以 401
                     // 暴露问题，比 connectOne 直接抛异常更好排查。
-                    endpoint = vault.resolve(cfg.url.orEmpty(), strict = false),
+                    endpoint = endpoint,
                     client = okHttpClient,
-                    extraHeaders = cfg.headers.mapValues { (_, v) -> vault.resolve(v, strict = false) },
+                    extraHeaders = resolvedHeaders,
                     // 配了 oauth 块的 server 由提供者在每次请求前注入/刷新 Bearer 令牌。
-                    authProvider = if (cfg.oauth != null) oauthClient.bearerProvider(cfg.name) else null
+                    authProvider = if (cfg.oauth != null) oauthClient.bearerProvider(cfg.name) else null,
+                    // 配对协商过加密、且用户没关总开关的 server 才带通道；null 时传输层的行为与加加密前完全一致。
+                    // 总开关关掉时直接给 null（明文，不当成配置错误），也不改写 server 自己的 encrypted 标记。
+                    encryption = if (cfg.encrypted && encryptionFactory.allowed()) {
+                        // 加密请求不带 Authorization（token 在密文体内），与 OAuth 的 Bearer 注入互斥：
+                        // 同时开着只会得到 401，不如直接说清楚。配对产出的配置不会同时带 oauth。
+                        if (cfg.oauth != null) {
+                            throw IllegalStateException("这条 server 同时开了应用层加密与 OAuth，两者互斥；先二选一")
+                        }
+                        // 取不到通道（没 token / 端点不是 HTTP）也不能退回明文：那等于把加密悄悄关掉。
+                        encryptionFactory.create(endpoint, bearerTokenOf(resolvedHeaders))
+                            ?: throw IllegalStateException(
+                                "这条 server 要求应用层加密，但配置里没有可用的 Bearer token；重新配对一次即可恢复"
+                            )
+                    } else {
+                        null
+                    }
                 )
             }
             transport = t
@@ -374,6 +396,14 @@ class McpManager @Inject constructor(
             McpServerStatus(cfg.name, McpServerStatus.State.FAILED, error = e.message)
         }
     }
+
+    /** 从（已解析的）配置头里取 Bearer token；加密通道拿它参与密钥派生。 */
+    private fun bearerTokenOf(headers: Map<String, String>): String? =
+        headers.entries.firstOrNull { it.key.equals("Authorization", ignoreCase = true) }
+            ?.value
+            ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
+            ?.substring("Bearer ".length)
+            ?.trim()
 
     fun getServerTools(serverName: String): List<McpToolDescriptor> {
         synchronized(runtimes) {

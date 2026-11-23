@@ -186,12 +186,15 @@ class GenerateImageTool @Inject constructor(
             val provider = resolveImageGenProvider()
             lastProviderId = provider.id
             activeApiKey = keyRotator.activeKey(provider, context.sessionId) ?: provider.firstUsableApiKey
+            // 多 Key 各自可带地址：把当前 Key 的地址烘进副本，主通道与回退通道共用同一份，
+            // 不改 generate(...) 签名，避免牵连所有调用点与测试。
+            val keyedProvider = provider.copy(baseUrl = provider.baseUrlForKey(activeApiKey))
             val model = provider.effectiveModel
             // Gemini 官方图像模型走 Interactions 协议（v1beta/interactions），OpenAI 的
             // /v1/images/generations 端点打不通；设了 Gemini 生图模型时切独立通道，
             // OpenAI 特有的参数（size/quality/background 等）在 Gemini 分支里忽略。
             if (provider.type == ProviderType.GEMINI) {
-                return@withContext generateViaGemini(access, provider, activeApiKey, prompt, n, outputPath, context.sessionId)
+                return@withContext generateViaGemini(access, keyedProvider, activeApiKey, prompt, n, outputPath, context.sessionId)
             }
             val isGptImage = model.startsWith("gpt-image", ignoreCase = true)
             val isDalle2 = model.equals("dall-e-2", ignoreCase = true)
@@ -212,7 +215,7 @@ class GenerateImageTool @Inject constructor(
             }
             FileLogger.i(TAG, "generateImage provider=${provider.id} model=$model prompt=$prompt n=$n size=$size")
 
-            val url = if (provider.useFullUrl) provider.baseUrl else joinUrl(provider.baseUrl, "v1/images/generations")
+            val url = if (keyedProvider.useFullUrl) keyedProvider.baseUrl else joinUrl(keyedProvider.baseUrl, "v1/images/generations")
             // 兼容性规则：
             // 1. 只有真正的官方 GPT Image 系列模型（如 gpt-image-1 / gpt-image-1.5）才支持 output_format，且其默认就返回 base64、不支持 response_format；
             // 2. 其它模型（DALL-E、各类聚合网关如 agnes/OneAPI/NewAPI/Flux/SD 等）必须传 response_format=b64_json 才会返回 base64，
@@ -246,14 +249,14 @@ class GenerateImageTool @Inject constructor(
                 val enriched = e.enrichWithHttpErrorBody()
                 // 部分中转站/网关不实现 Images 端点（一律 404/405/501），但能在 Chat Completions 里回图；
                 // 只有这类端点缺失才回落——鉴权、限流、超时、参数错误回落到 chat 同样无益。
-                if (provider.useFullUrl || !enriched.isImagesEndpointUnavailable()) throw enriched
+                if (keyedProvider.useFullUrl || !enriched.isImagesEndpointUnavailable()) throw enriched
                 FileLogger.i(TAG, "Images 端点不可用，回落 Chat Completions 出图")
-                chatImageFallback.generate(provider, activeApiKey, extraHeaders, prompt, context.sessionId)
+                chatImageFallback.generate(keyedProvider, activeApiKey, extraHeaders, prompt, context.sessionId)
             }
             // 端点存在但返回空数据（网关路由到默认处理器、模型静默拒答）时同样回落。
-            if (response.data.isEmpty() && !provider.useFullUrl) {
+            if (response.data.isEmpty() && !keyedProvider.useFullUrl) {
                 FileLogger.i(TAG, "Images 端点未返回图片，回落 Chat Completions 出图")
-                response = chatImageFallback.generate(provider, activeApiKey, extraHeaders, prompt, context.sessionId)
+                response = chatImageFallback.generate(keyedProvider, activeApiKey, extraHeaders, prompt, context.sessionId)
             }
             AILogger.logResponse(context.sessionId, provider.id, response, seq)
             buildSuccess(access, response, n, outputPath, model)

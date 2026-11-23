@@ -109,6 +109,21 @@ internal fun RemoteDeviceSection(viewModel: RemoteDeviceViewModel = hiltViewMode
                     )
                 }
             )
+            SettingsDivider()
+            // 加密开关只管与 Aharou 对端之间的通道，与此地服务是否开着无关（当客户端连别人时也生效），
+            // 所以不放进 config.enabled 分支。
+            // 文案 key 由主会话统一落盘（本仓约定不改 strings.xml），先引用。
+            SettingsRow(
+                icon = FeatherIcons.Shield,
+                title = stringResource(R.string.settings_remote_device_encrypt_channel),
+                subtitle = stringResource(R.string.settings_remote_device_encrypt_channel_hint),
+                trailing = {
+                    AppSwitch(
+                        checked = config.encryptChannel,
+                        onCheckedChange = { viewModel.setEncryptChannel(it) }
+                    )
+                }
+            )
         }
 
         // 配对与授权只在本机服务开启时有意义，关着就把这组藏起来。
