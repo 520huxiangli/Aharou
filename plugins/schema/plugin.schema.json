@@ -1,0 +1,358 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://520huxiangli.github.io/Aharou/schema/plugin.schema.json",
+  "title": "Aharou 插件清单 plugin.json",
+  "description": "字段事实源是 app/src/main/java/com/aharou/feature/plugin/domain/PluginManifestParser.kt：解析器对未知字段直接拒绝，改这里也要同步改解析器（scripts/check_plugin_host_api.py 会对账）。安装与加载不受本文件影响，它只服务于编辑器补全与静态校验；本地自查用 python3 scripts/check-plugin-manifests.py。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "id",
+    "name",
+    "version",
+    "publisher",
+    "repository",
+    "description",
+    "license",
+    "engines",
+    "contributes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "指向本 Schema 的路径或 URL；宿主只放行不解析。"
+    },
+    "manifestVersion": {
+      "const": 1,
+      "description": "清单格式版本，当前只支持 1。"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}\\.[a-z][a-z0-9-]{0,31}$",
+      "description": "全局唯一 ID，形如 publisher.name；publisher 部分是发布者，不是安装身份证明。"
+    },
+    "name": { "$ref": "#/definitions/localizedText" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$",
+      "description": "语义化版本。"
+    },
+    "publisher": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
+    },
+    "repository": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "插件源码或主页地址。"
+    },
+    "description": { "$ref": "#/definitions/localizedText" },
+    "license": { "type": "string", "maxLength": 100 },
+    "engines": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pluginApi"],
+      "properties": {
+        "pluginApi": {
+          "type": "string",
+          "description": "宿主插件 API 版本范围，必须包含宿主实现的版本（当前 1.0.0）。"
+        }
+      }
+    },
+    "runtime": { "$ref": "#/definitions/runtime" },
+    "configPage": { "$ref": "#/definitions/pagePath" },
+    "icon": {
+      "type": "string",
+      "description": "内置图标名，或包内 .png/.webp 相对路径。"
+    },
+    "contributes": { "$ref": "#/definitions/contributes" }
+  },
+  "definitions": {
+    "localizedText": {
+      "oneOf": [
+        { "type": "string", "maxLength": 600 },
+        {
+          "type": "object",
+          "additionalProperties": { "type": "string", "maxLength": 600 },
+          "required": ["default"],
+          "propertyNames": {
+            "pattern": "^(?i:default|[a-z]{2,3}((-|_)[a-z0-9]{2,8})*)$"
+          },
+          "description": "多语言文案：default 必填，其余键是语言标签。标签按 LocalizedText.normalize 处理（大小写与下划线不敏感，如 zh-CN / zh_CN 都等价于 zh-cn）。"
+        }
+      ]
+    },
+    "shortId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+    },
+    "handler": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
+      "description": "插件 runtime 导出的 handlers 表里的稳定键。"
+    },
+    "pagePath": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "包内相对路径，必须留在包目录内且层级不超过 8。"
+    },
+    "purpose": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "entry"],
+      "properties": {
+        "type": { "enum": ["javascript", "python"] },
+        "entry": { "$ref": "#/definitions/pagePath" },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": "覆盖默认启动命令；第一项是可执行文件。"
+        },
+        "dependencies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "file"],
+          "properties": {
+            "tool": {
+              "enum": ["npm", "pip"],
+              "description": "包管理工具；解析器只接受这两个值，dependencies.file 相应要求 package.json / requirements.txt。"
+            },
+            "file": { "$ref": "#/definitions/pagePath" }
+          }
+        },
+        "resident": {
+          "type": "boolean",
+          "description": "常驻进程不参与空闲回收。"
+        }
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "至少声明一项贡献，否则清单一律判为无效。",
+      "properties": {
+        "skills": { "type": "array", "maxItems": 64, "items": { "$ref": "#/definitions/contributionRef" } },
+        "agents": { "type": "array", "maxItems": 64, "items": { "$ref": "#/definitions/contributionRef" } },
+        "configPage": { "$ref": "#/definitions/pagePath" },
+        "workspaceTools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "description", "pageFile"],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "title": { "$ref": "#/definitions/localizedText" },
+              "description": { "$ref": "#/definitions/localizedText" },
+              "icon": { "type": "string", "maxLength": 32 },
+              "category": { "type": "string", "maxLength": 32 },
+              "pageFile": { "$ref": "#/definitions/pagePath" }
+            }
+          }
+        },
+        "uiEntries": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "slot", "title"],
+            "oneOf": [
+              { "required": ["page"] },
+              { "required": ["handler"] },
+              { "required": ["screen"] }
+            ],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "slot": {
+                "enum": [
+                  "settings.general",
+                  "settings.ai",
+                  "settings.environment",
+                  "settings.permissions",
+                  "settings.data",
+                  "settings.help",
+                  "drawer.footer",
+                  "chat.header.menu",
+                  "chat.welcome",
+                  "chat.session.menu",
+                  "files.tree.menu",
+                  "editor.selection.menu",
+                  "backup.data"
+                ],
+                "description": "宿主槽位；插件不能自定义插入位置。"
+              },
+              "title": { "$ref": "#/definitions/localizedText" },
+              "page": { "$ref": "#/definitions/pagePath" },
+              "handler": { "$ref": "#/definitions/handler" },
+              "screen": { "$ref": "#/definitions/pagePath", "description": "Compose DSL 面板脚本路径（Operit 兼容）。" },
+              "confirm": { "type": "boolean", "description": "动作入口执行前是否让宿主弹确认框。" },
+              "icon": { "type": "string", "maxLength": 32 }
+            }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "title", "description", "inputSchema", "handler"],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "title": { "$ref": "#/definitions/localizedText" },
+              "description": { "$ref": "#/definitions/localizedText" },
+              "inputSchema": { "$ref": "#/definitions/pagePath" },
+              "handler": { "$ref": "#/definitions/handler" }
+            }
+          }
+        },
+        "hooks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "event", "handler"],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "event": {
+                "enum": [
+                  "app.started",
+                  "agent.run.started",
+                  "agent.run.finished",
+                  "agent.request.started",
+                  "agent.request.finished",
+                  "agent.tool.started",
+                  "agent.tool.finished",
+                  "agent.compaction",
+                  "agent.tool.before",
+                  "agent.tool.after",
+                  "agent.http.before",
+                  "agent.permission.review",
+                  "plugin.installed",
+                  "plugin.uninstalled",
+                  "plugin.enabled",
+                  "plugin.disabled",
+                  "backup.export.before",
+                  "backup.import.finished",
+                  "chat.tag"
+                ],
+                "description": "备份类事件必须先声明 contributes.backup；transform 与 review 事件对 mode 有固定要求。chat.tag 不是事件派发，只用于声明聊天正文的内联标签。"
+              },
+              "handler": { "$ref": "#/definitions/handler" },
+              "mode": { "enum": ["observe", "transform", "review"] },
+              "tag": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]{1,32}$",
+                "description": "仅 chat.tag：AI 回复里要接管的标签名，小写字母/数字/下划线，同一插件内不能重复。"
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 24,
+                "maximum": 2000,
+                "description": "仅 chat.tag：内联组件固定高度（dp）。"
+              },
+              "maxHeight": {
+                "type": "integer",
+                "minimum": 24,
+                "maximum": 2000,
+                "description": "仅 chat.tag：内联组件最大高度（dp），超出后组件内部滚动，缺省 320。"
+              }
+            }
+          }
+        },
+        "mcp": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "file"],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "file": { "$ref": "#/definitions/pagePath" }
+            }
+          }
+        },
+        "providers": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "name", "description", "format", "baseUrl"],
+            "properties": {
+              "id": { "$ref": "#/definitions/shortId" },
+              "name": { "$ref": "#/definitions/localizedText" },
+              "description": { "$ref": "#/definitions/localizedText" },
+              "format": { "enum": ["openai"], "description": "当前只开放 OpenAI Chat Completions 兼容格式。" },
+              "baseUrl": {
+                "type": "string",
+                "maxLength": 2048,
+                "pattern": "^https?://",
+                "description": "插件自行启动或明确提供的 OpenAI 兼容服务地址。"
+              }
+            }
+          }
+        },
+        "shizuku": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose"],
+          "properties": { "purpose": { "$ref": "#/definitions/purpose" } }
+        },
+        "backup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose"],
+          "properties": { "purpose": { "$ref": "#/definitions/purpose" } }
+        },
+        "modelAccess": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose"],
+          "properties": { "purpose": { "$ref": "#/definitions/purpose" } }
+        },
+        "overlay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose"],
+          "properties": {
+            "purpose": { "$ref": "#/definitions/purpose" },
+            "surfaces": {
+              "type": "array",
+              "maxItems": 3,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "page"],
+                "properties": {
+                  "id": { "$ref": "#/definitions/shortId" },
+                  "page": { "$ref": "#/definitions/pagePath" },
+                  "width": { "type": "integer", "minimum": 1, "maximum": 720 },
+                  "height": { "type": "integer", "minimum": 1, "maximum": 1200 },
+                  "draggable": { "type": "boolean" },
+                  "snap": { "enum": ["none", "x", "y", "both"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "contributionRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "file"],
+      "properties": {
+        "id": { "$ref": "#/definitions/shortId" },
+        "file": { "$ref": "#/definitions/pagePath" }
+      }
+    }
+  }
+}

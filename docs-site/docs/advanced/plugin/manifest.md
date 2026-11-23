@@ -269,12 +269,13 @@
 | `id` | 是 | 局部 ID，同一插件的入口不可重名 |
 | `title` | 是 | 本地化名称，最多 80 字符 |
 | `slot` | 是 | 宿主槽位，仅可取下表的值 |
-| `page` | 二选一 | 包内 `.html`/`.htm` 页面，最大 512 KiB |
-| `handler` | 二选一 | runtime 的 handler 名；需要声明 `runtime` |
+| `page` | 三选一 | 包内 `.html`/`.htm` 页面，最大 512 KiB |
+| `handler` | 三选一 | runtime 的 handler 名；需要声明 `runtime` |
+| `screen` | 三选一 | 包内 Compose DSL 脚本（`.ui.js`，Operit 兼容）；与 `page` 同为页面型入口 |
 | `confirm` | 否 | 仅动作入口：执行前弹确认框 |
 | `icon` | 否 | 图标名，默认 `book`，最长 32 字符 |
 
-`page` 与 `handler` 必须且只能出现一个。`settings.*` 槽位只接受 `page`；`files.tree.menu` 与 `editor.selection.menu` 只接受 `handler`；`backup.data` 只接受数据选项（不能写 `page` / `handler` / `confirm`）。动作返回 `{message}` 时宿主用 toast 显示；错误请用 JSON-RPC error 返回。
+`page`、`handler`、`screen` 必须且只能出现一个。`settings.*` 槽位接受 `page` 或 `screen`；`files.tree.menu` 与 `editor.selection.menu` 只接受 `handler`；`backup.data` 只接受数据选项（不能写 `page` / `handler` / `screen` / `confirm`）。动作返回 `{message}` 时宿主用 toast 显示；错误请用 JSON-RPC error 返回。
 
 | `slot` | 位置 |
 | --- | --- |

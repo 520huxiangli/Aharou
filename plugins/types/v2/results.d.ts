@@ -1,0 +1,1825 @@
+// 来源：AAswordman/Operit2（AGPL-3.0）plugins/types/v2/results.d.ts，仅作接口参考，不含实现。
+// Generated from operit-plugin-sdk Rust declarations.
+
+import type { Catalog } from "./catalog";
+import type { Chat } from "./chat";
+import type { JsonObject } from "./core";
+import type { Models } from "./models";
+import type { Net } from "./network";
+import type { StorageChangePage, StorageKeyValueEntry, StoragePreferencesEdit, StoragePreferencesSnapshot, StorageSqlExecutionResult, StorageSqlRow, StorageValueEntry } from "./storage.generated";
+import type { TerminalExecEvent } from "./system";
+import type { Theme } from "./theme";
+import type { Tts } from "./tts";
+
+/**
+ * Preserves an arbitrary JSON result without interpreting strings or discarding null values.
+ */
+export interface JsonResultData {
+  value: unknown;
+}
+
+/**
+ * Contains every concrete payload returned by the built-in tool runtime.
+ */
+export type ToolResultData = UIPageResultData | UIActionResultData | JsonResultData | EdgePortResultData | BooleanResultData | StringResultData | SleepResultData | EnvironmentVariableReadResultData | EnvironmentVariableWriteResultData | ModelsListSummariesResultData | TtsSynthesizeResultData | TtsSpeakResultData | SttTranscribeResultData | TtsListConfigsResultData | TtsGetCurrentConfigIdResultData | TtsSetCurrentConfigIdResultData | ThemeListConfigsResultData | ThemeApplyConfigResultData | IntResultData | BinaryResultData | FilePartContentData | DirectoryListingData | FileContentData | BinaryFileContentData | FileExistsData | FileInfoData | FileOperationData | FileApplyResultData | StorageRequestResultData | WebSocketResultData | HttpResponseData | HttpStreamEventData | SystemSettingData | AppOperationData | AppListData | AppUsageTimeResultData | NotificationData | LocationData | DeviceInfoResultData | ChatServiceStartResultData | ChatCreationResultData | ChatListResultData | ChatFindResultData | AgentStatusResultData | ChatSwitchResultData | ChatTitleUpdateResultData | ChatDeleteResultData | MessageSendResultData | ChatSendMessageResultData | ChatObservationResultData | ChatPreparedDeliveryResultData | ChatScheduledMessagesResultData | ChatScheduleMessageResultData | ChatCancelScheduledMessageResultData | ChatCancelResultData | ChatReadExtensionResultData | ChatWriteExtensionResultData | ChatDeleteExtensionResultData | ChatCallResultData | ChatMessagesResultData | VisitWebResultData | TerminalInfoResultData | TerminalCommandResultData | TerminalStreamEventData | TerminalObservationResultData | HiddenTerminalCommandResultData | TerminalSessionCreationResultData | TerminalSessionCloseResultData | TerminalSessionScreenResultData | MusicPlaybackResultData | BluetoothStateData | BluetoothBondedDevicesData | BluetoothScanResultData | BluetoothSessionData | BluetoothTransferData | BluetoothReadData | BluetoothBleServicesData | BluetoothBleNotificationData | CatalogReadToolSourcesResultData | MediaRegistrationResultData | FindFilesResultData | GrepResultData;
+
+/**
+ * Captures the UI node and Android surface reached when an automation run finishes.
+ */
+export interface AutomationExecutionFinalState {
+  /**
+   * Identifies the final automation node.
+   */
+  nodeId: string;
+  /**
+   * Identifies the package shown in the final state.
+   */
+  packageName: string;
+  /**
+   * Identifies the activity shown in the final state.
+   */
+  activityName: string;
+}
+
+/**
+ * Records an automation or UI subagent invocation, its session, outcome, logs, and final state.
+ */
+export interface AutomationExecutionResultData {
+  /**
+   * Function name of the automation or subagent
+   */
+  functionName: string;
+  /**
+   * Parameters provided to the automation
+   */
+  providedParameters: Record<string, string>;
+  /**
+   * Optional agent id used for this run (can be reused to keep operating on the same virtual screen session)
+   */
+  agentId?: string | null;
+  /**
+   * Optional virtual display id associated with the agent session
+   */
+  displayId?: number | null;
+  /**
+   * Whether the execution succeeded
+   */
+  executionSuccess: boolean;
+  /**
+   * Detailed execution message and action logs
+   */
+  executionMessage: string;
+  /**
+   * Optional error message when execution fails
+   */
+  executionError?: string | null;
+  /**
+   * Final UI state information, if available
+   */
+  finalState?: AutomationExecutionFinalState | null;
+  /**
+   * Number of steps executed
+   */
+  executionSteps: number;
+  /**
+   * Formats the automation result for tool output.
+   */
+  toString(): string;
+}
+
+/**
+ * Represents one serializable UI hierarchy node with accessibility metadata and child nodes.
+ */
+export interface SimplifiedUINode {
+  className?: string;
+  text?: string;
+  contentDesc?: string;
+  resourceId?: string;
+  bounds?: string;
+  isClickable: boolean;
+  /**
+   * Preserves platform accessibility roles, states and supported actions.
+   */
+  properties: Record<string, unknown>;
+  children: SimplifiedUINode[];
+  /**
+   * Formats the node as a compact JSON value.
+   */
+  toString(): string;
+  /**
+   * Formats this node and its descendants as an indented tree.
+   */
+  toTreeString(indent?: string): string;
+  /**
+   * Reports whether the node contains information relevant to UI automation.
+   */
+  shouldKeepNode(): boolean;
+}
+
+/**
+ * Captures the active surface and its platform-neutral accessibility hierarchy.
+ */
+export interface UIPageResultData {
+  /**
+   * Identifies the native window that owns this snapshot.
+   */
+  windowId: string;
+  /**
+   * Contains a bounded, compact text view for model context; uiElements retains the full tree.
+   */
+  summary: string;
+  /**
+   * Reports the visibility granted by the owning platform.
+   */
+  scope: string;
+  /**
+   * Reports whether the provider reached its traversal budget.
+   */
+  truncated: boolean;
+  packageName: string;
+  activityName: string;
+  uiElements: SimplifiedUINode;
+  /**
+   * Formats the current UI page for tool output.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes an executed UI action and its optional target coordinates or element identifier.
+ */
+export interface UIActionResultData {
+  actionType: string;
+  actionDescription: string;
+  coordinates?: [number, number];
+  elementId?: string;
+  /**
+   * Formats the UI action for tool output.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies the command interpreter backing a terminal session.
+ */
+export type TerminalType = "powershell" | "bash" | "zsh" | "shell";
+
+/**
+ * Identifies the concrete terminal implementation selected by a host.
+ */
+export type TerminalImplementation = "native" | "proot" | "android-system" | "adb" | "shell" | "arm64" | "qemu-vroot" | "v86";
+
+/**
+ * Reports the start or an incremental chunk of a streamed chat-message response.
+ */
+export interface MessageSendStreamEventData {
+  /**
+   * Event type, currently "start" or "chunk"
+   */
+  type: string;
+  /**
+   * The ID of the chat receiving the streamed reply
+   */
+  chatId: string;
+  /**
+   * The original message content that was sent
+   */
+  message: string;
+  /**
+   * Whether waifu-style chunk aggregation is enabled for this stream
+   */
+  waifu: boolean;
+  /**
+   * Incremental chunk content for "chunk" events
+   */
+  chunk?: string | null;
+  /**
+   * Zero-based chunk index
+   */
+  chunkIndex?: number | null;
+  /**
+   * Total received character count so far
+   */
+  receivedChars?: number | null;
+  /**
+   * Returns the original message associated with this stream event.
+   */
+  toString(): string;
+}
+
+/**
+ * Wraps a boolean value returned by a built-in tool.
+ */
+export interface BooleanResultData {
+  value: boolean;
+}
+
+/**
+ * Wraps a string inside the Rust tool runtime before the JavaScript bridge emits a primitive string.
+ */
+export interface StringResultData {
+  /**
+   * Contains the returned string value.
+   */
+  value: string;
+}
+
+/**
+ * Records the requested and actual duration of a completed sleep operation.
+ */
+export interface SleepResultData {
+  requestedMs: number;
+  sleptMs: number;
+  /**
+   * Formats the actual sleep duration in milliseconds.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the current value and existence state of an environment variable.
+ */
+export interface EnvironmentVariableReadResultData {
+  key: string;
+  value?: string | null;
+  exists: boolean;
+  /**
+   * Formats the variable as a key-value pair or reports that it is unset.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the requested and resulting state of an environment-variable update.
+ */
+export interface EnvironmentVariableWriteResultData {
+  key: string;
+  requestedValue: string;
+  value?: string | null;
+  exists: boolean;
+  cleared: boolean;
+  /**
+   * Formats the variable's resulting value or reports that it was cleared.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the complete configured model summaries.
+ */
+export interface ModelsListSummariesResultData {
+  models: Models.Summary[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * One encoded audio segment, in synthesis order.
+ */
+export interface TtsAudioSegment {
+  audio: number[];
+  contentType: string;
+}
+
+export interface TtsSynthesizeResultData {
+  segments: TtsAudioSegment[];
+  toString(): string;
+}
+
+export interface SttTranscribeResultData {
+  text: string;
+  toString(): string;
+}
+
+/**
+ * Reports the actual host speech start and the resolved utterance parameters.
+ */
+export interface TtsSpeakResultData {
+  providerType: string;
+  started: boolean;
+  interrupt: boolean;
+  speed: number;
+  pitch: number;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the complete configured speech records.
+ */
+export interface TtsListConfigsResultData {
+  configs: Tts.Config[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the current application speech configuration identity.
+ */
+export interface TtsGetCurrentConfigIdResultData {
+  configId: string;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the committed application speech configuration identity.
+ */
+export interface TtsSetCurrentConfigIdResultData {
+  configId: string;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the pool identity and canonical link for one registered media item.
+ */
+export interface MediaRegistrationResultData {
+  id: string;
+  mimeType: string;
+  link: string;
+  width?: number;
+  height?: number;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the complete named appearance configurations.
+ */
+export interface ThemeListConfigsResultData {
+  configs: Theme.Config[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the actual named appearance record committed by the tool.
+ */
+export interface ThemeApplyConfigResultData {
+  id: string;
+  name: string;
+  snapshot: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Wraps an integer value returned by a built-in tool.
+ */
+export interface IntResultData {
+  value: number;
+}
+
+/**
+ * Carries raw bytes returned by a built-in tool.
+ */
+export interface BinaryResultData {
+  value: number[];
+}
+
+/**
+ * Contains one numbered line segment read from a text file.
+ */
+export interface FilePartContentData {
+  path: string;
+  content: string;
+  partIndex: number;
+  totalParts: number;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  /**
+   * Formats the segment number and line range followed by the segment content.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes one file-system entry returned in a directory listing.
+ */
+export interface FileEntry {
+  name: string;
+  isDirectory: boolean;
+  size: number;
+  permissions: string;
+  lastModified: string;
+}
+
+/**
+ * Contains the entries found at a virtual file-system directory path.
+ */
+export interface DirectoryListingData {
+  path: string;
+  entries: FileEntry[];
+  /**
+   * Formats directory entries with type, permissions, size, modification time, and name.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains the complete text and byte size read from a file.
+ */
+export interface FileContentData {
+  path: string;
+  content: string;
+  size: number;
+  /**
+   * Formats the file path followed by its text content.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains file bytes encoded as Base64 together with the original byte size.
+ */
+export interface BinaryFileContentData {
+  path: string;
+  /**
+   * Base64 encoded content of the file
+   */
+  contentBase64: string;
+  /**
+   * File size in bytes
+   */
+  size: number;
+  /**
+   * Summarizes the binary file path, byte size, and Base64 character count.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether a virtual file-system path exists and what it contains.
+ */
+export interface FileExistsData {
+  path: string;
+  exists: boolean;
+  isDirectory: boolean;
+  size: number;
+  /**
+   * Reports whether the path exists, its kind, and its byte size.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports virtual file-system stat metadata, including ownership, permissions, and raw output.
+ */
+export interface FileInfoData {
+  path: string;
+  exists: boolean;
+  fileType: string;
+  size: number;
+  permissions: string;
+  owner: string;
+  group: string;
+  lastModified: string;
+  rawStatOutput: string;
+  /**
+   * Formats the path's type, size, permissions, ownership, and modification time.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the target, success state, and details of a virtual file-system mutation.
+ */
+export interface FileOperationData {
+  operation: string;
+  path: string;
+  successful: boolean;
+  details: string;
+  /**
+   * Returns the operation details supplied by the file-system host.
+   */
+  toString(): string;
+}
+
+/**
+ * Combines a file operation outcome with its generated diff and patch instructions.
+ */
+export interface FileApplyResultData {
+  operation: FileOperationData;
+  aiDiffInstructions: string;
+  diffContent?: string;
+  /**
+   * Formats the file operation with diff markup, request context, and generated instructions.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the concrete result fields of the selected Storage tool operation.
+ */
+export type StorageRequestResultData = { op: "open"; handle: string; path: string; } | { op: "preferences_data"; snapshot: StoragePreferencesSnapshot; } | { op: "preferences_begin_edit"; edit: StoragePreferencesEdit; } | { op: "preferences_finish_edit"; snapshot: StoragePreferencesSnapshot; } | { op: "preferences_cancel_edit"; } | { op: "close"; } | { op: "query"; rows: StorageSqlRow[]; } | { op: "execute"; results: StorageSqlExecutionResult[]; } | { op: "transaction"; results: StorageSqlExecutionResult[]; } | { op: "define_table"; changed: boolean; } | { op: "get"; entry: StorageValueEntry | null; } | { op: "get_many"; entries: (StorageValueEntry | null)[]; } | { op: "list"; entries: StorageKeyValueEntry[]; } | { op: "changes"; page: StorageChangePage; } | { op: "commit"; version: string; };
+
+/**
+ * Contains an HTTP response status, headers, cookies, media type, and decoded or Base64 body.
+ */
+export interface HttpResponseData {
+  url: string;
+  statusCode: number;
+  statusMessage: string;
+  headers: Record<string, string>;
+  contentType: string;
+  content: string;
+  contentBase64?: string;
+  size: number;
+  cookies: Record<string, string>;
+  /**
+   * Formats response metadata, a bounded cookie preview, and the decoded body content.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes one metadata or body-chunk event from a streaming HTTP response.
+ */
+export interface HttpStreamEventData {
+  type: string;
+  url: string;
+  statusCode?: number;
+  statusMessage?: string;
+  headers: Record<string, string>;
+  contentType?: string;
+  chunk?: string;
+  chunkIndex?: number;
+  receivedBytes?: number;
+  /**
+   * Returns chunk content directly or formats the stream-start status and other event kinds.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies a system-setting namespace, key, and current value.
+ */
+export interface SystemSettingData {
+  namespace: string;
+  setting: string;
+  value: string;
+  /**
+   * Formats the namespaced setting name and its current value.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the outcome of installing, uninstalling, starting, or stopping an application package.
+ */
+export interface AppOperationData {
+  /**
+   * permission_required, installer_opened, restart_required, or completed.
+   */
+  installState?: string;
+  operationType: string;
+  packageName: string;
+  success: boolean;
+  details: string;
+  /**
+   * Formats a successful package operation or returns the host-provided operation details.
+   */
+  toString(): string;
+}
+
+/**
+ * Lists installed application packages and whether system applications were included.
+ */
+export interface AppListData {
+  includesSystemApps: boolean;
+  packages: string[];
+  /**
+   * Formats installed package names and indicates whether the list includes system apps.
+   */
+  toString(): string;
+}
+
+/**
+ * Records one application's foreground duration, last use, and system-app classification.
+ */
+export interface AppUsageTimeEntry {
+  packageName: string;
+  appName: string;
+  totalForegroundTimeMs: number;
+  lastTimeUsed: number;
+  isSystemApp: boolean;
+}
+
+/**
+ * Contains application foreground usage over a requested time window and package filter.
+ */
+export interface AppUsageTimeResultData {
+  startTime: number;
+  endTime: number;
+  sinceHours: number;
+  requestedPackageName?: string;
+  includesSystemApps: boolean;
+  totalEntries: number;
+  entries: AppUsageTimeEntry[];
+  /**
+   * Formats the query window and each application's human-readable foreground duration.
+   */
+  toString(): string;
+}
+
+/**
+ * Captures the source, text, and arrival time of one system notification.
+ */
+export interface Notification {
+  packageName: string;
+  text: string;
+  timestamp: number;
+}
+
+/**
+ * Contains the system notifications visible at a specific retrieval time.
+ */
+export interface NotificationData {
+  /**
+   * List of notification objects
+   */
+  notifications: Notification[];
+  /**
+   * Timestamp when the notifications were retrieved
+   */
+  timestamp: number;
+  /**
+   * Formats a numbered list of notification package names and text content.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports a device location with provider accuracy, raw data, and reverse-geocoded address fields.
+ */
+export interface LocationData {
+  /**
+   * Latitude coordinate in decimal degrees
+   */
+  latitude: number;
+  /**
+   * Longitude coordinate in decimal degrees
+   */
+  longitude: number;
+  /**
+   * Accuracy of the location in meters
+   */
+  accuracy: number;
+  /**
+   * Location provider (e.g., "gps", "network", etc.)
+   */
+  provider: string;
+  /**
+   * Timestamp when the location was retrieved
+   */
+  timestamp: number;
+  /**
+   * Raw location data from the system
+   */
+  rawData: string;
+  /**
+   * Street address determined from coordinates
+   */
+  address: string;
+  /**
+   * City name determined from coordinates
+   */
+  city: string;
+  /**
+   * Province/state name determined from coordinates
+   */
+  province: string;
+  /**
+   * Country name determined from coordinates
+   */
+  country: string;
+  /**
+   * Formats coordinates, accuracy, provider, local timestamp, and available address fields.
+   */
+  toString(): string;
+}
+
+/**
+ * Summarizes device identity, Android version, display, memory, storage, power, CPU, and network state.
+ */
+export interface DeviceInfoResultData {
+  deviceId: string;
+  model: string;
+  manufacturer: string;
+  androidVersion: string;
+  sdkVersion: number;
+  screenResolution: string;
+  screenDensity: number;
+  totalMemory: string;
+  availableMemory: string;
+  totalStorage: string;
+  availableStorage: string;
+  batteryLevel: number;
+  batteryCharging: boolean;
+  cpuInfo: string;
+  networkType: string;
+  additionalInfo: Record<string, string>;
+  /**
+   * Formats a labeled report of device hardware, Android, storage, power, and network details.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether the chat service connected and when the connection was established.
+ */
+export interface ChatServiceStartResultData {
+  /**
+   * Whether the service is connected
+   */
+  isConnected: boolean;
+  /**
+   * Connection timestamp
+   */
+  connectionTime: number;
+}
+
+/**
+ * Identifies a newly created chat and its creation time.
+ */
+export interface ChatCreationResultData {
+  /**
+   * The ID of the newly created chat
+   */
+  chatId: string;
+  /**
+   * Creation timestamp
+   */
+  createdAt: number;
+}
+
+/**
+ * Summarizes a workspace conversation's activity, token use, and current status.
+ */
+export interface ChatInfo {
+  /**
+   * Chat ID
+   */
+  id: string;
+  /**
+   * Chat title
+   */
+  title: string;
+  /**
+   * Number of messages in the chat
+   */
+  messageCount: number;
+  /**
+   * Creation timestamp
+   */
+  createdAt: string;
+  /**
+   * Last updated timestamp
+   */
+  updatedAt: string;
+  /**
+   * Whether this is the current active chat
+   */
+  isCurrent: boolean;
+  /**
+   * Total input tokens used
+   */
+  inputTokens: number;
+  /**
+   * Total output tokens used
+   */
+  outputTokens: number;
+}
+
+/**
+ * Contains the available chats and identifies the currently active chat.
+ */
+export interface ChatListResultData {
+  /**
+   * Total number of chats
+   */
+  totalCount: number;
+  /**
+   * The ID of the current active chat
+   */
+  currentChatId: string | null;
+  /**
+   * List of chat information
+   */
+  chats: ChatInfo[];
+  /**
+   * Formats workspace conversation summaries, current status, and token statistics.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the number of matching chats and the selected match, when one exists.
+ */
+export interface ChatFindResultData {
+  /**
+   * Total matched chats
+   */
+  matchedCount: number;
+  /**
+   * The selected chat (if any)
+   */
+  chat: ChatInfo | null;
+  /**
+   * Reports the selected chat identifier and total match count, or that no chat was found.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports a chat agent's current state and whether it is idle or processing.
+ */
+export interface AgentStatusResultData {
+  /**
+   * Title of the current execution, when the chat has started real work.
+   */
+  taskTitle?: string;
+  /**
+   * Actual model response rounds in this execution; zero before the first response.
+   */
+  currentRound: number;
+  /**
+   * Target chat id
+   */
+  chatId: string;
+  /**
+   * Current state key
+   */
+  state: string;
+  /**
+   * Optional detail message
+   */
+  message?: string | null;
+  /**
+   * Whether the chat is idle
+   */
+  isIdle: boolean;
+  /**
+   * Whether the chat is processing
+   */
+  isProcessing: boolean;
+  /**
+   * Formats the chat agent's state with its optional detail message.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies the chat selected as active and the time of the switch.
+ */
+export interface ChatSwitchResultData {
+  /**
+   * The ID of the chat switched to
+   */
+  chatId: string;
+  /**
+   * The title of the chat
+   */
+  chatTitle: string;
+  /**
+   * Switch timestamp
+   */
+  switchedAt: number;
+  /**
+   * Formats the selected chat title and identifier.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports a chat's updated title and update time.
+ */
+export interface ChatTitleUpdateResultData {
+  /**
+   * Target chat ID
+   */
+  chatId: string;
+  /**
+   * Updated title
+   */
+  title: string;
+  /**
+   * Update timestamp
+   */
+  updatedAt: number;
+}
+
+/**
+ * Identifies a deleted chat and the time it was deleted.
+ */
+export interface ChatDeleteResultData {
+  /**
+   * Deleted chat ID
+   */
+  chatId: string;
+  /**
+   * Delete timestamp
+   */
+  deletedAt: number;
+}
+
+/**
+ * Identifies the terminal state of the actual originating generation rather than a hook decision.
+ */
+export type MessageSendStatus = "completed" | "cancelled";
+
+/**
+ * Locates one exact assistant revision committed by the originating generation.
+ */
+export interface ChatCommittedMessage {
+  /**
+   * Identifies the real persisted message record, never a wall-clock receipt timestamp.
+   */
+  messageTimestamp: number;
+  /**
+   * Identifies the exact persisted revision; zero is the base message.
+   */
+  variantIndex: number;
+}
+
+/**
+ * Distinguishes real persistence, nonpersistent output and input ownership decisions without inventing locators.
+ */
+export type MessageSendOutcome = { type: "committed"; status: MessageSendStatus; userMessageTimestamp?: number; assistant?: ChatCommittedMessage; } | { type: "not_persisted"; status: MessageSendStatus; } | { type: "blocked"; message?: string; } | { type: "consumed"; metadata: Record<string, unknown>; };
+
+/**
+ * Records only the originating send's terminal result and exact commit receipts.
+ */
+export interface MessageSendResultData {
+  /**
+   * The ID of the chat the message was sent to
+   */
+  chatId: string;
+  /**
+   * The message content that was sent
+   */
+  message: string;
+  /**
+   * Final AI response content when available
+   */
+  aiResponse?: string | null;
+  /**
+   * Reply receive timestamp when available
+   */
+  receivedAt?: number | null;
+  /**
+   * Sent timestamp
+   */
+  sentAt: number;
+  /**
+   * Reports actual persistence or input ownership without looking up unrelated recent messages.
+   */
+  outcome: MessageSendOutcome;
+  /**
+   * Formats bounded previews of the sent message and optional AI reply.
+   */
+  toString(): string;
+}
+
+/**
+ * Records the authenticated Chat tool's actual originating send and committed outcome.
+ */
+export interface ChatSendMessageResultData {
+  /**
+   * The ID of the chat the message was sent to
+   */
+  chatId: string;
+  /**
+   * The message content that was sent
+   */
+  message: string;
+  /**
+   * Final AI response content when available
+   */
+  aiResponse?: string | null;
+  /**
+   * Reply receive timestamp when available
+   */
+  receivedAt?: number | null;
+  /**
+   * Sent timestamp
+   */
+  sentAt: number;
+  /**
+   * Reports actual persistence or input ownership without looking up unrelated recent messages.
+   */
+  outcome: MessageSendOutcome;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes the concrete resource result for an observation operation.
+ */
+export type ChatObservationResultData = { op: "open"; handle: string; } | { op: "next"; event: Chat.SendEvent | null; } | { op: "close"; };
+
+/**
+ * Reports cancellation of the calling owner's active Chat execution.
+ */
+export interface ChatCancelResultData {
+  chatId: string;
+  cancelRequested: boolean;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports durable immediate assistant message delivery and optional notification failure.
+ */
+export interface ChatPreparedDeliveryResultData {
+  chatId: string;
+  timestamp: number;
+  duplicate: boolean;
+  notificationError: string | null;
+  toString(): string;
+}
+
+/**
+ * Contains the platform-independent outcome of one plugin-owned scheduled message.
+ */
+export interface ChatScheduledMessage {
+  id: string;
+  chatId: string;
+  timestamp: number;
+  /**
+   * preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed.
+   */
+  status: string;
+  error: string | null;
+  /**
+   * Contains the accepted prepared body, including host-generated replies.
+   */
+  text: string;
+}
+
+export interface ChatScheduleMessageResultData {
+  message: ChatScheduledMessage;
+  toString(): string;
+}
+
+export interface ChatScheduledMessagesResultData {
+  messages: ChatScheduledMessage[];
+  toString(): string;
+}
+
+export interface ChatCancelScheduledMessageResultData {
+  id: string;
+  cancelled: boolean;
+  toString(): string;
+}
+
+/**
+ * Returns an owner-scoped Chat extension or its explicit absence.
+ */
+export interface ChatReadExtensionResultData {
+  extension: JsonObject | null;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Returns the exact owner-scoped Chat extension that was persisted.
+ */
+export interface ChatWriteExtensionResultData {
+  extension: JsonObject;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether an owner-scoped Chat extension was removed.
+ */
+export interface ChatDeleteExtensionResultData {
+  deleted: boolean;
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains the output of one non-persistent functional model call.
+ */
+export interface ChatCallResultData {
+  /**
+   * Contains the cleaned assistant text.
+   */
+  text: string;
+  /**
+   * Contains parsed assistant and tool-call segments.
+   */
+  turns: ChatCallTurnData[];
+  /**
+   * Identifies why the model call ended.
+   */
+  finishReason: string;
+  /**
+   * Contains protocol metadata extracted from the response.
+   */
+  metadata: Record<string, unknown>;
+  /**
+   * Records the completion timestamp.
+   */
+  receivedAt: number;
+  /**
+   * Formats the functional model text for legacy tool output.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes one segment returned by a functional model call.
+ */
+export interface ChatCallTurnData {
+  /**
+   * Identifies the segment role.
+   */
+  kind: string;
+  /**
+   * Contains the segment content.
+   */
+  content: string;
+  /**
+   * Identifies the tool called by this segment.
+   */
+  toolName?: string;
+  /**
+   * Carries segment metadata.
+   */
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * Describes one chat message's protocol sender, content, provider, model, and timestamp.
+ */
+export interface ChatMessageInfo {
+  sender: string;
+  content: string;
+  timestamp: number;
+  /**
+   * Identifies the exact selected persisted revision; zero selects the base message.
+   */
+  variantIndex: number;
+  /**
+   * Reports the genuine number of persisted message revisions.
+   */
+  variantCount: number;
+  provider: string;
+  modelName: string;
+}
+
+/**
+ * Contains an ordered, limited message history for a chat.
+ */
+export interface ChatMessagesResultData {
+  chatId: string;
+  order: string;
+  limit: number;
+  messages: ChatMessageInfo[];
+  /**
+   * Contains the inclusive first message index for a range query.
+   */
+  start?: number;
+  /**
+   * Contains the inclusive last message index for a range query.
+   */
+  end?: number;
+}
+
+/**
+ * Reports the primary terminal identity and available terminal implementations.
+ */
+export interface TerminalInfoResultData {
+  /**
+   * ID of the user-selected default profile on the executing Core device.
+   */
+  defaultProfileId: string;
+  /**
+   * Saved configurations, including multiple instances of one interpreter or distribution.
+   */
+  profiles: TerminalProfileInfoData[];
+  /**
+   * Current runtime platform, such as windows, linux, or android
+   */
+  platform: string;
+  /**
+   * Primary terminal implementation selected by the host
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Primary shell semantics selected by the host
+   */
+  terminalType: TerminalType;
+  /**
+   * Terminal types known to this host
+   */
+  types: TerminalTypeInfoData[];
+  /**
+   * Formats the primary terminal identity and availability of each known terminal implementation.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes a selectable profile without exposing device-local executable or rootfs paths.
+ */
+export interface TerminalProfileInfoData {
+  id: string;
+  name: string;
+  terminal: TerminalImplementation;
+  terminalType: TerminalType;
+  available: boolean;
+}
+
+/**
+ * Reports one available terminal implementation and its shell semantics.
+ */
+export interface TerminalTypeInfoData {
+  /**
+   * Terminal implementation id supported by a terminal host
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Terminal type id supported by a terminal host
+   */
+  terminalType: TerminalType;
+  /**
+   * Whether this terminal type is available on the current platform
+   */
+  available: boolean;
+  /**
+   * Human-readable terminal type description
+   */
+  description: string;
+}
+
+/**
+ * Records a terminal command's session, interpreter, output, exit code, and timeout state.
+ */
+export interface TerminalCommandResultData {
+  /**
+   * The command that was executed
+   */
+  command: string;
+  /**
+   * The output from the command execution
+   */
+  output: string;
+  /**
+   * Exit code from the command (0 typically means success)
+   */
+  exitCode: number;
+  /**
+   * ID of the terminal session used for execution
+   */
+  sessionId: string;
+  /**
+   * Host platform that executed the command
+   */
+  platform: string;
+  /**
+   * Terminal implementation that executed the command
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Actual terminal type used for execution
+   */
+  terminalType: TerminalType;
+  /**
+   * Whether foreground waiting expired while the original command continues in its session.
+   */
+  timedOut: boolean;
+  /**
+   * Formats command, session, interpreter, exit, timeout, and captured output details.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the start or an incremental output chunk of a terminal command stream.
+ */
+export interface TerminalStreamEventData {
+  /**
+   * Event type, currently "start" or "chunk"
+   */
+  type: string;
+  /**
+   * The command being executed
+   */
+  command: string;
+  /**
+   * ID of the terminal session used for execution
+   */
+  sessionId: string;
+  /**
+   * Host platform that owns the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that owns the terminal session
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Shell semantics used by the terminal session
+   */
+  terminalType: TerminalType;
+  /**
+   * Incremental output chunk for "chunk" events
+   */
+  chunk?: string | null;
+  /**
+   * Zero-based chunk index
+   */
+  chunkIndex?: number | null;
+  /**
+   * Total received character count so far
+   */
+  receivedChars?: number | null;
+  /**
+   * Returns an output chunk directly or labels the stream lifecycle event.
+   */
+  toString(): string;
+}
+
+/**
+ * Records a hidden executor command's interpreter, output, exit code, and timeout state.
+ */
+export interface HiddenTerminalCommandResultData {
+  /**
+   * The command that was executed
+   */
+  command: string;
+  /**
+   * The output from the command execution
+   */
+  output: string;
+  /**
+   * Exit code from the command (0 typically means success)
+   */
+  exitCode: number;
+  /**
+   * Hidden executor key used for execution
+   */
+  executorKey: string;
+  /**
+   * Host platform that executed the command
+   */
+  platform: string;
+  /**
+   * Terminal implementation that executed the command
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Actual terminal type used for execution
+   */
+  terminalType: TerminalType;
+  /**
+   * Whether this execution ended due to timeout. On timeout, the current command is cancelled and the hidden executor session is kept.
+   */
+  timedOut: boolean;
+  /**
+   * Formats command, executor, interpreter, exit, timeout, and captured output details.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies a created or reused named terminal session and its interpreter.
+ */
+export interface TerminalSessionCreationResultData {
+  /**
+   * ID of the created or retrieved session
+   */
+  sessionId: string;
+  /**
+   * Name of the session
+   */
+  sessionName: string;
+  /**
+   * Host platform that created the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that created the terminal session
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Actual terminal type for the session
+   */
+  terminalType: TerminalType;
+  /**
+   * Whether a new session was created
+   */
+  isNewSession: boolean;
+  /**
+   * Reports whether the named terminal session was created or reused and identifies it.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether a terminal session closed successfully and provides the host message.
+ */
+export interface TerminalSessionCloseResultData {
+  /**
+   * ID of the closed session
+   */
+  sessionId: string;
+  /**
+   * Whether the session was closed successfully
+   */
+  success: boolean;
+  /**
+   * A message describing the result
+   */
+  message: string;
+}
+
+/**
+ * Captures one terminal session's visible screen, dimensions, interpreter, and running state.
+ */
+export interface TerminalSessionScreenResultData {
+  /**
+   * ID of the session
+   */
+  sessionId: string;
+  /**
+   * Host platform that owns the terminal session
+   */
+  platform: string;
+  /**
+   * Terminal implementation that owns the terminal session
+   */
+  terminal: TerminalImplementation;
+  /**
+   * Actual terminal type for the session
+   */
+  terminalType: TerminalType;
+  /**
+   * Screen row count
+   */
+  rows: number;
+  /**
+   * Screen column count
+   */
+  cols: number;
+  /**
+   * Current visible screen text content
+   */
+  content: string;
+  /**
+   * Whether a command is currently running in this session
+   */
+  commandRunning: boolean;
+  /**
+   * Formats screen dimensions and session state followed by the visible terminal content.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the active music source, transport state, position, buffering, and volume.
+ */
+export interface MusicPlaybackResultData {
+  /**
+   * Playback state
+   */
+  state: string;
+  /**
+   * Current audio source
+   */
+  source?: string | null;
+  /**
+   * Current audio source type
+   */
+  sourceType?: string | null;
+  /**
+   * Display title
+   */
+  title?: string | null;
+  /**
+   * Display artist
+   */
+  artist?: string | null;
+  /**
+   * Duration in milliseconds, when known
+   */
+  durationMs?: number | null;
+  /**
+   * Current playback position in milliseconds
+   */
+  positionMs: number;
+  /**
+   * Buffered playback position in milliseconds
+   */
+  bufferedPositionMs: number;
+  /**
+   * Playback volume from 0 to 1
+   */
+  volume: number;
+  /**
+   * Whether current track loops
+   */
+  loop: boolean;
+  /**
+   * Operation message
+   */
+  message: string;
+  /**
+   * Formats playback state, track metadata, timing, buffering, volume, looping, and message.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports whether Bluetooth is supported, enabled, and its current adapter state.
+ */
+export interface BluetoothStateData {
+  supported: boolean;
+  enabled: boolean;
+  state: string;
+  /**
+   * Formats Bluetooth support, enablement, and adapter state.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies a bonded Bluetooth device and its device and bond classifications.
+ */
+export interface BluetoothDeviceData {
+  name?: string;
+  address: string;
+  type: string;
+  bondState: string;
+}
+
+/**
+ * Contains the devices currently bonded with the Bluetooth adapter.
+ */
+export interface BluetoothBondedDevicesData {
+  devices: BluetoothDeviceData[];
+  /**
+   * Formats each bonded device's name, address, type, and bond state.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes a discovered Bluetooth device, including discovery source and optional signal strength.
+ */
+export interface BluetoothScannedDeviceData {
+  name?: string;
+  address: string;
+  type: string;
+  bondState: string;
+  source: string;
+  rssi?: number;
+}
+
+/**
+ * Contains devices discovered during a timed Bluetooth scan and indicates BLE coverage.
+ */
+export interface BluetoothScanResultData {
+  devices: BluetoothScannedDeviceData[];
+  durationMs: number;
+  includesBle: boolean;
+  /**
+   * Formats scan duration and BLE coverage followed by every discovered device.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies an open Bluetooth session, its remote address, and connection mode.
+ */
+export interface BluetoothSessionData {
+  sessionId: string;
+  address: string;
+  mode: string;
+  /**
+   * Formats the Bluetooth session identifier, remote address, and connection mode.
+   */
+  toString(): string;
+}
+
+/**
+ * Reports the number of bytes written through a Bluetooth session.
+ */
+export interface BluetoothTransferData {
+  sessionId: string;
+  bytesWritten: number;
+  /**
+   * Formats the Bluetooth session identifier and number of bytes written.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains bytes read from a Bluetooth session as optional text and Base64 data.
+ */
+export interface BluetoothReadData {
+  sessionId: string;
+  bytesRead: number;
+  text?: string;
+  dataBase64?: string;
+  /**
+   * Formats the byte count and available text or Base64 payload read from the session.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes a BLE characteristic UUID and the operations it supports.
+ */
+export interface BluetoothBleCharacteristicData {
+  uuid: string;
+  properties: string[];
+}
+
+/**
+ * Describes a discovered BLE service and its characteristics.
+ */
+export interface BluetoothBleServiceData {
+  uuid: string;
+  characteristics: BluetoothBleCharacteristicData[];
+}
+
+/**
+ * Contains the BLE services and characteristics discovered for a session.
+ */
+export interface BluetoothBleServicesData {
+  sessionId: string;
+  services: BluetoothBleServiceData[];
+  /**
+   * Formats discovered BLE services and the properties of each characteristic.
+   */
+  toString(): string;
+}
+
+/**
+ * Carries one timestamped value received from a subscribed BLE characteristic.
+ */
+export interface BluetoothBleNotificationEntry {
+  characteristicUuid: string;
+  bytesRead: number;
+  text?: string;
+  dataBase64?: string;
+  timestamp: number;
+}
+
+/**
+ * Contains timestamped characteristic notifications received by a BLE session.
+ */
+export interface BluetoothBleNotificationData {
+  sessionId: string;
+  notifications: BluetoothBleNotificationEntry[];
+  /**
+   * Formats each received BLE notification with its source, timestamp, and available payload.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains extracted web-page content, links, images, metadata, and truncation storage details.
+ */
+export interface VisitWebResultData {
+  url: string;
+  title: string;
+  content: string;
+  metadata: Record<string, string>;
+  links: LinkData[];
+  imageLinks: string[];
+  visitKey?: string;
+  contentSavedTo?: string;
+  contentTruncated: boolean;
+  originalContentLength?: number;
+  /**
+   * Formats bounded link and image previews, persisted-content metadata, and page content.
+   */
+  toString(): string;
+}
+
+/**
+ * Describes a URL and the human-readable text associated with it.
+ */
+export interface LinkData {
+  url: string;
+  text: string;
+}
+
+/**
+ * Returns the actual registered built-in, package, skill and MCP tool sources.
+ */
+export interface CatalogReadToolSourcesResultData {
+  builtinTools: Catalog.ToolSource[];
+  packages: Catalog.ToolSource[];
+  skills: Catalog.ToolSource[];
+  mcpServers: Catalog.ToolSource[];
+  /**
+   * Formats the concrete tool fields for the common text result path.
+   */
+  toString(): string;
+}
+
+/**
+ * Contains file paths matching a pattern beneath a requested search path.
+ */
+export interface FindFilesResultData {
+  path: string;
+  pattern: string;
+  files: string[];
+  /**
+   * Formats search parameters and a bounded preview of matched file paths.
+   */
+  toString(): string;
+}
+
+/**
+ * Identifies one matching line and its optional surrounding grep context.
+ */
+export interface GrepLineMatch {
+  lineNumber: number;
+  lineContent: string;
+  matchContext?: string;
+}
+
+/**
+ * Groups grep line matches by source file.
+ */
+export interface GrepFileMatch {
+  filePath: string;
+  lineMatches: GrepLineMatch[];
+}
+
+/**
+ * Summarizes a text search across files and groups all reported line matches by file.
+ */
+export interface GrepResultData {
+  searchPath: string;
+  pattern: string;
+  matches: GrepFileMatch[];
+  totalMatches: number;
+  filesSearched: number;
+  /**
+   * Formats search statistics and bounded, line-aware match context grouped by file.
+   */
+  toString(): string;
+}
+
+/**
+ * Bounded hardware reply. Transport/authentication failures reject the plugin promise.
+ */
+export interface EdgePortResultData {
+  /**
+   * Exact node selected by the caller; never a guessed default or local fallback.
+   */
+  nodeId: string;
+  /**
+   * Native Edge action/port result; no JavaScript source or local serial handle.
+   */
+  data: any;
+}
+
+/**
+ * Exchanges one scoped terminal execution observation through the common tool transport.
+ */
+export type TerminalObservationResultData = { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
+
+/**
+ * Reports exactly the requested WebSocket operation.
+ */
+export type WebSocketResultData = { op: "open"; handle: string; } | { op: "read"; events: Net.WebSocketEvent[]; } | { op: "send"; } | { op: "close"; };

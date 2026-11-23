@@ -1,0 +1,112 @@
+// 来源：AAswordman/Operit2（AGPL-3.0）plugins/types/v2/tts.d.ts，仅作接口参考，不含实现。
+// Generated from operit-plugin-sdk Rust declarations.
+
+import type { TtsGetCurrentConfigIdResultData, TtsListConfigsResultData, TtsSetCurrentConfigIdResultData, TtsSpeakResultData, TtsSynthesizeResultData } from "./results";
+
+/**
+ * Reads and selects speech configurations through the canonical host manager.
+ */
+export namespace Tts {
+  /**
+   * Preserves one configured speech request or response-pipeline header.
+   */
+  export interface Header {
+    name: string;
+    value: string;
+  }
+
+  /**
+   * Preserves every configured speech response-pipeline field.
+   */
+  export interface ResponseStep {
+    stepType: string;
+    path: string;
+    headers: Header[];
+  }
+
+  /**
+   * Preserves the complete speech configuration returned by the host manager.
+   */
+  export interface Config {
+    id: string;
+    name: string;
+    providerType: string;
+    endpoint: string;
+    apiKey: string;
+    model: string;
+    voice: string;
+    responseFormat: string;
+    speed: number;
+    httpMethod: string;
+    requestBody: string;
+    contentType: string;
+    headers: Header[];
+    responsePipeline: ResponseStep[];
+    createdAt: number;
+    updatedAt: number;
+  }
+
+  /**
+   * Synthesizes audio on the plugin's host without starting host playback.
+   */
+  export interface SynthesizeRequest {
+    text: string;
+    /**
+     * Uses the selected host configuration when omitted.
+     */
+    configId?: string;
+  }
+
+  /**
+   * Starts speech on this host using the configured system voice or generated audio.
+   */
+  export interface SpeakRequest {
+    text: string;
+    /**
+     * Uses the selected host configuration when omitted.
+     */
+    configId?: string;
+    /**
+     * Interrupts active speech when omitted.
+     */
+    interrupt?: boolean;
+    /**
+     * Overrides the configured speed for this utterance only.
+     */
+    speed?: number;
+    /**
+     * Overrides the system voice pitch for this utterance only; generated audio requires 1.0.
+     */
+    pitch?: number;
+    /**
+     * Resolves after the last segment finishes instead of after playback starts.
+     */
+    waitForCompletion?: boolean;
+    /**
+     * Names this utterance for cancellation within the executing plugin.
+     */
+    playbackId?: string;
+  }
+
+  /**
+   * Cancels the executing plugin's matching queued or active utterance.
+   */
+  function cancel(id: string): Promise<boolean>;
+  /**
+   * Reads the current application-wide speech configuration ID.
+   */
+  function getCurrentConfigId(): Promise<TtsGetCurrentConfigIdResultData>;
+  /**
+   * Returns complete configured speech records.
+   */
+  function listConfigs(): Promise<TtsListConfigsResultData>;
+  /**
+   * Selects an exact existing speech configuration ID.
+   */
+  function setCurrentConfigId(id: string): Promise<TtsSetCurrentConfigIdResultData>;
+  /**
+   * Starts configured speech through the shared host playback capability.
+   */
+  function speak(request: SpeakRequest): Promise<TtsSpeakResultData>;
+  function synthesize(request: SynthesizeRequest): Promise<TtsSynthesizeResultData>;
+}

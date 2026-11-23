@@ -108,3 +108,8 @@
 | 安装 Playwright 浏览器自动化 | 容器内装 Chromium 并接入 Playwright MCP，让 AI 操作网页 → [文档](/advanced/playwright-mcp) |
 | 用 adb 无线调试其他设备 | 在容器里用 adb 连接另一台手机或本机，安装应用、抓日志、截屏 → [文档](/advanced/adb-wireless-debug) |
 | 自定义面板 | 用脚本在输入框上方画余额或用量卡片 → [文档](/advanced/dashboard-cards) |
+| 插件宿主方法总览 | 179 个宿主方法按域列全，标注页面/进程/浮层可用来源 → [文档](/advanced/plugin/api-reference) |
+| 插件入口与页面导航 | 槽位入口、Compose 面板、返回键与关闭的位置规则 → [文档](/advanced/plugin/ui-navigation) |
+| 工具授权与代审核 | 插件工具的授权链、代执行审批轮询与代审核 hook → [文档](/advanced/plugin/tool-permissions) |
+| 设备能力与系统工具 | 点屏、截图、通知、蓝牙/BLE 的前置权限与报错 → [文档](/advanced/plugin/device-tools) |
+| 兼容 Operit 插件 | `api_version` 的含义、兼容分级与迁移写法 → [文档](/advanced/plugin/compat-v1) |

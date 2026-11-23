@@ -72,6 +72,7 @@ demo-kit/
 3. 按需阅读能力章节：声明式能力参见[技能、子代理与 MCP](/advanced/plugin/skills-agents-mcp)，业务逻辑参见[AI 工具与插件运行时](/advanced/plugin/tools-runtime)，拦截与代审核参见[生命周期 Hooks](/advanced/plugin/hooks)。
 4. 需要界面时，参见[插件页面与宿主接口](/advanced/plugin/ui-pages)和[页面样式、组件与事件](/advanced/plugin/ui-components)；需要悬浮窗时参见[系统浮层](/advanced/plugin/overlay)。
 5. 最后阅读[打包、导入与排错](/advanced/plugin/packaging)，以及[示例库](/advanced/plugin/examples)中的完整项目。
+6. 写页面与工具时对照[宿主方法总览](/advanced/plugin/api-reference)、[入口与页面导航](/advanced/plugin/ui-navigation)与[工具授权与代审核](/advanced/plugin/tool-permissions)；要操作手机就看[设备能力与系统工具](/advanced/plugin/device-tools)；移植旧插件先读[兼容 Operit 插件](/advanced/plugin/compat-v1)。
 
 ## 示例库
 

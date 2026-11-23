@@ -1,0 +1,37 @@
+{
+  "repository": "assistance",
+  "directory": "examples/types",
+  "commit": "e777a210b183c27a76b812d0e6124f3516d52569",
+  "files": {
+    "android.d.ts": "5cd03a883c4b9c34d7c9331719fbf30c46b86705143424c77d1ee30664a7ee11",
+    "chat.d.ts": "21e8fc41886e35af9887e6f8bc4b9ca5b1dad8e74f68805e8ac57360c2337bd3",
+    "compose-dsl.d.ts": "f54fd9bcfc07bb88423880b5283341821f816fe287543b8def9c40d95c839f85",
+    "compose-dsl.material3.generated.d.ts": "d194ed9f5e6a0f604ba4bb9c3bd096d370581269b1b68d64d61084c126cc7b5c",
+    "core.d.ts": "3a23b79e50b49c4b17f641f06e5c4141400d7cebfe0226a011a8cb8db874ef63",
+    "cryptojs.d.ts": "60eaa7e62a71e7d9d887051790927af19402f787031f6740799b8a3dafd79c47",
+    "ffmpeg.d.ts": "3db968e51b666965a1d640457afc91edc6ebb33f0d8631ea98ddc09827028b21",
+    "files.d.ts": "41e9c1e4cc550a3aa0977b26464f165749a8418761d6fab7475eb5f616e1ab9e",
+    "index.d.ts": "7c29cb71ae4206d8644451879ab3e556565b3f586016c4bb95ab60cc331ac345",
+    "java-bridge.d.ts": "169b9991e030dfb055dfaee9804ca88484163ae179c522efb83c475fa73b44a1",
+    "jimp.d.ts": "def93266155e57ce0b453389eedbfa1929761c744a9a860fa925d0e1cbd9c0fd",
+    "material-icons.d.ts": "72b33718e70cc293a45c0c209104870870121fb50a9f4bf24def231dbf25312f",
+    "memory.d.ts": "0e90993789a2e1dcccccba75f1861fbb349c5c3fbbd916931d25305e61f7ad1b",
+    "network.d.ts": "1d9eac07b984719eb9a868fd412838bbaedcd5b5085b82ec45d81659af009bf3",
+    "okhttp.d.ts": "b4c68ab60b2b3c38deeb634fc7370a5d7ea68c029b158f7c6d5b2caab4cf6d90",
+    "pako.d.ts": "f357d139ab32001c0465bc16820e6067b015ff52373e5e0f2c71a53d1463ae26",
+    "quickjs-runtime.d.ts": "5a72f03f78a91e6ddbbedde93d37ce415de86d163c7dc32618138db4e430f98c",
+    "results.d.ts": "c53d899ee060f9756a2553c41b9664e14ef3ad11b01867a848e6fe55ed7df164",
+    "software_settings.d.ts": "c1a4839a9058d7b900c6519ace8fc581e5faf7706210e2614172d170e5dfc030",
+    "system.d.ts": "cbaa69a8b7d93e30f51bd1faf780bfc83f1a9e6f6becd362a52b56857902a23e",
+    "tasker.d.ts": "2555bda23f3d9215317b641dc6882e469b30703dde3c3cbfca23e199e233aa1f",
+    "tool-types.d.ts": "c988a2e4c26a4b6a3ad85142038d54d96ccf15c17f5611f7e498757e58c2a858",
+    "toolpkg.d.ts": "8dfd59b92aafe5d69491b9d659a2ebbdd95b7977220644182bb7dceeb0727105",
+    "ui.d.ts": "dd2f593e01a572fada58a2d8b265445f36f8791e699c3b347db03b03594cf790",
+    "workflow.d.ts": "d5cd97ea1f8a803fd4f4f6b9188c6ae4265c1b520fde624e884c0e3e013fe5c0"
+  },
+  "localExtensions": {
+    "quickjs-runtime.d.ts": [
+      "Declare global as an alias of globalThis supplied by the shared engine bootstrap."
+    ]
+  }
+}

@@ -1,0 +1,343 @@
+// 来源：AAswordman/Operit2（AGPL-3.0）plugins/types/v2/index.d.ts，仅作接口参考，不含实现。
+/**
+ * TypeScript definitions for Assistance Package Tools
+ * 
+ * This file provides type definitions for the JavaScript environment
+ * available in package tools execution.
+ */
+
+// Import types that will be used in global declarations
+import { DeviceEdge, DeviceIo, DeviceTransport } from './edge';
+import { ToolReturnType, ToolCatalogEntry, ToolCatalog, DeviceToolOptions } from './core';
+import {
+    JavaBridgeApi as JavaBridgeApiType,
+    JavaBridgeClass as JavaBridgeClassType,
+    JavaBridgeInstance as JavaBridgeInstanceType,
+    JavaBridgeHandle as JavaBridgeHandleType,
+    JavaBridgePackage as JavaBridgePackageType,
+    JavaBridgeJsInterfaceMarker as JavaBridgeJsInterfaceMarkerType,
+    JavaBridgeJsInterfaceImpl as JavaBridgeJsInterfaceImplType,
+    JavaBridgeJsMethod as JavaBridgeJsMethodType,
+    JavaBridgeInterfaceRef as JavaBridgeInterfaceRefType,
+    JavaBridgeCallbackResult as JavaBridgeCallbackResultType,
+    JavaBridgeExternalCodeLoadOptions as JavaBridgeExternalCodeLoadOptionsType,
+    JavaBridgeLoadedCodePath as JavaBridgeLoadedCodePathType
+} from './java-bridge';
+import {
+    SleepResultData as _SleepResultData,
+    SystemSettingData as _SystemSettingData,
+    AppOperationData as _AppOperationData,
+    AppListData as _AppListData,
+    DeviceInfoResultData as _DeviceInfoResultData,
+    UIPageResultData as _UIPageResultData,
+    UIActionResultData as _UIActionResultData,
+    SimplifiedUINode as _SimplifiedUINode,
+    FileOperationData as _FileOperationData,
+    DirectoryListingData as _DirectoryListingData,
+    FileContentData as _FileContentData,
+    FileExistsData as _FileExistsData,
+    FindFilesResultData as _FindFilesResultData,
+    FileInfoData as _FileInfoData,
+    HttpResponseData as _HttpResponseData,
+    VisitWebResultData as _VisitWebResultData,
+    TerminalInfoResultData as _TerminalInfoResultData,
+    TerminalType as _TerminalType,
+    TerminalImplementation as _TerminalImplementation,
+    TerminalTypeInfoData as _TerminalTypeInfoData,
+    TerminalCommandResultData as _TerminalCommandResultData,
+    TerminalStreamEventData as _TerminalStreamEventData,
+    HiddenTerminalCommandResultData as _HiddenTerminalCommandResultData,
+    MusicPlaybackResultData as _MusicPlaybackResultData,
+    AutomationExecutionResultData as _AutomationExecutionResultData,
+    FilePartContentData as _FilePartContentData,
+    FileApplyResultData as _FileApplyResultData,
+    GrepResultData as _GrepResultData,
+    GrepFileMatch as _GrepFileMatch,
+    GrepLineMatch as _GrepLineMatch,
+    EnvironmentVariableReadResultData as _EnvironmentVariableReadResultData,
+    EnvironmentVariableWriteResultData as _EnvironmentVariableWriteResultData
+} from './results';
+import { UINode as UINodeClass, UI as UINamespace } from './ui';
+import { Android as AndroidClass } from './android';
+import type {
+    MaterialIconName as MaterialIconNameType,
+    MaterialIconsRegistry as MaterialIconsRegistryType
+} from './material-icons';
+import {
+    ComposeDslContext as ComposeDslContextType,
+    ComposeDslScreen as ComposeDslScreenType,
+    ComposeNode as ComposeNodeType,
+    ComposeCanvasCommand as ComposeCanvasCommandType
+} from './compose-dsl';
+import {
+    OkHttp as OkHttpValue,
+    OkHttpClientBuilder as OkHttpClientBuilderClass,
+    OkHttpClient as OkHttpClientClass,
+    RequestBuilder as RequestBuilderClass,
+    OkHttpConfig as OkHttpConfigType,
+    HttpRequest as OkHttpRequestType,
+    HttpStreamEvent as OkHttpStreamEventType,
+    OkHttpExecuteOptions as OkHttpExecuteOptionsType,
+    OkHttpResponse as OkHttpResponseType
+} from './okhttp';
+
+// Export core interfaces and functions
+export * from './core';
+
+// Export all result types
+export * from './results';
+
+// Export tool type definitions
+export * from './tool-types';
+export * from './java-bridge';
+export * from './toolpkg';
+export * from './material-icons';
+export * from './okhttp';
+
+// Export compose-dsl definitions for toolpkg runtime modules
+export * from './compose-dsl';
+export * from './compose-dsl.material3.generated';
+
+import { Files as FilesType } from './files';
+import { Net as NetType } from './network';
+import { System as SystemType } from './system';
+import { SoftwareSettings as SoftwareSettingsType } from './software_settings';
+import { Models as ModelsType } from './models';
+import { Tts as TtsType } from './tts';
+import { Stt as SttType } from './stt';
+import { Theme as ThemeType } from './theme';
+import { Catalog as CatalogType } from './catalog';
+import { Media as MediaType } from './media';
+import { UI as UIType } from './ui';
+import { Chat as ChatType } from './chat';
+import { Storage as StorageType } from './storage';
+
+export { Net } from './network';
+export { System } from './system';
+export { SoftwareSettings } from './software_settings';
+export { Models } from './models';
+export { Tts } from './tts';
+export { Stt } from './stt';
+export { Theme } from './theme';
+export { Catalog } from './catalog';
+export { Media } from './media';
+export { UI, UINode } from './ui';
+export { ToolPkg } from './toolpkg';
+export { Chat } from './chat';
+export { DeviceEdge, DeviceIo, DeviceTransport } from './edge';
+export type { EdgeInterfaceInfo, IoInterfaceInfo, DeviceTransportEndpoint, DeviceTransportEvent, DeviceTransportChannel } from './edge';
+export * from './storage';
+
+// Export Android utilities
+export {
+    PackageManager,
+    ContentProvider,
+    SystemManager,
+    DeviceController,
+    Android
+} from './android';
+
+
+// Global declarations (these will be available without imports)
+declare global {
+    // Make Android classes/constructs available globally
+    const UINode: typeof UINodeClass;
+    const Android: typeof AndroidClass;
+    const Icons: MaterialIconsRegistryType;
+    const OkHttp: typeof OkHttpValue;
+    const OkHttpClientBuilder: typeof OkHttpClientBuilderClass;
+    const OkHttpClient: typeof OkHttpClientClass;
+    const RequestBuilder: typeof RequestBuilderClass;
+
+    // Make classes available as types too
+    type UINode = UINodeClass;
+    type Android = AndroidClass;
+    type MaterialIconName = MaterialIconNameType;
+    type MaterialIconsRegistry = MaterialIconsRegistryType;
+    type ComposeDslContext = ComposeDslContextType;
+    type ComposeDslScreen = ComposeDslScreenType;
+    type ComposeNode = ComposeNodeType;
+    type ComposeCanvasCommand = ComposeCanvasCommandType;
+    type JavaBridgeApi = JavaBridgeApiType;
+    type JavaBridgeClass = JavaBridgeClassType;
+    type JavaBridgeInstance = JavaBridgeInstanceType;
+    type JavaBridgeHandle = JavaBridgeHandleType;
+    type JavaBridgePackage = JavaBridgePackageType;
+    type JavaBridgeJsInterfaceMarker = JavaBridgeJsInterfaceMarkerType;
+    type JavaBridgeJsInterfaceImpl = JavaBridgeJsInterfaceImplType;
+    type JavaBridgeJsMethod = JavaBridgeJsMethodType;
+    type JavaBridgeInterfaceRef = JavaBridgeInterfaceRefType;
+    type JavaBridgeCallbackResult = JavaBridgeCallbackResultType;
+    type JavaBridgeExternalCodeLoadOptions = JavaBridgeExternalCodeLoadOptionsType;
+    type JavaBridgeLoadedCodePath = JavaBridgeLoadedCodePathType;
+    type OkHttpConfig = OkHttpConfigType;
+    type HttpRequest = OkHttpRequestType;
+    type HttpStreamEvent = OkHttpStreamEventType;
+    type OkHttpExecuteOptions = OkHttpExecuteOptionsType;
+    type OkHttpResponse = OkHttpResponseType;
+
+    // Make result types available globally
+    type SleepResultData = _SleepResultData;
+    type SystemSettingData = _SystemSettingData;
+    type AppOperationData = _AppOperationData;
+    type AppListData = _AppListData;
+    type DeviceInfoResultData = _DeviceInfoResultData;
+    type UIPageResultData = _UIPageResultData;
+    type UIActionResultData = _UIActionResultData;
+    type SimplifiedUINode = _SimplifiedUINode;
+    type FileOperationData = _FileOperationData;
+    type DirectoryListingData = _DirectoryListingData;
+    type FileContentData = _FileContentData;
+    type FileExistsData = _FileExistsData;
+    type FindFilesResultData = _FindFilesResultData;
+    type FileInfoData = _FileInfoData;
+    type HttpResponseData = _HttpResponseData;
+    type VisitWebResultData = _VisitWebResultData;
+    type TerminalInfoResultData = _TerminalInfoResultData;
+    type TerminalType = _TerminalType;
+    type TerminalImplementation = _TerminalImplementation;
+    type TerminalTypeInfoData = _TerminalTypeInfoData;
+    type TerminalCommandResultData = _TerminalCommandResultData;
+    type TerminalStreamEventData = _TerminalStreamEventData;
+    type HiddenTerminalCommandResultData = _HiddenTerminalCommandResultData;
+    type MusicPlaybackResultData = _MusicPlaybackResultData;
+    type AutomationExecutionResultData = _AutomationExecutionResultData;
+    type FilePartContentData = _FilePartContentData;
+    type FileApplyResultData = _FileApplyResultData;
+    type GrepResultData = _GrepResultData;
+    type GrepFileMatch = _GrepFileMatch;
+    type GrepLineMatch = _GrepLineMatch;
+    type EnvironmentVariableReadResultData = _EnvironmentVariableReadResultData;
+    type EnvironmentVariableWriteResultData = _EnvironmentVariableWriteResultData;
+
+
+    // Global interface definitions
+    interface ToolParams {
+        [key: string]: string | number | boolean | object;
+    }
+
+    interface ToolConfig {
+        type?: string;
+        name: string;
+        params?: ToolParams;
+        onIntermediateResult?: (value: unknown) => void;
+    }
+
+    interface ToolCallOptions<TIntermediate = unknown> {
+        onIntermediateResult?: (value: TIntermediate) => void;
+    }
+
+    // Tool call functions
+    function toolCall<T extends string>(toolType: string, toolName: T, toolParams?: ToolParams): Promise<ToolReturnType<T>>;
+    function toolCall<T extends string>(toolName: T, toolParams?: ToolParams): Promise<ToolReturnType<T>>;
+    function toolCall<T extends string>(config: ToolConfig & { name: T }): Promise<ToolReturnType<T>>;
+    function toolCall<T extends string, TIntermediate = unknown>(toolType: string, toolName: T, toolParams: ToolParams | undefined, options: ToolCallOptions<TIntermediate>): Promise<ToolReturnType<T>>;
+    function toolCall<T extends string, TIntermediate = unknown>(toolName: T, toolParams: ToolParams | undefined, options: ToolCallOptions<TIntermediate>): Promise<ToolReturnType<T>>;
+    function toolCall(toolName: string): Promise<any>;
+
+    /** Returns the current executable tool catalog from the host runtime. */
+    function getToolCatalog(): { tools: ToolCatalogEntry[] };
+
+    // Complete function
+    function complete<T>(result: T): void;
+
+    // Send intermediate result function
+    function sendIntermediateResult<T>(result: T): void;
+
+    // Get environment variable function
+    function getEnv(key: string): string | undefined;
+
+    // Get the persistent plugin config directory as an absolute VFS path.
+    function getPluginConfigDir(pluginId?: string): string;
+
+    function getState(): string | undefined;
+
+    /**
+     * Returns the current package language tag, such as `zh-CN` or `en`.
+     */
+    function getLang(): string;
+
+    function getCallerName(): string | undefined;
+
+    function getChatId(): string | undefined;
+
+    /** Returns the opaque execution participant authenticated by the host. */
+    function getCallerParticipantId(): string | undefined;
+
+    const OPERIT_DOWNLOAD_DIR: string;
+    /**
+     * Absolute VFS directory for temporary files removed on exit.
+     * Use with Tools.Files; this is not a physical path for shell commands.
+     */
+    const OPERIT_CLEAN_ON_EXIT_DIR: string;
+
+    // Utility objects
+    const _: {
+        isEmpty(value: any): boolean;
+        isString(value: any): boolean;
+        isNumber(value: any): boolean;
+        isBoolean(value: any): boolean;
+        isObject(value: any): boolean;
+        isArray(value: any): boolean;
+        forEach<T>(collection: T[] | object, iteratee: (value: any, key: any, collection: any) => void): any;
+        map<T, R>(collection: T[] | object, iteratee: (value: any, key: any, collection: any) => R): R[];
+    };
+
+    const dataUtils: {
+        parseJson(jsonString: string): any;
+        stringifyJson(obj: any): string;
+        formatDate(date?: Date | string): string;
+    };
+
+    /** Explicit-device tool view, with the same namespace overloads and result types. */
+    interface DeviceTools {
+        Files: typeof FilesType;
+        Net: typeof NetType;
+        System: typeof SystemType;
+        SoftwareSettings: typeof SoftwareSettingsType;
+        Chat: typeof ChatType;
+        Models: typeof ModelsType;
+        Tts: typeof TtsType;
+        Stt: typeof SttType;
+        Theme: typeof ThemeType;
+        Catalog: typeof CatalogType;
+        Media: typeof MediaType;
+        Storage: typeof StorageType;
+        transport: DeviceTransport;
+        Edge: DeviceEdge;
+        Io: DeviceIo;
+        call<T extends string>(name: T, params?: Record<string, unknown>): Promise<ToolReturnType<T>>;
+        catalog(): Promise<ToolCatalog>;
+        /** Cancels this view's pending calls; subsequent calls remain available. */
+        cancel(): void;
+    }
+
+    // Tools namespace available globally
+    const Tools: {
+        device(nodeId: string, options?: DeviceToolOptions): DeviceTools;
+        Files: typeof FilesType;
+        Net: typeof NetType;
+        System: typeof SystemType;
+        SoftwareSettings: typeof SoftwareSettingsType;
+        Models: typeof ModelsType;
+        Tts: typeof TtsType;
+        Stt: typeof SttType;
+        Theme: typeof ThemeType;
+        Catalog: typeof CatalogType;
+        Media: typeof MediaType;
+        UI: typeof UIType;
+        Chat: typeof ChatType;
+        Storage: typeof StorageType;
+    };
+
+    /** Lowercase alias of the existing Core plugin Tools object. */
+    const tools: typeof Tools;
+
+    // CommonJS exports
+    const exports: Record<string, any>;
+
+    // Java/Kotlin bridge (Rhino-like)
+    const Java: JavaBridgeApiType;
+    const Kotlin: JavaBridgeApiType;
+
+}
