@@ -6,34 +6,20 @@ import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.widget.Toast
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.session.AgentRunEvent
 import com.aharou.feature.agent.domain.session.AgentRunStateStore
+import com.aharou.feature.plugin.domain.PluginHostApiOrigin
 import com.aharou.feature.plugin.domain.PluginHostException
 import com.aharou.feature.plugin.domain.PluginHostPaths
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.domain.PluginPage
-import com.aharou.feature.plugin.overlay.PluginOverlayException
-import com.aharou.feature.plugin.overlay.PluginOverlayManager
 import com.aharou.feature.plugin.runtime.PluginEventBus
-import com.aharou.feature.plugin.runtime.PluginChatService
+import com.aharou.feature.plugin.runtime.PluginHostApiDispatcher
 import com.aharou.feature.plugin.runtime.PluginModelService
-import com.aharou.feature.plugin.runtime.PluginHttpService
-import com.aharou.feature.plugin.runtime.PluginIntrospectionService
 import com.aharou.feature.plugin.runtime.PluginProcessException
 import com.aharou.feature.plugin.runtime.PluginRuntimeManager
-import com.aharou.feature.plugin.runtime.PluginSecretStore
-import com.aharou.feature.plugin.runtime.PluginShizukuException
-import com.aharou.feature.plugin.runtime.PluginShizukuRunner
-import com.aharou.feature.plugin.runtime.PluginSystemService
-import com.aharou.feature.plugin.runtime.PluginTipException
-import com.aharou.feature.plugin.runtime.PluginTipManager
-import com.aharou.feature.plugin.runtime.PluginTerminalException
-import com.aharou.feature.plugin.runtime.PluginTerminalRunner
-import com.aharou.feature.plugin.runtime.PluginToolService
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
-import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,14 +29,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -70,23 +54,12 @@ class PluginWebBridge(
     private val languageTag: String,
     private val fileAccess: FileAccessProvider,
     private val homeResolver: PathHomeResolver,
-    private val commandEngine: CommandEngine,
-    private val workspacePath: () -> String,
     private val eventBus: PluginEventBus,
     private val pluginManager: PluginManager,
     private val pluginRuntimeManager: PluginRuntimeManager,
-    private val terminalRunner: PluginTerminalRunner,
-    private val shizukuRunner: PluginShizukuRunner,
-    private val tipManager: PluginTipManager,
-    private val overlayManager: PluginOverlayManager,
-    private val chatService: PluginChatService,
     private val modelService: PluginModelService,
     private val agentRunStateStore: AgentRunStateStore,
-    private val secretStore: PluginSecretStore,
-    private val systemService: PluginSystemService,
-    private val introspectionService: PluginIntrospectionService,
-    private val toolService: PluginToolService,
-    private val httpService: PluginHttpService,
+    private val hostApiDispatcher: PluginHostApiDispatcher,
     private val environment: PluginPageEnvironment,
     @Volatile private var theme: () -> String,
     @Volatile private var onClosePage: () -> Unit,
@@ -319,8 +292,6 @@ class PluginWebBridge(
             put("dataDir", dataDirPath())
         }
 
-        "app.isForeground" -> JsonPrimitive(overlayManager.isAppForeground())
-
         "toast" -> {
             val message = PluginHostPaths.requireString(params, "message")
             mainHandler.post { Toast.makeText(context, message, Toast.LENGTH_SHORT).show() }
@@ -350,33 +321,7 @@ class PluginWebBridge(
             buildJsonObject { put("ok", true) }
         }
 
-        "fs.read" -> hostPaths.read(PluginHostPaths.requireString(params, "path"))
-        "fs.write" -> hostPaths.write(
-            PluginHostPaths.requireString(params, "path"),
-            PluginHostPaths.requireString(params, "content")
-        )
-        "fs.list" -> hostPaths.list(PluginHostPaths.requireString(params, "path"))
-        "fs.delete" -> hostPaths.delete(PluginHostPaths.requireString(params, "path"))
-        "fs.stat" -> hostPaths.stat(PluginHostPaths.requireString(params, "path"))
-        "fs.mkdir" -> hostPaths.mkdir(PluginHostPaths.requireString(params, "path"))
-        "fs.rename" -> hostPaths.rename(
-            PluginHostPaths.requireString(params, "from"),
-            PluginHostPaths.requireString(params, "to")
-        )
-        "fs.copy" -> hostPaths.copy(
-            PluginHostPaths.requireString(params, "from"),
-            PluginHostPaths.requireString(params, "to"),
-            (params["overwrite"] as? JsonPrimitive)?.booleanOrNull ?: false
-        )
-        "fs.append" -> hostPaths.append(
-            PluginHostPaths.requireString(params, "path"),
-            PluginHostPaths.requireString(params, "content")
-        )
-        "fs.readBinary" -> hostPaths.readBinary(PluginHostPaths.requireString(params, "path"))
-        "fs.writeBinary" -> hostPaths.writeBinary(
-            PluginHostPaths.requireString(params, "path"),
-            PluginHostPaths.requireString(params, "base64")
-        )
+        // 文件读写与进程侧共用同一套实现，页面只多出订阅（fs.watch / fs.unwatch）。
         "fs.watch" -> {
             val id = PluginHostPaths.requireString(params, "subscriptionId")
             val path = PluginHostPaths.requireString(params, "path")
@@ -391,89 +336,16 @@ class PluginWebBridge(
             fileSubscriptions.remove(PluginHostPaths.requireString(params, "subscriptionId"))
             buildJsonObject { put("ok", true) }
         }
-        "bash" -> bash(params)
-        "shizuku.exec" -> shizukuExec(params)
-        "overlay.create" -> overlayCreate(params)
-        "overlay.update" -> overlayUpdate(params)
-        "overlay.close" -> overlayClose(params)
-        "overlay.postMessage" -> overlayPostMessage(params)
-        "tip" -> tip(params)
+        // 页面专属能力到此为止，其余公共能力统一交给分发器处理。
         "plugin.invoke" -> invokePlugin(params)
-        "terminal.run" -> terminalRun(params)
-        "terminal.poll" -> terminalPoll(params)
-        "terminal.stop" -> terminalStop(params)
-        "terminal.close" -> terminalClose(params)
-        "terminal.write" -> terminalWrite(params)
-        "terminal.list" -> terminalRunner.list(page.pluginId)
-        "chat.listSessions" -> chatService.listSessions(page.pluginId, params)
-        "chat.createSession" -> chatService.createSession(page.pluginId, params)
-        "chat.listMessages" -> chatService.listMessages(page.pluginId, params)
-        "chat.sendMessage" -> chatService.sendMessage(page.pluginId, params)
-        "chat.setDraft" -> chatService.setDraft(page.pluginId, params)
-        "chat.stop" -> chatService.stop(page.pluginId, params)
-        "chat.openSession" -> chatService.openSession(page.pluginId, params)
-        "chat.getSession" -> chatService.getSession(page.pluginId, params)
-        "chat.renameSession" -> chatService.renameSession(page.pluginId, params)
-        "chat.pinSession" -> chatService.pinSession(page.pluginId, params)
-        "chat.deleteSession" -> chatService.deleteSession(page.pluginId, params)
-        "chat.getRunState" -> chatService.getRunState(page.pluginId, params)
-        "chat.waitForRun" -> chatService.waitForRun(page.pluginId, params)
-        "chat.listApprovals" -> chatService.listApprovals(page.pluginId, params)
-        "chat.resolveToolApproval" -> chatService.resolveToolApproval(page.pluginId, params)
-        "chat.resolveQuestion" -> chatService.resolveQuestion(page.pluginId, params)
-        "chat.resolvePlanApproval" -> chatService.resolvePlanApproval(page.pluginId, params)
-        "model.listProviders" -> modelService.listProviders(page.pluginId)
-        "model.listModels" -> modelService.listModels(page.pluginId, params)
-        "model.create" -> modelService.create(page.pluginId, params)
-        "model.close" -> modelService.close(page.pluginId, params)
-        "model.start" -> modelService.start(page.pluginId, params, "page:${page.cacheKey}")
-        "model.read" -> modelService.read(page.pluginId, params)
-        "model.cancel" -> modelService.cancel(page.pluginId, params)
-        "clipboard.read" -> systemService.clipboardRead(page.pluginId)
-        "clipboard.write" -> systemService.clipboardWrite(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "text")
+        else -> hostApiDispatcher.dispatch(
+            pluginId = page.pluginId,
+            method = method,
+            params = params,
+            origin = PluginHostApiOrigin.PAGE,
+            workspaceRoot = environment::workspaceRoot,
+            modelOrigin = "page:${page.cacheKey}"
         )
-        "share.text" -> systemService.shareText(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "text"),
-            (params["title"] as? JsonPrimitive)?.contentOrNull
-        )
-        "ui.openUrl" -> systemService.openUrl(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "url")
-        )
-        "app.info" -> systemService.appInfo(page.pluginId)
-        "log.write" -> systemService.log(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "level"),
-            PluginHostPaths.requireString(params, "message"),
-            (params["tag"] as? JsonPrimitive)?.contentOrNull
-        )
-        "secrets.get" -> secretStore.get(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "key")
-        )
-        "secrets.set" -> secretStore.set(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "key"),
-            PluginHostPaths.requireString(params, "value")
-        )
-        "secrets.delete" -> secretStore.delete(
-            page.pluginId,
-            PluginHostPaths.requireString(params, "key")
-        )
-        "secrets.list" -> secretStore.list(page.pluginId)
-        "tools.list" -> introspectionService.listTools(
-            page.pluginId,
-            includeSchema = (params["includeSchema"] as? JsonPrimitive)?.booleanOrNull ?: false
-        )
-        "tools.execute" -> toolService.execute(page.pluginId, params)
-        "tools.pending" -> toolService.pending(page.pluginId, params)
-        "tools.resolve" -> toolService.resolve(page.pluginId, params)
-        "mcp.status" -> introspectionService.mcpStatus(page.pluginId)
-        "http.request" -> httpService.request(page.pluginId, params)
-        else -> throw PluginHostException("METHOD_UNKNOWN", "unknown method: $method")
         }
     }
 
@@ -504,139 +376,6 @@ class PluginWebBridge(
             )
         } catch (e: PluginProcessException) {
             throw PluginHostException(e.code, e.message)
-        }
-    }
-
-    /** 从设置页创建宿主托管的系统浮层；权限与页面声明由 OverlayManager 校验。 */
-    private suspend fun overlayCreate(params: JsonObject): JsonElement = try {
-        val surface = (params["surface"] as? JsonPrimitive)?.contentOrNull
-        overlayManager.create(page.pluginId, surface, params)
-    } catch (e: PluginOverlayException) {
-        throw PluginHostException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayClose(params: JsonObject): JsonElement = try {
-        val overlayId = PluginHostPaths.requireString(params, "overlayId")
-        overlayManager.close(page.pluginId, overlayId)
-    } catch (e: PluginOverlayException) {
-        throw PluginHostException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayUpdate(params: JsonObject): JsonElement = try {
-        val overlayId = PluginHostPaths.requireString(params, "overlayId")
-        overlayManager.update(page.pluginId, overlayId, params)
-    } catch (e: PluginOverlayException) {
-        throw PluginHostException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayPostMessage(params: JsonObject): JsonElement = try {
-        val overlayId = PluginHostPaths.requireString(params, "overlayId")
-        val payload = params["payload"] ?: JsonNull
-        overlayManager.postMessage(page.pluginId, overlayId, payload)
-    } catch (e: PluginOverlayException) {
-        throw PluginHostException(e.code, e.message.orEmpty())
-    }
-
-    /** 页面请求一条对话内提示；动作按钮会回调页面所属插件的 handler。 */
-    private fun tip(params: JsonObject): JsonElement = try {
-        tipManager.show(page.pluginId, params)
-    } catch (e: PluginTipException) {
-        throw PluginHostException(e.code, e.message.orEmpty())
-    }
-
-    /** 通过 Shizuku 在宿主 Android 系统上执行命令；范围由插件的清单声明限制。 */    private suspend fun shizukuExec(params: JsonObject): JsonElement {
-        val command = PluginHostPaths.requireString(params, "command")
-        val timeoutSeconds = (params["timeout"] as? JsonPrimitive)?.longOrNull
-            ?: DEFAULT_SHIZUKU_TIMEOUT_SECONDS
-        return try {
-            val result = shizukuRunner.exec(page.pluginId, command, timeoutSeconds)
-            buildJsonObject {
-                put("output", result.output)
-                put("exitCode", result.exitCode)
-                put("truncated", result.truncated)
-            }
-        } catch (e: PluginShizukuException) {
-            throw PluginHostException(e.code, e.message.orEmpty())
-        }
-    }
-
-    /** 新建共享终端标签；后续通过 terminal.poll 读取输出。 */    private suspend fun terminalRun(params: JsonObject): JsonElement {
-        val command = PluginHostPaths.requireString(params, "command").trim()
-        val title = (params["title"] as? JsonPrimitive)?.contentOrNull
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.take(MAX_TERMINAL_TITLE_CHARS)
-        return try {
-            val tabId = terminalRunner.start(page.pluginId, command, title)
-            buildJsonObject {
-                put("tabId", tabId)
-                put("state", "running")
-            }
-        } catch (e: PluginTerminalException) {
-            throw PluginHostException(e.code, e.message)
-        }
-    }
-
-    private suspend fun terminalPoll(params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        val offset = (params["offset"] as? JsonPrimitive)?.longOrNull ?: 0L
-        return try {
-            val poll = terminalRunner.poll(page.pluginId, tabId, offset)
-            buildJsonObject {
-                put("output", poll.output)
-                put("offset", poll.offset)
-                put("state", poll.state)
-                poll.exitCode?.let { put("exitCode", it) }
-                put("truncated", poll.truncated)
-            }
-        } catch (e: PluginTerminalException) {
-            throw PluginHostException(e.code, e.message)
-        }
-    }
-
-    private suspend fun terminalStop(params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        withTerminalErrors { terminalRunner.stop(page.pluginId, tabId) }
-        return buildJsonObject { put("ok", true) }
-    }
-
-    private suspend fun terminalClose(params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        withTerminalErrors { terminalRunner.close(page.pluginId, tabId) }
-        return buildJsonObject { put("ok", true) }
-    }
-
-    private suspend fun terminalWrite(params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        val text = PluginHostPaths.requireString(params, "text")
-        val appendNewline = (params["appendNewline"] as? JsonPrimitive)?.booleanOrNull ?: true
-        val written = withTerminalErrors {
-            terminalRunner.write(page.pluginId, tabId, text, appendNewline)
-        }
-        return buildJsonObject { put("ok", written) }
-    }
-
-    private suspend fun <T> withTerminalErrors(block: suspend () -> T): T = try {
-        block()
-    } catch (e: PluginTerminalException) {
-        throw PluginHostException(e.code, e.message)
-    }
-
-    /** 一次性 Shell 命令：在插件页面所属工作区执行，输出与退出码原样返回。 */
-    private suspend fun bash(params: JsonObject): JsonElement {
-        val command = PluginHostPaths.requireString(params, "command")
-        if (command.isBlank()) throw PluginHostException("PARAM_INVALID", "empty command")
-        if (command.length > PluginHostPaths.MAX_COMMAND_CHARS) {
-            throw PluginHostException("PARAM_INVALID", "command too long")
-        }
-        val timeoutSeconds = (params["timeout"] as? JsonPrimitive)?.longOrNull
-            ?: PluginHostPaths.DEFAULT_BASH_TIMEOUT_SECONDS
-        val timeoutMs = timeoutSeconds.coerceIn(1L, PluginHostPaths.MAX_BASH_TIMEOUT_SECONDS) * 1000L
-        val result = commandEngine.runCommandSyncWithExit(command, workspacePath(), timeoutMs)
-        return buildJsonObject {
-            put("output", result.output)
-            put("exitCode", result.exitCode)
-            put("truncated", result.outputTruncated)
         }
     }
 
@@ -705,8 +444,6 @@ class PluginWebBridge(
         const val TAG = "PluginWebBridge"
         const val UI_INVOKE_TIMEOUT_MS = 60_000L
         const val MAX_INVOKE_ARGS_CHARS = 256 * 1024
-        const val MAX_TERMINAL_TITLE_CHARS = 120
-        const val DEFAULT_SHIZUKU_TIMEOUT_SECONDS = 120L
         val HANDLER_NAME = Regex("^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
     }
 }

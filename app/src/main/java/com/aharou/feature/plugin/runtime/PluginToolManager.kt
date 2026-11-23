@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.tool.ToolRegistry
 import com.aharou.feature.plugin.domain.InstalledPlugin
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.overlay.PluginOverlayManager
+import com.aharou.feature.plugin.workflow.WorkflowTemplateSync
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,7 +31,8 @@ class PluginToolManager @Inject constructor(
     private val runtime: PluginRuntimeManager,
     private val terminalRunner: PluginTerminalRunner,
     private val modelService: PluginModelService,
-    private val overlayManager: PluginOverlayManager
+    private val overlayManager: PluginOverlayManager,
+    private val workflowTemplateSync: WorkflowTemplateSync
 ) {
     private val started = AtomicBoolean(false)
     private val registeredLock = Any()
@@ -51,6 +53,9 @@ class PluginToolManager @Inject constructor(
             pluginManager.plugins.collect { plugins ->
                 runCatching { sync(plugins) }
                     .onFailure { FileLogger.e(TAG, "同步插件 AI 工具失败", it) }
+                // 插件装/卸/启停都可能带来工作流模板，跟着同一次列变化同步（默认注册成禁用）。
+                runCatching { workflowTemplateSync.syncInstalled() }
+                    .onFailure { FileLogger.w(TAG, "同步插件工作流模板失败", it) }
             }
         }
     }

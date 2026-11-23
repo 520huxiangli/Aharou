@@ -1,5 +1,6 @@
 package com.aharou.feature.plugin.runtime
 
+import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.plugin.domain.PluginHostPaths
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.terminal.domain.TerminalSessionProvider
@@ -109,7 +110,8 @@ internal class Utf8StreamDecoder {
 @Singleton
 class PluginTerminalRunner @Inject constructor(
     private val provider: TerminalSessionProvider,
-    private val pluginManager: PluginManager
+    private val pluginManager: PluginManager,
+    private val commandEngine: CommandEngine
 ) {
 
     private class Run(
@@ -228,6 +230,30 @@ class PluginTerminalRunner @Inject constructor(
         return withContext(Dispatchers.Main) { provider.sendInput(tabId, text, appendNewline) }
     }
 
+    /**
+     * 不建标签地跑一条命令并等结果：插件只要输出、不想在用户终端列表里留痕时用。
+     * 与 `bash` 同一条执行链路（命令引擎、无 PTY、超时后返回已收集的输出）。
+     */
+    suspend fun hiddenExec(
+        pluginId: String,
+        command: String,
+        workspaceRoot: String,
+        timeoutSeconds: Long
+    ): JsonElement {
+        requireActive(pluginId)
+        if (command.isBlank()) throw PluginTerminalException("PARAM_INVALID", "empty command")
+        if (command.length > PluginHostPaths.MAX_COMMAND_CHARS) {
+            throw PluginTerminalException("PARAM_INVALID", "command too long")
+        }
+        val timeoutMs = timeoutSeconds.coerceIn(1L, MAX_HIDDEN_TIMEOUT_SECONDS) * 1000L
+        val result = commandEngine.runCommandSyncWithExit(command, workspaceRoot, timeoutMs)
+        return buildJsonObject {
+            put("output", result.output)
+            put("exitCode", result.exitCode)
+            put("truncated", result.outputTruncated)
+        }
+    }
+
     /** 列出当前插件自己创建的标签及其运行状态。 */
     suspend fun list(pluginId: String): JsonElement {
         val mine = runs.values.filter { it.pluginId == pluginId }.sortedBy { it.tabId }
@@ -295,5 +321,8 @@ class PluginTerminalRunner @Inject constructor(
 
         /** 单次写入的字符上限。 */
         const val MAX_INPUT_CHARS = 4000
+
+        /** 隐藏执行的超时上限与命令引擎的整体预算一致。 */
+        const val MAX_HIDDEN_TIMEOUT_SECONDS = 300L
     }
 }

@@ -2,13 +2,13 @@ package com.aharou.feature.plugin.presentation
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.core.watch.FileChangeHub
 import com.aharou.core.watch.WatchFilter
-import com.aharou.feature.agent.domain.container.CommandEngine
 import com.aharou.feature.agent.domain.shizuku.ShizukuManager
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
 import com.aharou.feature.agent.domain.session.AgentRunStateStore
@@ -18,6 +18,9 @@ import com.aharou.feature.plugin.data.PluginDevSettingsRepository
 import com.aharou.feature.plugin.data.PluginOverlayPermissionRepository
 import com.aharou.feature.plugin.data.PluginShizukuPermissionRepository
 import com.aharou.feature.plugin.data.PluginStoreSettingsRepository
+import com.aharou.feature.plugin.data.import.OperitImportOutcome
+import com.aharou.feature.plugin.data.import.OperitImportReport
+import com.aharou.feature.plugin.data.import.OperitPluginImporter
 import com.aharou.feature.plugin.data.index.PluginIndexSourceRepository
 import com.aharou.feature.plugin.domain.PluginManifestParser
 import com.aharou.feature.plugin.domain.ManifestParseResult
@@ -36,25 +39,20 @@ import com.aharou.feature.plugin.domain.PluginPage
 import com.aharou.feature.plugin.domain.PluginUiEntry
 import com.aharou.feature.plugin.overlay.PluginOverlayManager
 import com.aharou.feature.plugin.runtime.PluginDependencyResult
-import com.aharou.feature.plugin.runtime.PluginChatService
-import com.aharou.feature.plugin.runtime.PluginHttpService
-import com.aharou.feature.plugin.runtime.PluginIntrospectionService
-import com.aharou.feature.plugin.runtime.PluginModelService
-import com.aharou.feature.plugin.runtime.PluginSecretStore
-import com.aharou.feature.plugin.runtime.PluginSystemService
 import com.aharou.feature.plugin.runtime.PluginEventBus
 import com.aharou.feature.plugin.runtime.PluginHookDispatcher
+import com.aharou.feature.plugin.runtime.PluginHostApiDispatcher
+import com.aharou.feature.plugin.runtime.PluginModelService
 import com.aharou.feature.plugin.runtime.PluginProviderRegistrar
 import com.aharou.feature.plugin.runtime.PluginRuntimeManager
-import com.aharou.feature.plugin.runtime.PluginShizukuRunner
 import com.aharou.feature.plugin.runtime.PluginTerminalRunner
 import com.aharou.feature.plugin.runtime.PluginTipManager
-import com.aharou.feature.plugin.runtime.PluginToolService
-import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -102,7 +100,10 @@ sealed interface PluginImportState {
         /** 展示用来源名称，例如「AiCode Plugins」。 */
         val sourceLabel: String? = null,
         /** 来源是否在宿主官方白名单内；只有它为 true 时跳过手输仓库。 */
-        val officialSource: Boolean = false
+        val officialSource: Boolean = false,
+
+        /** Operit 包的能力对照；普通插件包导入为 null。 */
+        val operitReport: OperitImportReport? = null
     ) : PluginImportState
 
     data class Failed(val errors: List<PluginError>) : PluginImportState
@@ -148,9 +149,7 @@ class PluginsViewModel @Inject constructor(
     private val manager: PluginManager,
     private val fileAccess: FileAccessProvider,
     private val pathHomeResolver: PathHomeResolver,
-    private val workspaceRepository: WorkspaceRepository,
     private val fileChangeHub: FileChangeHub,
-    private val commandEngine: CommandEngine,
     private val eventBus: PluginEventBus,
     private val pluginRuntimeManager: PluginRuntimeManager,
     private val pluginHookDispatcher: PluginHookDispatcher,
@@ -161,21 +160,15 @@ class PluginsViewModel @Inject constructor(
     private val backupPermissionRepository: PluginBackupPermissionRepository,
     private val overlayManager: PluginOverlayManager,
     private val shizukuManager: ShizukuManager,
-    private val shizukuRunner: PluginShizukuRunner,
     private val tipManager: PluginTipManager,
     private val devSettingsRepository: PluginDevSettingsRepository,
     private val indexSourceRepository: PluginIndexSourceRepository,
     private val storeSettingsRepository: PluginStoreSettingsRepository,
     private val pageEnvironment: PluginPageEnvironment,
-    private val chatService: PluginChatService,
     private val modelService: PluginModelService,
     private val agentRunStateStore: AgentRunStateStore,
-    private val secretStore: PluginSecretStore,
-    private val systemService: PluginSystemService,
-    private val introspectionService: PluginIntrospectionService,
-    private val toolService: PluginToolService,
-    private val httpService: PluginHttpService,
-    private val pluginPublisher: PluginPublisher
+    private val pluginPublisher: PluginPublisher,
+    private val hostApiDispatcher: PluginHostApiDispatcher
 ) : ViewModel() {
 
     val plugins: StateFlow<List<InstalledPlugin>> = manager.plugins
@@ -184,18 +177,27 @@ class PluginsViewModel @Inject constructor(
     private val _publishState = MutableStateFlow<String?>(null)
     val publishState: StateFlow<String?> = _publishState.asStateFlow()
 
+    /** 没权限直推时导出的提交包；非空时 UI 给出分享入口。 */
+    private val _publishExport = MutableStateFlow<java.io.File?>(null)
+    val publishExport: StateFlow<java.io.File?> = _publishExport.asStateFlow()
+
     fun publish(id: String) {
         if (_publishState.value != null) return
         _publishState.value = ""
         viewModelScope.launch(Dispatchers.IO) {
             val displayName = runCatching { UserIdentityStore.observe(context).first().name }.getOrDefault("")
             val result = pluginPublisher.publish(id, displayName)
+            _publishExport.value = result.submissionZip
             _publishState.value = result.message
         }
     }
 
+    /** 插件包目录：面板 WebView 从这里取包内资源。 */
+    fun pluginInstallDir(pluginId: String): java.io.File = manager.installDirFor(pluginId)
+
     fun clearPublishState() {
         _publishState.value = null
+        _publishExport.value = null
     }
 
     val loaded: StateFlow<Boolean> = manager.isLoaded
@@ -291,23 +293,71 @@ class PluginsViewModel @Inject constructor(
         if (_importState.value !is PluginImportState.Idle && _importState.value !is PluginImportState.Failed) return
         _importState.value = PluginImportState.Reading
         viewModelScope.launch(Dispatchers.IO) {
-            val result = try {
-                context.contentResolver.openInputStream(uri)?.use { manager.preview(it) }
-                    ?: PluginPreviewResult.Failed(listOf(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE)))
-            } catch (e: IOException) {
-                FileLogger.w(TAG, "打开插件包失败", e)
-                PluginPreviewResult.Failed(listOf(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE)))
-            } catch (e: SecurityException) {
-                FileLogger.w(TAG, "没有读取插件包的权限", e)
-                PluginPreviewResult.Failed(listOf(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE)))
+            val payload = readImportPayload(uri)
+            if (payload is ImportPayload.Failed) {
+                _importState.value = PluginImportState.Failed(listOf(payload.error))
+                return@launch
+            }
+            val bytes = (payload as ImportPayload.Ok).bytes
+            var operitReport: OperitImportReport? = null
+            // Operit 包先转成宿主自己的插件包再走同一条预览/安装流程；其余包原样交给现有读取逻辑
+            val result = when (val outcome = OperitPluginImporter.prepare(payload.fileName, bytes)) {
+                is OperitImportOutcome.NotOperit -> manager.preview(ByteArrayInputStream(bytes))
+                is OperitImportOutcome.Rejected -> PluginPreviewResult.Failed(outcome.errors)
+                is OperitImportOutcome.Importable -> {
+                    operitReport = outcome.report
+                    manager.preview(ByteArrayInputStream(outcome.zip))
+                }
             }
             _importState.value = when (result) {
                 is PluginPreviewResult.Ready -> PluginImportState.Preview(
-                    preview = result.preview
+                    preview = result.preview,
+                    operitReport = operitReport
                 )
                 is PluginPreviewResult.Failed -> PluginImportState.Failed(result.errors)
             }
         }
+    }
+
+    /** 先把整包读进内存：要按包内结构判断形态，交回读取器时就无法再回头读这个流。 */
+    private fun readImportPayload(uri: Uri): ImportPayload {
+        return try {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: return ImportPayload.Failed(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE))
+            input.use { stream ->
+                val buffer = ByteArrayOutputStream()
+                val chunk = ByteArray(64 * 1024)
+                while (true) {
+                    val read = stream.read(chunk)
+                    if (read < 0) break
+                    if (buffer.size() + read > MAX_IMPORT_BYTES) {
+                        return ImportPayload.Failed(PluginError(PluginErrorCode.ARCHIVE_TOO_LARGE))
+                    }
+                    buffer.write(chunk, 0, read)
+                }
+                if (buffer.size() == 0) {
+                    return ImportPayload.Failed(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE, "empty"))
+                }
+                ImportPayload.Ok(buffer.toByteArray(), queryDisplayName(uri))
+            }
+        } catch (e: IOException) {
+            FileLogger.w(TAG, "打开插件包失败", e)
+            ImportPayload.Failed(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE))
+        } catch (e: SecurityException) {
+            FileLogger.w(TAG, "没有读取插件包的权限", e)
+            ImportPayload.Failed(PluginError(PluginErrorCode.ARCHIVE_UNREADABLE))
+        }
+    }
+
+    private fun queryDisplayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
+
+    private sealed interface ImportPayload {
+        class Ok(val bytes: ByteArray, val fileName: String?) : ImportPayload
+        class Failed(val error: PluginError) : ImportPayload
     }
 
     fun confirmInstall() {
@@ -348,7 +398,8 @@ class PluginsViewModel @Inject constructor(
             origin = storePreview.origin,
             expectedRepository = storePreview.expectedRepository,
             sourceLabel = storePreview.sourceLabel,
-            officialSource = storePreview.officialSource
+            officialSource = storePreview.officialSource,
+            operitReport = storePreview.operitReport
         )
     }
 
@@ -357,7 +408,8 @@ class PluginsViewModel @Inject constructor(
         origin: PluginInstallOrigin,
         expectedRepository: String?,
         sourceLabel: String?,
-        officialSource: Boolean
+        officialSource: Boolean,
+        operitReport: OperitImportReport? = null
     ) {
         if (_importState.value !is PluginImportState.Idle && _importState.value !is PluginImportState.Failed) return
         _importState.value = PluginImportState.Preview(
@@ -365,7 +417,8 @@ class PluginsViewModel @Inject constructor(
             origin = origin,
             expectedRepository = expectedRepository,
             sourceLabel = sourceLabel,
-            officialSource = officialSource
+            officialSource = officialSource,
+            operitReport = operitReport
         )
     }
 
@@ -728,6 +781,14 @@ class PluginsViewModel @Inject constructor(
         }
     }
 
+    /** Compose DSL 面板的桥：与页面桥共用同一个运行时调用面，不需要 WebView。 */
+    internal fun createDslBridge(pluginId: String): PluginDslBridge =
+        PluginDslBridge(
+            pluginId = pluginId,
+            pluginManager = manager,
+            pluginRuntimeManager = pluginRuntimeManager
+        )
+
     /** 为插件设置页构造宿主桥；桥与 WebView 一起缓存，由 [PluginWebViewCache] 统一释放。 */
     fun createWebBridge(
         page: PluginPage,
@@ -745,23 +806,12 @@ class PluginsViewModel @Inject constructor(
             languageTag = languageTag,
             fileAccess = fileAccess,
             homeResolver = pathHomeResolver,
-            commandEngine = commandEngine,
-            workspacePath = { workspaceRepository.currentPath() },
             eventBus = eventBus,
             pluginManager = manager,
             pluginRuntimeManager = pluginRuntimeManager,
-            terminalRunner = pluginTerminalRunner,
-            shizukuRunner = shizukuRunner,
-            tipManager = tipManager,
-            overlayManager = overlayManager,
-            chatService = chatService,
             modelService = modelService,
             agentRunStateStore = agentRunStateStore,
-            secretStore = secretStore,
-            systemService = systemService,
-            introspectionService = introspectionService,
-            toolService = toolService,
-            httpService = httpService,
+            hostApiDispatcher = hostApiDispatcher,
             environment = pageEnvironment,
             theme = theme,
             onClosePage = onClosePage,
@@ -772,6 +822,9 @@ class PluginsViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "PluginsViewModel"
+
+        /** 插件包与 Operit 包共用的内存读取上限；超出就报「压缩包过大」，不再继续读。 */
+        const val MAX_IMPORT_BYTES = 16 * 1024 * 1024
         const val DEV_RELOAD_DEBOUNCE_MS = 500L
         const val SETTINGS_SAVE_DEBOUNCE_MS = 500L
         const val ACTION_TIMEOUT_MS = 10_000L

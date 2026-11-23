@@ -13,6 +13,7 @@ import com.aharou.feature.plugin.data.PluginRecord
 import com.aharou.feature.plugin.data.PluginRegistryStore
 import com.aharou.feature.plugin.runtime.PluginDependencyPreparer
 import com.aharou.feature.plugin.runtime.PluginDependencyResult
+import com.aharou.feature.plugin.runtime.PluginDependencyStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
@@ -123,6 +124,7 @@ class PluginManager internal constructor(
     private val dataRoot = File(rootDir, "data")
     private val store = PluginRegistryStore(registryFile)
     private val reader = PluginPackageReader()
+    private val dependencyStore = PluginDependencyStore(rootDir)
 
     private val mutex = Mutex()
     private val loadLock = Any()
@@ -164,9 +166,11 @@ class PluginManager internal constructor(
             migrateLegacyRoot()
             // 进程重启后不可能存在进行中的安装，暂存目录里的都是残留
             cleanup { deleteTree(stagingDir) }
+            cleanup { dependencyStore.cleanupStaging() }
             val registry = loadRecords()
             val recovered = !registry.failed && recoverInterruptedInstall(registry.records)
             publish(registry.records.map { loadInstalled(it) })
+            migrateLegacyDependencies(allowPrune = !registry.failed)
             // registry 或事务恢复失败时保留目录，避免把待恢复的备份当成孤儿。
             if (recovered) sweepOrphans(registry.records.map { it.id }.toSet())
             loaded = true
@@ -181,6 +185,7 @@ class PluginManager internal constructor(
             val loaded = loadRecords()
             val recovered = !loaded.failed && recoverInterruptedInstall(loaded.records)
             publish(loaded.records.map { loadInstalled(it) })
+            migrateLegacyDependencies(allowPrune = !loaded.failed)
             if (recovered) sweepOrphans(loaded.records.map { it.id }.toSet())
         }
     }
@@ -233,6 +238,9 @@ class PluginManager internal constructor(
     /** 插件专属数据目录，对应桥里的 `data://` 根。 */
     fun dataDirFor(pluginId: String): File = File(dataRoot, pluginId)
 
+    /** 插件安装目录：插件的包内资源（HTML、图标等）从这里读。 */
+    fun installDirFor(pluginId: String): File = File(installedDir, pluginId)
+
     /** 开发者侧载目录，容器内对应 `~/.aharou/plugin-dev`。 */
     val devDir: File
         get() = File(rootDir.parentFile ?: rootDir, DEV_DIR).apply { mkdirs() }
@@ -249,7 +257,21 @@ class PluginManager internal constructor(
             ?: return@withContext PluginDependencyResult.Failed("插件没有运行时，无需依赖")
         val preparer = dependencyPreparer
             ?: return@withContext PluginDependencyResult.Failed("依赖准备不可用")
+        val fingerprint = runCatching { dependencyStore.fingerprint(runtime) }.getOrNull()
         val result = preparer.prepare(runtime)
+        // 装好的依赖收进独立缓存再用链接挂回包目录；缓存这一步失败不算依赖准备失败，插件照旧能用。
+        if (result is PluginDependencyResult.Ready && fingerprint != null) {
+            runCatching {
+                if (!dependencyStore.isReady(id, fingerprint) &&
+                    dependencyStore.hasRealOutput(runtime.installDir, runtime.dependencies?.tool)
+                ) {
+                    dependencyStore.capture(runtime, fingerprint)
+                }
+                if (dependencyStore.isReady(id, fingerprint)) {
+                    dependencyStore.link(runtime.installDir, fingerprint, id)
+                }
+            }.onFailure { FileLogger.w(TAG, "依赖缓存保存失败: $id", it) }
+        }
         val saved = mutateRecords { current ->
             val installed = current.firstOrNull { it.id == id } ?: return@mutateRecords null
             if (!sameInstallation(installed.record, plugin.record)) return@mutateRecords null
@@ -423,6 +445,7 @@ class PluginManager internal constructor(
         val existing = _plugins.value.firstOrNull { it.id == manifest.id }
         if (existing == null) deleteTree(dataDirFor(manifest.id))
         val installRevision = UUID.randomUUID().toString()
+        val preservedDependency = preserveExistingDependencies(existing, pending)
         val record = PluginRecord(
             id = manifest.id,
             version = manifest.version.toString(),
@@ -436,6 +459,8 @@ class PluginManager internal constructor(
             indexUrl = origin.indexUrl,
             repository = origin.repository,
             official = origin.official,
+            dependenciesReady = preservedDependency != null,
+            dependenciesHash = preservedDependency?.let { dependencyFileHash(pending.content.runtime) },
             installRevision = installRevision
         )
 
@@ -452,6 +477,11 @@ class PluginManager internal constructor(
             }
             moveDirectory(pending.pkg.dir, target)
             movedNew = true
+            // 依赖没变就直接挂回旧缓存；挂不上不算安装失败，按「待准备依赖」展示。
+            if (preservedDependency != null) {
+                runCatching { dependencyStore.link(target, preservedDependency, manifest.id) }
+                    .onFailure { FileLogger.w(TAG, "复用插件依赖缓存失败: ${manifest.id}", it) }
+            }
             installed = loadInstalled(record)
             store.save(others.map { it.record } + record)
         } catch (e: IOException) {
@@ -483,7 +513,8 @@ class PluginManager internal constructor(
             publish(next)
             val installedDeleted = cleanup { deleteTree(File(installedDir, id)) }
             val dataDeleted = cleanup { deleteTree(dataDirFor(id)) }
-            installedDeleted && dataDeleted
+            val dependenciesDeleted = cleanup { dependencyStore.deleteForPlugin(id) }
+            installedDeleted && dataDeleted && dependenciesDeleted
         }
     }
 
@@ -554,14 +585,101 @@ class PluginManager internal constructor(
         }
     }
 
-    /** 依赖文件被改动后，准备状态失效；这里只修正视图，不写盘。 */
+    /**
+     * 依赖状态一律按磁盘推导，不写盘：缓存里准备过（包目录里是指向缓存的链接），
+     * 或者旧布局的真实依赖目录还在，都算就绪。
+     */
     private fun refreshDependencyState(record: PluginRecord, content: PluginContent): PluginRecord {
-        val dependency = content.runtime?.dependencies ?: return record.copy(dependenciesReady = true)
+        val runtime = content.runtime ?: return record.copy(dependenciesReady = true)
+        val dependency = runtime.dependencies ?: return record.copy(dependenciesReady = true)
         val hash = runCatching {
             PluginPackageReader.sha256Hex(dependency.file.readBytes())
         }.getOrNull() ?: return record.copy(dependenciesReady = false)
-        return if (record.dependenciesHash == hash) record.copy(dependenciesReady = true)
-        else record.copy(dependenciesReady = false)
+        val ready = when {
+            // 链接指向缓存：缓存被清掉时链接是悬空的，必须按缓存判就绪，不能看目录在不在。
+            dependencyStore.isLinked(runtime.installDir, dependency.tool) -> runCatching {
+                dependencyStore.isReady(record.id, dependencyStore.fingerprint(runtime))
+            }.getOrDefault(false)
+            dependencyStore.hasRealOutput(runtime.installDir, dependency.tool) ->
+                record.dependenciesHash == hash
+            else -> false
+        }
+        return record.copy(dependenciesReady = ready)
+    }
+
+    /**
+     * 判断升级/重装能不能沿用已有依赖。
+     *
+     * 指纹只看依赖输入内容与工具，版本号变了但依赖没变就不重装；旧包里的依赖还是真实目录时
+     * 先收进缓存再复用，收不进去就返回 null，按「需要重新准备」处理。
+     */
+    private fun preserveExistingDependencies(
+        existing: InstalledPlugin?,
+        pending: StagedPackage
+    ): String? {
+        val newRuntime = pending.content.runtime ?: return null
+        if (newRuntime.dependencies == null) return null
+        val newFingerprint = runCatching { dependencyStore.fingerprint(newRuntime) }.getOrNull()
+            ?: return null
+        // 重装、回滚或记录丢失时缓存里可能已经有同指纹的依赖，直接用。
+        if (dependencyStore.isReady(pending.manifest.id, newFingerprint)) return newFingerprint
+        val oldRuntime = existing?.content?.runtime ?: return null
+        if (oldRuntime.dependencies == null) return null
+        if (!dependencyStore.hasRealOutput(oldRuntime.installDir, oldRuntime.dependencies?.tool)) return null
+        val oldFingerprint = runCatching { dependencyStore.fingerprint(oldRuntime) }.getOrNull()
+            ?: return null
+        if (oldFingerprint != newFingerprint) return null
+        return runCatching {
+            if (!dependencyStore.isReady(existing.id, oldFingerprint)) {
+                dependencyStore.capture(oldRuntime, oldFingerprint)
+            }
+            oldFingerprint.takeIf { dependencyStore.isReady(existing.id, it) }
+        }.getOrNull()
+    }
+
+    private fun dependencyFileHash(runtime: PluginRuntime?): String? =
+        runtime?.dependencies?.file?.let {
+            runCatching { PluginPackageReader.sha256Hex(it.readBytes()) }.getOrNull()
+        }
+
+    /**
+     * 旧布局（依赖真实留在插件包目录里）就地迁到独立缓存。
+     *
+     * 是否旧布局只看依赖目录是不是真实的目录，不看版本与清单；迁移失败只记日志并保留原目录，
+     * 插件照旧可用。registry 读坏时列表为空，这时也不清理缓存，免得把待恢复插件的依赖当垃圾删掉。
+     */
+    private fun migrateLegacyDependencies(allowPrune: Boolean) {
+        var changed = false
+        val migrated = _plugins.value.map { plugin ->
+            val runtime = plugin.content.runtime ?: return@map plugin
+            if (runtime.dependencies == null) return@map plugin
+            if (!dependencyStore.migrateLegacy(runtime, plugin.id)) return@map plugin
+            val record = refreshDependencyState(plugin.record, plugin.content)
+            if (record == plugin.record) plugin else {
+                changed = true
+                plugin.copy(record = record)
+            }
+        }
+        if (changed) {
+            publish(migrated)
+            runCatching { store.save(migrated.map { it.record }) }
+                .onFailure { FileLogger.w(TAG, "迁移插件依赖后保存记录失败", it) }
+        }
+        if (allowPrune) pruneDependencyCache(migrated)
+    }
+
+    /** 只清「插件还在、指纹已换掉」的旧缓存；指纹算不出来或插件不认识的整份保留。 */
+    private fun pruneDependencyCache(plugins: List<InstalledPlugin>) {
+        val knownIds = plugins.map { it.id }.toSet()
+        val referenced = mutableMapOf<String, Set<String>>()
+        plugins.forEach { plugin ->
+            val runtime = plugin.content.runtime ?: return@forEach
+            if (runtime.dependencies == null) return@forEach
+            val fingerprint = runCatching { dependencyStore.fingerprint(runtime) }.getOrNull()
+                ?: return@forEach
+            referenced[plugin.id] = setOf(fingerprint)
+        }
+        cleanup { dependencyStore.pruneUnreferenced(knownIds, referenced) }
     }
 
     /**

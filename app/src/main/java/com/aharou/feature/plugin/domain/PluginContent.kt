@@ -6,6 +6,7 @@ import com.aharou.feature.agent.domain.skill.Skill
 import com.aharou.feature.agent.domain.skill.SkillParser
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.subagent.AgentDefinitionParser
+import com.aharou.core.util.FileLogger
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -54,7 +55,7 @@ data class PluginPage(
     val cacheKey: String get() = if (pluginVersion.isBlank()) key else "$key@$pluginVersion"
 }
 
-/** 已解析的槽位入口：页面或运行时动作。 */
+/** 已解析的槽位入口：HTML 页面、运行时动作或 Compose DSL 面板。 */
 data class PluginUiEntry(
     val pluginId: String,
     val localId: String,
@@ -63,6 +64,8 @@ data class PluginUiEntry(
     val icon: String,
     val page: PluginPage? = null,
     val handler: String? = null,
+    /** Compose DSL 面板脚本的包内相对路径；与 [page] / [handler] 互斥。 */
+    val screen: String? = null,
     val confirm: Boolean = false
 ) {
     val key: String get() = pluginContributionName(pluginId, localId)
@@ -70,6 +73,7 @@ data class PluginUiEntry(
     val kind: PluginUiEntryKind
         get() = when {
             slot == PluginUiSlots.BACKUP_DATA -> PluginUiEntryKind.DATA
+            screen != null -> PluginUiEntryKind.COMPOSE_DSL
             page != null -> PluginUiEntryKind.PAGE
             else -> PluginUiEntryKind.ACTION
         }
@@ -215,6 +219,8 @@ sealed interface ContentLoadResult {
  * 预览（暂存目录）与加载已安装插件共用这一份校验，保证装进去的和读出来的是同一套规则。
  */
 object PluginContentLoader {
+    private const val TAG = "PluginContent"
+
     const val MAX_CONTENT_BYTES = 512 * 1024
     const val MAX_SCHEMA_BYTES = 256 * 1024
     const val MAX_RUNTIME_BYTES = 512 * 1024
@@ -285,6 +291,15 @@ object PluginContentLoader {
                 )
             } else {
                 null
+            }
+        }
+        if (errors.isEmpty()) {
+            // 装得上、跑得动是前提，这里只把对不上的方法名留在日志里；拦截会让插件因规范问题不可用。
+            PluginBridgeAudit.audit(manifest, dir).forEach { finding ->
+                FileLogger.w(
+                    TAG,
+                    "[${manifest.id}] 页面 ${finding.pageFile} 调用了宿主未提供的方法: ${finding.method}"
+                )
             }
         }
         return if (errors.isEmpty()) {
@@ -512,7 +527,7 @@ object PluginContentLoader {
         )
     }
 
-    /** 槽位页 HTML 只校验存在性与大小，不解析内容；页面由宿主 WebView 加载。 */
+    /** 槽位入口的 HTML 与面板脚本只校验存在性与大小，不解析内容；分别由 WebView 与 Compose DSL 渲染层使用。 */
     private fun loadUiEntry(
         dir: File,
         pluginId: String,
@@ -522,6 +537,19 @@ object PluginContentLoader {
     ): PluginUiEntry? {
         val page = ref.page?.let { loadUiPage(dir, pluginId, pluginVersion, ref, errors) }
         if (ref.page != null && page == null) return null
+        val screen = ref.screen
+        if (screen != null) {
+            val file = File(dir, screen)
+            val inside = file.canonicalFile.toPath().startsWith(dir.canonicalFile.toPath())
+            if (!inside || !file.isFile) {
+                errors += PluginError(PluginErrorCode.FILE_MISSING, screen)
+                return null
+            }
+            if (file.length() > MAX_CONTENT_BYTES) {
+                errors += PluginError(PluginErrorCode.CONTENT_INVALID, "$screen: too large")
+                return null
+            }
+        }
         return PluginUiEntry(
             pluginId = pluginId,
             localId = ref.id,
@@ -530,6 +558,7 @@ object PluginContentLoader {
             icon = ref.icon,
             page = page,
             handler = ref.handler,
+            screen = screen,
             confirm = ref.confirm
         )
     }

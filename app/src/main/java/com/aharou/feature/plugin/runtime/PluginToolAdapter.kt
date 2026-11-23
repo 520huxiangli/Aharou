@@ -122,10 +122,10 @@ class PluginToolAdapter(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "PluginTool"
 
-        fun buildNamespacedName(pluginId: String, localId: String): String {
+        internal fun buildNamespacedName(pluginId: String, localId: String): String {
             val raw = "plugin__${sanitize(pluginId)}__${sanitize(localId)}"
             if (raw.length <= 64) return raw
             val suffix = "__${sha1(raw).take(8)}"
@@ -141,3 +141,12 @@ class PluginToolAdapter(
                 .joinToString("") { "%02x".format(it) }
     }
 }
+
+/**
+ * 插件工具在 [com.aharou.feature.agent.domain.tool.ToolRegistry] 里的注册名。
+ *
+ * 工作流按 Operit 的「包名:工具名」引用插件工具，需要同一套命名换算；
+ * 两处各写一份迟早漂移，所以直接复用适配器的实现。
+ */
+internal fun pluginToolRegistryName(pluginId: String, localId: String): String =
+    PluginToolAdapter.buildNamespacedName(pluginId, localId)

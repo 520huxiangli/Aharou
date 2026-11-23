@@ -7,7 +7,6 @@ import com.aharou.R
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.settings.data.repository.VoiceTtsSettingsRepository
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
-import com.aharou.feature.voice.data.CloudSpeechClient
 import com.aharou.feature.voice.data.TtsCache
 import com.aharou.feature.voice.playback.SpeechPlayback
 import com.aharou.feature.voice.tts.VoiceProfileStore
@@ -45,7 +44,6 @@ enum class VoiceSpeaker { AI, USER }
 internal class ReadAloudViewModel @Inject constructor(
     private val ttsSettings: VoiceTtsSettingsRepository,
     private val providerRepository: AIProviderRepository,
-    private val cloudSpeech: CloudSpeechClient,
     private val playbackHub: SpeechPlayback,
     private val ttsCache: TtsCache,
     private val profileStore: VoiceProfileStore,
@@ -138,19 +136,17 @@ internal class ReadAloudViewModel @Inject constructor(
                     val loaded = profileStore.load(localId)
                     if (loaded != null) {
                         // 同步过云端的音色优先用云端：又快又清楚，本地那句要十几秒而且偏糊。
+                        // 直接边合成边播；云端整条都走不通才落到下面的本机合成。
                         val cloudUri = loaded.profile.cloudVoiceUri
                         if (cloudUri.isNotBlank()) {
-                            val cloudAudio = synthesizeInCloud(cloudUri, text)
-                            if (cloudAudio != null) {
-                                _state.value = ReadAloudState.Playing
-                                playback.playOnce(cloudAudio) {
-                                    viewModelScope.launch {
-                                        _currentText.value = null
-                                        _state.value = ReadAloudState.Idle
-                                    }
+                            _state.value = ReadAloudState.Playing
+                            val started = playback.speakStreamed(text, voice = cloudUri) {
+                                viewModelScope.launch {
+                                    _currentText.value = null
+                                    _state.value = ReadAloudState.Idle
                                 }
-                                return@launch
                             }
+                            if (started) return@launch
                         }
                         val localKey = TtsCache.key(text, voice, LOCAL_TTS_MODEL, LOCAL_TTS_SOURCE)
                         val audio = ttsCache.get(localKey)?.let { cached ->
@@ -193,27 +189,18 @@ internal class ReadAloudViewModel @Inject constructor(
                     }
                     return@launch
                 }
-                val cacheKey = TtsCache.key(text, voice, model, provider.baseUrl)
-                // 命中缓存直接读本地音频，省一次云端往返
-                val cached = ttsCache.get(cacheKey)
-                val audio = if (cached != null) {
-                    withContext(Dispatchers.IO) { cached.readBytes() }
-                } else {
-                    cloudSpeech.synthesize(
-                        baseUrl = provider.baseUrl,
-                        apiKey = provider.firstUsableApiKey,
-                        model = model,
-                        text = text,
-                        voice = voice,
-                    ).also { ttsCache.put(cacheKey, it) }
-                }
                 _state.value = ReadAloudState.Playing
-                playback.playOnce(audio) {
+                // 边合成边播；服务商不支持 PCM 流时内部会自己整段回退
+                val started = playback.speakStreamed(text, voice = voice) {
                     // 自然播完：回到空闲。在 IO 线程回调，切回主线程改状态
                     viewModelScope.launch {
                         _currentText.value = null
                         _state.value = ReadAloudState.Idle
                     }
+                }
+                if (!started) {
+                    _currentText.value = null
+                    _state.value = ReadAloudState.Error(R.string.voice_tts_failed)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -222,26 +209,6 @@ internal class ReadAloudViewModel @Inject constructor(
                 _state.value = ReadAloudState.Error(R.string.voice_tts_failed)
             }
         }
-    }
-
-    /** 用「语音合成模型」里配的 provider 合成；没配或失败返回 null，由调用方回落本地。 */
-    private suspend fun synthesizeInCloud(voiceUri: String, text: String): ByteArray? {
-        val providerId = ttsSettings.getTtsProviderId()
-        val model = ttsSettings.getTtsModel()
-        if (providerId.isBlank() || model.isBlank()) return null
-        val provider = runCatching { providerRepository.getProviderById(providerId) }.getOrNull() ?: return null
-        val apiKey = provider.firstUsableApiKey
-        if (apiKey.isBlank()) return null
-        val cacheKey = TtsCache.key(text, voiceUri, model, provider.baseUrl)
-        ttsCache.get(cacheKey)?.let { cached ->
-            withContext(Dispatchers.IO) { runCatching { cached.readBytes() }.getOrNull() }?.let { return it }
-        }
-        return runCatching {
-            cloudSpeech.synthesize(provider.baseUrl, apiKey, model, text, voiceUri)
-        }.onFailure { e ->
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            FileLogger.w(TAG, "云端克隆合成失败，回落到本地", e)
-        }.getOrNull()?.also { ttsCache.put(cacheKey, it) }
     }
 
     /** 停止朗读。 */

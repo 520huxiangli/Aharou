@@ -3,6 +3,7 @@ package com.aharou.feature.plugin.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.plugin.data.import.OperitImportReport
 import com.aharou.feature.plugin.data.index.NoMatchingReleaseException
 import com.aharou.feature.plugin.data.index.PluginIndexClient
 import com.aharou.feature.plugin.data.index.PluginIndexException
@@ -43,7 +44,11 @@ data class PluginStorePreview(
     val origin: PluginInstallOrigin,
     val expectedRepository: String?,
     val sourceLabel: String,
-    val officialSource: Boolean
+    val officialSource: Boolean,
+    /** Operit 包转换后的兼容性对照；普通索引安装为 null。 */
+    val operitReport: OperitImportReport? = null,
+    /** 触发这次预览的 Operit 市场条目 ID，用来把预览回填到对应详情页。 */
+    val operitItemId: String? = null
 )
 
 enum class PluginStoreErrorCode {

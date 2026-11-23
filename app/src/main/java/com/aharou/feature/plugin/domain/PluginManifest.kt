@@ -55,12 +55,16 @@ object PluginUiSlots {
     fun isSettingsSlot(slot: String): Boolean = slot.startsWith("settings.")
 }
 
-/** 槽位入口的三种形态：HTML 页面、调用插件 runtime 的动作，或宿主渲染的数据选项。 */
-enum class PluginUiEntryKind { PAGE, ACTION, DATA }
+/**
+ * 槽位入口的四种形态：HTML 页面、调用插件 runtime 的动作、用插件 Compose DSL 画的面板，
+ * 或宿主渲染的数据选项。
+ */
+enum class PluginUiEntryKind { PAGE, ACTION, DATA, COMPOSE_DSL }
 
 /**
- * `contributes.uiEntries` 声明的一个槽位入口。`page` 与 `handler` 必须且只能出现一个；
- * `page` 是包内 HTML 相对路径，`handler` 走插件 runtime 的 `ui.invoke`。
+ * `contributes.uiEntries` 声明的一个槽位入口。`page` / `handler` / `screen` 必须且只能出现一个；
+ * `page` 是包内 HTML 相对路径，`handler` 走插件 runtime 的 `ui.invoke`，
+ * `screen` 是包内 Compose DSL 页面脚本，由插件 `registerUiRoute` 注册后交给宿主渲染。
  */
 data class PluginUiEntryRef(
     val id: String,
@@ -68,6 +72,7 @@ data class PluginUiEntryRef(
     val title: LocalizedText,
     val page: String? = null,
     val handler: String? = null,
+    val screen: String? = null,
     /** 仅动作入口：执行前让宿主弹确认框。 */
     val confirm: Boolean = false,
     val icon: String = "book"
@@ -75,10 +80,22 @@ data class PluginUiEntryRef(
     val kind: PluginUiEntryKind
         get() = when {
             slot == PluginUiSlots.BACKUP_DATA -> PluginUiEntryKind.DATA
+            screen != null -> PluginUiEntryKind.COMPOSE_DSL
             page != null -> PluginUiEntryKind.PAGE
             else -> PluginUiEntryKind.ACTION
         }
 }
+
+/** 槽位入口的 `page` 只认 HTML，`screen` 只认 node 能加载的 JS 脚本；两者都是包内相对路径。 */
+fun isValidUiEntryPagePath(path: String): Boolean =
+    PluginManifestParser.isSafeRelativePath(path) &&
+        (path.endsWith(".html", ignoreCase = true) || path.endsWith(".htm", ignoreCase = true))
+
+fun isValidUiEntryScreenPath(path: String): Boolean =
+    PluginManifestParser.isSafeRelativePath(path) &&
+        UI_ENTRY_SCREEN_EXTENSIONS.any { path.endsWith(it, ignoreCase = true) }
+
+private val UI_ENTRY_SCREEN_EXTENSIONS = listOf(".js", ".mjs", ".cjs")
 
 /** `contributes.workspaceTools` 声明的工作区工具项，包含入口元数据与页面定义文件引用。 */
 data class PluginWorkspaceToolRef(
@@ -175,6 +192,12 @@ object PluginHookEvents {
     /** 一次还原成功后；payload 带备份包中该插件区段的暂存目录，插件从其中恢复数据。 */
     const val BACKUP_IMPORT_FINISHED = "backup.import.finished"
 
+    /**
+     * 聊天正文内联标签：不是生命周期事件，宿主不会把它当 hook 派发，
+     * 而是在渲染消息时按标签名切分并调用 [PluginChatTagRef.handler]。
+     */
+    const val CHAT_TAG = "chat.tag"
+
     /** 涉及备份文件与使用者数据的事件；声明这些事件必须同时声明 contributes.backup。 */
     val BACKUP = setOf(BACKUP_EXPORT_BEFORE, BACKUP_IMPORT_FINISHED)
 
@@ -202,7 +225,8 @@ object PluginHookEvents {
         PLUGIN_ENABLED,
         PLUGIN_DISABLED,
         BACKUP_EXPORT_BEFORE,
-        BACKUP_IMPORT_FINISHED
+        BACKUP_IMPORT_FINISHED,
+        CHAT_TAG
     )
 }
 
@@ -215,6 +239,22 @@ data class PluginHookRef(
     val event: String,
     val handler: String,
     val mode: String = PluginHookModes.OBSERVE
+)
+
+/**
+ * `contributes.hooks` 里 `event: "chat.tag"` 的一条声明：插件接管 AI 回复中形如
+ * `<tag attr="v">…</tag>` 的片段。[handler] 收到的 payload 是 `{tagName, xmlContent, attributes}`，
+ * 返回 `{composeDsl: {tree, state, memo}}` 或 `{text}` / 纯字符串。
+ *
+ * [heightDp] 给内联组件固定高度，[maxHeightDp] 给最大高度（超出由组件内部滚动）；都不写时
+ * 按宿主默认上限（320dp）。
+ */
+data class PluginChatTagRef(
+    val id: String,
+    val tag: String,
+    val handler: String,
+    val heightDp: Int? = null,
+    val maxHeightDp: Int? = null
 )
 
 /** `contributes.mcp` 声明的 MCP 配置文件；文件沿用现有 `{"mcpServers": {...}}` 结构。 */
@@ -306,6 +346,8 @@ data class PluginManifest(
     val runtime: PluginRuntimeRef? = null,
     val tools: List<PluginToolRef> = emptyList(),
     val hooks: List<PluginHookRef> = emptyList(),
+    /** 聊天内联标签声明；与 [hooks] 同源（`event: "chat.tag"`），但不参与生命周期派发。 */
+    val chatTags: List<PluginChatTagRef> = emptyList(),
     val mcp: List<PluginMcpRef> = emptyList(),
     val providers: List<PluginProviderRef> = emptyList(),
     val shizuku: PluginShizukuRef? = null,
@@ -319,7 +361,7 @@ data class PluginManifest(
     /** 清单声明的贡献总数。 */
     val contributionCount: Int
         get() = skills.size + agents.size + workspaceTools.size + uiEntries.size +
-            tools.size + hooks.size + mcp.size + providers.size + (if (shizuku != null) 1 else 0) +
+            tools.size + hooks.size + chatTags.size + mcp.size + providers.size + (if (shizuku != null) 1 else 0) +
             (if (overlay != null) 1 + overlay.surfaces.size else 0) + (if (backup != null) 1 else 0) +
             (if (modelAccess != null) 1 else 0) + (if (configPage != null) 1 else 0)
 }

@@ -31,14 +31,18 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
+import com.aharou.feature.plugin.data.market.OperitMarketListing
+import com.aharou.feature.plugin.workfloweditor.WorkflowEditorScreen
+import com.aharou.feature.plugin.workfloweditor.WorkflowListScreen
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronLeft
+import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.Trash2
 
 /** 插件面板内的页面层级；设置页只挂一个入口，层级切换在本组件内部完成。 */
-private enum class PluginHostPage { List, Detail, StoreDetail, DevDetail }
+private enum class PluginHostPage { List, Detail, StoreDetail, OperitDetail, DevDetail, WorkflowList, WorkflowEditor }
 
 /**
  * 设置 → 插件 的容器：列表/详情/商店/开发者详情四层在这里切换，外层设置页无需为插件增加
@@ -48,6 +52,8 @@ private enum class PluginHostPage { List, Detail, StoreDetail, DevDetail }
 internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
     val plugins by viewModel.plugins.collectAsStateWithLifecycle()
     val publishState by viewModel.publishState.collectAsStateWithLifecycle()
+    val publishExport by viewModel.publishExport.collectAsStateWithLifecycle()
+    val shareContext = androidx.compose.ui.platform.LocalContext.current
     val loaded by viewModel.loaded.collectAsStateWithLifecycle()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val dependencyStates by viewModel.dependencyStates.collectAsStateWithLifecycle()
@@ -64,7 +70,9 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
     var page by remember { mutableStateOf(PluginHostPage.List) }
     var selectedPluginId by remember { mutableStateOf<String?>(null) }
     var selectedStoreItem by remember { mutableStateOf<PluginStoreItem?>(null) }
+    var selectedOperitItem by remember { mutableStateOf<OperitMarketListing?>(null) }
     var selectedDevProject by remember { mutableStateOf<PluginDevProject?>(null) }
+    var editingWorkflowId by remember { mutableStateOf<String?>(null) }
     var showSettingsSheet by remember { mutableStateOf(false) }
     var showUninstallConfirm by remember { mutableStateOf(false) }
 
@@ -84,7 +92,21 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
                     title = stringResource(R.string.settings_plugins),
                     onBack = null,
                     onSettings = { showSettingsSheet = true },
-                    onImport = { zipLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }
+                    onWorkflows = { page = PluginHostPage.WorkflowList },
+                    // 除 Aharou 插件 zip 外还要能选中 Operit 的单文件 JS 与技能 JSON；
+                    // 部分文件管理器只把 .js 报成 octet-stream，所以保留宽类型
+                    onImport = {
+                        zipLauncher.launch(
+                            arrayOf(
+                                "application/zip",
+                                "application/x-zip-compressed",
+                                "application/octet-stream",
+                                "text/javascript",
+                                "application/javascript",
+                                "application/json"
+                            )
+                        )
+                    }
                 )
                 PluginsSection(
                     plugins = plugins,
@@ -118,6 +140,10 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
                     onOpenStoreDetail = {
                         selectedStoreItem = it
                         page = PluginHostPage.StoreDetail
+                    },
+                    onOpenOperitDetail = {
+                        selectedOperitItem = it
+                        page = PluginHostPage.OperitDetail
                     }
                 )
             }
@@ -133,9 +159,21 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
                             onBack = { page = PluginHostPage.List },
                             onUninstall = { showUninstallConfirm = true }
                         )
-                        TextButton(onClick = { viewModel.publish(plugin.id) }) {
+                        TextButton(
+                            onClick = {
+                                val exported = publishExport
+                                if (exported != null) {
+                                    shareSubmission(shareContext, exported)
+                                    // 分享完清掉状态，否则按钮会一直停在「分享提交包」上
+                                    viewModel.clearPublishState()
+                                } else {
+                                    viewModel.publish(plugin.id)
+                                }
+                            }
+                        ) {
                             Text(
                                 text = when {
+                                    publishExport != null -> stringResource(R.string.plugins_publish_share)
                                     publishState == null -> stringResource(R.string.plugins_publish_action)
                                     publishState!!.isEmpty() -> stringResource(R.string.plugins_publish_running)
                                     else -> publishState!!
@@ -186,6 +224,50 @@ internal fun PluginScreenHost(viewModel: PluginsViewModel = hiltViewModel()) {
                             onShowPreview = viewModel::showPreview
                         )
                     }
+                }
+            }
+
+            PluginHostPage.OperitDetail -> {
+                val item = selectedOperitItem
+                if (item == null) {
+                    page = PluginHostPage.List
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        PluginHostToolbar(
+                            title = item.title,
+                            onBack = { page = PluginHostPage.List }
+                        )
+                        OperitMarketDetailSection(
+                            item = item,
+                            onShowPreview = viewModel::showPreview
+                        )
+                    }
+                }
+            }
+
+            PluginHostPage.WorkflowList -> Column(Modifier.fillMaxSize()) {
+                PluginHostToolbar(
+                    title = stringResource(R.string.workflow_editor_list_title),
+                    onBack = { page = PluginHostPage.List }
+                )
+                WorkflowListScreen(
+                    onOpenWorkflow = { workflowId ->
+                        editingWorkflowId = workflowId
+                        page = PluginHostPage.WorkflowEditor
+                    }
+                )
+            }
+
+            PluginHostPage.WorkflowEditor -> {
+                val workflowId = editingWorkflowId
+                if (workflowId == null) {
+                    page = PluginHostPage.WorkflowList
+                } else {
+                    // 编辑器自带标题行（返回/保存/运行/加节点），不再套宿主工具栏，避免两层返回键。
+                    WorkflowEditorScreen(
+                        workflowId = workflowId,
+                        onBack = { page = PluginHostPage.WorkflowList }
+                    )
                 }
             }
 
@@ -265,6 +347,7 @@ private fun PluginHostToolbar(
     title: String,
     onBack: (() -> Unit)?,
     onSettings: (() -> Unit)? = null,
+    onWorkflows: (() -> Unit)? = null,
     onImport: (() -> Unit)? = null,
     onUninstall: (() -> Unit)? = null
 ) {
@@ -301,6 +384,16 @@ private fun PluginHostToolbar(
                 )
             }
         }
+        if (onWorkflows != null) {
+            IconButton(onClick = onWorkflows) {
+                Icon(
+                    FeatherIcons.GitBranch,
+                    contentDescription = stringResource(R.string.workflow_editor_list_title),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
         if (onImport != null) {
             IconButton(onClick = onImport) {
                 Icon(
@@ -321,5 +414,28 @@ private fun PluginHostToolbar(
                 )
             }
         }
+    }
+}
+
+/**
+ * 把导出的提交包交给系统分享。
+ *
+ * 没有索引仓库写权限的用户只能走到这里：把包发给维护者审核，
+ * 好过把「没有权限」当成结论糊在屏幕上。
+ */
+private fun shareSubmission(context: android.content.Context, file: java.io.File) {
+    runCatching {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context, "${context.packageName}.fileprovider", file
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, file.name)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(
+            android.content.Intent.createChooser(intent, file.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }

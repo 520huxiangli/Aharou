@@ -2,6 +2,7 @@ package com.aharou.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.graphics.Path
@@ -10,7 +11,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.DisplayMetrics
 import android.view.Display
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -173,6 +176,30 @@ class AharouAccessibilityService : AccessibilityService() {
             (r?.packageName?.toString()) to (r?.className?.toString())
         } catch (_: Throwable) {
             null to null
+        }
+    }
+
+    /**
+     * 整屏尺寸（含状态栏与导航栏），供上层把节点坐标归一化成 0..1000。
+     *
+     * 不能用当前窗口尺寸：无障碍 dump 出来的是整屏坐标，而本服务自己的窗口会少掉系统栏那一截，
+     * 归一化的分母一小，换算出来的点就系统性偏下（模型照着点会点偏）。
+     */
+    fun screenSize(): Pair<Int, Int>? {
+        return try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return null
+            // 优先 getRealMetrics：它是整块屏幕的物理尺寸，与 dump 出来的节点坐标同一个坐标系；
+            // 虽然 API 31 起标记废弃，但仍是语义最准的那个。
+            @Suppress("DEPRECATION")
+            val dm = DisplayMetrics().also { wm.defaultDisplay.getRealMetrics(it) }
+            if (dm.widthPixels > 0 && dm.heightPixels > 0) return dm.widthPixels to dm.heightPixels
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val bounds = wm.maximumWindowMetrics.bounds
+                if (bounds.width() > 0 && bounds.height() > 0) return bounds.width() to bounds.height()
+            }
+            null
+        } catch (_: Throwable) {
+            null
         }
     }
 

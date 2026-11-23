@@ -42,7 +42,7 @@ object PluginManifestParser {
         ManifestParseResult.Failure(listOf(PluginError(code, detail)))
 
     private val TOP_LEVEL_KEYS = setOf(
-        "manifestVersion", "id", "name", "version", "publisher", "repository",
+        "\$schema", "manifestVersion", "id", "name", "version", "publisher", "repository",
         "description", "license", "engines", "runtime", "contributes", "configPage", "icon"
     )
     private val ENGINE_KEYS = setOf("pluginApi")
@@ -50,8 +50,7 @@ object PluginManifestParser {
     private val RUNTIME_DEPENDENCY_KEYS = setOf("tool", "file")
     private val CONTRIBUTION_KEYS = setOf("id", "file")
     private val TOOL_KEYS = setOf("id", "title", "description", "inputSchema", "handler")
-    private val HOOK_KEYS = setOf("id", "event", "handler", "mode")
-    private val UI_ENTRY_KEYS = setOf("id", "slot", "title", "page", "handler", "confirm", "icon")
+    private val UI_ENTRY_KEYS = setOf("id", "slot", "title", "page", "handler", "screen", "confirm", "icon")
     private val WORKSPACE_TOOL_KEYS = setOf("id", "title", "description", "icon", "category", "pageFile")
     private val PROVIDER_KEYS = setOf("id", "name", "description", "format", "baseUrl")
     private val SHIZUKU_KEYS = setOf("purpose")
@@ -62,8 +61,8 @@ object PluginManifestParser {
 
     private val PLUGIN_ID = Regex("^[a-z][a-z0-9-]{0,31}\\.[a-z][a-z0-9-]{0,31}$")
     private val PUBLISHER = Regex("^[a-z][a-z0-9-]{0,31}$")
-    private val LOCAL_ID = Regex("^[A-Za-z][A-Za-z0-9_-]{0,63}$")
-    private val HANDLER_NAME = Regex("^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+    internal val LOCAL_ID = Regex("^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+    internal val HANDLER_NAME = Regex("^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
     private val BUILTIN_ICON = Regex("^[a-z][a-z0-9-]{0,31}$")
     private val LANGUAGE_TAG = Regex("^[a-z]{2,3}(-[a-z0-9]{2,8})*$")
 
@@ -74,7 +73,7 @@ object PluginManifestParser {
     private const val MAX_LICENSE = 100
     private const val MAX_REPOSITORY = 300
     private const val MAX_LOCALES = 16
-    private const val MAX_IDS_PER_TYPE = 64
+    internal const val MAX_IDS_PER_TYPE = 64
     private const val MAX_PROVIDER_URL = 2048
     private const val MAX_SHIZUKU_PURPOSE = 200
     private const val MAX_BACKUP_PURPOSE = 200
@@ -132,6 +131,7 @@ object PluginManifestParser {
 
             val needsRuntime = contributes != null && (
                 contributes.tools.isNotEmpty() || contributes.hooks.isNotEmpty() ||
+                    contributes.chatTags.isNotEmpty() ||
                     contributes.uiEntries.any { it.handler != null }
                 )
             if (needsRuntime && runtime == null) missing("runtime")
@@ -155,6 +155,7 @@ object PluginManifestParser {
                     runtime = runtime,
                     tools = contributes.tools,
                     hooks = contributes.hooks,
+                    chatTags = contributes.chatTags,
                     mcp = contributes.mcp,
                     providers = contributes.providers,
                     shizuku = contributes.shizuku,
@@ -394,6 +395,7 @@ object PluginManifestParser {
             val uiEntries: List<PluginUiEntryRef>,
             val tools: List<PluginToolRef>,
             val hooks: List<PluginHookRef>,
+            val chatTags: List<PluginChatTagRef>,
             val mcp: List<PluginMcpRef>,
             val providers: List<PluginProviderRef>,
             val shizuku: PluginShizukuRef?,
@@ -422,7 +424,11 @@ object PluginManifestParser {
             val uiEntries = readUiEntries(contributes["uiEntries"], "contributes.uiEntries")
                 ?: run { ok = false; emptyList() }
             val tools = readTools(contributes["tools"], "contributes.tools") ?: run { ok = false; emptyList() }
-            val hooks = readHooks(contributes["hooks"], "contributes.hooks") ?: run { ok = false; emptyList() }
+            val hooksRead = PluginHookParser.read(contributes["hooks"], "contributes.hooks") { code, detail ->
+                err(code, detail)
+            } ?: run { ok = false; null }
+            val hooks = hooksRead?.hooks.orEmpty()
+            val chatTags = hooksRead?.chatTags.orEmpty()
             val mcpRefs = readContributionList(contributes["mcp"], "contributes.mcp", extension = ".json")
                 ?: run { ok = false; emptyList() }
             val mcp = mcpRefs.map { PluginMcpRef(it.id, it.file) }
@@ -464,14 +470,14 @@ object PluginManifestParser {
             }
             val configPage = readConfigPage(contributes["configPage"], "contributes.configPage")
             if (ok && skills.isEmpty() && agents.isEmpty() && workspaceTools.isEmpty() && uiEntries.isEmpty() &&
-                tools.isEmpty() && hooks.isEmpty() && mcp.isEmpty() && providers.isEmpty() &&
+                tools.isEmpty() && hooks.isEmpty() && chatTags.isEmpty() && mcp.isEmpty() && providers.isEmpty() &&
                 shizuku == null && overlay == null && backup == null && modelAccess == null && configPage == null
             ) {
                 invalid("contributes")
                 ok = false
             }
             return if (ok) Contributes(
-                skills, agents, workspaceTools, uiEntries, tools, hooks, mcp, providers,
+                skills, agents, workspaceTools, uiEntries, tools, hooks, chatTags, mcp, providers,
                 shizuku, overlay, backup, modelAccess, configPage
             ) else null
         }
@@ -604,62 +610,6 @@ object PluginManifestParser {
                 !uri.host.isNullOrBlank() && uri.userInfo == null &&
                 uri.rawQuery == null && uri.rawFragment == null
             return if (valid) text.trimEnd('/') else null
-        }
-
-        /** 缺省视为空列表；每项只允许 id/event/handler，event 必须在宿主支持的事件表内。 */
-        private fun readHooks(raw: JsonElement?, path: String): List<PluginHookRef>? {
-            if (raw == null) return emptyList()
-            val array = raw as? JsonArray ?: return null.also { invalid(path) }
-            if (array.size > MAX_IDS_PER_TYPE) return null.also { invalid(path) }
-            val result = mutableListOf<PluginHookRef>()
-            var ok = true
-            array.forEachIndexed { index, element ->
-                val itemPath = "$path[$index]"
-                val item = element as? JsonObject
-                if (item == null) {
-                    invalid(itemPath)
-                    ok = false
-                    return@forEachIndexed
-                }
-                item.keys.filter { it !in HOOK_KEYS }.forEach {
-                    err(PluginErrorCode.UNSUPPORTED_FIELD, "$itemPath.$it")
-                    ok = false
-                }
-                val id = item["id"]?.stringOrNull()?.takeIf { LOCAL_ID.matches(it) }
-                val event = item["event"]?.stringOrNull()?.takeIf { it in PluginHookEvents.ALL }
-                val handler = item["handler"]?.stringOrNull()?.trim()?.takeIf { HANDLER_NAME.matches(it) }
-                val mode = when (val raw = item["mode"]) {
-                    null -> PluginHookModes.OBSERVE
-                    else -> raw.stringOrNull()?.takeIf { it in PluginHookModes.ALL } ?: run {
-                        invalid("$itemPath.mode")
-                        ok = false
-                        null
-                    }
-                }
-                if (id == null) { invalid("$itemPath.id"); ok = false }
-                if (event == null) { invalid("$itemPath.event"); ok = false }
-                if (handler == null) { invalid("$itemPath.handler"); ok = false }
-                if (event != null && mode != null) {
-                    val expectedMode = when (event) {
-                        in PluginHookEvents.TRANSFORM -> PluginHookModes.TRANSFORM
-                        in PluginHookEvents.REVIEW -> PluginHookModes.REVIEW
-                        else -> PluginHookModes.OBSERVE
-                    }
-                    if (mode != expectedMode) {
-                        invalid("$itemPath.mode")
-                        ok = false
-                    }
-                }
-                if (id != null && event != null && handler != null && mode != null) {
-                    if (result.any { it.id == id }) {
-                        err(PluginErrorCode.DUPLICATE_ID, "$path.$id")
-                        ok = false
-                    } else {
-                        result += PluginHookRef(id, event, handler, mode)
-                    }
-                }
-            }
-            return if (ok) result else null
         }
 
         /** 缺省表示不使用 Shizuku；声明只需给出用途。 */
@@ -888,7 +838,7 @@ object PluginManifestParser {
             return text
         }
 
-        /** 缺省视为空列表；每项必须有局部 ID、标题、已知槽位，以及 page / handler 二者之一。 */
+        /** 缺省视为空列表；每项必须有局部 ID、标题、已知槽位，以及 page / handler / screen 三者之一。 */
         private fun readUiEntries(raw: JsonElement?, path: String): List<PluginUiEntryRef>? {
             if (raw == null) return emptyList()
             val array = raw as? JsonArray ?: return null.also { invalid(path) }
@@ -914,34 +864,32 @@ object PluginManifestParser {
                 val page = item["page"]?.stringOrNull()
                 val handlerRaw = item["handler"]?.stringOrNull()
                 val handler = handlerRaw?.trim()?.takeIf { HANDLER_NAME.matches(it) }
+                val screen = item["screen"]?.stringOrNull()
                 val confirmRaw = item["confirm"]
                 val confirm = if (confirmRaw != null) (confirmRaw as? JsonPrimitive)?.booleanOrNull else false
                 val icon = item["icon"]?.stringOrNull()?.trim() ?: "book"
                 if (id == null) { invalid("$itemPath.id"); ok = false }
                 if (title == null) { invalid("$itemPath.title"); ok = false }
                 if (slot == null) { invalid("$itemPath.slot"); ok = false }
-                if (page != null && (!isSafeRelativePath(page) ||
-                        !(page.endsWith(".html", ignoreCase = true) || page.endsWith(".htm", ignoreCase = true)))
-                ) {
-                    invalid("$itemPath.page")
-                    ok = false
-                }
+                if (page != null && !isValidUiEntryPagePath(page)) { invalid("$itemPath.page"); ok = false }
                 if (handlerRaw != null && handler == null) { invalid("$itemPath.handler"); ok = false }
+                if (screen != null && !isValidUiEntryScreenPath(screen)) { invalid("$itemPath.screen"); ok = false }
                 if (confirmRaw != null && confirm == null) { invalid("$itemPath.confirm"); ok = false }
                 if (slot != null) {
                     if (slot in PluginUiSlots.DATA_ONLY) {
-                        // 数据选项由宿主渲染开关，不接受页面、动作或确认框。
-                        if (page != null) { invalid("$itemPath.page"); ok = false }
+                        // 数据选项由宿主渲染开关，不接受页面、动作、面板或确认框。
                         if (handlerRaw != null) { invalid("$itemPath.handler"); ok = false }
+                        if (page != null || screen != null) {
+                            invalid(if (page != null) "$itemPath.page" else "$itemPath.screen"); ok = false
+                        }
                         if (confirmRaw != null) { invalid("$itemPath.confirm"); ok = false }
                         if (result.count { it.slot == slot } >= 1) { invalid("$itemPath.slot"); ok = false }
                     } else {
-                        val kinds = listOfNotNull(page, handler)
+                        val kinds = listOfNotNull(page, handler, screen)
                         if (kinds.size != 1) { invalid(itemPath); ok = false }
                         if (confirm == true && handler == null) { invalid("$itemPath.confirm"); ok = false }
-                        if (slot in PluginUiSlots.ACTION_ONLY && page != null) {
-                            invalid("$itemPath.page")
-                            ok = false
+                        if (slot in PluginUiSlots.ACTION_ONLY && (page != null || screen != null)) {
+                            invalid(if (page != null) "$itemPath.page" else "$itemPath.screen"); ok = false
                         }
                         if (PluginUiSlots.isSettingsSlot(slot) && handler != null) {
                             invalid("$itemPath.slot")
@@ -968,6 +916,7 @@ object PluginManifestParser {
                             title = title,
                             page = page,
                             handler = handler,
+                            screen = screen,
                             confirm = confirm == true,
                             icon = icon
                         )

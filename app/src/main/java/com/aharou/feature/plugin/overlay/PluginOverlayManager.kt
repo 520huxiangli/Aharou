@@ -55,10 +55,15 @@ class PluginOverlayManager @Inject constructor(
     private val pluginManager: PluginManager,
     private val permissionRepository: PluginOverlayPermissionRepository,
     private val positionRepository: PluginOverlayPositionRepository,
-    private val appForegroundMonitor: AppForegroundMonitor
+    private val appForegroundMonitor: AppForegroundMonitor,
+    // Lazy 只为打破循环：RuntimeManager 经由 Dispatcher 反向依赖本类，
+    // 直接注入会构成 Singleton 组件里的依赖环。
+    private val pluginRuntimeManager: dagger.Lazy<com.aharou.feature.plugin.runtime.PluginRuntimeManager>
 ) {
     private val windowManager = context.getSystemService(WindowManager::class.java)
     private val windows = ConcurrentHashMap<String, PluginOverlayWindow>()
+    /** v2 的浮动窗口跑 Compose DSL，与 WebView 版窗口分开存，销毁路径也各自独立。 */
+    private val composeWindows = ConcurrentHashMap<String, PluginComposeOverlayWindow>()
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val createMutex = Mutex()
@@ -168,7 +173,89 @@ class PluginOverlayManager @Inject constructor(
         }
     }
 
+    /**
+     * v2 的 `floatingWindows.open({ id, route, options })`：不要求清单里预先声明浮层，
+     * 直接按插件给的路由开一个 Compose 浮窗。
+     */
+    suspend fun createDsl(
+        pluginId: String,
+        overlayId: String,
+        routeId: String,
+        params: JsonObject
+    ): JsonObject = createMutex.withLock {
+        pluginManager.ensureLoaded()
+        pluginManager.plugins.value.firstOrNull { it.id == pluginId && it.isActive }
+            ?: throw PluginOverlayException("PLUGIN_INACTIVE", "plugin is not active: $pluginId")
+        if (!permissionRepository.isGranted(pluginId)) {
+            throw PluginOverlayException("OVERLAY_NOT_AUTHORIZED", "user did not grant overlay for this plugin")
+        }
+        if (!Settings.canDrawOverlays(context)) {
+            throw PluginOverlayException("OVERLAY_SYSTEM_PERMISSION_MISSING", "system overlay permission is not granted")
+        }
+        val key = "$pluginId:$overlayId"
+        composeWindows[key]?.let { return@withLock it.describe().toJsonObject() }
+        if (composeWindows.size >= MAX_SURFACES_TOTAL) {
+            throw PluginOverlayException("OVERLAY_LIMIT", "too many overlays")
+        }
+        val widthDp = readSize(params, "width", 240, PluginOverlayLimits.MAX_WIDTH_DP)
+        val heightDp = readSize(params, "height", 320, PluginOverlayLimits.MAX_HEIGHT_DP)
+        val density = context.resources.displayMetrics.density
+        val widthPx = (widthDp * density).toInt().coerceAtLeast(1)
+        val heightPx = (heightDp * density).toInt().coerceAtLeast(1)
+        val saved = positionRepository.get(pluginId, overlayId)
+        val layout = PluginComposeOverlayWindow.Factory.params(
+            context,
+            widthPx,
+            heightPx,
+            (params["x"] as? JsonPrimitive)?.intOrNull ?: saved?.x ?: defaultX(widthPx),
+            (params["y"] as? JsonPrimitive)?.intOrNull ?: saved?.y ?: defaultY(heightPx)
+        )
+        val bridge = com.aharou.feature.plugin.presentation.PluginDslBridge(
+            pluginId = pluginId,
+            pluginManager = pluginManager,
+            pluginRuntimeManager = pluginRuntimeManager.get()
+        )
+        val window = PluginComposeOverlayWindow(
+            context = context,
+            pluginId = pluginId,
+            overlayId = key,
+            windowManager = windowManager,
+            layoutParams = layout,
+            bridge = bridge,
+            routeId = routeId,
+            initiallyDraggable = (params["draggable"] as? JsonPrimitive)?.contentOrNull != "false",
+            // save 是 suspend，拖动回调不能直接调；用独立作用域落盘，失败也不影响拖动
+            onPositionChanged = { x, y ->
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    runCatching { positionRepository.save(pluginId, overlayId, x, y) }
+                }
+            }
+        )
+        composeWindows[key] = window
+        withContext(Dispatchers.Main.immediate) { window.show() }
+        window.describe().toJsonObject()
+    }
+
+    private fun Map<String, Any?>.toJsonObject(): JsonObject = buildJsonObject {
+        this@toJsonObject.forEach { (key, value) ->
+            when (value) {
+                is Int -> put(key, value)
+                is Boolean -> put(key, value)
+                null -> {}
+                else -> put(key, value.toString())
+            }
+        }
+    }
+
     fun close(pluginId: String, overlayId: String): JsonObject {
+        composeWindows[overlayId]?.let { composed ->
+            if (composed.pluginId != pluginId) {
+                throw PluginOverlayException("OVERLAY_DENIED", "overlay does not belong to this plugin")
+            }
+            composeWindows.remove(overlayId, composed)
+            mainHandler.post { composed.remove() }
+            return buildJsonObject { put("ok", true) }
+        }
         val window = windows[overlayId]
             ?: throw PluginOverlayException("OVERLAY_NOT_FOUND", "overlay not found: $overlayId")
         if (window.pluginId != pluginId) {
@@ -271,6 +358,17 @@ class PluginOverlayManager @Inject constructor(
     }
 
     fun update(pluginId: String, overlayId: String, params: JsonObject): JsonObject {
+        composeWindows[overlayId]?.let { composed ->
+            if (composed.pluginId != pluginId) {
+                throw PluginOverlayException("OVERLAY_DENIED", "overlay does not belong to this plugin")
+            }
+            val dx = (params["dx"] as? JsonPrimitive)?.intOrNull
+            val dy = (params["dy"] as? JsonPrimitive)?.intOrNull
+            if (dx != null || dy != null) {
+                mainHandler.post { composed.moveBy(dx ?: 0, dy ?: 0) }
+            }
+            return composed.describe().toJsonObject()
+        }
         val window = windows[overlayId]
             ?: throw PluginOverlayException("OVERLAY_NOT_FOUND", "overlay not found: $overlayId")
         if (window.pluginId != pluginId) {

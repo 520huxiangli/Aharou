@@ -75,6 +75,7 @@ import com.aharou.core.ui.FloatingTabBar
 import com.aharou.core.ui.FloatingTabItem
 import com.aharou.core.ui.SegmentedTabs
 import com.aharou.feature.agent.domain.shizuku.ShizukuState
+import com.aharou.feature.plugin.data.market.OperitMarketListing
 import com.aharou.feature.plugin.domain.InstalledPlugin
 import com.aharou.feature.plugin.domain.PluginContent
 import com.aharou.feature.plugin.domain.PluginIcon
@@ -154,7 +155,8 @@ internal fun PluginsSection(
     onOpenDetail: (InstalledPlugin) -> Unit,
     onToggleEnabled: (InstalledPlugin, Boolean) -> Unit,
     onShowStorePreview: (PluginStorePreview) -> Unit,
-    onOpenStoreDetail: (PluginStoreItem) -> Unit
+    onOpenStoreDetail: (PluginStoreItem) -> Unit,
+    onOpenOperitDetail: (OperitMarketListing) -> Unit
 ) {
     if (!loaded) return
 
@@ -210,9 +212,10 @@ internal fun PluginsSection(
                         onOpenDetail = onOpenDevDetail,
                         onSetEnabled = onSetDevEnabled
                     )
-                    else -> PluginStorePage(
+                    else -> PluginStoreSection(
                         onShowPreview = onShowStorePreview,
                         onOpenDetail = onOpenStoreDetail,
+                        onOpenOperitDetail = onOpenOperitDetail,
                         viewModel = storeViewModel
                     )
                 }
@@ -321,19 +324,6 @@ private fun InstalledPluginsPage(
             }
         }
     }
-}
-
-@Composable
-private fun PluginStorePage(
-    onShowPreview: (PluginStorePreview) -> Unit,
-    onOpenDetail: (PluginStoreItem) -> Unit,
-    viewModel: PluginStoreViewModel
-) {
-    PluginStoreSection(
-        onShowPreview = onShowPreview,
-        onOpenDetail = onOpenDetail,
-        viewModel = viewModel
-    )
 }
 
 /** 列表搜索无结果时的共用占位。 */
@@ -676,6 +666,9 @@ private fun PluginNativeConfigContent(
                 )
             }
         }
+
+        // 插件声明的交互入口：与详情页同屏直接打开，不再要求用户去侧栏找。
+        PluginUiEntriesSection(plugin = plugin, languageTag = languageTag)
 
         if (plugin.content.shizuku != null || plugin.content.overlay != null || plugin.content.backup != null) {
             SettingsGroupHeader(text = stringResource(R.string.plugins_permissions_section))

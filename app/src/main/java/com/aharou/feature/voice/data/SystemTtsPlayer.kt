@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
  * 所有引擎调用都必须在主线程，所以这里每次都切 [Dispatchers.Main]。
  */
 @Singleton
-internal class SystemTtsPlayer @Inject constructor(
+class SystemTtsPlayer @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
 

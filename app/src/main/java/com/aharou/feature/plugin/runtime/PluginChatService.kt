@@ -34,6 +34,7 @@ import com.aharou.feature.workspace.data.repository.WorkspaceRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.delay
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -165,6 +166,78 @@ class PluginChatService @Inject constructor(
             put("sessionId", session.id)
             put("accepted", true)
         }
+    }
+
+    /**
+     * 发一条消息并等到这一轮跑完，返回最后一条助手回复。
+     *
+     * 与 [sendMessage] 同一条发送链路（照样经过聊天页 ViewModel 的工具授权与队列语义），只是多发一步等待：
+     * 先确认本轮真的开始（否则会拿到上一轮的旧快照），再等它不在运行，最后按发送前的时间戳基线取回复。
+     * 会话本来就在跑、或本轮直到超时都没开始，都返回明确的错误码，不把「没等到」当成「没回复」。
+     */
+    suspend fun sendMessageAndWait(pluginId: String, params: JsonObject): JsonElement {
+        ensureActive(pluginId)
+        val workspace = requireWorkspace()
+        val sessionId = PluginHostPaths.requireString(params, "sessionId").trim()
+        val session = requireSession(sessionId, workspace)
+        val text = PluginHostPaths.requireString(params, "text")
+        if (text.isBlank()) throw paramInvalid("text is blank")
+        if (text.length > MAX_MESSAGE_CHARS) throw paramInvalid("text too long")
+        if (runStateStore.snapshot(session.id)?.running == true) {
+            throw PluginHostException("CHAT_BUSY", "session is already running: ${session.id}")
+        }
+        val timeoutMs = (optionalLong(params, "timeoutMs") ?: DEFAULT_REPLY_TIMEOUT_MS)
+            .coerceIn(MIN_REPLY_TIMEOUT_MS, MAX_REPLY_TIMEOUT_MS)
+
+        val startedAt = System.currentTimeMillis()
+        val baseline = agentMessageDao.getMessagesPageDescending(session.id, null, null, 1)
+            .firstOrNull()?.timestamp ?: 0L
+        submit(AgentChatRequest.Send(session.id, text, session.workspacePath))
+
+        // 本轮开始前不能直接 awaitIdle：状态还是上一轮留下的 idle，会立刻返回旧结果。
+        val startDeadline = startedAt + minOf(timeoutMs, RUN_START_TIMEOUT_MS)
+        var started = false
+        while (System.currentTimeMillis() < startDeadline) {
+            if (runStateStore.snapshot(session.id)?.running == true) {
+                started = true
+                break
+            }
+            // 极短的轮次可能在我们第一次轮询前就跑完了，回复已经落库就当作已开始。
+            if (latestAssistantAfter(session.id, baseline) != null) {
+                started = true
+                break
+            }
+            delay(RUN_POLL_INTERVAL_MS)
+        }
+        if (!started) {
+            throw PluginHostException(
+                "CHAT_RUN_NOT_STARTED",
+                "run did not start within ${minOf(timeoutMs, RUN_START_TIMEOUT_MS)}ms: ${session.id}"
+            )
+        }
+
+        val remaining = (startedAt + timeoutMs - System.currentTimeMillis()).coerceAtLeast(0L)
+        val snapshot = runStateStore.awaitIdle(session.id, remaining)
+        val reply = latestAssistantAfter(session.id, baseline)
+        return buildJsonObject {
+            put("sessionId", session.id)
+            put("text", capText(reply?.content.orEmpty(), MAX_REPLY_CHARS))
+            put("hasReply", reply != null)
+            reply?.let {
+                put("messageId", it.id)
+                put("timestamp", it.timestamp)
+            }
+            put("status", snapshot?.status ?: "idle")
+            put("timedOut", snapshot?.running == true)
+            put("run", runJson(snapshot))
+        }
+    }
+
+    /** 发送前时间点之后最新的一条助手回复；只有中间态（纯工具调用）时退而取最新一条。 */
+    private suspend fun latestAssistantAfter(sessionId: String, baseline: Long): AgentMessageEntity? {
+        val rows = agentMessageDao.getMessagesPageDescending(sessionId, null, baseline, MAX_REPLY_SCAN)
+        return rows.firstOrNull { it.role.equals("assistant", ignoreCase = true) && it.content.isNotBlank() }
+            ?: rows.firstOrNull { it.role.equals("assistant", ignoreCase = true) }
     }
 
     suspend fun setDraft(pluginId: String, params: JsonObject): JsonElement {
@@ -582,6 +655,15 @@ class PluginChatService @Inject constructor(
         const val DEFAULT_WAIT_TIMEOUT_MS = 120_000L
         const val MIN_WAIT_TIMEOUT_MS = 1_000L
         const val MAX_WAIT_TIMEOUT_MS = 600_000L
+        const val DEFAULT_REPLY_TIMEOUT_MS = 180_000L
+        const val MIN_REPLY_TIMEOUT_MS = 1_000L
+        const val MAX_REPLY_TIMEOUT_MS = 600_000L
+
+        /** 等本轮真正开始的预算：超过它还没 running，说明请求卡在队列里，不该继续干等。 */
+        const val RUN_START_TIMEOUT_MS = 15_000L
+        const val RUN_POLL_INTERVAL_MS = 100L
+        const val MAX_REPLY_SCAN = 200
+        const val MAX_REPLY_CHARS = 200_000
         val JSON = Json { ignoreUnknownKeys = true }
     }
 }

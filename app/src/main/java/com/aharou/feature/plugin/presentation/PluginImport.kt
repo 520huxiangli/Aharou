@@ -150,10 +150,12 @@ private fun PluginPreviewSheet(
             )
             state.sourceLabel?.let { source ->
                 Text(
-                    text = if (state.officialSource) {
-                        stringResource(R.string.plugins_install_source_official, source)
-                    } else {
-                        stringResource(R.string.plugins_install_source_community, source)
+                    text = when {
+                        state.operitReport != null ->
+                            stringResource(R.string.plugins_install_source_operit, source)
+                        state.officialSource ->
+                            stringResource(R.string.plugins_install_source_official, source)
+                        else -> stringResource(R.string.plugins_install_source_community, source)
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -180,6 +182,8 @@ private fun PluginPreviewSheet(
                     active = true
                 )
             }
+
+            state.operitReport?.let { report -> OperitCompatRows(report) }
 
             if (requiresManualRepository) {
                 SettingsGroupHeader(text = stringResource(R.string.plugins_install_repository_header))

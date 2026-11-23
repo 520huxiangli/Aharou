@@ -34,6 +34,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -51,6 +52,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aharou.R
 import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
+import com.aharou.core.ui.SegmentedTabs
+import com.aharou.feature.plugin.data.market.OperitMarketListing
 import com.aharou.feature.settings.presentation.component.LazyGroupItem
 import com.aharou.feature.settings.presentation.component.McpPill
 import com.aharou.feature.settings.presentation.component.ModelSearchField
@@ -80,7 +83,38 @@ private val UnofficialBadgeText = Color(0xFF5C4300)
 internal fun PluginStoreSection(
     onShowPreview: (PluginStorePreview) -> Unit,
     onOpenDetail: (PluginStoreItem) -> Unit,
+    onOpenOperitDetail: (OperitMarketListing) -> Unit,
     viewModel: PluginStoreViewModel = hiltViewModel()
+) {
+    // 两个来源的列表结构不同（索引整包 vs 服务端分页），只在顶部共用一枚来源切换
+    var source by rememberSaveable { mutableIntStateOf(0) }
+    Column(modifier = Modifier.fillMaxSize()) {
+        SegmentedTabs(
+            selected = source,
+            labels = listOf(
+                stringResource(R.string.operit_market_source_aharou),
+                stringResource(R.string.operit_market_source_operit)
+            ),
+            onSelect = { source = it },
+            modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.xs)
+        )
+        when (source) {
+            0 -> AharouStorePage(
+                onShowPreview = onShowPreview,
+                onOpenDetail = onOpenDetail,
+                viewModel = viewModel
+            )
+            else -> OperitMarketPage(onOpenDetail = onOpenOperitDetail)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AharouStorePage(
+    onShowPreview: (PluginStorePreview) -> Unit,
+    onOpenDetail: (PluginStoreItem) -> Unit,
+    viewModel: PluginStoreViewModel
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()

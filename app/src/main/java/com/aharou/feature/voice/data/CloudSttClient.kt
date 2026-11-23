@@ -25,7 +25,7 @@ import org.json.JSONObject
  * 只做整段识别——流式的实时字幕仍由端上识别器给，不然每说几个字就要发一次请求。
  */
 @Singleton
-internal class CloudSttClient @Inject constructor(
+class CloudSttClient @Inject constructor(
     private val sttSettings: VoiceSttSettingsRepository,
     private val providerRepository: AIProviderRepository,
 ) {

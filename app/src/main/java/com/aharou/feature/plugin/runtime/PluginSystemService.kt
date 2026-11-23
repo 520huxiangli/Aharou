@@ -113,9 +113,16 @@ class PluginSystemService @Inject constructor(
         return ok()
     }
 
-    /** 宿主 App 的包名、版本、系统 API 级别、界面语言与前后台状态。 */
-    suspend fun appInfo(pluginId: String): JsonElement {
+    /**
+     * 宿主 App 的包名、版本、系统 API 级别、界面语言与前后台状态。
+     *
+     * 传了 [packageName] 时改查那个已安装应用的信息（插件要按包名拿版本与显示名），
+     * 不传则保持原有语义不变：返回宿主自己的信息。
+     */
+    suspend fun appInfo(pluginId: String, packageName: String? = null): JsonElement {
         ensureActive(pluginId)
+        val target = packageName?.trim()?.takeIf { it.isNotEmpty() }
+        if (target != null) return installedAppInfo(pluginId, target)
         val info = try {
             context.packageManager.getPackageInfo(context.packageName, 0)
         } catch (e: PackageManager.NameNotFoundException) {
@@ -134,6 +141,41 @@ class PluginSystemService @Inject constructor(
             put("sdkInt", Build.VERSION.SDK_INT)
             put("languageTag", Locale.getDefault().toLanguageTag())
             put("isForeground", foreground.current())
+        }
+    }
+
+    /** 查一个已安装应用：查不到时返回 `isInstalled=false`，不用异常表示「没装」。 */
+    private suspend fun installedAppInfo(pluginId: String, packageName: String): JsonElement {
+        if (!PACKAGE_NAME.matches(packageName)) {
+            throw PluginHostException("PARAM_INVALID", "invalid package name: $packageName")
+        }
+        val info = try {
+            context.packageManager.getPackageInfo(packageName, 0)
+        } catch (e: PackageManager.NameNotFoundException) {
+            return buildJsonObject {
+                put("packageName", packageName)
+                put("isInstalled", false)
+            }
+        }
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
+        val label = info.applicationInfo?.let { appInfo ->
+            runCatching { context.packageManager.getApplicationLabel(appInfo).toString() }.getOrNull()
+        }.orEmpty()
+        val isSystemApp = info.applicationInfo
+            ?.let { (it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0 }
+            ?: false
+        return buildJsonObject {
+            put("packageName", packageName)
+            put("isInstalled", true)
+            put("versionName", info.versionName.orEmpty())
+            put("versionCode", versionCode)
+            put("label", label)
+            put("isSystemApp", isSystemApp)
         }
     }
 
@@ -196,5 +238,6 @@ class PluginSystemService @Inject constructor(
         const val MAX_LOG_MESSAGE_CHARS = 2000
         const val MAX_LOG_TAG_CHARS = 64
         const val DEFAULT_TAG_PREFIX = "plugin:"
+        val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$")
     }
 }

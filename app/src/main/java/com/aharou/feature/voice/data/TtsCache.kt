@@ -25,18 +25,21 @@ internal class TtsCache @Inject constructor(
 
     private val dir: File get() = File(context.filesDir, DIR_NAME)
 
-    /** 命中且文件非空才算，返回可直接播放的文件。 */
+    /** 命中且文件非空才算，返回可直接播放的文件。整段合成存 MP3，流式攒出来的存 WAV。 */
     suspend fun get(key: String): File? = withContext(Dispatchers.IO) {
-        val file = File(dir, "$key.mp3")
-        if (file.isFile && file.length() > 0) file else null
+        for (suffix in CACHED_SUFFIXES) {
+            val file = File(dir, "$key$suffix")
+            if (file.isFile && file.length() > 0) return@withContext file
+        }
+        null
     }
 
-    /** 写入缓存并做一次容量回收。 */
-    suspend fun put(key: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
+    /** 写入缓存并做一次容量回收；[wav] 为真时按 WAV 落盘（流式路径只能拿到裸采样）。 */
+    suspend fun put(key: String, bytes: ByteArray, wav: Boolean = false): Unit = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) return@withContext
         runCatching {
             if (!dir.exists() && !dir.mkdirs()) return@withContext
-            File(dir, "$key.mp3").writeBytes(bytes)
+            File(dir, key + if (wav) ".wav" else ".mp3").writeBytes(bytes)
             prune()
         }.onFailure { FileLogger.w(TAG, "写入 TTS 缓存失败", it) }
     }
@@ -62,6 +65,9 @@ internal class TtsCache @Inject constructor(
     companion object {
         private const val TAG = "TtsCache"
         private const val DIR_NAME = "tts_cache"
+
+        /** 同一句话可能来自整段合成（MP3）或流式攒包（WAV），命中哪个用哪个。 */
+        private val CACHED_SUFFIXES = listOf(".mp3", ".wav")
 
         /** 文件数上限。 */
         private const val MAX_FILES = 200

@@ -1,16 +1,17 @@
 package com.aharou.feature.plugin.runtime
 
 import com.aharou.core.util.FileLogger
-import com.aharou.feature.agent.domain.container.CommandEngine
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.aharou.feature.agent.domain.container.ContainerInstaller
 import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.LinuxContainerEngine
+import com.aharou.feature.plugin.domain.PluginHostApiOrigin
 import com.aharou.feature.plugin.domain.PluginHostException
 import com.aharou.feature.plugin.domain.PluginHostPaths
 import com.aharou.feature.plugin.domain.PluginManager
 import com.aharou.feature.plugin.domain.PluginRuntime
 import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
-import com.aharou.feature.plugin.overlay.PluginOverlayException
 import com.aharou.feature.plugin.overlay.PluginOverlayManager
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
@@ -19,6 +20,7 @@ import com.aharou.feature.workspace.domain.FileAccessProvider
 import com.aharou.feature.workspace.domain.PathHomeResolver
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -30,11 +32,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
 /**
@@ -42,33 +40,22 @@ import kotlinx.serialization.json.put
  *
  * 进程在本地容器中运行（SSH 模式下同样在手机端），cwd 是插件自己的安装目录，
  * 因此可以直接读取包内文件、`node_modules` 或虚拟环境。插件主动发来的 host API
- * 请求复用 [PluginHostPaths]，与页面桥的文件限制保持一致。
+ * 请求交给 [PluginHostApiDispatcher]，与页面桥共用同一套方法与文件限制。
  */
 @Singleton
 class PluginRuntimeManager @Inject constructor(
+    @param:ApplicationContext private val context: Context,
     private val pluginManager: PluginManager,
     private val installer: ContainerInstaller,
     private val engine: LinuxContainerEngine,
     private val containerSettingsRepository: ContainerSettingsRepository,
     private val fileAccess: FileAccessProvider,
     private val homeResolver: PathHomeResolver,
-    private val commandEngine: CommandEngine,
     private val workspaceRepository: WorkspaceRepository,
     private val executionModeHolder: ExecutionModeHolder,
     private val eventBus: PluginEventBus,
-    private val notifier: PluginNotifier,
-    private val terminalRunner: PluginTerminalRunner,
-    private val shizukuRunner: PluginShizukuRunner,
-    private val tipManager: PluginTipManager,
     private val overlayManager: PluginOverlayManager,
-    private val chatService: PluginChatService,
-    private val modelService: PluginModelService,
-    private val secretStore: PluginSecretStore,
-    private val systemService: PluginSystemService,
-    private val introspectionService: PluginIntrospectionService,
-    private val toolService: PluginToolService,
-    private val httpService: PluginHttpService,
-    private val portService: PluginPortService
+    private val hostApiDispatcher: PluginHostApiDispatcher
 ) {
 
     private class Entry(
@@ -80,6 +67,9 @@ class PluginRuntimeManager @Inject constructor(
     )
 
     private val processes = ConcurrentHashMap<String, Entry>()
+
+    /** 打开中的面板给进程打的租约计数，键与 [processes] 一致：`<插件ID>@<版本>`。 */
+    private val leases = ConcurrentHashMap<String, Int>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
@@ -149,8 +139,7 @@ class PluginRuntimeManager @Inject constructor(
         }
     }
 
-    /** 插件版本替换后关闭旧版本进程，避免 resident 旧进程永远不回收。 */
-    fun closeOtherVersions(pluginId: String, currentVersion: String) {
+    /** 插件版本替换后关闭旧版本进程，避免 resident 旧进程永远不回收。 */    fun closeOtherVersions(pluginId: String, currentVersion: String) {
         val keepKey = "$pluginId@$currentVersion"
         synchronized(processes) {
             processes.entries
@@ -159,6 +148,26 @@ class PluginRuntimeManager @Inject constructor(
                     processes.remove(key, entry)
                     entry.transport.close()
                 }
+        }
+    }
+
+    /**
+     * 面板等长驻界面打开期间给进程加一层租约。
+     *
+     * 没有租约时最后一次调用过去 10 分钟就会连 handler 带 action 表一起被收走，
+     * 用户再点按钮只会得到 HANDLER_NOT_FOUND。返回的函数释放这一份租约，可重复调用。
+     */
+    fun acquireLease(pluginId: String, version: String): () -> Unit {
+        val key = leaseKey(pluginId, version)
+        leases.compute(key) { _, count -> (count ?: 0) + 1 }
+        val released = AtomicBoolean(false)
+        return {
+            if (released.compareAndSet(false, true)) {
+                leases.compute(key) { _, count ->
+                    val next = (count ?: 1) - 1
+                    if (next > 0) next else null
+                }
+            }
         }
     }
 
@@ -200,12 +209,15 @@ class PluginRuntimeManager @Inject constructor(
             program = runtime.command.firstOrNull()
                 ?: throw PluginProcessException("PLUGIN_COMMAND_MISSING", "[$pluginId] 运行时没有启动命令"),
             programArgs = runtime.command.drop(1),
-            extraEnv = mapOf(
-                "AICODE_PLUGIN_ID" to pluginId,
-                "AICODE_PLUGIN_VERSION" to version,
-                "AICODE_DATA_DIR" to dataDir,
-                "AICODE_WORKSPACE" to wsRoot
-            ),
+            extraEnv = buildMap {
+                put("AICODE_PLUGIN_ID", pluginId)
+                put("AICODE_PLUGIN_VERSION", version)
+                put("AICODE_DATA_DIR", dataDir)
+                put("AICODE_WORKSPACE", wsRoot)
+                // Operit 转换来的插件入口会 require 这个 shim 才能拿到 Tools.*；
+                // 拿不到就根本没接上，所以只要落盘成功就必须带出去。
+                operitShimPath()?.let { put("AHAROU_OPERIT_SHIM", it) }
+            },
             onRequest = { method, params -> hostRequest(pluginId, runtime, method, params) },
             onNotification = { method, params -> handleNotification(pluginId, method, params) },
             onExit = {
@@ -230,287 +242,18 @@ class PluginRuntimeManager @Inject constructor(
         runtime: PluginRuntime,
         method: String,
         params: JsonObject
-    ): JsonElement {
-        val paths = PluginHostPaths(
-            fileAccess = fileAccess,
-            homeResolver = homeResolver,
+    ): JsonElement = try {
+        hostApiDispatcher.dispatch(
+            pluginId = pluginId,
+            method = method,
+            params = params,
+            origin = PluginHostApiOrigin.PROCESS,
             workspaceRoot = ::workspaceRoot,
-            pluginId = pluginId
+            modelOrigin = PROCESS_ORIGIN
         )
-        return when (method) {
-            "host.fs.read" -> hostCall { paths.read(PluginHostPaths.requireString(params, "path")) }
-            "host.fs.write" -> hostCall {
-                paths.write(
-                    PluginHostPaths.requireString(params, "path"),
-                    PluginHostPaths.requireString(params, "content")
-                )
-            }
-            "host.fs.list" -> hostCall { paths.list(PluginHostPaths.requireString(params, "path")) }
-            "host.fs.delete" -> hostCall { paths.delete(PluginHostPaths.requireString(params, "path")) }
-            "host.fs.stat" -> hostCall { paths.stat(PluginHostPaths.requireString(params, "path")) }
-            "host.fs.mkdir" -> hostCall { paths.mkdir(PluginHostPaths.requireString(params, "path")) }
-            "host.fs.rename" -> hostCall {
-                paths.rename(
-                    PluginHostPaths.requireString(params, "from"),
-                    PluginHostPaths.requireString(params, "to")
-                )
-            }
-            "host.fs.copy" -> hostCall {
-                paths.copy(
-                    PluginHostPaths.requireString(params, "from"),
-                    PluginHostPaths.requireString(params, "to"),
-                    (params["overwrite"] as? JsonPrimitive)?.booleanOrNull ?: false
-                )
-            }
-            "host.fs.append" -> hostCall {
-                paths.append(
-                    PluginHostPaths.requireString(params, "path"),
-                    PluginHostPaths.requireString(params, "content")
-                )
-            }
-            "host.fs.readBinary" -> hostCall {
-                paths.readBinary(PluginHostPaths.requireString(params, "path"))
-            }
-            "host.fs.writeBinary" -> hostCall {
-                paths.writeBinary(
-                    PluginHostPaths.requireString(params, "path"),
-                    PluginHostPaths.requireString(params, "base64")
-                )
-            }
-            "host.app.isForeground" -> JsonPrimitive(overlayManager.isAppForeground())
-            "host.bash" -> bash(params)
-            "host.notify" -> notifier.notify(pluginId, params)
-            "host.shizuku.exec" -> shizukuExec(pluginId, params)
-            "host.overlay.create" -> overlayCreate(pluginId, params)
-            "host.overlay.close" -> overlayClose(pluginId, params)
-            "host.overlay.postMessage" -> overlayPostMessage(pluginId, params)
-            "host.overlay.update" -> overlayUpdate(pluginId, params)
-            "host.tip" -> tip(pluginId, params)
-            "host.terminal.run" -> terminalRun(pluginId, params)
-            "host.terminal.poll" -> terminalPoll(pluginId, params)
-            "host.terminal.stop" -> terminalStop(pluginId, params, close = false)
-            "host.terminal.close" -> terminalStop(pluginId, params, close = true)
-            "host.terminal.write" -> terminalWrite(pluginId, params)
-            "host.terminal.list" -> terminalCall { terminalRunner.list(pluginId) }
-            "host.chat.listSessions" -> hostCall { chatService.listSessions(pluginId, params) }
-            "host.chat.createSession" -> hostCall { chatService.createSession(pluginId, params) }
-            "host.chat.listMessages" -> hostCall { chatService.listMessages(pluginId, params) }
-            "host.chat.sendMessage" -> hostCall { chatService.sendMessage(pluginId, params) }
-            "host.chat.setDraft" -> hostCall { chatService.setDraft(pluginId, params) }
-            "host.chat.stop" -> hostCall { chatService.stop(pluginId, params) }
-            "host.chat.openSession" -> hostCall { chatService.openSession(pluginId, params) }
-            "host.chat.getSession" -> hostCall { chatService.getSession(pluginId, params) }
-            "host.chat.renameSession" -> hostCall { chatService.renameSession(pluginId, params) }
-            "host.chat.pinSession" -> hostCall { chatService.pinSession(pluginId, params) }
-            "host.chat.deleteSession" -> hostCall { chatService.deleteSession(pluginId, params) }
-            "host.chat.getRunState" -> hostCall { chatService.getRunState(pluginId, params) }
-            "host.chat.waitForRun" -> hostCall { chatService.waitForRun(pluginId, params) }
-            "host.chat.listApprovals" -> hostCall { chatService.listApprovals(pluginId, params) }
-            "host.chat.resolveToolApproval" -> hostCall { chatService.resolveToolApproval(pluginId, params) }
-            "host.chat.resolveQuestion" -> hostCall { chatService.resolveQuestion(pluginId, params) }
-            "host.chat.resolvePlanApproval" -> hostCall { chatService.resolvePlanApproval(pluginId, params) }
-            "host.model.listProviders" -> hostCall { modelService.listProviders(pluginId) }
-            "host.model.listModels" -> hostCall { modelService.listModels(pluginId, params) }
-            "host.model.create" -> hostCall { modelService.create(pluginId, params) }
-            "host.model.close" -> hostCall { modelService.close(pluginId, params) }
-            "host.model.start" -> hostCall { modelService.start(pluginId, params, PROCESS_ORIGIN) }
-            "host.model.read" -> hostCall { modelService.read(pluginId, params) }
-            "host.model.cancel" -> hostCall { modelService.cancel(pluginId, params) }
-            "host.clipboard.read" -> hostCall { systemService.clipboardRead(pluginId) }
-            "host.clipboard.write" -> hostCall {
-                systemService.clipboardWrite(pluginId, PluginHostPaths.requireString(params, "text"))
-            }
-            "host.share.text" -> hostCall {
-                systemService.shareText(
-                    pluginId,
-                    PluginHostPaths.requireString(params, "text"),
-                    (params["title"] as? JsonPrimitive)?.contentOrNull
-                )
-            }
-            "host.ui.openUrl" -> hostCall {
-                systemService.openUrl(pluginId, PluginHostPaths.requireString(params, "url"))
-            }
-            "host.app.info" -> hostCall { systemService.appInfo(pluginId) }
-            "host.log" -> hostCall {
-                systemService.log(
-                    pluginId,
-                    PluginHostPaths.requireString(params, "level"),
-                    PluginHostPaths.requireString(params, "message"),
-                    (params["tag"] as? JsonPrimitive)?.contentOrNull
-                )
-            }
-            "host.secrets.get" -> hostCall {
-                secretStore.get(pluginId, PluginHostPaths.requireString(params, "key"))
-            }
-            "host.secrets.set" -> hostCall {
-                secretStore.set(
-                    pluginId,
-                    PluginHostPaths.requireString(params, "key"),
-                    PluginHostPaths.requireString(params, "value")
-                )
-            }
-            "host.secrets.delete" -> hostCall {
-                secretStore.delete(pluginId, PluginHostPaths.requireString(params, "key"))
-            }
-            "host.secrets.list" -> hostCall { secretStore.list(pluginId) }
-            "host.tools.list" -> hostCall {
-                introspectionService.listTools(
-                    pluginId,
-                    includeSchema = (params["includeSchema"] as? JsonPrimitive)?.booleanOrNull ?: false
-                )
-            }
-            "host.tools.execute" -> hostCall { toolService.execute(pluginId, params) }
-            "host.tools.pending" -> hostCall { toolService.pending(pluginId, params) }
-            "host.tools.resolve" -> hostCall { toolService.resolve(pluginId, params) }
-            "host.mcp.status" -> hostCall { introspectionService.mcpStatus(pluginId) }
-            "host.http.request" -> hostCall { httpService.request(pluginId, params) }
-            "host.ports.forward" -> hostCall { portService.forward(pluginId, params) }
-            "host.ports.close" -> hostCall { portService.close(pluginId, params) }
-            "host.ports.list" -> hostCall { portService.list(pluginId) }
-            else -> throw PluginProcessException("METHOD_UNKNOWN", "unknown host method: $method")
-        }
-    }
-
-    private fun tip(pluginId: String, params: JsonObject): JsonElement = try {
-        tipManager.show(pluginId, params)
-    } catch (e: PluginTipException) {
-        throw PluginProcessException(e.code, e.message.orEmpty())
-    }
-
-    private suspend fun shizukuExec(pluginId: String, params: JsonObject): JsonElement {        val command = PluginHostPaths.requireString(params, "command")
-        val timeoutSeconds = (params["timeout"] as? JsonPrimitive)?.longOrNull ?: DEFAULT_SHIZUKU_TIMEOUT_SECONDS
-        return try {
-            val result = shizukuRunner.exec(pluginId, command, timeoutSeconds)
-            buildJsonObject {
-                put("output", result.output)
-                put("exitCode", result.exitCode)
-                put("truncated", result.truncated)
-            }
-        } catch (e: PluginShizukuException) {
-            throw PluginProcessException(e.code, e.message.orEmpty())
-        }
-    }
-
-    private suspend fun overlayCreate(pluginId: String, params: JsonObject): JsonElement = try {
-        val surface = (params["surface"] as? JsonPrimitive)?.contentOrNull
-        overlayManager.create(pluginId, surface, params)
-    } catch (e: PluginOverlayException) {
-        throw PluginProcessException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayClose(pluginId: String, params: JsonObject): JsonElement = try {
-        val overlayId = (params["overlayId"] as? JsonPrimitive)?.contentOrNull
-        val surfaceId = (params["surface"] as? JsonPrimitive)?.contentOrNull
-        when {
-            !overlayId.isNullOrBlank() -> overlayManager.close(pluginId, overlayId)
-            !surfaceId.isNullOrBlank() -> overlayManager.closeBySurface(pluginId, surfaceId)
-            else -> throw PluginProcessException("PARAM_INVALID", "overlayId or surface required")
-        }
-    } catch (e: PluginOverlayException) {
-        throw PluginProcessException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayPostMessage(pluginId: String, params: JsonObject): JsonElement = try {
-        val overlayId = (params["overlayId"] as? JsonPrimitive)?.contentOrNull
-        val surfaceId = (params["surface"] as? JsonPrimitive)?.contentOrNull
-        val payload = params["payload"] ?: kotlinx.serialization.json.JsonNull
-        when {
-            !overlayId.isNullOrBlank() -> overlayManager.postMessage(pluginId, overlayId, payload)
-            !surfaceId.isNullOrBlank() -> overlayManager.postMessageBySurface(pluginId, surfaceId, payload)
-            else -> throw PluginProcessException("PARAM_INVALID", "overlayId or surface required")
-        }
-    } catch (e: PluginOverlayException) {
-        throw PluginProcessException(e.code, e.message.orEmpty())
-    }
-
-    private fun overlayUpdate(pluginId: String, params: JsonObject): JsonElement = try {
-        overlayManager.update(pluginId, PluginHostPaths.requireString(params, "overlayId"), params)
-    } catch (e: PluginOverlayException) {
-        throw PluginProcessException(e.code, e.message.orEmpty())
-    }
-
-    private suspend fun bash(params: JsonObject): JsonElement {        val command = PluginHostPaths.requireString(params, "command")
-        if (command.isBlank()) throw PluginProcessException("PARAM_INVALID", "empty command")
-        if (command.length > PluginHostPaths.MAX_COMMAND_CHARS) {
-            throw PluginProcessException("PARAM_INVALID", "command too long")
-        }
-        val timeoutSeconds = (params["timeout"] as? JsonPrimitive)?.longOrNull
-            ?: PluginHostPaths.DEFAULT_BASH_TIMEOUT_SECONDS
-        val timeoutMs = timeoutSeconds.coerceIn(1L, PluginHostPaths.MAX_BASH_TIMEOUT_SECONDS) * 1000L
-        val result = commandEngine.runCommandSyncWithExit(command, workspaceRepository.currentPath(), timeoutMs)
-        return buildJsonObject {
-            put("output", result.output)
-            put("exitCode", result.exitCode)
-            put("truncated", result.outputTruncated)
-        }
-    }
-
-    private suspend fun terminalRun(pluginId: String, params: JsonObject): JsonElement {
-        val command = PluginHostPaths.requireString(params, "command").trim()
-        val title = (params["title"] as? JsonPrimitive)?.contentOrNull
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.take(MAX_TERMINAL_TITLE_CHARS)
-        return try {
-            val tabId = terminalRunner.start(pluginId, command, title)
-            buildJsonObject {
-                put("tabId", tabId)
-                put("state", "running")
-            }
-        } catch (e: PluginTerminalException) {
-            throw PluginProcessException(e.code, e.message)
-        }
-    }
-
-    private suspend fun terminalPoll(pluginId: String, params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        val offset = (params["offset"] as? JsonPrimitive)?.longOrNull ?: 0L
-        return try {
-            val poll = terminalRunner.poll(pluginId, tabId, offset)
-            buildJsonObject {
-                put("output", poll.output)
-                put("offset", poll.offset)
-                put("state", poll.state)
-                poll.exitCode?.let { put("exitCode", it) }
-                put("truncated", poll.truncated)
-            }
-        } catch (e: PluginTerminalException) {
-            throw PluginProcessException(e.code, e.message)
-        }
-    }
-
-    private suspend fun terminalStop(pluginId: String, params: JsonObject, close: Boolean): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        try {
-            if (close) terminalRunner.close(pluginId, tabId) else terminalRunner.stop(pluginId, tabId)
-        } catch (e: PluginTerminalException) {
-            throw PluginProcessException(e.code, e.message)
-        }
-        return buildJsonObject { put("ok", true) }
-    }
-
-    private suspend fun <T> hostCall(block: suspend () -> T): T = try {
-        block()
     } catch (e: PluginHostException) {
+        // 进程通道只认 PluginProcessException，其余错误会被 transport 归成 HOST_ERROR。
         throw PluginProcessException(e.code, e.message)
-    }
-
-    private suspend fun terminalCall(block: suspend () -> JsonElement): JsonElement = try {
-        block()
-    } catch (e: PluginTerminalException) {
-        throw PluginProcessException(e.code, e.message)
-    }
-
-    private suspend fun terminalWrite(pluginId: String, params: JsonObject): JsonElement {
-        val tabId = PluginHostPaths.requireString(params, "tabId")
-        val text = PluginHostPaths.requireString(params, "text")
-        val appendNewline = (params["appendNewline"] as? JsonPrimitive)?.booleanOrNull ?: true
-        val written = try {
-            terminalRunner.write(pluginId, tabId, text, appendNewline)
-        } catch (e: PluginTerminalException) {
-            throw PluginProcessException(e.code, e.message)
-        }
-        return buildJsonObject { put("ok", written) }
     }
 
     private fun isActive(pluginId: String): Boolean {
@@ -565,7 +308,11 @@ class PluginRuntimeManager @Inject constructor(
         val now = System.currentTimeMillis()
         synchronized(processes) {
             processes.entries
-                .filter { !it.value.resident && now - it.value.lastUsed > IDLE_TIMEOUT_MS }
+                .filter {
+                    !it.value.resident &&
+                        (leases[it.key] ?: 0) <= 0 &&
+                        now - it.value.lastUsed > IDLE_TIMEOUT_MS
+                }
                 .forEach { (key, entry) ->
                     processes.remove(key, entry)
                     entry.transport.close()
@@ -573,13 +320,41 @@ class PluginRuntimeManager @Inject constructor(
         }
     }
 
+    private fun leaseKey(pluginId: String, version: String): String = "$pluginId@$version"
+
+    /**
+     * 把 Operit 兼容层落到宿主的 `.aharou/plugins/sdk/`，返回它在容器里的路径。
+     *
+     * `.aharou` 在容器内被绑成 `/root/.aharou`，所以宿主写文件就等于写进容器，不必再走引擎。
+     * 内容没变就不重写，避免每次起插件都碰一次磁盘。远程模式下容器在服务器上，本轮不处理。
+     */
+    private fun operitShimPath(): String? {
+        if (executionModeHolder.currentMode() == ExecutionMode.REMOTE_SSH) return null
+        return runCatching {
+            val dir = File(installer.aharouDir, SHIM_DIR)
+            if (!dir.isDirectory && !dir.mkdirs()) error("无法创建 ${dir.absolutePath}")
+            SHIM_FILES.forEach { name ->
+                val target = File(dir, name)
+                val bytes = context.assets.open("plugin-ui/$name").use { it.readBytes() }
+                if (!target.isFile || !target.readBytes().contentEquals(bytes)) {
+                    target.writeBytes(bytes)
+                }
+            }
+            "$CONTAINER_SHIM_DIR/${SHIM_FILES.first()}"
+        }.onFailure {
+            FileLogger.w(TAG, "Operit 兼容层落盘失败，插件里的 Tools.* 将不可用", it)
+        }.getOrNull()
+    }
+
     private companion object {
         const val TAG = "PluginRuntime"
+        /** 兼容层文件：shim 本体与它 require 的 Compose DSL 运行时，必须同目录。 */
+        val SHIM_FILES = listOf("operit-shim.js", "compose-dsl-runtime.js")
+        const val SHIM_DIR = "plugins/sdk"
+        const val CONTAINER_SHIM_DIR = "/root/.aharou/plugins/sdk"
         const val TOOL_TIMEOUT_MS = 120_000L
         const val IDLE_TIMEOUT_MS = 10 * 60_000L
         const val IDLE_CHECK_MS = 60_000L
-        const val MAX_TERMINAL_TITLE_CHARS = 120
-        const val DEFAULT_SHIZUKU_TIMEOUT_SECONDS = 120L
         const val OVERLAY_MESSAGE_TIMEOUT_MS = 30_000L
         const val PROCESS_ORIGIN = "process"
     }
