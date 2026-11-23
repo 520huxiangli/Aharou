@@ -50,6 +50,14 @@ class OperitMarketClient @Inject constructor(
         .cache(null)
         .build()
 
+    /** 镜像专用超时：CNB 正常不到一秒返回，卡住就尽快回退上游，别把用户的等待时间叠成两份。 */
+    private val mirrorHttp = client.newBuilder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .cache(null)
+        .build()
+
     /** 下载单独一套超时：GitHub Release 直链在国内常被挂住不发数据，连接与读超时卡住即可；
      *  不设整体 callTimeout，慢网络下 16 MB 的包也能流完。 */
     private val downloadHttp = client.newBuilder()
@@ -68,7 +76,7 @@ class OperitMarketClient @Inject constructor(
                 readCachedManifest(body)?.let { return@withContext it }
             }
             val bytes = try {
-                getBytes(MANIFEST_URL, MAX_PAGE_BYTES)
+                fetchMarketBytes(MANIFEST_PATH, MAX_PAGE_BYTES, preferDirect = forceRefresh)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -100,7 +108,7 @@ class OperitMarketClient @Inject constructor(
 
         val url = listUrl(scope, page)
         val bytes = try {
-            getBytes(url, MAX_PAGE_BYTES)
+            fetchMarketBytes(url, MAX_PAGE_BYTES, preferDirect = forceRefresh)
         } catch (e: CancellationException) {
             throw e
         } catch (e: OperitMarketHttpNotFoundException) {
@@ -328,10 +336,46 @@ class OperitMarketClient @Inject constructor(
     private fun listUrl(scope: OperitMarketListScope, page: Int): String {
         val category = scope.categoryId
         return if (category.isNullOrBlank()) {
-            "$BASE_URL/lists/all/$SORT/page-$page.json"
+            "lists/all/$SORT/page-$page.json"
         } else {
-            "$BASE_URL/lists/category/${category.lowercase()}/$SORT/page-$page.json"
+            "lists/category/${category.lowercase()}/$SORT/page-$page.json"
         }
+    }
+
+    /**
+     * 先问 CNB 镜像，再回退上游静态站。
+     *
+     * 上游 static.operit.app 在国内时常几十秒才超时，镜像每天 04:17 由定时任务同步一次。
+     * 镜像缺失（新页还没同步）或不可用时安静回退，404 与网络错误的语义仍由上游那一侧决定，
+     * 调用方的缓存与分页收尾逻辑不受影响。
+     *
+     * [preferDirect] 用于用户主动刷新：先试着直连拿最新，失败再退回镜像的隔夜快照，
+     * 不让刷新按钮变成「只能看昨天的数据」。
+     */
+    private fun fetchMarketBytes(
+        path: String,
+        maxBytes: Long,
+        preferDirect: Boolean = false
+    ): ByteArray {
+        if (preferDirect) {
+            try {
+                return getBytes("$BASE_URL/$path", maxBytes, mirrorHttp)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OperitMarketHttpNotFoundException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.i(TAG, "上游刷新失败，回退镜像: $path")
+            }
+        }
+        try {
+            return getBytes("$MIRROR_BASE/$path", maxBytes, mirrorHttp)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            FileLogger.i(TAG, "CNB 镜像不可用，回退上游: $path")
+        }
+        return getBytes("$BASE_URL/$path", maxBytes)
     }
 
     private fun getBytes(url: String, maxBytes: Long, client: OkHttpClient = http): ByteArray {
@@ -384,7 +428,11 @@ class OperitMarketClient @Inject constructor(
         private const val OPERIT2_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
 
         private fun assetBase(path: String): String = OPERIT2_RAW_BASE + path.trimStart('/')
-        private const val MANIFEST_URL = "$BASE_URL/manifest.json"
+
+        /** 市场列表快照的 CNB 镜像，由 `aharou-plugins` 仓库的定时任务同步。 */
+        private const val MIRROR_BASE =
+            "https://cnb.cool/huxiangli/aharou-plugins/-/git/raw/main/mirror/operit-market"
+        private const val MANIFEST_PATH = "manifest.json"
 
         /** 安装来源里记录的地址；也是本模块唯一对外暴露的市场入口。 */
         const val INDEX_URL = "$BASE_URL/lists/all/downloads"
