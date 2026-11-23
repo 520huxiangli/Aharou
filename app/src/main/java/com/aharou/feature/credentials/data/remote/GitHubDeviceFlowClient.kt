@@ -83,17 +83,21 @@ class GitHubDeviceFlowClient @Inject constructor() {
         .build()
 
     /** 申请设备码与用户码。失败抛 [IOException]。 */
-    suspend fun requestDeviceCode(): GitHubDeviceCode = withContext(Dispatchers.IO) {
-        val form = FormBody.Builder()
-            .add("client_id", GitHubAppConfig.CLIENT_ID)
-            .build()
-        parseDeviceCode(postForm(DEVICE_CODE_URL, form))
-    }
+    suspend fun requestDeviceCode(clientId: String = GitHubAppConfig.CLIENT_ID): GitHubDeviceCode =
+        withContext(Dispatchers.IO) {
+            val form = FormBody.Builder()
+                .add("client_id", clientId.ifBlank { GitHubAppConfig.CLIENT_ID })
+                .build()
+            parseDeviceCode(postForm(DEVICE_CODE_URL, form))
+        }
 
     /** 单次轮询访问令牌。失败（网络/非 2xx）抛 [IOException]，调用方可继续重试。 */
-    suspend fun pollAccessToken(deviceCode: String): GitHubTokenPollResult = withContext(Dispatchers.IO) {
+    suspend fun pollAccessToken(
+        deviceCode: String,
+        clientId: String = GitHubAppConfig.CLIENT_ID
+    ): GitHubTokenPollResult = withContext(Dispatchers.IO) {
         val form = FormBody.Builder()
-            .add("client_id", GitHubAppConfig.CLIENT_ID)
+            .add("client_id", clientId.ifBlank { GitHubAppConfig.CLIENT_ID })
             .add("device_code", deviceCode)
             .add("grant_type", DEVICE_GRANT)
             .build()

@@ -24,9 +24,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import net.schmizz.sshj.sftp.FileAttributes
+import net.schmizz.sshj.sftp.FileMode
 import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.RemoteFile
 import net.schmizz.sshj.sftp.SFTPClient
@@ -43,6 +45,9 @@ class RemoteSftpFileAccessTest {
     ))
     private val workspace = mockk<WorkspaceRepository>()
     private val sftp = mockk<SFTPClient>(relaxed = true)
+    private val lease = mockk<RemoteSshConnection.SftpLease>(relaxed = true) {
+        every { client } returns sftp
+    }
     private val config = RemoteConnectionConfig("example.invalid", username = "test", auth = RemoteAuth.Password("test"), remoteWorkspacePath = "/remote")
 
     private fun publish(config: RemoteConnectionConfig, home: String?) {
@@ -55,8 +60,8 @@ class RemoteSftpFileAccessTest {
         publish(config, home)
         every { workspace.currentPath() } returns "/remote/global"
         every { sftp.statExistence(any()) } returns null
-        coEvery { connection.sftp() } returns sftp
-        coEvery { connection.invalidateSftp() } just Runs
+        coEvery { connection.acquireSftp() } returns lease
+        coEvery { connection.invalidateSftpChannel(any()) } just Runs
         return RemoteSftpFileAccess(connection, workspace)
     }
 
@@ -80,7 +85,7 @@ class RemoteSftpFileAccessTest {
         verify { sftp.statExistence("/home/test/other") }
     }
 
-    @Test fun changedConnectionFailsBeforeAcquiringNewSftpClient() {
+    @Test fun changedConnectionFailsBeforeAcquiringNewChannel() {
         val a = access().forWorkspace("/remote/a")
         publish(config.copy(host = "different.invalid"), "/different/home")
         try {
@@ -89,13 +94,13 @@ class RemoteSftpFileAccessTest {
         } catch (error: IOException) {
             assertTrue(error.message.orEmpty().contains("connection changed"))
         }
-        coVerify(exactly = 0) { connection.sftp() }
+        coVerify(exactly = 0) { connection.acquireSftp() }
     }
 
     @Test fun unconfiguredRemoteLegCanBeBoundWithoutNetwork() {
         val a = RemoteSftpFileAccess(connection, workspace).forWorkspace("/local/a")
         assertEquals("~/workspace/file", a.toDisplayPath("/local/a/file"))
-        coVerify(exactly = 0) { connection.sftp() }
+        coVerify(exactly = 0) { connection.acquireSftp() }
         try {
             a.writeFile("~/workspace/file", "new")
             fail("Expected unconfigured connection failure")
@@ -121,7 +126,7 @@ class RemoteSftpFileAccessTest {
         }
     }
 
-    @Test fun connectWaitsForCurrentFileOperationBeforeChangingConfiguration() = runBlocking {
+    @Test fun connectNoLongerWaitsForInFlightFileOperation() = runBlocking {
         access()
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
@@ -129,49 +134,79 @@ class RemoteSftpFileAccessTest {
             connection.withSftpOperation(config) { entered.complete(Unit); release.await() }
         }
         entered.await()
-        val change = async(start = CoroutineStart.UNDISPATCHED) {
-            runCatching { connection.connect(config.copy(auth = RemoteAuth.Password(""))) }
-        }
-        try {
-            assertFalse(change.isCompleted)
-            assertEquals(config, connection.config)
+        // 通道改为租约分配后不再有「让切连接排队」的全局锁：在途操作由连接身份校验
+        // 与断开时清空整个池兜底，切连接本身不会被文件操作挡住。
+        val change = try {
+            withTimeout(5_000) {
+                runCatching { connection.connect(config.copy(auth = RemoteAuth.Password(""))) }
+            }
         } finally {
             release.complete(Unit)
-            operation.await()
         }
-        assertTrue(change.await().isFailure)
+        operation.await()
+        assertTrue(change.isFailure)
         assertEquals(config, connection.config)
     }
 
-    @Test fun boundCopiesShareConnectionOperationLock() {
+    @Test fun boundCopiesRunConcurrentlyOnSeparateChannels() {
         val root = access()
         val a = root.forWorkspace("/remote/a")
         val b = root.forWorkspace("/remote/b")
         val firstEntered = CountDownLatch(1)
-        val secondStarted = CountDownLatch(1)
-        val secondEntered = CountDownLatch(1)
         val releaseFirst = CountDownLatch(1)
-        every { sftp.statExistence("/remote/a/file") } answers {
+        val secondEntered = CountDownLatch(1)
+        // 每条通道各自的 client：第二条能同时进入才说明池是按租约并行分配，而不是共用一条串行
+        val clientA = mockk<SFTPClient>(relaxed = true)
+        val clientB = mockk<SFTPClient>(relaxed = true)
+        every { clientA.statExistence("/remote/a/file") } answers {
             firstEntered.countDown()
             check(releaseFirst.await(5, TimeUnit.SECONDS))
             null
         }
-        every { sftp.statExistence("/remote/b/file") } answers { secondEntered.countDown(); null }
+        every { clientB.statExistence("/remote/b/file") } answers { secondEntered.countDown(); null }
+        val leaseA = mockk<RemoteSshConnection.SftpLease>(relaxed = true) { every { client } returns clientA }
+        val leaseB = mockk<RemoteSshConnection.SftpLease>(relaxed = true) { every { client } returns clientB }
+        coEvery { connection.acquireSftp() } returnsMany listOf(leaseA, leaseB)
         val pool = Executors.newFixedThreadPool(2)
         try {
             val first = pool.submit<Boolean> { a.exists("~/workspace/file") }
             assertTrue(firstEntered.await(5, TimeUnit.SECONDS))
-            val second = pool.submit<Boolean> { secondStarted.countDown(); b.exists("~/workspace/file") }
-            assertTrue(secondStarted.await(5, TimeUnit.SECONDS))
-            assertFalse(secondEntered.await(100, TimeUnit.MILLISECONDS))
+            val second = pool.submit<Boolean> { b.exists("~/workspace/file") }
+            assertTrue(secondEntered.await(5, TimeUnit.SECONDS))
             releaseFirst.countDown()
-            first.get(5, TimeUnit.SECONDS)
-            second.get(5, TimeUnit.SECONDS)
-            assertEquals(0L, secondEntered.count)
+            assertFalse(first.get(5, TimeUnit.SECONDS))
+            assertFalse(second.get(5, TimeUnit.SECONDS))
         } finally {
             releaseFirst.countDown()
             pool.shutdownNow()
         }
+        coVerify(exactly = 2) { connection.acquireSftp() }
+        // 两条通道用完都还回池里，不占名额
+        coVerify { leaseA.release() }
+        coVerify { leaseB.release() }
+    }
+
+    @Test fun readLinesToleratesPartialRemoteReads() {
+        val a = access().forWorkspace("/remote/a")
+        val content = "alpha\nbeta\ngamma".toByteArray()
+        every { sftp.statExistence("/remote/a/file") } returns FileAttributes.Builder()
+            .withType(FileMode.Type.REGULAR).withSize(content.size.toLong()).build()
+        val file = mockk<RemoteFile>(relaxed = true)
+        // 每次只吐 3 字节：分块读取必须自己拼满，否则行会在半路被截断
+        every { file.read(any(), any(), any(), any()) } answers {
+            val offset = firstArg<Long>().toInt()
+            val buf = secondArg<ByteArray>()
+            val off = thirdArg<Int>()
+            val len = minOf(arg<Int>(3), 3, content.size - offset)
+            if (offset >= content.size) {
+                -1
+            } else {
+                System.arraycopy(content, offset, buf, off, len)
+                len
+            }
+        }
+        every { sftp.open("/remote/a/file") } returns file
+        assertEquals(listOf("alpha", "beta", "gamma"), a.readLines("~/workspace/file").toList())
     }
 
     @Test fun writesUseDistinctExclusiveTemporaryFiles() {

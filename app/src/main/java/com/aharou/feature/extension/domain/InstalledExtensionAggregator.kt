@@ -7,6 +7,7 @@ import com.aharou.feature.agent.domain.knowledge.KnowledgeSourceRepository
 import com.aharou.feature.agent.domain.skill.SkillRepository
 import com.aharou.feature.agent.domain.skill.market.SkillInstallRepository
 import com.aharou.feature.connectors.domain.ConnectorLibrary
+import com.aharou.feature.plugin.domain.PluginManager
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,16 +26,34 @@ class InstalledExtensionAggregator @Inject constructor(
     private val knowledgeCatalog: KnowledgeCatalog,
     private val knowledgeSources: KnowledgeSourceRepository,
     private val mcpConfigRepository: McpConfigRepository,
+    private val pluginManager: PluginManager,
     @param:ApplicationContext private val context: Context,
 ) {
 
     /** 全部已有扩展：插件 + 技能 + 知识库源 + 内置连接器。UI 层按 [ExtensionEntry.kind] 分组。 */
     suspend fun installed(): List<ExtensionEntry> = buildList {
+        addAll(pluginEntries())
         addAll(skillEntries())
         addAll(mcpEntries())
         addAll(knowledgeEntries())
         addAll(connectorEntries())
     }
+
+    /** 已装插件。状态口径与插件页的开关一致：启用且清单可读算运行中。 */
+    private fun pluginEntries(): List<ExtensionEntry> =
+        pluginManager.plugins.value.map { installed ->
+            val manifest = installed.manifest
+            ExtensionEntry(
+                id = "plugin:${installed.id}",
+                kind = ExtensionKind.PLUGIN,
+                name = manifest?.name?.resolve(language)?.takeIf { it.isNotBlank() } ?: installed.id,
+                description = manifest?.description?.resolve(language).orEmpty(),
+                author = manifest?.publisher.orEmpty(),
+                version = manifest?.version?.toString().orEmpty(),
+                sourceLabel = manifest?.publisher.orEmpty(),
+                state = if (installed.isActive) ExtensionState.RUNNING else ExtensionState.INSTALLED,
+            )
+        }
 
     /** 已配置的 MCP 服务器（全局 + 项目级合并，项目优先）。 */
     private suspend fun mcpEntries(): List<ExtensionEntry> =
