@@ -6,6 +6,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.database.AgentDatabase
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
+import com.aharou.feature.agent.domain.schedule.trigger.GeofenceTriggerManager
+import com.aharou.feature.agent.domain.schedule.trigger.McpResourceSubscriptionManager
+import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -25,6 +28,12 @@ import org.robolectric.annotation.Config
 class ScheduledTaskPendingTest {
     private lateinit var database: AgentDatabase
     private lateinit var dao: ScheduledTaskDao
+
+    // 仓库现在会顺带同步围栏与 MCP 订阅；这个测试只关心挂起任务的状态机，两个副作用用 relaxed mock 抹掉。
+    private val geofence: GeofenceTriggerManager = mockk(relaxed = true)
+    private val mcpResources: McpResourceSubscriptionManager = mockk(relaxed = true)
+
+    private fun repo() = ScheduledTaskRepository(dao, geofence, mcpResources)
 
     @Before
     fun setUp() {
@@ -67,7 +76,7 @@ class ScheduledTaskPendingTest {
     @Test
     fun userDisablingPendingClearsIt() = runBlocking {
         pending()
-        ScheduledTaskRepository(dao).setEnabled("task", false, 300L)
+        repo().setEnabled("task", false, 300L)
         assertEquals(0, dao.pendingRunsCount())
         assertNull(dao.getById("task")!!.pendingRunPrompt)
     }
@@ -85,8 +94,8 @@ class ScheduledTaskPendingTest {
     fun savingDisabledTaskClearsPending() = runBlocking {
         pending()
         val stale = dao.getById("task")!!
-        val repo = ScheduledTaskRepository(dao)
-        repo.save(stale, "Renamed", stale.prompt, null, null, 15, 0, false,
+        val repository = repo()
+        repository.save(stale, "Renamed", stale.prompt, null, null, 15, 0, false,
             scheduleType = stale.scheduleType, onceAtMillis = stale.onceAtMillis, now = 300L)
         assertNull(dao.getById("task")!!.pendingRunPrompt)
     }
@@ -97,7 +106,7 @@ class ScheduledTaskPendingTest {
         val stale = dao.getById("task")!!
         dao.clearPendingRun("task", "rendered", 200L, 300L)
         dao.recordOutcomeForRun("task", 200L, ScheduledTaskOutcome.COMPLETED, 301L)
-        ScheduledTaskRepository(dao).upsert(stale.copy(name = "Renamed", enabled = true,
+        repo().upsert(stale.copy(name = "Renamed", enabled = true,
             lastRunAt = null, runCount = 0, lastOutcome = null, nextRunAt = 100L))
         val saved = dao.getById("task")!!
         assertNull(saved.pendingRunPrompt)
@@ -175,7 +184,7 @@ class ScheduledTaskPendingTest {
         dao.claim("task", 100L, Long.MAX_VALUE, 200L)
         listOf(
             async(Dispatchers.IO) { dao.markPendingRun("task", "rendered", 200L, disableOnce = true) },
-            async(Dispatchers.IO) { ScheduledTaskRepository(dao).upsert(stale.copy(enabled = false)) },
+            async(Dispatchers.IO) { repo().upsert(stale.copy(enabled = false)) },
         ).awaitAll()
         val saved = dao.getById("task")!!
         assertNull(saved.pendingRunPrompt)
