@@ -3,6 +3,7 @@ package com.aharou.feature.agent.domain.model
 import kotlinx.serialization.Serializable
 import com.aharou.feature.agent.domain.subagent.AgentDefinition
 import com.aharou.feature.agent.domain.tool.ToolCall
+import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 
 @Serializable
 sealed class AgentMessage {
@@ -116,5 +117,11 @@ data class AgentContext(
     /** 与上一轮相比工作区变过时，这里是上一轮的工作区；未变时为 null（系统提示据此追加一次性切换提示）。 */
     val workspaceSwitchedFrom: WorkspaceRef? = null,
     /** 界面当前选中的工作区；与会话绑定的 [projectRoot] 不一致时非空，用于提醒别按错仓库操作。 */
-    val selectedWorkspace: WorkspaceRef? = null
+    val selectedWorkspace: WorkspaceRef? = null,
+    /**
+     * 本轮由谁触发。工具层据此区分「后台自动读取」与「用户手动读取」：只有
+     * [AgentTurnTrigger.SCHEDULED_TASK] 轮次里读设备敏感数据才计入后台读取配额，
+     * 用户自己在对话里让它读不受配额约束。来源不明时按 [AgentTurnTrigger.UNKNOWN] 处理，不猜。
+     */
+    val turnTrigger: AgentTurnTrigger = AgentTurnTrigger.UNKNOWN
 )

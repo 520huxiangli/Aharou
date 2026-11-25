@@ -104,6 +104,12 @@ class PersonalContextAccess @Inject constructor(
                     authority = CALL_LOG_AUTHORITY,
                 )
                 PersonalCapability.APP_USAGE -> appUsageState()
+                // 发送走 telephony，不经过 sms provider：provider 缺失只影响读短信库，
+                // 不该让「能不能发」跟着报 unavailable，所以这里不传 authority。
+                PersonalCapability.SMS_WRITE -> permissionState(
+                    capability,
+                    listOf(Manifest.permission.SEND_SMS),
+                )
             }
         } catch (e: Exception) {
             FileLogger.e(TAG, "读取能力状态失败：${capability.id}", e)
@@ -339,7 +345,9 @@ class PersonalContextAccess @Inject constructor(
     private fun installerRestricted(permissions: List<String>): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
         val sensitive = permissions.any {
-            it == Manifest.permission.READ_SMS || it == Manifest.permission.READ_CALL_LOG
+            it == Manifest.permission.READ_SMS ||
+                it == Manifest.permission.SEND_SMS ||
+                it == Manifest.permission.READ_CALL_LOG
         }
         if (!sensitive) return false
         val allowlist = runCatching {
@@ -385,6 +393,7 @@ class PersonalContextAccess @Inject constructor(
     /** scope 用固定词组，便于模型与设置页按词匹配，不写自然语言。 */
     private fun scopeName(permission: String): String = when (permission) {
         Manifest.permission.READ_SMS -> "read_sms"
+        Manifest.permission.SEND_SMS -> "send_sms"
         Manifest.permission.READ_CALL_LOG -> "read_call_log"
         Manifest.permission.READ_CONTACTS -> "read_contacts"
         Manifest.permission.WRITE_CONTACTS -> "write_contacts"

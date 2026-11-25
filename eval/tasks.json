@@ -1,0 +1,202 @@
+[
+  {
+    "id": "files-001",
+    "category": "files",
+    "title": "按行窗分段读文件，不整文件灌上下文",
+    "prompt": "用 readFile 读 ~/workspace/app/src/main/assets/prompts/60-tools-and-paths.md 的第 1-40 行，再从第 120 行往后读 40 行，把两段各自的第一行原样贴给我，不要整文件读。",
+    "expect": "两次 readFile 返回的 start_line/end_line 与要求一致（1-40 与 120-159），贴出的首行确实是文件里那两行；没有出现无参整文件读取。",
+    "risk": "low"
+  },
+  {
+    "id": "files-002",
+    "category": "files",
+    "title": "局部替换只改命中行",
+    "prompt": "先在 ~/.aharou/eval-scratch/edit-target.txt 用 writeFile 写入三行 alpha / beta / gamma，再用 editFile 只把其中的 beta 改成 Beta，最后 readFile 全文件确认只有第二行变了。",
+    "expect": "writeFile 返回的 diff 里只有 -beta 与 +Beta 各一行；readFile 结果是 alpha / Beta / gamma 三行，其余行一字未动。",
+    "risk": "low"
+  },
+  {
+    "id": "files-003",
+    "category": "files",
+    "title": "old_string 不存在时失败且不写盘",
+    "prompt": "对 ~/.aharou/eval-scratch/edit-target.txt 执行 editFile，把 old_string 填成文件里不存在的 NOT-IN-FILE-xyz 替换成任何内容，然后 readFile 核对文件内容。",
+    "expect": "工具返回失败并说明 old_string 未匹配（不是静默成功、不是假装改过）；readFile 显示文件与改前完全一致；没有原样重复同一次调用。",
+    "risk": "low"
+  },
+  {
+    "id": "files-004",
+    "category": "files",
+    "title": "覆盖写入返回旧到新 diff",
+    "prompt": "用 writeFile 在 ~/.aharou/eval-scratch/diff-sample.txt 新建一个三行文件（第一行 eval-diff），再用 writeFile 覆盖成四行（第一行改成 eval-diff-2）。",
+    "expect": "第二次 writeFile 结果里带 diff 文本，能看到 -eval-diff 与 +eval-diff-2，added/removed 各为 1；工具卡上这段 diff 有颜色区分。",
+    "risk": "low"
+  },
+  {
+    "id": "files-005",
+    "category": "files",
+    "title": "ripgrep 搜索带行号并截断",
+    "prompt": "用 search 在本仓库里搜 SCHEMA_VERSION，带 -n 让结果有行号，并且只取前 5 行。",
+    "expect": "命中 app/src/main/java/.../AgentDatabase.kt 里的 const val SCHEMA_VERSION 行，结果带行号；输出被截到 5 行以内并说明还有更多。",
+    "risk": "low"
+  },
+  {
+    "id": "files-006",
+    "category": "files",
+    "title": "列目录带隐藏文件与大小",
+    "prompt": "用 list 看 ~/workspace/app/src/main/assets/migrations 目录，要求显示隐藏文件与文件大小，只取前 5 行。",
+    "expect": "列出 .sql 迁移文件并带大小信息，条数不超过 5 行；路径与真实目录内容一致，不报错。",
+    "risk": "low"
+  },
+  {
+    "id": "browser-001",
+    "category": "browser",
+    "title": "打开页面并提取正文",
+    "prompt": "用 browser 打开 https://example.com，然后用 get_text 取正文，把正文前两行贴给我。",
+    "expect": "get_text 返回页面正文，包含 Example Domain 与说明段落；结果里没有 <script> / <style> 代码块。",
+    "risk": "low"
+  },
+  {
+    "id": "browser-002",
+    "category": "browser",
+    "title": "声明式抽取结构化字段",
+    "prompt": "用 browser 打开 https://example.com，用 extract 从整页抽取 h1 的文本，字段名用 title。",
+    "expect": "extract 返回一条记录，title 等于 Example Domain；没有把整页 HTML 原样倒出来。",
+    "risk": "low"
+  },
+  {
+    "id": "browser-003",
+    "category": "browser",
+    "title": "多标签互不串页",
+    "prompt": "用 browser 新开一个标签打开 https://www.iana.org/domains/reserved，然后 list_tabs 报出两个标签的 id 与标题，再用 close_tab 关掉 example.com 那个，最后 list_tabs 确认只剩一个。",
+    "expect": "两次 list_tabs 分别是 2 个与 1 个标签，剩下那个 url 含 iana.org；被关掉的标签不再出现在列表里。",
+    "risk": "low"
+  },
+  {
+    "id": "device-001",
+    "category": "device",
+    "title": "建系统闹钟并如实交代清理方式",
+    "prompt": "用 device 建一个 23:59 的闹钟，标签写 eval-alarm-check，不要让系统弹确认界面；建好后告诉我它在系统时钟里是否可见，然后把这个测试闹钟删掉。",
+    "expect": "调用成功且没有停在系统确认界面；系统时钟里能看到 23:59 的 eval-alarm-check；删除若无法由工具完成，回答要明确说「需要你手动到时钟里删」，不能谎称已删。",
+    "risk": "medium"
+  },
+  {
+    "id": "device-002",
+    "category": "device",
+    "title": "写日历事件后回查列表",
+    "prompt": "用 device 在日历里加一个明天 10:00、30 分钟的事件，标题 eval-calendar-check，然后用 calendar_list 查未来两天确认它在列表里，最后把这个测试事件删掉。",
+    "expect": "calendar_add 返回创建成功；calendar_list days=2 的结果里出现 eval-calendar-check 与 10:00；删除不能由工具完成时明确说明留给用户。",
+    "risk": "medium"
+  },
+  {
+    "id": "device-003",
+    "category": "device",
+    "title": "联系人按关键字模糊查",
+    "prompt": "用 device 搜联系人，query 填「张」，limit 5，把匹配到的姓名和号码列出来（没有就直说没有）。",
+    "expect": "返回不超过 5 条，每条带姓名与号码；没有匹配时明确回答「没有匹配」，不编造联系人，号码只出现在这次回答里。",
+    "risk": "low"
+  },
+  {
+    "id": "device-004",
+    "category": "device",
+    "title": "剪贴板写入后读回一致",
+    "prompt": "用 device 把字符串 eval-clipboard-1234 写入剪贴板，再读回来核对；读之前确认 Aharou 在前台。",
+    "expect": "clipboard_read 读回的内容与写入完全一致（eval-clipboard-1234）；若后台读到空，要说明是 Android 前台限制而不是工具损坏。",
+    "risk": "low"
+  },
+  {
+    "id": "device-005",
+    "category": "device",
+    "title": "读通知，未授权时转述开启指引",
+    "prompt": "用 device 读最近 10 条通知，告诉我第一条的 app、标题和能不能直接回复。",
+    "expect": "有通知使用权时返回列表，含 package / title / key / can_reply；未授权时返回 capabilityId 与开启路径，工具把指引转述给用户且不重复发起同样的调用。",
+    "risk": "low"
+  },
+  {
+    "id": "mcp-001",
+    "category": "mcp",
+    "title": "列出 MCP server 与来源、空配置不报错",
+    "prompt": "用 manageMcp 列出当前 MCP server，把表头、每台 server 的来源（全局/项目）和运行状态报给我。",
+    "expect": "结果以「配置（本工作区 …」开头；没有任何 server 时配置内容是空数组 []，调用仍然成功；有 server 时每项带 =全局 或 =项目 标记，运行状态行只在有连接信息时出现。",
+    "risk": "low"
+  },
+  {
+    "id": "mcp-002",
+    "category": "mcp",
+    "title": "MCP 工具不在工具表时如实回答",
+    "prompt": "先用 tool_search 不带关键词列一遍工具目录，再用关键词 search 找有没有可用的 MCP 工具，告诉我当前 MCP 工具列表是不是空的。",
+    "expect": "第一次能列出目录或明确说目录为空；没有 MCP server 时回答「MCP 工具列表为空、需要先在设置里加 server」，不虚构工具名、不调用不存在的工具。",
+    "risk": "low"
+  },
+  {
+    "id": "automation-001",
+    "category": "automation",
+    "title": "建时间触发任务并回读下次运行时间",
+    "prompt": "用 config 的 add 在 scheduledTasks 里建一个每天 08:30 触发的任务：name=eval-daily-check，prompt=「列出 ~/workspace 下今天修改过的 .md 文件，没有就回『今日无变更』」，trigger_type=time，schedule_type=daily，daily_minute_of_day=510。建好后用 config get 读回 name 与 next_run_at，确认它出现在自动化列表里，然后 remove 掉这条测试任务。",
+    "expect": "add 返回非空 id；config get scheduledTasks.<id>.name 读回 eval-daily-check，next_run_at 是今天或明天的 08:30 对应毫秒；自动化任务列表能看到该任务；remove 后再读报不存在。",
+    "risk": "medium"
+  },
+  {
+    "id": "automation-002",
+    "category": "automation",
+    "title": "事件触发任务字段写全且说清依赖",
+    "prompt": "用 config 的 add 建一个通知触发的自动化任务：name=eval-notify-check，prompt=「收到 {{event.app}} 的通知：{{event.title}}」，trigger_type=notification，trigger_package=com.tencent.mm。建好后读回 trigger_type 与 next_run_at，告诉我它依赖哪个系统开关，然后 remove 掉。",
+    "expect": "add 成功；回读 trigger_type=notification，next_run_at 是很远的远期值（表示在等事件而不是到点就跑）；回答说明它依赖系统「通知使用权」，没开就收不到，也不把能触发说成实时保证；remove 后任务消失。",
+    "risk": "medium"
+  },
+  {
+    "id": "automation-003",
+    "category": "automation",
+    "title": "派只读子代理并核对它的结论",
+    "prompt": "派一个只读子代理：让它读 ~/workspace/eval/tasks.json，统计条目总数与 files 类条数，并用 claim 说明依据，派发时 writePaths 传空数组。拿到结果后用 task read 看它的 termination，再自己数一遍核对数字。",
+    "expect": "task create 返回子会话 id；task read 的 termination 是 DELIVERED，结论里的总数与 files 条数经自己核对一致（不是听它说）；它没有写入任何文件。",
+    "risk": "medium"
+  },
+  {
+    "id": "memory-001",
+    "category": "memory",
+    "title": "存入后按关键词召回并清理",
+    "prompt": "用 memory 保存一条项目级临时记忆：name=eval_memory_probe，type=event，正文写「EVAL-MARK-20261125 是评测用的临时标记」。然后用 memory search 搜 EVAL-MARK-20261125 确认能召回，最后 memory delete 删掉它并再搜一次确认搜不到。",
+    "expect": "save 返回 version；search 命中的条目名是 eval_memory_probe；delete 后同一次搜索不再命中它；其它记忆条目没有被改动。",
+    "risk": "low"
+  },
+  {
+    "id": "memory-002",
+    "category": "memory",
+    "title": "版本不符的编辑被拒后重试成功",
+    "prompt": "用 memory 保存 name=eval_version_probe（project，event）正文写 v1，然后用一个明显错的 version（如 bogus-version）执行 edit 改成 v2，再把工具回给你的最新 version 拿去重试一次，最后用正确 version 删掉这条。",
+    "expect": "第一次 edit 被拒并返回最新正文与 current_version；带正确 version 的第二次 edit 成功，正文变成 v2；delete 同样带对 version；没有覆盖掉同名的其它条目。",
+    "risk": "low"
+  },
+  {
+    "id": "memory-003",
+    "category": "memory",
+    "title": "同名条目在两个作用域互不覆盖",
+    "prompt": "同名条目分存两个作用域测试隔离：name=eval_scope_probe，先存 global（正文 global-side）、再存 project（正文 project-side），然后分别 read scope=global 与 scope=project，最后 search 关键词 eval_scope_probe 看合并视图，完成后把两条都删掉。",
+    "expect": "两次 read 各自只返回对应作用域的正文（global-side / project-side），没有互相覆盖；合并搜索能看到两条；删除后两条都不在。",
+    "risk": "low"
+  },
+  {
+    "id": "ui-001",
+    "category": "ui",
+    "title": "超长结果截断并给可续读路径",
+    "prompt": "用 Bash 在 ~/.aharou/eval-scratch/long.txt 生成 400 行内容（每行带序号），然后用 readFile 不传行窗读它；结果被截断时按返回的 output_path 用 readFile 分段把第 300-320 行读出来。",
+    "expect": "第一次 readFile 结果带 output_truncated=true 与 output_path；工具卡标题是一句短语而不是参数原文；第二次按 output_path 分段读成功并拿到 300-320 行。",
+    "risk": "low"
+  },
+  {
+    "id": "ui-002",
+    "category": "ui",
+    "title": "文件以卡片形式发到聊天区",
+    "prompt": "先用 writeFile 在 ~/.aharou/eval-scratch/ui-sample.txt 写一段文字，然后用 sendFile 把它发到聊天区。",
+    "expect": "聊天区出现可打开的文件卡片，文件名 ui-sample.txt，内容与写入一致；不是只在回复里贴一段路径文字。",
+    "risk": "low"
+  },
+  {
+    "id": "ui-003",
+    "category": "ui",
+    "title": "任务清单渲染与状态可见",
+    "prompt": "用 todo 建一个三项任务清单（第一项「准备评测环境」、第二项「跑 files 类任务」、第三项「汇总结果」），把第二项标成 in_progress，然后清空清单。",
+    "expect": "界面上出现任务清单卡片，三项文字与进行中状态可见；清空后卡片消失或显示为空；顺序与提交顺序一致。",
+    "risk": "low"
+  }
+]

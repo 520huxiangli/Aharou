@@ -50,6 +50,7 @@ import com.aharou.core.ui.SwipeToDeleteRow
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
+import com.aharou.feature.agent.domain.schedule.trigger.GeofenceTriggerManager
 import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
 import com.aharou.feature.settings.presentation.ScheduledTasksViewModel
 import compose.icons.FeatherIcons
@@ -62,14 +63,6 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 /** 值得在列表里提示的 [ScheduledTaskEntity.lastOutcome] 取值；其余（如 dispatched）不打扰用户。 */
-private const val OUTCOME_SKIPPED = "skipped"
-private const val OUTCOME_SKIPPED_MISSED = "skipped_missed"
-private const val OUTCOME_SKIPPED_CONDITION = "skipped_condition"
-private const val OUTCOME_SKIPPED_DEBOUNCE = "skipped_debounce"
-private const val OUTCOME_SKIPPED_RUNNING = "skipped_running"
-private const val OUTCOME_SKIPPED_DUPLICATE = "skipped_duplicate"
-private const val OUTCOME_SKIPPED_DEDUP_FULL = "skipped_dedup_full"
-private const val OUTCOME_FAILED = "failed"
 
 private const val MAX_SESSION_CHOICES = 30
 
@@ -80,6 +73,7 @@ private const val DEFAULT_DEBOUNCE_MINUTES = 10
 internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltViewModel()) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
+    val paused by viewModel.paused.collectAsStateWithLifecycle()
 
     var editing by remember { mutableStateOf<ScheduledTaskEntity?>(null) }
     var showEditor by remember { mutableStateOf(false) }
@@ -113,6 +107,14 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = Spacing.lg, vertical = 12.dp)
+            )
+        }
+
+        SettingsGroup {
+            SwitchRow(
+                title = stringResource(R.string.scheduled_tasks_paused),
+                checked = paused,
+                onCheckedChange = { viewModel.setPaused(it) }
             )
         }
 
@@ -187,6 +189,13 @@ internal fun ScheduledTasksSection(viewModel: ScheduledTasksViewModel = hiltView
                     triggerBatteryBelow = draft.triggerBatteryBelow,
                     triggerOnCharging = draft.triggerOnCharging,
                     triggerSsid = draft.triggerSsid,
+                    triggerLatitude = draft.triggerLatitude,
+                    triggerLongitude = draft.triggerLongitude,
+                    triggerRadiusMeters = draft.triggerRadiusMeters,
+                    triggerOnEnter = draft.triggerOnEnter,
+                    triggerOnExit = draft.triggerOnExit,
+                    triggerMcpServer = draft.triggerMcpServer,
+                    triggerMcpResourceUri = draft.triggerMcpResourceUri,
                     conditionWindowFrom = draft.conditionWindowFrom,
                     conditionWindowTo = draft.conditionWindowTo,
                     condRequireCharging = draft.condRequireCharging,
@@ -364,93 +373,6 @@ private fun timeDescription(task: ScheduledTaskEntity, limitText: String): Strin
     )
 }
 
-@Composable
-private fun eventDescription(task: ScheduledTaskEntity, limitText: String): String = when (task.triggerType) {
-    ScheduledTaskEntity.TYPE_NOTIFICATION -> if (task.triggerPackage.isBlank()) {
-        stringResource(R.string.scheduled_tasks_desc_notification, task.runCount, limitText)
-    } else {
-        stringResource(
-            R.string.scheduled_tasks_desc_notification_app,
-            task.triggerPackage,
-            task.runCount,
-            limitText
-        )
-    }
-
-    ScheduledTaskEntity.TYPE_BATTERY -> when {
-        task.triggerBatteryBelow >= 0 -> stringResource(
-            R.string.scheduled_tasks_desc_battery_below,
-            task.triggerBatteryBelow,
-            task.runCount,
-            limitText
-        )
-        task.triggerOnCharging -> stringResource(
-            R.string.scheduled_tasks_desc_battery_charging,
-            task.runCount,
-            limitText
-        )
-        else -> stringResource(R.string.scheduled_tasks_desc_battery, task.runCount, limitText)
-    }
-
-    ScheduledTaskEntity.TYPE_NETWORK -> if (task.triggerSsid.isBlank()) {
-        stringResource(R.string.scheduled_tasks_desc_network, task.runCount, limitText)
-    } else {
-        stringResource(
-            R.string.scheduled_tasks_desc_network_ssid,
-            task.triggerSsid,
-            task.runCount,
-            limitText
-        )
-    }
-
-    ScheduledTaskEntity.TYPE_APP_START -> stringResource(
-        R.string.scheduled_tasks_desc_app_start,
-        task.runCount,
-        limitText
-    )
-
-    else -> stringResource(R.string.scheduled_tasks_desc_boot, task.runCount, limitText)
-}
-
-/** 上次结果里值得说一句的那几种；没说头的结果返回 null。 */
-@StringRes
-private fun outcomeLabel(outcome: String?): Int? {
-    if (outcome == null) return null
-    return when {
-        // 带原因后缀的取值见 ScheduledTaskWorker.outcomeOf；旧数据没有后缀，回落到通用文案
-        outcome.startsWith("$OUTCOME_SKIPPED_CONDITION:") ->
-            conditionReasonLabel(outcome.substringAfter(':'))
-        outcome == OUTCOME_SKIPPED_CONDITION -> R.string.scheduled_tasks_skipped_condition
-        outcome == OUTCOME_SKIPPED || outcome == OUTCOME_SKIPPED_MISSED -> R.string.scheduled_tasks_missed
-        outcome == OUTCOME_SKIPPED_DEBOUNCE -> R.string.scheduled_tasks_skipped_debounce
-        outcome == OUTCOME_SKIPPED_RUNNING -> R.string.scheduled_tasks_skipped_running
-        outcome == OUTCOME_SKIPPED_DUPLICATE -> R.string.scheduled_tasks_skipped_duplicate
-        outcome == OUTCOME_SKIPPED_DEDUP_FULL -> R.string.scheduled_tasks_skipped_dedup_full
-        outcome == OUTCOME_FAILED -> R.string.scheduled_tasks_failed
-        else -> null
-    }
-}
-
-/** 具体是哪条条件没过；认不出的后缀回落到通用「条件不满足」。 */
-@StringRes
-private fun conditionReasonLabel(reason: String): Int = when (reason) {
-    "out_of_window" -> R.string.scheduled_tasks_skip_reason_window
-    "not_charging" -> R.string.scheduled_tasks_skip_reason_charging
-    "battery_too_low" -> R.string.scheduled_tasks_skip_reason_battery
-    "state_unknown" -> R.string.scheduled_tasks_skip_reason_unknown
-    else -> R.string.scheduled_tasks_skipped_condition
-}
-
-@StringRes
-private fun triggerLabel(type: String): Int = when (type) {
-    ScheduledTaskEntity.TYPE_NOTIFICATION -> R.string.scheduled_tasks_trigger_notification
-    ScheduledTaskEntity.TYPE_BATTERY -> R.string.scheduled_tasks_trigger_battery
-    ScheduledTaskEntity.TYPE_NETWORK -> R.string.scheduled_tasks_trigger_network
-    ScheduledTaskEntity.TYPE_BOOT -> R.string.scheduled_tasks_trigger_boot
-    ScheduledTaskEntity.TYPE_APP_START -> R.string.scheduled_tasks_trigger_app_start
-    else -> R.string.scheduled_tasks_trigger_time
-}
-
 private data class ScheduledTaskDraft(
     val name: String,
     val prompt: String,
@@ -467,6 +389,13 @@ private data class ScheduledTaskDraft(
     val triggerBatteryBelow: Int,
     val triggerOnCharging: Boolean,
     val triggerSsid: String,
+    val triggerLatitude: Double?,
+    val triggerLongitude: Double?,
+    val triggerRadiusMeters: Int,
+    val triggerOnEnter: Boolean,
+    val triggerOnExit: Boolean,
+    val triggerMcpServer: String,
+    val triggerMcpResourceUri: String,
     val conditionWindowFrom: Int,
     val conditionWindowTo: Int,
     val condRequireCharging: Boolean,
@@ -512,6 +441,13 @@ private fun ScheduledTaskEditorSheet(
     var minBatteryText by remember { mutableStateOf(percentText(initial?.condMinBattery)) }
     var windowFromText by remember { mutableStateOf(minuteText(initial?.conditionWindowFrom)) }
     var windowToText by remember { mutableStateOf(minuteText(initial?.conditionWindowTo)) }
+    var locationLatText by remember { mutableStateOf(initial?.triggerLatitude?.toString().orEmpty()) }
+    var locationLonText by remember { mutableStateOf(initial?.triggerLongitude?.toString().orEmpty()) }
+    var locationRadiusText by remember { mutableStateOf((initial?.triggerRadiusMeters ?: 200).toString()) }
+    var locationOnEnter by remember { mutableStateOf(initial?.triggerOnEnter ?: true) }
+    var locationOnExit by remember { mutableStateOf(initial?.triggerOnExit ?: true) }
+    var mcpServer by remember { mutableStateOf(initial?.triggerMcpServer.orEmpty()) }
+    var mcpResourceUri by remember { mutableStateOf(initial?.triggerMcpResourceUri.orEmpty()) }
 
     val isTimeTrigger = TriggerType.isTimeTrigger(triggerType)
     val minInterval = ScheduledTaskScheduler.MIN_INTERVAL_MINUTES
@@ -528,6 +464,20 @@ private fun ScheduledTaskEditorSheet(
     val minBatteryInvalid = minBatteryText.isNotBlank() && minBattery !in 0..100
     val windowFromInvalid = windowFromText.isNotBlank() && windowFrom == null
     val windowToInvalid = windowToText.isNotBlank() && windowTo == null
+    // 两个都空 = 还没选地点（允许存，只是不会注册围栏）；只填一边或超范围才算填错，拦住保存。
+    val locationLat = locationLatText.trim().toDoubleOrNull()
+    val locationLon = locationLonText.trim().toDoubleOrNull()
+    val locationHalfFilled = locationLatText.isNotBlank() != locationLonText.isNotBlank()
+    val locationOutOfRange = (locationLat != null && locationLat !in -90.0..90.0) ||
+        (locationLon != null && locationLon !in -180.0..180.0)
+    val locationInvalid = triggerType == ScheduledTaskEntity.TYPE_LOCATION &&
+        (locationHalfFilled || locationOutOfRange)
+    val locationRadiusValue = locationRadiusText.toIntOrNull()
+        ?.coerceIn(GeofenceTriggerManager.MIN_RADIUS_METERS, GeofenceTriggerManager.MAX_RADIUS_METERS)
+        ?: 200
+    // 两个都空 = 还没配（允许存，只是不会订阅）；只填一个属于填了一半，拦住保存。
+    val mcpIncomplete = triggerType == ScheduledTaskEntity.TYPE_MCP_RESOURCE &&
+        mcpServer.isBlank() != mcpResourceUri.isBlank()
     val scheduleReady = when {
         // 事件类触发不看到点时间，时间参数空着也照样能存。
         !isTimeTrigger -> true
@@ -537,6 +487,7 @@ private fun ScheduledTaskEditorSheet(
     }
     val canSave = name.isNotBlank() && prompt.isNotBlank() && scheduleReady &&
         !batteryBelowInvalid && !minBatteryInvalid && !windowFromInvalid && !windowToInvalid &&
+        !locationInvalid && !mcpIncomplete &&
         (!useExisting || selectedSessionId != null)
 
     AdaptiveModalBottomSheet(onDismissRequest = onDismiss) {
@@ -683,6 +634,28 @@ private fun ScheduledTaskEditorSheet(
                         text = stringResource(R.string.scheduled_tasks_trigger_app_start_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    ScheduledTaskEntity.TYPE_MCP_RESOURCE -> ScheduledTaskMcpFields(
+                        serverText = mcpServer,
+                        onServerChange = { mcpServer = it },
+                        uriText = mcpResourceUri,
+                        onUriChange = { mcpResourceUri = it },
+                        incomplete = mcpIncomplete,
+                    )
+
+                    ScheduledTaskEntity.TYPE_LOCATION -> ScheduledTaskLocationFields(
+                        latitudeText = locationLatText,
+                        onLatitudeChange = { locationLatText = it },
+                        longitudeText = locationLonText,
+                        onLongitudeChange = { locationLonText = it },
+                        radiusText = locationRadiusText,
+                        onRadiusChange = { locationRadiusText = it },
+                        enterEnabled = locationOnEnter,
+                        onEnterChange = { locationOnEnter = it },
+                        exitEnabled = locationOnExit,
+                        onExitChange = { locationOnExit = it },
+                        coordinateInvalid = locationInvalid,
                     )
 
                     else -> Text(
@@ -845,6 +818,13 @@ private fun ScheduledTaskEditorSheet(
                                 triggerBatteryBelow = batteryBelow.coerceIn(-1, 100),
                                 triggerOnCharging = chargingStart,
                                 triggerSsid = ssid.trim(),
+                                triggerLatitude = locationLat,
+                                triggerLongitude = locationLon,
+                                triggerRadiusMeters = locationRadiusValue,
+                                triggerOnEnter = locationOnEnter,
+                                triggerOnExit = locationOnExit,
+                                triggerMcpServer = mcpServer.trim(),
+                                triggerMcpResourceUri = mcpResourceUri.trim(),
                                 conditionWindowFrom = windowFrom ?: -1,
                                 conditionWindowTo = windowTo ?: -1,
                                 condRequireCharging = requireCharging,

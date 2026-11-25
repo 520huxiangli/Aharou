@@ -411,6 +411,18 @@ class McpManager @Inject constructor(
         }
     }
 
+    /**
+     * 取某个 server 当前的 client（只读，不触发重连、不改变任何状态）。
+     *
+     * 给需要长会话的能力（资源订阅）用：管理层不替调用方订阅任何东西，订阅与退订、
+     * 以及重新连上后的重订全部由上层自己做；这里只负责把「当前这条会话」交出去。
+     * 返回 null 表示该 server 现在没有可用连接，调用方应等待/重试，别自己建连接绕开管理层。
+     */
+    fun clientFor(serverName: String, workspacePath: String = activeWorkspace): McpClient? =
+        synchronized(runtimes) {
+            runtimes[workspacePath.ifBlank { activeWorkspace }]?.clients?.get(serverName)
+        }
+
     /** 仅重连活动工作区的单个 server（保存/启用开关/编辑刷新用）。 */
     suspend fun reloadServer(name: String) = reloadMutex.withLock {
         val path = activeWorkspace.ifBlank { return@withLock }

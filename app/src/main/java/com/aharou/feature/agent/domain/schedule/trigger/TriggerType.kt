@@ -18,6 +18,8 @@ object TriggerType {
         ScheduledTaskEntity.TYPE_NETWORK,
         ScheduledTaskEntity.TYPE_BOOT,
         ScheduledTaskEntity.TYPE_APP_START,
+        ScheduledTaskEntity.TYPE_LOCATION,
+        ScheduledTaskEntity.TYPE_MCP_RESOURCE,
     )
 
     fun isTimeTrigger(type: String): Boolean = type == ScheduledTaskEntity.TYPE_TIME

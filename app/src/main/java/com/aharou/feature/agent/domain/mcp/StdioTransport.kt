@@ -13,7 +13,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.BufferedWriter
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -27,7 +31,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * 进程由调用方通过 [startProcess] 拉起：本地是 proot 容器内的 `npx -y some-server`，
  * 远程是 SSH 通道上的同名命令。首次 [request]/[notify] 时惰性启动（[startMutex] 串行化）。stdout 读循环把每条带 id 的响应路由到
- * 对应的 pending [CompletableDeferred]；server 主动发来的请求/通知（带 method）当前不支持，记录后忽略。
+ * 对应的 pending [CompletableDeferred]；server 主动推送的无 id 通知（如 `notifications/resources/updated`）
+ * 交给 [setNotificationHandler] 注册的回调，没人注册时仅记日志丢弃。
  *
  * 与 [StreamableHttpTransport] 对等：协议错误以 [McpException] 抛出，由 [McpClient]/[McpManager]
  * 按 server 粒度兜底，单个 server 失败不影响其它 server 与整个 Agent。
@@ -75,6 +80,9 @@ class StdioTransport(
     @Volatile private var process: Process? = null
     @Volatile private var writer: BufferedWriter? = null
     @Volatile private var closed = false
+
+    /** server 主动推送消息的回调；null 时保持旧行为（只记日志丢弃）。 */
+    @Volatile private var notificationHandler: ((String, JsonElement?) -> Unit)? = null
 
     /** [onClosed] 只回调一次：读循环结束与 [close] 都可能走到同一收尾路径。 */
     private val closedNotified = AtomicBoolean(false)
@@ -124,6 +132,10 @@ class StdioTransport(
     /** 传输是否仍然可用：未主动关闭且子进程还活着。管理层据此摘除死连接。 */
     override val isAlive: Boolean
         get() = !closed && process?.isAlive == true
+
+    override fun setNotificationHandler(handler: ((method: String, params: JsonElement?) -> Unit)?) {
+        notificationHandler = handler
+    }
 
     /**
      * 通知上层「这条 stdio 已经结束」（子进程退出 / 管道断开）。
@@ -182,7 +194,7 @@ class StdioTransport(
         }
     }
 
-    /** 逐行读 stdout，把每条响应按 id 路由到对应 pending；非响应（带 method 或不可解析）忽略。 */
+    /** 逐行读 stdout：带 id 的响应路由到 pending，无 id 的 server 通知交给回调，其余（不可解析 / server 请求）记日志。 */
     private fun readLoop(p: Process) {
         val reader = p.inputStream.bufferedReader()
         try {
@@ -197,9 +209,17 @@ class StdioTransport(
                     FileLogger.i(TAG, "[$serverName] 跳过非 JSON 行: $line")
                     continue
                 }
-                // 带 method 的是 server→client 的请求/通知（如 sampling/roots），当前不支持，忽略。
+                // 带 method 的是 server→client 消息：无 id 的是通知（交给注册的回调），带 id 的是请求
+                // （如 sampling/roots，需要应答，我们尚未实现——明确记一条而不是当作协议错误）。
                 if (obj.containsKey("method")) {
-                    FileLogger.d(TAG, "[$serverName] 忽略 server 主动消息: ${obj["method"]}")
+                    val method = (obj["method"] as? JsonPrimitive)?.contentOrNull
+                    val idElement = obj["id"]
+                    val isRequest = idElement != null && idElement !is JsonNull
+                    when {
+                        method == null -> FileLogger.d(TAG, "[$serverName] 跳过无 method 的 server 消息")
+                        isRequest -> FileLogger.w(TAG, "[$serverName] 暂不支持 server 主动请求，未应答: $method")
+                        else -> dispatchNotification(method, obj["params"])
+                    }
                     continue
                 }
 
@@ -241,6 +261,22 @@ class StdioTransport(
         } else {
             FileLogger.w(TAG, "[$serverName] 进程已退出 exitCode=$code")
         }
+    }
+
+    /**
+     * 把一条 server 通知交给上层回调。
+     *
+     * handler 抛异常必须咽下：它在 stdout 读循环里执行，漏出去会让整个读循环结束，
+     * 表现成「服务端随机掉线重连」。
+     */
+    private fun dispatchNotification(method: String, params: JsonElement?) {
+        val handler = notificationHandler
+        if (handler == null) {
+            FileLogger.d(TAG, "[$serverName] 收到 server 通知（无接收方）: $method")
+            return
+        }
+        runCatching { handler(method, params) }
+            .onFailure { FileLogger.w(TAG, "[$serverName] 通知回调异常（已忽略）: ${it.message}") }
     }
 
     /** server 的诊断日志写在 stderr，单独排空并记录（npx 拉包输出也在这，提到 INFO 便于定位安装失败）。 */

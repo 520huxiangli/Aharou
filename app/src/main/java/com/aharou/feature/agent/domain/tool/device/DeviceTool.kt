@@ -1,9 +1,14 @@
 package com.aharou.feature.agent.domain.tool.device
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.personal.DeviceReadCategory
+import com.aharou.feature.agent.domain.personal.DeviceReadQuota
+import com.aharou.feature.agent.domain.personal.DeviceReadQuotaDecision
 import com.aharou.feature.agent.domain.personal.PersonalAccessText
 import com.aharou.feature.agent.domain.personal.PersonalCapability
 import com.aharou.feature.agent.domain.personal.PersonalContextAccess
+import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
@@ -12,15 +17,20 @@ import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 /**
  * 设备能力工具：让 Agent 用上手机本体（闹钟、日历、联系人、剪贴板、定位、天气、媒体、设备状态、相册）。
@@ -43,8 +53,10 @@ class DeviceTool @Inject constructor(
     private val weather: WeatherHandler,
     private val media: MediaHandler,
     private val notification: NotificationHandler,
+    private val sms: SmsSendHandler,
     private val personalAccess: PersonalContextAccess,
     private val personalText: PersonalAccessText,
+    private val readQuota: DeviceReadQuota,
 ) : AgentTool() {
 
     private companion object {
@@ -53,7 +65,7 @@ class DeviceTool @Inject constructor(
         /** 会改变设备状态的动作：只有它们这次调用才算「改设备」。 */
         val WRITE_ACTIONS = setOf(
             "alarm", "timer", "clipboard_write", "calendar_add", "contacts_add", "media_control",
-            "notification_send", "notification_reply",
+            "notification_send", "notification_reply", "sms_send",
         )
 
         val ACTIONS = listOf(
@@ -64,6 +76,7 @@ class DeviceTool @Inject constructor(
             "location", "weather", "media_control",
             "notification_read", "notification_send", "notification_reply",
             "device_info", "photos_recent",
+            "sms_preview", "sms_send", "sms_results",
         )
 
         val TIME_PATTERNS = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd")
@@ -85,8 +98,14 @@ class DeviceTool @Inject constructor(
             "notification_send=发一条通知提醒用户（title、text）；" +
             "notification_reply=直接在通知里回复（key 取自 notification_read，text 为回复内容；只有 can_reply=true 的通知能回）；" +
             "device_info=机型/系统/电量/存储/内存/网络快照；" +
-            "photos_recent=相册最近图片的元数据（limit 默认 20、最多 200，只给文件名与路径，不给图片本体）。" +
-            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体、发通知、回复通知按写操作处理。" +
+            "photos_recent=相册最近图片的元数据（limit 默认 20、最多 200，只给文件名与路径，不给图片本体）；" +
+            "sms_preview=发短信前必须先预览（phone、text）：给出字符数、按运营商口径估算的条数与 5 分钟内有效的一次性 token，" +
+            "并提示可能产生的费用，这一步不会发出任何短信；" +
+            "sms_send=真正发出短信（phone、text、token）：token 必须来自号码与正文完全一致的 sms_preview，用完即失效，没预览过会被直接拒绝；" +
+            "sms_results=查最近的短信发送记录（limit 默认 10、最多 50）：status 是「交给运营商没有」，" +
+            "delivery_status 是「运营商确认收件人收到没有」，后者依赖运营商状态报告，缺省停在 pending，不要拿它断言没送到。" +
+            "读类动作免确认；建闹钟、写日历联系人、写剪贴板、控制媒体、发通知、回复通知、发短信按写操作处理。" +
+            "短信发出去就撤不回：务必先预览、把号码与正文念给用户确认，再发。" +
             "权限不足时错误里带 capabilityId 与「去系统设置哪里开」，不要自动重试；" +
             "想知道各能力当前能不能用（含短信/通话记录/应用使用统计），先调 personal_context(action=capabilities)。"
 
@@ -118,9 +137,21 @@ class DeviceTool @Inject constructor(
         "description" to ToolParameter("description", ParameterType.STRING, "calendar_add 专用：备注", false),
         "query" to ToolParameter("query", ParameterType.STRING, "contacts_search 专用：名字或号码片段，留空列出前几条", false),
         "name" to ToolParameter("name", ParameterType.STRING, "contacts_add 专用：联系人姓名", false),
-        "phone" to ToolParameter("phone", ParameterType.STRING, "contacts_add 专用：电话号码", false),
+        "phone" to ToolParameter(
+            "phone", ParameterType.STRING,
+            "contacts_add：联系人电话号码；sms_preview / sms_send：收信人号码（可带 + 与国际区号）", false,
+        ),
         "email" to ToolParameter("email", ParameterType.STRING, "contacts_add 专用：邮箱", false),
-        "text" to ToolParameter("text", ParameterType.STRING, "clipboard_write：要写入剪贴板的文本；notification_send：通知正文；notification_reply：要发出的回复内容", false),
+        "text" to ToolParameter(
+            "text", ParameterType.STRING,
+            "clipboard_write：要写入剪贴板的文本；notification_send：通知正文；notification_reply：要发出的回复内容；" +
+                "sms_preview / sms_send：短信正文（发送时必须与预览时完全一致）",
+            false,
+        ),
+        "token" to ToolParameter(
+            "token", ParameterType.STRING,
+            "sms_send 专用：sms_preview 返回的一次性 token，5 分钟内有效，且必须与 phone / text 完全对应", false,
+        ),
         "key" to ToolParameter(
             "key", ParameterType.STRING,
             "notification_reply 专用：notification_read 返回的那条通知的 key", false,
@@ -133,11 +164,54 @@ class DeviceTool @Inject constructor(
             false,
             enum = listOf("play", "pause", "toggle", "next", "previous", "stop", "volume_up", "volume_down", "mute"),
         ),
-        "limit" to ToolParameter("limit", ParameterType.INTEGER, "photos_recent / contacts_search 专用：返回条数", false),
+        "limit" to ToolParameter("limit", ParameterType.INTEGER, "photos_recent / contacts_search / sms_results 专用：返回条数", false),
     )
 
     override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> =
         if (action(args) in WRITE_ACTIONS) setOf(ToolCapability.MODIFY_DEVICE_STATE) else capabilities
+
+    /**
+     * 后台自动触发的轮次里，读位置与通知要先过配额。用户手打的轮次不受约束，
+     * 所以判定依据是 [AgentContext.turnTrigger] 而不是「有没有配额配置」。
+     */
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext,
+    ): ToolResult {
+        if (context.turnTrigger == AgentTurnTrigger.SCHEDULED_TASK) {
+            val act = action(args)
+            val category = when (act) {
+                "location" -> DeviceReadCategory.LOCATION
+                // weather 不给城市时会自己走定位，与直接读位置是同一笔消耗。
+                "weather" -> if (args.str("city").isNullOrBlank()) DeviceReadCategory.LOCATION else null
+                "notification_read" -> DeviceReadCategory.NOTIFICATION
+                else -> null
+            }
+            if (category != null) {
+                val decision = readQuota.checkAndRecord(category)
+                if (!decision.allowed) return quotaExceeded(decision)
+            }
+        }
+        return execute(args)
+    }
+
+    private fun quotaExceeded(decision: DeviceReadQuotaDecision): ToolResult {
+        val what = when (decision.category) {
+            DeviceReadCategory.LOCATION -> "位置"
+            DeviceReadCategory.NOTIFICATION -> "通知"
+            DeviceReadCategory.SMS -> "短信"
+        }
+        val why = when (decision.reason) {
+            DeviceReadQuota.REASON_TOO_FREQUENT -> "距上一次读取太近"
+            else -> "24 小时内已读 ${decision.used} 次，达到 ${decision.limit} 次上限"
+        }
+        return ToolResult.Error(
+            "后台自动读取$what 的配额已用尽：$why。约 ${decision.retryAfterSeconds} 秒后可再读。" +
+                "这次是自动化任务发起的运行，用户不在跟前；不要改用别的 action 绕开，" +
+                "也不要连续重试。把「需要用户手动确认才能继续读取$what」写进结果交给用户。",
+            "DEVICE_READ_QUOTA_EXCEEDED",
+        )
+    }
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         val act = action(args)
@@ -247,6 +321,99 @@ class DeviceTool @Inject constructor(
                     }
                 }
 
+                "sms_preview" -> {
+                    val phone = args.str("phone")
+                    val text = args.str("text")
+                    when {
+                        phone == null -> ToolResult.Error("sms_preview 需要 phone", "MISSING_PHONE")
+                        text == null -> ToolResult.Error("sms_preview 需要非空 text", "MISSING_TEXT")
+                        else -> when (val preview = sms.preview(phone, text)) {
+                            is SmsSendHandler.PreviewResult.Rejected ->
+                                ToolResult.Error(preview.message, preview.code)
+                            is SmsSendHandler.PreviewResult.Ready -> ToolResult.Success(buildJsonObject {
+                                put("phone", preview.phone)
+                                put("text", preview.text)
+                                put("chars", preview.chars)
+                                put("segments", preview.segments)
+                                put("token", preview.token)
+                                put("token_valid_seconds", preview.validSeconds)
+                                put("note", preview.costNote)
+                            })
+                        }
+                    }
+                }
+
+                "sms_send" -> {
+                    val phone = args.str("phone")
+                    val text = args.str("text")
+                    val token = args.str("token")
+                    when {
+                        phone == null -> ToolResult.Error("sms_send 需要 phone", "MISSING_PHONE")
+                        text == null -> ToolResult.Error(
+                            "sms_send 需要非空 text，且必须与预览时一字不差",
+                            "MISSING_TEXT",
+                        )
+                        token == null -> ToolResult.Error(
+                            "sms_send 需要 token：先 sms_preview 预览一次，再把它返回的 token 原样传回来",
+                            "SMS_PREVIEW_REQUIRED",
+                        )
+                        else -> when (val sent = sms.send(phone, text, token)) {
+                            is SmsSendHandler.SendResult.Rejected -> ToolResult.Error(sent.message, sent.code)
+                            is SmsSendHandler.SendResult.Submitted -> ToolResult.Success(buildJsonObject {
+                                put("record_id", sent.recordId)
+                                put("phone", sent.phone)
+                                put("segments", sent.segments)
+                                put("status", "pending")
+                                put(
+                                    "note",
+                                    "已交给系统短信服务，回执还没回来。过几秒用 sms_results 查这条 record_id 的真实结果，" +
+                                        "再告诉用户成没成；不要因为这里没报错就说「已送达」。",
+                                )
+                            })
+                        }
+                    }
+                }
+
+                "sms_results" -> {
+                    val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 10).coerceIn(1, 50)
+                    val records = sms.lastResults(limit)
+                    // SimpleDateFormat 不是线程安全的，每次现建一个——工具可能被多个会话并发调用。
+                    val timeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                    ToolResult.Success(buildJsonObject {
+                        put("count", records.size)
+                        if (records.isEmpty()) put("note", "还没有短信发送记录。")
+                        if (records.any { it.status == "pending" }) {
+                            put(
+                                "pending_note",
+                                "status=pending 只表示回执还没回来（刚提交、回执未到，或者进程被系统回收时回执丢了），" +
+                                    "不等于已送达也不等于失败；不要据此告诉用户「已发送」。",
+                            )
+                        }
+                        if (records.any { it.deliveryStatus == "pending" }) {
+                            put(
+                                "delivery_note",
+                                "delivery_status=pending 表示还没收到运营商的送达回执：可能刚发出、运营商没开状态报告、" +
+                                    "或回执晚于本应用进程存活期。status=sent 已说明交给了运营商，这只是补充信息，" +
+                                    "不能因为它停在 pending 就说对方没收到。",
+                            )
+                        }
+                        put("records", buildJsonArray {
+                            records.forEach { record ->
+                                add(buildJsonObject {
+                                    put("record_id", record.id)
+                                    put("time", timeFormat.format(Date(record.at)))
+                                    put("phone", record.phone)
+                                    put("segments", record.segments)
+                                    put("status", record.status)
+                                    put("delivery_status", record.deliveryStatus)
+                                    record.errorCode?.let { put("error_code", it) }
+                                    put("text_head", record.textHead)
+                                })
+                            }
+                        })
+                    })
+                }
+
                 "device_info" -> deviceInfo.snapshot()
 
                 "photos_recent" -> photos.recent(args["limit"]?.jsonPrimitive?.intOrNull, null)
@@ -291,6 +458,8 @@ class DeviceTool @Inject constructor(
         "notification_read", "notification_reply" -> PersonalCapability.NOTIFICATIONS_READ
         "notification_send" -> PersonalCapability.NOTIFICATIONS_POST
         "photos_recent" -> PersonalCapability.PHOTOS
+        "sms_preview", "sms_results" -> PersonalCapability.SMS
+        "sms_send" -> PersonalCapability.SMS_WRITE
         "device_info" -> PersonalCapability.DEVICE_INFO
         else -> null
     }

@@ -8,10 +8,12 @@ import com.aharou.core.config.ConfigRegistry
 import com.aharou.core.config.ConfigSchema
 import com.aharou.core.config.ConfigValue
 import com.aharou.core.config.fields.ClosureField
+import com.aharou.feature.agent.domain.schedule.AutomationGlobalSwitch
 import com.aharou.core.config.fields.ReadOnlyField
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskRepository
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
+import com.aharou.feature.agent.domain.schedule.trigger.GeofenceTriggerManager
 import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -32,10 +34,22 @@ import kotlinx.coroutines.runBlocking
 class ConfigScheduledTaskFields @Inject constructor(
     private val tasks: ScheduledTaskRepository,
     private val scheduler: ScheduledTaskScheduler,
+    private val globalSwitch: AutomationGlobalSwitch,
     @param:ApplicationContext private val context: Context,
 ) {
 
     fun registerInto(registry: ConfigRegistry) {
+        // 集合级别的总开关：暂停全部，但不动每个任务自己的 enabled。
+        registry.register(
+            ClosureField(
+                path = "scheduledTasks.paused",
+                displayName = "暂停全部自动化",
+                description = "true 时所有自动化任务都不触发（单个任务的启用状态不变）；改回 false 后恢复。",
+                valueSchema = ConfigSchema.Bool,
+                reader = { ConfigValue.Bool(globalSwitch.isPaused()) },
+                writer = { value -> globalSwitch.setPaused(boolOf(value)) },
+            )
+        )
         registry.register(TaskCollection())
     }
 
@@ -209,7 +223,9 @@ class ConfigScheduledTaskFields @Inject constructor(
                     "$basePath.$forId.trigger_type",
                     "触发方式（$forId）",
                     "time 到点（按任务的运行方式：周期 / 每天定时 / 只跑一次）｜notification 收到通知｜" +
-                        "battery 电量变化｜network WiFi 连上或断开｜boot 开机｜app_start 应用启动。" +
+                        "battery 电量变化｜network WiFi 连上或断开｜boot 开机｜app_start 应用启动｜" +
+                        "location 进入或离开指定位置（需先填围栏纬度、经度）｜" +
+                        "mcp_resource 某条 MCP server 的资源发生变化（需填 trigger_mcp_server 与 trigger_mcp_resource_uri）。" +
                         "改成事件类后不再按时间自动跑，要等事件发生才跑；改回 time 会按运行方式重排下次运行。",
                     schema = ConfigSchema.StrEnum(TriggerType.ALL),
                 ) { ConfigValue.Str(t.triggerType) } write { v ->
@@ -262,6 +278,74 @@ class ConfigScheduledTaskFields @Inject constructor(
                     "触发方式为 network 时有效：连上或离开这个 WiFi 时触发；留空表示任意 WiFi 变化都触发。",
                 ) { ConfigValue.Str(t.triggerSsid) } write { v ->
                     mutate(forId) { it.copy(triggerSsid = strOf(v).trim(), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_latitude",
+                    "围栏纬度（$forId）",
+                    "触发方式为 location 时有效：围栏中心纬度；空串表示未设置，这种任务不会被注册进系统围栏。",
+                ) { ConfigValue.Str(t.triggerLatitude?.toString().orEmpty()) } write { v ->
+                    mutate(forId) { it.copy(triggerLatitude = parseCoordinate(strOf(v)), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_longitude",
+                    "围栏经度（$forId）",
+                    "触发方式为 location 时有效：围栏中心经度；空串表示未设置。",
+                ) { ConfigValue.Str(t.triggerLongitude?.toString().orEmpty()) } write { v ->
+                    mutate(forId) { it.copy(triggerLongitude = parseCoordinate(strOf(v)), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_radius_meters",
+                    "围栏半径（$forId）",
+                    "触发方式为 location 时有效：触发半径（米，100-3000）。小于 100 米会因 GPS 抖动反复触发。",
+                    schema = ConfigSchema.Int(min = GeofenceTriggerManager.MIN_RADIUS_METERS, max = GeofenceTriggerManager.MAX_RADIUS_METERS),
+                ) { ConfigValue.Int(t.triggerRadiusMeters) } write { v ->
+                    mutate(forId) {
+                        it.copy(
+                            triggerRadiusMeters = intOf(v).coerceIn(
+                                GeofenceTriggerManager.MIN_RADIUS_METERS,
+                                GeofenceTriggerManager.MAX_RADIUS_METERS,
+                            ),
+                            updatedAt = now(),
+                        )
+                    }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_on_enter",
+                    "进入触发（$forId）",
+                    "触发方式为 location 时有效：进入围栏时跑一次（默认开）。",
+                    schema = ConfigSchema.Bool,
+                ) { ConfigValue.Bool(t.triggerOnEnter) } write { v ->
+                    mutate(forId) { it.copy(triggerOnEnter = boolOf(v), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_on_exit",
+                    "离开触发（$forId）",
+                    "触发方式为 location 时有效：离开围栏时跑一次（默认开）。两个开关都关掉的任务不会注册围栏。",
+                    schema = ConfigSchema.Bool,
+                ) { ConfigValue.Bool(t.triggerOnExit) } write { v ->
+                    mutate(forId) { it.copy(triggerOnExit = boolOf(v), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_mcp_server",
+                    "MCP server（$forId）",
+                    "触发方式为 mcp_resource 时有效：订阅哪条 MCP server 的资源，填设置里显示的 server 名。" +
+                        "与 trigger_mcp_resource_uri 都填了才会真正订阅；server 未连接时不会注册。",
+                ) { ConfigValue.Str(t.triggerMcpServer) } write { v ->
+                    mutate(forId) { it.copy(triggerMcpServer = strOf(v).trim(), updatedAt = now()) }
+                },
+
+                scalar(
+                    "$basePath.$forId.trigger_mcp_resource_uri",
+                    "MCP 资源 URI（$forId）",
+                    "触发方式为 mcp_resource 时有效：要订阅的资源 uri（如 memo://notes），该资源变更时触发一次。",
+                ) { ConfigValue.Str(t.triggerMcpResourceUri) } write { v ->
+                    mutate(forId) { it.copy(triggerMcpResourceUri = strOf(v).trim(), updatedAt = now()) }
                 },
 
                 scalar(
@@ -396,6 +480,21 @@ class ConfigScheduledTaskFields @Inject constructor(
                         ?: base.triggerOnCharging,
                     triggerSsid = (obj["trigger_ssid"] as? ConfigValue.Str)?.value?.trim()
                         ?: base.triggerSsid,
+                    triggerLatitude = (obj["trigger_latitude"] as? ConfigValue.Str)?.value
+                        ?.let(::parseCoordinate) ?: base.triggerLatitude,
+                    triggerLongitude = (obj["trigger_longitude"] as? ConfigValue.Str)?.value
+                        ?.let(::parseCoordinate) ?: base.triggerLongitude,
+                    triggerRadiusMeters = (obj["trigger_radius_meters"] as? ConfigValue.Int)?.value
+                        ?.coerceIn(GeofenceTriggerManager.MIN_RADIUS_METERS, GeofenceTriggerManager.MAX_RADIUS_METERS)
+                        ?: base.triggerRadiusMeters,
+                    triggerOnEnter = (obj["trigger_on_enter"] as? ConfigValue.Bool)?.value
+                        ?: base.triggerOnEnter,
+                    triggerOnExit = (obj["trigger_on_exit"] as? ConfigValue.Bool)?.value
+                        ?: base.triggerOnExit,
+                    triggerMcpServer = (obj["trigger_mcp_server"] as? ConfigValue.Str)?.value?.trim()
+                        ?: base.triggerMcpServer,
+                    triggerMcpResourceUri = (obj["trigger_mcp_resource_uri"] as? ConfigValue.Str)?.value?.trim()
+                        ?: base.triggerMcpResourceUri,
                     conditionWindowFrom = (obj["condition_window_from"] as? ConfigValue.Int)?.value
                         ?: base.conditionWindowFrom,
                     conditionWindowTo = (obj["condition_window_to"] as? ConfigValue.Int)?.value
@@ -449,6 +548,9 @@ class ConfigScheduledTaskFields @Inject constructor(
             )
         }
     }
+
+    /** 坐标：空串或非法值都当「未设置」，不抛错——用户在设置页清空一个框不该让保存失败。 */
+    private fun parseCoordinate(raw: String): Double? = raw.trim().toDoubleOrNull()
 
     /** once_at_millis 收 epoch 毫秒字符串；空串表示未设置。 */
     private fun parseOnceAt(raw: String): Long {

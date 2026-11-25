@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.domain.mcp
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -17,6 +18,18 @@ interface McpTransport {
 
     /** 发送一条不需要应答的通知（fire-and-forget）。 */
     suspend fun notify(method: String, params: JsonObject? = null)
+
+    /**
+     * 注册 server 主动推送的无 id 消息（notification）的接收回调，例如
+     * `notifications/resources/updated`。传 null 注销。
+     *
+     * 默认实现是空操作：不为这条能力改造过的传输实现（含测试替身）行为完全不变，
+     * 收到 server 推送照旧丢弃。
+     *
+     * 实现约定：handler 在传输的读线程上同步调用，**抛异常不得影响读循环**（实现方要自己兜住）；
+     * 回调里也不要阻塞，需要耗时处理请自行切协程。
+     */
+    fun setNotificationHandler(handler: ((method: String, params: JsonElement?) -> Unit)?) {}
 
     /** 释放底层资源（连接、会话等）。可重复调用。 */
     fun close()

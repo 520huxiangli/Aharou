@@ -208,6 +208,7 @@ class AIEditorApp : Application(), Configuration.Provider {
     lateinit var configEnvFields: com.aharou.feature.settings.data.ConfigEnvFields
 
     @Inject lateinit var configScheduledTaskFields: com.aharou.feature.agent.data.ConfigScheduledTaskFields
+    @Inject lateinit var configDeviceReadQuotaFields: com.aharou.feature.agent.data.ConfigDeviceReadQuotaFields
     @Inject lateinit var configRuleFields: com.aharou.feature.agent.data.ConfigRuleFields; @Inject lateinit var configReminderFields: com.aharou.feature.agent.data.ConfigReminderFields
     /** 语音合成（TTS）字段注册。 */
     @Inject
@@ -298,6 +299,7 @@ class AIEditorApp : Application(), Configuration.Provider {
     /** 定时任务调度：启动时按「有无启用任务」决定排周期检查还是取消，避免空转唤醒进程。 */
     @Inject
     lateinit var scheduledTaskScheduler: com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
+    @Inject lateinit var geofenceTriggerManager: com.aharou.feature.agent.domain.schedule.trigger.GeofenceTriggerManager; @Inject lateinit var mcpResourceSubscriptionManager: com.aharou.feature.agent.domain.schedule.trigger.McpResourceSubscriptionManager
 
     /** 「应用启动」触发：进程启动后投递一次，语义同「开机」（只认启用中的任务）。 */
     @Inject
@@ -409,6 +411,7 @@ class AIEditorApp : Application(), Configuration.Provider {
         configModelRoleFields.registerInto(configRegistry)
         configEnvFields.registerInto(configRegistry)
         configScheduledTaskFields.registerInto(configRegistry)
+        configDeviceReadQuotaFields.registerInto(configRegistry)
         configRuleFields.registerInto(configRegistry); configReminderFields.registerInto(configRegistry)
         configMcpFields.registerInto(configRegistry)
         configSkillFields.registerInto(configRegistry)
@@ -598,6 +601,8 @@ class AIEditorApp : Application(), Configuration.Provider {
         appScope.launch {
             runCatching { scheduledTaskScheduler.ensureScheduled(this@AIEditorApp) }
                 .onFailure { FileLogger.e("AIEditorApp", "定时任务调度初始化失败", it) }
+            runCatching { geofenceTriggerManager.syncAll() }.onFailure { FileLogger.e("AIEditorApp", "位置围栏初始化失败", it) }
+            runCatching { mcpResourceSubscriptionManager.syncAll() }.onFailure { FileLogger.e("AIEditorApp", "MCP 资源订阅初始化失败", it) }
             eventTriggerBus.postAppStart()
         }
         // 记忆自动同步：启动时按需重排。已有任务能跑就保留周期计时（KEEP），只有任务缺失或

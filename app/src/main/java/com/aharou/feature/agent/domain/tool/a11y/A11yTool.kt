@@ -48,6 +48,10 @@ class A11yTool @Inject constructor(
         const val TAG = "A11yTool"
         const val MAX_NODES = 400
         const val MAX_DEPTH = 25
+
+        /** 节点少于这个数、或可见文字少于 [THIN_TEXT_CHARS] 个字，就把树归为 thin。 */
+        const val THIN_NODE_COUNT = 8
+        const val THIN_TEXT_CHARS = 10
         const val MAX_IMAGE_EDGE = 1440
         const val JPEG_QUALITY = 75
 
@@ -189,8 +193,24 @@ class A11yTool @Inject constructor(
                         buildJsonObject {
                             put("tree", dump.text)
                             put("node_count", dump.count)
+                            put("quality", dump.quality)
                             // 只有空树才给诊断：非空时模型直接读 tree 就行，多一个字段只会分散注意。
                             dump.diagnosis?.let { put("diagnosis", it) }
+                            if (dump.quality == "thin") {
+                                put(
+                                    "quality_note",
+                                    "树读到了但几乎没有文字（节点 ${dump.count} 个）：常见于页面刚切换、列表还在渲染、" +
+                                        "或只剩容器与占位。照着这种树找按钮容易点错，先稍等再 dump 一次，或改用 find / shot。",
+                                )
+                            }
+                            if (dump.truncated) {
+                                put(
+                                    "truncated_note",
+                                    "树被截断了（只输出前 $MAX_NODES 个节点、深度 $MAX_DEPTH 层）：" +
+                                        "当前看到的不是完整界面。目标没出现时先用 find 精确定位，或滚动/切换后再 dump，" +
+                                        "不要直接下「界面上没有这个按钮」的结论。",
+                                )
+                            }
                         }
                     )
                 }
@@ -313,18 +333,49 @@ class A11yTool @Inject constructor(
         }
     }
 
-    /** dump 的结果：空树时 [diagnosis] 非空，[text] 就是给模型看的那句诊断提示。 */
-    private class DumpResult(val text: String, val count: Int, val diagnosis: String? = null)
+    /**
+     * dump 的结果：空树时 [diagnosis] 非空，[text] 就是给模型看的那句诊断提示。
+     *
+     * [quality] 是给模型的「这棵树能用到什么程度」的粗分级：
+     * - unusable：一个节点都没读到，附 [diagnosis] 说明原因与处置；
+     * - thin：读到了但几乎没有文字（常见于页面刚切、列表还没渲染、只剩容器与占位），
+     *   此时直接照着找按钮容易点错，应稍等后重新 dump，或改用 find/shot；
+     * - good：有足够多的文字可供定位。
+     * 分级只用来提示，不拦截任何动作。
+     */
+    private class DumpResult(
+        val text: String,
+        val count: Int,
+        val diagnosis: String? = null,
+        val truncated: Boolean = false,
+        val textChars: Int = 0,
+    ) {
+        val quality: String
+            get() = when {
+                count == 0 -> "unusable"
+                count < THIN_NODE_COUNT || textChars < THIN_TEXT_CHARS -> "thin"
+                else -> "good"
+            }
+    }
 
     private fun dumpTree(service: AharouAccessibilityService): DumpResult {
         val sb = StringBuilder()
         val screen = service.screenSize()
         var count = 0
+        var textChars = 0
+        var capped = false
         val packages = HashSet<String>()
         fun walk(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > MAX_DEPTH || count >= MAX_NODES) return
+            if (node == null) return
+            // 被上限截断时要记下来：这时看到的不是完整界面，不说的话模型会以为找遍了。
+            if (depth > MAX_DEPTH || count >= MAX_NODES) {
+                capped = true
+                return
+            }
             val id = service.nodeRegistry.put(node)
             sb.append("  ".repeat(depth)).append(describeNode(node, id, screen)).append('\n')
+            textChars += node.text?.toString()?.trim()?.length ?: 0
+            textChars += node.contentDescription?.toString()?.trim()?.length ?: 0
             node.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packages.add(it) }
             count++
             for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
@@ -332,10 +383,10 @@ class A11yTool @Inject constructor(
         service.rootNodes().forEach { walk(it, 0) }
         if (count == 0) {
             val (diagnosis, hint) = diagnoseEmptyTree(service)
-            return DumpResult(hint, 0, diagnosis)
+            return DumpResult(hint, 0, diagnosis, truncated = false, textChars = 0)
         }
         packagesWithReadableTree.addAll(packages)
-        return DumpResult(sb.toString(), count)
+        return DumpResult(sb.toString(), count, truncated = capped, textChars = textChars)
     }
 
     private fun findNodes(service: AharouAccessibilityService, query: String): String {

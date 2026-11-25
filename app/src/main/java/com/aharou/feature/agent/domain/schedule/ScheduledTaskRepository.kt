@@ -2,6 +2,8 @@ package com.aharou.feature.agent.domain.schedule
 
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
+import com.aharou.feature.agent.domain.schedule.trigger.GeofenceTriggerManager
+import com.aharou.feature.agent.domain.schedule.trigger.McpResourceSubscriptionManager
 import com.aharou.feature.agent.domain.schedule.trigger.TriggerType
 import java.util.UUID
 import javax.inject.Inject
@@ -16,7 +18,9 @@ import kotlinx.coroutines.flow.Flow
  */
 @Singleton
 class ScheduledTaskRepository @Inject constructor(
-    private val dao: ScheduledTaskDao
+    private val dao: ScheduledTaskDao,
+    private val geofence: GeofenceTriggerManager,
+    private val mcpResources: McpResourceSubscriptionManager,
 ) {
 
     fun observeAll(): Flow<List<ScheduledTaskEntity>> = dao.observeAll()
@@ -26,9 +30,19 @@ class ScheduledTaskRepository @Inject constructor(
 
     suspend fun get(id: String): ScheduledTaskEntity? = dao.getById(id)
 
-    suspend fun upsert(task: ScheduledTaskEntity) = dao.upsertPreservingPending(task)
+    suspend fun upsert(task: ScheduledTaskEntity) {
+        dao.upsertPreservingPending(task)
+        // 配置通道改字段走的是 upsert，不经过 save；围栏与 MCP 订阅也得跟着对齐。
+        runCatching { geofence.syncAll() }
+        runCatching { mcpResources.syncAll() }
+    }
 
-    suspend fun delete(id: String) = dao.deleteById(id)
+    suspend fun delete(id: String) {
+        dao.deleteById(id)
+        // 任务没了，它对应的系统围栏也得撤掉，否则会一直占着一个位置监听。
+        runCatching { geofence.syncAll() }
+        runCatching { mcpResources.syncAll() }
+    }
 
     /**
      * 新建或更新一个任务。周期收敛到下限；新建时下次运行由调度类型决定。
@@ -55,6 +69,13 @@ class ScheduledTaskRepository @Inject constructor(
         triggerBatteryBelow: Int = -1,
         triggerOnCharging: Boolean = false,
         triggerSsid: String = "",
+        triggerLatitude: Double? = null,
+        triggerLongitude: Double? = null,
+        triggerRadiusMeters: Int = 200,
+        triggerOnEnter: Boolean = true,
+        triggerOnExit: Boolean = true,
+        triggerMcpServer: String = "",
+        triggerMcpResourceUri: String = "",
         conditionWindowFrom: Int = -1,
         conditionWindowTo: Int = -1,
         condRequireCharging: Boolean = false,
@@ -88,6 +109,16 @@ class ScheduledTaskRepository @Inject constructor(
             triggerBatteryBelow = triggerBatteryBelow.coerceIn(-1, 100),
             triggerOnCharging = triggerOnCharging,
             triggerSsid = triggerSsid,
+            triggerLatitude = triggerLatitude,
+            triggerLongitude = triggerLongitude,
+            triggerRadiusMeters = triggerRadiusMeters.coerceIn(
+                GeofenceTriggerManager.MIN_RADIUS_METERS,
+                GeofenceTriggerManager.MAX_RADIUS_METERS,
+            ),
+            triggerOnEnter = triggerOnEnter,
+            triggerOnExit = triggerOnExit,
+            triggerMcpServer = triggerMcpServer.trim(),
+            triggerMcpResourceUri = triggerMcpResourceUri.trim(),
             conditionWindowFrom = if (unlimitedWindow) -1 else windowBound(conditionWindowFrom),
             conditionWindowTo = if (unlimitedWindow) -1 else windowBound(conditionWindowTo),
             condRequireCharging = condRequireCharging,
@@ -119,6 +150,10 @@ class ScheduledTaskRepository @Inject constructor(
             pendingRunPrompt = if (enabled) existing?.pendingRunPrompt else null,
         )
         dao.upsertPreservingPending(task)
+        // 位置触发不靠调度器，而是系统围栏回调：任务存下来之后得把围栏对齐一次。
+        // 非位置类任务也会走到这里，syncAll 内部按类型过滤，开销只是查一次库。
+        runCatching { geofence.syncAll() }
+        runCatching { mcpResources.syncAll() }
         return task
     }
 
@@ -140,6 +175,8 @@ class ScheduledTaskRepository @Inject constructor(
         } else {
             dao.setEnabled(id, enabled, now)
         }
+        runCatching { geofence.syncAll() }
+        runCatching { mcpResources.syncAll() }
     }
 
     /** 时段边界：-1 表示不限，其余收敛到当天分钟数范围。 */

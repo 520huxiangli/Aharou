@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.aharou.feature.agent.data.local.dao.ChatSessionDao
 import com.aharou.feature.agent.data.local.entity.ChatSessionEntity
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
+import com.aharou.feature.agent.domain.schedule.AutomationGlobalSwitch
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskRepository
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -22,8 +24,18 @@ class ScheduledTasksViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: ScheduledTaskRepository,
     private val scheduler: ScheduledTaskScheduler,
+    private val globalSwitch: AutomationGlobalSwitch,
     chatSessionDao: ChatSessionDao
 ) : ViewModel() {
+
+    /** 全部自动化的总开关；与单个任务的 enabled 分开管。 */
+    private val _paused = MutableStateFlow(globalSwitch.isPaused())
+    val paused: StateFlow<Boolean> = _paused
+
+    fun setPaused(paused: Boolean) {
+        globalSwitch.setPaused(paused)
+        _paused.value = paused
+    }
 
     val tasks: StateFlow<List<ScheduledTaskEntity>> = repository.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -49,6 +61,13 @@ class ScheduledTasksViewModel @Inject constructor(
         triggerBatteryBelow: Int = -1,
         triggerOnCharging: Boolean = false,
         triggerSsid: String = "",
+        triggerLatitude: Double? = null,
+        triggerLongitude: Double? = null,
+        triggerRadiusMeters: Int = 200,
+        triggerOnEnter: Boolean = true,
+        triggerOnExit: Boolean = true,
+        triggerMcpServer: String = "",
+        triggerMcpResourceUri: String = "",
         conditionWindowFrom: Int = -1,
         conditionWindowTo: Int = -1,
         condRequireCharging: Boolean = false,
@@ -73,6 +92,13 @@ class ScheduledTasksViewModel @Inject constructor(
                 triggerBatteryBelow = triggerBatteryBelow,
                 triggerOnCharging = triggerOnCharging,
                 triggerSsid = triggerSsid,
+                triggerLatitude = triggerLatitude,
+                triggerLongitude = triggerLongitude,
+                triggerRadiusMeters = triggerRadiusMeters,
+                triggerOnEnter = triggerOnEnter,
+                triggerOnExit = triggerOnExit,
+                triggerMcpServer = triggerMcpServer,
+                triggerMcpResourceUri = triggerMcpResourceUri,
                 conditionWindowFrom = conditionWindowFrom,
                 conditionWindowTo = conditionWindowTo,
                 condRequireCharging = condRequireCharging,

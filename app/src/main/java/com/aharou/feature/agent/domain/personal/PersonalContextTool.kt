@@ -1,12 +1,14 @@
 package com.aharou.feature.agent.domain.personal
 
 import com.aharou.core.util.FileLogger
+import com.aharou.feature.agent.domain.model.AgentContext
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ParameterType
 import com.aharou.feature.agent.domain.tool.ToolCapability
 import com.aharou.feature.agent.domain.tool.ToolParameter
 import com.aharou.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aharou.feature.agent.domain.tool.ToolResult
+import com.aharou.feature.agent.domain.workflow.AgentTurnTrigger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -38,6 +40,7 @@ class PersonalContextTool @Inject constructor(
     private val sms: SmsQuery,
     private val callLog: CallLogQuery,
     private val appUsage: AppUsageQuery,
+    private val readQuota: DeviceReadQuota,
 ) : AgentTool() {
 
     private companion object {
@@ -87,6 +90,33 @@ class PersonalContextTool @Inject constructor(
             enum = MODES,
         ),
     )
+
+    /**
+     * 短信读取在后台自动轮次里要过配额；capabilities / 通话记录 / 应用使用不记账。
+     * 用户手打轮次不受约束。
+     */
+    override suspend fun executeWithContext(
+        args: Map<String, JsonElement>,
+        context: AgentContext,
+    ): ToolResult {
+        if (context.turnTrigger == AgentTurnTrigger.SCHEDULED_TASK && action(args) == "sms_query") {
+            val decision = readQuota.checkAndRecord(DeviceReadCategory.SMS)
+            if (!decision.allowed) {
+                val why = if (decision.reason == DeviceReadQuota.REASON_TOO_FREQUENT) {
+                    "距上一次读取太近"
+                } else {
+                    "24 小时内已读 ${decision.used} 次，达到 ${decision.limit} 次上限"
+                }
+                return ToolResult.Error(
+                    "后台自动读取短信的配额已用尽：$why。约 ${decision.retryAfterSeconds} 秒后可再读。" +
+                        "这次是自动化任务发起的运行，用户不在跟前；不要改查通话记录或应用使用去绕，" +
+                        "把「需要用户手动确认才能继续读短信」写进结果交给用户。",
+                    "DEVICE_READ_QUOTA_EXCEEDED",
+                )
+            }
+        }
+        return execute(args)
+    }
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         val action = action(args)

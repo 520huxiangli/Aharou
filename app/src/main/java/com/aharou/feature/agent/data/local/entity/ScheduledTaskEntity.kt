@@ -83,6 +83,20 @@ data class ScheduledTaskEntity(
     val updatedAt: Long,
     /** 已认领但还没跑起来（总线投递失败时落库，会话层就绪后捡起）；空 = 没有挂起。 */
     val pendingRunPrompt: String? = null,
+    /** location 用：围栏中心纬度；null 表示还没设置坐标，这种任务不会被注册进系统围栏。 */
+    val triggerLatitude: Double? = null,
+    /** location 用：围栏中心经度。 */
+    val triggerLongitude: Double? = null,
+    /** location 用：围栏半径（米）。系统建议不要小于 100 米，否则频繁进出会耗电。 */
+    val triggerRadiusMeters: Int = 200,
+    /** location 用：进入围栏时触发。 */
+    val triggerOnEnter: Boolean = true,
+    /** location 用：离开围栏时触发。 */
+    val triggerOnExit: Boolean = true,
+    /** mcp_resource 用：订阅哪个 MCP server 的资源（填 server 名，与设置里显示的一致）。 */
+    val triggerMcpServer: String = "",
+    /** mcp_resource 用：要订阅的资源 uri；资源变化时触发。 */
+    val triggerMcpResourceUri: String = "",
 ) {
     companion object {
         /** 周期：每 intervalMinutes 跑一次。 */
@@ -111,6 +125,12 @@ data class ScheduledTaskEntity(
 
         /** App 启动触发：本进程启动后触发一次。 */
         const val TYPE_APP_START = "app_start"
+
+        /** 位置围栏触发：进入或离开某个坐标附近。 */
+        const val TYPE_LOCATION = "location"
+
+        /** MCP 资源变化触发：订阅的资源收到 notifications/resources/updated 就跑一次。 */
+        const val TYPE_MCP_RESOURCE = "mcp_resource"
 
         /** 同一任务上一次派发还没跑完就跳过本次。 */
         const val RUN_SINGLE = "single"

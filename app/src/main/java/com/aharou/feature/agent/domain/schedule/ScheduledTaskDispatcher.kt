@@ -35,11 +35,14 @@ class ScheduledTaskDispatcher @Inject constructor(
     private val eventBus: EventTriggerBus,
     private val deviceStateMonitor: DeviceStateMonitor,
     private val scheduler: ScheduledTaskScheduler,
+    private val globalSwitch: AutomationGlobalSwitch,
     @param:ApplicationContext private val context: Context,
 ) {
 
     /** 返回本轮真正派发出去的任务数。 */
     suspend fun dispatchDue(now: Long = System.currentTimeMillis()): Int {
+        // 全局暂停：到点也不派发。任务本身的 nextRunAt 不动，恢复后按各自策略补上或跳过。
+        if (globalSwitch.isPaused()) return 0
         // 顺带比对一次设备状态（电量/充电/WiFi）：电量与网络没有实时监听，状态类事件最迟
         // 一个周期（15 分钟）才发现，是设计取舍。
         val state = runCatching { deviceStateMonitor.check() }.getOrNull()

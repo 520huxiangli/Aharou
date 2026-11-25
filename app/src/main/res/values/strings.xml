@@ -1658,6 +1658,11 @@
     <!-- Scheduled Tasks -->
     <string name="settings_scheduled_tasks">自动化任务</string>
     <string name="scheduled_tasks_intro">让 AI 按你定的时间或事件自动干活：可以按周期重复、每天固定时刻、只跑一次，也可以等某件事发生再跑（收到通知、电量变化、WiFi 连上或断开、开机、打开 Aharou）。选定时刻的任务会走系统精确闹钟（Android 12 及以上需授权「精确闹钟」），周期下限 %1$d 分钟。</string>
+    <string name="scheduled_tasks_paused">暂停全部自动化</string>
+    <string name="mcp_app_close">关闭</string>
+    <string name="mcp_app_loading">加载中…</string>
+    <string name="mcp_app_failed">打开 MCP 应用失败：%1$s</string>
+    <string name="mcp_app_open">打开 MCP 应用</string>
     <string name="scheduled_tasks_list_header">任务列表</string>
     <string name="scheduled_tasks_empty">还没有定时任务</string>
     <string name="scheduled_tasks_add">新建自动化任务</string>
@@ -1707,6 +1712,7 @@
     <string name="scheduled_tasks_trigger_network">网络变化</string>
     <string name="scheduled_tasks_trigger_boot">开机</string>
     <string name="scheduled_tasks_trigger_app_start">应用启动</string>
+    <string name="scheduled_tasks_trigger_location">位置围栏</string>
     <string name="scheduled_tasks_trigger_package">来源应用</string>
     <string name="scheduled_tasks_trigger_package_hint">填应用包名（如 com.tencent.mm）；留空表示任意应用。需先在「软件权限」里开启通知使用权</string>
     <string name="scheduled_tasks_trigger_battery_below">电量阈值（%）</string>
@@ -1716,6 +1722,23 @@
     <string name="scheduled_tasks_trigger_ssid_hint">留空表示任意 WiFi 变化</string>
     <string name="scheduled_tasks_trigger_boot_hint">开机或重启完成后触发一次</string>
     <string name="scheduled_tasks_trigger_app_start_hint">App 启动后触发一次；在后台被系统重新拉起也算一次启动</string>
+    <string name="scheduled_tasks_trigger_location_hint">进入或离开指定位置附近时触发；需要定位权限，若要锁屏时也能触发，需在系统设置里选「始终允许」</string>
+    <string name="scheduled_tasks_location_latitude">纬度</string>
+    <string name="scheduled_tasks_location_longitude">经度</string>
+    <string name="scheduled_tasks_location_coordinate_hint">纬度 -90 到 90、经度 -180 到 180；可从地图应用复制坐标</string>
+    <string name="scheduled_tasks_location_radius">半径（米）</string>
+    <string name="scheduled_tasks_location_radius_hint">100 到 3000 米，默认 200；太小会因定位漂移反复触发</string>
+    <string name="scheduled_tasks_location_on_enter">进入时触发</string>
+    <string name="scheduled_tasks_location_on_exit">离开时触发</string>
+    <string name="scheduled_tasks_location_invalid">请填写有效的纬度与经度</string>
+    <string name="scheduled_tasks_location_no_permission">未授予定位权限，位置触发不会被注册</string>
+    <string name="scheduled_tasks_mcp_server">MCP server</string>
+    <string name="scheduled_tasks_mcp_server_hint">填设置里显示的 server 名；只支持当前工作区里已连接的 server</string>
+    <string name="scheduled_tasks_mcp_resource_uri">资源 URI</string>
+    <string name="scheduled_tasks_mcp_resource_uri_hint">如 memo://notes；该资源变更时触发一次</string>
+    <string name="scheduled_tasks_mcp_incomplete">server 名与资源 URI 要一起填</string>
+    <string name="scheduled_tasks_desc_mcp_resource">MCP 资源变化时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_trigger_mcp_resource">MCP 资源变化</string>
     <string name="scheduled_tasks_conditions">触发条件（可选）</string>
     <string name="scheduled_tasks_condition_window_from">时段起</string>
     <string name="scheduled_tasks_condition_window_to">时段止</string>
@@ -1735,6 +1758,7 @@
     <string name="scheduled_tasks_desc_network_ssid">连接或离开 %1$s 时 · 已运行 %2$d 次（%3$s）</string>
     <string name="scheduled_tasks_desc_boot">开机时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_desc_app_start">应用启动时 · 已运行 %1$d 次（%2$s）</string>
+    <string name="scheduled_tasks_desc_location">在指定位置附近时 · 已运行 %1$d 次（%2$s）</string>
     <string name="scheduled_tasks_skipped_condition">条件不满足</string>
     <string name="scheduled_tasks_skip_reason_window">条件不满足：不在允许时段</string>
     <string name="scheduled_tasks_skip_reason_charging">条件不满足：未在充电</string>

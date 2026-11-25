@@ -44,11 +44,13 @@ import com.aharou.feature.agent.domain.tool.editor.EditFileTool
 import com.aharou.feature.agent.domain.tool.git.GitBlameTool
 import com.aharou.feature.agent.domain.tool.dependency.DependencyCheckTool
 import com.aharou.feature.agent.domain.tool.device.DeviceTool
+import com.aharou.feature.agent.domain.tool.device.PhoneCallTool
 import com.aharou.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aharou.feature.agent.domain.tool.container.TerminalSessionTool
 import com.aharou.feature.agent.domain.tool.explorer.ListFilesTool
 import com.aharou.feature.agent.domain.tool.explorer.SearchCodeTool
 import com.aharou.feature.agent.domain.tool.shizuku.ShizukuTool
+import com.aharou.feature.agent.domain.tool.knowledge.AppKnowledgeTool
 import com.aharou.feature.agent.domain.tool.knowledge.KnowledgeSearchTool
 import com.aharou.feature.agent.domain.tool.rule.LoadRuleTool
 import com.aharou.feature.agent.domain.tool.skill.LoadSkillTool
@@ -110,6 +112,7 @@ import com.aharou.feature.agent.domain.tool.a11y.A11yTool
 import com.aharou.feature.agent.domain.tool.app.OpenAppTool
 import com.aharou.feature.agent.domain.tool.vdisplay.VdTool
 import com.aharou.feature.agent.domain.tool.mcp.ManageMcpTool
+import com.aharou.feature.agent.domain.tool.mcp.McpAppTool
 import com.aharou.feature.agent.domain.tool.memory.MemoryTool
 import com.aharou.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aharou.feature.agent.domain.tool.mode.PlanModeTool
@@ -459,9 +462,12 @@ object AgentModule {
         dependencyCheckTool: DependencyCheckTool,
         sessionTool: SessionTool,
         deviceTool: DeviceTool,
+        phoneCallTool: PhoneCallTool,
         personalContextTool: PersonalContextTool,
         diagnosticsTool: DiagnosticsTool,
         gitBlameTool: GitBlameTool,
+        mcpAppTool: McpAppTool,
+        appKnowledgeTool: AppKnowledgeTool,
         guard: ToolCallGuard
     ): ToolRegistry {
         return ToolRegistry(guard).apply {
@@ -501,9 +507,12 @@ object AgentModule {
             register("check_dependencies", dependencyCheckTool)
             register("sessions", sessionTool)
             register("device", deviceTool)
+            register("phone_call", phoneCallTool)
             register("personal_context", personalContextTool)
             register("diagnostics", diagnosticsTool)
             register("git_blame", gitBlameTool)
+            register("mcp_app", mcpAppTool)
+            register("app_knowledge", appKnowledgeTool)
         }
     }
 

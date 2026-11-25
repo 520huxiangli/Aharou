@@ -38,6 +38,16 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 位置围栏触发：Android 10 起锁屏/后台状态下没有它，围栏基本不会触发。
+         系统要求它只能与 ACCESS_FINE_LOCATION 分开申请，用户要在设置里单独选「始终允许」。 -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- 短信发送：仅当用户显式让 AI 发短信时才会用到，运行时才申请；
+         发送前必须先过 sms_preview 拿到 token，避免未预览就发出去。 -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- 通话：CALL_PHONE 用于直接呼出（没授予时降级成打开拨号盘预填）；
+         READ_PHONE_STATE 只用来读通话状态，不读号码与内容；接听/挂断走宿主通道。 -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <!-- 蓝牙（经典 + BLE）：31 起拆成 SCAN/CONNECT；30 及以下用旧权限，扫描沿用上面的定位权限。
          neverForLocation 声明扫描不用于定位，S+ 因此不再额外要求定位权限。 -->
@@ -466,6 +476,24 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- MCP App 宿主：跑 server 通过 resources 暴露的 HTML 页面，单独窗口，退出即销毁 WebView。 -->
+        <activity
+            android:name="com.aharou.feature.agent.presentation.mcpapp.McpAppActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- 位置围栏进出广播：系统通过 PendingIntent 触发，不需要 exported；
+             代码里校验 action，外部的同名广播进不来。 -->
+        <receiver
+            android:name="com.aharou.feature.agent.domain.schedule.trigger.ProximityAlertReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="com.aharou.intent.GEOFENCE_PROXIMITY" />
             </intent-filter>
         </receiver>
 

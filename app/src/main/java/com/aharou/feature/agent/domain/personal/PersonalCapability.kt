@@ -38,7 +38,15 @@ enum class PersonalCapability(val id: String) {
     CALL_LOG("call_log"),
 
     /** 应用使用统计（PACKAGE_USAGE_STATS）。特殊权限，只能引导去系统设置手动开。 */
-    APP_USAGE("app_usage");
+    APP_USAGE("app_usage"),
+
+    /**
+     * 发短信（SEND_SMS）。与只读的 [SMS] 分开登记：发送会真的产生费用、发出去也收不回，
+     * 而且系统里 READ_SMS 与 SEND_SMS 本来就可以只给其中一个。
+     *
+     * 新项只能追加在末尾——枚举顺序可能被 UI 按序渲染，插在中间会打乱既有位置。
+     */
+    SMS_WRITE("sms_write");
 
     /**
      * 特殊权限：应用连系统授权框都弹不出来，只能给「去系统设置哪里开」的指路文案。

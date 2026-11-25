@@ -320,6 +320,7 @@ class AgentTurnRunner @Inject constructor(
             workspaceName = workspace?.name,
             workspaceSwitchedFrom = switchedFrom,
             selectedWorkspace = selectedWorkspace,
+            turnTrigger = turn.trigger,
             // 模型身份：会话上就存着 provider / model，顺手带进上下文，供系统提示词注入。
             modelIdentity = sessionEntity?.model?.takeIf { it.isNotBlank() }
                 ?.let { ModelIdentity(modelId = it, providerId = sessionEntity.providerId) },

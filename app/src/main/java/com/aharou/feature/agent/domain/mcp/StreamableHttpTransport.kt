@@ -6,7 +6,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
 import okhttp3.Call
 import okhttp3.Callback
@@ -62,9 +66,11 @@ interface McpEncryptionFactory {
  * MCP「Streamable HTTP」传输实现。
  *
  * 单一端点 POST JSON-RPC；server 可回 `application/json`（单条响应）或
- * `text/event-stream`（SSE，本传输一问一答、不维持服务端推送通道，故只读取其中 JSON-RPC `id`
- * 与本次请求匹配的那条 message 事件，跳过无 id 的通知与乱序事件）。`initialize` 响应里的
- * `Mcp-Session-Id` 头会被记下，之后每条请求都带上（spec 要求）。
+ * `text/event-stream`（SSE）。SSE 只读取其中 JSON-RPC `id` 与本次请求匹配的那条 message 事件，
+ * 途中遇到的 server 主动通知（无 id 有 method）交给 [setNotificationHandler] 注册的回调；
+ * 乱序响应照旧跳过。**本传输不维持独立的长连接推送通道**：一次 POST 结束，那条流就结束了，
+ * 所以通知只在「有请求在飞」的窗口内收得到（详见 `extractSseJson` 的说明）。
+ * `initialize` 响应里的 `Mcp-Session-Id` 头会被记下，之后每条请求都带上（spec 要求）。
  *
  * SSE 的解析方式与 AnthropicAdapter 一致——手动读 `data:` 行，避免引入 okhttp-sse。
  */
@@ -102,6 +108,14 @@ class StreamableHttpTransport(
 
     @Volatile
     private var sessionId: String? = null
+
+    /** server 主动推送消息的回调；null 时保持旧行为（只跳过）。 */
+    @Volatile
+    private var notificationHandler: ((String, JsonElement?) -> Unit)? = null
+
+    override fun setNotificationHandler(handler: ((method: String, params: JsonElement?) -> Unit)?) {
+        notificationHandler = handler
+    }
 
     override suspend fun request(method: String, params: JsonObject?): JsonRpcResponse =
         withContext(Dispatchers.IO) {
@@ -253,9 +267,12 @@ class StreamableHttpTransport(
 
     /**
      * 从 SSE 流里循环读事件，返回第一条 JSON-RPC `id` 与 [expectedId] 匹配的 `data:` 负载。
-     * server 可能先推 progress 之类的通知（无 id）或乱序响应，第一个事件不能当成这次请求的响应；
-     * 事件数设上限，避免 server 持续推无关事件导致死循环。多行 data 属于同一事件，
-     * 按 SSE 规范以换行连接（JSON 允许空白，拼接后仍可解析）。
+     * server 可能先推 progress / 资源变更之类的通知（无 id）或乱序响应，第一个事件不能当成这次请求的响应；
+     * 途中遇到的通知交给注册的回调，不丢。事件数设上限，避免 server 持续推无关事件导致死循环。
+     * 多行 data 属于同一事件，按 SSE 规范以换行连接（JSON 允许空白，拼接后仍可解析）。
+     *
+     * 限制：这条流只在本次 POST 期间存在，响应一返回就断开，所以没有持久推送通道；
+     * 依赖实时通知的调用方需要保活一条长连接的 server，或周期性重新读资源。
      */
     private fun extractSseJson(reader: java.io.BufferedReader?, expectedId: Long): String? {
         reader ?: return null
@@ -269,24 +286,48 @@ class StreamableHttpTransport(
                     events++
                     val payload = data.toString().trimEnd('\n')
                     data.setLength(0)
-                    if (hasId(payload, expectedId)) return payload
+                    if (handleSseEvent(payload, expectedId)) return payload
                 }
             }
         }
         // 流未以空行收尾：残留的 data 也当一条事件判一次。
         if (data.isNotEmpty()) {
             val payload = data.toString().trimEnd('\n')
-            if (hasId(payload, expectedId)) return payload
+            if (handleSseEvent(payload, expectedId)) return payload
         }
         return null
     }
 
-    /** 事件负载的 JSON-RPC `id` 是否等于 [expectedId]；无 id（server 主动通知）或解析失败都算不匹配。 */
-    private fun hasId(payload: String, expectedId: Long): Boolean {
-        val resp = runCatching {
-            json.decodeFromString(JsonRpcResponse.serializer(), payload)
-        }.getOrNull()
-        return resp?.id == expectedId
+    /**
+     * 判一条 SSE 事件是不是本次请求的响应；不是的话，若是 server 主动通知就分发给回调。
+     *
+     * `id` 用 `contentOrNull` 取再转数字：规范允许 id 为字符串，直接反序列化成 Long 会解析失败。
+     */
+    private fun handleSseEvent(payload: String, expectedId: Long): Boolean {
+        val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }.getOrNull() ?: return false
+        val idElement = obj["id"]
+        if ((idElement as? JsonPrimitive)?.contentOrNull?.toLongOrNull() == expectedId) return true
+        val hasNoId = idElement == null || idElement is JsonNull
+        val method = (obj["method"] as? JsonPrimitive)?.contentOrNull
+        // 带 id 的 server 请求（sampling/roots 之类）需要应答，这里不会也不该当成通知往下传。
+        if (hasNoId && method != null) dispatchNotification(method, obj["params"])
+        return false
+    }
+
+    /**
+     * 把一条 server 通知交给上层回调。
+     *
+     * 回调在读 SSE 的协程里同步执行，抛异常会带上整个请求——必须咽下，否则一次不听话的回调
+     * 就会表现成「资源订阅期间请求随机失败」。
+     */
+    private fun dispatchNotification(method: String, params: JsonElement?) {
+        val handler = notificationHandler
+        if (handler == null) {
+            FileLogger.d(TAG, "收到 server 通知（无接收方）: $method")
+            return
+        }
+        runCatching { handler(method, params) }
+            .onFailure { FileLogger.w(TAG, "通知回调异常（已忽略）: ${it.message}") }
     }
 
     private fun parseAndValidate(rawJson: String, expectedId: Long, method: String): JsonRpcResponse {

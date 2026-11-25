@@ -4,6 +4,7 @@ import android.content.Context
 import com.aharou.core.util.FileLogger
 import com.aharou.feature.agent.data.local.dao.ScheduledTaskDao
 import com.aharou.feature.agent.data.local.entity.ScheduledTaskEntity
+import com.aharou.feature.agent.domain.schedule.AutomationGlobalSwitch
 import com.aharou.feature.agent.domain.schedule.ScheduledTaskScheduler
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -37,6 +38,7 @@ class EventTriggerBus @Inject constructor(
     @ApplicationContext private val context: Context,
     private val dao: ScheduledTaskDao,
     private val scheduler: ScheduledTaskScheduler,
+    private val globalSwitch: AutomationGlobalSwitch,
 ) {
 
     /** 事件现场暂存：taskId → 现场。内存态、取走即删；进程重启就没了——事件本来就是一次性的。 */
@@ -104,6 +106,39 @@ class EventTriggerBus @Inject constructor(
         }
     }
 
+    /**
+     * 位置围栏入口：系统在地理围栏进出时发来的广播。
+     *
+     * [entering] 为 true 表示刚进入围栏。系统对同一位置的进出会各发一次，这里按任务配置的
+     * 「进入触发 / 离开触发」再筛一道——只勾了「进入」的任务不会因为离开而跑。
+     *
+     * 返回的 Job 供静态接收器 `goAsync()` 收尾用。
+     */
+    fun postLocation(taskId: String, entering: Boolean): Job = scope.launch {
+        dispatch(
+            ScheduledTaskEntity.TYPE_LOCATION,
+            EventPayload(timeMillis = System.currentTimeMillis()),
+        ) { task ->
+            task.id == taskId && if (entering) task.triggerOnEnter else task.triggerOnExit
+        }
+    }
+
+    /**
+     * MCP 资源变化入口：某条 server 的资源收到 `notifications/resources/updated`。
+     *
+     * 只按「server 名 + uri」匹配，不看 notification 里的其它字段——那是 server 推来的不可信数据。
+     * 同一资源被多个任务订阅时，这些任务都会各自跑一次，去重交给各自的防抖与去重表。
+     */
+    fun postMcpResource(serverName: String, uri: String): Job = scope.launch {
+        dispatch(
+            ScheduledTaskEntity.TYPE_MCP_RESOURCE,
+            EventPayload(timeMillis = System.currentTimeMillis()),
+        ) { task ->
+            task.triggerMcpServer.equals(serverName, ignoreCase = true) &&
+                task.triggerMcpResourceUri == uri
+        }
+    }
+
     /** 周期检查发现状态变化时调用：电量/充电变化看 battery 类任务，WiFi 变化看 network 类任务。 */
     suspend fun dispatchDeviceStateChange(check: DeviceStateCheck) {
         val payload = EventPayload(
@@ -131,6 +166,8 @@ class EventTriggerBus @Inject constructor(
         rawPayload: EventPayload,
         matches: (ScheduledTaskEntity) -> Boolean,
     ) {
+        // 全局暂停时事件照收不投：围栏、通知这些回调不能装看不见，但也不该把任务唤醒。
+        if (globalSwitch.isPaused()) return
         // 所有事件都从这里进，载荷收敛与去重都只在这一处做，不会因为多一个入口就漏掉。
         val payload = rawPayload.limited()
         val now = System.currentTimeMillis()

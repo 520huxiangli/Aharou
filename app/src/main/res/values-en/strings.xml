@@ -1659,6 +1659,11 @@
     <!-- Scheduled Tasks -->
     <string name="settings_scheduled_tasks">Automation tasks</string>
     <string name="scheduled_tasks_intro">Let the AI work on your schedule or when something happens: repeat on an interval, run daily at a fixed time, run once, or wait for an event (notification received, battery change, Wi-Fi connect or disconnect, boot, app opened). Tasks with a fixed time use system exact alarms (Android 12+ needs the exact alarm permission); the shortest interval is %1$d minutes.</string>
+    <string name="scheduled_tasks_paused">Pause all automations</string>
+    <string name="mcp_app_close">Close</string>
+    <string name="mcp_app_loading">Loading…</string>
+    <string name="mcp_app_failed">Failed to open MCP app: %1$s</string>
+    <string name="mcp_app_open">Open MCP app</string>
     <string name="scheduled_tasks_list_header">Tasks</string>
     <string name="scheduled_tasks_empty">No scheduled tasks yet</string>
     <string name="scheduled_tasks_add">New automation task</string>
@@ -1708,6 +1713,7 @@
     <string name="scheduled_tasks_trigger_network">On network change</string>
     <string name="scheduled_tasks_trigger_boot">On boot</string>
     <string name="scheduled_tasks_trigger_app_start">On app start</string>
+    <string name="scheduled_tasks_trigger_location">Location</string>
     <string name="scheduled_tasks_trigger_package">Source app</string>
     <string name="scheduled_tasks_trigger_package_hint">Enter the app package (e.g. com.tencent.mm); leave empty for any app. Turn on notification access in App permissions first</string>
     <string name="scheduled_tasks_trigger_battery_below">Battery threshold (%)</string>
@@ -1717,6 +1723,23 @@
     <string name="scheduled_tasks_trigger_ssid_hint">Leave empty for any Wi-Fi change</string>
     <string name="scheduled_tasks_trigger_boot_hint">Fires once after the device finishes booting</string>
     <string name="scheduled_tasks_trigger_app_start_hint">Fires once after the app starts; a background restart also counts as a start</string>
+    <string name="scheduled_tasks_trigger_location_hint">Fires when entering or leaving a place. Needs location permission; choose "Allow all the time" if it should work with the screen off</string>
+    <string name="scheduled_tasks_location_latitude">Latitude</string>
+    <string name="scheduled_tasks_location_longitude">Longitude</string>
+    <string name="scheduled_tasks_location_coordinate_hint">Latitude -90 to 90, longitude -180 to 180; copy coordinates from a map app</string>
+    <string name="scheduled_tasks_location_radius">Radius (m)</string>
+    <string name="scheduled_tasks_location_radius_hint">100 to 3000 m, default 200; too small will retrigger from GPS drift</string>
+    <string name="scheduled_tasks_location_on_enter">Trigger on entering</string>
+    <string name="scheduled_tasks_location_on_exit">Trigger on leaving</string>
+    <string name="scheduled_tasks_location_invalid">Enter a valid latitude and longitude</string>
+    <string name="scheduled_tasks_location_no_permission">Location permission not granted, so the trigger is not registered</string>
+    <string name="scheduled_tasks_mcp_server">MCP server</string>
+    <string name="scheduled_tasks_mcp_server_hint">Use the server name shown in settings; only connected servers in the current workspace are supported</string>
+    <string name="scheduled_tasks_mcp_resource_uri">Resource URI</string>
+    <string name="scheduled_tasks_mcp_resource_uri_hint">e.g. memo://notes; fires once when the resource changes</string>
+    <string name="scheduled_tasks_mcp_incomplete">Server name and resource URI must both be filled</string>
+    <string name="scheduled_tasks_desc_mcp_resource">On MCP resource change · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_trigger_mcp_resource">MCP resource change</string>
     <string name="scheduled_tasks_conditions">Trigger conditions (optional)</string>
     <string name="scheduled_tasks_condition_window_from">From</string>
     <string name="scheduled_tasks_condition_window_to">To</string>
@@ -1736,6 +1759,7 @@
     <string name="scheduled_tasks_desc_network_ssid">When connecting to or leaving %1$s · ran %2$d times (%3$s)</string>
     <string name="scheduled_tasks_desc_boot">On boot · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_desc_app_start">On app start · ran %1$d times (%2$s)</string>
+    <string name="scheduled_tasks_desc_location">Near a place · ran %1$d times (%2$s)</string>
     <string name="scheduled_tasks_skipped_condition">Conditions not met</string>
     <string name="scheduled_tasks_skip_reason_window">Conditions not met: outside the allowed time window</string>
     <string name="scheduled_tasks_skip_reason_charging">Conditions not met: not charging</string>

@@ -65,3 +65,41 @@ data class McpToolsListResult(
     val tools: List<McpToolDescriptor> = emptyList(),
     val nextCursor: String? = null
 )
+
+// ---- MCP 资源（resources/*）----
+
+/**
+ * `resources/list` 里的一条资源。
+ *
+ * 字段都做成可空且带默认值：server 实现普遍不严格遵循规范，少个 name / mimeType 不该让整张表解析失败。
+ */
+@Serializable
+data class McpResource(
+    val uri: String,
+    val name: String? = null,
+    val description: String? = null,
+    val mimeType: String? = null
+)
+
+@Serializable
+data class McpResourceListResult(
+    val resources: List<McpResource> = emptyList(),
+    val nextCursor: String? = null
+)
+
+/**
+ * `resources/read` 的内容块：text 与 blob 二选一。
+ * blob 是 base64（二进制资源），这里只留长度信息给占位描述，不把大段 base64 拼进上下文。
+ */
+@Serializable
+data class McpResourceContent(
+    val uri: String? = null,
+    val mimeType: String? = null,
+    val text: String? = null,
+    val blob: String? = null
+)
+
+@Serializable
+data class McpResourceReadResult(
+    val contents: List<McpResourceContent> = emptyList()
+)
