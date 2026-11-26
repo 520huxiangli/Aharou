@@ -285,7 +285,7 @@
 | `settings.permissions` | 设置页「权限与后台」分组末尾 |
 | `settings.data` | 设置页「数据与诊断」分组末尾 |
 | `settings.help` | 设置页「帮助与关于」分组末尾 |
-| `drawer.footer` | 侧栏底部，浏览器与设置之上 |
+| `drawer.footer` | 侧栏底部，宿主当前不展示该槽位 |
 | `chat.header.menu` | 聊天顶栏「更多」菜单底部 |
 | `chat.welcome` | 聊天空态建议区，最多展示 3 条 |
 | `chat.session.menu` | 会话长按菜单，删除项之前 |

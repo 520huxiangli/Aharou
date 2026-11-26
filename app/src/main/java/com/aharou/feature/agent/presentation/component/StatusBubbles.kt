@@ -842,7 +842,7 @@ internal fun ReasoningBubble(
                 .clickable { toggleExpanded(!expanded) },
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ThinkingGlyph(tint = Brand.IconGray, iconSize = 16.dp)
+            ThinkingGlyph(live = live, iconSize = 16.dp)
             Spacer(Modifier.width(Spacing.sm))
             ThinkingDurationLabel(
                 text = text,

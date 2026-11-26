@@ -8,7 +8,6 @@ import com.aharou.R
 import com.aharou.feature.agent.domain.workflow.ToolArgsProgress
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Check
-import compose.icons.feathericons.Cpu
 import compose.icons.feathericons.Database
 import compose.icons.feathericons.Edit3
 import compose.icons.feathericons.FileText
@@ -35,7 +34,7 @@ internal fun toolIcon(toolName: String?): ImageVector = when (toolName?.lowercas
     "bash", "terminal" -> FeatherIcons.Terminal
     "askuserquestion" -> FeatherIcons.HelpCircle
     "todo" -> FeatherIcons.Check
-    "task" -> FeatherIcons.Cpu
+    "task" -> FeatherIcons.Tool
     "memory" -> FeatherIcons.Database
     else -> FeatherIcons.Tool
 }

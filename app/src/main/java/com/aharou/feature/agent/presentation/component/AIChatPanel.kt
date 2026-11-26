@@ -114,7 +114,6 @@ import com.aharou.feature.settings.domain.model.DashboardContext
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.workspace.domain.WorkspacePathMapper
-import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -167,10 +166,8 @@ fun AIChatPanel(
     onNavigateToTerminal: () -> Unit = {},
     onNavigateToGit: () -> Unit = {},
     onNavigateToBrowser: () -> Unit = {},
-    onNavigateToSandbox: () -> Unit = {},
     onNavigateToShared: () -> Unit = {},
     settingsViewModel: SettingsViewModel? = null,
-    workspaceViewModel: WorkspaceViewModel? = null,
     onOpenDrawer: () -> Unit,
     showMenuButton: Boolean = true,
     /** 大屏右栏当前开的是终端 / Git 时，顶栏对应图标高亮。 */
@@ -341,7 +338,6 @@ fun AIChatPanel(
     val attachmentUploadMutex = remember { Mutex() }
     var uploadingCount by remember { mutableStateOf(0) }
     var messageForMenu by remember { mutableStateOf<AgentUIMessage?>(null) }
-    var showActivity by remember { mutableStateOf(false) }
     var editingMessage by remember { mutableStateOf<AgentUIMessage?>(null) }
     var queuedEditing by remember { mutableStateOf<QueuedRequest?>(null) }
     val listState = rememberLazyListState()
@@ -1213,9 +1209,7 @@ fun AIChatPanel(
                 onNavigateToTerminal = onNavigateToTerminal,
                 onNavigateToGit = onNavigateToGit,
                 onNavigateToBrowser = onNavigateToBrowser,
-                onNavigateToSandbox = onNavigateToSandbox,
                 onNavigateToShared = onNavigateToShared,
-                onOpenActivity = { showActivity = true },
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) },
                 voiceMode = voiceMode,
@@ -1490,7 +1484,7 @@ fun AIChatPanel(
                 onInputChange = { id, text -> dashboardInputs = dashboardInputs + (id to text) }
             ) {
                 ChatInputBar(
-                    value = inputText, serviceTier = viewModel.currentServiceTierNow(), onServiceTierChange = viewModel::setServiceTier,
+                    value = inputText,
                     onValueChange = viewModel::updateInputDraft,
                     onSend = { text -> sendMessage(text) },
                     enterToSend = settingsViewModel?.enterToSend?.collectAsStateWithLifecycle()?.value ?: false,
@@ -1498,8 +1492,6 @@ fun AIChatPanel(
                     onForceStop = { viewModel.forceStopAgent() },
                     isBusy = isBusy,
                     canForceStop = currentSessionId?.let { it in activeAgentSessions } == true,
-                    workspaceViewModel = workspaceViewModel,
-                    onStopCurrentSessions = { viewModel.stopAllAgents() },
                     onOpenDashboardUrl = { url ->
                         // 自定义面板里的链接走内置浏览器：先建/选中标签页再跳过去。
                         viewModel.browserTabPool.selectOrCreateTabForURL(url)
@@ -1805,10 +1797,6 @@ fun AIChatPanel(
                 )
             }
 
-            if (showActivity) {
-                val receipts by viewModel.currentSessionReceipts.collectAsStateWithLifecycle()
-                ActivityTimelineSheet(receipts = receipts, onDismiss = { showActivity = false })
-            }
             editingMessage?.let { message ->
                 EditMessageDialog(
                     initialText = message.content,

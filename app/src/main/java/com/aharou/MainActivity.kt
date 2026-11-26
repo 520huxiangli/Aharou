@@ -864,7 +864,8 @@ fun AppNavigation(
                 navController.navigate("settings")
                 if (!permanentDrawer) scope.launch { drawerState.snapTo(DrawerValue.Closed) }
             },
-            pluginHost = pluginHost,
+            workspaceViewModel = workspaceViewModel,
+            onStopCurrentSessions = { agentViewModel.stopAllAgents() },
             searchQuery = chatSearchQuery,
             searchState = chatSearchState,
             onSearchQueryChange = { agentViewModel.updateChatSearchQuery(it) },
@@ -956,13 +957,11 @@ fun AppNavigation(
                             AIChatPanel(
                                 viewModel = agentViewModel,
                                 settingsViewModel = settingsViewModel,
-                                workspaceViewModel = workspaceViewModel,
                                 onOpenDrawer = { scope.launch { drawerState.open() } },
                                 showMenuButton = !permanentDrawer,
                                 onNavigateToTerminal = { openWorkbench(WorkbenchPaneKind.TERMINAL) },
                                 onNavigateToGit = { openWorkbench(WorkbenchPaneKind.GIT) },
                                 onNavigateToBrowser = { openWorkbench(WorkbenchPaneKind.BROWSER) },
-                                onNavigateToSandbox = { navController.navigate("sandbox") },
                                 onNavigateToShared = { navController.navigate("shared") },
                                 terminalActive = paneOpen && paneKind == WorkbenchPaneKind.TERMINAL,
                                 gitActive = paneOpen && paneKind == WorkbenchPaneKind.GIT, browserActive = paneOpen && paneKind == WorkbenchPaneKind.BROWSER,

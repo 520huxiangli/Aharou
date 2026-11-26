@@ -123,10 +123,7 @@ import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
-import com.aharou.feature.settings.domain.model.ServiceTier
 import com.aharou.feature.settings.domain.model.modelMetadataKey
-import com.aharou.feature.workspace.presentation.WorkspaceViewModel
-import com.aharou.feature.workspace.presentation.component.WorkspaceIconButton
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
 import compose.icons.feathericons.RefreshCw
@@ -171,8 +168,6 @@ internal fun ChatInputBar(
     isBusy: Boolean,
     /** 该会话是否还有 agent 协程在跑：软打断后 [isBusy] 已回到 false，但任务仍在后台跑当前这一步。 */
     canForceStop: Boolean = false,
-    workspaceViewModel: WorkspaceViewModel?,
-    onStopCurrentSessions: () -> Unit = {},
     activeProvider: AIProviderConfig?,
     providers: List<AIProviderConfig>,
     modelMetadata: Map<String, ModelMetadata>,
@@ -200,8 +195,6 @@ internal fun ChatInputBar(
     onInterjectQueued: (String) -> Unit = {},
     tokenProgress: Float = 0f,
     tokenEstimated: Boolean = false,
-    serviceTier: ServiceTier = ServiceTier.FOLLOW,
-    onServiceTierChange: ((ServiceTier) -> Unit)? = null,
     dashboardState: ProviderDashboardState = ProviderDashboardState.Idle,
     onRefreshDashboard: () -> Unit = {},
     onRefreshDashboardByButton: (String, String?) -> Unit = { _, _ -> },
@@ -608,15 +601,6 @@ internal fun ChatInputBar(
                             modifier = Modifier.onboardingTarget(OnboardingStep.OPEN_MODEL_PICKER)
                         )
 
-                        if (workspaceViewModel != null) {
-                            WorkspaceIconButton(
-                                viewModel = workspaceViewModel,
-                                onStopCurrentSessions = onStopCurrentSessions,
-                                modifier = Modifier.size(36.dp),
-                                iconSize = 20.dp
-                            )
-                        }
-
                         // 档位一律全列：models.dev 的声明常缺档（例如只给 low/high/max），
                         // 按声明过滤会让用户选不到「中」这类档位；声明只用来在弹层里提示「未必支持」。
                         ReasoningEffortSelector(
@@ -624,10 +608,7 @@ internal fun ChatInputBar(
                             availableEfforts = ReasoningEffort.entries,
                             onChange = onReasoningEffortChange,
                             enabled = !isBusy,
-                            modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] },
-                            serviceTier = serviceTier,
-                            onServiceTierChange = onServiceTierChange,
-                            showServiceTier = activeProvider?.type == com.aharou.feature.settings.domain.model.ProviderType.OPENAI
+                            modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] }
                         )
                     }
                     val callContext = LocalContext.current

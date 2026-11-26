@@ -82,13 +82,12 @@ import com.aharou.core.theme.Spacing
 import com.aharou.core.theme.semanticColors
 import com.aharou.core.ui.SegmentedTabs
 import com.aharou.core.ui.rememberImeBottomInset
-import com.aharou.feature.plugin.presentation.PluginDrawerEntries
-import com.aharou.feature.plugin.presentation.PluginHostState
 import com.aharou.feature.settings.presentation.component.SettingsDivider
 import com.aharou.feature.settings.presentation.component.SettingsGroup
-import com.aharou.feature.settings.presentation.component.SettingsGroupHeader
 import com.aharou.feature.settings.presentation.component.SettingsRow
 import com.aharou.feature.settings.presentation.component.settingsPageBackground
+import com.aharou.feature.workspace.presentation.WorkspaceViewModel
+import com.aharou.feature.workspace.presentation.component.WorkspaceDrawerSection
 import com.aharou.feature.agent.domain.model.ChatSession
 import com.aharou.feature.agent.presentation.AgentUIState
 import com.aharou.feature.agent.presentation.ChatSearchHit
@@ -167,14 +166,15 @@ fun ChatDrawerContent(
     onCancelPasteOverwrite: () -> Unit,
     onClearClipboard: () -> Unit,
     onNavigateToBrowser: (() -> Unit)? = null,
-    /** 插件入口（`drawer.footer` 槽位）；null 表示不展示。 */
-    pluginHost: PluginHostState? = null,
     onNavigateToSettings: () -> Unit,
     searchQuery: String,
     searchState: ChatSearchState,
     onSearchQueryChange: (String) -> Unit,
     onClearSearch: () -> Unit,
     onOpenSearchHit: (ChatSearchHit) -> Unit,
+    /** 侧栏顶部的工作区切换；null 表示不展示（远程等场景不传）。 */
+    workspaceViewModel: WorkspaceViewModel? = null,
+    onStopCurrentSessions: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val fileSearchViewModel: FileSearchViewModel = hiltViewModel()
@@ -317,6 +317,10 @@ fun ChatDrawerContent(
             )
         }
 
+        workspaceViewModel?.let {
+            WorkspaceDrawerSection(viewModel = it, onStopCurrentSessions = onStopCurrentSessions)
+        }
+
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
                 0 -> SessionListTab(
@@ -374,8 +378,6 @@ fun ChatDrawerContent(
                 )
             }
         }
-
-        PluginDrawerEntries(pluginHost)
 
         SettingsGroup {
             if (onNavigateToBrowser != null) {

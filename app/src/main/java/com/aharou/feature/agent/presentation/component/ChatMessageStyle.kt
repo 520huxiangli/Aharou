@@ -2,6 +2,7 @@ package com.aharou.feature.agent.presentation.component
 
 import android.content.ClipData
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -198,19 +199,18 @@ internal fun formatClockTime(millis: Long): String =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(CHAT_CLOCK_FORMATTER)
 
 /**
- * 「思考」字形：矢量原子/思考图标（对齐用户参考图）。
- * 资源载入 R.drawable.ic_thinking，颜色跟随调用方给的主题色 tint，等比缩放到指定尺寸。
+ * 「思考」图标：黑脑袋 + 亮符号，思考中是问号，完成后是灯泡。
+ * 双色位图自带配色，不走 tint，否则符号会被一并染成黑色。
  */
 @Composable
 internal fun ThinkingGlyph(
+    live: Boolean = true,
     modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     iconSize: Dp = 16.dp
 ) {
-    Icon(
-        painter = painterResource(R.drawable.ic_thinking),
+    Image(
+        painter = painterResource(if (live) R.drawable.ic_thinking_live else R.drawable.ic_thinking_done),
         contentDescription = null,
-        tint = tint,
         modifier = modifier.size(iconSize)
     )
 }

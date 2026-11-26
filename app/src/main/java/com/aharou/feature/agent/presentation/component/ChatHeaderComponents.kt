@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -52,13 +53,11 @@ import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.onboarding.presentation.onboardingTarget
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.MoreHorizontal
-import compose.icons.feathericons.Folder
-import compose.icons.feathericons.Archive
+import compose.icons.feathericons.Inbox
+import compose.icons.feathericons.ChevronsRight
 import compose.icons.feathericons.ChevronRight
-import compose.icons.feathericons.Clock
 import compose.icons.feathericons.GitBranch
 import compose.icons.feathericons.Globe
-import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Menu
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Terminal
@@ -74,9 +73,7 @@ internal fun ChatHeader(
     onNavigateToTerminal: () -> Unit,
     onNavigateToGit: () -> Unit,
     onNavigateToBrowser: () -> Unit = {},
-    onNavigateToSandbox: () -> Unit = {},
     onNavigateToShared: () -> Unit = {},
-    onOpenActivity: () -> Unit = {},
     currentMode: AgentMode,
     onToggleMode: (AgentMode) -> Unit,
     /** 对话模式：开启后双方消息都以语音条呈现。 */
@@ -92,8 +89,8 @@ internal fun ChatHeader(
     pluginLanguageTag: String = "zh-CN",
     onPluginEntry: (com.aharou.feature.plugin.domain.PluginUiEntry) -> Unit = {}
 ) {
-    // 顶栏工具收纳：Git / 终端 / 浏览器 收进一个按钮，展开时在原位覆盖成那三个入口，
-    // 替出来的格子给智能托管。展开态只改这一段，不弹浮层也不撑开新行。
+    // 顶栏工具收纳：Git / 终端 / 浏览器 收进一个按钮，展开时在原位覆盖成那三个入口。
+    // 展开态只改这一段，不弹浮层也不撑开新行。
     var toolsExpanded by remember { mutableStateOf(false) }
     Surface(
         color = MaterialTheme.colorScheme.background
@@ -130,26 +127,37 @@ internal fun ChatHeader(
                         contentDescription = stringResource(R.string.chat_new_session),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                // 对话 / 工作：对话模式下双方消息改用语音条，工作模式就是普通文字气泡
-                Surface(
-                    shape = RoundedCornerShape(Radius.pill),
-                    color = if (voiceMode) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceVariant,
+                // 对话 / 工作：两格分段，选中的那格高亮；对话模式下双方消息改用语音条
+                Row(
                     modifier = Modifier
                         .padding(start = Spacing.xs)
-                        .clickable { onToggleVoiceMode() }
+                        .clip(RoundedCornerShape(Radius.pill))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        text = stringResource(
-                            if (voiceMode) R.string.chat_mode_chat else R.string.chat_mode_work
-                        ),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = if (voiceMode) MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 4.dp)
-                    )
+                    listOf(
+                        stringResource(R.string.chat_mode_work) to false,
+                        stringResource(R.string.chat_mode_chat) to true
+                    ).forEach { (label, chatMode) ->
+                        val selected = voiceMode == chatMode
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(Radius.pill))
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent
+                                )
+                                .clickable(enabled = !selected) { onToggleVoiceMode() }
+                                .padding(horizontal = Spacing.sm, vertical = 4.dp)
+                        )
+                    }
                 }
                 // 会话标题已从顶栏移除：侧边栏可重命名，顶栏把空间留给按钮。
                 Spacer(modifier = Modifier.weight(1f))
@@ -173,12 +181,6 @@ internal fun ChatHeader(
                         active = browserActive,
                         onClick = onNavigateToBrowser
                     )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.Clock,
-                        contentDescription = stringResource(R.string.chat_open_activity),
-                        active = false,
-                        onClick = onOpenActivity
-                    )
                     IconButton(onClick = { toolsExpanded = false }) {
                         Icon(
                             FeatherIcons.ChevronRight,
@@ -186,16 +188,8 @@ internal fun ChatHeader(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    // 智能托管常驻顶栏：AI 空闲时自动判断任务是否完成并续写下一步
-                    sessionId?.takeIf { it.isNotBlank() }?.let { StewardEntryButton(sessionId = it) }
                     WorkbenchIconButton(
-                        icon = FeatherIcons.Folder,
-                        contentDescription = stringResource(R.string.chat_open_sandbox),
-                        active = false,
-                        onClick = onNavigateToSandbox
-                    )
-                    WorkbenchIconButton(
-                        icon = FeatherIcons.HardDrive,
+                        icon = FeatherIcons.Inbox,
                         contentDescription = stringResource(R.string.chat_open_shared),
                         active = false,
                         onClick = onNavigateToShared
@@ -205,7 +199,7 @@ internal fun ChatHeader(
                     }
                     IconButton(onClick = { toolsExpanded = true }) {
                         Icon(
-                            FeatherIcons.Archive,
+                            FeatherIcons.ChevronsRight,
                             contentDescription = stringResource(R.string.chat_tools_expand),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

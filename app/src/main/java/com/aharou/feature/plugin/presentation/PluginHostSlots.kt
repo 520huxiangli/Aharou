@@ -32,7 +32,6 @@ data class PluginDslPage(
 
 /** 各处插件槽位的入口；从已加载的插件快照算，不读盘。 */
 data class PluginHostSlotEntries(
-    val drawer: List<PluginUiEntry>,
     val header: List<PluginUiEntry>,
     val editor: List<PluginUiEntry>
 )
@@ -113,7 +112,6 @@ private fun rememberPluginSlotEntries(
             }
         }
     PluginHostSlotEntries(
-        drawer = all.filter { it.slot == PluginUiSlots.DRAWER_FOOTER },
         header = all.filter { it.slot == PluginUiSlots.CHAT_HEADER_MENU },
         editor = all.filter { it.slot == PluginUiSlots.EDITOR_SELECTION_MENU }
     )

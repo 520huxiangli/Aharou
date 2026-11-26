@@ -4,32 +4,24 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import com.aharou.core.ui.AdaptiveModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import com.aharou.core.ui.AppTextField
 import com.aharou.core.ui.dialogTextFieldColors
 import androidx.compose.runtime.Composable
@@ -45,16 +37,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.theme.semanticColors
 import com.aharou.feature.workspace.domain.model.Workspace
 import com.aharou.feature.workspace.domain.model.WorkspaceType
 import com.aharou.feature.workspace.presentation.WorkspaceViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Folder
+import compose.icons.feathericons.ChevronDown
+import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.HardDrive
 import compose.icons.feathericons.Plus
@@ -62,326 +55,6 @@ import compose.icons.feathericons.Trash2
 import androidx.compose.ui.res.stringResource
 import android.widget.Toast
 import com.aharou.R
-
-/**
- * 顶栏的工作区选择图标按钮：点击弹出选择/新建/删除面板。
- */
-@Composable
-fun WorkspaceIconButton(
-    viewModel: WorkspaceViewModel,
-    onStopCurrentSessions: () -> Unit = {},
-    modifier: Modifier = Modifier,
-    iconSize: Dp = 24.dp
-) {
-    var showSheet by remember { mutableStateOf(false) }
-
-    IconButton(
-        onClick = { showSheet = true },
-        modifier = modifier
-    ) {
-        Icon(
-            FeatherIcons.Folder,
-            contentDescription = stringResource(R.string.workspace_open),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(iconSize)
-        )
-    }
-
-    // 远程工作区路径/默认工作区创建失败提示：消费后清除，避免重复弹 Toast
-    val initError by viewModel.initError.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    LaunchedEffect(initError) {
-        if (initError != null) {
-            Toast.makeText(context, initError, Toast.LENGTH_LONG).show()
-            viewModel.consumeInitError()
-        }
-    }
-
-    WorkspaceSelectionHost(
-        visible = showSheet,
-        onDismiss = { showSheet = false },
-        viewModel = viewModel,
-        onStopCurrentSessions = onStopCurrentSessions
-    )
-}
-
-/** 工作区选择面板的公共宿主：由 WorkspaceIconButton 入口调用。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun WorkspaceSelectionHost(
-    visible: Boolean,
-    onDismiss: () -> Unit,
-    viewModel: WorkspaceViewModel,
-    onStopCurrentSessions: () -> Unit
-) {
-    val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
-    val current by viewModel.current.collectAsStateWithLifecycle()
-    val isLocalMode by viewModel.isLocalMode.collectAsStateWithLifecycle()
-    val addError by viewModel.addError.collectAsStateWithLifecycle()
-    val externalWarningDismissed by viewModel.externalWarningDismissed.collectAsStateWithLifecycle()
-    val deleteExternalWorkspaceSessions by viewModel.deleteExternalWorkspaceSessions.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var showExternalWarning by remember { mutableStateOf(false) }
-    var dontShowExternalWarningAgain by remember { mutableStateOf(false) }
-
-    fun select(ws: Workspace) {
-        viewModel.selectWorkspace(ws.name)
-        onDismiss()
-    }
-
-    // 添加外部本地工作区失败提示：消费后清除，避免重复弹 Toast
-    LaunchedEffect(addError) {
-        if (addError != null) {
-            Toast.makeText(context, addError, Toast.LENGTH_LONG).show()
-            viewModel.consumeAddError()
-        }
-    }
-
-    // 系统目录选择器：选设备上的目录注册为外部本地工作区
-    val folderLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                )
-            }
-            viewModel.addExternalWorkspace(uri) { created ->
-                if (created != null) {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.workspace_external_added, created.name),
-                        Toast.LENGTH_LONG
-                    ).show()
-                    onDismiss()
-                    select(created)
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(visible) {
-        if (visible) viewModel.refreshAvailability()
-    }
-
-    if (visible) {
-        WorkspaceSheet(
-            workspaces = workspaces,
-            current = current,
-            isLocalMode = isLocalMode,
-            onAddExternal = {
-                if (externalWarningDismissed) folderLauncher.launch(null)
-                else showExternalWarning = true
-            },
-            onSelect = ::select,
-            onCreate = { name ->
-                viewModel.createWorkspace(name) { created ->
-                    if (created != null) select(created)
-                }
-            },
-            onDelete = { viewModel.deleteWorkspace(it.name) },
-            onRename = { ws, newName ->
-                viewModel.renameWorkspace(ws.name, newName) { renamed ->
-                    if (renamed == null) {
-                        // 具体原因由 repository 给出（名称非法 / 重名 / 目录状态 / 迁移失败），
-                        // 拿不到时才退回笼统文案。
-                        val message = viewModel.renameError()
-                            ?: context.getString(R.string.workspace_rename_failed)
-                        viewModel.consumeRenameError()
-                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                    }
-                }
-            },
-            onStopCurrentSessions = onStopCurrentSessions,
-            deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
-            onDismiss = onDismiss
-        )
-    }
-
-    if (showExternalWarning) {
-        AlertDialog(
-            onDismissRequest = { showExternalWarning = false },
-            title = { Text(stringResource(R.string.workspace_external_warning_title)) },
-            text = {
-                Column {
-                    Text(stringResource(R.string.workspace_external_warning_message))
-                    Spacer(Modifier.height(Spacing.sm))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { dontShowExternalWarningAgain = !dontShowExternalWarningAgain },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = dontShowExternalWarningAgain,
-                            onCheckedChange = { dontShowExternalWarningAgain = it }
-                        )
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text(stringResource(R.string.workspace_external_warning_dont_show_again))
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (dontShowExternalWarningAgain) viewModel.setExternalWarningDismissed(true)
-                    showExternalWarning = false
-                    folderLauncher.launch(null)
-                }) { Text(stringResource(R.string.workspace_external_warning_continue)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showExternalWarning = false }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            }
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun WorkspaceSheet(
-    workspaces: List<Workspace>,
-    current: Workspace?,
-    isLocalMode: Boolean,
-    onAddExternal: () -> Unit,
-    onSelect: (Workspace) -> Unit,
-    onCreate: (String) -> Unit,
-    onDelete: (Workspace) -> Unit,
-    onRename: (Workspace, String) -> Unit,
-    onStopCurrentSessions: () -> Unit,
-    deleteExternalWorkspaceSessions: Boolean,
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState()
-    var showCreateDialog by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<Workspace?>(null) }
-    var pendingRename by remember { mutableStateOf<Workspace?>(null) }
-    // 本地模式建的是应用私有目录里的工作区（内部），远程模式建在服务器上，两者入口文案需区分。
-    val createWorkspaceLabel = stringResource(
-        if (isLocalMode) R.string.workspace_new_internal else R.string.workspace_new_workspace
-    )
-
-    AdaptiveModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.lg)
-                .padding(bottom = Spacing.xl)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.md),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.common_workspace),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isLocalMode) {
-                    TextButton(onClick = onAddExternal) {
-                        Icon(FeatherIcons.HardDrive, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text(stringResource(R.string.workspace_add_external))
-                    }
-                }
-                TextButton(onClick = { showCreateDialog = true }) {
-                    Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(Spacing.xs))
-                    Text(createWorkspaceLabel)
-                }
-            }
-
-            if (workspaces.isEmpty()) {
-                Text(
-                    stringResource(R.string.workspace_empty_hint, createWorkspaceLabel),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = Spacing.md)
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 320.dp),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-                ) {
-                    items(workspaces, key = { it.name }) { ws ->
-                        WorkspaceRow(
-                            workspace = ws,
-                            selected = ws.name == current?.name,
-                            canDelete = workspaces.size > 1,
-                            onClick = { onSelect(ws) },
-                            onDelete = { pendingDelete = ws },
-                            onRename = { pendingRename = ws }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (showCreateDialog) {
-        CreateWorkspaceDialog(
-            title = createWorkspaceLabel,
-            existingNames = workspaces.map { it.name },
-            onConfirm = {
-                onCreate(it)
-                showCreateDialog = false
-            },
-            onDismiss = { showCreateDialog = false }
-        )
-    }
-
-    pendingDelete?.let { ws ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text(stringResource(R.string.workspace_delete)) },
-            text = {
-                Text(
-                    if (ws.type == WorkspaceType.EXTERNAL_LOCAL) {
-                        stringResource(
-                            if (deleteExternalWorkspaceSessions) R.string.workspace_external_remove_confirm_sessions
-                            else R.string.workspace_external_remove_confirm,
-                            ws.name
-                        )
-                    } else {
-                        stringResource(R.string.workspace_delete_confirm, ws.name)
-                    }
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (ws.name == current?.name) onStopCurrentSessions()
-                    onDelete(ws)
-                    pendingDelete = null
-                }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.common_cancel)) }
-            }
-        )
-    }
-
-    pendingRename?.let { ws ->
-        RenameWorkspaceDialog(
-            workspace = ws,
-            existingNames = workspaces.map { it.name },
-            onConfirm = { newName ->
-                // 改的正是当前工作区时，先按切换工作区的同一套处理停掉会话与终端，
-                // 否则旧 proot 里还绑着旧路径。
-                if (ws.name == current?.name) onStopCurrentSessions()
-                onRename(ws, newName)
-                pendingRename = null
-            },
-            onDismiss = { pendingRename = null }
-        )
-    }
-}
 
 @Composable
 private fun WorkspaceRow(
@@ -477,6 +150,82 @@ private fun WorkspaceRow(
                 )
             }
         }
+    }
+}
+
+/** 新建 / 重命名 / 删除三个确认弹窗：侧栏顶部区块与其它入口共用。 */
+@Composable
+private fun WorkspaceConfirmDialogs(
+    workspaces: List<Workspace>,
+    current: Workspace?,
+    createTitle: String,
+    showCreate: Boolean,
+    onShowCreateChange: (Boolean) -> Unit,
+    onCreate: (String) -> Unit,
+    pendingDelete: Workspace?,
+    onPendingDeleteChange: (Workspace?) -> Unit,
+    onDelete: (Workspace) -> Unit,
+    pendingRename: Workspace?,
+    onPendingRenameChange: (Workspace?) -> Unit,
+    onRename: (Workspace, String) -> Unit,
+    deleteExternalWorkspaceSessions: Boolean,
+    onStopCurrentSessions: () -> Unit
+) {
+    if (showCreate) {
+        CreateWorkspaceDialog(
+            title = createTitle,
+            existingNames = workspaces.map { it.name },
+            onConfirm = {
+                onCreate(it)
+                onShowCreateChange(false)
+            },
+            onDismiss = { onShowCreateChange(false) }
+        )
+    }
+
+    pendingDelete?.let { ws ->
+        AlertDialog(
+            onDismissRequest = { onPendingDeleteChange(null) },
+            title = { Text(stringResource(R.string.workspace_delete)) },
+            text = {
+                Text(
+                    if (ws.type == WorkspaceType.EXTERNAL_LOCAL) {
+                        stringResource(
+                            if (deleteExternalWorkspaceSessions) R.string.workspace_external_remove_confirm_sessions
+                            else R.string.workspace_external_remove_confirm,
+                            ws.name
+                        )
+                    } else {
+                        stringResource(R.string.workspace_delete_confirm, ws.name)
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (ws.name == current?.name) onStopCurrentSessions()
+                    onDelete(ws)
+                    onPendingDeleteChange(null)
+                }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { onPendingDeleteChange(null) }) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
+    }
+
+    pendingRename?.let { ws ->
+        RenameWorkspaceDialog(
+            workspace = ws,
+            existingNames = workspaces.map { it.name },
+            onConfirm = { newName ->
+                // 改的正是当前工作区时，先按切换工作区的同一套处理停掉会话与终端，
+                // 否则旧 proot 里还绑着旧路径。
+                if (ws.name == current?.name) onStopCurrentSessions()
+                onRename(ws, newName)
+                onPendingRenameChange(null)
+            },
+            onDismiss = { onPendingRenameChange(null) }
+        )
     }
 }
 
@@ -578,4 +327,219 @@ private fun RenameWorkspaceDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         }
     )
+}
+
+/**
+ * 侧栏顶部的工作区切换：折叠时一行显示当前工作区，展开后就是完整列表。
+ *
+ * 条目与确认弹窗和底部弹层共用，只是把常驻位置换到侧栏顶部，不必每次先点图标。
+ */
+@Composable
+fun WorkspaceDrawerSection(
+    viewModel: WorkspaceViewModel,
+    onStopCurrentSessions: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
+    val current by viewModel.current.collectAsStateWithLifecycle()
+    val isLocalMode by viewModel.isLocalMode.collectAsStateWithLifecycle()
+    val addError by viewModel.addError.collectAsStateWithLifecycle()
+    val externalWarningDismissed by viewModel.externalWarningDismissed.collectAsStateWithLifecycle()
+    val deleteExternalWorkspaceSessions by viewModel.deleteExternalWorkspaceSessions.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<Workspace?>(null) }
+    var pendingRename by remember { mutableStateOf<Workspace?>(null) }
+    var showExternalWarning by remember { mutableStateOf(false) }
+    var dontShowExternalWarningAgain by remember { mutableStateOf(false) }
+    val createWorkspaceLabel = stringResource(
+        if (isLocalMode) R.string.workspace_new_internal else R.string.workspace_new_workspace
+    )
+
+    LaunchedEffect(Unit) { viewModel.refreshAvailability() }
+
+    // 添加外部本地工作区失败提示：消费后清除，避免重复弹 Toast
+    LaunchedEffect(addError) {
+        if (addError != null) {
+            Toast.makeText(context, addError, Toast.LENGTH_LONG).show()
+            viewModel.consumeAddError()
+        }
+    }
+
+    // 系统目录选择器：选设备上的目录注册为外部本地工作区
+    val folderLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            viewModel.addExternalWorkspace(uri) { created ->
+                if (created != null) {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.workspace_external_added, created.name),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    viewModel.selectWorkspace(created.name)
+                    expanded = false
+                }
+            }
+        }
+    }
+
+    Surface(
+        color = MaterialTheme.semanticColors.cardSurface,
+        shape = RoundedCornerShape(Radius.mdLarge),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    FeatherIcons.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(Spacing.sm))
+                Text(
+                    text = stringResource(R.string.common_workspace),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            if (expanded) {
+                workspaces.forEach { ws ->
+                    WorkspaceRow(
+                        workspace = ws,
+                        selected = ws.name == current?.name,
+                        canDelete = workspaces.size > 1,
+                        onClick = {
+                            viewModel.selectWorkspace(ws.name)
+                            expanded = false
+                        },
+                        onDelete = { pendingDelete = ws },
+                        onRename = { pendingRename = ws }
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isLocalMode) {
+                        TextButton(onClick = {
+                            if (externalWarningDismissed) folderLauncher.launch(null)
+                            else showExternalWarning = true
+                        }) {
+                            Icon(FeatherIcons.HardDrive, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(Spacing.xs))
+                            Text(
+                                stringResource(R.string.workspace_add_external),
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                    TextButton(onClick = { showCreateDialog = true }) {
+                        Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(createWorkspaceLabel, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+    }
+
+    WorkspaceConfirmDialogs(
+        workspaces = workspaces,
+        current = current,
+        createTitle = createWorkspaceLabel,
+        showCreate = showCreateDialog,
+        onShowCreateChange = { showCreateDialog = it },
+        onCreate = { name ->
+            viewModel.createWorkspace(name) { created ->
+                if (created != null) {
+                    viewModel.selectWorkspace(created.name)
+                    expanded = false
+                }
+            }
+        },
+        pendingDelete = pendingDelete,
+        onPendingDeleteChange = { pendingDelete = it },
+        onDelete = { viewModel.deleteWorkspace(it.name) },
+        pendingRename = pendingRename,
+        onPendingRenameChange = { pendingRename = it },
+        onRename = { ws, newName ->
+            viewModel.renameWorkspace(ws.name, newName) { renamed ->
+                if (renamed == null) {
+                    // 具体原因由 repository 给出（名称非法 / 重名 / 目录状态 / 迁移失败），
+                    // 拿不到时才退回笼统文案。
+                    val message = viewModel.renameError()
+                        ?: context.getString(R.string.workspace_rename_failed)
+                    viewModel.consumeRenameError()
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }
+            }
+        },
+        deleteExternalWorkspaceSessions = deleteExternalWorkspaceSessions,
+        onStopCurrentSessions = onStopCurrentSessions
+    )
+
+    if (showExternalWarning) {
+        AlertDialog(
+            onDismissRequest = { showExternalWarning = false },
+            title = { Text(stringResource(R.string.workspace_external_warning_title)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.workspace_external_warning_message))
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { dontShowExternalWarningAgain = !dontShowExternalWarningAgain },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = dontShowExternalWarningAgain,
+                            onCheckedChange = { dontShowExternalWarningAgain = it }
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(stringResource(R.string.workspace_external_warning_dont_show_again))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (dontShowExternalWarningAgain) viewModel.setExternalWarningDismissed(true)
+                    showExternalWarning = false
+                    folderLauncher.launch(null)
+                }) { Text(stringResource(R.string.workspace_external_warning_continue)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExternalWarning = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
+    }
 }

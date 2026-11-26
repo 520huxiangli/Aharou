@@ -37,7 +37,6 @@ import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
 import com.aharou.feature.agent.domain.model.ReasoningEffort
-import com.aharou.feature.settings.domain.model.ServiceTier
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
@@ -111,13 +110,9 @@ internal fun ReasoningEffortSelector(
     availableEfforts: List<ReasoningEffort>,
     onChange: (ReasoningEffort) -> Unit,
     enabled: Boolean,
-    modelMetadata: ModelMetadata? = null,
-    serviceTier: ServiceTier = ServiceTier.FOLLOW,
-    onServiceTierChange: ((ServiceTier) -> Unit)? = null,
-    showServiceTier: Boolean = false
+    modelMetadata: ModelMetadata? = null
 ) {
     var showSheet by remember { mutableStateOf(false) }
-    var tierTab by remember { mutableStateOf(false) }
     Box {
         // 图标旁带档位文字：档位不同耗时与花费差得多，只给图标看不出当前选了哪档。
         Row(
@@ -160,34 +155,13 @@ internal fun ReasoningEffortSelector(
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.xl)
             ) {
-                if (showServiceTier && onServiceTierChange != null) {
-                    // 思考强度已有 7 档，再往下叠一组档位会把弹层撑满，改成两个分页签一次只显示一组。
-                    Row(modifier = Modifier.padding(bottom = Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
-                        listOf(false to R.string.chat_reasoning_effort, true to R.string.service_tier_title).forEachIndexed { index, (isTier, labelRes) ->
-                            if (index > 0) Spacer(Modifier.width(Spacing.lg))
-                            val active = isTier == tierTab
-                            Text(
-                                text = stringResource(labelRes),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                                color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(Radius.sm))
-                                    .clickable { tierTab = isTier }
-                                    .padding(vertical = Spacing.xs, horizontal = Spacing.xs)
-                            )
-                        }
-                    }
-                } else {
-                    Text(
-                        text = stringResource(com.aharou.R.string.chat_reasoning_effort),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = Spacing.sm)
-                    )
-                }
-                if (!tierTab) {
+                Text(
+                    text = stringResource(com.aharou.R.string.chat_reasoning_effort),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = Spacing.sm)
+                )
                 val declaredEfforts = modelMetadata?.reasoningEffortOptions
                 // 声明了档位的模型，档位表本身就是说明；纯开关型/预算型才需一句话点明区别。
                 if (declaredEfforts.isNullOrEmpty()) {
@@ -253,45 +227,6 @@ internal fun ReasoningEffortSelector(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
-                        }
-                    }
-                }
-                }
-                if (tierTab && showServiceTier && onServiceTierChange != null) {
-                    Spacer(Modifier.size(Spacing.md))
-                    EffortHint(stringResource(R.string.service_tier_hint), MaterialTheme.colorScheme.onSurfaceVariant)
-                    listOf(
-                        ServiceTier.FOLLOW to R.string.service_tier_follow,
-                        ServiceTier.STANDARD to R.string.service_tier_standard,
-                        ServiceTier.FAST to R.string.service_tier_fast,
-                        ServiceTier.ULTRAFAST to R.string.service_tier_ultrafast
-                    ).forEach { (tier, label) ->
-                        val tierSelected = tier == serviceTier
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(Radius.sm))
-                                .clickable {
-                                    showSheet = false
-                                    onServiceTierChange(tier)
-                                }
-                                .padding(horizontal = Spacing.md, vertical = Spacing.md),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(label),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (tierSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (tierSelected) {
-                                Icon(
-                                    FeatherIcons.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
                         }
                     }
                 }
