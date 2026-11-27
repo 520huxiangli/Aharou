@@ -97,6 +97,8 @@ data class AgentContext(
     val modeBeforePlan: AgentMode? = null,
     /** 思考强度（"low"/"medium"/"high"），随每次 LLM 请求传给支持的 provider。 */
     val reasoningEffort: String? = null,
+    /** 本轮是否走服务端快速档（OpenAI service_tier）；只改变排队优先级。 */
+    val fastMode: Boolean = false,
     /**
      * 本会话绑定的自定义子代理定义；非空表示这是一个按定义运行的子代理会话，
      * 系统提示词与工具集都按其配置组装（见 [com.aharou.feature.agent.domain.prompt.SystemPromptProvider]）。

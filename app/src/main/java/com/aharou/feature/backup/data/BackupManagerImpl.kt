@@ -848,6 +848,7 @@ class BackupManagerImpl @Inject constructor(
         isEnabled = isEnabled,
         useFullUrl = useFullUrl,
         useResponseApi = useResponseApi,
+        useResponseWebSocket = useResponseWebSocket,
         anthropicCacheBreakpoints = anthropicCacheBreakpoints,
         openaiChatCacheKey = openaiChatCacheKey,
         dashboardScriptPath = dashboardScriptPath,
@@ -860,7 +861,7 @@ class BackupManagerImpl @Inject constructor(
         keyCooldownMinutes = keyCooldownMinutes,
         scriptParams = scriptParams,
         keySwitchStatusCodes = keySwitchStatusCodes,
-        customIcon = customIcon
+        customIcon = customIcon, maxConcurrentRequests = maxConcurrentRequests
     )
 
     private fun ProviderDto.toEntity() = AIProviderEntity(
@@ -874,7 +875,7 @@ class BackupManagerImpl @Inject constructor(
         selectedModel = selectedModel,
         isEnabled = isEnabled,
         useFullUrl = useFullUrl,
-        useResponseApi = useResponseApi,
+        useResponseApi = useResponseApi, useResponseWebSocket = useResponseWebSocket ?: false,
         anthropicCacheBreakpoints = anthropicCacheBreakpoints ?: true,
         openaiChatCacheKey = openaiChatCacheKey ?: false,
         dashboardScriptPath = dashboardScriptPath ?: "",
@@ -887,7 +888,7 @@ class BackupManagerImpl @Inject constructor(
         keyCooldownMinutes = keyCooldownMinutes ?: 5,
         scriptParams = restoreSecret(scriptParams),
         keySwitchStatusCodes = keySwitchStatusCodes ?: "",
-        customIcon = customIcon ?: ""
+        customIcon = customIcon ?: "", maxConcurrentRequests = (maxConcurrentRequests ?: 0).coerceAtLeast(0)
     )
 
     private fun RemoteConnectionEntity.toDto() = RemoteConnectionDto(
@@ -915,13 +916,13 @@ class BackupManagerImpl @Inject constructor(
     private fun ChatSessionEntity.toDto() = ChatSessionDto(
         id = id, title = title, createdAt = createdAt, updatedAt = updatedAt, workspacePath = workspacePath,
         mode = mode, modeBeforePlan = modeBeforePlan, reasoningEffort = reasoningEffort, providerId = providerId,
-        model = model, isPinned = isPinned, parentId = parentId, subagentType = subagentType
+        model = model, isPinned = isPinned, parentId = parentId, subagentType = subagentType, fastMode = fastMode
     )
 
     private fun ChatSessionDto.toEntity() = ChatSessionEntity(
         id = id, title = title, createdAt = createdAt, updatedAt = updatedAt, workspacePath = workspacePath,
         mode = mode, modeBeforePlan = modeBeforePlan, reasoningEffort = reasoningEffort, providerId = providerId,
-        model = model, isPinned = isPinned, parentId = parentId, subagentType = subagentType
+        model = model, isPinned = isPinned, parentId = parentId, subagentType = subagentType, fastMode = fastMode
     )
 
     private fun AgentMessageEntity.toDto() = AgentMessageDto(

@@ -1308,6 +1308,20 @@ class AIAgentViewModel @Inject constructor(
         _retryStates.value = if (state == null) _retryStates.value - sessionId else _retryStates.value + (sessionId to state)
     }
 
+    /** 按 sessionId 维护的供应商并发排队提示；取得名额、本轮结束或被打断时清除。 */
+    private val _requestQueueStates = MutableStateFlow<Map<String, RequestQueueState?>>(emptyMap())
+    val requestQueueState: StateFlow<RequestQueueState?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null)
+            else _requestQueueStates.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun setRequestQueueState(sessionId: String, state: RequestQueueState?) {
+        _requestQueueStates.value =
+            if (state == null) _requestQueueStates.value - sessionId else _requestQueueStates.value + (sessionId to state)
+    }
+
     /** 按 sessionId 维护的多 Key 切换提示；重新出内容或本轮结束时置 null。 */
     private val _keySwitchStates = MutableStateFlow<Map<String, KeySwitchState?>>(emptyMap())
     val keySwitchState: StateFlow<KeySwitchState?> = _currentSessionId
@@ -2145,6 +2159,8 @@ class AIAgentViewModel @Inject constructor(
                 completion?.observe(event)
                 if (sessionJobs[sessionId] !== currentJob) return@collect
                 when (event) {
+                    is AgentEvent.RequestQueued -> setRequestQueueState(sessionId, RequestQueueState(event.requestsAhead))
+                    AgentEvent.RequestStarted -> setRequestQueueState(sessionId, null)
                     is AgentEvent.AssistantDelta -> {
                         if (event.accumulated.hasVisibleContent()) {
                             finishReasoning()
@@ -2339,6 +2355,7 @@ class AIAgentViewModel @Inject constructor(
                 setCompacting(sessionId, false)
                 setRetryState(sessionId, null)
                 setKeySwitchState(sessionId, null)
+                setRequestQueueState(sessionId, null)
                 val currentState = _agentStates.value[sessionId]
                 if (currentState !is AgentUIState.Error && currentState !is AgentUIState.Loading && currentState !is AgentUIState.Streaming) {
                     setAgentState(sessionId, AgentUIState.Idle)
@@ -2640,6 +2657,8 @@ class AIAgentViewModel @Inject constructor(
             }
         }
     }
+
+    fun setSessionFastMode(enabled: Boolean) { _currentSessionId.value?.let { sid -> viewModelScope.launch { sessionUseCase.updateFastMode(sid, enabled) } } }
 
     fun setSessionReasoningEffort(effort: ReasoningEffort) {
         val sid = _currentSessionId.value ?: return

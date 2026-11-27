@@ -57,6 +57,7 @@ class ResponsesStreamAccumulatorTest {
         error: JsonObject? = null
     ): JsonObject {
         val response = JsonObject().apply {
+            addProperty("id", "resp_test")
             addProperty("status", status)
             add("output", output)
             usage?.let { add("usage", it) }
@@ -92,6 +93,7 @@ class ResponsesStreamAccumulatorTest {
         val response = acc.toResponse()
         assertEquals("Hello world", response.content)
         assertEquals("stop", response.stopReason)
+        assertEquals("resp_test", response.responseId)
         assertEquals(12, response.inputTokens)
         assertEquals(3, response.outputTokens)
         assertEquals(8, response.cachedInputTokens)
@@ -337,6 +339,19 @@ class ResponsesStreamAccumulatorTest {
 
         assertTrue(thrown is StreamApiException)
         assertEquals("server_error", (thrown as StreamApiException).code)
+    }
+
+    @Test
+    fun error_event_wrapped_in_error_object_is_unwrapped() {
+        val acc = ResponsesStreamAccumulator()
+
+        val thrown = runCatching {
+            acc.accept(event("{'type':'response.error','error':{'code':'rate_limit_exceeded','message':'慢点'}}"))
+        }.exceptionOrNull()
+
+        assertTrue(thrown is StreamApiException)
+        assertEquals("rate_limit_exceeded", (thrown as StreamApiException).code)
+        assertEquals("慢点", thrown.message)
     }
 
     @Test

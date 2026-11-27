@@ -151,6 +151,54 @@ internal fun buildResponsesInput(
     return items
 }
 
+/** WebSocket 续传的输入：能续传时只发增量，不能续传时回退整段历史。 */
+internal data class ResponsesContinuationInput(
+    val canContinue: Boolean,
+    val input: List<Map<String, Any?>>,
+    val previousResponseId: String?
+)
+
+/**
+ * 判断能不能拿 `previous_response_id` 续传，并算好本次要发的 `input`。
+ *
+ * 续传的前提是「服务端已经掌握的历史」与「本地历史」严格一致：只允许在末尾追加新消息。
+ * 上下文压缩会重写历史前缀，此时服务端那份历史已经对不上了，继续续传只会得到错位的回答，
+ * 故逐项比对 [submittedMessages] 与 [messages] 的前缀，不一致就整段重发。
+ */
+internal fun prepareResponsesContinuationInput(
+    fullInput: List<Map<String, Any?>>,
+    messages: List<AgentMessage>,
+    submittedMessages: List<AgentMessage>,
+    previousResponseId: String?
+): ResponsesContinuationInput {
+    val canContinue = previousResponseId != null && submittedMessages.size <= messages.size &&
+        submittedMessages.indices.all { submittedMessages[it] == messages[it] }
+    val input = if (canContinue) {
+        buildResponsesContinuationInput(messages.drop(submittedMessages.size))
+    } else {
+        fullInput
+    }
+    return ResponsesContinuationInput(input = input, canContinue = canContinue, previousResponseId = previousResponseId.takeIf { canContinue })
+}
+
+/** 新 WebSocket response 续传时只发送上轮完成后新增的用户消息与工具结果。 */
+internal fun buildResponsesContinuationInput(messages: List<AgentMessage>): List<Map<String, Any?>> =
+    messages.mapNotNull { message ->
+        when (message) {
+            is AgentMessage.UserMessage -> mapOf(
+                "role" to "user",
+                "content" to message.toResponsesContent()
+            )
+            is AgentMessage.ToolResultMessage -> mapOf(
+                "type" to ResponsesItem.FUNCTION_CALL_OUTPUT,
+                "call_id" to message.id,
+                "output" to message.toResponsesOutput()
+            )
+            // assistant 轮次已在服务端，重复发送会让模型把自己上一轮的输出当成用户输入。
+            is AgentMessage.AssistantMessage -> null
+        }
+    }
+
 /**
  * 从快照 JSON 中反序列化出 OpenAI 官方 Responses 规范的加密 reasoning item。
  * 严格按照 OpenCode / OpenAI 防御规则：只有当包含非空字符串 `encrypted_content` 时才被允许回传；

@@ -4105,4 +4105,20 @@
     <string name="connector_device_success">Signed in, connecting</string>
     <string name="connector_device_failed">Sign-in failed: %1$s</string>
     <string name="connector_reauth_device">Sign in again</string>
+    <string name="chat_status_request_queued">%1$d request(s) ahead</string>
+    <string name="provider_response_websocket_title">WebSocket connection</string>
+    <string name="provider_response_websocket_subtitle">Reuse a persistent connection for long tool chains; requires server support for responses_websockets, turn off if your relay does not support it</string>
+    <string name="provider_max_concurrent_requests">Max concurrent requests</string>
+    <string name="provider_max_concurrent_requests_desc">Concurrent in-flight requests per provider; extras queue in FIFO order, 0 means unlimited</string>
+    <string name="chat_fast_mode_title">Fast mode</string>
+    <string name="chat_fast_mode_cost_hint">Requests go to the fast service tier; the server may bill at a higher rate</string>
+    <string name="chat_fast_mode_label">Fast</string>
+    <string name="provider_multi_key_paste">Batch paste</string>
+    <string name="provider_multi_key_paste_title">Batch paste keys</string>
+    <string name="provider_multi_key_paste_hint">One per line; commas, spaces and semicolons also work. Duplicates are removed automatically.</string>
+    <string name="settings_general_remote">Remote</string>
+    <string name="settings_sftp_channel_limit">SFTP channel limit</string>
+    <string name="settings_sftp_channel_limit_desc">Concurrent SFTP operations per connection; higher is faster, lower uses fewer server session slots</string>
+    <string name="settings_sftp_channel_limit_value">%1$d</string>
+    <string name="settings_sftp_channel_limit_input_hint">1-20</string>
 </resources>

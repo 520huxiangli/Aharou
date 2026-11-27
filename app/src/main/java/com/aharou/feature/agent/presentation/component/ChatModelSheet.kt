@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.aharou.R
 import com.aharou.core.theme.Radius
 import com.aharou.core.theme.Spacing
+import com.aharou.core.ui.AppSwitch
 import com.aharou.feature.agent.domain.model.ReasoningEffort
 import com.aharou.feature.onboarding.domain.OnboardingStep
 import com.aharou.feature.settings.domain.model.AIProviderConfig
@@ -109,6 +111,9 @@ internal fun ReasoningEffortSelector(
     effort: ReasoningEffort,
     availableEfforts: List<ReasoningEffort>,
     onChange: (ReasoningEffort) -> Unit,
+    fastMode: Boolean = false,
+    showFastMode: Boolean = false,
+    onFastModeChange: (Boolean) -> Unit = {},
     enabled: Boolean,
     modelMetadata: ModelMetadata? = null
 ) {
@@ -139,6 +144,15 @@ internal fun ReasoningEffortSelector(
                 // 放开父约束让它按自身宽度排版，宁可溢出也不截成半个词。
                 modifier = Modifier.wrapContentWidth(unbounded = true)
             )
+            if (showFastMode && fastMode) {
+                Spacer(Modifier.width(Spacing.xs))
+                Text(
+                    text = stringResource(R.string.chat_fast_mode_label),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1
+                )
+            }
         }
     }
 
@@ -231,6 +245,34 @@ internal fun ReasoningEffortSelector(
                     }
                 }
 
+                if (showFastMode) {
+                    Spacer(Modifier.height(Spacing.sm))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.md, vertical = Spacing.md),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.chat_fast_mode_title),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.chat_fast_mode_cost_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.width(Spacing.md))
+                        AppSwitch(
+                            checked = fastMode,
+                            enabled = enabled,
+                            onCheckedChange = onFastModeChange
+                        )
+                    }
+                }
             }
         }
     }

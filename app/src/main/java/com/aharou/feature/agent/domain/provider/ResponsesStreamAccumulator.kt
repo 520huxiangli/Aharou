@@ -174,6 +174,8 @@ internal class ResponsesStreamAccumulator {
     /** 终止事件里兜底解析出的工具调用（流中 delta 事件缺失时的补齐来源）。 */
     private val finalCalls = mutableListOf<ToolCall>()
     private var status: String? = null
+    /** 终止事件里拿到的 response id：WebSocket 续传要靠它作为 `previous_response_id`。 */
+    private var responseId: String? = null
     private var incompleteReason: String? = null
     private var usage = ResponsesUsage()
 
@@ -210,6 +212,8 @@ internal class ResponsesStreamAccumulator {
                         item.str("call_id")?.takeIf { it.isNotEmpty() }?.let { acc.callId = it }
                         item.str("arguments")?.takeIf { it.isNotEmpty() }?.let { budget.add(it); acc.args = StringBuilder(it) }
                         item.str("name")?.takeIf { it.isNotEmpty() }?.let { name ->
+                            // 工具名已经确定就算「服务端已产出内容」，首字节超时不应再盯着它计时。
+                            receivedContent = true
                             val first = acc.name.isEmpty()
                             acc.name = name
                             // 工具名先于参数到达：让 UI 提前把状态说具体（每个调用只推一次）
@@ -269,11 +273,14 @@ internal class ResponsesStreamAccumulator {
                 )
             }
 
-            // 传输层错误事件：code / message 就在事件自身上（不嵌在 error 对象里）。
-            ResponsesEvent.ERROR, ResponsesEvent.RESPONSE_ERROR -> throw StreamApiException(
-                code = event.str("code"),
-                message = event.str("message") ?: "Responses 流返回 error 事件"
-            )
+            // 传输层错误事件：code / message 不一定在事件自身上，部分网关包在 `error` 对象里。
+            ResponsesEvent.ERROR, ResponsesEvent.RESPONSE_ERROR -> {
+                val error = event.obj("error")
+                throw StreamApiException(
+                    code = event.str("code") ?: error?.str("code"),
+                    message = event.str("message") ?: error?.str("message") ?: "Responses 流返回 error 事件"
+                )
+            }
         }
         return null
     }
@@ -295,7 +302,8 @@ internal class ResponsesStreamAccumulator {
             outputTokens = usage.outputTokens,
             cachedInputTokens = usage.cachedInputTokens,
             cacheCreationTokens = usage.cacheCreationTokens,
-            images = images.values.filter { it.base64Data.isNotEmpty() }.ifEmpty { finalImages }
+            images = images.values.filter { it.base64Data.isNotEmpty() }.ifEmpty { finalImages },
+            responseId = responseId
         )
     }
 
@@ -303,6 +311,7 @@ internal class ResponsesStreamAccumulator {
     private fun absorbFinalResponse(response: JsonObject?) {
         if (response == null) return
         status = response.str("status")
+        responseId = response.str("id")
         incompleteReason = response.obj("incomplete_details")?.str("reason")
         usage = parseResponsesUsage(response.obj("usage"))
 
@@ -333,3 +342,34 @@ private fun JsonObject.arr(name: String): JsonArray? =
 
 private fun JsonObject.obj(name: String): JsonObject? =
     get(name)?.takeIf { it.isJsonObject }?.asJsonObject
+
+/**
+ * Responses 流的参数进度：delta 事件只带片段，工具名在 output_item 事件里，
+ * 所以先按同一个 call key 记下名字，再按片段累积长度。
+ */
+internal fun sampleResponsesArgProgress(
+    event: JsonObject,
+    sampler: ToolArgProgressSampler
+): AIStreamChunk.ToolCallArgumentProgress? {
+    val key = event.responsesEventCallKey()
+    return when (event.str("type")) {
+        ResponsesEvent.OUTPUT_ITEM_ADDED, ResponsesEvent.OUTPUT_ITEM_DONE -> {
+            val item = event.obj("item")
+            if (item?.str("type") == ResponsesItem.FUNCTION_CALL) {
+                item.str("name")?.takeIf { it.isNotEmpty() }?.let { sampler.declare(key, it) }
+            }
+            null
+        }
+
+        ResponsesEvent.FUNCTION_CALL_ARGS_DELTA -> {
+            val piece = event.str("delta")
+            if (piece.isNullOrEmpty()) null else sampler.append(key, piece)
+        }
+
+        else -> null
+    }
+}
+
+/** 与累加器的 callKey 同口径：同一调用的不同事件必须落在同一个 key 上。 */
+internal fun JsonObject.responsesEventCallKey(): String =
+    str("output_index") ?: str("item_id") ?: "0"

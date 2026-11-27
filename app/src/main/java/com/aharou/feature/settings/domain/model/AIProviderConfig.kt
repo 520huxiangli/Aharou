@@ -20,6 +20,8 @@ data class AIProviderConfig(
     val keyCooldownMinutes: Int = 5,
     /** 命中即触发多 Key 自动切换的 HTTP 状态码；留空时回退 [DEFAULT_KEY_SWITCH_STATUS_CODES]。 */
     val keySwitchStatusCodes: List<Int> = emptyList(),
+    /** 同一供应商同时在途的 AI 请求上限；0 表示不限，超出部分按 FIFO 排队。 */
+    val maxConcurrentRequests: Int = DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS,
     val baseUrl: String,
     val defaultModel: String,
     /** 该提供商已添加的可用模型列表（拉取或手动添加）。 */
@@ -29,6 +31,8 @@ data class AIProviderConfig(
     val isEnabled: Boolean = true,
     val useFullUrl: Boolean = false,
     val useResponseApi: Boolean = false,
+    /** OpenAI Responses 长链工作流通过持久 WebSocket 续传；需服务端支持 responses_websockets beta。 */
+    val useResponseWebSocket: Boolean = false,
     /** Anthropic 显式缓存断点（cache_control）。仅 ANTHROPIC 类型生效，默认开启。 */
     val anthropicCacheBreakpoints: Boolean = true,
     /** Chat Completion 路径发送 prompt_cache_key（shard 路由）。仅 OPENAI 类型生效，默认关闭。 */
@@ -135,6 +139,9 @@ data class ProviderKey(
 const val DEFAULT_KEY_WEIGHT: Int = 1
 const val MAX_KEY_WEIGHT: Int = 1_000_000
 
+/** 供应商并发请求数默认值：0 表示不限（保持升级前的行为，用户主动开限才生效）。 */
+const val DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS: Int = 0
+
 /** 已告警过的非法 Key 地址（providerId|地址）：一次请求会拼好几次 URL，不去重会把日志刷满。 */
 private const val KEY_ENDPOINT_TAG = "ProviderEndpoint"
 private val warnedKeyEndpoints: MutableSet<String> = Collections.synchronizedSet(HashSet())
@@ -204,6 +211,22 @@ fun parseProviderKeyLines(raw: String): List<ProviderKey> =
         if (value.isEmpty()) null else ProviderKey(value, weight, url)
     }
 
+/**
+ * 批量粘贴的分隔规则：换行 / 中英文逗号 / 中英文分号 / 空格 / 制表符都算分隔符。
+ * 手机输入法随手打的大概率是全角，所以全角标点也认。
+ */
+fun splitPastedKeys(raw: String): List<String> =
+    raw.split('\n', '\r', ',', '，', ';', '；', ' ', '\t')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+
+/** 把批量粘贴内容并入现有 Key 列表：拆分、去空、按值去重（已有的一律跳过）。 */
+fun List<ProviderKey>.mergedWithPasted(raw: String): List<ProviderKey> {
+    val existing = map { it.value }.toSet()
+    return this + splitPastedKeys(raw).filter { it !in existing }.map { ProviderKey(it) }
+}
+
 /** 序列化回存储串。没有单独地址的 Key 只写两段，避免每次保存都把旧配置整体改写成三段。 */
 fun List<ProviderKey>.toProviderKeyLines(): String =
     joinToString("\n") { key ->
@@ -238,6 +261,8 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
         .filter { it.value.isNotEmpty() }
         .distinctBy { it.value },
     keySwitchStatusCodes = keySwitchStatusCodes.filter { it in 100..599 }.distinct(),
+    // 负数没有意义，且会让闸门把它当成「已开启」而永远排不上，保存前一并拉回 0。
+    maxConcurrentRequests = maxConcurrentRequests.coerceAtLeast(0),
     baseUrl = baseUrl.stripAllWhitespace(),
     defaultModel = defaultModel.stripLineBreaks(),
     models = models.map { it.stripLineBreaks() }.filter { it.isNotEmpty() }.distinct(),

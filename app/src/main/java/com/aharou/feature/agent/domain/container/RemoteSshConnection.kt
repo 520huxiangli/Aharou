@@ -4,12 +4,14 @@ import com.aharou.core.util.FileLogger
 import com.aharou.core.util.shellQuote
 import com.aharou.feature.workspace.domain.remote.RemoteAuth
 import com.aharou.feature.credentials.domain.model.GitCredential
+import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,12 +38,6 @@ import javax.inject.Singleton
 private const val TAG = "RemoteSshConnection"
 
 /**
- * 并发 SFTP 通道上限。OpenSSH 默认 MaxSessions=10，还要留给 exec、终端与端口转发，取 4 足够
- * 并行工具调用同时读写，又不会因为一次批量扫描就撞上服务器的会话上限。
- */
-private const val SFTP_CHANNEL_LIMIT = 4
-
-/**
  * 共享的 SSH 连接管理器：exec 用一条独立 sshj [SSHClient]（供 [RemoteSshEngine] 执行命令），
  * SFTP 用另一条独立 transport，在其上按需开多条 SFTP 通道（见 [SftpChannelPool]）。两者隔离，
  * SFTP 的 Buffer 溢出不会拖垮命令通道。
@@ -54,7 +50,8 @@ class RemoteSshConnection @Inject constructor(
     private val hostKeyStore: SshHostKeyStore,
     private val hostKeyVerifier: SshHostKeyVerifier,
     private val privateKeyStore: SshPrivateKeyStore,
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val containerSettings: ContainerSettingsRepository
 ) {
 
     @Volatile
@@ -72,7 +69,26 @@ class RemoteSshConnection @Inject constructor(
 
     private val mutex = Mutex()
     private val sftpLock = Mutex()
-    private val sftpPool = SftpChannelPool(SFTP_CHANNEL_LIMIT) { createSftpChannel() }
+
+    /**
+     * 通道池初始上限取默认值，真正的值由下面的采集协程在毫秒内改到位；池要等建连后才开通道，
+     * 所以不存在「先按默认值开完再改」的窗口。
+     */
+    private val sftpPool = SftpChannelPool(ContainerSettingsRepository.DEFAULT_SFTP_CHANNEL_LIMIT) {
+        createSftpChannel()
+    }
+
+    /**
+     * 上限随设置页实时生效：调小由池回收多余空闲通道，调大则放行排队者，不必重连或换工作区。
+     * 本类是进程级单例，这个采集协程随它一起活，无需额外取消路径。
+     */
+    private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        settingsScope.launch {
+            containerSettings.sftpChannelLimitFlow.collect { sftpPool.updateLimit(it) }
+        }
+    }
 
     /**
      * 借一条通道执行 [block]：借之前校验连接身份，正常返回、抛异常、协程取消都经 finally 归还。

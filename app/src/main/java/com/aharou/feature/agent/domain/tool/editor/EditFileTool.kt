@@ -3,6 +3,10 @@ package com.aharou.feature.agent.domain.tool.editor
 import com.aharou.feature.agent.domain.inbox.SharedInbox
 import com.aharou.feature.agent.domain.inbox.SharedInboxEvents
 import com.aharou.feature.agent.domain.model.AgentContext
+import com.aharou.feature.agent.domain.session.SessionUseCase
+import com.aharou.feature.agent.domain.subagent.SubAgentEvent
+import com.aharou.feature.agent.domain.subagent.SubAgentEventBus
+import com.aharou.feature.agent.domain.subagent.SubAgentEventType
 import com.aharou.feature.agent.domain.subagent.SubAgentWriteLease
 import com.aharou.feature.agent.domain.subagent.WriteLease
 import com.aharou.feature.agent.domain.tool.AgentTool
@@ -68,7 +72,9 @@ class EditFileTool @Inject constructor(
     private val fileLock: WorkspaceFileLock,
     private val versions: FileVersionRegistry,
     private val inboxEvents: SharedInboxEvents,
-    private val writeLease: SubAgentWriteLease
+    private val writeLease: SubAgentWriteLease,
+    private val sessionUseCase: SessionUseCase,
+    private val eventBus: SubAgentEventBus
 ) : AgentTool() {
     override val name = "editFile"
     override val description =
@@ -311,6 +317,27 @@ class EditFileTool @Inject constructor(
             }
     }
 
+    /** 已推给父会话的「会话+路径」，避免子代理反复重试同一处时刷屏。 */
+    private val deniedNotified = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * 子代理写入被租约拒绝时直接推一条给父会话：撞车就发生在它反复重试的那几秒里，
+     * 等模型自己想起 messageParent 时，多半已经闷头绕道或放弃了。
+     */
+    private suspend fun notifyLeaseDenied(sessionId: String?, path: String, reason: String) {
+        val id = sessionId?.takeIf { it.isNotBlank() } ?: return
+        val parentId = sessionUseCase.getSessionById(id)?.parentId?.takeIf { it.isNotBlank() } ?: return
+        if (!deniedNotified.add("$id|$path")) return
+        eventBus.emit(
+            SubAgentEvent(
+                subSessionId = id,
+                parentSessionId = parentId,
+                type = SubAgentEventType.MESSAGE_FROM_SUB,
+                detail = "写入被拒：$path\n$reason\n请父会话决定：停掉占用方、grant 追加范围，或自己写这部分。"
+            )
+        )
+    }
+
     /** 真正的编辑逻辑：不涉及锁与版本，纯粹按 [args] 完成一次「读-改-写」。 */
     private suspend fun performEdit(
         access: FileAccessProvider,
@@ -323,6 +350,7 @@ class EditFileTool @Inject constructor(
         return try {
             WriteLease.denialReason(writePaths, path, sessionId, workspaceRoot)?.let { reason ->
                 FileLogger.w(TAG, "edit_file 被写路径租约拒绝: $path ($reason)")
+                notifyLeaseDenied(sessionId, path, reason)
                 return ToolResult.Error("${WriteLease.DENIAL_PREFIX}：$reason", "WRITE_LEASE_DENIED")
             }
 

@@ -213,6 +213,10 @@ class SessionUseCase @Inject constructor(
         chatSessionDao.updateReasoningEffort(sessionId, effort)
     }
 
+    suspend fun updateFastMode(sessionId: String, enabled: Boolean) {
+        chatSessionDao.updateFastMode(sessionId, enabled)
+    }
+
     suspend fun updateLastInputTokens(sessionId: String, tokens: Int) {
         chatSessionDao.updateLastInputTokens(sessionId, tokens)
     }

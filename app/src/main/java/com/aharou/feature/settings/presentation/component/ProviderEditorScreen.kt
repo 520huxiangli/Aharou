@@ -115,6 +115,7 @@ import com.aharou.core.ui.FloatingTabItem
 import com.aharou.feature.settings.data.local.CustomModelMetadataStore
 import com.aharou.feature.settings.data.local.ProviderPreset
 import com.aharou.feature.settings.domain.model.AIProviderConfig
+import com.aharou.feature.settings.domain.model.DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
 import com.aharou.feature.settings.domain.model.KeyRotationStrategy
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.MAX_KEY_WEIGHT
@@ -196,9 +197,13 @@ fun ProviderEditorScreen(
     var keySwitchStatusCodes by remember {
         mutableStateOf(initialProvider?.keySwitchStatusCodes?.joinToString(",") ?: "")
     }
+    var maxConcurrentRequests by remember {
+        mutableStateOf((initialProvider?.maxConcurrentRequests ?: DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS).toString())
+    }
     var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: presetPrefill?.baseUrl ?: "") }
     var useFullUrl by remember { mutableStateOf(initialProvider?.useFullUrl ?: false) }
     var useResponseApi by remember { mutableStateOf(initialProvider?.useResponseApi ?: presetPrefill?.useResponseApi ?: false) }
+    var useResponseWebSocket by remember { mutableStateOf(initialProvider?.useResponseWebSocket ?: false) }
     var anthropicCacheBreakpoints by remember { mutableStateOf(initialProvider?.anthropicCacheBreakpoints ?: true) }
     var openaiChatCacheKey by remember { mutableStateOf(initialProvider?.openaiChatCacheKey ?: false) }
     var dashboardScriptPath by remember { mutableStateOf(initialProvider?.dashboardScriptPath ?: "") }
@@ -348,6 +353,10 @@ fun ProviderEditorScreen(
         keyRotationStrategy = keyRotationStrategy,
         keyCooldownMinutes = keyCooldownMinutes,
         keySwitchStatusCodes = keySwitchStatusCodes.split(",").mapNotNull { it.trim().toIntOrNull() },
+        // 留空等于「不限」；填了溢出 Int 的数字钳到上限，而不是静默变回 0（那会被当成不限）。
+        maxConcurrentRequests = maxConcurrentRequests.toIntOrNull()
+            ?.coerceAtLeast(0)
+            ?: if (maxConcurrentRequests.isBlank()) DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS else Int.MAX_VALUE,
         baseUrl = baseUrl.ifBlank { defaultProviderBaseUrl(type) },
         useFullUrl = useFullUrl,
         isEnabled = isEnabled,
@@ -355,6 +364,7 @@ fun ProviderEditorScreen(
         models = models.toList(),
         selectedModel = initialProvider?.selectedModel ?: "",
         useResponseApi = useResponseApi,
+        useResponseWebSocket = useResponseWebSocket,
         anthropicCacheBreakpoints = anthropicCacheBreakpoints,
         openaiChatCacheKey = openaiChatCacheKey,
         dashboardScriptPath = dashboardScriptPath,
@@ -562,6 +572,21 @@ fun ProviderEditorScreen(
                             onCheckedChange = { isEnabled = it }
                         )
                         SettingsDivider()
+                        ProviderTextFieldRow(
+                            label = stringResource(R.string.provider_max_concurrent_requests),
+                            value = maxConcurrentRequests,
+                            // 只收数字：负号与小数点存进去也只会在保存时被钳掉，不如当场拦住。
+                            onValueChange = { value -> if (value.all { it in '0'..'9' }) maxConcurrentRequests = value },
+                            placeholder = DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS.toString(),
+                            keyboardType = KeyboardType.Number
+                        )
+                        Text(
+                            text = stringResource(R.string.provider_max_concurrent_requests_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.xs)
+                        )
+                        SettingsDivider()
                         ProviderSwitchRow(
                             title = stringResource(R.string.provider_full_url),
                             subtitle = stringResource(R.string.provider_full_url_desc),
@@ -579,6 +604,15 @@ fun ProviderEditorScreen(
                                 ),
                                 checked = useResponseApi,
                                 onCheckedChange = { useResponseApi = it }
+                            )
+                        }
+                        if (type == ProviderType.OPENAI && useResponseApi) {
+                            SettingsDivider()
+                            ProviderSwitchRow(
+                                title = stringResource(R.string.provider_response_websocket_title),
+                                subtitle = stringResource(R.string.provider_response_websocket_subtitle),
+                                checked = useResponseWebSocket,
+                                onCheckedChange = { useResponseWebSocket = it }
                             )
                         }
                         if (type == ProviderType.OPENAI) {

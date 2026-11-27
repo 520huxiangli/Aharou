@@ -6,6 +6,8 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 
 data class AIResponse(
     val content: String,
@@ -50,7 +52,12 @@ data class AIResponse(
      * 本轮模型直接输出的图片（Gemini Nano Banana 图像模型走 Interactions 时产出）。
      * 元素带 base64 数据；工作流负责落盘并构造 UI 附件。其他 provider / 模型恒为空。
      */
-    val images: List<AgentImage> = emptyList()
+    val images: List<AgentImage> = emptyList(),
+    /**
+     * 本轮服务端返回的 response id。目前只有 OpenAI Responses 通道提供（含 WebSocket 通道），
+     * 下一轮续传时作为 `previous_response_id` 只发新增消息；其他 provider 恒为 null。
+     */
+    val responseId: String? = null
 ) {
     val isTruncated: Boolean
         get() = stopReason in TRUNCATION_STOP_REASONS
@@ -111,6 +118,10 @@ class AllKeysFailedException(message: String, cause: Throwable? = null) : Except
  * [KeySwitched] 在多 Key 自动切换时推送，供 UI 提示本次请求已改用的 Key。
  */
 sealed class AIStreamChunk {
+    /** 请求在供应商并发上限前排到第 [requestsAhead] 位。仅用于 UI 展示排队提示，不进入上下文回放。 */
+    data class RequestQueued(val requestsAhead: Int) : AIStreamChunk()
+    /** 已取得供应商并发名额、请求即将发出。UI 据此撤掉排队提示。 */
+    object RequestStarted : AIStreamChunk()
     data class TextDelta(val text: String) : AIStreamChunk()
     /** 模型新吐出的一小段思考过程（增量，非累积）。仅用于 UI 实时展示，不进入上下文回放。 */
     data class ReasoningDelta(val text: String) : AIStreamChunk()
@@ -258,6 +269,9 @@ interface AIProvider {
      * Gemini 走 Interactions API（`v1beta/interactions`）。Anthropic 忽略。
      */
     var useResponseApi: Boolean
+
+    /** OpenAI Responses 走持久 WebSocket 长连接（需服务端支持 `responses_websockets` beta）。仅 OPENAI 类型生效，其余实现忽略。 */
+    var useResponseWebSocket: Boolean
     var model: String
 
     /**
@@ -265,6 +279,45 @@ interface AIProvider {
      * 调用前由工作流设置；为空时元数据解析回退纯自动（拉取/内置/默认）。
      */
     var providerId: String
+
+    /**
+     * 供应商并发闸门，由 [ProviderInstanceFactory] 在装配时注入；null 表示不启用（一次性旁路调用）。
+     * [maxConcurrentRequests] ≤ 0 同样视为不限，两道口子都保留是为了让旁路调用不必关心限流。
+     */
+    var requestConcurrencyLimiter: ProviderRequestConcurrencyLimiter?
+
+    /** 同一供应商同时在途的请求上限；0 表示不限，见 [ProviderRequestConcurrencyLimiter]。 */
+    var maxConcurrentRequests: Int
+
+    /**
+     * 把一次请求包进供应商并发名额。排队时先回调 [onQueued]（前方请求数），轮到本次时回调 [onAdmitted]。
+     * 名额在请求结束、抛异常、被取消三条路径上都会归还，调用方不必自己收尾。
+     */
+    suspend fun <T> withRequestPermit(
+        onQueued: suspend (Int) -> Unit = {},
+        onAdmitted: suspend () -> Unit = {},
+        block: suspend () -> T
+    ): T {
+        val limiter = requestConcurrencyLimiter ?: run {
+            onAdmitted()
+            return block()
+        }
+        return limiter.withPermit(providerId, maxConcurrentRequests, onQueued, onAdmitted, block)
+    }
+
+    /**
+     * 流式请求的闸门包装：调用方只构造原始分块流，排队/开始事件由这里推进。
+     * 三个 adapter 各写一遍同样的 `flow { withRequestPermit { emitAll(...) } }` 没有意义，
+     * 且这段包装必须与 [withRequestPermit] 的事件顺序保持一致，放到一处才不会漏改。
+     */
+    fun gatedStream(chunks: Flow<AIStreamChunk>): Flow<AIStreamChunk> = flow {
+        withRequestPermit(
+            onQueued = { emit(AIStreamChunk.RequestQueued(it)) },
+            onAdmitted = { emit(AIStreamChunk.RequestStarted) }
+        ) {
+            emitAll(chunks)
+        }
+    }
 
     /**
      * 当前会话 id，仅用于日志归档：调用前由工作流设置，[com.aharou.core.util.AILogger]
@@ -323,26 +376,37 @@ interface AIProvider {
      * 模型若决定调用工具，结果会出现在返回的 [AIResponse.toolCalls] 中。
      * [reasoningEffort] 为思考强度（"low"/"medium"/"high"），仅 OpenAI 系生效；
      * Anthropic/Gemini 与不支持该参数的模型忽略。
+     * [fastMode] 为 OpenAI 系的服务档位（`service_tier: "fast"`），只有 Responses / Chat
+     * Completions 两条 OpenAI 通道会写出该字段，其余 provider 无对应概念、实现里直接忽略。
      */
     suspend fun complete(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool> = emptyList(),
-        reasoningEffort: String? = null
+        reasoningEffort: String? = null,
+        fastMode: Boolean = false
     ): AIResponse
 
     /**
      * 流式单轮补全：以 SSE 逐字接收模型回复。文字以 [AIStreamChunk.TextDelta] 增量推送，
      * 本轮结束时以 [AIStreamChunk.Final] 给出聚合后的完整 [AIResponse]（含工具调用）。
      * 工具调用的 function-calling 语义与 [complete] 一致。
-     * [reasoningEffort] 同 [complete]。
+     * [reasoningEffort] / [fastMode] 同 [complete]。
      */
     fun completeStream(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool> = emptyList(),
-        reasoningEffort: String? = null
+        reasoningEffort: String? = null,
+        fastMode: Boolean = false
     ): Flow<AIStreamChunk>
+
+    /**
+     * 释放与本次 provider 实例绑定的长连接（当前只有 OpenAI Responses WebSocket 持有）。
+     * 必须由上层在会话切换 / 实例丢弃时调用，否则连接会一直挂在连接池里。
+     * 默认空实现：无长连接的 adapter 无需关心。
+     */
+    suspend fun close() = Unit
 }
 
 private val VERSION_SEGMENT_REGEX = Regex("""^v\d+.*$""", RegexOption.IGNORE_CASE)

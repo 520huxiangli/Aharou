@@ -10,6 +10,7 @@ import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ProviderType
 import javax.inject.Inject
 import javax.inject.Singleton
+import okhttp3.OkHttpClient
 
 /**
  * 按提供商配置装配一个新的 [AIProvider] 实例。
@@ -20,11 +21,13 @@ import javax.inject.Singleton
 @Singleton
 class ProviderInstanceFactory @Inject constructor(
     private val openAIApi: OpenAIApi,
+    private val okHttpClient: OkHttpClient,
     private val anthropicApi: AnthropicApi,
     private val geminiApi: GeminiApi,
     private val keyRotator: ProviderKeyRotator,
     private val modelMetadataService: ModelMetadataService,
-    private val generalSettingsRepository: GeneralSettingsRepository
+    private val generalSettingsRepository: GeneralSettingsRepository,
+    private val requestConcurrencyLimiter: ProviderRequestConcurrencyLimiter
 ) {
 
     suspend fun create(config: AIProviderConfig, scopeId: String?): AIProvider {
@@ -33,8 +36,10 @@ class ProviderInstanceFactory @Inject constructor(
                 it.cacheBreakpointsEnabled = config.anthropicCacheBreakpoints
             }
             ProviderType.GEMINI -> GeminiAdapter(geminiApi)
-            else -> OpenAIAdapter(openAIApi).also {
+            else -> OpenAIAdapter(openAIApi, okHttpClient).also {
                 it.chatCacheKeyEnabled = config.openaiChatCacheKey
+                // Responses WebSocket 通道尚未接入提供商配置（AIProviderConfig 无对应字段），
+                // 保持默认关闭，需要时由上层显式打开 useResponseWebSocket。
             }
         }
         // 多 Key 模式下由轮换器决定本次用哪个 Key（同一作用域内粘住，Key 不可用时切下一个并重发）。
@@ -66,7 +71,10 @@ class ProviderInstanceFactory @Inject constructor(
         provider.model = config.effectiveModel
         provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
+        provider.useResponseWebSocket = config.useResponseApi && config.useResponseWebSocket
         provider.providerId = config.id
+        provider.requestConcurrencyLimiter = requestConcurrencyLimiter
+        provider.maxConcurrentRequests = config.maxConcurrentRequests
         provider.logSessionId = scopeId
         provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)

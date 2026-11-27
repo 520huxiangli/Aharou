@@ -22,6 +22,7 @@ import com.aharou.feature.settings.domain.model.KeyRotationStrategy
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.parseProviderKeyLines
 import com.aharou.feature.settings.domain.model.toProviderKeyLines
+import com.aharou.feature.settings.domain.model.mergedWithPasted
 import com.aharou.feature.settings.domain.model.ProxyType
 import com.aharou.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -73,9 +74,9 @@ class ConfigProviderFields @Inject constructor(
         override val displayName = "AI 供应商"
         override val description =
             "已配置的供应商列表。子字段：name / baseUrl / apiKey / defaultModel / selectedModel / " +
-                "panelScript / enabled / multiKeyEnabled / apiKeys / keyRotationStrategy / " +
-                "keyCooldownMinutes / keySwitchStatusCodes / proxyEnabled / proxyType / proxyHost / " +
-                "proxyPort / proxyUsername / proxyPassword / useFullUrl / useResponseApi / customHeaders / " +
+                "panelScript / enabled / multiKeyEnabled / apiKeys（整体覆盖）/ api_keys_paste（只写，批量追加）/ keyRotationStrategy / " +
+                "keyCooldownMinutes / keySwitchStatusCodes / maxConcurrentRequests / proxyEnabled / proxyType / proxyHost / " +
+                "proxyPort / proxyUsername / proxyPassword / useFullUrl / useResponseApi / useResponseWebSocket / customHeaders / " +
                 "sortOrder（只读）/ dashboardRefreshInterval / anthropicCacheBreakpoints / openaiChatCacheKey。"
 
         override fun childIds(): List<String> =
@@ -296,6 +297,14 @@ class ConfigProviderFields @Inject constructor(
                     read = { it.apiKeys.toProviderKeyLines() },
                     write = { p, s -> p.copy(apiKeys = parseProviderKeyLines(s)) },
                 ),
+                str(
+                    field = "api_keys_paste",
+                    name = "批量粘贴 Key",
+                    desc = "把粘贴内容按换行/逗号/空格/分号拆开后追加到多 Key 列表，重复的自动去重，不会覆盖已有 Key；只写字段，读取只返回当前数量。",
+                    risk = ConfigRisk.SENSITIVE,
+                    read = { "${it.apiKeys.size} 个 Key（只写字段，不回显内容）" },
+                    write = { p, s -> p.copy(apiKeys = p.apiKeys.mergedWithPasted(s)) },
+                ),
                 enumField(
                     field = "key_rotation_strategy",
                     name = "多 Key 策略",
@@ -327,6 +336,14 @@ class ConfigProviderFields @Inject constructor(
                                 .distinct(),
                         )
                     },
+                ),
+                int(
+                    field = "max_concurrent_requests",
+                    name = "最大并发请求数",
+                    desc = "同一供应商同时在途的 AI 请求上限；超出按先来先服务排队，0 表示不限。默认 0。",
+                    min = 0,
+                    read = { it.maxConcurrentRequests },
+                    write = { p, n -> p.copy(maxConcurrentRequests = n) },
                 ),
                 bool(
                     field = "proxy_enabled",
@@ -387,6 +404,13 @@ class ConfigProviderFields @Inject constructor(
                     desc = "OpenAI 类型改用 Response API 端点。默认关闭。",
                     read = { it.useResponseApi },
                     write = { p, b -> p.copy(useResponseApi = b) },
+                ),
+                bool(
+                    field = "use_response_websocket",
+                    name = "Responses WebSocket",
+                    desc = "Response API 改走持久 WebSocket 长连接，需服务端支持 responses_websockets beta；仅 OpenAI 类型且开启 Response API 时生效。默认关闭。",
+                    read = { it.useResponseWebSocket },
+                    write = { p, b -> p.copy(useResponseWebSocket = b) },
                 ),
                 str(
                     field = "custom_headers",

@@ -142,6 +142,8 @@ data class ProviderDto(
     val isEnabled: Boolean = true,
     val useFullUrl: Boolean = false,
     val useResponseApi: Boolean = false,
+    /** Responses WebSocket 开关；null 表示旧备份无此字段，导入时回退默认值。 */
+    val useResponseWebSocket: Boolean? = null,
     /** 提供商级缓存开关；null 表示旧备份无此字段，导入时回退默认值。 */
     val anthropicCacheBreakpoints: Boolean? = null,
     val openaiChatCacheKey: Boolean? = null,
@@ -164,7 +166,9 @@ data class ProviderDto(
     /** 多 Key 自动切换状态码（逗号分隔）；null 表示旧备份无此字段，导入时回退空串（即默认码表）。 */
     val keySwitchStatusCodes: String? = null,
     /** 自定义图标（本地路径或 http(s) 链接）；null 表示旧备份无此字段，导入时回退空串（按品牌名匹配内置图标）。 */
-    val customIcon: String? = null
+    val customIcon: String? = null,
+    /** 供应商并发请求上限；null 表示旧备份无此字段，导入时回退 0（不限）。 */
+    val maxConcurrentRequests: Int? = null
 )
 
 @Serializable
@@ -202,6 +206,7 @@ data class ChatSessionDto(
     val mode: String = "BUILD",
     val modeBeforePlan: String? = null,
     val reasoningEffort: String = "MEDIUM",
+    val fastMode: Boolean = false,
     val providerId: String? = null,
     val model: String? = null,
     val isPinned: Boolean = false,

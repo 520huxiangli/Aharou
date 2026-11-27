@@ -120,6 +120,7 @@ import com.aharou.feature.settings.domain.model.ProxyType
 import com.aharou.feature.settings.domain.model.mergeModelMetadata
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import com.aharou.feature.settings.domain.model.sanitized
+import com.aharou.feature.settings.domain.model.splitPastedKeys
 import com.aharou.feature.settings.presentation.FetchState
 import com.aharou.feature.settings.presentation.SettingsViewModel
 import androidx.compose.ui.platform.LocalFocusManager
@@ -134,6 +135,7 @@ import compose.icons.feathericons.CheckSquare
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
 import compose.icons.feathericons.ChevronUp
+import compose.icons.feathericons.Clipboard
 import android.content.Intent
 import android.widget.Toast
 import compose.icons.feathericons.Copy
@@ -175,6 +177,7 @@ internal fun ProviderKeysPage(
     val rowIds = remember { mutableStateListOf<Int>().apply { keys.indices.forEach { add(it) } } }
     var nextRowId by remember { mutableIntStateOf(keys.size) }
     var expandedIds by remember { mutableStateOf(emptySet<Int>()) }
+    var showPasteDialog by remember { mutableStateOf(false) }
     val hapticFeedback = LocalHapticFeedback.current
 
     fun addKey() {
@@ -212,6 +215,9 @@ internal fun ProviderKeysPage(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showPasteDialog = true }) {
+                        Icon(FeatherIcons.Clipboard, contentDescription = stringResource(R.string.provider_multi_key_paste))
+                    }
                     IconButton(onClick = { addKey() }) {
                         Icon(FeatherIcons.Plus, contentDescription = stringResource(R.string.provider_multi_key_add))
                     }
@@ -269,6 +275,9 @@ internal fun ProviderKeysPage(
                                 }
                         ) {
                             SwipeToDeleteRow(
+                                deleteButtonHeight = 48.dp,
+                                deleteButtonCornerRadius = 14.dp,
+                                swipeEnabled = rowId !in expandedIds,
                                 onDelete = {
                                     keys.removeAt(index)
                                     rowIds.removeAt(index)
@@ -353,6 +362,72 @@ internal fun ProviderKeysPage(
             }
         }
     }
+
+    if (showPasteDialog) {
+        BatchPasteKeyDialog(
+            onDismiss = { showPasteDialog = false },
+            onConfirm = { values ->
+                // 与已有 Key 去重：同一个 Key 加两遍只会在轮询里白白多占一档次序
+                val existing = keys.map { it.value }.toSet()
+                val fresh = values.filter { it !in existing }
+                if (fresh.isNotEmpty()) {
+                    val start = nextRowId
+                    fresh.forEachIndexed { i, value ->
+                        keys.add(ProviderKey(value))
+                        rowIds.add(start + i)
+                    }
+                    nextRowId = start + fresh.size
+                    expandedIds = expandedIds + (start until start + fresh.size).toSet()
+                }
+                showPasteDialog = false
+            }
+        )
+    }
+}
+
+/** 批量粘贴弹窗：多行输入框 + 说明，确认后才把拆好的 Key 交给调用方。 */
+@Composable
+private fun BatchPasteKeyDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (List<String>) -> Unit
+) {
+    var text by remember { mutableStateOf("") }
+    val values = remember(text) { splitPastedKeys(text) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        title = { Text(stringResource(R.string.provider_multi_key_paste_title)) },
+        text = {
+            Column {
+                Text(
+                    text = stringResource(R.string.provider_multi_key_paste_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(Spacing.md))
+                AppTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = "sk-...",
+                    singleLine = false,
+                    minLines = 4,
+                    maxLines = 8
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(values) },
+                enabled = values.isNotEmpty()
+            ) {
+                Text(stringResource(R.string.common_add))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
+        }
+    )
 }
 
 /** Key 列表前的固定项数量：一个分组小标题。拖拽回调下标需减去它才能映射到 Key 下标。 */

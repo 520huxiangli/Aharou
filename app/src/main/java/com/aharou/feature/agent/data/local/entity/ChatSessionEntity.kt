@@ -1,5 +1,6 @@
 package com.aharou.feature.agent.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -23,6 +24,9 @@ data class ChatSessionEntity(
     /** 进入 PLAN 前的模式（如 AUTO）；退出 PLAN 时恢复，null 视为 BUILD。 */
     val modeBeforePlan: String? = null,
     val reasoningEffort: String = ReasoningEffort.DEFAULT.name,
+    /** 服务端快速档（OpenAI service_tier）；只改变排队优先级，不换模型。 */
+    @ColumnInfo(defaultValue = "0")
+    val fastMode: Boolean = false,
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,
@@ -49,6 +53,7 @@ data class ChatSessionEntity(
         mode = runCatching { AgentMode.valueOf(mode) }.getOrDefault(AgentMode.BUILD),
         modeBeforePlan = modeBeforePlan?.let { runCatching { AgentMode.valueOf(it) }.getOrNull() },
         reasoningEffort = runCatching { ReasoningEffort.valueOf(reasoningEffort) }.getOrDefault(ReasoningEffort.DEFAULT),
+        fastMode = fastMode,
         providerId = providerId,
         model = model,
         totalInputTokens = totalInputTokens,
@@ -69,6 +74,7 @@ data class ChatSessionEntity(
             mode = session.mode.name,
             modeBeforePlan = session.modeBeforePlan?.name,
             reasoningEffort = session.reasoningEffort.name,
+            fastMode = session.fastMode,
             providerId = session.providerId,
             model = session.model,
             totalInputTokens = session.totalInputTokens,

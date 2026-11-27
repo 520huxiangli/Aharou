@@ -38,6 +38,8 @@ data class ChatSession(
     /** 进入 PLAN 前的模式（如 AUTO）；退出 PLAN 时恢复，null 视为 BUILD。 */
     val modeBeforePlan: AgentMode? = null,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.DEFAULT,
+    /** 服务端快速档（OpenAI service_tier）；只改变排队优先级，不换模型。 */
+    val fastMode: Boolean = false,
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,

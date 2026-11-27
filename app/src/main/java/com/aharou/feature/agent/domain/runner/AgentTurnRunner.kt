@@ -315,6 +315,7 @@ class AgentTurnRunner @Inject constructor(
             mode = mode,
             modeBeforePlan = sessionDomain?.modeBeforePlan,
             reasoningEffort = sessionDomain?.reasoningEffort?.apiValue,
+            fastMode = sessionDomain?.fastMode ?: false,
             agentDefinition = agentDefinition,
             writePaths = subAgentWriteLease.pathsFor(sessionId),
             workspaceName = workspace?.name,

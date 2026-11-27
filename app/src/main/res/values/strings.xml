@@ -4103,4 +4103,20 @@
     <string name="connector_device_success">授权完成，正在连接</string>
     <string name="connector_device_failed">登录失败：%1$s</string>
     <string name="connector_reauth_device">重新登录</string>
+    <string name="chat_status_request_queued">前面还有 %1$d 个请求</string>
+    <string name="provider_response_websocket_title">WebSocket 长连接</string>
+    <string name="provider_response_websocket_subtitle">复用持久连接跑长链工作流；需服务端支持 responses_websockets，中转站不支持时请关闭</string>
+    <string name="provider_max_concurrent_requests">最大并发请求数</string>
+    <string name="provider_max_concurrent_requests_desc">同一供应商同时在途的请求上限；超出按先来先服务排队，0 表示不限</string>
+    <string name="chat_fast_mode_title">快速模式</string>
+    <string name="chat_fast_mode_cost_hint">请求按快速档排队；服务端可能按更高费率计费</string>
+    <string name="chat_fast_mode_label">快速</string>
+    <string name="provider_multi_key_paste">批量粘贴</string>
+    <string name="provider_multi_key_paste_title">批量粘贴 Key</string>
+    <string name="provider_multi_key_paste_hint">每行一个，也支持逗号/空格/分号分隔；重复的会自动去重</string>
+    <string name="settings_general_remote">远程连接</string>
+    <string name="settings_sftp_channel_limit">SFTP 通道上限</string>
+    <string name="settings_sftp_channel_limit_desc">该连接上同时进行的 SFTP 操作数；调大更快，调小更省服务器会话名额</string>
+    <string name="settings_sftp_channel_limit_value">%1$d</string>
+    <string name="settings_sftp_channel_limit_input_hint">1-20</string>
 </resources>

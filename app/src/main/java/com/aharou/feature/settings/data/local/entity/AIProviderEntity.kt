@@ -23,6 +23,9 @@ data class AIProviderEntity(
     val keyCooldownMinutes: Int = 5,
     /** 命中即触发多 Key 自动切换的 HTTP 状态码，以逗号分隔持久化；空串表示用默认值。 */
     val keySwitchStatusCodes: String = "",
+    /** 同一供应商同时在途的 AI 请求上限；0 表示不限。 */
+    @ColumnInfo(defaultValue = "0")
+    val maxConcurrentRequests: Int = 0,
     val baseUrl: String,
     val defaultModel: String,
     /** 可用模型列表，以换行分隔持久化。 */
@@ -32,6 +35,9 @@ data class AIProviderEntity(
     val isEnabled: Boolean = true,
     val useFullUrl: Boolean = false,
     val useResponseApi: Boolean = false,
+    /** 走 Responses WebSocket 长连接；默认关，中转站不支持 responses_websockets beta。 */
+    @ColumnInfo(defaultValue = "0")
+    val useResponseWebSocket: Boolean = false,
     /** Anthropic 显式缓存断点（cache_control）。仅 ANTHROPIC 类型使用，默认开启。 */
     val anthropicCacheBreakpoints: Boolean = true,
     /** Chat Completion 路径发送 prompt_cache_key（shard 路由）。仅 OPENAI 类型使用，默认关闭（官方 API 不接受该字段）。 */

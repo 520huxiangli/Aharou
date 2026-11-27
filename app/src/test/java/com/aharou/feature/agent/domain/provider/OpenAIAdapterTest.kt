@@ -113,11 +113,23 @@ class OpenAIAdapterTest {
         assertEquals("auto", req.tool_choice)
         assertEquals(false, req.stream)
         assertNull(req.prompt_cache_key) // 默认关闭
+        assertNull(req.service_tier) // 未开快速模式不发服务档位
         assertEquals("ok", result.content)
         assertEquals("stop", result.stopReason)
         assertEquals(10, result.inputTokens)
         assertEquals(5, result.outputTokens)
         assertEquals(3, result.cachedInputTokens)
+    }
+
+    @Test
+    fun complete_fastModeAddsServiceTier() = runTest {
+        val api = api()
+        val reqSlot = slot<ChatCompletionRequest>()
+        coEvery { api.createChatCompletion(any(), any(), any(), capture(reqSlot)) } returns response()
+
+        adapter(api).complete("", emptyList(), fastMode = true)
+
+        assertEquals("fast", reqSlot.captured.service_tier)
     }
 
     @Test
@@ -426,9 +438,27 @@ class OpenAIAdapterTest {
     }
 
     @Test
+    fun responsesComplete_fastModeAddsServiceTierAndReturnsResponseId() = runTest {
+        val api = api()
+        val reqSlot = slot<Map<String, Any?>>()
+        coEvery { api.createResponses(any(), any(), any(), capture(reqSlot)) } returns com.google.gson.JsonObject().apply {
+            addProperty("id", "resp_1")
+            addProperty("status", "completed")
+            add("output", com.google.gson.JsonArray())
+        }
+
+        val result = adapter(api).apply { useResponseApi = true }
+            .complete("", emptyList(), fastMode = true)
+
+        assertEquals("fast", reqSlot.captured["service_tier"])
+        assertEquals("resp_1", result.responseId)
+    }
+
+    @Test
     fun responsesComplete_truncated_mapsToLength() = runTest {
         val api = api()
-        coEvery { api.createResponses(any(), any(), any(), any()) } returns com.google.gson.JsonObject().apply {
+        val reqSlot = slot<Map<String, Any?>>()
+        coEvery { api.createResponses(any(), any(), any(), capture(reqSlot)) } returns com.google.gson.JsonObject().apply {
             addProperty("status", "incomplete")
             add("incomplete_details", com.google.gson.JsonObject().apply {
                 addProperty("reason", "max_output_tokens")
@@ -439,12 +469,42 @@ class OpenAIAdapterTest {
         val result = adapter(api).apply { useResponseApi = true }.complete("", emptyList())
 
         assertEquals("length", result.stopReason)
+        assertTrue(!reqSlot.captured.containsKey("service_tier"))
     }
 
     // ── Chat Completions 流式 ─────────────────────────────────────────
 
     private fun sseCall(vararg lines: String): Call<ResponseBody> =
         FakeStreamCall { FakeSseStream.rawBody(*lines) }
+
+    @Test
+    fun responsesStream_fastModeAddsServiceTierAndCarriesResponseId() = runTest {
+        val api = api()
+        val reqSlot = slot<Any>()
+        every { api.streamResponses(any(), any(), any(), capture(reqSlot)) } returns sseCall(
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}"
+        )
+
+        val chunks = adapter(api).apply { useResponseApi = true }
+            .completeStream("", emptyList(), fastMode = true).toList()
+
+        assertEquals("fast", (reqSlot.captured as Map<*, *>)["service_tier"])
+        assertEquals("resp_1", chunks.filterIsInstance<AIStreamChunk.Final>().single().response.responseId)
+    }
+
+    @Test
+    fun streamChat_fastModeAddsServiceTier() = runTest {
+        val api = api()
+        val reqSlot = slot<ChatCompletionRequest>()
+        every { api.streamChatCompletion(any(), any(), any(), capture(reqSlot)) } returns sseCall(
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
+            "data: [DONE]"
+        )
+
+        adapter(api).completeStream("", emptyList(), fastMode = true).toList()
+
+        assertEquals("fast", reqSlot.captured.service_tier)
+    }
 
     @Test
     fun streamChat_collectsTextAndFinal() = runTest {

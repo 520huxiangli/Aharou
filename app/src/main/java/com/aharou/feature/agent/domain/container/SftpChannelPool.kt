@@ -34,7 +34,7 @@ private const val SWEEP_INTERVAL_MS = 5_000L
  * 把通道交给一个已取消的等待者会把名额永久卡死。
  */
 internal class SftpChannelPool(
-    private val limit: Int,
+    private var limit: Int,
     private val createChannel: suspend () -> SFTPClient
 ) {
     /** 池内一条通道及其最近归还时间（毫秒，单调时钟）。 */
@@ -66,6 +66,21 @@ internal class SftpChannelPool(
 
     /** 借一条通道；无空闲通道且已达上限时挂起等待有人归还。 */
     suspend fun acquire(): Lease = Lease(obtain().client) { release(it) }
+
+    /**
+     * 更新通道上限（用户改设置时调用）。调大后立刻唤醒排队者；调小后交给 [sweep]
+     * 逐轮关掉多余的空闲通道——已租出去的通道要等在途操作还回来，不能直接掐断传输。
+     */
+    suspend fun updateLimit(newLimit: Int) {
+        lock.withLock {
+            if (newLimit == limit) return
+            limit = newLimit
+            while (all.size + creating < limit) {
+                val waiter = waiters.removeFirstOrNull() ?: break
+                waiter.complete(Unit)
+            }
+        }
+    }
 
     /** 丢弃一条出问题的通道（传输层异常后调用），其余通道与 transport 保持不变。 */
     suspend fun invalidate(client: SFTPClient) {

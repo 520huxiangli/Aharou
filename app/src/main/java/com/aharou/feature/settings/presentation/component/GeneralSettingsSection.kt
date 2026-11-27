@@ -233,6 +233,8 @@ internal fun GeneralSettingsSection(
             )
         }
 
+        SftpChannelLimitSection()
+
         SettingsGroupHeader(text = stringResource(R.string.settings_general_tools))
         SettingsGroup {
             SettingsRow(
@@ -369,9 +371,11 @@ private fun timeoutLabel(sec: Int): String =
 
 /**
  * 数值输入弹窗：只接受非负整数，留空或填 0 按 0 处理（由调用方决定 0 的语义）。
+ *
+ * internal 供同包的 [SftpChannelLimitSection] 复用，免得同一套校验弹窗写两遍。
  */
 @Composable
-private fun NumberInputDialog(
+internal fun NumberInputDialog(
     title: String,
     initialValue: Int,
     hint: String,

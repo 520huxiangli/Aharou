@@ -308,7 +308,7 @@ class StatefulAgentWorkflow @Inject constructor(
             ?.let { promptProvider.findAgentDefinitionIncludingDisabled(it) }
         val context = AgentContext(null, null, session?.workspacePath.orEmpty(), null,
             history = history, sessionId = sessionId, mode = domain?.mode ?: AgentMode.BUILD,
-            modeBeforePlan = domain?.modeBeforePlan, reasoningEffort = domain?.reasoningEffort?.apiValue,
+            modeBeforePlan = domain?.modeBeforePlan, reasoningEffort = domain?.reasoningEffort?.apiValue, fastMode = domain?.fastMode ?: false,
             lastInputTokens = session?.lastInputTokens ?: 0, agentDefinition = definition)
         val allTools = toolRegistry.getAvailableTools()
         val tools = when {
@@ -693,13 +693,15 @@ class StatefulAgentWorkflow @Inject constructor(
             // 用户打断：与采样检测共用同一个 takeWhile，命中即掉断上游流，不再继续吐字。
             var userInterruptCut = false
             callId = telemetry.llmRequest(providerInUse.providerId, providerInUse.model, messagesToSend.size, promptTools.size, predictedInput)
-            providerInUse.completeStream(requestSystemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort)
+            providerInUse.completeStream(requestSystemPrompt, messagesToSend, promptTools, currentContext.reasoningEffort, fastMode = currentContext.fastMode)
                 .takeWhile { !samplingLoopCut && !userInterruptCut }
                 .collect { chunk ->
                     if (!userInterruptCut && consumeUserInterrupt(currentContext.sessionId)) {
                         userInterruptCut = true
                     }
                 when (chunk) {
+                    is AIStreamChunk.RequestQueued -> emit(AgentEvent.RequestQueued(chunk.requestsAhead))
+                    AIStreamChunk.RequestStarted -> emit(AgentEvent.RequestStarted)
                     is AIStreamChunk.TextDelta -> {
                         if (ttfbElapsed == null) { ttfbElapsed = SystemClock.elapsedRealtime() - callStartElapsed; telemetry.llmFirstByte(callId) }
                         acc.append(chunk.text)

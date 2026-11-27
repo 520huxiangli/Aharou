@@ -123,6 +123,7 @@ import com.aharou.feature.agent.presentation.QueuedRequest
 import com.aharou.feature.settings.domain.model.AIProviderConfig
 import com.aharou.feature.settings.domain.model.ModelMetadata
 import com.aharou.feature.settings.domain.model.ProviderDashboardState
+import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.modelMetadataKey
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
@@ -176,6 +177,9 @@ internal fun ChatInputBar(
     onToggleMode: (AgentMode) -> Unit,
     reasoningEffort: ReasoningEffort,
     onReasoningEffortChange: (ReasoningEffort) -> Unit,
+    /** 当前会话是否走服务端快速档（仅 OpenAI + Response API 时有意义）。 */
+    fastMode: Boolean = false,
+    onFastModeChange: (Boolean) -> Unit = {},
     pendingAttachments: List<PendingUploadAttachment>,
     onRemoveAttachment: (Int) -> Unit,
     onReadAttachment: suspend (String) -> String?,
@@ -607,6 +611,10 @@ internal fun ChatInputBar(
                             effort = reasoningEffort,
                             availableEfforts = ReasoningEffort.entries,
                             onChange = onReasoningEffortChange,
+                            fastMode = fastMode,
+                            // 只有 OpenAI 走 Response API 时 service_tier 才有意义，其它情况不展示开关
+                            showFastMode = activeProvider?.let { it.type == ProviderType.OPENAI && it.useResponseApi } == true,
+                            onFastModeChange = onFastModeChange,
                             enabled = !isBusy,
                             modelMetadata = activeProvider?.let { modelMetadata[modelMetadataKey(it.id, it.effectiveModel)] }
                         )

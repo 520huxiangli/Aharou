@@ -13,6 +13,7 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.modelToolResultText
+import com.aharou.feature.settings.domain.model.DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.defaultProviderApiPath
 import com.google.gson.JsonParser
@@ -39,8 +40,11 @@ class AnthropicAdapter @Inject constructor(
     override var baseUrl = "https://api.anthropic.com/"
     override var useFullUrl = false
     override var useResponseApi = false
+    override var useResponseWebSocket = false
     override var model = "claude-3-5-sonnet-20241022"
     override var providerId = ""
+    override var requestConcurrencyLimiter: ProviderRequestConcurrencyLimiter? = null
+    override var maxConcurrentRequests: Int = DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
     override var logSessionId: String? = null
     override var firstByteTimeoutMs: Long = FIRST_BYTE_TIMEOUT_MS
     override var streamIdleTimeoutMs: Long = 0L
@@ -68,7 +72,19 @@ class AnthropicAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        // Anthropic 没有服务档位（快速模式）概念，接口参数在此直接忽略。
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
+    ): AIResponse = withRequestPermit {
+        completeRequest(systemPrompt, messages, tools, reasoningEffort, fastMode)
+    }
+
+    private suspend fun completeRequest(
+        systemPrompt: String,
+        messages: List<AgentMessage>,
+        tools: List<AgentTool>,
+        reasoningEffort: String?,
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
     ): AIResponse {
         val anthropicMessages = convertToAnthropicMessages(messages, cacheBreakpointsEnabled)
 
@@ -150,11 +166,13 @@ class AnthropicAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        // 同 complete：Anthropic 无服务档位，忽略。
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
     // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
     // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
     // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
-    ): Flow<AIStreamChunk> = channelFlow {
+    ): Flow<AIStreamChunk> = gatedStream(channelFlow {
         val anthropicMessages = convertToAnthropicMessages(messages, cacheBreakpointsEnabled)
         val toolDefs = tools.takeIf { it.isNotEmpty() }?.mapIndexed { index, tool ->
             AnthropicToolDefinition(
@@ -403,7 +421,7 @@ class AnthropicAdapter @Inject constructor(
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
             sseLog.finish()
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO))
 
     /** 流式过程中按 content block index 累积的 tool_use 状态。 */
     private class ToolBlockAcc(val id: String, val name: String) {

@@ -9,6 +9,7 @@ import com.aharou.feature.agent.domain.model.AgentMessage
 import com.aharou.feature.agent.domain.tool.AgentTool
 import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.modelToolResultText
+import com.aharou.feature.settings.domain.model.DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
 import com.google.gson.JsonParser
 import com.google.gson.JsonObject
 import javax.inject.Inject
@@ -32,8 +33,11 @@ class GeminiAdapter @Inject constructor(
     override var baseUrl = "https://generativelanguage.googleapis.com/"
     override var useFullUrl = false
     override var useResponseApi = false
+    override var useResponseWebSocket = false
     override var model = "gemini-1.5-flash"
     override var providerId = ""
+    override var requestConcurrencyLimiter: ProviderRequestConcurrencyLimiter? = null
+    override var maxConcurrentRequests: Int = DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
     override var logSessionId: String? = null
     override var firstByteTimeoutMs: Long = FIRST_BYTE_TIMEOUT_MS
     override var streamIdleTimeoutMs: Long = 0L
@@ -78,7 +82,19 @@ class GeminiAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        // Gemini 没有服务档位（快速模式）字段，接口参数在此直接忽略。
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
+    ): AIResponse = withRequestPermit {
+        completeRequest(systemPrompt, messages, tools, reasoningEffort, fastMode)
+    }
+
+    private suspend fun completeRequest(
+        systemPrompt: String,
+        messages: List<AgentMessage>,
+        tools: List<AgentTool>,
+        reasoningEffort: String?,
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
     ): AIResponse {
         if (useResponseApi) {
             return completeViaInteractions(systemPrompt, messages, tools, reasoningEffort)
@@ -181,11 +197,13 @@ class GeminiAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        // 同 complete：Gemini 无服务档位，忽略。
+        @Suppress("UNUSED_PARAMETER") fastMode: Boolean
     // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
     // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
     // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
-    ): Flow<AIStreamChunk> = channelFlow {
+    ): Flow<AIStreamChunk> = gatedStream(channelFlow {
         if (useResponseApi) {
             streamViaInteractions(systemPrompt, messages, tools, reasoningEffort)
             return@channelFlow
@@ -351,7 +369,7 @@ class GeminiAdapter @Inject constructor(
         } finally {
             sseLog.finish()
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO))
 
     /**
      * Interactions 请求体。与 generateContent 的差异集中在四处：

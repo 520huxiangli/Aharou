@@ -99,6 +99,12 @@ sealed class AgentEvent {
     /** 网络请求正在重试（首字节前失败触发自动重试）。仅用于 UI 实时展示，不落库。[error] 为触发重试的错误摘要。 */
     data class Retrying(val attempt: Int, val maxRetries: Int, val error: RetryErrorInfo) : AgentEvent()
 
+    /** 请求在供应商并发上限前排到第 [requestsAhead] 位。仅用于 UI 展示排队提示，不落库。 */
+    data class RequestQueued(val requestsAhead: Int) : AgentEvent()
+
+    /** 已取得供应商并发名额、请求即将发出。仅用于 UI 清除排队提示，不落库。 */
+    object RequestStarted : AgentEvent()
+
     /** 多 Key 自动切换：当前 Key 不可用，已改用第 [newIndex]/[total] 个 Key 重发本次请求。仅用于 UI 实时展示，不落库。 */
     data class KeySwitched(val newIndex: Int, val total: Int) : AgentEvent()
 

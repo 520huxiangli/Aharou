@@ -88,6 +88,22 @@ class ConfigContainerFields @Inject constructor(
         )
 
         registry.register(
+            DataStoreIntField(
+                path = "container.sftp_channel_limit",
+                displayName = "远程 SFTP 通道上限",
+                description = "远程工作区模式下同时进行的文件读写最多开几条 SFTP 通道。" +
+                    "调大能让更多文件操作并行，调小则少占服务器的会话名额（OpenSSH 默认 MaxSessions=10，" +
+                    "还要分给命令、终端与端口转发）。范围 ${ContainerSettingsRepository.MIN_SFTP_CHANNEL_LIMIT}~" +
+                    "${ContainerSettingsRepository.MAX_SFTP_CHANNEL_LIMIT}，默认 ${ContainerSettingsRepository.DEFAULT_SFTP_CHANNEL_LIMIT}。" +
+                    "改完立即生效：调小只会关掉多余的空闲通道，正在进行的读写不被打断。",
+                flow = containerSettings.sftpChannelLimitFlow,
+                setter = { containerSettings.setSftpChannelLimit(it) },
+                minValue = ContainerSettingsRepository.MIN_SFTP_CHANNEL_LIMIT,
+                maxValue = ContainerSettingsRepository.MAX_SFTP_CHANNEL_LIMIT,
+            ),
+        )
+
+        registry.register(
             DataStoreBoolField(
                 path = "container.env_output_redaction",
                 displayName = "命令输出隐藏环境变量值",

@@ -2,6 +2,7 @@ package com.aharou.feature.agent.domain.provider
 
 import com.aharou.core.util.AILogger
 import com.aharou.feature.agent.data.remote.openai.OpenAIApi
+import com.aharou.feature.settings.domain.model.DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
 import com.aharou.feature.settings.domain.model.ProviderType
 import com.aharou.feature.settings.domain.model.defaultProviderApiPath
 import java.io.IOException
@@ -15,6 +16,7 @@ import com.aharou.feature.agent.domain.tool.ToolCall
 import com.aharou.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonParser
 import javax.inject.Inject
+import okhttp3.OkHttpClient
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -34,16 +36,30 @@ import com.aharou.feature.agent.data.remote.openai.OpenAIImagePart
 import com.aharou.feature.agent.data.remote.openai.StreamOptions
 
 class OpenAIAdapter @Inject constructor(
-    private val api: OpenAIApi
+    private val api: OpenAIApi,
+    internal val okHttpClient: OkHttpClient
 ) : AIProvider {
+
+    /** 旁路一次性调用（生图 / 记忆整理等）不经 Hilt 装配，也不开 WebSocket，用一个共享客户端即可。 */
+    constructor(api: OpenAIApi) : this(api, fallbackHttpClient)
 
     override var apiKey = ""
     override var keySwitcher: (suspend (Throwable, String, Set<String>) -> KeySwitchOutcome?)? = null
     override var baseUrl = "https://api.openai.com/"
     override var useFullUrl = false
     override var useResponseApi = false
+
+    /** Responses WebSocket 通道（默认关闭，需服务端支持 `responses_websockets` beta），实现见 ResponsesWebSocketStream.kt。 */
+    internal val responsesWebSocket = ResponsesWebSocketState()
+
+    override var useResponseWebSocket: Boolean
+        get() = responsesWebSocket.enabled
+        set(value) { responsesWebSocket.enabled = value }
+
     override var model = "gpt-4-turbo"
     override var providerId = ""
+    override var requestConcurrencyLimiter: ProviderRequestConcurrencyLimiter? = null
+    override var maxConcurrentRequests: Int = DEFAULT_PROVIDER_MAX_CONCURRENT_REQUESTS
     override var logSessionId: String? = null
     override var firstByteTimeoutMs: Long = FIRST_BYTE_TIMEOUT_MS
     override var streamIdleTimeoutMs: Long = 0L
@@ -73,7 +89,9 @@ class OpenAIAdapter @Inject constructor(
     // null 时请求体不带 temperature（Gson 跳过 null 字段），交由服务端默认。
     override var temperature: Float? = null
 
-    private fun extraHeaders(): Map<String, String> {
+    override suspend fun close() = responsesWebSocket.reset()
+
+    internal fun extraHeaders(): Map<String, String> {
         val base = resolveCustomHeaders(customHeaders, logSessionId, apiKey)
         if (!isCodexClient()) return base
         return base + codexHeaders()
@@ -93,7 +111,7 @@ class OpenAIAdapter @Inject constructor(
      * useResponseApi 时请求体是 Responses 格式（`input`），若仍打到 chat/completions 会被服务端以
      * 「missing field `messages`」拒绝，故必须同步切端点。useFullUrl 时直接用用户填的完整 baseUrl。
      */
-    private fun resolveApiUrl(): String {
+    internal fun resolveApiUrl(): String {
         if (useFullUrl) return baseUrl
         val path = if (useResponseApi) "v1/responses" else defaultProviderApiPath(ProviderType.OPENAI)
         return joinUrl(baseUrl, path)
@@ -103,9 +121,12 @@ class OpenAIAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
-    ): AIResponse {
-        if (useResponseApi) return completeViaResponses(systemPrompt, messages, tools, reasoningEffort)
+        reasoningEffort: String?,
+        fastMode: Boolean
+    ): AIResponse = withRequestPermit { completeRequest(systemPrompt, messages, tools, reasoningEffort, fastMode) }
+
+    private suspend fun completeRequest(systemPrompt: String, messages: List<AgentMessage>, tools: List<AgentTool>, reasoningEffort: String?, fastMode: Boolean): AIResponse {
+        if (useResponseApi) return completeViaResponses(systemPrompt, messages, tools, reasoningEffort, fastMode)
 
         val openAIMessages = buildList {
             if (systemPrompt.isNotBlank()) {
@@ -133,7 +154,9 @@ class OpenAIAdapter @Inject constructor(
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = false,
-            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
+            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null,
+            // 服务档位：非官方端点会忽略该字段，故只在用户开启快速模式时发。
+            service_tier = "fast".takeIf { fastMode }
         ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
@@ -172,7 +195,7 @@ class OpenAIAdapter @Inject constructor(
      * 一律用 developer。gpt-4 及更早、以及第三方兼容服务（deepseek/kimi/minimax/moonshot 等）不命中
      * 前缀，继续走 system，不受影响。
      */
-    private fun systemRoleForModel(): String = when {
+    internal fun systemRoleForModel(): String = when {
         model.startsWith("o", ignoreCase = true) -> "developer"
         model.startsWith("gpt-5", ignoreCase = true) -> "developer"
         else -> "system"
@@ -232,12 +255,13 @@ class OpenAIAdapter @Inject constructor(
      * Responses 请求体。system prompt 作为首个 message item 进 `input`（与顶层 `instructions` 等价，
      * 服务端同样按首条 system 消息处理），因此不再单独发 `instructions`。
      */
-    private fun buildResponsesRequest(
+    internal fun buildResponsesRequest(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
         reasoningEffort: String?,
-        stream: Boolean
+        stream: Boolean,
+        fastMode: Boolean = false
     ): Map<String, Any?> {
         // 每次请求换一个 turn id（header 与请求体里的 codex 痕迹要一致）。
         codexTurnId = java.util.UUID.randomUUID().toString()
@@ -260,6 +284,7 @@ class OpenAIAdapter @Inject constructor(
             request["tool_choice"] = "auto"
         }
         if (stream) request["stream"] = true
+        if (fastMode) request["service_tier"] = "fast"
         normalizeReasoningEffort(reasoningEffort)?.let { effort ->
             if (isDeepSeek) {
                 request["reasoning"] = mapOf("effort" to effort)
@@ -340,10 +365,11 @@ class OpenAIAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        fastMode: Boolean
     ): AIResponse {
         val url = resolveApiUrl()
-        val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = false)
+        val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = false, fastMode = fastMode)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
         val triedKeys = mutableSetOf(apiKey)
@@ -378,7 +404,9 @@ class OpenAIAdapter @Inject constructor(
             outputTokens = usage.outputTokens,
             cachedInputTokens = usage.cachedInputTokens,
             cacheCreationTokens = usage.cacheCreationTokens,
-            images = parsed.images
+            images = parsed.images,
+            // response id 供上层（WebSocket 续传 / 调试）核对是同一轮的返回，取不到就为 null。
+            responseId = response.get("id")?.takeIf { it.isJsonPrimitive }?.asString
         ))
     }
 
@@ -386,13 +414,18 @@ class OpenAIAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        fastMode: Boolean
     // 必须用 channelFlow + send（而非 flow + emit）：首字节超时靠取消 attempt 作用域实现，
     // 取消信号可能落在挂起的 emit 上；flow{} 里恢复后再次 emit（如 Retrying/KeySwitched）会触发
     // Flow 异常透明性违规（IllegalStateException），channel 的 send 不受该检查约束。
-    ): Flow<AIStreamChunk> = channelFlow {
+    ): Flow<AIStreamChunk> = gatedStream(channelFlow {
         if (useResponseApi) {
-            streamViaResponses(systemPrompt, messages, tools, reasoningEffort)
+            if (useResponseWebSocket) {
+                this@OpenAIAdapter.streamViaResponsesWebSocket(this, systemPrompt, messages, tools, reasoningEffort, fastMode)
+            } else {
+                streamViaResponses(systemPrompt, messages, tools, reasoningEffort, fastMode)
+            }
             return@channelFlow
         }
 
@@ -423,7 +456,9 @@ class OpenAIAdapter @Inject constructor(
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = true,
             stream_options = StreamOptions(include_usage = true),
-            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
+            prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null,
+            // 同上：不是所有兼容渠道都认这个字段，开启快速模式才发。
+            service_tier = "fast".takeIf { fastMode }
         ).withThinkingDisabled(reasoningEffort)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
@@ -609,7 +644,7 @@ class OpenAIAdapter @Inject constructor(
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
             sseLog.finish()
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO))
 
     /**
      * Responses API 的流式请求。与 Chat Completions 的 delta 帧不同，这里是语义事件流（见
@@ -621,10 +656,11 @@ class OpenAIAdapter @Inject constructor(
         systemPrompt: String,
         messages: List<AgentMessage>,
         tools: List<AgentTool>,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        fastMode: Boolean
     ) {
         val url = resolveApiUrl()
-        val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = true)
+        val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = true, fastMode = fastMode)
         val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 原始 SSE 分批落盘（见 AILogger.beginRawSse），本轮结束在 finally 收尾。
         val sseLog = AILogger.beginRawSse(logSessionId, "OpenAI", seq)
@@ -748,41 +784,6 @@ class OpenAIAdapter @Inject constructor(
         val args = StringBuilder()
         val progress = ToolArgProgressThrottle()
     }
-
-    /**
-     * Responses 流的参数进度：delta 事件只带片段，工具名在 output_item 事件里，
-     * 所以先按同一个 call key 记下名字，再按片段累积长度。
-     */
-    private fun sampleResponsesArgProgress(
-        event: com.google.gson.JsonObject,
-        sampler: ToolArgProgressSampler
-    ): AIStreamChunk.ToolCallArgumentProgress? {
-        val key = event.responsesCallKey()
-        return when (event.get("type")?.takeIf { it.isJsonPrimitive }?.asString) {
-            ResponsesEvent.OUTPUT_ITEM_ADDED, ResponsesEvent.OUTPUT_ITEM_DONE -> {
-                val item = event.get("item")?.takeIf { it.isJsonObject }?.asJsonObject
-                if (item?.get("type")?.takeIf { it.isJsonPrimitive }?.asString == ResponsesItem.FUNCTION_CALL) {
-                    item.get("name")?.takeIf { !it.isJsonNull }?.asString
-                        ?.takeIf { it.isNotEmpty() }
-                        ?.let { sampler.declare(key, it) }
-                }
-                null
-            }
-
-            ResponsesEvent.FUNCTION_CALL_ARGS_DELTA -> {
-                val piece = event.get("delta")?.takeIf { !it.isJsonNull }?.asString
-                if (piece.isNullOrEmpty()) null else sampler.append(key, piece)
-            }
-
-            else -> null
-        }
-    }
-
-    /** 与累加器的 callKey 同口径：同一调用的不同事件必须落在同一个 key 上。 */
-    private fun com.google.gson.JsonObject.responsesCallKey(): String =
-        get("output_index")?.takeIf { it.isJsonPrimitive }?.asString
-            ?: get("item_id")?.takeIf { it.isJsonPrimitive }?.asString
-            ?: "0"
 
     private fun convertToOpenAIMessages(messages: List<AgentMessage>): MutableList<OpenAIChatMessage> {
         val raw = messages.map { message ->
@@ -992,4 +993,7 @@ class OpenAIAdapter @Inject constructor(
         )
     }
 }
+
+/** 旁路一次性调用的兼容客户端：不进 Hilt 的装配路径，也不开 WebSocket。 */
+private val fallbackHttpClient: OkHttpClient by lazy { OkHttpClient.Builder().build() }
 

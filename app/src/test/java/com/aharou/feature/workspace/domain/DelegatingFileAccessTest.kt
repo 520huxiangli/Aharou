@@ -4,6 +4,7 @@ import com.aharou.feature.agent.domain.container.ContainerProfile
 import com.aharou.feature.agent.domain.container.ContainerProfileResolver
 import com.aharou.feature.agent.domain.container.RemoteSshConnection
 import com.aharou.feature.workspace.data.repository.WorkspaceRepository
+import com.aharou.feature.settings.data.repository.ContainerSettingsRepository
 import com.aharou.feature.settings.data.repository.ExecutionMode
 import com.aharou.feature.settings.data.repository.ExecutionModeHolder
 import io.mockk.every
@@ -13,12 +14,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.flow.flowOf
 
 class DelegatingFileAccessTest {
     private val mode = ExecutionModeHolder()
     private val resolver = mockk<ContainerProfileResolver>()
     private val local = mockk<LocalFileAccess>()
     private val remote = mockk<RemoteSftpFileAccess>()
+
+    /** 连接构造时会采集通道上限设置，给个固定值免得后台协程拿到空答案。 */
+    private fun stubSettings(): ContainerSettingsRepository =
+        mockk { every { sftpChannelLimitFlow } returns flowOf(3) }
 
     @Test fun remoteWorkspaceBindsBothLegsAndKeepsSafeWrapper() {
         val boundLocal = mockk<FileAccessProvider>()
@@ -50,7 +56,7 @@ class DelegatingFileAccessTest {
     }
 
     @Test fun localBindingDoesNotRequireSshConfiguration() {
-        val connection = RemoteSshConnection(mockk(), mockk(), mockk(), mockk())
+        val connection = RemoteSshConnection(mockk(), mockk(), mockk(), mockk(), stubSettings())
         val remoteWithoutConfiguration = RemoteSftpFileAccess(connection, mockk<WorkspaceRepository>())
         val boundLocal = mockk<FileAccessProvider>()
         every { local.forWorkspace("/local/a") } returns boundLocal

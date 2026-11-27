@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import net.schmizz.sshj.sftp.FileAttributes
@@ -41,7 +42,8 @@ import org.junit.Test
 class RemoteSftpFileAccessTest {
     private val connection = spyk(RemoteSshConnection(
         mockk<SshHostKeyStore>(), mockk<SshHostKeyVerifier>(),
-        mockk<SshPrivateKeyStore>(), mockk<ContainerInstaller>()
+        mockk<SshPrivateKeyStore>(), mockk<ContainerInstaller>(),
+        mockk { every { sftpChannelLimitFlow } returns flowOf(3) }
     ))
     private val workspace = mockk<WorkspaceRepository>()
     private val sftp = mockk<SFTPClient>(relaxed = true)

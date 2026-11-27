@@ -73,6 +73,16 @@ class ContainerSettingsRepository @Inject constructor(
         const val GRADLE_HEAP_MAX_MB = 8192
         const val GRADLE_HEAP_STEP_MB = 512
 
+        /**
+         * 远程模式并发 SFTP 通道上限：默认 3，范围 1-20。
+         *
+         * OpenSSH 默认 MaxSessions=10，还要留给 exec、终端与端口转发，所以默认给 3：够并行工具调用
+         * 同时读写，又不会因为一次批量扫描就撞上服务器的会话上限。
+         */
+        const val DEFAULT_SFTP_CHANNEL_LIMIT = 3
+        const val MIN_SFTP_CHANNEL_LIMIT = 1
+        const val MAX_SFTP_CHANNEL_LIMIT = 20
+
         /** 设备总内存（MB）；拿不到时按 4GB 计。 */
         fun deviceTotalMemMb(context: Context): Int = runCatching {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -112,6 +122,8 @@ class ContainerSettingsRepository @Inject constructor(
         val DOWNLOADED_IMAGES_KEY = stringPreferencesKey("downloaded_images_json")
         /** 容器内编译 Gradle 工程时的 JVM 堆上限（MB）；无值时按设备内存推荐。 */
         val GRADLE_HEAP_MB_KEY = intPreferencesKey("gradle_heap_mb")
+        /** 远程模式并发 SFTP 通道上限；无值时用 [DEFAULT_SFTP_CHANNEL_LIMIT]。 */
+        val SFTP_CHANNEL_LIMIT_KEY = intPreferencesKey("sftp_channel_limit")
         /** 工作区路径 → profile id 的覆盖表（JSON 对象）；键已由 [ContainerWorkspaceKeys] 归一化。 */
         val WORKSPACE_PROFILES_KEY = stringPreferencesKey("workspace_profiles_json")
         /** PRoot seccomp 兼容模式；无值时 AUTO。 */
@@ -229,6 +241,18 @@ class ContainerSettingsRepository @Inject constructor(
         val aligned = (mb / GRADLE_HEAP_STEP_MB) * GRADLE_HEAP_STEP_MB
         context.containerDataStore.edit {
             it[GRADLE_HEAP_MB_KEY] = aligned.coerceIn(GRADLE_HEAP_MIN_MB, GRADLE_HEAP_MAX_MB)
+        }
+    }
+
+    /** 远程模式并发 SFTP 通道上限；未设置过时用 [DEFAULT_SFTP_CHANNEL_LIMIT]。 */
+    val sftpChannelLimitFlow: Flow<Int> = context.containerDataStore.data.map { prefs ->
+        (prefs[SFTP_CHANNEL_LIMIT_KEY] ?: DEFAULT_SFTP_CHANNEL_LIMIT)
+            .coerceIn(MIN_SFTP_CHANNEL_LIMIT, MAX_SFTP_CHANNEL_LIMIT)
+    }
+
+    suspend fun setSftpChannelLimit(limit: Int) {
+        context.containerDataStore.edit {
+            it[SFTP_CHANNEL_LIMIT_KEY] = limit.coerceIn(MIN_SFTP_CHANNEL_LIMIT, MAX_SFTP_CHANNEL_LIMIT)
         }
     }
 

@@ -132,7 +132,7 @@ import kotlinx.coroutines.withContext
  * 缓存 content 子组合——流式期间 targetState 一直不变，文本增长时不会重新调用 content，
  * 导致 [StreamingBubble] 收不到后续文本、停在首句。故改用枚举 + 直接 [when] 分发。
  */
-private enum class TailKind { THINKING, STREAMING, COMPACTING, RETRYING, KEY_SWITCHED, NONE }
+private enum class TailKind { THINKING, STREAMING, QUEUED, COMPACTING, RETRYING, KEY_SWITCHED, NONE }
 
 /** 悬浮层（横幅/面板/输入框）与最后一条消息的间距。 */
 private val FLOATING_LAYER_GAP_DP = 8.dp
@@ -236,6 +236,7 @@ fun AIChatPanel(
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
     val retryState by viewModel.retryState.collectAsStateWithLifecycle()
+    val requestQueueState by viewModel.requestQueueState.collectAsStateWithLifecycle()
     val keySwitchState by viewModel.keySwitchState.collectAsStateWithLifecycle()
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
@@ -451,6 +452,7 @@ fun AIChatPanel(
     val canUploadFiles = projectRoot.isNotBlank() && activeModelMetadata?.supportsTools == true
     val canUploadImages = projectRoot.isNotBlank()
     val reasoningEffort by viewModel.currentSessionReasoningEffort.collectAsStateWithLifecycle()
+    val fastMode = viewModel.currentSessionState.collectAsStateWithLifecycle().value?.fastMode == true
 
     val providerDashboards by (settingsViewModel?.providerDashboards?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(emptyMap()) })
     val currentDashboardState = activeProvider?.let { providerDashboards[it.id] } ?: ProviderDashboardState.Idle
@@ -1284,8 +1286,7 @@ fun AIChatPanel(
                                 }
                             },
                         contentPadding = PaddingValues(
-                            start = Spacing.lg,
-                            end = Spacing.lg,
+                            start = Spacing.lg, end = Spacing.lg,
                             top = Spacing.md,
                             bottom = with(LocalDensity.current) { inputBarReservePx.toDp() }
                         )
@@ -1303,10 +1304,13 @@ fun AIChatPanel(
                         val showThinking = !showStreaming && !isCompacting && isBusy && pendingPermission == null &&
                             pendingQuestion == null && (!showReasoning || preparingTool != null)
                         val showRetrying = retryState != null && isBusy && !isCompacting && !showStreaming && !showReasoning
+                        // 排队中还没拿到并发名额：优先于重试/思考文案，因为这时请求根本没发出去。
+                        val showQueued = requestQueueState != null && isBusy && !isCompacting && !showStreaming && !showReasoning
                         val showKeySwitched = keySwitchState != null && isBusy && !isCompacting && !showStreaming && !showReasoning
                         val tailKind = when {
                             showStreaming -> TailKind.STREAMING
                             isCompacting -> TailKind.COMPACTING
+                            showQueued -> TailKind.QUEUED
                             showKeySwitched -> TailKind.KEY_SWITCHED
                             showRetrying -> TailKind.RETRYING
                             showThinking -> TailKind.THINKING
@@ -1340,6 +1344,12 @@ fun AIChatPanel(
                                 when (tailKind) {
                                     TailKind.THINKING -> ThinkingBubble(label = thinkingLabel)
                                     TailKind.STREAMING -> StreamingBubble(text = typewriter.text, cache = markdownCache)
+                                    TailKind.QUEUED -> ThinkingBubble(
+                                        label = stringResource(
+                                            R.string.chat_status_request_queued,
+                                            requestQueueState?.requestsAhead ?: 1
+                                        )
+                                    )
                                     TailKind.COMPACTING -> CompactionProgressBubble()
                                     TailKind.RETRYING -> {
                                         val rs = retryState
@@ -1507,6 +1517,8 @@ fun AIChatPanel(
                     onToggleMode = { viewModel.setSessionMode(it) },
                     reasoningEffort = reasoningEffort,
                     onReasoningEffortChange = { viewModel.setSessionReasoningEffort(it) },
+                    fastMode = fastMode,
+                    onFastModeChange = { viewModel.setSessionFastMode(it) },
                     pendingAttachments = pendingAttachments,
                     onRemoveAttachment = ::removePendingAttachment,
                     onReadAttachment = { path -> viewModel.readAttachmentText(path) },

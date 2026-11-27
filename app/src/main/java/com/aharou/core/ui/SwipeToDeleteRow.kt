@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
@@ -40,6 +41,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +71,10 @@ private val DeleteButtonGap = 8.dp
  * @param onClick 表层未滑开时的点击回调；null 表示整行不可点击。
  * @param onLongClick 表层长按回调；null 表示不接长按。
  * @param deleteEnabled false 时删除按钮可露出但点击无效（如未下载完成的镜像不可删）。
+ * @param deleteButtonHeight 删除按钮固定高度；默认 [Dp.Unspecified] 表示铺满整行。
+ *   行内容是可展开大卡片时（如多 Key 管理）必须指定，否则红色块会跟着撑满整张卡片。
+ * @param deleteButtonCornerRadius 删除按钮圆角；卡片式行传与卡片一致的圆角，否则边缘会露馅。
+ * @param swipeEnabled false 时禁用手势（如卡片展开中），已滑开的行会收回。
  * @param selectionMode 多选态：左滑删除停用、点击改为切换选中、行底色随 [selected] 变化。
  * @param selected 多选态下本行是否已选中（非多选态忽略）。
  * @param onToggleSelect 多选态下点击本行时触发；由调用方决定切哪一个 id。
@@ -83,6 +89,9 @@ fun SwipeToDeleteRow(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     deleteEnabled: Boolean = true,
+    deleteButtonHeight: Dp = Dp.Unspecified,
+    deleteButtonCornerRadius: Dp = 10.dp,
+    swipeEnabled: Boolean = true,
     selectionMode: Boolean = false,
     selected: Boolean = false,
     onToggleSelect: () -> Unit = {},
@@ -103,9 +112,9 @@ fun SwipeToDeleteRow(
     val offsetX = remember { Animatable(0f) }
     val coroutineScope = rememberCoroutineScope()
 
-    // 进入多选态时把已滑开的行收回去：多选态下手势禁用，留着露出状态会挡住点击
-    LaunchedEffect(selectionMode) {
-        if (selectionMode && offsetX.value != 0f) offsetX.animateTo(0f)
+    // 进入多选态或禁用手势时把已滑开的行收回去：手势禁用后留着露出状态会挡住点击
+    LaunchedEffect(selectionMode, swipeEnabled) {
+        if ((selectionMode || !swipeEnabled) && offsetX.value != 0f) offsetX.animateTo(0f)
     }
 
     // 不可删除时按钮呈灰色，与可删状态区分
@@ -113,17 +122,19 @@ fun SwipeToDeleteRow(
     val buttonBorder = if (deleteEnabled) Color(0xFFF87171) else Color(0xFFD1D5DB)
 
     Box(modifier = modifier.fillMaxWidth()) {
+        // 高度不固定时红块铺满整行；指定了就贴顶固定高度，让按钮落在头部那一行
+        val pinnedHeight = deleteButtonHeight != Dp.Unspecified
         // 底层删除按钮：常驻组合，滑动进度只在绘制阶段换算成宽度与透明度
         Row(
             modifier = Modifier
                 .matchParentSize()
                 .padding(vertical = 2.dp),
             horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = if (pinnedHeight) Alignment.Top else Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxHeight()
+                    .then(if (pinnedHeight) Modifier.height(deleteButtonHeight) else Modifier.fillMaxHeight())
                     .width(DeleteButtonMaxWidth)
                     .graphicsLayer {
                         val maxWidthPx = DeleteButtonMaxWidth.toPx()
@@ -136,9 +147,9 @@ fun SwipeToDeleteRow(
                         scaleY = 0.7f + 0.3f * progress
                         alpha = (progress * 1.2f).coerceIn(0f, 1f)
                     }
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(deleteButtonCornerRadius))
                     .background(buttonBg)
-                    .border(1.dp, buttonBorder, RoundedCornerShape(10.dp))
+                    .border(1.dp, buttonBorder, RoundedCornerShape(deleteButtonCornerRadius))
                     .clickable(enabled = deleteEnabled && !selectionMode) {
                         // 按钮常驻后收起状态也占着位置：表层没接点击时事件会落到这里，
                         // 所以按当前位移判断是否真露出来了，避免误删
@@ -185,9 +196,9 @@ fun SwipeToDeleteRow(
                 .then(
                     if (selectionTint != null) Modifier.background(selectionTint) else Modifier
                 )
-                .pointerInput(selectionMode) {
-                    // 多选态下整行只作选中开关，左滑删除不可用
-                    if (selectionMode) return@pointerInput
+                .pointerInput(selectionMode, swipeEnabled) {
+                    // 多选态与手势禁用（如卡片展开中）时整行不接左滑
+                    if (selectionMode || !swipeEnabled) return@pointerInput
                     detectHorizontalDragGestures(
                         onDragStart = {
                             coroutineScope.launch { offsetX.stop() }
