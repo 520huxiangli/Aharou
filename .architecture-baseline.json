@@ -6,7 +6,7 @@
     "app/src/main/java/com/aharou/feature/plugin/runtime/PluginModelService.kt": 1183,
     "app/src/main/java/com/aharou/feature/settings/presentation/SettingsViewModel.kt": 3384,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/ProviderEditorScreen.kt": 3254,
-    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 3398,
+    "app/src/main/java/com/aharou/feature/agent/presentation/AIAgentViewModel.kt": 2422,
     "app/src/main/java/com/aharou/feature/agent/presentation/component/AIChatPanel.kt": 1901,
     "app/src/main/java/com/aharou/feature/browser/BrowserUseManager.kt": 1908,
     "app/src/main/java/com/aharou/feature/settings/presentation/component/SettingsScreen.kt": 1758,
