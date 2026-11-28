@@ -21,7 +21,14 @@ object LanguageRegistry {
 
     val languages: List<SupportedLanguage> = listOf(
         SupportedLanguage("zh", "中文"),
-        SupportedLanguage("en", "English")
+        SupportedLanguage("en", "English"),
+        SupportedLanguage("fr", "Français"),
+        SupportedLanguage("es", "Español"),
+        SupportedLanguage("pt", "Português"),
+        SupportedLanguage("ru", "Русский"),
+        SupportedLanguage("ja", "日本語"),
+        SupportedLanguage("ko", "한국어"),
+        SupportedLanguage("de", "Deutsch")
     )
 
     /** 判断 tag 是否为已支持的真实语言（排除 [FOLLOW_SYSTEM]）。 */

@@ -134,6 +134,33 @@ def check_strings_parity(policy, errors):
         errors.append("%s：中文有而英文缺 %s" % (cfg["en"], missing))
 
 
+def check_translation_parity(policy, notes):
+    """多语言词条完整性：只报告不拦截。
+
+    Android 资源缺项会回落成默认 values/（中文），对非中文用户反而更糟，所以缺项要看得见；
+    但翻译滞后不该拦住编译，故只进 notes。
+    """
+    cfg = policy.get("stringsParity") or {}
+    base_rel = cfg.get("zh")
+    if not base_rel:
+        return
+
+    def names(rel):
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+            return set(re.findall(r'<string name="([^"]+)"', f.read()))
+
+    base = names(base_rel)
+    res_dir = os.path.dirname(os.path.dirname(base_rel))
+    for name in sorted(os.listdir(os.path.join(ROOT, res_dir))):
+        if not name.startswith("values-") or name in ("values-en", "values-night", "values-v31", "values-night-v31"):
+            continue
+        rel = os.path.join(os.path.dirname(base_rel), name, "strings.xml")
+        if not os.path.exists(os.path.join(ROOT, rel)):
+            continue
+        missing = sorted(base - names(rel))
+        if missing:
+            notes.append("%s 缺 %d 条词条（会回落成中文），例：%s" % (rel, len(missing), ", ".join(missing[:3])))
+
 def sync_baseline(policy, baseline):
     """把当前超限文件的行数写回基线。
 
@@ -206,6 +233,7 @@ def main():
         check_banned_imports(policy, baseline, errors, notes)
         check_file_lines(policy, baseline, errors, notes)
         check_strings_parity(policy, errors)
+        check_translation_parity(policy, notes)
     for note in notes:
         print("[WARN] %s" % note)
     if errors:
