@@ -20,9 +20,16 @@ class LanguageRegistryTest {
     }
 
     @Test
+    fun added_languages_are_supported() {
+        listOf("fr", "es", "pt", "ru", "ja", "ko", "de").forEach {
+            assertTrue("$it 应当受支持", LanguageRegistry.isSupported(it))
+        }
+    }
+
+    @Test
     fun unsupported_tags_are_rejected() {
-        assertFalse(LanguageRegistry.isSupported("fr"))
-        assertFalse(LanguageRegistry.isSupported("ja"))
+        assertFalse(LanguageRegistry.isSupported("ar"))
+        assertFalse(LanguageRegistry.isSupported("hi"))
         assertFalse(LanguageRegistry.isSupported("ZH"))
         assertFalse(LanguageRegistry.isSupported("en-US"))
         assertFalse(LanguageRegistry.isSupported("zh-CN"))
