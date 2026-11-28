@@ -21,6 +21,7 @@ object LanguageRegistry {
 
     val languages: List<SupportedLanguage> = listOf(
         SupportedLanguage("zh", "中文"),
+        SupportedLanguage("zh-TW", "繁體中文"),
         SupportedLanguage("en", "English"),
         SupportedLanguage("fr", "Français"),
         SupportedLanguage("es", "Español"),

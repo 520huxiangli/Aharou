@@ -21,7 +21,7 @@ class LanguageRegistryTest {
 
     @Test
     fun added_languages_are_supported() {
-        listOf("fr", "es", "pt", "ru", "ja", "ko", "de").forEach {
+        listOf("zh-TW", "fr", "es", "pt", "ru", "ja", "ko", "de").forEach {
             assertTrue("$it 应当受支持", LanguageRegistry.isSupported(it))
         }
     }
